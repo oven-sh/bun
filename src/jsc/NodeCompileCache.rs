@@ -73,8 +73,7 @@ enum Backing {
     /// tmpfile + rename, so a replaced file's old inode stays live under the
     /// mapping.
     Map {
-        base: core::ptr::NonNull<u8>,
-        map_len: usize,
+        _pages: sys::Mmap,
     },
 }
 
@@ -115,16 +114,11 @@ impl AlignedBlob {
 
 impl Drop for AlignedBlob {
     fn drop(&mut self) {
-        match self.backing {
-            Backing::Heap => {
-                let layout = core::alloc::Layout::from_size_align(self.len.max(1), BLOB_ALIGN)
-                    .expect("valid");
-                // SAFETY: allocated in `new_uninit` with the identical layout.
-                unsafe { std::alloc::dealloc(self.ptr.as_ptr(), layout) };
-            }
-            Backing::Map { base, map_len } => {
-                let _ = sys::munmap(base.as_ptr(), map_len);
-            }
+        if let Backing::Heap = self.backing {
+            let layout =
+                core::alloc::Layout::from_size_align(self.len.max(1), BLOB_ALIGN).expect("valid");
+            // SAFETY: allocated in `new_uninit` with the identical layout.
+            unsafe { std::alloc::dealloc(self.ptr.as_ptr(), layout) };
         }
     }
 }
@@ -659,24 +653,6 @@ fn blob_file_offset(code_size: u32) -> u64 {
     (HEADER_SIZE as u64 + u64::from(code_size)).next_multiple_of(BLOB_ALIGN as u64)
 }
 
-/// Unmaps on drop unless [`MapGuard::take`]n for a blob that keeps the
-/// mapping alive.
-struct MapGuard(Option<(core::ptr::NonNull<u8>, usize)>);
-
-impl MapGuard {
-    fn take(&mut self) -> Option<(core::ptr::NonNull<u8>, usize)> {
-        self.0.take()
-    }
-}
-
-impl Drop for MapGuard {
-    fn drop(&mut self) {
-        if let Some((base, map_len)) = self.0.take() {
-            let _ = sys::munmap(base.as_ptr(), map_len);
-        }
-    }
-}
-
 fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option<&[u8]>) {
     let basename = cache_basename(key);
     let mut line = String::new();
@@ -728,16 +704,11 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
     let (prot, flags) = (libc::PROT_READ, libc::MAP_PRIVATE);
     #[cfg(not(unix))]
     let (prot, flags) = (0i32, 0i32);
-    let mut map_guard = MapGuard(
-        sys::mmap(core::ptr::null_mut(), total, prot, flags, file.fd(), 0)
-            .ok()
-            .and_then(core::ptr::NonNull::new)
-            .map(|base| (base, total)),
-    );
+    let mapped = sys::Mmap::new(total, prot, flags, file.fd(), 0).ok();
     let heap_contents;
-    let bytes: &[u8] = match &map_guard.0 {
-        // SAFETY: the mapping is `total` bytes and outlives this borrow.
-        Some((base, _)) => unsafe { core::slice::from_raw_parts(base.as_ptr(), total) },
+    let bytes: &[u8] = match &mapped {
+        // SAFETY: see `Backing::Map`.
+        Some(mapped) => unsafe { mapped.as_slice() },
         None => {
             let mut contents: Vec<u8> = Vec::new();
             if contents.try_reserve_exact(total).is_err() {
@@ -852,28 +823,21 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
     // page-aligned (every supported page size is a multiple of 128) and
     // `blob_off` is a multiple of 128 by construction, but a miss here would
     // be a JSC assert or segfault, so verify instead of assuming.
-    let map_is_aligned = map_guard.0.as_ref().is_some_and(|(base, _)| {
-        (base.as_ptr() as usize + blob_off as usize).is_multiple_of(BLOB_ALIGN)
-    });
-    let blob = if map_is_aligned {
-        let (base, map_len) = map_guard.take().expect("checked above");
-        // SAFETY: `blob_off + cache_size == map_len` was just validated.
-        let ptr =
-            unsafe { core::ptr::NonNull::new_unchecked(base.as_ptr().add(blob_off as usize)) };
-        AlignedBlob {
+    let ptr = core::ptr::NonNull::from(blob_bytes).cast::<u8>();
+    let blob = match mapped {
+        Some(pages) if ptr.addr().get().is_multiple_of(BLOB_ALIGN) => AlignedBlob {
             ptr,
             len: cache_size as usize,
-            backing: Backing::Map { base, map_len },
+            backing: Backing::Map { _pages: pages },
+        },
+        _ => {
+            let Some(mut blob) = AlignedBlob::new_uninit(cache_size as usize) else {
+                finish(line, &|| "allocation failed\n".into());
+                return;
+            };
+            blob.as_mut_slice().copy_from_slice(blob_bytes);
+            blob
         }
-    } else {
-        // No mapping, or the blob would be misaligned in it: copy to an
-        // aligned heap buffer instead (map_guard unmaps on return).
-        let Some(mut blob) = AlignedBlob::new_uninit(cache_size as usize) else {
-            finish(line, &|| "allocation failed\n".into());
-            return;
-        };
-        blob.as_mut_slice().copy_from_slice(blob_bytes);
-        blob
     };
     finish(line, &|| format!(" success, size={cache_size}\n"));
     entry.blob = Some(blob);

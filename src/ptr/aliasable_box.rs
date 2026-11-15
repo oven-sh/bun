@@ -9,15 +9,26 @@ impl<T> AliasableBox<T> {
         Self(bun_core::heap::alloc_nn(value))
     }
 
+    /// As [`Box::into_raw`].
+    pub fn into_raw(self) -> *mut T {
+        core::mem::ManuallyDrop::new(self).as_ptr()
+    }
+
     /// Valid until `self` is dropped.
     pub fn as_ptr(&self) -> *mut T {
         self.0.as_ptr()
     }
 }
 
+impl<T> From<Box<T>> for AliasableBox<T> {
+    fn from(value: Box<T>) -> Self {
+        Self(Box::into_non_null(value))
+    }
+}
+
 impl<T> Drop for AliasableBox<T> {
     fn drop(&mut self) {
-        // SAFETY: `new` allocated it, and `self` is the only owner.
+        // SAFETY: it came from a `Box`, and `self` is the only owner.
         unsafe { bun_core::heap::destroy(self.0.as_ptr()) }
     }
 }

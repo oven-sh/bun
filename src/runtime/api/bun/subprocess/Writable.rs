@@ -2,7 +2,7 @@ use core::ptr::NonNull;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, event_loop::EventLoop};
 use bun_ptr::RefPtr;
-#[cfg(not(windows))]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys::FdExt;
 use bun_sys::{self, Fd};
 
@@ -119,8 +119,7 @@ impl<'a> Writable<'a> {
     ) -> JsResult<JSValue> {
         FileSink::assign_to_stream(pipe, stream, global).inspect_err(|_| {
             subprocess.weak_file_sink_stdin_ptr.set(None);
-            subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, false));
-            subprocess.deref();
+            subprocess.stdin_sink_ref.set(None);
         })
     }
 
@@ -131,8 +130,6 @@ impl<'a> Writable<'a> {
         result: StdioResult,
         promise_for_stream: &mut JSValue,
     ) -> JsResult<Writable<'a>> {
-        super::assert_stdio_result!(result);
-
         let global = event_loop.global_ref();
 
         // `FileSink::create` / `StaticPipeWriter::create` take
@@ -151,11 +148,7 @@ impl<'a> Writable<'a> {
             match stdio {
                 Stdio::Pipe | Stdio::ReadableStream(_) => {
                     if let StdioResult::Buffer(buffer) = result {
-                        // Ownership of the `Box<uv::Pipe>` transfers to the
-                        // FileSink's writer (the sink takes over the heap
-                        // pointer).
-                        let uv_pipe: *mut _ = bun_core::heap::into_raw(buffer);
-                        let pipe_ref = FileSink::create_with_pipe(evtloop, uv_pipe);
+                        let pipe_ref = FileSink::create_with_pipe(evtloop, buffer);
 
                         match pipe_ref.writer.with_mut(|w| w.start_with_current_pipe()) {
                             bun_sys::Result::Ok(()) => {}
@@ -172,11 +165,8 @@ impl<'a> Writable<'a> {
                         subprocess
                             .weak_file_sink_stdin_ptr
                             .set(Some(pipe_ref.as_non_null()));
-                        subprocess.ref_();
-                        subprocess.update_flags(|f| {
-                            f.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
-                            f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);
-                        });
+                        subprocess.hold_for_stdin_sink();
+                        subprocess.update_flags(|f| f.remove(Flags::HAS_STDIN_DESTRUCTOR_CALLED));
 
                         if let Stdio::ReadableStream(rs) = stdio {
                             *promise_for_stream =
@@ -228,7 +218,7 @@ impl<'a> Writable<'a> {
         #[cfg(unix)]
         {
             if matches!(stdio, Stdio::Pipe) {
-                let _ = bun_sys::set_nonblocking(result.unwrap());
+                let _ = bun_sys::set_nonblocking(result.as_ref().unwrap().fd());
             }
         }
 
@@ -236,14 +226,14 @@ impl<'a> Writable<'a> {
         match stdio {
             Stdio::Dup2(_) => panic!("TODO dup2 stdio"),
             Stdio::Pipe | Stdio::ReadableStream(_) => {
-                let fd = result.unwrap();
-                let pipe_ref = FileSink::create(evtloop, fd);
+                let file = result.unwrap();
+                let pipe_ref = FileSink::create(evtloop, file.fd());
 
-                match pipe_ref.writer.with_mut(|w| w.start(fd, true)) {
-                    bun_sys::Result::Ok(()) => {}
+                match pipe_ref.writer.with_mut(|w| w.start(file.fd(), true)) {
+                    // The writer closes it from now on.
+                    bun_sys::Result::Ok(()) => _ = file.into_raw(),
                     bun_sys::Result::Err(err) => {
-                        // The writer did not take `fd`; nothing else closes it.
-                        fd.close();
+                        drop(file);
                         if let Stdio::ReadableStream(rs) = stdio {
                             rs.cancel(global)?;
                         }
@@ -262,11 +252,8 @@ impl<'a> Writable<'a> {
                 subprocess
                     .weak_file_sink_stdin_ptr
                     .set(Some(pipe_ref.as_non_null()));
-                subprocess.ref_();
-                subprocess.update_flags(|f| {
-                    f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);
-                    f.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
-                });
+                subprocess.hold_for_stdin_sink();
+                subprocess.update_flags(|f| f.remove(Flags::HAS_STDIN_DESTRUCTOR_CALLED));
 
                 if let Stdio::ReadableStream(rs) = stdio {
                     *promise_for_stream = Self::attach_stream(&pipe_ref, rs, subprocess, global)?;
@@ -306,7 +293,7 @@ impl<'a> Writable<'a> {
                 debug_assert!(*fd != Fd::INVALID);
                 Ok(Writable::Memfd(*fd))
             }
-            Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
+            Stdio::Fd(fd) => Ok(Writable::Fd(*fd)),
             Stdio::Inherit => Ok(Writable::Inherit),
             Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
             Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
@@ -344,8 +331,7 @@ impl<'a> Writable<'a> {
                         .get()
                         .contains(Flags::HAS_STDIN_DESTRUCTOR_CALLED)
                 {
-                    // `Writable::init()` already called `subprocess.ref()` and
-                    // set `DEREF_ON_STDIN_DESTROYED`. `on_attached_process_exit()`
+                    // `Writable::init()` set `stdin_sink_ref`. `on_attached_process_exit()`
                     // → `writer.close()` → `pipe.source` → `Writable::on_close`
                     // → `on_stdin_destroyed()` balances that ref, so a ref-count
                     // drop across this call is expected (previously these
@@ -364,16 +350,11 @@ impl<'a> Writable<'a> {
                     subprocess
                         .weak_file_sink_stdin_ptr
                         .set(Some(pipe_ref.as_non_null()));
-                    if !subprocess
-                        .flags
-                        .get()
-                        .contains(Flags::DEREF_ON_STDIN_DESTROYED)
-                    {
+                    if subprocess.stdin_sink_ref.get().is_none() {
                         // `Writable::init()` already did this for fresh pipes;
                         // only take a new ref if `on_stdin_destroyed()` has since
                         // consumed it.
-                        subprocess.ref_();
-                        subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, true));
+                        subprocess.hold_for_stdin_sink();
                     }
                     let parent_ptr = subprocess.as_ctx_ptr().cast::<Subprocess<'static>>();
                     if matches!(*pipe_ref.source.get(), SourceHandle::Subprocess(p) if p.as_const_ptr() == parent_ptr.cast_const())

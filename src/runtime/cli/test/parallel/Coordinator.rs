@@ -1237,31 +1237,6 @@ impl<'a> Coordinator<'a> {
         // costs nothing.
         self.assign_work(w);
     }
-
-    #[cfg(windows)]
-    pub(crate) fn create_windows_kill_on_close_job() -> Option<*mut c_void> {
-        use bun_sys::windows;
-        // SAFETY: Win32 FFI calls.
-        unsafe {
-            let job = windows::CreateJobObjectA(core::ptr::null_mut(), core::ptr::null_mut());
-            if job.is_null() {
-                return None;
-            }
-            let mut jeli: windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION = bun_core::ffi::zeroed();
-            jeli.BasicLimitInformation.LimitFlags = windows::JOB_LIMIT_FLAGS_KILL_TREE_ON_CLOSE;
-            if windows::SetInformationJobObject(
-                job,
-                windows::JobObjectExtendedLimitInformation,
-                (&mut jeli as *mut windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-                core::mem::size_of::<windows::JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            ) == 0
-            {
-                windows::CloseHandle(job);
-                return None;
-            }
-            Some(job)
-        }
-    }
 }
 
 /// SIGTERM to the process group a worker leads: the worker and everything it

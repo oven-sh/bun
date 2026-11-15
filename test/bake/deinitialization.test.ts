@@ -235,3 +235,58 @@ test("a request that crosses maxRequestBodySize while it waits for a bundle that
   expect(JSON.parse(stdout)).toEqual({ upload: "HTTP/1.1 413 Payload Too Large", next: 500, pendingRequests: 0 });
   expect(exitCode).toBe(0);
 });
+
+test("an HMR upgrade on the last connection of a stopped server", async () => {
+  using dir = tempDir("dev-server-upgrade-after-stop", {
+    "index.html": `<!DOCTYPE html><html><body></body></html>`,
+    "fixture.ts": `
+      import { getDevServerDeinitCount } from "bun:internal-for-testing";
+      import { once } from "node:events";
+      import net from "node:net";
+      import html from "./index.html";
+
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: true,
+        routes: { "/": html },
+        fetch: () => new Response("ok"),
+      });
+      const sock = net.connect(server.port, "127.0.0.1");
+      let response = "";
+      let closed = false;
+      sock.on("data", data => (response += data.toString("latin1")));
+      sock.on("error", () => {});
+      sock.on("close", () => (closed = true));
+      await once(sock, "connect");
+      await new Promise(resolve => sock.write("GET /_bun/hmr HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n", resolve));
+      // Connections are accepted in order, so the server has accepted the first one after this.
+      await (await fetch(new URL("/other", server.url), { keepalive: false })).text();
+
+      const deinitsBefore = getDevServerDeinitCount();
+      server.stop();
+      const deinitsAtStop = getDevServerDeinitCount() - deinitsBefore;
+      sock.write(
+        "Connection: Upgrade\\r\\nUpgrade: websocket\\r\\nSec-WebSocket-Version: 13\\r\\n" +
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\n\\r\\n",
+      );
+      const deadline = Date.now() + 2000;
+      while (!closed && Date.now() < deadline) await new Promise(resolve => setImmediate(resolve));
+      const deinits = getDevServerDeinitCount() - deinitsBefore;
+      console.log(JSON.stringify({ status: response.split("\\r\\n")[0], deinitsAtStop, deinits, closed }));
+      process.exit(0);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toBe('{"status":"HTTP/1.1 101 Switching Protocols","deinitsAtStop":0,"deinits":1,"closed":true}\n');
+  expect(exitCode).toBe(0);
+});

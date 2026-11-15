@@ -402,7 +402,7 @@ impl PackageManager {
             log_level,
             foreground,
             install_ctx,
-        )?;
+        );
         Ok(())
     }
 

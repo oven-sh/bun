@@ -4164,11 +4164,9 @@ pub mod bv2_impl {
         }
     }
 
-    pub struct DependenciesScanner {
-        pub(crate) ctx: *mut (),
+    pub struct DependenciesScanner<'s> {
+        pub analyzer: &'s mut dyn OnDependenciesAnalyze,
         pub entry_points: Box<[Box<[u8]>]>,
-        pub(crate) on_fetch:
-            fn(ctx: *mut (), result: &mut DependenciesScannerResult) -> Result<(), Error>,
     }
 
     pub struct DependenciesScannerResult<'r, 'a> {
@@ -4177,9 +4175,7 @@ pub mod bv2_impl {
         pub bundle_v2: &'r mut BundleV2<'a>,
     }
 
-    /// Callback contract for [`DependenciesScanner`]. Each call site's local
-    /// `Analyzer` struct implements this; [`DependenciesScanner::new`] erases the
-    /// concrete type behind a monomorphized trampoline.
+    /// Callback contract for [`DependenciesScanner`].
     pub trait OnDependenciesAnalyze {
         fn on_analyze(
             &mut self,
@@ -4187,37 +4183,11 @@ pub mod bv2_impl {
         ) -> Result<(), Error>;
     }
 
-    impl DependenciesScanner {
-        /// Type-erase `analyzer` into the `(ctx, on_fetch)` pair. The returned
-        /// scanner borrows `*analyzer` for its lifetime: caller must keep
-        /// `analyzer` alive and exclusively owned until the scan completes.
-        pub fn new<A: OnDependenciesAnalyze>(
-            analyzer: &mut A,
-            entry_points: Box<[Box<[u8]>]>,
-        ) -> Self {
-            fn trampoline<A: OnDependenciesAnalyze>(
-                ctx: *mut (),
-                result: &mut DependenciesScannerResult,
-            ) -> Result<(), Error> {
-                // SAFETY: `ctx` was set from `&mut *analyzer` in `new`; the caller
-                // contract guarantees `*analyzer` outlives the scanner and is not
-                // otherwise borrowed, so reconstituting `&mut A` here is exclusive.
-                let analyzer = unsafe { &mut *ctx.cast::<A>() };
-                analyzer.on_analyze(result)
-            }
-            Self {
-                ctx: core::ptr::from_mut(analyzer).cast::<()>(),
-                entry_points,
-                on_fetch: trampoline::<A>,
-            }
-        }
-    }
-
     impl<'a> BundleV2<'a> {
         pub(crate) fn get_all_dependencies(
             &mut self,
             reachable_files: &[Index],
-            fetcher: &DependenciesScanner,
+            fetcher: &mut DependenciesScanner<'_>,
         ) -> Result<(), Error> {
             // Find all external dependencies from reachable files
             let mut external_deps = bun_collections::StringSet::new();
@@ -4275,7 +4245,7 @@ pub mod bv2_impl {
                 bundle_v2: self,
                 reachable_files,
             };
-            (fetcher.on_fetch)(fetcher.ctx, &mut result)
+            fetcher.analyzer.on_analyze(&mut result)
         }
 
         /// `load` has returned its `&mut Graph` before `link` starts the workers that read the graph.
@@ -4307,7 +4277,7 @@ pub mod bv2_impl {
             reachable_files_count: &mut usize,
             minify_duration: &mut u64,
             source_code_size: &mut u64,
-            fetcher: Option<&DependenciesScanner>,
+            fetcher: Option<&mut DependenciesScanner<'_>>,
         ) -> Result<BuildResult, Error> {
             let mut this = BundleV2::init(
                 transpiler,
@@ -5465,22 +5435,7 @@ pub mod bv2_impl {
                 self.owned_client_transpiler = None;
             }
 
-            // Worker-assignment teardown.
-            let pool = self.graph.pool_mut();
-            {
-                let mut assignments = pool.workers_assignments.lock();
-                if assignments.count() > 0 {
-                    for worker in assignments.values() {
-                        // SAFETY: worker ptrs are live until `deinit_soon`.
-                        unsafe { (**worker).deinit_soon() };
-                    }
-                    pool.wake_for_idle_events();
-                }
-                // `ThreadPool` is arena-allocated; the arena bulk-free won't
-                // run its `Drop`, so release the map's backing storage here.
-                assignments.clear_and_free();
-            }
-            pool.deinit();
+            self.graph.pool_mut().deinit();
 
             for free in self.free_list.drain(..) {
                 drop(free);
@@ -5951,8 +5906,6 @@ pub mod bv2_impl {
                 };
             }
 
-            // `Chunk: !Default` (Vec fields). Allocate via Vec then
-            // leak into the arena.
             let mut chunks: Vec<Chunk> =
                 Vec::with_capacity(1 + start.css_entry_points.count() + html_files.count());
 
@@ -6029,16 +5982,12 @@ pub mod bv2_impl {
                     ..Chunk::default()
                 });
             }
-            // Arena-owned; the
-            // `DevServerOutput` lifetime is documented as "tied to the bundler's
-            // arena". `alloc_slice_fill_iter` moves each `Chunk` into the bump.
-            let chunks: &mut [Chunk] = self.arena().alloc_slice_fill_iter(chunks);
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
             crate::linker_context_mod::generate_chunks_in_parallel::<true>(
                 &mut self.linker,
-                chunks,
+                &mut chunks,
             )
             .map_err(|_| AllocError)?;
 
@@ -6050,7 +5999,6 @@ pub mod bv2_impl {
                     &mut DevServerOutput {
                         chunks,
                         css_file_list: core::mem::take(&mut start.css_entry_points),
-                        html_files,
                     },
                 )
                 .map_err(|_| AllocError)
@@ -8226,9 +8174,8 @@ pub mod bv2_impl {
 
     /// The lifetime of this structure is tied to the bundler's arena
     pub struct DevServerOutput<'a> {
-        pub chunks: &'a mut [Chunk<'a>],
+        pub chunks: Vec<Chunk<'a>>,
         pub css_file_list: ArrayHashMap<Index, CssEntryPointMeta>,
-        pub html_files: ArrayHashMap<Index, ()>,
     }
 
     pub(crate) fn generate_unique_key() -> u64 {

@@ -10,7 +10,7 @@ use crate::node::types::FdJsc as _;
 
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::webcore::ReadableStream;
-use bun_io::max_buf::MaxBuf;
+use bun_io::max_buf;
 use bun_ptr::RefPtr;
 use bun_ptr::cow_slice::CowSlice;
 
@@ -92,34 +92,22 @@ impl Readable {
         event_loop: &EventLoop,
         process: NonNull<Subprocess<'static>>,
         result: StdioResult,
-        max_size: Option<NonNull<MaxBuf>>,
+        max_size: Option<&max_buf::OwnerRef>,
         _is_sync: bool,
     ) -> Readable {
-        super::assert_stdio_result!(result);
-
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let mut stdio = stdio;
         #[cfg(unix)]
         {
             if matches!(stdio, Stdio::Pipe) {
-                let _ = bun_sys::set_nonblocking(result.unwrap());
+                let _ = bun_sys::set_nonblocking(result.as_ref().unwrap().fd());
             }
         }
 
         match &stdio {
             Stdio::Inherit => Readable::Inherit,
             Stdio::Ignore | Stdio::Ipc | Stdio::Path(..) => Readable::Ignore,
-            Stdio::Fd(fd) => {
-                #[cfg(unix)]
-                {
-                    let _ = fd;
-                    Readable::Fd(result.unwrap())
-                }
-                #[cfg(not(unix))]
-                {
-                    Readable::Fd(*fd)
-                }
-            }
+            Stdio::Fd(fd) => Readable::Fd(*fd),
             #[cfg(any(target_os = "linux", target_os = "android"))]
             Stdio::Memfd(_) => {
                 // Ownership of the fd moves into the Readable; `Stdio`'s Drop would close it.
@@ -141,8 +129,16 @@ impl Readable {
             }
             Stdio::Blob(..) => panic!("TODO: implement Blob support in Stdio readable"),
             Stdio::Capture(..) => panic!("TODO: implement capture support in Stdio readable"),
-            // ReadableStream is handled separately
-            Stdio::ReadableStream(..) => Readable::Ignore,
+            Stdio::ReadableStream(..) => {
+                // Nothing reads it, but closing it would fail the child's writes.
+                #[cfg(unix)]
+                let _ = result.map(bun_sys::File::into_raw);
+                #[cfg(windows)]
+                if let StdioResult::Buffer(pipe) = result {
+                    let _ = pipe.into_raw();
+                }
+                Readable::Ignore
+            }
             // Rejected at i < 3 in Stdio::extract(); stdout/stderr never see this.
             Stdio::SocketFd => unreachable!("SocketFd at stdout/stderr"),
         }
@@ -181,26 +177,12 @@ impl Readable {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
+                let reader = Self::pipe_reader_mut(&pipe);
+                reader.process = None;
                 #[cfg(unix)]
-                {
-                    let release_start_ref = {
-                        let reader = Self::pipe_reader_mut(&pipe);
-                        if reader.process.is_some()
-                            && matches!(reader.state, super::subprocess_pipe_reader::State::Pending)
-                            && reader.ref_count.get() > 1
-                        {
-                            reader.reader.deinit();
-                            true
-                        } else {
-                            false
-                        }
-                    };
-                    if release_start_ref {
-                        // SAFETY: guard above proved a second ref exists; this deref cannot reach zero.
-                        unsafe { PipeReader::deref(pipe.as_ptr()) };
-                    }
+                if let Some(_start_ref) = reader.start_ref.take() {
+                    reader.reader.deinit();
                 }
-                Self::pipe_reader_mut(&pipe).process = None;
             }
             Readable::Buffer(_) | Readable::Errored(..) => {
                 // Dropping the CowString (via the overwrite) frees the buffer;
@@ -222,8 +204,10 @@ impl Readable {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                let result = Self::pipe_reader_mut(&pipe).to_js(cx);
-                Self::pipe_reader_mut(&pipe).process = None;
+                let reader = Self::pipe_reader_mut(&pipe);
+                let result = reader.to_js(cx);
+                reader.process = None;
+                drop(reader.start_ref.take());
                 result
             }
             Readable::Buffer(_) => {

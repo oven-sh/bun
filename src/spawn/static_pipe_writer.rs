@@ -128,16 +128,9 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             // On Windows `StdioResult` is the `WindowsStdioResult` union and
             // the caller invariant is that the `Buffer` arm is set. Enforce
             // that here: any other arm is a logic bug, not a silent no-op.
-            // Ownership of the boxed `uv::Pipe` transfers into the writer's
-            // `Source::Pipe`, so we move it out (replacing with `Unavailable`)
-            // and `heap::alloc` it (set_pipe re-wraps via `heap::take`).
             use crate::process::WindowsStdioResult;
-            match core::mem::replace(&mut boxed.stdio_result, WindowsStdioResult::Unavailable) {
-                WindowsStdioResult::Buffer(pipe) => {
-                    // SAFETY: `pipe` is a Box-allocated `uv::Pipe`; `set_pipe`
-                    // takes ownership via `heap::take`.
-                    unsafe { boxed.writer.set_pipe(bun_core::heap::into_raw(pipe)) };
-                }
+            match boxed.stdio_result.take() {
+                WindowsStdioResult::Buffer(pipe) => boxed.writer.set_pipe(pipe),
                 WindowsStdioResult::BufferFd(_)
                 | WindowsStdioResult::UnownedFd(_)
                 | WindowsStdioResult::Unavailable => {
@@ -180,14 +173,9 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         }
         #[cfg(not(windows))]
         {
-            use bun_sys::FdExt as _;
-            // On POSIX `StdioResult` is an `Option<Fd>`.
-            let fd = self.stdio_result.unwrap();
-            match self.writer.start(fd, true) {
+            let file = self.stdio_result.take().unwrap();
+            match self.writer.start(file.fd(), true) {
                 bun_sys::Result::Err(err) => {
-                    // The writer did not take `fd`; nothing else closes it.
-                    self.stdio_result = None;
-                    fd.close();
                     // start() failed: `started` stays false so no release
                     // site fires — release start()'s `+1` here.
                     // SAFETY: `self` is the live `Self` we ref'd at the top
@@ -197,6 +185,8 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
                     bun_sys::Result::Err(err)
                 }
                 bun_sys::Result::Ok(()) => {
+                    // The writer closes it from now on.
+                    file.into_raw();
                     self.started = true;
                     #[cfg(unix)]
                     {

@@ -532,8 +532,7 @@ impl Entry {
                 self.metadata.sourcemap_byte_offset,
             )?;
 
-            // `InternalSourceMap::find` trusts these header offsets.
-            if !bun_sourcemap::InternalSourceMap::is_valid_blob(&sourcemap) {
+            if bun_sourcemap::InternalSourceMap::new(&sourcemap).is_none() {
                 return Err(crate::CrateError::InvalidSourceMap);
             }
 

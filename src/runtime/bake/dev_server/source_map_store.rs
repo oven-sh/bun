@@ -14,7 +14,7 @@ use bun_sourcemap::{self as source_map, SourceMapState};
 use crate::bake::{self, Side};
 use crate::timer::EventLoopTimerState;
 
-use super::{ChunkKind, DevServer, EventLoopTimer, Magic, TimerTag, packed_map};
+use super::{ChunkKind, EventLoopTimer, TimerTag, packed_map};
 
 /// See `SourceId` for what the content of u64 is.
 #[repr(transparent)]
@@ -415,12 +415,6 @@ impl Default for SourceMapStore {
     }
 }
 
-// Intrusive backref: recover the owning DevServer. Caller must guarantee `self`
-// is the `source_maps` field of a live, heap-allocated `DevServer` (always
-// true for production use; the `Default::default()` instance must never call
-// this).
-bun_core::impl_field_parent! { SourceMapStore => DevServer.source_maps; pub fn mut owner; }
-
 impl SourceMapStore {
     /// ArrayHashMap/LinearFifo have no `const fn` ctors; callers use
     /// this in lieu of a `const`.
@@ -584,11 +578,7 @@ impl SourceMapStore {
     ///
     /// # Safety
     /// `timer` must point to the `weak_ref_sweep_timer` field of a live
-    /// `SourceMapStore` that is itself the `source_maps` field of a live
-    /// heap-allocated `DevServer`.
-    // `timer` is never dereferenced in Rust — `from_timer_ptr` only does
-    // `container_of` pointer arithmetic to recover the parent `SourceMapStore`;
-    // the deref is of that recovered parent pointer, not the parameter.
+    /// `SourceMapStore`.
     pub(crate) fn sweep_weak_refs(
         timer: *mut EventLoopTimer,
         now_ts: &bun_event_loop::EventLoopTimer::Timespec,
@@ -596,8 +586,6 @@ impl SourceMapStore {
         map_log!("sweepWeakRefs");
         // SAFETY: `timer` points to the `weak_ref_sweep_timer` field of a SourceMapStore.
         let store: &mut SourceMapStore = unsafe { &mut *SourceMapStore::from_timer_ptr(timer) };
-        // SAFETY: invariant of `owner()` — store is the `source_maps` field of a live DevServer.
-        debug_assert!(unsafe { (*store.owner()).magic } == Magic::Valid);
 
         // Mixed-sign comparison: a negative `expire` must count as expired.
         // Keep `now` as i64 (already clamped ≥0) so the comparison stays

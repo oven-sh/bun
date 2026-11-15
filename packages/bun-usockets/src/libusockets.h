@@ -546,9 +546,7 @@ enum create_bun_socket_error_t {
 
 /* Build an SSL_CTX from options. Returns the BoringSSL SSL_CTX*; caller owns
  * one reference and releases with SSL_CTX_free() (no wrapper struct — the
- * SSL_CTX's own refcount is the refcount). The strdup'd passphrase is freed
- * inside this call once private-key load completes, so a plain SSL_CTX_free()
- * is sufficient on every path.
+ * SSL_CTX's own refcount is the refcount).
  *
  * Mode-neutral: the same SSL_CTX may back client connects and server accepts
  * (Node's createSecureContext semantics). CTX-level verify mode is derived

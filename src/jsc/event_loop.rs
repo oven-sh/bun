@@ -1124,8 +1124,7 @@ impl EventLoop {
 
         let mut exception_thrown = false;
         for task in to_run_now.iter() {
-            // SAFETY: ImmediateObject pointers are kept alive by the JS heap
-            // until `__bun_run_immediate_task` consumes them.
+            // SAFETY: the queue holds a ref on each, which `__bun_run_immediate_task` consumes.
             exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
         }
 
@@ -1280,7 +1279,7 @@ impl EventLoop {
     /// loop's own poster for a spawnSync loop.
     pub fn js_poster(&self) -> bun_event_loop::JsPoster {
         match &self.isolated_poster {
-            Some(p) => crate::vm_handle::IsolatedPosterInner::to_js_poster(p),
+            Some(p) => std::sync::Arc::<crate::vm_handle::IsolatedPosterInner>::clone(p),
             None => self.vm_ref().js_poster(),
         }
     }

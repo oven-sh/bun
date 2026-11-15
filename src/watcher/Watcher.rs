@@ -295,14 +295,13 @@ impl Watcher {
             // ends before the free below.
             let me = unsafe { &*this };
             // `thread_body` clears `watchloop_handle` under this mutex when it returns ownership.
-            me.mutex.lock();
+            let guard = me.mutex.lock_guard();
             if me.watchloop_handle.load() {
                 me.close_descriptors.store(close_descriptors);
                 me.running.store(false);
-                me.mutex.unlock();
                 false
             } else {
-                me.mutex.unlock();
+                drop(guard);
                 if close_descriptors && me.running.load() {
                     let fds = me.watchlist.items_fd();
                     for &fd in fds {
@@ -885,7 +884,7 @@ impl Watcher {
         package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<FdOwnership> {
         // This must lock due to concurrent transpiler
-        self.mutex.lock();
+        let _guard = self.mutex.lock_guard();
 
         if let Some(index) = self.index_of(hash) {
             let mut ownership = FdOwnership::Caller;
@@ -901,19 +900,16 @@ impl Watcher {
                     ownership = FdOwnership::Watcher;
                 }
             }
-            self.mutex.unlock();
             return Ok(ownership);
         }
 
-        let r = self.append_file_maybe_lock::<CLONE_FILE_PATH, false>(
+        self.append_file_maybe_lock::<CLONE_FILE_PATH, false>(
             fd,
             file_path,
             hash,
             dir_fd,
             package_json,
-        );
-        self.mutex.unlock();
-        r
+        )
     }
 
     pub fn index_of(&self, hash: HashType) -> Option<u32> {

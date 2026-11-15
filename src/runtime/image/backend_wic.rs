@@ -317,18 +317,11 @@ pub(crate) fn encode(
     if unsafe { GetHGlobalFromStream(stream.as_ptr(), &mut hg) } < 0 || hg.is_null() {
         return Err(EncodeFailed);
     }
-    // SAFETY: hg is non-null.
-    let ptr_ = unsafe { GlobalLock(hg) };
-    if ptr_.is_null() {
-        return Err(EncodeFailed);
-    }
-    let ptr_ = ptr_ as *const u8;
-    scopeguard::defer! {
-        // SAFETY: hg is a locked HGLOBAL.
-        let _ = unsafe { GlobalUnlock(hg) };
-    }
-    // SAFETY: ptr_ points to `pos` valid bytes inside the locked HGLOBAL.
-    let slice = unsafe { bun_core::ffi::slice(ptr_, usize::try_from(pos).expect("int cast")) };
+    // SAFETY: the stream's memory, which outlives the lock.
+    let locked = unsafe { LockedGlobal::new(hg) }.ok_or(EncodeFailed)?;
+    let len = usize::try_from(pos).expect("int cast");
+    // SAFETY: the stream wrote `pos` bytes.
+    let slice = unsafe { bun_core::ffi::slice(locked.bytes, len) };
     Ok(slice.to_vec())
 }
 
@@ -850,6 +843,27 @@ unsafe extern "system" {
     fn GlobalUnlock(h: *mut c_void) -> c_int;
 }
 
+struct LockedGlobal {
+    handle: *mut c_void,
+    bytes: *const u8,
+}
+
+impl LockedGlobal {
+    /// SAFETY: `handle` is an HGLOBAL that outlives the lock.
+    unsafe fn new(handle: *mut c_void) -> Option<Self> {
+        // SAFETY: fn contract.
+        let bytes = unsafe { GlobalLock(handle) }.cast_const().cast::<u8>();
+        (!bytes.is_null()).then(|| Self { handle, bytes })
+    }
+}
+
+impl Drop for LockedGlobal {
+    fn drop(&mut self) {
+        // SAFETY: locked in `new`.
+        unsafe { GlobalUnlock(self.handle) };
+    }
+}
+
 /// `WICConvertBitmapSource` is the one flat export from windowscodecs.dll we
 /// need. Loaded lazily (LoadLibraryA inside `loadFactory`) so the binary
 /// carries no import-table dependency on windowscodecs — nano-server / stripped
@@ -983,26 +997,38 @@ pub(crate) fn has_clipboard_image() -> bool {
     false
 }
 
+struct Clipboard(());
+
+impl Clipboard {
+    fn open() -> Option<Self> {
+        // SAFETY: a null hwnd associates the open with the current task; fine for read-only.
+        (unsafe { OpenClipboard(ptr::null_mut()) } != 0).then(|| Self(()))
+    }
+
+    fn data(&self, format: c_uint) -> *mut c_void {
+        // SAFETY: the clipboard is open.
+        unsafe { GetClipboardData(format) }
+    }
+}
+
+impl Drop for Clipboard {
+    fn drop(&mut self) {
+        // SAFETY: the clipboard is open.
+        unsafe { CloseClipboard() };
+    }
+}
+
 // The wider `BackendError` type matches the macOS backend so the caller in
 // Image.rs handles both identically.
 pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
-    // hwnd=null associates the open with the current task; fine for read-only.
-    // SAFETY: null hwnd is documented as valid.
-    if unsafe { OpenClipboard(ptr::null_mut()) } == 0 {
-        return Err(BackendUnavailable);
-    }
-    scopeguard::defer! {
-        // SAFETY: clipboard is open.
-        let _ = unsafe { CloseClipboard() };
-    }
+    let clipboard = Clipboard::open().ok_or(BackendUnavailable)?;
 
     // 1. Registered file-format chunks — copy verbatim.
     for name in NAMED_FORMATS {
         // SAFETY: name is a static NUL-terminated C string.
         let id = unsafe { RegisterClipboardFormatA(name.as_ptr()) };
         if id != 0 {
-            // SAFETY: clipboard is open.
-            let h = unsafe { GetClipboardData(id) };
+            let h = clipboard.data(id);
             if !h.is_null() {
                 if let Some(b) = dup_global::<0>(h)? {
                     return Ok(Some(b));
@@ -1016,8 +1042,7 @@ pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     //    hostile: a 1-byte CF_DIB or a header with biSize≈u32::MAX must drop
     //    the format, not panic the process.
     for cf in [CF_DIBV5, CF_DIB] {
-        // SAFETY: clipboard is open.
-        let h = unsafe { GetClipboardData(cf) };
+        let h = clipboard.data(cf);
         if h.is_null() {
             continue;
         }
@@ -1069,18 +1094,12 @@ fn dup_global<const PREFIX: usize>(
     if size == 0 {
         return Ok(None);
     }
-    // SAFETY: h is a non-null HGLOBAL.
-    let ptr_ = unsafe { GlobalLock(h) };
-    if ptr_.is_null() {
+    // SAFETY: h is a non-null HGLOBAL, and the clipboard is open.
+    let Some(locked) = (unsafe { LockedGlobal::new(h) }) else {
         return Ok(None);
-    }
-    let ptr_ = ptr_ as *const u8;
-    scopeguard::defer! {
-        // SAFETY: h is locked.
-        let _ = unsafe { GlobalUnlock(h) };
-    }
+    };
     let mut out = vec![0u8; PREFIX + size];
-    // SAFETY: ptr_ points to `size` valid bytes inside the locked HGLOBAL.
-    out[PREFIX..].copy_from_slice(unsafe { bun_core::ffi::slice(ptr_, size) });
+    // SAFETY: `size` valid bytes inside the locked HGLOBAL.
+    out[PREFIX..].copy_from_slice(unsafe { bun_core::ffi::slice(locked.bytes, size) });
     Ok(Some(out))
 }

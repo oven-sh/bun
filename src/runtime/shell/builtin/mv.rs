@@ -8,7 +8,7 @@ use crate::node::fs::{is_on_disk_at, note_moved_shell_operand, refuse_move};
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    Interpreter, NodeId, ShellTask, closefd, shell_lstatat, shell_openat, shell_statat,
+    Interpreter, NodeId, OwnedFd, ShellTask, shell_lstatat, shell_openat, shell_statat,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -25,7 +25,7 @@ pub(crate) struct MvArgs {
     pub(crate) sources_start: usize,
     /// argv[sources_start..target_idx] are sources; argv[target_idx] is dest.
     pub(crate) target_idx: usize,
-    pub(crate) target_fd: Option<bun_sys::Fd>,
+    pub(crate) target_fd: Option<OwnedFd>,
     /// `-n` — do not overwrite an existing file
     pub(crate) no_clobber: bool,
 }
@@ -142,7 +142,7 @@ impl Mv {
                     _ => unreachable!(),
                 };
                 debug_assert!(result.is_some());
-                let maybe_fd: Option<bun_sys::Fd> = match result.unwrap() {
+                let target_fd = match result.unwrap() {
                     Ok(fd) => fd,
                     Err(e) => {
                         // Only ENOENT (rename to a
@@ -191,9 +191,10 @@ impl Mv {
                     }
                 };
 
+                let maybe_fd = target_fd.as_ref().map(OwnedFd::fd);
                 let n_sources = {
                     let me = Self::state_mut(interp, cmd);
-                    me.args.target_fd = maybe_fd;
+                    me.args.target_fd = target_fd;
                     me.args.target_idx - me.args.sources_start
                 };
                 // Trying to move multiple files into a non-directory.
@@ -424,18 +425,6 @@ impl Mv {
     }
 }
 
-impl Drop for Mv {
-    /// Close the directory fd opened by
-    /// `ShellMvCheckTargetTask` (`openat(target, O_RDONLY|O_DIRECTORY)`).
-    /// `bun_sys::Fd` is `Copy` with no `Drop`, so without this every
-    /// `mv srcs... dir/` leaks one open fd.
-    fn drop(&mut self) {
-        if let Some(fd) = self.args.target_fd.take() {
-            closefd(fd);
-        }
-    }
-}
-
 enum MvFlag {
     ContinueParsing,
     Done,
@@ -450,7 +439,7 @@ pub(crate) struct ShellMvCheckTargetTask {
     pub(crate) target: ZBox,
     /// `Ok(Some(fd))` → directory; `Ok(None)` → not a directory; `Err(e)` →
     /// open error (e.g. ENOENT).
-    pub(crate) result: Option<Result<Option<bun_sys::Fd>, bun_sys::Error>>,
+    pub(crate) result: Option<Result<Option<OwnedFd>, bun_sys::Error>>,
     pub(crate) done: bool,
     pub task: ShellTask,
 }
@@ -459,7 +448,7 @@ impl ShellMvCheckTargetTask {
     fn run_from_thread_pool(this: &mut ShellMvCheckTargetTask) {
         let flags = bun_sys::O::RDONLY | bun_sys::O::DIRECTORY;
         this.result = Some(match shell_openat(this.cwd, &this.target, flags, 0) {
-            Ok(fd) => Ok(Some(fd)),
+            Ok(fd) => Ok(Some(OwnedFd(fd))),
             Err(e) if e.get_errno() == bun_sys::E::ENOTDIR => Ok(None),
             Err(e) => Err(e),
         });
@@ -667,16 +656,9 @@ impl ShellMvBatchedTask {
             )?);
             // Boxed: `WrappedIterator` embeds an 8 KB inline readdir buffer.
             let mut iter = Box::new(bun_sys::dir_iterator::iterate(sd.fd()));
-            let mut nbuf = bun_paths::path_buffer_pool::get();
             while let Some(entry) = iter.next()? {
-                let name = entry.name.slice_u8();
-                if name.len() >= bun_paths::MAX_PATH_BYTES {
-                    return Err(bun_sys::Error::from_code(E::ENAMETOOLONG, Tag::rename));
-                }
-                nbuf[..name.len()].copy_from_slice(name);
-                nbuf[name.len()] = 0;
-                let name_z = ZStr::from_buf(&nbuf[..], name.len());
-                Self::move_across_devices(sd.fd(), name_z, dd.fd(), name_z, Some(output))?;
+                let name = entry.name.as_zstr();
+                Self::move_across_devices(sd.fd(), name, dd.fd(), name, Some(output))?;
             }
             #[cfg(unix)]
             let _ = bun_sys::fchown(dd.fd(), st.st_uid as _, st.st_gid as _);

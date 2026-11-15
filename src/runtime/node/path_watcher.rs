@@ -1397,7 +1397,8 @@ struct KqEntry {
     /// under `manager.mutex`; outlives the entry because
     /// `remove_watch` clears all of a watcher's entries before `destroy()`.
     watcher: *mut PathWatcher,
-    fd: Fd,
+    /// Closing it removes the kevent.
+    _file: sys::File,
     /// Relative to watcher.path; empty for the root. Owned.
     subpath: ZBox,
     generation: usize,
@@ -1486,7 +1487,7 @@ impl Kqueue {
         use bun_sys::freebsd::{EV, EVFILT, Kevent, NOTE, kevent};
         // O_EVTONLY: we only need the fd for kevent registration, never for I/O.
         // (No-op on FreeBSD where EVTONLY is 0; semantic here for kqueue-on-macOS.)
-        let fd = match sys::open(
+        let file = match sys::File::open(
             abs_path,
             sys::O::EVTONLY | sys::O::RDONLY | sys::O::CLOEXEC,
             0,
@@ -1499,6 +1500,7 @@ impl Kqueue {
             }
             Ok(f) => f,
         };
+        let fd = file.fd();
 
         // Caller holds manager.mutex; exclusive access to `next_gen`.
         let generation = {
@@ -1537,7 +1539,6 @@ impl Kqueue {
             // Registration failed (ENOMEM/EINVAL on a bad fd, etc.). Don't leave a
             // dead entry in the map that will never deliver events.
             let errno = sys::get_errno(krc);
-            fd.close();
             return Err(sys::Error {
                 errno: errno as u16,
                 syscall: Tag::watch,
@@ -1550,7 +1551,7 @@ impl Kqueue {
             fd.native() as i32,
             KqEntry {
                 watcher: core::ptr::from_mut(watcher),
-                fd,
+                _file: file,
                 subpath: ZBox::from_bytes(subpath),
                 generation,
                 is_file,
@@ -1563,11 +1564,7 @@ impl Kqueue {
     /// Caller holds `manager.mutex`.
     fn remove_watch(_: &'static PathWatcherManager, plat: &mut Kqueue, watcher: &mut PathWatcher) {
         for &ident in watcher.platform.fds.iter() {
-            if let Some((_, entry)) = plat.entries.fetch_swap_remove(&ident) {
-                // Closing the fd auto-removes the kevent.
-                entry.fd.close();
-                // entry.subpath dropped here.
-            }
+            plat.entries.swap_remove(&ident);
         }
         watcher.platform.fds.clear();
     }

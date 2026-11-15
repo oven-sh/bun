@@ -7,7 +7,7 @@ use bun_uws::AnySocket;
 
 unsafe extern "C" {
     // Also declared in `bun_runtime::api::bun::x509`, which is above this crate.
-    safe fn Bun__X509__toJSLegacyEncoding(cert: &mut X509, global: &JSGlobalObject) -> JSValue;
+    safe fn Bun__X509__toJSLegacyEncoding(cert: &X509, global: &JSGlobalObject) -> JSValue;
 }
 
 pub(crate) fn callback_of(global: &JSGlobalObject, tls: JSValue) -> JsResult<Option<JSValue>> {
@@ -41,13 +41,11 @@ fn verdict(
     socket: &AnySocket,
     hostname: &[u8],
 ) -> JsResult<Option<JSValue>> {
-    let AnySocket::SocketTls(tls) = socket else {
+    // SAFETY: `socket` is reporting its handshake, and `ssl` is used at once.
+    let Some(cert) = unsafe { socket.ssl() }.and_then(|ssl| ssl.peer_certificate()) else {
         return Ok(Some(no_verdict(global)));
     };
-    let Some(cert) = tls.ssl_mut().and_then(|ssl| ssl.peer_leaf_certificate()) else {
-        return Ok(Some(no_verdict(global)));
-    };
-    let cert = bun_jsc::from_js_host_call(global, || Bun__X509__toJSLegacyEncoding(cert, global))?;
+    let cert = bun_jsc::from_js_host_call(global, || Bun__X509__toJSLegacyEncoding(&cert, global))?;
     let hostname = bun_string_jsc::create_utf8_for_js(global, hostname)?;
     let result = callback.call(global, JSValue::UNDEFINED, &[hostname, cert])?;
     if callback.call_may_have_been_dropped(global) {

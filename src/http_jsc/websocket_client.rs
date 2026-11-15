@@ -421,7 +421,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         };
         if !ws.accepts_tls_peer(
             TlsHandshake::Renegotiation,
-            socket.ssl_mut(),
+            // SAFETY: `socket` is live, and a renegotiation runs no callback that could close it.
+            unsafe { socket.ssl() },
             success == 1 && ssl_error.error_no == 0,
             &self.verified_hostname,
         ) {

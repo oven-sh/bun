@@ -1,8 +1,5 @@
 // Authentication methods
 
-#[cfg(debug_assertions)]
-use core::ffi::c_char;
-
 use bun_boringssl as boringssl;
 
 use bun_sha_hmac::{SHA1, SHA256};
@@ -44,7 +41,6 @@ pub(crate) mod mysql_native_password {
         sha1.update(nonce);
         sha1.update(&stage2);
         sha1.r#final(&mut stage3);
-        // `defer sha1.deinit()` → handled by Drop on SHA1
 
         // Final: stage1 XOR stage3
         debug_assert_eq!(stage1.len(), stage3.len());
@@ -163,64 +159,23 @@ pub mod caching_sha2_password {
             let bio =
                 boringssl::c::MemBio::new(public_key).ok_or(crate::Error::InvalidPublicKey)?;
 
-            // SAFETY: `bio` is live; null callback/userdata are permitted.
-            let rsa = unsafe {
-                boringssl::c::PEM_read_bio_RSA_PUBKEY(
-                    bio.as_ptr(),
-                    core::ptr::null_mut(),
-                    None,
-                    core::ptr::null_mut(),
-                )
-            };
-            if rsa.is_null() {
-                #[cfg(debug_assertions)]
-                {
-                    // SAFETY: FFI calls with no preconditions; buf is 256 bytes which is
-                    // the documented minimum for ERR_error_string.
-                    unsafe {
-                        boringssl::c::ERR_load_ERR_strings();
-                        boringssl::c::ERR_load_crypto_strings();
-                        let mut buf = [0u8; 256];
-                        let s = boringssl::c::ERR_error_string(
-                            boringssl::c::ERR_get_error(),
-                            buf.as_mut_ptr().cast::<c_char>(),
-                        );
-                        bun_core::scoped_log!(
-                            Auth,
-                            "Failed to read public key: {}",
-                            bstr::BStr::new(bun_core::ffi::cstr(s).to_bytes())
-                        );
-                    }
-                }
+            let Some(rsa) = bio.read_rsa_public_key() else {
+                bun_core::scoped_log!(
+                    Auth,
+                    "Failed to read public key: {}",
+                    bstr::BStr::new(boringssl::c::err_error_string_n(
+                        boringssl::c::ERR_get_error(),
+                        &mut [0u8; 256]
+                    ))
+                );
                 return Err(crate::Error::InvalidPublicKey);
-            }
-            let rsa = OwnedRsa(rsa);
-            // encrypt password
-
-            // SAFETY: rsa.0 is a valid RSA*.
-            let rsa_size = unsafe { boringssl::c::RSA_size(rsa.0) } as usize;
-            // should never ne bigger than 4096 but lets cover all cases
-            let mut encrypted_password = vec![0u8; rsa_size];
-
-            // SAFETY: plain_password and encrypted_password are valid for the given
-            // lengths; rsa.0 is a valid RSA*; padding constant is a valid mode.
-            let encrypted_password_len = unsafe {
-                boringssl::c::RSA_public_encrypt(
-                    plain_password.len(),
-                    plain_password.as_ptr(),
-                    encrypted_password.as_mut_ptr(),
-                    rsa.0,
-                    boringssl::c::RSA_PKCS1_OAEP_PADDING,
-                )
             };
-            if encrypted_password_len == -1 {
-                return Err(crate::Error::FailedToEncryptPassword);
-            }
-            let encrypted_password_slice =
-                &encrypted_password[0..usize::try_from(encrypted_password_len).expect("int cast")];
+            let encrypted_password = rsa
+                .public_encrypt_oaep(&plain_password)
+                .ok_or(crate::Error::FailedToEncryptPassword)?;
 
             let mut packet = writer.start(self.sequence_id)?;
-            writer.write(encrypted_password_slice)?;
+            writer.write(&encrypted_password)?;
             packet.end()?;
             Ok(())
         }
@@ -243,15 +198,6 @@ pub mod caching_sha2_password {
         pub fn decode(&mut self, reader: PacketReader<'a>) -> crate::Result<()> {
             self.data = reader.read(reader.peek().len())?;
             Ok(())
-        }
-    }
-
-    struct OwnedRsa(*mut boringssl::c::RSA);
-
-    impl Drop for OwnedRsa {
-        fn drop(&mut self) {
-            // SAFETY: a non-null RSA* from PEM_read_bio_RSA_PUBKEY, freed once.
-            unsafe { boringssl::c::RSA_free(self.0) };
         }
     }
 }

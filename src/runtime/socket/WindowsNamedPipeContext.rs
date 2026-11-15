@@ -193,12 +193,24 @@ impl WindowsNamedPipeContext {
 
     fn server_identity(
         this: *mut Self,
-        ssl: &mut bun_boringssl_sys::SSL,
+        ssl: &bun_boringssl_sys::SSL,
     ) -> bun_boringssl::ServerIdentity {
         // SAFETY: see `on_open`.
         match SocketType::of(unsafe { &(*this).socket }) {
             SocketType::Tls(s) => s.server_identity(ssl),
             _ => bun_boringssl::ServerIdentity::Unchecked,
+        }
+    }
+
+    fn alpn_select<'a>(
+        this: *mut Self,
+        ssl: &bun_boringssl_sys::SSL,
+        offered: &'a [u8],
+    ) -> bun_boringssl::AlpnSelection<'a> {
+        // SAFETY: see `on_open`.
+        match SocketType::of(unsafe { &(*this).socket }) {
+            SocketType::Tls(s) => TLSSocket::alpn_select(s, ssl, offered),
+            _ => bun_boringssl::AlpnSelection::NoAck,
         }
     }
 
@@ -341,6 +353,7 @@ impl WindowsNamedPipeContext {
             on_session: |p, d| Self::on_session(p.cast::<Self>(), d),
             on_keylog: |p, d| Self::on_keylog(p.cast::<Self>(), d),
             server_identity: |p, ssl| Self::server_identity(p.cast::<Self>(), ssl),
+            alpn_select: |p, ssl, offered| Self::alpn_select(p.cast::<Self>(), ssl, offered),
         };
         let named_pipe = WindowsNamedPipe::new(handlers, vm);
         // SAFETY: `this` is freshly allocated uninit storage exclusively owned here; we write

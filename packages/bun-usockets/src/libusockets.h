@@ -482,7 +482,6 @@ int us_connecting_socket_get_error(struct us_connecting_socket_t *c) nonnull_fn_
  * connect failure past name resolution. Nonzero means us_connecting_socket_get_error
  * returns the same getaddrinfo code, not an errno (the two namespaces overlap). */
 int us_connecting_socket_get_dns_error(struct us_connecting_socket_t *c) nonnull_fn_decl;
-void *us_connecting_socket_get_native_handle(struct us_connecting_socket_t *c) nonnull_fn_decl;
 struct us_socket_group_t *us_connecting_socket_group(struct us_connecting_socket_t *c) nonnull_fn_decl;
 unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) nonnull_fn_decl;
 
@@ -578,6 +577,8 @@ int us_ssl_identity_checked(struct ssl_st *ssl);
 int us_ssl_take_error_reason(char *reason, size_t length);
 /* For an SSL that no us_socket_t drives: its callbacks go to `wrapper`, which must outlive `ssl`. */
 void us_ssl_set_wrapper(struct ssl_st *ssl, void *wrapper);
+/* Routes the ALPN select callback of `ctx` to us_dispatch_alpn_select or us_ssl_wrapper_alpn_select. */
+void us_ssl_ctx_enable_alpn_select(struct ssl_ctx_st *ctx);
 /* `ctx` is the X509_STORE_CTX of a verify callback. */
 void *us_ssl_wrapper_from_verify(void *ctx);
 /* Owner data for us_dispatch_new_session. `on_free(sink)` runs once, on SSL_free. */

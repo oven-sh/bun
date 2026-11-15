@@ -1,5 +1,3 @@
-use core::ffi::c_uint;
-
 use bun_boringssl_sys as boringssl;
 use bun_jsc::{JSGlobalObject, JSValue, Job, JobContext, JsResult, JsThread, Strong};
 
@@ -8,25 +6,21 @@ use crate::node::{StringOrBuffer, ThreadIsolated};
 pub(crate) struct PBKDF2 {
     iteration_count: u32,
     pub length: usize,
-    digest: Digest,
+    digest: &'static boringssl::EVP_MD,
 }
-
-#[derive(Clone, Copy)]
-pub(crate) struct Digest(core::ptr::NonNull<boringssl::EVP_MD>);
-
-// SAFETY: BoringSSL's `EVP_MD`s are immutable statics. They hold no VM or JS state.
-unsafe impl Send for Digest {}
 
 unsafe extern "C" {
     /// The lookup of `createHmac()` and the rest of `node:crypto`.
-    fn Bun__getDigestByName(name: *const u8, length: usize) -> *const boringssl::EVP_MD;
+    fn Bun__getDigestByName(name: *const u8, length: usize) -> Option<&'static boringssl::EVP_MD>;
 }
 
-pub(crate) fn digest_by_name(global_this: &JSGlobalObject, name: &[u8]) -> JsResult<Digest> {
+pub(crate) fn digest_by_name(
+    global_this: &JSGlobalObject,
+    name: &[u8],
+) -> JsResult<&'static boringssl::EVP_MD> {
     // SAFETY: `name` is valid for `name.len()` bytes, and the callee does not keep it.
-    let digest = unsafe { Bun__getDigestByName(name.as_ptr(), name.len()) };
-    match core::ptr::NonNull::new(digest.cast_mut()) {
-        Some(digest) => Ok(Digest(digest)),
+    match unsafe { Bun__getDigestByName(name.as_ptr(), name.len()) } {
+        Some(digest) => Ok(digest),
         None => Err(global_this
             .err(
                 bun_jsc::ErrorCode::CRYPTO_INVALID_DIGEST,
@@ -43,7 +37,7 @@ impl PBKDF2 {
         salt: &[u8],
         iteration_count: u32,
         length: usize,
-        digest: Digest,
+        digest: &'static boringssl::EVP_MD,
     ) -> JsResult<Self> {
         if salt.len() > i32::MAX as usize {
             return Err(global_this.throw_invalid_arguments(format_args!("salt is too long")));
@@ -63,32 +57,13 @@ impl PBKDF2 {
         let length = self.length;
 
         output.fill(0);
-        debug_assert!(self.length <= output.len());
         // Node.js (OpenSSL) rejects a zero-length derivation; BoringSSL accepts it.
         if length == 0 {
             return false;
         }
         boringssl::ERR_clear_error();
-        // SAFETY: password/salt point to valid slices for the given lengths;
-        // the digest is a non-null EVP_MD; output is writable for `length` bytes.
-        let rc = unsafe {
-            boringssl::PKCS5_PBKDF2_HMAC(
-                if !password.is_empty() {
-                    password.as_ptr()
-                } else {
-                    core::ptr::null()
-                },
-                password.len(),
-                salt.as_ptr(),
-                salt.len(),
-                iteration_count as c_uint,
-                self.digest.0.as_ptr(),
-                length,
-                output.as_mut_ptr(),
-            )
-        };
-
-        rc > 0
+        self.digest
+            .pbkdf2_hmac(password, salt, iteration_count, &mut output[..length])
     }
 }
 

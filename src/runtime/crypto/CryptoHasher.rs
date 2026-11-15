@@ -109,8 +109,8 @@ fn finish_with<'a>(
 }
 
 pub(crate) enum CryptoHasher {
-    /// `None` once digested. HMAC_CTX contains 3 EVP_CTX, so let's store it as a pointer.
-    Hmac(Option<Box<HMAC>>),
+    /// `None` once digested.
+    Hmac(Option<HMAC>),
     /// `EVP_MD_CTX` holds its state inline. Boxed, so that the cell stays small.
     Evp(Box<EVP>),
     Zig(CryptoHasherZig),
@@ -412,11 +412,11 @@ impl CryptoHasher {
     ) -> bindgen::Result<'a, JsLocal<'a>> {
         let algorithm = &*algorithm.to_utf8();
         let mut digest: evp::Digest = [0; EVP_MAX_MD_SIZE_USIZE];
-        let length = if let Some(mut evp) = EVP::by_name(algorithm) {
+        let length = if let Some(evp) = EVP::by_name(algorithm) {
             let Some(length) = evp.hash(input, &mut digest) else {
                 return Err(crypto_error(heap, boring_ssl::ERR_get_error()));
             };
-            length as usize
+            length
         } else if let Some(length) = CryptoHasherZig::hash_by_name(algorithm, input, &mut digest) {
             length
         } else {

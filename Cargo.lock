@@ -303,7 +303,6 @@ name = "bun_boringssl_sys"
 version = "0.0.0"
 dependencies = [
  "bun_core",
- "bun_opaque",
 ]
 
 [[package]]
@@ -2128,6 +2127,7 @@ dependencies = [
  "bun_boringssl",
  "bun_core",
  "bun_jsc_macros",
+ "bun_ptr",
  "bun_uws_sys",
  "strum",
 ]

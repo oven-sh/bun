@@ -169,10 +169,9 @@ unsafe extern "C" {
     safe fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: BunString);
     // Also declared in `bun_runtime::api::bun::x509`, which is above this crate.
     safe fn Bun__X509__toJSLegacyEncoding(
-        cert: &mut boringssl::c::X509,
+        cert: &boringssl::c::X509,
         global_object: &JSGlobalObject,
     ) -> JSValue;
-    safe fn SSL_total_renegotiations(ssl: &boringssl::c::SSL) -> core::ffi::c_int;
 }
 
 // Receivers are `&self` (not `&mut self`) because `CppWebSocket` is
@@ -346,7 +345,7 @@ impl CppWebSocket {
     pub(crate) fn server_identity(
         &self,
         peer: TlsPeer,
-        ssl: &mut boringssl::c::SSL,
+        ssl: &boringssl::c::SSL,
         hostname: &[u8],
     ) -> boringssl::ServerIdentity {
         match self.name_check(peer) {
@@ -359,7 +358,7 @@ impl CppWebSocket {
     pub(crate) fn accepts_tls_peer(
         &self,
         handshake: TlsHandshake,
-        ssl: Option<&mut boringssl::c::SSL>,
+        ssl: Option<&boringssl::c::SSL>,
         chain_verified: bool,
         hostname: &[u8],
     ) -> bool {
@@ -378,12 +377,13 @@ impl CppWebSocket {
                 true
             }
             (NameCheck::BuiltIn, _) => ssl.is_some_and(|ssl| {
-                !hostname.is_empty() && bun_uws::check_server_identity(ssl, hostname)
+                // SAFETY: every caller is a handshake handler.
+                !hostname.is_empty() && unsafe { bun_uws::check_server_identity(ssl, hostname) }
             }),
             (NameCheck::Callback { callback, enforce }, TlsHandshake::First { context, .. }) => {
                 // Before the 101 the upgrade client hears of a renegotiation too.
                 ssl.is_some_and(|ssl| {
-                    SSL_total_renegotiations(ssl) > 0
+                    ssl.total_renegotiations() > 0
                         || run_check_server_identity(context, callback, ssl, hostname)
                 }) || !enforce
             }
@@ -449,7 +449,7 @@ impl CppWebSocket {
 fn run_check_server_identity(
     context: ContextId,
     callback: JSValue,
-    ssl: &mut boringssl::c::SSL,
+    ssl: &boringssl::c::SSL,
     hostname: &[u8],
 ) -> bool {
     let vm = VirtualMachineRef::get();
@@ -468,14 +468,14 @@ fn run_check_server_identity(
 fn call_check_server_identity(
     global: &JSGlobalObject,
     callback: JSValue,
-    ssl: &mut boringssl::c::SSL,
+    ssl: &boringssl::c::SSL,
     hostname: &[u8],
 ) -> JsResult<bool> {
-    let Some(cert) = ssl.peer_leaf_certificate() else {
+    let Some(cert) = ssl.peer_certificate() else {
         return Ok(false);
     };
     let js_cert =
-        bun_jsc::from_js_host_call(global, || Bun__X509__toJSLegacyEncoding(cert, global))?;
+        bun_jsc::from_js_host_call(global, || Bun__X509__toJSLegacyEncoding(&cert, global))?;
     let js_hostname = bun_jsc::bun_string_jsc::create_utf8_for_js(global, hostname)?;
     let verdict = callback.call(global, JSValue::UNDEFINED, &[js_hostname, js_cert])?;
     js_hostname.ensure_still_alive();

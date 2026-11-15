@@ -47,33 +47,36 @@ pub(crate) struct InternalMsgHolder {
     // TODO: move this to an Array or a JS Object or something which doesn't
     // individually create a Strong for every single IPC message...
     callbacks: Cell<bun_collections::ArrayHashMap<i32, Strong>>,
-    worker_and_listener: Cell<Option<(Strong, Strong)>>,
+    listener: Cell<Option<ClusterListener>>,
     messages: Cell<Vec<Strong>>,
 }
 
+struct ClusterListener {
+    worker: Strong,
+    cb: Strong,
+}
+
 impl InternalMsgHolder {
-    pub(crate) fn listen(&self, worker: JSValue, listener: JSValue, global: &JSGlobalObject) {
-        self.worker_and_listener.set(Some((
-            Strong::create(worker, global),
-            Strong::create(listener, global),
-        )));
+    pub(crate) fn set_listener(&self, worker: JSValue, cb: JSValue, global: &JSGlobalObject) {
+        self.listener.set(Some(ClusterListener {
+            worker: Strong::create(worker, global),
+            cb: Strong::create(cb, global),
+        }));
     }
 
-    pub(crate) fn worker_and_listener(&self) -> Option<(JSValue, JSValue)> {
-        self.worker_and_listener.with_taken(|strongs| {
-            let (worker, listener) = strongs.as_ref()?;
-            Some((worker.get(), listener.get()))
+    pub(crate) fn worker_and_cb(&self) -> Option<(JSValue, JSValue)> {
+        self.listener.with_taken(|listener| {
+            let listener = listener.as_ref()?;
+            Some((listener.worker.get(), listener.cb.get()))
         })
     }
 
-    /// `callback` is for the message that acknowledges the returned number.
-    pub(crate) fn next_seq(&self, callback: Option<Strong>) -> i32 {
-        let seq = self.seq.get();
-        self.seq.set(seq.wrapping_add(1));
-        if let Some(callback) = callback {
-            self.callbacks.with_taken(|map| map.insert(seq, callback));
-        }
-        seq
+    pub(crate) fn next_seq(&self) -> i32 {
+        self.seq.replace(self.seq.get().wrapping_add(1))
+    }
+
+    pub(crate) fn put_callback(&self, seq: i32, callback: Strong) {
+        self.callbacks.with_taken(|map| map.insert(seq, callback));
     }
 
     pub(crate) fn take_callback(&self, seq: i32) -> Option<JSValue> {
@@ -84,7 +87,7 @@ impl InternalMsgHolder {
     }
 
     pub(crate) fn dispatch(&self, message: JSValue, handle: JSValue, global: &JSGlobalObject) {
-        let Some((worker, listener)) = self.worker_and_listener() else {
+        let Some((worker, cb)) = self.worker_and_cb() else {
             // Queued messages drop their handle; the cluster listener is
             // installed before any handle-bearing reply can arrive.
             let message = Strong::create(message, global);
@@ -93,7 +96,7 @@ impl InternalMsgHolder {
         };
         global.bun_vm().event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
-            listener,
+            cb,
             global,
             worker,
             &[message, handle],
@@ -106,8 +109,8 @@ impl InternalMsgHolder {
         }
     }
 
-    pub(crate) fn stop_listening(&self) {
-        self.worker_and_listener.set(None);
+    pub(crate) fn clear_listener_and_messages(&self) {
+        self.listener.set(None);
         drop(self.messages.take());
     }
 }
@@ -699,7 +702,7 @@ pub(crate) enum CallbackList {
     AckNack,
     None,
     Callback(Strong),
-    Callbacks(Vec<Strong>),
+    CallbackArray(Vec<Strong>),
 }
 
 impl CallbackList {
@@ -707,10 +710,10 @@ impl CallbackList {
         *self = match core::mem::replace(self, CallbackList::None) {
             CallbackList::AckNack => unreachable!(),
             CallbackList::None => CallbackList::Callback(callback),
-            CallbackList::Callback(first) => CallbackList::Callbacks(vec![first, callback]),
-            CallbackList::Callbacks(mut callbacks) => {
+            CallbackList::Callback(first) => CallbackList::CallbackArray(vec![first, callback]),
+            CallbackList::CallbackArray(mut callbacks) => {
                 callbacks.push(callback);
-                CallbackList::Callbacks(callbacks)
+                CallbackList::CallbackArray(callbacks)
             }
         };
     }
@@ -719,7 +722,7 @@ impl CallbackList {
         let callbacks = match self {
             CallbackList::AckNack | CallbackList::None => &[],
             CallbackList::Callback(callback) => core::slice::from_ref(callback),
-            CallbackList::Callbacks(callbacks) => callbacks,
+            CallbackList::CallbackArray(callbacks) => callbacks,
         };
         for callback in callbacks {
             JSValue::call_next_tick_1(callback.get(), global, JSValue::NULL)?;
@@ -1515,7 +1518,9 @@ impl SendQueue {
             Err(_) => return SerializeAndSendResult::Failure,
         };
         debug_assert!(payload.list.len() == payload_length);
-        let callback = (callback.is_callable()).then(|| Strong::create(callback, global));
+        let callback = callback
+            .is_callable()
+            .then(|| Strong::create(callback, global));
         self.start_message(callback, handle, payload);
         log!("IPC call continueSend() from serializeAndSend");
         self.continue_send(global, ContinueSendReason::NewMessageAppended);

@@ -198,8 +198,8 @@ impl<'a> Writable<'a> {
                 let file = result.unwrap();
                 let pipe_ref = FileSink::create(evtloop, file.fd());
 
-                let (writer, event_loop) = (&pipe_ref.writer, evtloop.as_event_loop_ctx());
-                match writer.start(&*pipe_ref, event_loop, file.fd(), true) {
+                let writer = &pipe_ref.writer;
+                match writer.start(&*pipe_ref, evtloop.as_event_loop_ctx(), file.fd(), true) {
                     // The writer closes it from now on.
                     bun_sys::Result::Ok(()) => _ = file.into_raw(),
                     bun_sys::Result::Err(err) => {

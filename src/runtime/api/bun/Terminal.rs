@@ -45,9 +45,7 @@ pub(crate) use crate::generated_bindgen::terminal::js_Terminal as js;
 /// 1. The JS wrapper (released when it is collected)
 /// 2. Reader (released in `on_read_result`)
 /// 3. Writer (released in `on_close`)
-///
-// Every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
+/// 4. A write in flight, on Windows
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct Terminal {
     ref_count: bun_ptr::RefCount<Terminal>,
@@ -83,8 +81,9 @@ pub(crate) struct Terminal {
 
     /// Held until the writer closes.
     writer_ref: JsCell<Option<bun_ptr::RefPtr<Terminal>>>,
+    /// Held while a write is in flight.
     #[cfg(windows)]
-    write_in_flight_ref: Cell<Option<bun_ptr::RefPtr<Terminal>>>,
+    inflight_write_ref: Cell<Option<bun_ptr::RefPtr<Terminal>>>,
 
     /// Held until the reader is done.
     reader_ref: JsCell<Option<bun_ptr::RefPtr<Terminal>>>,
@@ -284,10 +283,7 @@ impl Terminal {
         self.flags.set(v);
     }
 
-    /// `self`'s address as `*mut Self` for intrusive backref / refcount slots.
-    /// Callers deref it as `&*const` (shared), so no write provenance is
-    /// required; the `*mut` spelling is purely to match the C-shaped vtable
-    /// signatures. All field mutation routes through `Cell`/`JsCell`.
+    /// `self`'s address for `AbortHandle::arm_owner`, whose callback borrows it shared.
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
         std::ptr::from_ref::<Self>(self).cast_mut()
@@ -342,7 +338,7 @@ impl Terminal {
             reader: BufferedReader::init(),
             writer_ref: JsCell::new(None),
             #[cfg(windows)]
-            write_in_flight_ref: Cell::new(None),
+            inflight_write_ref: Cell::new(None),
             reader_ref: JsCell::new(None),
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::empty()),
@@ -352,7 +348,7 @@ impl Terminal {
             abort_handle: jsc::AbortHandle::for_owner::<Terminal>(),
         });
         let owner = |tag| Owner::new(tag, terminal.as_ptr().cast());
-        // SAFETY: fields of their owner.
+        // SAFETY: `owner` points to the heap allocation that holds the reader and the writer.
         unsafe {
             terminal.reader.set_owner(owner(PollTag::TerminalReader));
             terminal.writer.set_owner(owner(PollTag::TerminalWriter));
@@ -1720,7 +1716,7 @@ impl WriteHandler for Terminal {
     }
 
     #[cfg(windows)]
-    fn on_write_in_flight(&self, in_flight: bool) {
-        (self.write_in_flight_ref).set(in_flight.then(|| self.ref_guard()));
+    fn set_has_inflight_write(&self, value: bool) {
+        self.inflight_write_ref.set(value.then(|| self.ref_guard()));
     }
 }

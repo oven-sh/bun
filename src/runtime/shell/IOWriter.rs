@@ -475,7 +475,7 @@ impl IOWriter {
         #[cfg(not(windows))]
         {
             debug_assert!(s.writer.handle().has_poll());
-            // Not `is_registered()`: a one-shot poll that fired is still registered, and has to be re-armed.
+            // A one-shot poll that fired has to be re-armed.
             if s.writer.handle().is_watching() {
                 return WriteOutcome::Suspended;
             }
@@ -1037,6 +1037,7 @@ bun_io::impl_buffered_writer_parent! {
 // drainBufferedData / tryWrite (POSIX file path)
 // ──────────────────────────────────────────────────────────────────────────
 
+/// TODO: This function is a copy of PipeWriter's.
 #[cfg(not(windows))]
 fn try_write_with_write_fn(
     fd: Fd,
@@ -1064,8 +1065,6 @@ fn try_write_with_write_fn(
     bun_io::WriteResult::Wrote(offset)
 }
 
-/// TODO: This function and `try_write_with_write_fn` are copy-pastes from
-/// PipeWriter; it would be nice to not have to do that.
 #[cfg(not(windows))]
 fn drain_buffered_data(
     parent: &IOWriter,

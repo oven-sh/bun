@@ -1035,7 +1035,24 @@ impl<'p> Printer<'_, 'p, '_> {
             self.encountered_error = true;
             self.report(Report::LikelyUnsafeImportRequired(name.clone(), Vec::new()));
         }
+        // The names behind the specifier are those of the source: they were resolved in `target`.
+        self.track_import_type(target, &name);
         (!name.is_empty() && name != self.text(spec)).then_some(name)
+    }
+
+    /// `SymbolTracker::track_import_type` for the import type `node` of `file`, whose specifier the printer keeps.
+    fn track_kept_import_type(&mut self, file: FileId, node: TypeNodeId) {
+        if self.tracker.is_none() {
+            return;
+        }
+        let (hir, files) = (self.c.hir(file), self.c.files());
+        let TypeNodeKind::Import { spec, mode, .. } = hir[node].kind else {
+            return;
+        };
+        let mode = files.mode_of_import(file, mode);
+        if let Some(module) = files.module_of_specifier_as(file, spec, mode) {
+            self.track_import_type(module, self.c.atoms().bytes(spec));
+        }
     }
 
     /// `emitImportTypeNodeAttributes` for the import type `node` of `file`, after the `, ` that
@@ -1183,6 +1200,7 @@ impl<'p> Printer<'_, 'p, '_> {
                 let specifier = match self.get_module_specifier_override(file, node) {
                     Some(name) => self.string_literal(&name, b'"'),
                     None => {
+                        self.track_kept_import_type(file, node);
                         let is_quote = |&&byte: &&u8| byte == b'\'' || byte == b'"';
                         let quote = match hir.text.get(pos as usize..) {
                             Some(rest) if rest.iter().find(is_quote) == Some(&b'\'') => b'\'',

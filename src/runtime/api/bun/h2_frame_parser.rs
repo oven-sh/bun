@@ -13,7 +13,7 @@ use std::borrow::Cow;
 
 use crate::api::socket::{TCPSocket, TLSSocket};
 use crate::node::{Encoding, StringOrBuffer};
-use crate::socket::{NativeCallbacks, NewSocket};
+use crate::socket::NativeCallbacks;
 use bstr::BStr;
 use bun_collections::{
     AppendOnlyMap, ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt,
@@ -58,85 +58,78 @@ impl<T: Default> WithTaken<T> for Cell<T> {
 
 const MAX_PAYLOAD_SIZE_WITHOUT_FRAME: usize = 16384 - FrameHeader::BYTE_SIZE - 1;
 
-/// `Copy` view of [`NativeSocket`] for call sites to snapshot across re-entrant writes.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum BunSocket {
-    None,
-    Tls(bun_ptr::BackRef<TLSSocket>),
-    Tcp(bun_ptr::BackRef<TCPSocket>),
+    Tls(RefPtr<TLSSocket>),
+    Tcp(RefPtr<TCPSocket>),
 }
 
-/// What ties the parser to a socket.
-enum Link<const SSL: bool> {
-    /// The parser is the socket's native callback: the socket detaches it before it is freed.
-    Callback(bun_ptr::BackRef<NewSocket<SSL>>),
-    /// That slot was taken, so the parser only writes.
-    WriteOnly(RefPtr<NewSocket<SSL>>),
-}
-
-impl<const SSL: bool> Link<SSL> {
-    fn new(socket: *mut NewSocket<SSL>, h2: RefPtr<H2FrameParser>) -> Self {
-        // BACKREF: the caller's JS socket holds a ref on it.
-        let socket = bun_ptr::BackRef::from(NonNull::new(socket).expect("non-null socket"));
-        if socket.attach_native_callback(NativeCallbacks::H2(h2)) {
-            Self::Callback(socket)
-        } else {
-            Self::WriteOnly(socket.ref_guard())
+impl BunSocket {
+    fn from_js(value: JSValue) -> Option<Self> {
+        // SAFETY: `from_js` returns what the wrapper `value` holds a ref on.
+        unsafe {
+            if let Some(socket) = TLSSocket::from_js(value) {
+                return Some(Self::Tls(RefPtr::init_ref(socket)));
+            }
+            TCPSocket::from_js(value).map(|socket| Self::Tcp(RefPtr::init_ref(socket)))
         }
     }
 
-    fn socket(&self) -> bun_ptr::BackRef<NewSocket<SSL>> {
+    fn write_maybe_corked(&self, buf: &[u8]) -> i32 {
         match self {
-            Self::Callback(socket) => *socket,
-            Self::WriteOnly(socket) => bun_ptr::BackRef::new(socket),
+            // No fatal latch: its close would drop what the peer sent before; the TLS layer closes after reading it.
+            Self::Tls(socket) => socket.write_maybe_corked(buf).max(-1),
+            Self::Tcp(socket) => socket.write_maybe_corked(buf),
         }
     }
 }
 
-impl<const SSL: bool> Drop for Link<SSL> {
-    fn drop(&mut self) {
-        if let Self::Callback(socket) = self {
-            socket.detach_native_callback();
-        }
-    }
-}
-
-enum Attachment {
-    Tls(Link<true>),
-    Tcp(Link<false>),
-}
-
-/// The parser's attachment to a native socket. Readers take a [`BunSocket`] snapshot.
+/// The parser's attachment to a native socket.
 #[derive(Default)]
 struct NativeSocket {
-    attachment: JsCell<Option<Attachment>>,
+    socket: Cell<Option<BunSocket>>,
+    /// The parser is the socket's native callback. If that slot was taken, it only writes.
+    is_callback: Cell<bool>,
     /// The attached socket closed. Sticky until `attach`; `onWrite` tells the session.
     closed: Cell<bool>,
 }
 
 impl NativeSocket {
-    #[inline]
-    fn get(&self) -> BunSocket {
-        match self.attachment.get() {
-            Some(Attachment::Tls(link)) => BunSocket::Tls(link.socket()),
-            Some(Attachment::Tcp(link)) => BunSocket::Tcp(link.socket()),
-            None => BunSocket::None,
-        }
+    /// A ref for the caller to hold across a write or a close, which can detach the socket.
+    fn get(&self) -> Option<BunSocket> {
+        self.socket.with_taken(|socket| socket.clone())
     }
 
-    fn attach(&self, attachment: Attachment) {
-        debug_assert!(self.attachment.get().is_none());
+    fn is_attached(&self) -> bool {
+        self.socket.with_taken(|socket| socket.is_some())
+    }
+
+    fn attach(&self, socket: BunSocket, h2: RefPtr<H2FrameParser>) {
+        debug_assert!(!self.is_attached());
+        let callback = NativeCallbacks::H2(h2);
+        self.is_callback.set(match &socket {
+            BunSocket::Tls(socket) => socket.attach_native_callback(callback),
+            BunSocket::Tcp(socket) => socket.attach_native_callback(callback),
+        });
         self.closed.set(false);
-        self.attachment.set(Some(attachment));
+        self.socket.set(Some(socket));
     }
 
     fn detach(&self) {
-        self.attachment.set(None);
+        let socket = self.socket.take();
+        if !self.is_callback.take() {
+            return;
+        }
+        match &socket {
+            Some(BunSocket::Tls(socket)) => socket.detach_native_callback(),
+            Some(BunSocket::Tcp(socket)) => socket.detach_native_callback(),
+            None => {}
+        }
     }
 
     /// The socket released the parser. `detach` gets here too, but with nothing attached.
     fn note_socket_closed(&self) {
-        if self.attachment.get().is_some() {
+        if self.is_attached() {
             self.closed.set(true);
         }
     }
@@ -1072,7 +1065,7 @@ pub(crate) struct H2FrameParser {
     /// A frame callback left an exception pending in this batch (`Sink::should_stop`).
     left_exception: Cell<bool>,
     // we buffer requests until we get the first settings ACK
-    write_buffer: JsCell<Vec<u8>>,
+    write_buffer: Cell<Vec<u8>>,
     write_buffer_offset: Cell<usize>,
     // TODO: this will be removed when I re-add header and data priorization
     outbound_queue_size: Cell<usize>,
@@ -2240,7 +2233,7 @@ impl H2FrameParser {
 
     fn cork(&self) {
         while let Some(corked) = Self::set_corked(None) {
-            if std::ptr::eq(&*corked, self) {
+            if std::ptr::eq(corked.as_ptr(), self) {
                 // already corked
                 Self::set_corked(Some(corked));
                 return;
@@ -2255,180 +2248,96 @@ impl H2FrameParser {
         CORK_OFFSET.with(|c| c.set(0));
     }
 
+    /// Bytes in `write_buffer` that were not handed to the transport yet.
+    fn pending_len(&self) -> usize {
+        let offset = self.write_buffer_offset.get();
+        self.write_buffer.with_taken(|wb| wb[offset..].len())
+    }
+
+    fn append_pending(&self, bytes: &[u8]) {
+        let _ = self.write_buffer.with_taken(|wb| wb.write(bytes));
+        self.global()
+            .vm()
+            .deprecated_report_extra_memory(bytes.len());
+    }
+
+    fn reset_write_buffer(wb: &mut Vec<u8>) {
+        wb.clear();
+        // lets keep size under control
+        if wb.capacity() > MAX_BUFFER_SIZE as usize {
+            wb.shrink_to(MAX_BUFFER_SIZE as usize);
+        }
+    }
+
+    fn write_to_socket(&self, socket: &BunSocket, bytes: &[u8]) -> usize {
+        let result: i32 = socket.write_maybe_corked(bytes);
+        if Self::is_transport_fatal_write_result(result) {
+            self.note_transport_write_fatal();
+        }
+        usize::try_from(result).unwrap_or(0)
+    }
+
     /// Takes the pending bytes out for the write: JS re-entering under it would send them again.
-    fn write_pending_through_js<S: NativeSocketWrite>(
-        &self,
-        mut socket: S,
-        bytes: &[u8],
-    ) -> (usize, usize) {
+    fn write_pending(&self, socket: &BunSocket, bytes: &[u8]) -> (usize, usize) {
         let offset = self.write_buffer_offset.replace(0);
         let mut pending = self.write_buffer.take();
         let _ = pending.write(bytes);
-        let result: i32 = socket.write_maybe_corked(&pending[offset..]);
-        self.restore_unwritten_pending(pending, offset, bytes.len(), result)
-    }
-
-    fn restore_unwritten_pending(
-        &self,
-        pending: Vec<u8>,
-        offset: usize,
-        appended: usize,
-        result: i32,
-    ) -> (usize, usize) {
         let total = pending.len() - offset;
-        let written: usize = if result < 0 {
-            if Self::is_transport_fatal_write_result(result) {
-                self.note_transport_write_fatal();
-            }
-            0
-        } else {
-            usize::try_from(result).expect("int cast")
-        };
+        let written = self.write_to_socket(socket, &pending[offset..]);
         if written < total {
             // The rest goes back in front of whatever a re-entrant write buffered meanwhile.
             let reentrant_offset = self.write_buffer_offset.replace(offset + written);
-            let reentrant = self.write_buffer.replace(pending);
-            let _ = self
-                .write_buffer
-                .with_mut(|wb| wb.write(&reentrant[reentrant_offset..]));
-            self.global()
-                .vm()
-                .deprecated_report_extra_memory(appended.min(total - written));
+            let _ = pending.write(&self.write_buffer.take()[reentrant_offset..]);
+            self.write_buffer.set(pending);
+            if !bytes.is_empty() {
+                self.global()
+                    .vm()
+                    .deprecated_report_extra_memory(bytes.len().min(total - written));
+            }
+        } else if self.native_socket.is_attached() && self.pending_len() == 0 {
+            Self::reset_write_buffer(&mut pending);
+            self.write_buffer.set(pending);
         }
         (written, total)
     }
 
-    pub(crate) fn generic_flush<S: NativeSocketWrite>(&self, mut socket: S) -> usize {
-        let buffer_len = self.write_buffer.get().slice()[self.write_buffer_offset.get()..].len();
-        if buffer_len > 0 {
-            if self.transport_write_runs_js() {
-                let (written, _) = self.write_pending_through_js(socket, b"");
-                bun_output::scoped_log!(H2FrameParser, "_genericFlush {}", written);
-                return written;
-            }
-            let result: i32 = socket.write_maybe_corked(
-                &self.write_buffer.get().slice()[self.write_buffer_offset.get()..],
-            );
-            let written: u32 = if result < 0 {
-                if Self::is_transport_fatal_write_result(result) {
-                    self.note_transport_write_fatal();
-                }
-                0
-            } else {
-                u32::try_from(result).expect("int cast")
-            };
-
-            if (written as usize) < buffer_len {
-                self.write_buffer_offset
-                    .set(self.write_buffer_offset.get() + written as usize);
-                bun_output::scoped_log!(H2FrameParser, "_genericFlush {}", written);
-                return written as usize;
-            }
-
-            // all the buffer was written! reset things
-            self.write_buffer_offset.set(0);
-            self.write_buffer.with_mut(|wb| {
-                wb.clear();
-                // lets keep size under control
-                if wb.capacity() > MAX_BUFFER_SIZE as usize {
-                    wb.shrink_to(MAX_BUFFER_SIZE as usize);
-                }
-            });
-            bun_output::scoped_log!(H2FrameParser, "_genericFlush {}", buffer_len);
+    fn generic_flush(&self) -> usize {
+        let written = if self.pending_len() > 0
+            && let Some(socket) = self.native_socket.get()
+        {
+            self.write_pending(&socket, b"").0
         } else {
-            bun_output::scoped_log!(H2FrameParser, "_genericFlush 0");
-        }
-        buffer_len
+            0
+        };
+        bun_output::scoped_log!(H2FrameParser, "_genericFlush {}", written);
+        written
     }
 
-    pub(crate) fn generic_write<S: NativeSocketWrite>(&self, mut socket: S, bytes: &[u8]) -> bool {
+    fn generic_write(&self, socket: &BunSocket, bytes: &[u8]) -> bool {
         bun_output::scoped_log!(H2FrameParser, "_genericWrite {}", bytes.len());
 
-        let global = self.global();
-        let buffered_len = self.write_buffer.get().slice()[self.write_buffer_offset.get()..].len();
-        if buffered_len > 0 {
+        if self.pending_len() > 0 {
             if self.transport_write_runs_js() {
-                let (written, total) = self.write_pending_through_js(socket, bytes);
+                let (written, total) = self.write_pending(socket, bytes);
                 return written == total;
             }
-            {
-                let result: i32 = socket.write_maybe_corked(
-                    &self.write_buffer.get().slice()[self.write_buffer_offset.get()..],
+            let (written, total) = self.write_pending(socket, b"");
+            if written < total {
+                // we still have more to buffer and even more now
+                self.append_pending(bytes);
+                bun_output::scoped_log!(
+                    H2FrameParser,
+                    "_genericWrite flushed {} and buffered more {}",
+                    written,
+                    bytes.len()
                 );
-                let written: u32 = if result < 0 {
-                    if Self::is_transport_fatal_write_result(result) {
-                        self.note_transport_write_fatal();
-                    }
-                    0
-                } else {
-                    u32::try_from(result).expect("int cast")
-                };
-                if (written as usize) < buffered_len {
-                    self.write_buffer_offset
-                        .set(self.write_buffer_offset.get() + written as usize);
-
-                    // we still have more to buffer and even more now
-                    let _ = self.write_buffer.with_mut(|wb| wb.write(bytes));
-                    global.vm().deprecated_report_extra_memory(bytes.len());
-
-                    bun_output::scoped_log!(
-                        H2FrameParser,
-                        "_genericWrite flushed {} and buffered more {}",
-                        written,
-                        bytes.len()
-                    );
-                    return false;
-                }
+                return false;
             }
-            // all the buffer was written!
-            self.write_buffer_offset.set(0);
-            self.write_buffer.with_mut(|wb| wb.clear());
-            {
-                let result: i32 = socket.write_maybe_corked(bytes);
-                let written: u32 = if result < 0 {
-                    if Self::is_transport_fatal_write_result(result) {
-                        self.note_transport_write_fatal();
-                    }
-                    0
-                } else {
-                    u32::try_from(result).expect("int cast")
-                };
-                if (written as usize) < bytes.len() {
-                    let pending = &bytes[written as usize..];
-                    // ops not all data was sent, lets buffer again
-                    let _ = self.write_buffer.with_mut(|wb| wb.write(pending));
-                    global.vm().deprecated_report_extra_memory(pending.len());
-
-                    bun_output::scoped_log!(
-                        H2FrameParser,
-                        "_genericWrite buffered more {}",
-                        pending.len()
-                    );
-                    return false;
-                }
-            }
-            // lets keep size under control
-            self.write_buffer.with_mut(|wb| {
-                if wb.capacity() > MAX_BUFFER_SIZE as usize {
-                    wb.shrink_to(MAX_BUFFER_SIZE as usize);
-                }
-            });
-            return true;
         }
-        let result: i32 = socket.write_maybe_corked(bytes);
-        let written: u32 = if result < 0 {
-            if Self::is_transport_fatal_write_result(result) {
-                self.note_transport_write_fatal();
-            }
-            0
-        } else {
-            u32::try_from(result).expect("int cast")
-        };
-        if (written as usize) < bytes.len() {
-            let pending = &bytes[written as usize..];
+        let written = self.write_to_socket(socket, bytes);
+        if written < bytes.len() {
             // ops not all data was sent, lets buffer again
-            let _ = self.write_buffer.with_mut(|wb| wb.write(pending));
-            global.vm().deprecated_report_extra_memory(pending.len());
+            self.append_pending(&bytes[written..]);
             return false;
         }
         true
@@ -2477,68 +2386,61 @@ impl H2FrameParser {
         }
 
         let mut written = self.uncork();
-        written += match self.native_socket.get() {
-            BunSocket::Tls(socket) => self.generic_flush(socket.get()),
-            BunSocket::Tcp(socket) => self.generic_flush(socket.get()),
-            BunSocket::None => {
-                // consider that backpressure is gone and flush data queue
-                self.has_nonnative_backpressure.set(false);
-                let offset = self.write_buffer_offset.get();
-                let bytes_len = self.write_buffer.get().slice()[offset..].len();
-                if bytes_len > 0 {
-                    let global = self.handlers.get().global();
-                    // A failed conversion means the VM is terminating (or OOM): report
-                    // nothing flushed instead of calling JS with an empty value.
-                    let Ok(output_value) = self
-                        .handlers
-                        .get()
+        if !self.native_socket.is_attached() {
+            // consider that backpressure is gone and flush data queue
+            self.has_nonnative_backpressure.set(false);
+            let offset = self.write_buffer_offset.get();
+            let bytes_len = self.pending_len();
+            if bytes_len > 0 {
+                let handlers = self.handlers.get();
+                // A failed conversion means the VM is terminating (or OOM): report
+                // nothing flushed instead of calling JS with an empty value.
+                let Ok(output_value) = self.write_buffer.with_taken(|wb| {
+                    handlers
                         .binary_type
-                        .to_js(&self.write_buffer.get().slice()[offset..], &global)
-                    else {
-                        return 0;
-                    };
-                    self.js_socket_flushing.set(true);
-                    let result = self.call_on_write(output_value);
-                    self.js_socket_flushing.set(false);
+                        .to_js(&wb[offset..], &handlers.global())
+                }) else {
+                    return 0;
+                };
+                self.js_socket_flushing.set(true);
+                let result = self.call_on_write(output_value);
+                self.js_socket_flushing.set(false);
 
-                    // Same contract as _write: -1 dropped, 0 queued by the socket, else sent.
-                    let code = if result.is_number() {
-                        result.to_int32()
-                    } else {
-                        -1
-                    };
-                    if code == -1 {
-                        // JS did not take the bytes (socket not ready). Keep them queued;
-                        // clearing here loses the connection preface when peer frames arrive
-                        // before the connect callback has run.
-                        self.has_nonnative_backpressure.set(true);
-                        return 0;
-                    }
+                // Same contract as _write: -1 dropped, 0 queued by the socket, else sent.
+                let code = if result.is_number() {
+                    result.to_int32()
+                } else {
+                    -1
+                };
+                if code == -1 {
+                    // JS did not take the bytes (socket not ready). Keep them queued;
+                    // clearing here loses the connection preface when peer frames arrive
+                    // before the connect callback has run.
+                    self.has_nonnative_backpressure.set(true);
+                    return 0;
+                }
 
-                    // Consume exactly what was handed to JS; re-entrant writes during dispatch
-                    // sit after it and wait for the next flush. `>=` also covers the buffer
-                    // being cleared (detach) mid-dispatch, where advancing would strand the offset.
-                    if offset + bytes_len >= self.write_buffer.get().slice().len() {
+                // Consume exactly what was handed to JS; re-entrant writes during dispatch
+                // sit after it and wait for the next flush. `>=` also covers the buffer
+                // being cleared (detach) mid-dispatch, where advancing would strand the offset.
+                self.write_buffer.with_taken(|wb| {
+                    if offset + bytes_len >= wb.len() {
                         self.write_buffer_offset.set(0);
-                        self.write_buffer.with_mut(|wb| {
-                            wb.clear();
-                            if wb.capacity() > MAX_BUFFER_SIZE as usize {
-                                wb.shrink_to(MAX_BUFFER_SIZE as usize);
-                            }
-                        });
+                        Self::reset_write_buffer(wb);
                     } else {
                         self.write_buffer_offset.set(offset + bytes_len);
                     }
+                });
 
-                    if code == 0 {
-                        self.has_nonnative_backpressure.set(true);
-                        return bytes_len;
-                    }
+                if code == 0 {
+                    self.has_nonnative_backpressure.set(true);
+                    return bytes_len;
                 }
-
-                return self.flush_stream_queue();
             }
-        };
+
+            return self.flush_stream_queue();
+        }
+        written += self.generic_flush();
         // if no backpressure flush data queue
         if !self.has_backpressure() {
             written += self.flush_stream_queue();
@@ -2548,14 +2450,11 @@ impl H2FrameParser {
 
     pub(crate) fn _write(&self, bytes: &[u8]) -> bool {
         match self.native_socket.get() {
-            BunSocket::Tls(socket) => self.generic_write(socket.get(), bytes),
-            BunSocket::Tcp(socket) => self.generic_write(socket.get(), bytes),
-            BunSocket::None => {
-                let global = self.global();
+            Some(socket) => self.generic_write(&socket, bytes),
+            None => {
                 if self.has_nonnative_backpressure.get() {
                     // we should not invoke JS when we have backpressure is cheaper to keep it queued here
-                    let _ = self.write_buffer.with_mut(|wb| wb.write(bytes));
-                    global.vm().deprecated_report_extra_memory(bytes.len());
+                    self.append_pending(bytes);
                     return false;
                 }
                 // fallback to onWrite non-native callback
@@ -2580,8 +2479,7 @@ impl H2FrameParser {
                 let r = match code {
                     -1 => {
                         // dropped
-                        let _ = self.write_buffer.with_mut(|wb| wb.write(bytes));
-                        global.vm().deprecated_report_extra_memory(bytes.len());
+                        self.append_pending(bytes);
                         self.has_nonnative_backpressure.set(true);
                         false
                     }
@@ -2607,24 +2505,21 @@ impl H2FrameParser {
     }
 
     fn has_backpressure(&self) -> bool {
-        self.write_buffer.get().len_u32() > 0 || self.has_nonnative_backpressure.get()
+        self.write_buffer.with_taken(|wb| wb.len_u32()) > 0 || self.has_nonnative_backpressure.get()
     }
 
     /// Whether a write to this session's transport synchronously runs user JS: a JS-backed
     /// socket's onWrite is the user's Duplex, and a socket upgraded from a JS Duplex
     /// (`tls.connect({ socket })`) writes its records through that Duplex.
     fn transport_write_runs_js(&self) -> bool {
-        match self.native_socket.get() {
-            BunSocket::None => true,
-            BunSocket::Tls(s) => matches!(
-                s.get().socket.get().socket,
-                bun_uws::InternalSocket::UpgradedDuplex(_)
-            ),
-            BunSocket::Tcp(s) => matches!(
-                s.get().socket.get().socket,
-                bun_uws::InternalSocket::UpgradedDuplex(_)
-            ),
-        }
+        self.native_socket.socket.with_taken(|socket| {
+            let transport = match socket {
+                None => return true,
+                Some(BunSocket::Tls(s)) => s.socket.get().socket,
+                Some(BunSocket::Tcp(s)) => s.socket.get().socket,
+            };
+            matches!(transport, bun_uws::InternalSocket::UpgradedDuplex(_))
+        })
     }
 
     /// A payload borrowed from a JS ArrayBuffer has to be copied before a send whenever JS
@@ -2763,13 +2658,9 @@ impl H2FrameParser {
     /// alone entirely - the connect-error path owns their failure delivery.
     fn close_transport_after_fatal_write(&self) {
         match self.native_socket.get() {
-            BunSocket::Tls(socket) => {
-                Self::close_socket_for_dead_transport::<true>(socket.get());
-            }
-            BunSocket::Tcp(socket) => {
-                Self::close_socket_for_dead_transport::<false>(socket.get());
-            }
-            BunSocket::None => {}
+            Some(BunSocket::Tls(socket)) => Self::close_socket_for_dead_transport(&socket),
+            Some(BunSocket::Tcp(socket)) => Self::close_socket_for_dead_transport(&socket),
+            None => {}
         }
     }
 
@@ -2777,7 +2668,7 @@ impl H2FrameParser {
     /// once it has read what the peer sent before.
     fn transport_send_rejected(&self) -> bool {
         match self.native_socket.get() {
-            BunSocket::Tls(socket) => socket.get().socket.get().ssl_send_rejected(),
+            Some(BunSocket::Tls(socket)) => socket.socket.get().ssl_send_rejected(),
             // A plain socket is closed at once, which ends its streams before the error is reported.
             _ => false,
         }
@@ -2892,7 +2783,7 @@ impl H2FrameParser {
     fn flush_batch_vectored(&self, batch: &[u8], segments: &[BatchSegment]) {
         let mut total: usize = 0;
         let total_written = match self.native_socket.get() {
-            BunSocket::Tcp(socket) => BATCH_IOVECS.with_borrow_mut(|iov| {
+            Some(BunSocket::Tcp(socket)) => BATCH_IOVECS.with_borrow_mut(|iov| {
                 iov.clear();
                 iov.reserve(segments.len());
                 for seg in segments {
@@ -2909,7 +2800,7 @@ impl H2FrameParser {
                 if total == 0 {
                     return 0usize;
                 }
-                let w = socket.get().write_vectored_raw(iov);
+                let w = socket.write_vectored_raw(iov);
                 if w < 0 { 0 } else { w as usize }
             }),
             _ => {
@@ -2939,7 +2830,7 @@ impl H2FrameParser {
                 // SAFETY: same as the copy path above; skip < len
                 let rest = unsafe { core::slice::from_raw_parts(ptr.add(skip), len - skip) };
                 skip = 0;
-                let _ = self.write_buffer.with_mut(|wb| wb.write(rest));
+                let _ = self.write_buffer.with_taken(|wb| wb.write(rest));
                 buffered += rest.len();
             }
             if buffered > 0 {
@@ -3071,24 +2962,6 @@ impl H2FrameParser {
             }
         });
         ok
-    }
-}
-
-/// Trait to abstract over TLSSocket / TCPSocket for `generic_flush`/`generic_write`.
-pub(crate) trait NativeSocketWrite {
-    fn write_maybe_corked(&mut self, buf: &[u8]) -> i32;
-}
-impl NativeSocketWrite for &TLSSocket {
-    fn write_maybe_corked(&mut self, buf: &[u8]) -> i32 {
-        // Forward to the inherent NewSocket<true>::write_maybe_corked (R-2: now
-        // takes `&self`). UFCS to avoid resolving back to this trait impl.
-        // No fatal latch: its close would drop what the peer sent before; the TLS layer closes after reading it.
-        TLSSocket::write_maybe_corked(*self, buf).max(-1)
-    }
-}
-impl NativeSocketWrite for &TCPSocket {
-    fn write_maybe_corked(&mut self, buf: &[u8]) -> i32 {
-        TCPSocket::write_maybe_corked(*self, buf)
     }
 }
 
@@ -3338,7 +3211,7 @@ impl H2FrameParser {
             // Outbound-ACK-flood counter: only reset when the transport actually
             // drained (nghttp2 decrements per-send). Resetting per receive() lets
             // a peer that never reads keep it under the limit forever.
-            if self.write_buffer.get().slice()[self.write_buffer_offset.get()..].is_empty() {
+            if self.pending_len() == 0 {
                 engine.note_outbound_drained();
             }
             // Apply any receive-window growth setLocalWindowSize() accumulated while a dispatch
@@ -4837,7 +4710,7 @@ impl H2FrameParser {
 impl H2FrameParser {
     // get memory usage in bytes
     fn get_session_memory_usage_bytes(&self, streams: &Streams) -> usize {
-        self.write_buffer.get().len_u32() as usize
+        self.write_buffer.with_taken(|wb| wb.len_u32()) as usize
             + self.queued_data_size.get() as usize
             + streams.len() * core::mem::size_of::<Stream>()
     }
@@ -4851,7 +4724,8 @@ impl H2FrameParser {
 
     // get memory in bytes
     pub(crate) fn buffer_size(&self) -> f64 {
-        (self.write_buffer.get().len_u32() as u64 + self.queued_data_size.get()) as f64
+        (self.write_buffer.with_taken(|wb| wb.len_u32()) as u64 + self.queued_data_size.get())
+            as f64
     }
 
     /// Returns `(settled_state, callback_deferred)`: the state the close tail settled on (5 =
@@ -4972,7 +4846,10 @@ impl H2FrameParser {
                     // records payload slices by reference and flushes with writev —
                     // TLS cannot vectorize (SSL_write must consume the bytes to seal
                     // records), so it keeps the contiguous copy.
-                    let vectorize = matches!(self.native_socket.get(), BunSocket::Tcp(_))
+                    let vectorize = self
+                        .native_socket
+                        .socket
+                        .with_taken(|socket| matches!(socket, Some(BunSocket::Tcp(_))))
                         && !self.has_backpressure();
                     BATCH_BUFFER.with_borrow_mut(|batch| {
                         if batch.is_empty() {
@@ -6962,17 +6839,9 @@ impl H2FrameParser {
     pub(crate) fn set_native_socket(&self, _: &mut JsScope<'_>, socket: JsLocal<'_>) {
         let socket = socket.to_js();
         self.detach_native_socket();
-        if let Some(socket) = TLSSocket::from_js(socket) {
-            bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
-            self.native_socket
-                .attach(Attachment::Tls(Link::new(socket, self.ref_guard())));
-            // if we started with non native and go to native we now control the backpressure internally
-            self.has_nonnative_backpressure.set(false);
-            let _ = self.flush();
-        } else if let Some(socket) = TCPSocket::from_js(socket) {
-            bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
-            self.native_socket
-                .attach(Attachment::Tcp(Link::new(socket, self.ref_guard())));
+        if let Some(socket) = BunSocket::from_js(socket) {
+            bun_output::scoped_log!(H2FrameParser, "native socket attached");
+            self.native_socket.attach(socket, self.ref_guard());
             // if we started with non native and go to native we now control the backpressure internally
             self.has_nonnative_backpressure.set(false);
             let _ = self.flush();
@@ -7057,7 +6926,7 @@ impl H2FrameParser {
             last_peer_stream_id: Cell::new(0),
             is_server: Cell::new(false),
             left_exception: Cell::new(false),
-            write_buffer: JsCell::new(Vec::<u8>::default()),
+            write_buffer: Cell::default(),
             write_buffer_offset: Cell::new(0),
             outbound_queue_size: Cell::new(0),
             streams: RefCell::default(),
@@ -7097,20 +6966,12 @@ impl H2FrameParser {
             .set(Handlers::from_js(global_object, handler_js, js_value)?);
 
         // check if socket is provided, and if it is a valid native socket
-        if let Some(socket_js) = options.get(global_object, "native")? {
-            if let Some(socket) = TLSSocket::from_js(socket_js) {
-                bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
-                this_ref
-                    .native_socket
-                    .attach(Attachment::Tls(Link::new(socket, this_ref.ref_guard())));
-                let _ = this_ref.flush();
-            } else if let Some(socket) = TCPSocket::from_js(socket_js) {
-                bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
-                this_ref
-                    .native_socket
-                    .attach(Attachment::Tcp(Link::new(socket, this_ref.ref_guard())));
-                let _ = this_ref.flush();
-            }
+        if let Some(socket_js) = options.get(global_object, "native")?
+            && let Some(socket) = BunSocket::from_js(socket_js)
+        {
+            bun_output::scoped_log!(H2FrameParser, "native socket attached");
+            this_ref.native_socket.attach(socket, this.clone());
+            let _ = this_ref.flush();
         }
         if let Some(settings_js) = options.get(global_object, "settings")? {
             if !settings_js.is_empty_or_undefined_or_null() {
@@ -7293,7 +7154,7 @@ impl H2FrameParser {
 
         // Free the allocation, not just the length: detach() is reachable from JS without a
         // following `deinit`, so the capacity must be released here.
-        self.write_buffer.with_mut(|wb| wb.clear_and_free());
+        drop(self.write_buffer.take());
         self.tx_tracker.set(TxFrameTracker::default());
         // Drop every per-stream JS context root; the parser is detaching.
         self.sctx.with_mut(|m| m.clear());

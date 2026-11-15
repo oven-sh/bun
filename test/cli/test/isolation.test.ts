@@ -9,7 +9,8 @@ import { mysqlHandshakeV10, mysqlOkPacket, pgAuthenticationOk, pgReadyForQuery }
 // Every case spawns at least one full `bun test --isolate` child; the heavy
 // ones (8-file leak fixtures, 500-2000-export module_info modules) exceed the
 // 5s default on debug/ASAN runners.
-setDefaultTimeout(isASAN ? 120_000 : 30_000);
+const isolationTimeout = isASAN ? 120_000 : 30_000;
+setDefaultTimeout(isolationTimeout);
 
 // Two test files where the first leaks state and the second observes it.
 // Under --isolate the second file must see a clean world.
@@ -1953,7 +1954,11 @@ describe.concurrent("bun test --isolate=modules", () => {
         console.log(JSON.stringify(patched));
       });`,
     };
-    expect((await passes(files, 1)).split("\n").filter(line => line.startsWith("["))).toEqual(["[]"]);
+    expect(
+      (await passes(files, 1, isASAN ? [`--timeout=${isolationTimeout}`] : []))
+        .split("\n")
+        .filter(line => line.startsWith("[")),
+    ).toEqual(["[]"]);
   });
 
   test("Module._cache is the running file's require.cache", async () => {

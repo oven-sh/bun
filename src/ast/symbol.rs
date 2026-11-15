@@ -1,5 +1,4 @@
 use core::sync::atomic::{AtomicU32, Ordering};
-use std::cell::Cell;
 
 use crate::base::Ref;
 use crate::g as G;
@@ -28,12 +27,7 @@ pub struct Symbol<'a> {
     pub namespace_alias: Option<AstBox<'a, G::NamespaceAlias<'a>>>,
 
     /// Used by the parser for single pass parsing.
-    ///
-    /// `Cell` because union-find (`merge`/`follow`) mutates this through
-    /// `&Symbol` while other shared refs to the same table are live. `Ref` is
-    /// `Copy`, so `Cell<Ref>` is zero-cost and lets those algorithms run
-    /// without raw-pointer writes.
-    pub link: Cell<Ref>,
+    pub link: Ref,
 
     /// An estimate of the number of uses of this symbol. This is used to detect
     /// whether a symbol is used or not. For example, TypeScript imports that are
@@ -166,7 +160,7 @@ impl Default for Symbol<'_> {
         Self {
             original_name: crate::StoreStr::EMPTY,
             namespace_alias: None,
-            link: Cell::new(Ref::NONE),
+            link: Ref::NONE,
             use_count_estimate: 0,
             chunk_index: AtomicU32::new(INVALID_CHUNK_INDEX),
             nested_scope_slot: INVALID_NESTED_SCOPE_SLOT,
@@ -231,7 +225,7 @@ impl Symbol<'_> {
 
     #[inline]
     pub fn has_link(&self) -> bool {
-        self.link.get().is_valid()
+        self.link.is_valid()
     }
 
     /// An import item the linker merged into the export it names. A local
@@ -405,17 +399,13 @@ impl Use {
 }
 
 pub type List<'a> = bun_alloc::ArenaVec<'a, Symbol<'a>>;
-/// `Map.symbols_for_source` storage. Decoupled from [`List`] (which is
-/// arena-backed): the linker clones every per-source symbol table here so it
-/// can mutate them independently of the parsed `BundledAst.symbols`, and those
-/// clones are owned for the link lifetime — global allocator, no arena tag.
-pub type NestedList<'a> = Vec<Vec<Symbol<'a>>>;
+pub type NestedList<'a> = Vec<List<'a>>;
 
-/// Like [`Map::follow`], including path compression, but for the parser's flat per-file symbol table.
-pub fn follow_symbols(symbols: &[Symbol], ref_: Ref) -> Ref {
+/// Like [`Map::follow`], plus path compression, for the parser's flat per-file symbol table.
+pub fn follow_symbols(symbols: &mut [Symbol], ref_: Ref) -> Ref {
     let mut root = ref_;
     loop {
-        let link = symbols[root.inner_index() as usize].link.get();
+        let link = symbols[root.inner_index() as usize].link;
         if !link.is_valid() {
             break;
         }
@@ -423,7 +413,7 @@ pub fn follow_symbols(symbols: &[Symbol], ref_: Ref) -> Ref {
     }
     let mut current = ref_;
     while current != root {
-        current = symbols[current.inner_index() as usize].link.replace(root);
+        current = core::mem::replace(&mut symbols[current.inner_index() as usize].link, root);
     }
     root
 }
@@ -448,7 +438,7 @@ impl<'a> Map<'a> {
             bun_core::prettyln!("\n\n-- Source ID: {} ({} symbols) --\n", i, symbols.len(),);
             for (inner_index, symbol) in symbols.iter().enumerate() {
                 let display_ref = if symbol.has_link() {
-                    symbol.link.get()
+                    symbol.link
                 } else {
                     Ref::new(
                         inner_index as u32, // @truncate
@@ -519,27 +509,23 @@ impl<'a> Map<'a> {
             return new;
         }
 
-        // Union-find with path compression. `link` is `Cell<Ref>`, so all link
-        // reads/writes go through safe shared access (`get_const`). Backing
-        // storage is never reallocated during merge, so re-looking-up after the
-        // recursive call is cheap and the borrow ends before the `&mut self`
-        // recursion.
-        let old_link = self.get_const(old).unwrap().link.get();
+        // Union-find with path compression.
+        let old_link = self.get_const(old).unwrap().link;
         if old_link.is_valid() {
             let merged = self.merge(old_link, new);
-            self.get_const(old).unwrap().link.set(merged);
+            self.get_mut(old).unwrap().link = merged;
             return merged;
         }
 
-        let new_link = self.get_const(new).unwrap().link.get();
+        let new_link = self.get_const(new).unwrap().link;
         if new_link.is_valid() {
             let merged = self.merge(old, new_link);
-            self.get_const(new).unwrap().link.set(merged);
+            self.get_mut(new).unwrap().link = merged;
             return merged;
         }
 
-        let old_symbol = self.get_const(old).unwrap();
-        old_symbol.link.set(new);
+        let old_symbol = self.get_mut(old).unwrap();
+        old_symbol.link = new;
         let use_count_estimate = old_symbol.use_count_estimate;
         let pinned_name = old_symbol
             .must_not_be_renamed()
@@ -582,10 +568,7 @@ impl<'a> Map<'a> {
         })
     }
 
-    // Takes ownership of `list` and boxes it into a one-element NestedList.
-    // PERF: one extra allocation — profile if needed (single caller is the
-    // printer one-shot, cold).
-    pub fn init_with_one_list(list: Vec<Symbol<'a>>) -> Self {
+    pub fn init_with_one_list(list: List<'a>) -> Self {
         Self::init_list(vec![list])
     }
 
@@ -604,19 +587,24 @@ impl<'a> Map<'a> {
         self.symbols_for_source.get_mut(src)?.get_mut(idx)
     }
 
+    /// Points every link at the end of its chain, so that [`Map::follow`] takes one step.
     pub fn follow_all(&mut self) {
         // The returned `Ctx` is RAII and ends the span on drop.
         let _trace = bun_perf::trace(bun_perf::PerfEvent::SymbolsFollowAll);
-        // `link` is `Cell<Ref>`, so we can iterate the table by shared ref and
-        // mutate `link` in place; `follow()` only takes `&self` and only touches
-        // `link`, so the nested shared borrows coexist.
-        for symbols in self.symbols_for_source.iter() {
-            for symbol in symbols.iter() {
-                if !symbol.has_link() {
-                    continue;
+        for source_index in 0..self.symbols_for_source.len() {
+            let mut inner_index = 0;
+            while let Some(unlinked) = self.symbols_for_source[source_index][inner_index..]
+                .iter()
+                .position(Symbol::has_link)
+            {
+                inner_index += unlinked;
+                let mut link = self.symbols_for_source[source_index][inner_index].link;
+                let root = self.follow(link);
+                self.symbols_for_source[source_index][inner_index].link = root;
+                while link != root {
+                    link = core::mem::replace(&mut self.get_mut(link).unwrap().link, root);
                 }
-                let resolved = self.follow(symbol.link.get());
-                symbol.link.set(resolved);
+                inner_index += 1;
             }
         }
     }
@@ -636,13 +624,7 @@ impl<'a> Map<'a> {
         ref_
     }
 
-    /// Equivalent to followSymbols in esbuild.
-    ///
-    /// An iterative two-phase walk so the per-hop work is just two raw
-    /// pointer adds and a load — no call frame, no `Option` unwrap, no
-    /// repeated tag/null guards. Every node on the path from `ref_` to the
-    /// union-find root has its `link` rewritten to the root (full path
-    /// compression).
+    /// Equivalent to followSymbols in esbuild, without the path compression: see [`Map::follow_all`].
     pub fn follow(&self, ref_: Ref) -> Ref {
         // Entry guard — `ref_` may be `Ref::None` / a SourceContentsSlice ref
         // (callers pass arbitrary Refs read out of AST nodes). After this,
@@ -650,7 +632,7 @@ impl<'a> Map<'a> {
         let Some(symbol) = self.get_const(ref_) else {
             return ref_;
         };
-        let mut link = symbol.link.get();
+        let link = symbol.link;
         // `has_link()` is `link.is_valid()` (tag != RefTag::Invalid). This is
         // the overwhelmingly common exit — most symbols are roots, especially
         // after `follow_all` has run once.
@@ -658,11 +640,11 @@ impl<'a> Map<'a> {
             return ref_;
         }
 
-        // Phase 1: find the root. `link.is_valid()` holds here. The only
+        // Find the root. `link.is_valid()` holds here. The only
         // writers of `Symbol::link` are (a) the default `Ref::NONE`
         // (tag=Invalid — rejected by `is_valid()` above), (b) `merge()`,
         // which stores a Ref that came from `declare_symbol` / `new_symbol` /
-        // `LinkerGraph::generate_new_symbol`, and (c) prior `follow()` path
+        // `LinkerGraph::generate_new_symbol`, and (c) `follow_all()`'s path
         // compression, which stores a `root` that itself satisfied (b). All
         // such refs satisfy the in-bounds contract (see `get_const`):
         // `(source_index, inner_index)` with tag ∈ {Symbol, AllocatedName},
@@ -675,34 +657,12 @@ impl<'a> Map<'a> {
 
         let mut root = link;
         loop {
-            let next = lookup(root).link.get();
+            let next = lookup(root).link;
             if !next.is_valid() {
-                break;
+                return root;
             }
             root = next;
         }
-
-        // Phase 2: path compression. Rewrite `link` on the entry node and every
-        // intermediate node to point directly at `root`. The `!=` gate avoids
-        // a redundant store when the chain was already length-1. `link` is
-        // `Cell<Ref>`, so writes go through `&Symbol` safely.
-        if !link.eql(root) {
-            symbol.link.set(root);
-            loop {
-                let p = lookup(link);
-                let next = p.link.get();
-                // `next.eql(root)` ⇔ `p.link` already points at root —
-                // saves a redundant store on the last intermediate plus the
-                // otherwise-wasted lookup of `root` itself.
-                if next.eql(root) || !next.is_valid() {
-                    break;
-                }
-                p.link.set(root);
-                link = next;
-            }
-        }
-
-        root
     }
 }
 

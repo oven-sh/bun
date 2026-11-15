@@ -89,8 +89,9 @@ pub(crate) fn compute_chunks<'a>(
         temp.alloc_slice_fill_copy(this.graph.entry_points.len(), u32::MAX);
 
     let parse_graph = this.parse_graph();
+    let heap = this.arena();
 
-    let entry_source_indices = this.graph.entry_points.items_source_index();
+    let entry_source_indices = &this.graph.entry_points;
     let css_asts = &parse_graph.css_asts;
     let mut html_chunks: ArrayHashMap<&[u8], Chunk> = ArrayHashMap::new();
     let loaders = parse_graph.input_files.items_loader();
@@ -157,7 +158,7 @@ pub(crate) fn compute_chunks<'a>(
         }
 
         if css_asts[source_index as usize].is_some() {
-            let order = find_imported_files_in_css_order(this, &[Index::init(source_index)]);
+            let order = find_imported_files_in_css_order(this, heap, &[Index::init(source_index)]);
             let order = css_order_or_log(log, sources, order);
             // Create a chunk for the entry point here to ensure that the chunk is
             // always generated even if the resulting file is empty
@@ -223,7 +224,8 @@ pub(crate) fn compute_chunks<'a>(
             let css_source_indices =
                 find_imported_css_files_in_js_order(this, temp, Index::init(source_index));
             if css_source_indices.len() > 0 {
-                let order = find_imported_files_in_css_order(this, css_source_indices.slice());
+                let order =
+                    find_imported_files_in_css_order(this, heap, css_source_indices.slice());
                 let order = css_order_or_log(log, sources, order);
 
                 // Always use content-based hashing for CSS chunk deduplication.
@@ -551,9 +553,9 @@ pub(crate) fn compute_chunks<'a>(
         return Ok(Box::default());
     }
 
-    let bv2 = this.bundle;
+    let bv2 = this.bundle();
     let keys_len = chunk::UNIQUE_KEY_LEN * 2;
-    let mut keys = Vec::with_capacity_in(keys_len * chunks.len(), this.arena());
+    let mut keys = Vec::with_capacity_in(keys_len * chunks.len(), heap);
     for index in 0..chunks.len() as u32 {
         for kind in [chunk::QueryKind::Chunk, chunk::QueryKind::ChunkId] {
             let key = chunk::UniqueKey {
@@ -569,7 +571,8 @@ pub(crate) fn compute_chunks<'a>(
     this.unique_key_prefix = &keys[..chunk::UNIQUE_KEY_PREFIX_LEN];
 
     let kinds = this.graph.files.items_entry_point_kind();
-    let output_paths = this.graph.entry_points.items_output_path();
+    let entry_source_indices = &this.graph.entry_points;
+    let original_names = &this.parse_graph().entry_point_original_names;
     let mut compile_entry_point_pending =
         !bv2.transpiler().options.compile_entry_point_name.is_empty();
     for (chunk, keys) in chunks.iter_mut().zip(keys.chunks_exact(keys_len)) {
@@ -594,6 +597,15 @@ pub(crate) fn compute_chunks<'a>(
             continue;
         }
 
+        // The options of the transpiler that parsed the files of the chunk.
+        let options = if (chunk.flags).contains(chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD) {
+            let client = bv2.client_transpiler_ref();
+            &client
+                .expect("infallible: the client transpiler parsed this chunk")
+                .options
+        } else {
+            &bv2.transpiler().options
+        };
         if chunk.entry_point.is_entry_point()
             && (matches!(chunk.content, chunk::Content::Html)
                 || (kinds[chunk.entry_point.source_index() as usize]
@@ -605,7 +617,6 @@ pub(crate) fn compute_chunks<'a>(
                 chunk.template = PathTemplate::FILE_WITH_TARGET.into();
             } else {
                 chunk.template = PathTemplate::FILE.into();
-                let options = this.options_for_chunk(chunk);
                 chunk.template.data.clone_from(&options.entry_naming);
             }
         } else {
@@ -613,20 +624,23 @@ pub(crate) fn compute_chunks<'a>(
                 chunk.template = PathTemplate::CHUNK_WITH_TARGET.into();
             } else {
                 chunk.template = PathTemplate::CHUNK.into();
-                let options = this.options_for_chunk(chunk);
                 chunk.template.data.clone_from(&options.chunk_naming);
             }
         }
 
+        let entry_source_index = entry_source_indices[chunk.entry_point.entry_point_id() as usize];
+        // An entry point that a plugin resolved keeps the name it was given.
         let pathname = bun_fs::PathName::init(
-            output_paths[chunk.entry_point.entry_point_id() as usize].slice(),
+            (original_names.get(entry_source_index))
+                .unwrap_or_else(|| this.get_source(entry_source_index).path.text),
         );
         chunk.template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
         chunk.template.placeholder.ext = chunk.content.ext().to_vec().into_boxed_slice();
 
         if chunk.template.needs(PlaceholderField::Target) {
             // Determine the target from the AST of the entry point source
-            let chunk_target = ast_targets[chunk.entry_point.source_index() as usize];
+            let chunk_target =
+                this.graph.ast.items_target()[chunk.entry_point.source_index() as usize];
             chunk.template.placeholder.target = chunk_target.naming_placeholder().into();
         }
 
@@ -678,7 +692,7 @@ pub(crate) fn compute_chunks<'a>(
                 }
             };
 
-            let root_dir = &this.resolver.opts.root_dir;
+            let root_dir = &bv2.transpiler().resolver.opts.root_dir;
             chunk.template.placeholder.dir = resolve_path::relative_vec(root_dir, dir).into();
         }
     }

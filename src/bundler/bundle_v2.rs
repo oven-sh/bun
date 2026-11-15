@@ -10,7 +10,6 @@ use core::sync::atomic::AtomicU32;
 
 use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::ThreadLock;
-use bun_threading::WaitGroup;
 
 // `bake_types` / `dispatch` are canonically defined in `bv2_impl` below
 // (the full versions); re-exported here so the crate-root `lib.rs` modules and
@@ -71,9 +70,6 @@ pub struct BundleV2<'a> {
     pub(crate) has_any_css_locals: AtomicU32,
     /// The order files of `--bytecode-order` / `compile.bytecodeOrder`, read and merged when the bundle started.
     pub(crate) bytecode_order: Option<crate::bytecode_order::BytecodeOrder>,
-    /// For the linker's source map tasks. Here because the linker may move while they run.
-    pub(crate) line_offset_wait_group: WaitGroup,
-    pub(crate) quoted_contents_wait_group: WaitGroup,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
     pub completion: Option<dispatch::CompletionHandle<'a>>,
     /// When this bundle's owning loop is a JS event loop (bake / dev server):
@@ -1366,6 +1362,9 @@ pub mod bv2_impl {
     use crate::PathToSourceIndexMap::PathToSourceIndexMap;
     use crate::ServerComponentParseTask::ServerComponentParseTask;
     use crate::barrel_imports;
+    use crate::linker_context_mod::{
+        generate_chunks_in_parallel, generate_compile_results, post_process_chunks,
+    };
 
     use crate::chunk::{self, Chunk};
     use crate::options::{self, Loader, Target};
@@ -2958,8 +2957,6 @@ pub mod bv2_impl {
                 r#loop: event_loop,
                 has_any_css_locals: Default::default(),
                 bytecode_order: None,
-                line_offset_wait_group: Default::default(),
-                quoted_contents_wait_group: Default::default(),
                 plugins: None,
                 completion: None,
                 // SAFETY: `event_loop`, when set, points at the caller's live loop
@@ -3370,26 +3367,20 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        pub(crate) fn create_linker_graph(&mut self) -> Result<LinkerGraph<'a>, Error> {
-            let _trace = crate::perf::trace("Bundler.cloneAST");
-            let ast_arena = self.graph.ast_arena();
-            let mut linker_graph = LinkerGraph::new(ast_arena);
-            // SAFETY: neither list drops its elements. From here on `graph.ast` only follows
-            // `url_for_css`, a borrow, and `import_records`, which the linker never reallocates.
-            linker_graph.ast = unsafe { self.graph.ast.shallow_clone() }?;
-
-            for module_scope in linker_graph.ast.items_module_scope_mut() {
-                if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
-                    /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
-                }
-
-                module_scope.generated = AstVec::from_slice_in(&module_scope.generated, ast_arena);
-            }
+        /// Takes `graph.ast`.
+        pub(crate) fn create_linker_graph(
+            &mut self,
+            additional_output_files: Vec<options::OutputFile>,
+        ) -> LinkerGraph<'a> {
+            let _trace = crate::perf::trace("Bundler.createLinkerGraph");
+            let mut linker_graph = LinkerGraph::new(self.graph.ast_arena());
+            linker_graph.ast = core::mem::take(&mut self.graph.ast);
+            linker_graph.additional_output_files = additional_output_files;
 
             // Some parts of the AST are owned by worker allocators at this point.
             // Transfer ownership to the graph heap.
             linker_graph.take_ast_ownership();
-            Ok(linker_graph)
+            linker_graph
         }
 
         /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
@@ -3842,7 +3833,7 @@ pub mod bv2_impl {
             // Find all external dependencies from reachable files
             let mut external_deps = bun_collections::StringSet::new();
 
-            let import_records = self.graph.ast.items_import_records();
+            let import_records = linker_graph.ast.items_import_records();
 
             // Check for either node or bun builtins
             // We don't use the list from .bun because that includes third-party packages in some cases.
@@ -3947,17 +3938,15 @@ pub mod bv2_impl {
 
             this.add_server_component_boundaries_as_extra_entry_points()?;
 
-            let mut linker_graph = this.create_linker_graph()?;
-            linker_graph.additional_output_files = additional_output_files;
+            let linker_graph = this.create_linker_graph(additional_output_files);
 
             let log = this.transpiler.log();
             let mut linker = LinkerContext::load(&this, linker_graph, &reachable_files)?;
-            let mut chunks = linker.link(log)?;
-            this.dump_pool_stats("link");
 
             // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
             if let Some(fetch) = fetcher {
-                drop(chunks);
+                drop(linker.link(log)?);
+                this.dump_pool_stats("link");
                 let linker_graph = linker.into_graph();
                 this.get_all_dependencies(&linker_graph, &reachable_files, fetch)?;
                 return Ok(BuildResult {
@@ -3967,16 +3956,19 @@ pub mod bv2_impl {
                 });
             }
 
-            let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
-                &mut linker,
-                log,
-                &mut chunks,
-            )?;
+            let (chunks, output_files) =
+                linker.with_source_map_tasks(|linker, source_map_tasks| {
+                    let mut chunks = linker.link(log)?;
+                    this.dump_pool_stats("link");
+                    let output_files =
+                        generate_chunks_in_parallel(linker, log, &mut chunks, source_map_tasks)?;
+                    Ok::<_, Error>((chunks, output_files))
+                })?;
             this.dump_pool_stats("print");
 
             // Generate metafile if requested (the CLI build command writes the files)
             let metafile: Option<Box<[u8]>> = if linker.options.metafile {
-                match crate::linker_context::metafile_builder::generate(&linker, &chunks) {
+                match crate::linker_context::metafile_builder::generate(&mut linker, &chunks) {
                     Ok(m) => Some(m),
                     Err(err) => {
                         bun_core::warn!("Failed to generate metafile: {}", err);
@@ -4076,22 +4068,19 @@ pub mod bv2_impl {
 
             this.add_server_component_boundaries_as_extra_entry_points()?;
 
-            let mut linker_graph = this.create_linker_graph()?;
-            linker_graph.additional_output_files = additional_output_files;
+            let linker_graph = this.create_linker_graph(additional_output_files);
 
             let log = this.transpiler.log();
             let mut linker = LinkerContext::load(&this, linker_graph, &reachable_files)?;
-            let mut chunks = linker.link(log)?;
+            linker.with_source_map_tasks(|linker, source_map_tasks| {
+                let mut chunks = linker.link(log)?;
 
-            if chunks.is_empty() {
-                return Ok(Vec::new());
-            }
+                if chunks.is_empty() {
+                    return Ok(Vec::new());
+                }
 
-            crate::linker_context_mod::generate_chunks_in_parallel::<false>(
-                &mut linker,
-                log,
-                &mut chunks,
-            )
+                generate_chunks_in_parallel(linker, log, &mut chunks, source_map_tasks)
+            })
         }
 
         pub(crate) fn add_server_component_boundaries_as_extra_entry_points(
@@ -4856,9 +4845,6 @@ pub mod bv2_impl {
 
     impl Drop for BundleV2<'_> {
         fn drop(&mut self) {
-            // Dropping the linker waits too, but leaking it does not.
-            self.line_offset_wait_group.wait();
-            self.quoted_contents_wait_group.wait();
             // The last IO callback may still be using the worker pool that `graph` frees.
             self.graph.pool().wait_for_io_tasks();
 
@@ -4912,33 +4898,32 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-            let mut linker_graph = self.create_linker_graph()?;
-
-            /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
-
             let reachable_files = self.find_reachable_files()?;
 
-            linker_graph.additional_output_files = self.process_files_to_copy(&reachable_files)?;
+            let additional_output_files = self.process_files_to_copy(&reachable_files)?;
 
             self.add_server_component_boundaries_as_extra_entry_points()?;
 
+            let linker_graph = self.create_linker_graph(additional_output_files);
+
             let log = self.transpiler.log();
             let mut linker = LinkerContext::load(self, linker_graph, &reachable_files)?;
-            let mut chunks = linker.link(log)?;
+            let (chunks, mut output_files) =
+                linker.with_source_map_tasks(|linker, source_map_tasks| {
+                    let mut chunks = linker.link(log)?;
 
-            if log.has_errors() {
-                return Err(crate::Error::BuildFailed);
-            }
+                    if log.has_errors() {
+                        return Err(crate::Error::BuildFailed);
+                    }
 
-            let mut output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
-                &mut linker,
-                log,
-                &mut chunks,
-            )?;
+                    let output_files =
+                        generate_chunks_in_parallel(linker, log, &mut chunks, source_map_tasks)?;
+                    Ok((chunks, output_files))
+                })?;
 
             // Generate metafile if requested
             let metafile: Option<Box<[u8]>> = if linker.options.metafile {
-                match crate::linker_context::metafile_builder::generate(&linker, &chunks) {
+                match crate::linker_context::metafile_builder::generate(&mut linker, &chunks) {
                     Ok(m) => Some(m),
                     Err(err) => {
                         bun_core::warn!("Failed to generate metafile: {}", err.name());
@@ -5262,7 +5247,7 @@ pub mod bv2_impl {
 
             // The linker still has to be initialized as code generation expects
             // much of its state to be valid memory, even if empty.
-            let linker_graph = self.create_linker_graph().map_err(|_| AllocError)?;
+            let linker_graph = self.create_linker_graph(Vec::new());
             let transpiler_log = self.transpiler.log();
             let mut linker = LinkerContext::load(self, linker_graph, js_reachable_files)
                 .map_err(|_| AllocError)?;
@@ -5284,22 +5269,17 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-            // Compute line offset tables and quoted contents, used in source maps.
-            // Quoted contents will be default-allocated
             if cfg!(debug_assertions) {
                 for idx in js_reachable_files {
-                    debug_assert!(self.graph.ast.items_parts()[idx.get() as usize].len() != 0); // will create a memory leak
+                    debug_assert!(linker.graph.ast.items_parts()[idx.get() as usize].len() != 0); // will create a memory leak
                 }
             }
-            linker.compute_data_for_source_map();
-
-            /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
             // Generate chunks
             let js_part_ranges = self
                 .arena()
                 .alloc_slice_fill_default::<crate::PartRange>(js_reachable_files.len());
-            let parts = self.graph.ast.items_parts();
+            let parts = linker.graph.ast.items_parts();
             debug_assert_eq!(js_reachable_files.len(), js_part_ranges.len());
             for (source_index, part_range) in
                 js_reachable_files.iter().zip(js_part_ranges.iter_mut())
@@ -5333,7 +5313,7 @@ pub mod bv2_impl {
             // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
             let mut css_too_deep = Vec::new();
             for entry_point in start.css_entry_points.keys() {
-                match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&linker, &[*entry_point]) {
+                match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&linker, self.arena(), &[*entry_point]) {
                     Ok(order) => chunks.push(Chunk {
                         entry_point: chunk::EntryPoint::non_entry_point(
                             entry_point.get(),
@@ -5364,14 +5344,31 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-            crate::linker_context_mod::generate_chunks_in_parallel::<true>(
-                &mut linker,
-                transpiler_log,
-                &mut chunks,
-            )
-            .map_err(|_| AllocError)?;
-
-            /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
+            // The JavaScript is not joined. It is DevServer's job to create and send HMR patches.
+            let compile_results = linker
+                .with_source_map_tasks(|linker, source_map_tasks| {
+                    generate_compile_results(linker, transpiler_log, &mut chunks, source_map_tasks)
+                })
+                .map_err(|_| AllocError)?;
+            let css = 1..chunks.len() - html_files.count();
+            let css_code = post_process_chunks(&linker, &mut chunks, &compile_results, css.clone())
+                .into_iter()
+                .zip(&chunks[css])
+                .map(|(mut output, chunk)| {
+                    let code = output.code(
+                        None,
+                        self,
+                        &linker.graph,
+                        b"THIS_SHOULD_NEVER_BE_EMITTED_IN_DEV_MODE",
+                        chunk,
+                        &chunks,
+                        None,
+                        chunk::ReferencePathStyle::ImporterRelative,
+                        chunk::SourceMapShiftTracking::Disabled,
+                    );
+                    code.map(|code| code.buffer)
+                })
+                .collect::<Result<_, _>>()?;
 
             // Nothing reads it after printing.
             chunks[0].renamer = Default::default();
@@ -5400,6 +5397,8 @@ pub mod bv2_impl {
                     self,
                     DevServerOutput {
                         chunks,
+                        compile_results,
+                        css_code,
                         linker_graph,
                         css_file_list: core::mem::take(&mut start.css_entry_points),
                         resolution_failures,
@@ -7464,6 +7463,10 @@ pub mod bv2_impl {
     /// The lifetime of this structure is tied to the bundler's arena
     pub struct DevServerOutput<'a> {
         pub chunks: Vec<Chunk<'a>>,
+        /// Indexed like `chunks`.
+        pub compile_results: Vec<Box<[CompileResult]>>,
+        /// Indexed like `css_file_list`.
+        pub css_code: Vec<Box<[u8]>>,
         pub linker_graph: LinkerGraph<'a>,
         pub css_file_list: ArrayHashMap<Index, CssEntryPointMeta>,
         pub resolution_failures: ResolutionFailures,

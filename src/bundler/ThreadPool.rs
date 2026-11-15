@@ -61,6 +61,9 @@ pub struct ThreadPool {
     pub(crate) generation: u64,
 }
 
+// SAFETY: the map of workers is locked, and a thread uses only its own worker.
+unsafe impl Sync for ThreadPool {}
+
 enum WorkerPool {
     Owned(Pin<Box<ThreadPoolLib::ThreadPool>>),
     Lent(BackRef<ThreadPoolLib::ThreadPool>),
@@ -217,7 +220,7 @@ impl ThreadPool {
         });
         TLS_WORKER.set((self.generation, worker));
         // SAFETY: no other thread looks up `id`. Dropping the `BundleV2` takes every entry, so it
-        // must not happen while a task has its worker. It waits for the source map tasks itself.
+        // must not happen while a task has its worker.
         // Its callers `wait_for_parse` first, except when `enqueue_entry_points_*` returns an
         // error, which only a failed allocation makes it do.
         unsafe { &mut *worker }
@@ -264,9 +267,8 @@ pub static WORKER_LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 /// Per-OS-thread bundler state. Never moved after [`Worker::new`] boxes it.
 pub struct Worker {
     /// BACKREF (LIFETIMES.tsv): the owning `BundleV2` strictly outlives every
-    /// task that runs on a `Worker` it creates. `BackRef` so call sites read
-    /// `worker.ctx.field` via safe `Deref` instead of open-coding a raw deref.
-    pub(crate) ctx: bun_ptr::BackRef<BundleV2<'static>>,
+    /// task that runs on a `Worker` it creates.
+    ctx: bun_ptr::BackRef<BundleV2<'static>>,
 
     /// `'static` stands for the borrow of `heap`.
     pub(crate) transpiler: Transpiler<'static>,
@@ -294,6 +296,24 @@ impl Worker {
         // SAFETY: callers are task callbacks, which complete before `ThreadPool::drop` releases
         // the worker. What they return goes to the bundle, which owns that pool.
         unsafe { &*self.heap.as_ptr() }
+    }
+}
+
+/// Gives a task the worker of its thread.
+#[derive(Clone, Copy)]
+pub(crate) struct Workers<'l, 'a>(&'l BundleV2<'a>);
+
+// SAFETY: of the bundle, `Worker::get` and the methods of `Worker` use the pool, which is `Sync`,
+// and read the transpilers to clone them.
+unsafe impl Sync for Workers<'_, '_> {}
+
+impl<'l, 'a> Workers<'l, 'a> {
+    pub(crate) fn new(bundle: &'l BundleV2<'a>) -> Self {
+        Self(bundle)
+    }
+
+    pub(crate) fn get(self) -> WorkerGuard {
+        Worker::get(self.0)
     }
 }
 

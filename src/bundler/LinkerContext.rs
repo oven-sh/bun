@@ -1,19 +1,18 @@
 use crate::mal_prelude::*;
+use core::sync::SyncView;
 use core::sync::atomic::Ordering;
 
 use crate::Error as BunError;
+use crate::bake_types as bake;
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_ast::{AstArena, AstBox, AstVec, Data, Loc, Log, Range, Source};
+use bun_ast::{ImportKind, ImportRecord};
 use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt, index_sort};
 use bun_core::{self as bun, FeatureFlags, Output};
 use bun_core::{MutableString, string_joiner::StringJoiner, strings};
 use bun_paths::resolve_path::SpillBuf;
 use bun_sourcemap::{self as SourceMap, DebugIDFormatter, SourceMapPieces, SourceMapState};
-// Note: alias the *module* (not the `ThreadPool` struct) so
-// `ThreadPoolLib::Task` / `ThreadPoolLib::Batch` resolve as nested items.
-use crate::bake_types as bake;
-use bun_ast::{ImportKind, ImportRecord};
-use bun_threading::{WaitGroup, thread_pool as ThreadPoolLib};
+use bun_threading::thread_pool::{Batch, RunningTasks};
 
 use crate::BundledAst as JSAst;
 use bun_ast::{
@@ -31,16 +30,17 @@ use bun_js_printer::{self as js_printer, renamer};
 
 use crate::bun_node_fallbacks as NodeFallbackModules;
 use bun_ast::SideEffects;
-use bun_resolver::Resolver;
 
-use crate::Graph::{CssAsts, Graph};
+use crate::Graph::{CssAsts, Graph, InputFile};
+use crate::chunk::{ChunkOutput, IntermediateOutput};
 use crate::linker_graph::{
     QuotedSourceContents, is_external_dynamic_import, top_level_symbol_to_parts,
 };
-use crate::options::{BundleOptions, CompileMode, Format, Loader, SourceMapOption, Target};
+use crate::options::{CompileMode, Format, Loader, SourceMapOption, Target};
+use crate::thread_pool::Workers;
 use crate::{
-    AdditionalFile, BundleV2, Chunk, CompileResultForSourceMap, ContentHasher, ImportTracker,
-    LinkerGraph, MangledProps, StableRef, WrapKind,
+    AdditionalFile, BundleV2, Chunk, CompileResult, CompileResultForSourceMap, ContentHasher,
+    ImportTracker, LinkerGraph, MangledProps, StableRef, WrapKind,
 };
 
 /// `bun_event_loop` is a
@@ -63,20 +63,22 @@ bun_core::define_scoped_log!(debug_tree_shake, crate::linker_context_mod::TreeSh
 pub(crate) use crate::linker_context::scan_imports_and_exports::scan_imports_and_exports;
 
 pub(crate) use crate::linker_context::compute_chunks::compute_chunks;
-pub use crate::linker_context::metafile_builder as MetafileBuilder;
-// do_step5 / create_exports_for_file are inherent methods on LinkerContext (see
-// `linker_context/doStep5.rs`), not free functions — no item re-export.
 pub(crate) use crate::linker_context::compute_cross_chunk_dependencies::compute_cross_chunk_dependencies;
-pub(crate) use crate::linker_context::generate_chunks_in_parallel::generate_chunks_in_parallel;
+pub(crate) use crate::linker_context::generate_chunks_in_parallel::{
+    generate_chunks_in_parallel, generate_compile_results, post_process_chunks,
+};
+pub use crate::linker_context::metafile_builder as MetafileBuilder;
 pub(crate) use crate::linker_context::post_process_css_chunk::post_process_css_chunk;
 pub(crate) use crate::linker_context::post_process_html_chunk::post_process_html_chunk;
 pub(crate) use crate::linker_context::post_process_js_chunk::post_process_js_chunk;
 pub(crate) use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in_chunk;
 
 pub(crate) struct LinkerContext<'l, 'a> {
-    pub(crate) bundle: &'l BundleV2<'a>,
+    /// `SyncView`: workers share `&LinkerContext`, and `BundleV2` is `!Sync`.
+    bundle: SyncView<&'l BundleV2<'a>>,
+    parse_graph: &'l Graph<'a>,
+    pub(crate) workers: Workers<'l, 'a>,
     pub(crate) graph: LinkerGraph<'a>,
-    pub(crate) resolver: &'l Resolver<'a>,
 
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
     pub(crate) cjs_runtime_ref: Ref,
@@ -95,8 +97,6 @@ pub(crate) struct LinkerContext<'l, 'a> {
 
     /// string buffer containing prefix for each unique keys
     pub(crate) unique_key_prefix: &'a [u8],
-
-    pub(crate) source_maps: SourceMapData<'l, 'a>,
 
     pub(crate) has_dev_server: bool,
     pub(crate) framework: Option<&'l bake::Framework>,
@@ -120,36 +120,26 @@ pub(crate) struct LinkerContext<'l, 'a> {
     pub(crate) entry_point_part_indices: Vec<u32>,
 }
 
-// SAFETY: workers share `&LinkerContext`. Of `bundle` they read the graph, the transpilers and the
-// framework, and get their `Worker` from the pool, which locks its map. What the rows of
-// `bundle.graph.ast` point to is shared with `graph.ast`. What is not `Sync` in `graph`:
-// - The columns that workers write through `split_raw()`: each task writes only the rows of its own
-//   file or chunk. Nothing writes `Part.scopes` or the `symbols` column of `ast` while workers run.
-// - `Symbol.link`, a `Cell` that `follow()` writes only to shorten a chain.
-//   `LinkerContext::link()` shortens them all with `follow_all()` before workers
-//   follow any. The dev server skips `link()`: its links come from the parser and
-//   stay within one file, and tasks that run at the same time work on different files.
-// - The arena. Only the bundle thread allocates from it; workers use `worker.arena()`.
-unsafe impl Sync for LinkerContext<'_, '_> {}
-
 impl<'l, 'a> LinkerContext<'l, 'a> {
     #[inline]
     pub(crate) fn parse_graph(&self) -> &'l Graph<'a> {
-        &self.bundle.graph
+        self.parse_graph
     }
 
-    /// The options of the transpiler that parsed the files of `chunk`.
-    pub(crate) fn options_for_chunk(&self, chunk: &Chunk) -> &'l BundleOptions<'a> {
+    pub(crate) fn bundle(&mut self) -> &'l BundleV2<'a> {
+        self.bundle.as_mut()
+    }
+
+    /// The public path of the transpiler that parsed the files of `chunk`.
+    pub(crate) fn public_path_for_chunk(&self, chunk: &Chunk) -> &'l [u8] {
         if chunk
             .flags
             .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
         {
-            let client = self.bundle.client_transpiler_ref();
-            &client
+            (self.options.client_public_path)
                 .expect("infallible: the client transpiler parsed this chunk")
-                .options
         } else {
-            &self.bundle.transpiler.options
+            self.options.public_path
         }
     }
 
@@ -280,7 +270,7 @@ use crate::bundled_ast::{BundledAstRow, Flags as AstFlags};
 use bun_ast::DeclaredSymbolList;
 
 impl<'l, 'a> LinkerContext<'l, 'a> {
-    pub(crate) fn arena(&self) -> &'a Bump {
+    pub(crate) fn arena(&mut self) -> &'a Bump {
         self.graph.arena()
     }
 
@@ -321,7 +311,6 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             parse_graph.input_files.items_source(),
             &parse_graph.server_component_boundaries,
             bundle.dynamic_import_entry_points.keys(),
-            &parse_graph.entry_point_original_names,
         )?;
 
         let runtime_named_exports = &graph.ast.items_named_exports()[Index::RUNTIME.get() as usize];
@@ -329,8 +318,9 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             |name: &[u8]| runtime_named_exports.get(name).map(|export| export.ref_);
 
         let mut this = Self {
-            bundle,
-            resolver: &bundle.transpiler.resolver,
+            bundle: SyncView::new(bundle),
+            parse_graph,
+            workers: Workers::new(bundle),
             cjs_runtime_ref: runtime_export(b"__commonJS").expect("infallible: runtime export"),
             esm_runtime_ref: runtime_export(b"__esm").expect("infallible: runtime export"),
             unbound_module_ref: Ref::NONE,
@@ -340,12 +330,8 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             preload_runtime_ref: runtime_export(b"__preload").unwrap_or(Ref::NONE),
             chunks_runtime_ref: runtime_export(b"__chunks").unwrap_or(Ref::NONE),
             graph,
-            options: LinkerOptions::new(&bundle.transpiler.options),
+            options: LinkerOptions::new(bundle),
             unique_key_prefix: b"",
-            source_maps: SourceMapData {
-                line_offsets: SourceMapTasks::new(&bundle.line_offset_wait_group),
-                quoted_contents: SourceMapTasks::new(&bundle.quoted_contents_wait_group),
-            },
             has_dev_server: bundle.dev_server.is_some(),
             framework: bundle.framework.as_deref(),
             mangled_props: Default::default(),
@@ -395,20 +381,52 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         Ok(this)
     }
 
-    pub(crate) fn compute_data_for_source_map(&mut self) {
-        debug_assert!(self.options.source_maps != SourceMapOption::None);
-        let reachable: &[Index] = &self.graph.reachable_files;
-        // line offsets block sooner and are faster to compute, so we should schedule those first
-        let mut batch = self
-            .source_maps
-            .line_offsets
-            .create_batch(self.bundle, reachable);
-        batch.push(
-            self.source_maps
-                .quoted_contents
-                .create_batch(self.bundle, reachable),
-        );
-        self.worker_pool().schedule(batch);
+    /// Computes what source maps need of each file on the pool, while `link` runs.
+    pub(crate) fn with_source_map_tasks<R>(
+        &mut self,
+        link: impl FnOnce(&mut Self, SourceMapTasks<'_, 'a>) -> R,
+    ) -> R {
+        let files: Vec<(crate::IndexInt, u32)> = match self.options.source_maps {
+            SourceMapOption::None => Vec::new(),
+            _ => {
+                let newline_counts = self.graph.ast.items_approximate_newline_count();
+                (self.graph.reachable_files.iter())
+                    .map(|index| (index.get(), newline_counts[index.get() as usize]))
+                    .collect()
+            }
+        };
+        let pool = self.worker_pool();
+        let ctx = (self.workers, &self.parse_graph().input_files);
+        Batch::scope(
+            ctx,
+            |&(workers, input_files), ((index, newline_count), result)| {
+                let arena = workers.get().arena();
+                *result = compute_line_offsets(arena, input_files, *index, *newline_count);
+            },
+            files.len(),
+            files.iter().map(|&file| (file, LineOffsets::default())),
+            |mut batch, line_offsets| {
+                Batch::scope(
+                    ctx,
+                    |&(workers, input_files), (index, result)| {
+                        *result =
+                            compute_quoted_contents(workers.get().arena(), input_files, *index);
+                    },
+                    files.len(),
+                    files.iter().map(|&(index, _)| (index, None)),
+                    |quoted_contents_batch, quoted_contents| {
+                        // line offsets block sooner and are faster to compute, so we should schedule those first
+                        batch.push(quoted_contents_batch);
+                        pool.schedule(batch);
+                        let tasks = SourceMapTasks {
+                            line_offsets,
+                            quoted_contents,
+                        };
+                        link(self, tasks)
+                    },
+                )
+            },
+        )
     }
 
     /// Ends the borrow of the bundle.
@@ -448,7 +466,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 .ref_;
 
                 // Make the __jsonParse in that file point to the __jsonParse in the runtime chunk.
-                self.graph.symbol(original_ref).link.set(actual_ref);
+                self.graph.symbols.get_mut(original_ref).unwrap().link = actual_ref;
 
                 // When --splitting is enabled, we have to make sure we import the __jsonParse function.
                 self.graph
@@ -507,10 +525,6 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
 
     #[inline(never)]
     pub(crate) fn link(&mut self, log: &Log) -> Result<Box<[Chunk<'a>]>, LinkError> {
-        if self.options.source_maps != SourceMapOption::None {
-            self.compute_data_for_source_map();
-        }
-
         self.process_html_import_files();
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
@@ -518,7 +532,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         }
 
         // Validate top-level await for all files first.
-        if self.bundle.has_any_top_level_await_modules {
+        if self.bundle().has_any_top_level_await_modules {
             let input_files = self.parse_graph().input_files.items_source();
             let css_asts = &self.parse_graph().css_asts;
             let ast = self.graph.ast.split_mut();
@@ -640,7 +654,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             // the `import()` instead (see `mark_part_live_step`).
             let root_dynamic_imports = !self.options.tree_shaking;
             for i in 0..entry_points_len {
-                let entry_point = self.graph.entry_points.items_source_index()[i];
+                let entry_point = self.graph.entry_points[i];
                 if !root_dynamic_imports
                     && self.graph.files.items_entry_point_kind()[entry_point as usize]
                         == EntryPoint::Kind::DynamicImport
@@ -676,7 +690,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             // between live parts within the same file. All liveness has to be computed
             // first before determining which entry points can reach which files.
             for i in 0..entry_points_len {
-                let entry_point = self.graph.entry_points.items_source_index()[i];
+                let entry_point = self.graph.entry_points[i];
                 self.mark_file_reachable_for_code_splitting(&mut queue, entry_point, i);
             }
         }
@@ -684,20 +698,20 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         Ok(())
     }
 
-    // CONCURRENCY: `each_ptr` callback — runs on worker threads, one task per
-    // `chunk_index`. Writes: `chunk.intermediate_output`, `chunk.isolated_hash`,
-    // `chunk.output_source_map` (per-chunk, disjoint by `&mut Chunk`). Reads
-    // `ctx.chunks` shared.
-    pub(crate) fn generate_chunk(ctx: &GenerateChunkCtx, chunk: &mut Chunk, chunk_index: usize) {
-        let mut worker = crate::thread_pool::Worker::get(ctx.c.bundle);
-        // Note: dispatch on a discriminant copy so `chunk` isn't borrowed
-        // across the post-process call (which takes `&mut Chunk`).
-        let result = match chunk.content {
+    pub(crate) fn generate_chunk<'r>(
+        ctx: &GenerateChunkCtx<'_, 'r, 'a>,
+        chunk_index: usize,
+        output: &mut ChunkOutput<'r, 'a>,
+    ) {
+        let mut worker = ctx.c.workers.get();
+        let result = match ctx.chunks[chunk_index].content {
             crate::chunk::Content::Javascript(_) => {
-                post_process_js_chunk(*ctx, &mut worker, chunk, chunk_index)
+                post_process_js_chunk(*ctx, &mut worker, chunk_index, output)
             }
-            crate::chunk::Content::Css(_) => post_process_css_chunk(*ctx, &mut worker, chunk),
-            crate::chunk::Content::Html => post_process_html_chunk(*ctx, &mut worker, chunk),
+            crate::chunk::Content::Css(_) => {
+                post_process_css_chunk(*ctx, &mut worker, chunk_index, output)
+            }
+            crate::chunk::Content::Html => post_process_html_chunk(*ctx, chunk_index, output),
         };
         if let Err(err) = result {
             Output::panic(format_args!("TODO: handle error: {}", err.name()));
@@ -709,15 +723,6 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
     pub(crate) fn generate_js_renamer(&self, chunk: &mut Chunk<'a>) {
         if let crate::chunk::Content::Javascript(_) = chunk.content {
             chunk.renamer = rename_symbols_in_chunk(self, chunk).expect("TODO: handle error");
-        }
-    }
-
-    pub(crate) fn renamer_for_chunk<'r>(&'r self, chunk: &'r Chunk) -> renamer::Renamer<'r> {
-        use crate::bun_renamer::ChunkRenamer;
-        match &chunk.renamer {
-            ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
-            ChunkRenamer::Number(r) => r.as_renamer(&self.graph.symbols, &self.cross_chunk_names),
-            ChunkRenamer::Minify(r) => r.as_renamer(&self.graph.symbols),
         }
     }
 
@@ -984,11 +989,14 @@ pub(crate) struct LinkerOptions<'l> {
     pub(crate) mode: LinkerOptionsMode,
 
     pub(crate) public_path: &'l [u8],
+    pub(crate) client_public_path: Option<&'l [u8]>,
+    pub(crate) output_dir: &'l [u8],
 }
 
 impl<'l> LinkerOptions<'l> {
-    fn new(options: &'l BundleOptions<'_>) -> Self {
+    fn new(bundle: &'l BundleV2<'_>) -> Self {
         use crate::options::CompileTargetBuiltins;
+        let options = &bundle.transpiler.options;
         Self {
             generate_bytecode_cache: options.bytecode,
             generate_internal_module_bytecode: options.bytecode
@@ -1025,6 +1033,9 @@ impl<'l> LinkerOptions<'l> {
             metafile: options.metafile,
             mode: LinkerOptionsMode::Bundle,
             public_path: &options.public_path,
+            client_public_path: (bundle.client_transpiler_ref())
+                .map(|client| &*client.options.public_path),
+            output_dir: &bundle.transpiler.resolver.opts.output_dir,
         }
     }
 
@@ -1060,146 +1071,60 @@ pub enum LinkerOptionsMode {
     Bundle,
 }
 
-pub(crate) struct SourceMapData<'l, 'a> {
-    pub(crate) line_offsets: SourceMapTasks<'l, 'a, LineOffsets<'a>>,
-    pub(crate) quoted_contents: SourceMapTasks<'l, 'a, QuotedContents<'a>>,
-}
-
 type LineOffsets<'a> = SourceMap::line_offset_table::AstList<'a>;
 type QuotedContents<'a> = Option<QuotedSourceContents<'a>>;
 
-/// One task per file. They run while the link goes on, so each keeps its result to itself.
-pub(crate) struct SourceMapTasks<'l, 'a, T> {
-    wait_group: &'l WaitGroup,
-    tasks: Vec<SourceMapTask<'l, 'a, T>>,
+/// The tasks run while the link goes on, so each keeps its result to itself.
+pub(crate) struct SourceMapTasks<'s, 'a> {
+    pub(crate) line_offsets: RunningTasks<'s, ((crate::IndexInt, u32), LineOffsets<'a>)>,
+    pub(crate) quoted_contents: RunningTasks<'s, (crate::IndexInt, QuotedContents<'a>)>,
 }
 
-struct SourceMapTask<'l, 'a, T> {
-    task: ThreadPoolLib::CountedTask,
-    bundle: &'l BundleV2<'a>,
+fn compute_line_offsets<'a>(
+    arena: &'a AstArena,
+    input_files: &MultiArrayList<InputFile<'_>>,
     source_index: crate::IndexInt,
-    result: T,
+    approximate_line_count: u32,
+) -> LineOffsets<'a> {
+    debug!("Computing LineOffsetTable: {}", source_index);
+    let source: &Source = &input_files.items_source()[source_index as usize];
+    let loader: Loader = input_files.items_loader()[source_index as usize];
+
+    if !loader.can_have_source_map() {
+        // This is not a file which we support generating source maps for
+        return LineOffsets::default();
+    }
+
+    SourceMap::LineOffsetTable::generate_in(
+        &source.contents,
+        // We don't support sourcemaps for source files with more than 2^31 lines
+        (approximate_line_count & 0x7FFF_FFFF) as i32,
+        arena,
+    )
 }
 
-impl<T> Drop for SourceMapTasks<'_, '_, T> {
-    fn drop(&mut self) {
-        self.wait_group.wait();
-    }
-}
-
-impl<'l, 'a, T: SourceMapColumn<'a>> SourceMapTasks<'l, 'a, T> {
-    fn new(wait_group: &'l WaitGroup) -> Self {
-        Self {
-            wait_group,
-            tasks: Vec::new(),
-        }
+fn compute_quoted_contents<'a>(
+    arena: &'a AstArena,
+    input_files: &MultiArrayList<InputFile<'_>>,
+    source_index: crate::IndexInt,
+) -> QuotedContents<'a> {
+    debug!("Computing Quoted Source Contents: {}", source_index);
+    let loader: Loader = input_files.items_loader()[source_index as usize];
+    if !loader.can_have_source_map() {
+        return None;
     }
 
-    fn create_batch(
-        &mut self,
-        bundle: &'l BundleV2<'a>,
-        reachable: &[Index],
-    ) -> ThreadPoolLib::Batch {
-        assert!(self.tasks.is_empty());
-        self.wait_group.add(reachable.len());
-        self.tasks = reachable
-            .iter()
-            .map(|source_index| SourceMapTask {
-                task: ThreadPoolLib::CountedTask::new(Self::run, self.wait_group),
-                bundle,
-                source_index: source_index.get(),
-                result: T::default(),
-            })
-            .collect();
-        let mut batch = ThreadPoolLib::Batch::default();
-        for task in &mut self.tasks {
-            // SAFETY: `finish` and `drop` wait for the group before they access `tasks`.
-            batch.push(unsafe { ThreadPoolLib::Batch::from_raw(&raw mut task.task.task) });
-        }
-        batch
-    }
-
-    unsafe fn run(task: *mut ThreadPoolLib::Task) {
-        // SAFETY: `task` is the field of an element of `tasks`, and nothing else touches an element
-        // before the wait group is done.
-        let task = unsafe { &mut *bun_core::from_field_ptr!(SourceMapTask<'l, 'a, T>, task, task) };
-        let worker = crate::thread_pool::Worker::get(task.bundle);
-        task.result = T::compute(worker.arena(), &task.bundle.graph, task.source_index);
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.tasks.is_empty()
-    }
-
-    /// Waits for the tasks and moves their results to `column`, which is indexed by source index.
-    pub(crate) fn finish(&mut self, column: &mut [T]) {
-        self.wait_group.wait();
-        for task in core::mem::take(&mut self.tasks) {
-            column[task.source_index as usize] = task.result;
-        }
-    }
-}
-
-pub(crate) trait SourceMapColumn<'a>: Default {
-    fn compute(arena: &'a AstArena, parse_graph: &Graph<'_>, source_index: crate::IndexInt)
-    -> Self;
-}
-
-impl<'a> SourceMapColumn<'a> for LineOffsets<'a> {
-    fn compute(
-        arena: &'a AstArena,
-        parse_graph: &Graph<'_>,
-        source_index: crate::IndexInt,
-    ) -> Self {
-        debug!("Computing LineOffsetTable: {}", source_index);
-        let source: &Source = &parse_graph.input_files.items_source()[source_index as usize];
-        let loader: Loader = parse_graph.input_files.items_loader()[source_index as usize];
-
-        if !loader.can_have_source_map() {
-            // This is not a file which we support generating source maps for
-            return Self::default();
-        }
-
-        let approximate_line_count =
-            parse_graph.ast.items_approximate_newline_count()[source_index as usize];
-
-        SourceMap::LineOffsetTable::generate_in(
-            &source.contents,
-            // We don't support sourcemaps for source files with more than 2^31 lines
-            (approximate_line_count as u32 & 0x7FFF_FFFF) as i32,
-            arena,
-        )
-    }
-}
-
-impl<'a> SourceMapColumn<'a> for QuotedContents<'a> {
-    fn compute(
-        arena: &'a AstArena,
-        parse_graph: &Graph<'_>,
-        source_index: crate::IndexInt,
-    ) -> Self {
-        debug!("Computing Quoted Source Contents: {}", source_index);
-        let loader: Loader = parse_graph.input_files.items_loader()[source_index as usize];
-        if !loader.can_have_source_map() {
-            return None;
-        }
-
-        let source: &Source = &parse_graph.input_files.items_source()[source_index as usize];
-        // ~12.5% escape-expansion slack matches `quote_for_json`'s
-        // heuristic so the writer rarely reallocs. The slack is dropped with
-        // the arena at bundle end, and `StringJoiner` only borrows a `&[u8]`
-        // view downstream.
-        let contents: &[u8] = &source.contents;
-        let mut buf =
-            Vec::with_capacity_in(contents.len() + (contents.len() >> 3) + 8, arena.heap());
-        buf.push(b'"');
-        js_printer::write_pre_quoted_string_inner::<_, { js_printer::Encoding::Utf8 }>(
-            contents, &mut buf, b'"', false, true,
-        )
-        .expect("OOM");
-        buf.push(b'"');
-        Some(QuotedSourceContents::new(buf.leak()))
-    }
+    let source: &Source = &input_files.items_source()[source_index as usize];
+    // 12.5% of slack for escapes, as in `quote_for_json`, so that the writer rarely reallocates.
+    let contents: &[u8] = &source.contents;
+    let mut buf = Vec::with_capacity_in(contents.len() + (contents.len() >> 3) + 8, arena.heap());
+    buf.push(b'"');
+    js_printer::write_pre_quoted_string_inner::<_, { js_printer::Encoding::Utf8 }>(
+        contents, &mut buf, b'"', false, true,
+    )
+    .expect("OOM");
+    buf.push(b'"');
+    Some(QuotedSourceContents::new(buf.leak()))
 }
 
 /// Where export `name` of some file finally resolves to, plus the re-export
@@ -1260,21 +1185,20 @@ pub(crate) struct ChunkMeta {
 
 pub(crate) type ChunkMetaMap = ArrayHashMap<Ref, ()>;
 
-/// The same context is observed from every worker thread. Each task only writes to its own `Chunk`.
+/// The same context is observed from every worker thread. `'r`: the borrow of `compile_results` that `ChunkOutput` keeps.
 #[derive(Clone, Copy)]
-pub(crate) struct GenerateChunkCtx<'c, 'a> {
-    pub(crate) c: &'c LinkerContext<'c, 'a>,
-    /// Backref to the full `chunks: &mut [Chunk]` slice owned by
-    /// `generate_chunks_in_parallel`. The slice outlives every
-    /// `GenerateChunkCtx` (`each_ptr` joins the tasks), so [`bun_ptr::BackRef`]'s
-    /// owner-outlives-holder invariant holds and per-task reads go through
-    /// safe `Deref`. Read-only: each task writes only through its own
-    /// `&mut Chunk`.
-    pub(crate) chunks: bun_ptr::BackRef<[Chunk<'a>]>,
+pub(crate) struct GenerateChunkCtx<'c, 'r, 'a> {
+    pub(crate) c: &'c LinkerContext<'r, 'a>,
+    pub(crate) chunks: &'c [Chunk<'a>],
+    pub(crate) compile_results: &'r [Box<[CompileResult]>],
 }
 
 impl<'a> LinkerContext<'_, 'a> {
-    pub(crate) fn generate_isolated_hash(&self, chunk: &Chunk) -> u64 {
+    pub(crate) fn generate_isolated_hash(
+        &self,
+        chunk: &Chunk,
+        intermediate_output: &IntermediateOutput,
+    ) -> u64 {
         let _trace = bun::perf::trace("Bundler.generateIsolatedHash");
 
         let mut hasher = ContentHasher::default();
@@ -1310,7 +1234,7 @@ impl<'a> LinkerContext<'_, 'a> {
         // any import to be considered different if the import's output path has changed.
         hasher.write(&chunk.template.data);
 
-        let public_path: &[u8] = &self.options_for_chunk(chunk).public_path;
+        let public_path: &[u8] = self.public_path_for_chunk(chunk);
 
         // Also hash the public path. If provided, this is used whenever files
         // reference each other such as cross-chunk imports, asset file references,
@@ -1324,10 +1248,10 @@ impl<'a> LinkerContext<'_, 'a> {
         // Include the generated output content in the hash. This excludes the
         // randomly-generated import paths (the unique keys) and only includes the
         // data in the spans between them.
-        match &chunk.intermediate_output {
+        match intermediate_output {
             crate::chunk::IntermediateOutput::Pieces(pieces) => {
                 for piece in pieces.slice() {
-                    hasher.write(piece.data());
+                    hasher.write(pieces.data(piece));
                 }
             }
             crate::chunk::IntermediateOutput::Joiner(joiner) => {
@@ -1817,12 +1741,12 @@ impl<'a> LinkerContext<'_, 'a> {
     }
 
     pub(crate) fn mangle_local_css(&mut self) {
-        if self.bundle.has_any_css_locals.load(Ordering::Relaxed) == 0 {
+        if self.bundle().has_any_css_locals.load(Ordering::Relaxed) == 0 {
             return;
         }
 
         let all_css_asts = &self.parse_graph().css_asts;
-        let all_symbols: &[bun_ast::symbol::List<'a>] = self.graph.ast.items_symbols();
+        let all_symbols = &self.graph.symbols.symbols_for_source;
         let all_sources: &[Source] = self.parse_graph().input_files.items_source();
 
         // Collect all local css names
@@ -1844,7 +1768,7 @@ impl<'a> LinkerContext<'_, 'a> {
                                 bun_ast::RefTag::Symbol,
                             );
                             while symbol.has_link() {
-                                r#ref = symbol.link.get();
+                                r#ref = symbol.link;
                                 symbol = &all_symbols[r#ref.source_index() as usize]
                                     [r#ref.inner_index() as usize];
                             }
@@ -1892,11 +1816,12 @@ impl<'a> LinkerContext<'_, 'a> {
     pub(crate) fn final_chunk_hashes(
         &self,
         chunks: &[Chunk],
+        intermediate_outputs: &[IntermediateOutput],
     ) -> Result<Vec<bun_core::fmt::ContentHash>, AllocError> {
         let n = chunks.len();
         let mut own: Vec<u64> = Vec::with_capacity(n);
         let mut edges: Vec<Vec<u32>> = Vec::with_capacity(n);
-        for chunk in chunks {
+        for (chunk, intermediate_output) in chunks.iter().zip(intermediate_outputs) {
             let mut hash = ContentHasher::default();
             let mut out: Vec<u32> = chunk
                 .cross_chunk_imports
@@ -1904,7 +1829,7 @@ impl<'a> LinkerContext<'_, 'a> {
                 .iter()
                 .map(|import| import.chunk_index)
                 .collect();
-            if let crate::chunk::IntermediateOutput::Pieces(pieces) = &chunk.intermediate_output {
+            if let IntermediateOutput::Pieces(pieces) = intermediate_output {
                 for piece in pieces.slice() {
                     match piece.query.kind() {
                         crate::chunk::QueryKind::Asset => {
@@ -2212,7 +2137,7 @@ impl LinkerContext<'_, '_> {
 
         let mut preload_entries = AutoBitSet::init_empty(files_len)?;
         for i in 0..self.graph.entry_points.len() {
-            let entry = self.graph.entry_points.items_source_index()[i];
+            let entry = self.graph.entry_points[i];
             let id = entry as usize;
             if self.graph.files.items_entry_point_kind()[id] != EntryPoint::Kind::UserSpecified
                 || !reaches.is_set(id)
@@ -2291,7 +2216,7 @@ impl LinkerContext<'_, '_> {
                 // Note: `bake_graph()` lives in `bun_bake` (tier-6 — would back-edge).
                 // The debug log only needs a stable label, so print the `Target`
                 // tag directly via its `IntoStaticStr` derive.
-                <&'static str>::from(parse_graph.ast.items_target()[source_index as usize]),
+                <&'static str>::from(self.graph.ast.items_target()[source_index as usize]),
                 if self.graph.files_live.is_set(source_index as usize) {
                     "already seen"
                 } else {
@@ -3938,12 +3863,12 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         source_index: crate::IndexInt,
         member_resolutions: &mut ImportMemberResolutions<'a>,
     ) {
-        let arena = self.graph.ast_arena();
+        let (arena, bundle) = (self.graph.ast_arena(), self.bundle());
         let meta = self.graph.meta.split_mut();
         let imports_to_bind = &mut meta.imports_to_bind[source_index as usize];
         let mut matcher = ImportMatcher {
             arena,
-            bundle: self.bundle,
+            bundle,
             ast: &self.graph.ast,
             meta_flags: meta.flags,
             resolved_exports: meta.resolved_exports,
@@ -4309,12 +4234,11 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         Ok((r#ref, part_index))
     }
 
-    pub(crate) fn break_output_into_pieces(
+    pub(crate) fn break_output_into_pieces<'r>(
         &self,
-        _alloc: *const Bump,
-        j: &mut StringJoiner<'static>,
+        mut j: StringJoiner<'r>,
         count: u32,
-    ) -> Result<crate::chunk::IntermediateOutput, BunError> {
+    ) -> Result<IntermediateOutput<'r>, BunError> {
         let _trace = bun::perf::trace("Bundler.breakOutputIntoPieces");
 
         type OutputPiece = crate::chunk::OutputPiece;
@@ -4325,14 +4249,10 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             // 2. require()
             // 3. require.resolve()
             // 4. externals
-            return Ok(crate::chunk::IntermediateOutput::Joiner(core::mem::take(j)));
+            return Ok(IntermediateOutput::Joiner(j));
         }
 
         let mut pieces: Vec<OutputPiece> = Vec::new();
-        // Note: `StringJoiner::done()`
-        // returns a `Box<[u8]>`; we must keep it alive alongside the pieces
-        // (each `OutputPiece` stores a raw `*const u8` into it). It is moved
-        // into the returned `OutputPieces` below.
         let complete_output: Box<[u8]> = j.done()?;
         let mut output: &[u8] = &complete_output;
 
@@ -4405,14 +4325,18 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
 
             // Note: `Query` is a packed `u32` (`index: u29`, `kind: u3`);
             // construct via `new` rather than field-init.
+            let piece_start = complete_output.len() - output.len();
             pieces.push(OutputPiece::init(
-                &output[0..boundary],
+                piece_start..piece_start + boundary,
                 crate::chunk::Query::new(u32::try_from(index).expect("int cast"), kind),
             ));
             output = &output[boundary + prefix.len() + 9..];
         }
 
-        pieces.push(OutputPiece::init(output, crate::chunk::Query::NONE));
+        pieces.push(OutputPiece::init(
+            complete_output.len() - output.len()..complete_output.len(),
+            crate::chunk::Query::NONE,
+        ));
 
         Ok(crate::chunk::IntermediateOutput::Pieces(
             crate::chunk::OutputPieces::new(pieces, complete_output),

@@ -78,7 +78,7 @@ pub use css::targets::Features;
 #[derive(Clone, Copy)]
 pub struct ImportInfo<'a> {
     pub import_records: &'a [ImportRecord<'a>],
-    /// bundle_v2.graph.ast.items(.url_for_css)
+    /// LinkerGraph.ast.items(.url_for_css)
     pub ast_urls_for_css: &'a [&'a [u8]],
     /// bundle_v2.graph.input_files.items(.unique_key_for_additional_file)
     pub ast_unique_key_for_additional_file: &'a [StoreStr<'a>],

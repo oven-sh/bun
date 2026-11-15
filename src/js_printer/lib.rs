@@ -7520,6 +7520,8 @@ pub fn print_ast<'a, 'ast, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bo
 ) -> crate::Result<usize> {
     bun_crash_handler::scoped_action!(bun_crash_handler::Action::Print(source.path.text));
 
+    symbols.follow_all();
+
     // Declared out here so that what `renamer` borrows outlives the branch that makes it.
     let mut minify_renamer;
     // `Scope` isn't `Copy` here and the only
@@ -7540,7 +7542,7 @@ pub fn print_ast<'a, 'ast, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bo
                 if !symbol.has_link() {
                     break;
                 }
-                ref_ = symbol.link.get();
+                ref_ = symbol.link;
             }
         }
 
@@ -7740,7 +7742,7 @@ pub fn print_json<'ast, W: WriterTrait>(
     let writer = _writer;
     // The printer only needs default-empty `import_records` and `symbols` for
     // the no-op renamer; construct them directly without an `Ast`.
-    let symbols = js_ast::symbol::Map::init_list(vec![Vec::new()]);
+    let symbols = js_ast::symbol::Map::default();
 
     let full_opts = Options {
         indent: opts.indent,

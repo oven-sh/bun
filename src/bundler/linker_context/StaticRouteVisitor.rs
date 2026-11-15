@@ -13,6 +13,7 @@ use crate::{Index, UseDirective};
 
 pub(crate) struct StaticRouteVisitor<'a, 'ctx> {
     pub(crate) parse_graph: &'a Graph<'ctx>,
+    pub(crate) import_records: &'a [import_record::List<'ctx>],
     pub(crate) cache: ArrayHashMap</* Index::Int */ u32, bool>,
     pub(crate) visited: AutoBitSet,
     pub(crate) stack: Vec<Frame>,
@@ -38,7 +39,6 @@ impl StaticRouteVisitor<'_, '_> {
         }
 
         let parse_graph = self.parse_graph;
-        let all_import_records: &[import_record::List<'_>] = parse_graph.ast.items_import_records();
         let referenced_source_indices: &[u32] = parse_graph
             .server_component_boundaries
             .list
@@ -49,7 +49,7 @@ impl StaticRouteVisitor<'_, '_> {
             .items_use_directive();
 
         self.has_transitive_use_client_impl(
-            all_import_records,
+            self.import_records,
             referenced_source_indices,
             use_directives,
             Index::init(entry_point_source_index),

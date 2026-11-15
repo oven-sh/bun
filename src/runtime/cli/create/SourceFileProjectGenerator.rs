@@ -49,7 +49,7 @@ pub(crate) fn generate(
     let needs_to_inject_tailwind = !has_tailwind_in_dependencies
         && has_any_tailwind_classes_in_source_files(result.bundle_v2, result.reachable_files);
 
-    let shadcn = get_shadcn_components(result.bundle_v2, result.reachable_files)?;
+    let shadcn = get_shadcn_components(result)?;
     let needs_to_inject_shadcn_ui = !shadcn.keys().is_empty();
 
     if needs_to_inject_tailwind {
@@ -421,14 +421,13 @@ fn has_any_tailwind_classes_in_source_files(
 
 // Get list of shadcn components used in source files
 fn get_shadcn_components(
-    bundler: &BundleV2,
-    reachable_files: &[bun_ast::Index],
+    result: &DependenciesScannerResult,
 ) -> Result<StringSet, bun_alloc::AllocError> {
-    let input_files = &bundler.graph.input_files;
+    let input_files = &result.bundle_v2.graph.input_files;
     let loaders = input_files.items_loader();
-    let all = bundler.graph.ast.items_import_records();
+    let all = result.linker_graph.ast.items_import_records();
     let mut icons = StringSet::new();
-    for file in reachable_files {
+    for file in result.reachable_files {
         if !matches!(
             loaders[file.get() as usize],
             bun_ast::Loader::Tsx | bun_ast::Loader::Jsx

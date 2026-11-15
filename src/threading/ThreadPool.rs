@@ -391,8 +391,8 @@ pub struct Task {
 /// `&raw mut outer.counted.task` — a raw place projection through the *outer* struct, so the
 /// callback's container-of keeps provenance over its sibling fields — then `wait()` on the group.
 #[repr(C)]
-pub struct CountedTask {
-    pub task: Task,
+pub(crate) struct CountedTask {
+    pub(crate) task: Task,
     run: unsafe fn(*mut Task),
     group: *const WaitGroup,
 }
@@ -404,7 +404,7 @@ unsafe impl Send for CountedTask {}
 impl CountedTask {
     /// `group` must count this task before it runs and outlive its completion (`WaitGroup::wait()`
     /// returning is that completion).
-    pub fn new(run: unsafe fn(*mut Task), group: &WaitGroup) -> Self {
+    pub(crate) fn new(run: unsafe fn(*mut Task), group: &WaitGroup) -> Self {
         Self {
             task: Task {
                 node: Node::default(),
@@ -538,6 +538,79 @@ impl Batch {
     }
 }
 
+struct RunnerTask<V> {
+    task: CountedTask,
+    /// `*const (Ctx, F)`
+    shared: *const (),
+    value: V,
+}
+
+/// The values of [`Batch::scope`], which its tasks are using.
+pub struct RunningTasks<'s, V> {
+    group: &'s WaitGroup,
+    /// Not `&mut [_]`: the tasks are using the elements.
+    tasks: &'s mut Vec<RunnerTask<V>>,
+}
+
+impl<'s, V> RunningTasks<'s, V> {
+    /// Blocks until all tasks are completed.
+    pub fn wait(self) -> impl Iterator<Item = &'s mut V> {
+        self.group.wait();
+        self.tasks.iter_mut().map(|task| &mut task.value)
+    }
+}
+
+impl Batch {
+    /// Makes a batch that calls `run_fn` on each value. `f` schedules it, and this returns once it has run.
+    pub fn scope<Ctx, V, F, R>(
+        ctx: Ctx,
+        run_fn: F,
+        capacity: usize,
+        values: impl Iterator<Item = V>,
+        f: impl FnOnce(Batch, RunningTasks<'_, V>) -> R,
+    ) -> R
+    where
+        F: Fn(&Ctx, &mut V) + core::marker::Sync,
+        Ctx: core::marker::Sync,
+        V: core::marker::Send,
+    {
+        unsafe fn call<Ctx, V, F: Fn(&Ctx, &mut V)>(task: *mut Task) {
+            // SAFETY: `task` is the field of an element of `tasks`, which nothing else touches
+            // until a `wait` has returned. `shared` drops after that.
+            let (runner_task, (ctx, run_fn)) = unsafe {
+                let runner_task = bun_core::from_field_ptr!(RunnerTask<V>, task, task);
+                let shared = (*runner_task).shared.cast::<(Ctx, F)>();
+                (&mut *runner_task, &*shared)
+            };
+            run_fn(ctx, &mut runner_task.value);
+        }
+
+        let shared = (ctx, run_fn);
+        let group = WaitGroup::init();
+        let mut tasks = Vec::with_capacity(capacity);
+        tasks.extend(values.map(|value| RunnerTask {
+            task: CountedTask::new(call::<Ctx, V, F>, &group),
+            shared: (&raw const shared).cast(),
+            value,
+        }));
+
+        group.add(tasks.len());
+        let mut batch = Batch::default();
+        for runner_task in tasks.iter_mut() {
+            // SAFETY: `tasks`, `shared` and `group` drop after `group.wait()` below, and the bounds on
+            // `Ctx`, `F` and `V` let `call` run on another thread.
+            batch.push(unsafe { Batch::from_raw(&raw mut runner_task.task.task) });
+        }
+        // Deferred, in case `f` unwinds.
+        scopeguard::defer! { group.wait(); }
+        let tasks = RunningTasks {
+            group: &group,
+            tasks: &mut tasks,
+        };
+        f(batch, tasks)
+    }
+}
+
 impl ThreadPool {
     /// Loop over an array of tasks and invoke `run_fn` on each one in a different thread.
     /// **Blocks the calling thread** until all tasks are completed.
@@ -570,12 +643,15 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: Copy + core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(
+        Batch::scope(
             ctx,
             move |ctx, &mut (i, value)| run_fn(ctx, value, i),
             values.len(),
             values.iter().copied().enumerate().rev(),
-            on_calling_thread,
+            |batch, _| {
+                self.schedule(batch);
+                on_calling_thread();
+            },
         );
     }
 
@@ -627,59 +703,9 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: core::marker::Send,
     {
-        self.each_impl(ctx, run_fn, capacity, values, || {});
-    }
-
-    fn each_impl<Ctx, V, F>(
-        &self,
-        ctx: Ctx,
-        run_fn: F,
-        capacity: usize,
-        values: impl Iterator<Item = V>,
-        on_calling_thread: impl FnOnce(),
-    ) where
-        F: Fn(&Ctx, &mut V) + core::marker::Sync,
-        Ctx: core::marker::Sync,
-        V: core::marker::Send,
-    {
-        struct RunnerTask<'a, Ctx, V, F> {
-            task: CountedTask,
-            shared: &'a (Ctx, F),
-            value: V,
-        }
-
-        unsafe fn call<Ctx, V, F: Fn(&Ctx, &mut V)>(task: *mut Task) {
-            // SAFETY: `task` is the field of an element of `tasks`, which `each_impl` does not
-            // touch between `schedule` and the end of `wait`.
-            let runner_task =
-                unsafe { &mut *bun_core::from_field_ptr!(RunnerTask<Ctx, V, F>, task, task) };
-            let (ctx, run_fn) = runner_task.shared;
-            run_fn(ctx, &mut runner_task.value);
-        }
-
-        let shared = (ctx, run_fn);
-        let group = WaitGroup::init();
-        let mut tasks = Vec::with_capacity(capacity);
-        tasks.extend(values.map(|value| RunnerTask {
-            task: CountedTask::new(call::<Ctx, V, F>, &group),
-            shared: &shared,
-            value,
-        }));
-        if tasks.is_empty() {
-            return on_calling_thread();
-        }
-
-        group.add(tasks.len());
-        let mut batch = Batch::default();
-        for runner_task in tasks.iter_mut() {
-            // SAFETY: `tasks`, `shared` and `group` drop after `group.wait()` below, and the bounds on
-            // `Ctx`, `F` and `V` let `call` run on another thread.
-            batch.push(unsafe { Batch::from_raw(&raw mut runner_task.task.task) });
-        }
-        self.schedule(batch);
-        // Deferred, in case `on_calling_thread` unwinds.
-        scopeguard::defer! { group.wait(); }
-        on_calling_thread();
+        Batch::scope(ctx, run_fn, capacity, values, |batch, _| {
+            self.schedule(batch);
+        });
     }
 
     fn schedule_impl(&self, batch: Batch, try_current: bool) {
@@ -2106,5 +2132,57 @@ pub mod node {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::sync::atomic::AtomicUsize;
+
+    fn run_on_new_thread(batch: Batch) -> std::thread::JoinHandle<()> {
+        let head = AtomicPtr::new(batch.head.unwrap().as_ptr());
+        let thread = std::thread::Builder::new().spawn(move || {
+            let mut task = head.into_inner();
+            while !task.is_null() {
+                // SAFETY: a task of the batch, run once, after its link is read.
+                unsafe {
+                    let next = Task::from_node((*task).node.next);
+                    ((*task).callback)(task);
+                    task = next;
+                }
+            }
+        });
+        thread.unwrap()
+    }
+
+    #[test]
+    fn wait_returns_the_values() {
+        let thread = Batch::scope(
+            10,
+            |factor, value| *value *= factor,
+            3,
+            1..4,
+            |batch, tasks| {
+                let thread = run_on_new_thread(batch);
+                assert_eq!(tasks.wait().collect::<Vec<_>>(), [&10, &20, &30]);
+                thread
+            },
+        );
+        thread.join().unwrap();
+    }
+
+    #[test]
+    fn scope_waits_for_the_tasks() {
+        let sum = AtomicUsize::new(0);
+        let thread = Batch::scope(
+            &sum,
+            |sum, value| _ = sum.fetch_add(*value, Ordering::Relaxed),
+            3,
+            1..4,
+            |batch, _| run_on_new_thread(batch),
+        );
+        assert_eq!(sum.into_inner(), 6);
+        thread.join().unwrap();
     }
 }

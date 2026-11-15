@@ -471,7 +471,7 @@ impl<'ast> ConvertESMExportsForHmr<'_, 'ast> {
                     // existing AST trees, a link must be established.
                     let symbol = &mut p.symbols[namespace_ref.inner_index() as usize];
                     symbol.use_count_estimate = 0;
-                    symbol.link.set(stmt.namespace_ref);
+                    symbol.link = stmt.namespace_ref;
                     // Note: the concrete `P` always carries `symbol_uses`;
                     // once a `ParserLike` trait is introduced for
                     // AstBuilder, that variant should override this to a no-op.

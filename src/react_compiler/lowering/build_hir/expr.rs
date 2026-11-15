@@ -1485,7 +1485,7 @@ fn is_module_level_or_global(builder: &HirBuilder, ref_: Ref) -> bool {
         return true;
     };
     while sym.has_link() {
-        let next = sym.link.get();
+        let next = sym.link;
         match symbols.get(next.inner_index() as usize) {
             Some(s) => {
                 ref_ = next;

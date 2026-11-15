@@ -2,6 +2,7 @@ use crate::LinkerContext;
 use crate::analyze_transpiled_module::ModuleInfo;
 use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
 use crate::bundled_ast::BundledAstRow;
+use crate::chunk::ChunkOutput;
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::mal_prelude::*;
 use crate::options;
@@ -40,11 +41,12 @@ fn print_result_take_code(r: &mut PrintResult) -> Box<[u8]> {
 /// split bundle: the chunk graph `__preload` walks (see runtime.js).
 fn module_preload_registration(
     c: &LinkerContext,
-    chunk: &Chunk,
+    renamer: js_printer::renamer::Renamer,
     chunk_index: usize,
     chunks: &[Chunk],
 ) -> Result<Vec<u8>, crate::Error> {
     use std::io::Write as _;
+    let chunk = &chunks[chunk_index];
     let mut code = Vec::new();
     if !c.module_preload()
         || !chunk.entry_point.is_entry_point()
@@ -70,7 +72,7 @@ fn module_preload_registration(
     write!(
         &mut code,
         "{}(import.meta.url,[",
-        bstr::BStr::new(c.renamer_for_chunk(chunk).name_for_symbol(chunks_ref))
+        bstr::BStr::new(renamer.name_for_symbol(chunks_ref))
     )
     .unwrap();
     for (i, &chunk_index) in reached.iter().enumerate() {
@@ -99,15 +101,20 @@ fn module_preload_registration(
 }
 
 /// This runs after we've already populated the compile results
-pub(crate) fn post_process_js_chunk(
-    ctx: GenerateChunkCtx,
+pub(crate) fn post_process_js_chunk<'r>(
+    ctx: GenerateChunkCtx<'_, 'r, '_>,
     worker: &mut ThreadPool::Worker,
-    chunk: &mut Chunk,
     chunk_index: usize,
+    output: &mut ChunkOutput<'r, '_>,
 ) -> Result<(), crate::Error> {
     let _trace = perf::trace("Bundler.postProcessJSChunk");
 
     let c = ctx.c;
+    let chunk = &ctx.chunks[chunk_index];
+    let compile_results = &ctx.compile_results[chunk_index];
+    // Nothing reads it after post-processing.
+    let chunk_renamer = core::mem::take(&mut output.renamer);
+    let renamer = chunk_renamer.as_renamer(c);
     debug_assert!(matches!(
         chunk.content,
         crate::chunk::Content::Javascript(_)
@@ -201,8 +208,6 @@ pub(crate) fn post_process_js_chunk(
         for import_record in chunk.cross_chunk_imports.slice() {
             cross_chunk_import_records.push(ImportRecord {
                 kind: import_record.import_kind,
-                // `ctx.chunks` is a `BackRef<[Chunk]>` (safe `Deref`); chunk_index is
-                // in-bounds (produced by the linker for this chunks slice).
                 path: bun_paths::fs::Path::init(
                     ctx.chunks[import_record.chunk_index as usize].unique_key,
                 ),
@@ -219,7 +224,7 @@ pub(crate) fn post_process_js_chunk(
         let ast_view = BundledAstRow::new(&c.graph.ast, chunk.entry_point.source_index() as usize)
             .printer_view;
         let source = c.get_source(chunk.entry_point.source_index());
-        let target = c.resolver.opts.target;
+        let target = c.options.target;
 
         let js = chunk.content.javascript();
         let suffix_stmts: &[Stmt] = if exports_join_entry_tail {
@@ -239,11 +244,11 @@ pub(crate) fn post_process_js_chunk(
             },
             cross_chunk_import_records.as_slice(),
             &js.cross_chunk_prefix_stmts,
-            c.renamer_for_chunk(chunk),
+            renamer,
         );
         if let Some(mi) = module_info.as_deref_mut() {
             // One result per entry of `parts_in_chunk_in_order`, in that order.
-            for compile_result in chunk.compile_results_for_chunk.iter() {
+            for compile_result in compile_results.iter() {
                 if let CompileResult::Javascript {
                     module_info: Some(part_module_info),
                     ..
@@ -264,7 +269,7 @@ pub(crate) fn post_process_js_chunk(
             },
             &[],
             suffix_stmts,
-            c.renamer_for_chunk(chunk),
+            renamer,
         );
     }
 
@@ -276,7 +281,7 @@ pub(crate) fn post_process_js_chunk(
     // and the suspended generator is dropped — the entry promise resolves
     // immediately and the process exits before the awaited value lands.
     if let Some(mi) = module_info.as_deref_mut() {
-        let tla_keywords = c.parse_graph().ast.items_top_level_await_keyword();
+        let tla_keywords = c.graph.ast.items_top_level_await_keyword();
         let wraps = c.graph.meta.items_flags();
         for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
             let idx = part_range.source_index.get() as usize;
@@ -309,7 +314,7 @@ pub(crate) fn post_process_js_chunk(
                 chunk.entry_point.source_index(),
                 worker_arena,
                 &arena,
-                c.renamer_for_chunk(chunk),
+                renamer,
                 module_info.as_deref_mut(),
                 cross_chunk_exports,
             );
@@ -329,9 +334,7 @@ pub(crate) fn post_process_js_chunk(
     // generateChunksInParallel after final chunk paths are computed, so that
     // cross-chunk import specifiers (which use unique_key placeholders during
     // printing) can be resolved to actual paths.
-    if let Some(mi) = module_info {
-        chunk.content.javascript_mut().module_info = Some(mi);
-    }
+    output.module_info = module_info;
 
     let mut j = StringJoiner::default();
     j.watcher = Watcher {
@@ -440,15 +443,15 @@ pub(crate) fn post_process_js_chunk(
         }
     }
 
-    let mut preload_registration = module_preload_registration(c, chunk, chunk_index, &ctx.chunks)?;
+    let mut preload_registration =
+        module_preload_registration(c, renamer, chunk_index, ctx.chunks)?;
 
-    // For Kit, hoist runtime.js outside of the IIFE
-    let compile_results = &chunk.compile_results_for_chunk;
     // Right after the runtime (which declares `__chunks`) if it is in this chunk, else first.
     let preload_registration_index = compile_results
         .iter()
         .take_while(|r| r.source_index() == Index::RUNTIME.value())
         .count();
+    // For Kit, hoist runtime.js outside of the IIFE
     if c.options.output_format == options::OutputFormat::InternalBakeDev {
         for compile_result in compile_results.iter() {
             let source_index = compile_result.source_index();
@@ -485,7 +488,7 @@ pub(crate) fn post_process_js_chunk(
 
     {
         // `cross_chunk_prefix` is a local that drops at fn exit, but the joiner
-        // may be stashed on `chunk.intermediate_output` and consumed later
+        // may be stashed on `output.intermediate_output` and consumed later
         // (`IntermediateOutput::Joiner` path). Move the Box into the joiner.
         let code = print_result_take_code(&mut cross_chunk_prefix);
         if !code.is_empty() {
@@ -508,7 +511,7 @@ pub(crate) fn post_process_js_chunk(
         show_comments && c.framework.is_some_and(|fw| fw.server_components.is_some());
 
     let sources: &[bun_ast::Source] = c.parse_graph().input_files.items_source();
-    let targets: &[options::Target] = c.parse_graph().ast.items_target();
+    let targets: &[options::Target] = c.graph.ast.items_target();
     for (compile_result_index, compile_result) in compile_results.iter().enumerate() {
         let source_index = compile_result.source_index();
         let is_runtime = source_index == Index::RUNTIME.value();
@@ -724,43 +727,28 @@ pub(crate) fn post_process_js_chunk(
         line_offset.advance(b"\n");
     }
 
-    // SAFETY: every borrowed node in `j` points into `chunk.compile_results_for_chunk`
-    // (slots pre-sized in generateChunksInParallel, filled in place by the print
-    // workers before post-processing, never reassigned afterwards), `c.options`
-    // banner/footer (the bundle's options), graph/parse-graph data (hashbangs, source paths,
-    // HMR runtime), or `'static` literals; `watcher.input` is `chunk.unique_key`
-    // (bundle arena). All of these outlive the joiner stored in
-    // `chunk.intermediate_output`, which is only read while the chunk and the
-    // linker graph are alive.
-    let mut j = unsafe { j.detach_lifetime() };
-    chunk.intermediate_output = c
-        .break_output_into_pieces(worker_arena.heap(), &mut j, ctx.chunks.len() as u32)
+    output.intermediate_output = c
+        .break_output_into_pieces(j, ctx.chunks.len() as u32)
         .unwrap_or_else(|_| panic!("Unhandled out of memory error in breakOutputIntoPieces()"));
 
     // TODO: meta contents
 
-    chunk.isolated_hash = c.generate_isolated_hash(chunk);
-    chunk
-        .flags
-        .set(crate::chunk::Flags::IS_EXECUTABLE, is_executable);
+    output.isolated_hash = c.generate_isolated_hash(chunk, &output.intermediate_output);
+    output.is_executable = is_executable;
 
     if c.options.source_maps != options::SourceMapOption::None {
         let can_have_shifts = matches!(
-            chunk.intermediate_output,
+            output.intermediate_output,
             crate::chunk::IntermediateOutput::Pieces(_)
         );
-        chunk.output_source_map = c.generate_source_map_for_chunk(
-            chunk.isolated_hash,
+        output.output_source_map = c.generate_source_map_for_chunk(
+            output.isolated_hash,
             worker,
             &compile_results_for_source_map,
-            &c.resolver.opts.output_dir,
+            c.options.output_dir,
             can_have_shifts,
         )?;
     }
-
-    // Free the renamer now that printing is done; nothing reads it after
-    // post-processing.
-    chunk.renamer = Default::default();
 
     Ok(())
 }
@@ -1245,7 +1233,7 @@ pub(crate) fn generate_entry_point_tail_js(
     CompileResult::Javascript {
         result: js_printer::print::<false>(
             arena,
-            c.resolver.opts.target,
+            c.options.target,
             &ast.printer_view,
             c.get_source(source_index),
             print_options,

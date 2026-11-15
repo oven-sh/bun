@@ -474,8 +474,7 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
 }
 
 /// Frees the calling thread's bytecode-generation VM, if it made one.
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_jsc_destroy_bytecode_cache_vm() {
+pub fn destroy_bytecode_cache_vm() {
     unsafe extern "C" {
         safe fn Bun__destroyBytecodeCacheVM();
     }

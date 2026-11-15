@@ -9,13 +9,14 @@ use crate::shell::interpreter::{
     EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind, log,
 };
 use crate::shell::io::{IO, OutKind};
-use crate::shell::states::base::Base;
+use crate::shell::states::base::{Base, Env, InheritedEnv};
 use crate::shell::states::script::Script;
 use crate::shell::yield_::Yield;
 use crate::shell::{ExitCode, ShellErr};
 
 pub(crate) struct Expansion {
     pub(crate) base: Base,
+    shell: InheritedEnv,
     pub node: bun_ptr::BackRef<ast::Atom>,
     pub(crate) state: ExpansionState,
     /// Index of the next sub-atom to expand. For `Atom::Simple` this is 0/1;
@@ -93,7 +94,8 @@ impl Expansion {
         assign_ctx: bool,
     ) -> NodeId {
         interp.alloc_node(Node::Expansion(Expansion {
-            base: Base::new(parent, shell),
+            base: Base::new(parent),
+            shell: InheritedEnv(shell),
             node: bun_ptr::BackRef::new(node),
             state: ExpansionState::Idle,
             word_idx: 0,
@@ -162,7 +164,7 @@ impl Expansion {
                     ast::Atom::Simple(s) => s,
                     ast::Atom::Compound(c) => &c.atoms[me.word_idx as usize],
                 };
-                let shell = me.base.shell();
+                let shell = &*me.shell;
                 let is_cmd_subst = interp.vm_args_utf8.with_mut(|vm_args_utf8| {
                     Self::expand_simple_no_io(
                         shell,
@@ -194,11 +196,7 @@ impl Expansion {
                     stdout: OutKind::Pipe,
                     stderr: interp.root_io().stderr.clone(),
                 };
-                let duped = match me
-                    .base
-                    .shell_mut()
-                    .dupe_for_subshell(&io, ShellExecEnvKind::CmdSubst)
-                {
+                let duped = match me.shell.dupe_for_subshell(&io, ShellExecEnvKind::CmdSubst) {
                     Ok(d) => d,
                     Err(e) => {
                         drop(io);
@@ -206,14 +204,14 @@ impl Expansion {
                         return Yield::Failed(this);
                     }
                 };
-                let script = Script::init_cmd_subst(interp, duped, &sub.script, this, io);
+                let script = Script::init(interp, Env::Owned(duped), &sub.script, this, io);
                 interp.as_expansion_mut(this).child_script = Some(script);
                 return Script::start(interp, script);
             }
 
             // All sub-atoms expanded — post-process leading tilde then finish.
             if leading_tilde {
-                let home = me.base.shell().get_homedir();
+                let home = me.shell.get_homedir();
                 let len_before = me.current_out.len();
                 match me.current_out.first() {
                     Some(b'/') | Some(b'\\') => {
@@ -428,7 +426,7 @@ impl Expansion {
             let me = interp.as_expansion_mut(this);
             me.state = ExpansionState::Glob;
             pattern = Self::neutralize_glob_metachars(&me.current_out, &me.meta_offsets);
-            cwd = me.base.shell().cwd().to_vec();
+            cwd = me.shell.cwd().to_vec();
         }
         let walker = match bun_glob::BunGlobWalkerZ::init_with_cwd(
             &pattern, &cwd, false, false, false, false, false, None,
@@ -604,14 +602,7 @@ impl Expansion {
         }
         // SAFETY: single trampoline frame; the child script's env (and its
         // parent buffer in the `Borrowed` case) has no other live borrow.
-        let mut stdout = unsafe {
-            interp
-                .as_script_mut(child)
-                .base
-                .shell_mut()
-                .buffered_stdout_mut()
-        }
-        .clone();
+        let mut stdout = unsafe { interp.as_script_mut(child).shell.buffered_stdout_mut() }.clone();
         // Like bash and dash, drop NUL bytes before trimming and field splitting.
         let had_nul = bun_core::strings::contains_char(&stdout, 0);
         if had_nul {

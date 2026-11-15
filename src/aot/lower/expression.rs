@@ -18,7 +18,8 @@ use super::{
     operator, scope, template,
 };
 use crate::builtins::resolve::passes_every_assertion;
-use crate::builtins::{BuiltinId, Mutability, Resolved, table};
+use crate::builtins::table::{self, BuiltinFlags};
+use crate::builtins::{BuiltinId, Mutability, Resolved};
 use crate::compile::removable::{is_name_left_out_by_bun_run, is_read_left_out_by_bun_run};
 use crate::ir::generated::MAX_TRACKED_INTEGER;
 use crate::ir::{BlockId, DeclaredType, ValueId};
@@ -199,9 +200,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         }
         let entry = table::entry(member.id);
-        if let Some(holder) = entry.holder
-            && entry.mutability == Mutability::AlwaysLocked
-            && !table::is_legal_builtin_constant(member.id)
+        if entry.mutability != Mutability::AlwaysLocked {
+            return;
+        }
+        if table::is_legal_builtin_constant(member.id) {
+            if !self.file.builtins.is_unlocked(member.id) {
+                self.emit_locked_builtin(member.id);
+            }
+        } else if let Some(holder) = entry.holder
             && table::is_legal_builtin_constant(holder)
             && !table::is_symbol_name(entry.name)
         {
@@ -726,9 +732,13 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn is_read_left_out_by_bun_run(&self, expression: ExprId) -> bool {
-        self.builtins
-            .global_path(self.hir, self.bound, expression)
-            .is_some_and(|steps| is_read_left_out_by_bun_run(steps[0].id))
+        let path = self.builtins.global_path(self.hir, self.bound, expression);
+        path.is_some_and(|steps| {
+            let is_below_global_object = steps[1..]
+                .last()
+                .is_some_and(|root| table::has_flag(root.id, BuiltinFlags::IS_GLOBAL_OBJECT));
+            !is_below_global_object && is_read_left_out_by_bun_run(steps[0].id)
+        })
     }
 
     pub(in crate::lower) fn reads_only_what_bun_run_leaves_out(

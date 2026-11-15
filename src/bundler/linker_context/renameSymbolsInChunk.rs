@@ -462,7 +462,7 @@ pub(crate) fn run_nested_rename_task(
         &c.cross_chunk_names,
         &uses,
         source_index,
-        &worker.arena,
+        worker.arena(),
     );
     let mut sorted: Vec<u32> = Vec::new();
     for &(_, scope) in scopes {

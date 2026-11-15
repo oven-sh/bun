@@ -516,7 +516,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             nested_scope_slot_counts: Default::default(),
             hashbang: b"".into(),
             export_default_alias_of_import: Ref::NONE,
-            css: None,
             url_for_css: b"",
             tla_check: Default::default(),
             commonjs_named_exports: Default::default(),

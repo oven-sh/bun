@@ -553,7 +553,7 @@ impl PatchTask {
                 sys::O::RDONLY | sys::O::DIRECTORY,
                 0,
             ) {
-                sys::Result::Ok(fd) => fd,
+                sys::Result::Ok(fd) => sys::Dir::from_fd(fd),
                 sys::Result::Err(e) => {
                     log.add_sys_error(
                         &e,
@@ -565,10 +565,9 @@ impl PatchTask {
                     return Ok(());
                 }
             };
-            let _close_guard = sys::CloseOnDrop::new(patch_pkg_dir);
 
             // 4. apply patch
-            if let Err(e) = patchfile.apply(patch_pkg_dir) {
+            if let Err(e) = patchfile.apply(patch_pkg_dir.fd()) {
                 log.add_error_fmt_opts(
                     format_args!("failed applying patch file: {}", e),
                     Default::default(),
@@ -580,7 +579,7 @@ impl PatchTask {
             let mut buntagbuf = crate::BuntagHashBuf::default();
             let len = crate::buntaghashbuf_make(&mut buntagbuf, patch.patch_hash).len();
             let buntag_zstr = ZStr::from_buf(&buntagbuf, len);
-            if let Err(e) = sys::File::write_file(patch_pkg_dir, buntag_zstr, b"") {
+            if let Err(e) = sys::File::write_file(&patch_pkg_dir, buntag_zstr, b"") {
                 log.add_error_fmt_opts(
                     format_args!(
                         "failed adding bun tag: {}",

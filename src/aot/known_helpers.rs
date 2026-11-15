@@ -28,7 +28,7 @@ use crate::ir::{InParallel, for_each_mut};
 use crate::modules::ModuleGraph;
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Parent, SymbolId};
-use bun_sema::hir::{BinOp, ExprId, ExprKind, FnId, NodeData};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, File, FnId, NodeData, StmtId, StmtKind};
 use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::util::FxHashSet;
 use std::sync::OnceLock;
@@ -57,6 +57,34 @@ pub struct KnownHelpers {
 fn find_by_key<K: Ord + Copy, V>(sorted: &[(K, V)], key: K) -> Option<&V> {
     let at = sorted.binary_search_by(|entry| entry.0.cmp(&key));
     at.ok().map(|at| &sorted[at].1)
+}
+
+fn is_made_behind(hir: &File<'_>, defined: StmtId, position: u32) -> bool {
+    let statements = hir.body;
+    let find = |position: u32| {
+        let (mut first, mut end) = (0, statements.len());
+        while first < end {
+            let middle = (first + end) / 2;
+            match hir[hir.id_at::<StmtId>(statements, middle)].start <= position {
+                true => first = middle + 1,
+                false => end = middle,
+            }
+        }
+        let at = first.checked_sub(1)?;
+        Some((at, hir.id_at::<StmtId>(statements, at)))
+    };
+    let (Some((before, found)), Some((behind, around))) =
+        (find(hir[defined].start), find(position))
+    else {
+        return false;
+    };
+    let may_run_earlier = matches!(hir[around].kind, StmtKind::Fn(_) | StmtKind::Labeled { .. });
+    found == defined
+        && before < behind
+        && matches!(hir[defined].kind, StmtKind::Var(_) | StmtKind::Expr(_))
+        && (hir[around].start..hir[around].loc.end).contains(&position)
+        && hir[defined].loc.end <= hir[around].start
+        && !may_run_earlier
 }
 
 fn reads_private_state(helper: Helper) -> bool {
@@ -168,6 +196,20 @@ impl KnownHelpers {
             };
             private_state::find_in_file(&input, file)
         }))
+    }
+
+    fn holds_at_call(
+        files: &Files<'_>,
+        file: FileId,
+        values: &BindingValues,
+        callee: ExprId,
+    ) -> bool {
+        values.holds_from_the_start
+            || (values.certainty != Certainty::MayHoldOtherValues
+                && values.defined_by.is_some_and(|defined| {
+                    let hir = files.hir(file);
+                    is_made_behind(hir, defined, hir[callee].pos)
+                }))
     }
 
     fn find_called_symbol(files: &Files<'_>, file: FileId, callee: ExprId) -> Option<SymbolId> {

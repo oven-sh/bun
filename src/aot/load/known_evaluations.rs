@@ -9,9 +9,10 @@ use std::rc::Rc;
 
 use bun_core::strings::{contains, index_of_any, split};
 use bun_sema::atom::{Atom, Interner, known};
+use bun_sema::fold::Constant;
 use bun_sema::hir::{
-    BinOp, CallId, Chain, ExprId, ExprKind, File, FileBuilder, FnBody, FnId, FnKind, Keyword,
-    KnownEvaluation, PatKind, StmtKind, TypeNodeKind, UnOp,
+    ArenaFew, BinOp, CallId, Chain, ExprId, ExprKind, File, FileBuilder, FnBody, FnId, FnKind,
+    Keyword, KnownEvaluation, PatKind, StmtKind, TypeNodeKind, UnOp,
 };
 use bun_sema::resolve::TreeChange;
 use bun_sema::session::Arena;
@@ -409,7 +410,13 @@ pub(crate) fn write_known_evaluations<'s>(
         return TreeChange::Unchanged;
     }
     let mut first_call = CallId(0);
-    let mut text_allowance = hir.text.len() * TEXT_PER_SOURCE;
+    let imported: usize = (hir.imported_constants.iter())
+        .map(|constant| match constant.value {
+            Constant::String(text) => atoms.bytes(text).len(),
+            _ => 0,
+        })
+        .sum();
+    let mut text_allowance = (hir.text.len() + imported) * TEXT_PER_SOURCE;
     let mut change = TreeChange::Unchanged;
     for _ in 0..MAX_NESTED_TEXTS {
         let calls = find_evaluating_calls(hir);
@@ -417,8 +424,11 @@ pub(crate) fn write_known_evaluations<'s>(
             return change;
         }
         let next_call = CallId(hir.calls.len() as u32);
-        let evaluator = Evaluator::new(hir, atoms, beside, &calls, first_call, text_allowance);
+        let mut evaluator = Evaluator::new(hir, atoms, beside, &calls, first_call, text_allowance);
         let (found, left) = evaluator.find_texts(&calls);
+        let mut unknown = evaluator.into_unknown_imports();
+        unknown.extend(hir.unknown_imports_of_texts.iter().copied());
+        hir.unknown_imports_of_texts = ArenaFew::from_iter_in(unknown.into_iter(), arena);
         if append_texts(arena, atoms, hir, is_module, &calls, found) == TreeChange::Unchanged {
             return change;
         }

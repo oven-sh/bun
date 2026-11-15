@@ -185,15 +185,6 @@ impl FetchRequestBodySink {
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
 
-    /// # Safety
-    /// `this` must be live and must not be used after the call: the tasklet
-    /// owns this allocation, and if the ref released here was its last one,
-    /// its `drop` → `clear_sink` frees `*this`.
-    pub unsafe fn finalize(this: *mut Self) {
-        // SAFETY: caller contract; `this` is not touched again after this line.
-        drop(unsafe { (*this).task.take() });
-    }
-
     /// HTTP-thread drain ack: resolves the pending write/flush promise and wakes source.ready().
     pub fn on_drain(&mut self, _global_this: &JSGlobalObject) {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "onDrain");
@@ -217,10 +208,6 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
 
     crate::impl_js_sink_forwarders!();
 
-    unsafe fn finalize(this: *mut Self) {
-        // SAFETY: same contract, forwarded.
-        unsafe { Self::finalize(this) }
-    }
     fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, cx)
     }
@@ -229,6 +216,11 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
 impl crate::webcore::sink::ControlledSink for FetchRequestBodySink {
     fn to_any_sink(this: core::ptr::NonNull<Self>) -> AnyControlledSink {
         AnyControlledSink::FetchRequestBodySink(this)
+    }
+
+    unsafe fn controller_finalize(this: *mut Self) {
+        // SAFETY: trait contract. The tasklet owns `*this`, and `task` can be its last ref.
+        drop(unsafe { (*this).task.take() });
     }
 
     fn source(&mut self) -> &mut SourceHandle {

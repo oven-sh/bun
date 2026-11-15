@@ -7,8 +7,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 use std::time::Instant;
 
-use crate::Error;
-use bun_picohttp as picohttp;
+use crate::{Error, Headers};
 
 // `live_streams` lives in the parent module of `h2_client/`.
 use crate::HTTPClient;
@@ -34,8 +33,7 @@ pub struct Stream {
     /// HPACK is decoded eagerly at parse time so the dynamic table stays
     /// consistent across multiple HEADERS in one read; the resulting strings
     /// land here until `deliverStream` hands them to handleResponseMetadata.
-    pub(crate) decoded_bytes: Vec<u8>,
-    pub(crate) decoded_headers: Vec<picohttp::Header>,
+    pub(crate) decoded_headers: Headers,
     /// Final (non-1xx) status code; 0 until the response HEADERS arrive.
     pub(crate) status_code: u32,
 
@@ -129,8 +127,7 @@ impl Stream {
             opened_at: Instant::now(),
             header_block: Vec::new(),
             body_buffer: Vec::new(),
-            decoded_bytes: Vec::new(),
-            decoded_headers: Vec::new(),
+            decoded_headers: Headers::default(),
             status_code: 0,
             state: State::Open,
             rst_done: false,

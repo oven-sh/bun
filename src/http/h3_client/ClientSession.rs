@@ -334,12 +334,12 @@ impl ClientSession {
 
         if st.status_code != 0 && !st.headers_delivered {
             st.headers_delivered = true;
-            let (result, response) = match client
-                .apply_multiplexed_headers(u32::from(st.status_code), &st.decoded_headers)
-            {
-                Ok(r) => r,
-                Err(e) => return self.fail(stream, e),
-            };
+            let headers = core::mem::take(&mut st.decoded_headers);
+            let (result, response) =
+                match client.apply_multiplexed_headers(u32::from(st.status_code), headers) {
+                    Ok(r) => r,
+                    Err(e) => return self.fail(stream, e),
+                };
             // `is_done()`: Content-Length: 0 can arrive as `HasBody` (e.g. an
             // SSE content-type), which would make the headerProgress update
             // below terminal and free `client` while the stream still holds it.
@@ -353,7 +353,7 @@ impl ClientSession {
                     let client = client_mut(client_ptr);
                     return client.do_redirect_h3();
                 }
-                client.clone_metadata(&response);
+                client.store_metadata(response);
                 client.state.flags.received_last_chunk = true;
                 if result == HeaderResult::Finished {
                     client.state.content_length = Some(0);
@@ -363,7 +363,7 @@ impl ClientSession {
                 let client = client_mut(client_ptr);
                 return finish(client);
             }
-            client.clone_metadata(&response);
+            client.store_metadata(response);
             if client.signals.get(Signal::HeaderProgress) {
                 client.progress_update_h3();
             }

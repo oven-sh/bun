@@ -21,7 +21,8 @@ use crate::internal_state::HTTPStage;
 use crate::lshpack;
 use crate::signals;
 use crate::ssl_config;
-use crate::{HTTPClient, HTTPVerboseLevel, HeaderResult, NewHTTPContext, Protocol};
+use crate::verbose::print_request;
+use crate::{HTTPClient, HTTPVerboseLevel, HeaderResult, NewHTTPContext, Protocol, RequestBuffer};
 
 /// HTTP/2 only ever runs over TLS in this client (ALPN "h2").
 pub type Socket = HTTPSocket<true>;
@@ -568,7 +569,8 @@ impl ClientSession {
             client.fail(e);
             return;
         }
-        let request = client.build_request(client.body_len_for_send());
+        let mut buffer = RequestBuffer::default();
+        let request = client.build_request(&mut buffer);
         if let Err(err) = encode::write_request(self, client, stream_ref, &request) {
             // encodeHeader pushes into the HPACK encoder's dynamic table per
             // call, so a mid-encode failure leaves entries the server will
@@ -594,7 +596,7 @@ impl ClientSession {
             return;
         }
         if client.verbose != HTTPVerboseLevel::None {
-            crate::print_request(
+            print_request(
                 Protocol::Http2,
                 &request,
                 client.url.href,
@@ -1170,19 +1172,19 @@ impl ClientSession {
 
         if stream.headers_ready {
             stream.headers_ready = false;
-            let (result, response) = match client
-                .apply_multiplexed_headers(stream.status_code, &stream.decoded_headers)
-            {
-                Ok(r) => r,
-                Err(err) => {
-                    self.rst_stream(stream, wire::ErrorCode::CANCEL);
-                    let _ = self.flush();
-                    stream.client = None;
-                    client.h2 = None;
-                    client.h2_fail(err);
-                    return true;
-                }
-            };
+            let headers = core::mem::take(&mut stream.decoded_headers);
+            let (result, response) =
+                match client.apply_multiplexed_headers(stream.status_code, headers) {
+                    Ok(r) => r,
+                    Err(err) => {
+                        self.rst_stream(stream, wire::ErrorCode::CANCEL);
+                        let _ = self.flush();
+                        stream.client = None;
+                        client.h2 = None;
+                        client.h2_fail(err);
+                        return true;
+                    }
+                };
             // handleResponseMetadata set is_redirect_pending. The doRedirect
             // contract assumes the caller already detached the stream.
             // Detach + RST here unconditionally so the
@@ -1199,9 +1201,7 @@ impl ClientSession {
                 client.h2_do_redirect(self.ctx, self.socket);
                 return true;
             }
-            // Deep-copy before detaching: `response` borrows
-            // `stream.decoded_headers`.
-            client.h2_clone_metadata(&response);
+            client.store_metadata(response);
             // `is_done()`: Content-Length: 0 can arrive as `HasBody` (e.g. an
             // SSE content-type), which would make the headerProgress update
             // below terminal and free `client` while the stream still holds it.

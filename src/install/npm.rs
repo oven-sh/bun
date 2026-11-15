@@ -10,7 +10,6 @@ use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
 use bun_http::{self as http, HeaderBuilder};
-use bun_picohttp as picohttp;
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
 use bun_sys::{self, Fd, File};
 use bun_url::{OwnedURL, URL};
@@ -708,7 +707,7 @@ pub mod registry {
             && expiry > seconds_from_now(MAX_MANIFEST_AGE)
     }
 
-    pub(crate) fn manifest_expiry(headers: &picohttp::HeaderList) -> u32 {
+    pub(crate) fn manifest_expiry(headers: &bun_http::Headers) -> u32 {
         let mut max_age = u64::from(MAX_MANIFEST_AGE);
         for directive in strings::split(headers.get(b"cache-control").unwrap_or(b""), b",") {
             let directive = directive.trim_ascii();
@@ -726,7 +725,7 @@ pub mod registry {
 
     pub(crate) fn get_package_metadata(
         scope: &Scope,
-        response: picohttp::Response,
+        response: &bun_http::Response,
         body: &[u8],
         log: &mut bun_ast::Log,
         package_name: &[u8],

@@ -15,10 +15,10 @@ use super::client_context::ClientContext;
 use super::client_session::{ClientSession, session_mut, stream_mut, stream_ref};
 use super::encode;
 use super::stream::Stream;
+use crate::Headers;
 use crate::h2_client::dispatch::{
     is_malformed_response_field, is_malformed_response_value, trim_response_value,
 };
-use bun_picohttp as picohttp;
 
 use crate::h3_client::h3_client;
 
@@ -213,10 +213,16 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         session.fail(stream, crate::Error::ResponseHeadersTooLarge);
         return;
     }
+    // A second HEADERS block after the final response is trailers (RFC 9114 §4.1).
+    if stream.status_code != 0 {
+        return;
+    }
     let n = s.header_count();
 
-    stream.decoded_headers.clear();
-    stream.decoded_headers.reserve(n as usize);
+    let mut headers = Headers::default();
+    let field_len = |h: &quic::Header| h.name_bytes().len() + h.value_bytes().len();
+    (headers.buf).reserve((0..n).filter_map(|i| s.header(i).map(field_len)).sum());
+    bun_core::handle_oom(headers.entries.ensure_total_capacity(n as usize));
     let mut status: u16 = 0;
     let mut i: c_uint = 0;
     while i < n {
@@ -228,36 +234,30 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         let value = h.value_bytes();
         if name.first() == Some(&b':') {
             if name == b":status" {
-                status = bun_core::fmt::parse_int::<u16>(value, 10).unwrap_or(0);
+                status = match value.len() {
+                    3 => bun_core::fmt::parse_int::<u16>(value, 10).unwrap_or(0),
+                    _ => 0,
+                };
             }
             i += 1;
             continue;
         }
-        if stream.status_code == 0
-            && (is_malformed_response_field(name) || is_malformed_response_value(value))
-        {
+        if is_malformed_response_field(name) || is_malformed_response_value(value) {
             session.fail(stream, crate::Error::HTTP3ProtocolError);
             return;
         }
-        stream
-            .decoded_headers
-            .push(picohttp::Header::new(name, trim_response_value(value)));
+        headers.append(name, trim_response_value(value));
         i += 1;
     }
-    if status == 0 {
-        // A second HEADERS block after the final response is trailers
-        // (RFC 9114 §4.1) and carries no :status; ignore it rather than
-        // treating the stream as malformed.
-        if stream.status_code != 0 {
-            return;
-        }
+    if status < 100 {
         session.fail(stream, crate::Error::HTTP3ProtocolError);
         return;
     }
-    if status >= 100 && status < 200 {
+    if status < 200 {
         return;
     }
     stream.status_code = status;
+    stream.decoded_headers = headers;
     session.deliver(stream, false);
 }
 

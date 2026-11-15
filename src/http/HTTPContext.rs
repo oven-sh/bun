@@ -368,6 +368,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
         ActiveSocket::<SSL>::init(dead_socket())
     }
 
+    /// Whether a request is still attached to `socket`.
+    pub(crate) fn has_client(socket: HTTPSocket<SSL>) -> bool {
+        Self::get_tagged_from_socket(socket).is::<HTTPClient<'static>>()
+    }
+
     /// Write `tagged` into `socket`'s ext slot.
     ///
     /// INVARIANT (centralised here): the ext slot of every HTTP-thread socket

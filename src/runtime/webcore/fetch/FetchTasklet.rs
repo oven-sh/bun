@@ -1197,7 +1197,7 @@ impl FetchTasklet {
         // some times we don't have metadata so we also check the request's URL
         // Without the URL's userinfo: errors get logged.
         let href = match &self.metadata {
-            Some(metadata) => metadata.url.slice(),
+            Some(metadata) => &metadata.url,
             None => &self.url_proxy_buffer[..self.url_len],
         };
         let path = BunString::clone_utf8(&ZigURL::parse(href).href_without_userinfo());
@@ -1477,7 +1477,7 @@ impl FetchTasklet {
     /// proxy's reply to CONNECT.
     fn proxy_connect_error(
         global_this: &JSGlobalObject,
-        response: &bun_picohttp::Response<'_>,
+        response: &bun_http::Response,
     ) -> JsResult<JSValue> {
         let error = global_this
             .err(
@@ -1485,7 +1485,7 @@ impl FetchTasklet {
                 format_args!(
                     "Proxy refused to open a tunnel: {} {}",
                     response.status_code,
-                    bstr::BStr::new(response.status),
+                    bstr::BStr::new(response.status_text()),
                 ),
             )
             .to_js();
@@ -1497,14 +1497,11 @@ impl FetchTasklet {
         error.put(
             global_this,
             b"statusText".as_slice(),
-            bun_string_jsc::create_utf8_for_js(global_this, response.status)?,
+            bun_string_jsc::create_utf8_for_js(global_this, response.status_text())?,
         );
-        // SAFETY: `create_from_pico_headers` returns a fresh refcount=1 FetchHeaders*.
-        let mut headers = unsafe {
-            HeadersRef::adopt(FetchHeaders::create_from_pico_headers(
-                response.headers.list,
-            ))
-        };
+        // SAFETY: `create_from_headers` returns a fresh refcount=1 FetchHeaders*.
+        let mut headers =
+            unsafe { HeadersRef::adopt(FetchHeaders::create_from_headers(&response.headers)) };
         error.put(
             global_this,
             b"headers".as_slice(),
@@ -1705,18 +1702,18 @@ impl FetchTasklet {
         let metadata = self.metadata.as_ref().unwrap();
         let http_response = &metadata.response;
         // reshaped for borrowck — capture metadata fields before to_body_value() takes &mut self
-        let headers = FetchHeaders::create_from_pico_headers(http_response.headers.list);
+        let headers = FetchHeaders::create_from_headers(&http_response.headers);
         let status_code = http_response.status_code as u16;
         // Fast path: when the wire reason phrase matches the canonical text for
         // this status code, store a StaticEncodedSlice and skip the WTF allocation.
         let status_text = match crate::server::http_status_text::get(status_code)
             .map(|t| &t[4..])
-            .filter(|canon| *canon == http_response.status)
+            .filter(|canon| *canon == http_response.status_text())
         {
             Some(canon) => BunString::static_(canon),
-            None => BunString::clone_utf8(http_response.status),
+            None => BunString::clone_utf8(http_response.status_text()),
         };
-        let url = BunString::clone_utf8(metadata.url.slice());
+        let url = BunString::clone_utf8(&metadata.url);
         let redirected = self.result.redirected;
         let body = if self.response_body_is_null(status_code) {
             self.null_body_value()
@@ -1726,7 +1723,7 @@ impl FetchTasklet {
         };
         Response::init(
             crate::webcore::response::Init {
-                // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
+                // SAFETY: create_from_headers returns a fresh refcount=1 FetchHeaders*.
                 headers: Some(unsafe { HeadersRef::adopt(headers) }),
                 status_code,
                 status_text,

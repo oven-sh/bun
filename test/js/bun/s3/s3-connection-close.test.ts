@@ -4,7 +4,11 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // Every S3 PUT/DELETE answers with a zero-length body, and any endpoint behind
 // a load balancer may reply with `Connection: close`. The client must treat
 // `Content-Length: 0` as complete rather than reading to EOF, FIN or not.
-function fixture(op: "write" | "delete", sendFin: boolean) {
+function fixture(
+  op: "write" | "delete",
+  sendFin: boolean,
+  response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+) {
   return `
 import net from "node:net";
 
@@ -17,7 +21,7 @@ const server = net.createServer(socket => {
     if (headerEnd === -1) return;
     const match = /content-length: *(\\d+)/i.exec(buffer.subarray(0, headerEnd).toString());
     if (buffer.length - headerEnd - 4 < (match ? Number(match[1]) : 0)) return;
-    socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n");
+    socket.write(${JSON.stringify(response)});
     ${sendFin ? "socket.end();" : "// the peer keeps the socket open"}
   });
 });
@@ -137,6 +141,27 @@ describe.each([true, false])("peer sends FIN: %p", sendFin => {
     },
   );
 });
+
+test.concurrent.each(["Transfer-Encoding: chunked", "Content-Type: text/event-stream"])(
+  "S3Client.delete() resolves on a 204 response with %s",
+  async header => {
+    using dir = tempDir("s3-no-content", {
+      "fixture.ts": fixture("delete", false, `HTTP/1.1 204 No Content\r\n${header}\r\n\r\n`),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      env: envWithoutProxy,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "completed", exitCode: 0 });
+  },
+);
 
 describe("close-delimited response body", () => {
   test.concurrent.each(["text", "bytes", "large text"] as const)(

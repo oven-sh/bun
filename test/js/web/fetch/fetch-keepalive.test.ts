@@ -1009,6 +1009,7 @@ test.concurrent.each<[string, Parameters<typeof originWithBrokenReuse>[0]]>([
   ["close_notify", session => session.end()],
   ["FIN", (_session, raw) => raw.end()],
   ["RST", (_session, raw) => raw.resetAndDestroy()],
+  ["a late last chunk, then close_notify", session => session.end("0\r\n\r\n")],
 ])("a GET that a reused https connection answers with %s is sent again", async (_label, secondRequest) => {
   await using origin = await originWithBrokenReuse(secondRequest);
   const bodies = [await bodyOrCode(origin.url, {}), await bodyOrCode(origin.url, {})];
@@ -1036,6 +1037,20 @@ test.concurrent.each<[string, BunFetchRequestInit, Parameters<typeof originWithB
     });
   },
 );
+
+test.concurrent.each<[string, string]>([
+  ["POST", "0\r\n\r\n"],
+  ["GET", "0\r\n\r\nHTTP/1.1 204 No Content\r\n\r\n"],
+  ["GET", "HTTP/1.1 204 No Content\r\nA : b\r\n\r\n"],
+])("a %s that a reused connection answers with %j is not sent again", async (method, reply) => {
+  await using origin = await originWithBrokenReuse(session => session.write(reply));
+  const init = { method };
+  const bodies = [await bodyOrCode(origin.url, init), await bodyOrCode(origin.url, init)];
+  expect({ bodies, requests: origin.requests }).toEqual({
+    bodies: ["ok", "Malformed_HTTP_Response"],
+    requests: ["connection 1 request 1", "connection 1 request 2"],
+  });
+});
 
 // The session with an https proxy is the one that breaks, under a CONNECT tunnel that fetch reuses.
 test.concurrent(

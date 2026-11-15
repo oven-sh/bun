@@ -2745,6 +2745,13 @@ inline bool deepEqualsWrapperImpl(JSC::EncodedJSValue a, JSC::EncodedJSValue b, 
 }
 }
 
+// `bun_core::ffi::FfiSlice`
+template<typename T>
+struct FfiSlice {
+    const T* ptr;
+    size_t len;
+};
+
 extern "C" {
 
 bool WebCore__FetchHeaders__isEmpty(WebCore::FetchHeaders* arg0)
@@ -2974,65 +2981,27 @@ bool WebCore__FetchHeaders__count(WebCore::FetchHeaders* headers, uint32_t* coun
     return true;
 }
 
-typedef struct ZigSliceString {
-    const unsigned char* ptr;
-    size_t len;
-} ZigSliceString;
-
-typedef struct PicoHTTPHeader {
-    ZigSliceString name;
-    ZigSliceString value;
-} PicoHTTPHeader;
-
-typedef struct PicoHTTPHeaders {
-    const PicoHTTPHeader* ptr;
-    size_t len;
-} PicoHTTPHeaders;
-
-WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void* arg1)
+WebCore::FetchHeaders* WebCore__FetchHeaders__createFromEntries(FfiSlice<StringPointer> names, FfiSlice<StringPointer> values, FfiSlice<Latin1Character> buf)
 {
-    PicoHTTPHeaders pico_headers = *reinterpret_cast<const PicoHTTPHeaders*>(arg1);
-    auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    RELEASE_ASSERT(names.len == values.len);
+    auto slice = [&](StringPointer pointer) {
+        RELEASE_ASSERT(static_cast<size_t>(pointer.off) + pointer.len <= buf.len);
+        return std::span { buf.ptr + pointer.off, pointer.len };
+    };
 
-    if (pico_headers.len > 0) {
-        HTTPHeaderMap map = HTTPHeaderMap();
+    HTTPHeaderMap map;
+    for (size_t i = 0; i < names.len; i++) {
+        StringView nameView { slice(names.ptr[i]) };
+        String value { StringImpl::create(slice(values.ptr[i])) };
 
-        size_t end = pico_headers.len;
-
-        for (size_t j = 0; j < end; j++) {
-            PicoHTTPHeader header = pico_headers.ptr[j];
-            // picohttpparser reports obs-fold continuation lines with an empty
-            // name; skip those. Empty *values* must flow through so duplicate
-            // headers combine per the Fetch spec ("a, , c") and a lone empty
-            // header is still visible to JS, matching the uWS/H3 paths.
-            if (header.name.len == 0)
-                continue;
-
-            StringView nameView = StringView(std::span { reinterpret_cast<const char*>(header.name.ptr), header.name.len });
-
-            std::span<Latin1Character> data;
-            auto value = String::createUninitialized(header.value.len, data);
-            if (header.value.len > 0)
-                memcpy(data.data(), header.value.ptr, header.value.len);
-
-            HTTPHeaderName name;
-
-            // memory safety: the header names must be cloned if they're not statically known
-            // the value must also be cloned
-            // isolatedCopy() doesn't actually clone, it's only for threadlocal isolation
-            if (WebCore::findHTTPHeaderName(nameView, name)) {
-                map.add(name, value);
-            } else {
-                // the case where we do not need to clone the name
-                // when the header name is already present in the list
-                // we don't have that information here, so map.addUncommonHeaderCloneName exists
-                map.addUncommonHeaderCloneName(nameView, value);
-            }
+        HTTPHeaderName name;
+        if (WebCore::findHTTPHeaderName(nameView, name)) {
+            map.add(name, value);
+        } else {
+            map.addUncommonHeaderCloneName(nameView, value);
         }
-
-        headers->setInternalHeaders(WTF::move(map));
     }
-    return headers;
+    return new WebCore::FetchHeaders(WebCore::FetchHeaders::Guard::None, WTF::move(map));
 }
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
 {

@@ -125,17 +125,17 @@ impl PackageManager {
                     break 'brk Some(patched_dep.patchfile_hash().unwrap());
                 };
 
-                let buf = &mut **bun_paths::path_buffer_pool::get();
+                let mut buf = bun_paths::path_buffer_pool::get();
                 let folder_path: &ZStr = match pkg.resolution.tag {
                     ResolutionTag::Git => directories::cached_git_folder_name_print_auto(
                         self,
-                        buf,
+                        &mut buf,
                         pkg.resolution.git(),
                         patch_hash,
                     ),
                     ResolutionTag::Github => directories::cached_github_folder_name_print_auto(
                         self,
-                        buf,
+                        &mut buf,
                         pkg.resolution.github(),
                         patch_hash,
                     ),
@@ -145,7 +145,7 @@ impl PackageManager {
                             .slice(self.lockfile.buffers.string_bytes.as_slice());
                         directories::cached_npm_package_folder_name_print(
                             self,
-                            buf,
+                            &mut buf,
                             name,
                             pkg.resolution.npm().version,
                             patch_hash,
@@ -154,7 +154,7 @@ impl PackageManager {
                     ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                         directories::cached_tarball_folder_name(
                             self,
-                            buf,
+                            &mut buf,
                             &pkg.meta.integrity,
                             &pkg.resolution,
                             patch_hash,

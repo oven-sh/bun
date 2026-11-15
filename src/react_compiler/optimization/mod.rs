@@ -51,7 +51,9 @@ pub(crate) mod prune_maybe_throws;
 pub(crate) mod prune_unused_labels_hir;
 
 pub(crate) use constant_propagation::constant_propagation;
-pub(crate) use dead_code_elimination::dead_code_elimination;
+pub(crate) use dead_code_elimination::{
+    dead_code_elimination, dead_code_elimination_in_nested_function,
+};
 pub(crate) use drop_manual_memoization::drop_manual_memoization;
 pub(crate) use inline_iifes::inline_immediately_invoked_function_expressions;
 #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]

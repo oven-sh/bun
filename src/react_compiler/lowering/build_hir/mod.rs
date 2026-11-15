@@ -332,6 +332,7 @@ pub(super) fn lower_inner<'h>(
             is_async,
             directives,
             aliasing_effects: None,
+            keeps_unread_reads: false,
         },
         child_bindings,
     ))

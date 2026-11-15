@@ -894,6 +894,283 @@ describe("bundler", () => {
     },
   });
 
+  // DeadCodeElimination took a read of a property that nothing uses for dead code, as babel-plugin-react-compiler 1.0.0
+  // does. `el.offsetHeight;` in an effect, which is there to flush the layout, was gone. In a nested function the read
+  // stays now: an effect, a handler or a callback is not render code. A function that keeps one is made again when a
+  // variable that it captures changes, and the code around it reads nothing at render for it.
+  //
+  // A row is the log of each render of a function, and then the size of its memo cache ("-": it has none). The build
+  // without the compiler prints the same log, but for the rows of "upstream": there the read still goes, as upstream
+  // takes it.
+  {
+    const files = {
+      "/node_modules/react/index.js": `
+        const refs = new Map();
+        exports.useEffect = f => { const cleanup = f(); if (typeof cleanup === "function") cleanup(); };
+        exports.useCallback = f => f;
+        exports.useMemo = f => f();
+        exports.useRef = current => refs.get(globalThis.rendering) ?? (refs.set(globalThis.rendering, { current }), refs.get(globalThis.rendering));
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `
+        const caches = new Map();
+        exports.c = n => {
+          if (!caches.has(globalThis.rendering))
+            caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+          return caches.get(globalThis.rendering);
+        };
+        exports.size = fn => caches.get(fn)?.length ?? "-";
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    };
+    const entry = /* jsx */ `
+      import { useCallback, useEffect, useMemo, useRef } from "react";
+      import { size } from "react/compiler-runtime";
+      let log = [];
+      const mk = name => ({
+        get x() { log.push(name + ".x"); return 1; },
+        get y() { log.push(name + ".y"); return mk(name + ".y"); },
+        f() { log.push(name + ".f()"); return mk(name + ".f()"); },
+        valueOf() { log.push(name + ".valueOf"); return 3; },
+        [Symbol.iterator]() { log.push(name + ".iterator"); return [][Symbol.iterator](); },
+      });
+      const el = mk("el");
+      const key = "x";
+      const useNothing = () => 0;
+      const useRefEffect = callback => { callback(el); };
+      const count = x => x.length;
+      const mutate = x => { x.k = 1; };
+      const pick = node => node;
+
+      // In an effect, and in what it returns.
+      function useBare(d) { useEffect(() => { el.x; }, [d]); }
+      function useVoid(d) { useEffect(() => { void el.x; }, [d]); }
+      function useUnusedConst(d) { useEffect(() => { const _ = el.x; }, [d]); }
+      function useComputed(d) { useEffect(() => { el[key]; }, [d]); }
+      function useCallResult(d) { useEffect(() => { el.f(d).x; }, [d]); }
+      function useChain(d) { useEffect(() => { el.y.y.x; }, [d]); }
+      function useDeadStore(d) { useEffect(() => { let a = el.x; a = d; log.push("a=" + a); }, [d]); }
+      function useOperands(d) { useEffect(() => { (0, el.x); el.x || 0; typeof el.x; [el.x]; }, [d]); }
+      function useBetweenWrites(d) { useEffect(() => { log.push("a"); el.x; log.push("b"); }, [d]); }
+      function useCleanup(d) { useEffect(() => () => { el.x; }, [d]); }
+      function useNestedClosure(d) { useEffect(() => { const g = () => { el.x; }; g(); }, [d]); }
+      // In a handler, in a method, and in a callback of a callback of a hook of the module's own.
+      function useHandler(d) { useNothing(); const h = () => { el.x; return d; }; return h; }
+      function useMethod(d) { useNothing(); const o = { m() { el.x; return d; } }; return o; }
+      function useFlash(ids) { useNothing(); return useRefEffect(element => { const flash = () => { ids.forEach(id => { element.x; }); }; flash(); }); }
+      // The receiver is a value of the render: the closure follows it.
+      function usePropReceiver(node) { useEffect(() => { node.x; }); }
+      function usePropPath(props) { useEffect(() => { props.node.x; }); }
+      function useRefReceiver(node) { const ref = useRef(null); useEffect(() => { ref.current = node; ref.current.x; log.push("."); }); }
+      function useLocalReceiver(node) { const local = pick(node); useEffect(() => { local.x; }); }
+      // The receiver is undefined: the read throws, as it does without the compiler.
+      function useUndefinedReceiver(node) { useEffect(() => { const id = node.meta.id; }); }
+      // What is before the read is an optional chain: the closure follows the variable, not the value of the chain.
+      function useOptionalReceiver(node) { useEffect(() => { (node?.y).x; }); }
+      // The handler is not called, and what it reads is undefined. Nothing around it reads that at render: not for the
+      // read, not for a pattern, an optional chain or an element that only the read uses, not for a read of a function
+      // inside.
+      function HandlerSibling({ node, cond }) { const h = () => { node.inner.x; }; const v = cond ? [node.inner.y] : null; return <div onClick={h}>{v}</div>; }
+      function HandlerPattern({ node, cond }) { const h = () => { const { inner } = node; inner.x; }; const v = cond ? [node.y] : null; return <div onClick={h}>{v}</div>; }
+      function HandlerOptional({ node }) { const h = () => { const v = node.inner.deep?.el; v.x; }; return <div onClick={h} />; }
+      function HandlerInnerFunction({ node }) { const h = () => { const v = node.inner; const g = () => { v.x; }; g(); }; return <div onClick={h} />; }
+      function HandlerElement({ node }) { const g = () => pick(node.inner.z); const h = () => { const el = <div onClick={g} />; el.props; }; return <div onClick={h} data={[g]} />; }
+      // A store into another local after scopes that merge.
+      function HandlerNextToAStore({ c }) {
+        let z = [c]; const zi = [z[0]]; count(z); count(zi);
+        let w = mk("w" + c); count([w]);
+        const f = () => { w.x; return "read"; };
+        const za = [(z = ["k"])]; mutate(za);
+        return <div state={f()} zi={zi} />;
+      }
+      // A local that its memo block does not give out, and that code after the block reads: a captured local that dead
+      // code reads after a store, and the receiver of an optional chain that nothing uses.
+      function HandlerNextToADeadRead({ c, node }) {
+        let v = pick(node); const h = () => { node.x; }; const g = () => v;
+        v = mk("w" + c); const unused = [v];
+        return <div onClick={h} />;
+      }
+      function useRestNextToAnOptional({ node, ...rest }) { useEffect(() => { node?.x; }); useEffect(() => { rest.el.x; }); }
+      // A dependency array that names the receiver, and one that names a path of it.
+      function useCallbackRootDeps(node) { useNothing(); return useCallback(() => { node.x; }, [node]); }
+      function useCallbackPathDeps(props) { useNothing(); return useCallback(() => { props.node.x; }, [props.node]); }
+      // The body of a hook or component is render code. So is the callback of useMemo, which the compiler makes a part of it.
+      function useRenderBare(d) { useNothing(); el.x; return d; }
+      function useRenderUnusedConst(d) { useNothing(); const _ = el.x; return d; }
+      function RenderBetween({ d }) { const a = [d]; el.x; const b = [d]; return <div>{a}{b}</div>; }
+      function useMemoCallback(d) { return useMemo(() => { el.x; return [d]; }, [d]); }
+      // A pattern, a coercion and a spread are not reads of a property.
+      function usePattern(d) { useEffect(() => { const { x } = el; }, [d]); }
+      function useCoercion(d) { useEffect(() => { +el; }, [d]); }
+      function useSpread(d) { useEffect(() => { [...el]; }, [d]); }
+      function useParam(d) { useNothing(); const f = ({ x }) => [d]; return f; }
+
+      const render = (fn, arg, then) => {
+        globalThis.rendering = fn;
+        log = [];
+        try { const out = fn(arg); if (then) then(out); } catch (e) { log.push("throws " + e.name); }
+        return log.join(" ") || "-";
+      };
+      const row = (name, fn, args, then) => console.log(name + ": " + args.map(arg => render(fn, arg, then)).join(" | ") + " [" + size(fn) + "]");
+      const a = mk("a"), b = mk("b");
+      const ds = [1, 1, 2];
+      for (const [name, fn] of Object.entries({ useBare, useVoid, useUnusedConst, useComputed, useCallResult, useChain, useDeadStore, useOperands, useBetweenWrites, useCleanup, useNestedClosure })) row(name, fn, ds);
+      row("useHandler, invoked", useHandler, ds, h => h());
+      row("useHandler, not invoked", useHandler, ds);
+      row("useMethod", useMethod, ds, o => o.m());
+      row("useFlash", useFlash, [[1], [1, 2]]);
+      row("usePropReceiver", usePropReceiver, [a, a, b]);
+      row("usePropPath", usePropPath, [{ node: a }, { node: a }, { node: b }]);
+      row("useRefReceiver", useRefReceiver, [a, a, b]);
+      row("useLocalReceiver", useLocalReceiver, [a, a, b]);
+      row("useUndefinedReceiver", useUndefinedReceiver, [{}, {}]);
+      row("useOptionalReceiver", useOptionalReceiver, [a, a, b]);
+      row("HandlerSibling", HandlerSibling, [{ node: {}, cond: false }, { node: {}, cond: false }]);
+      row("HandlerPattern", HandlerPattern, [{ cond: false }, { cond: false }]);
+      row("HandlerOptional", HandlerOptional, [{ node: {} }, { node: {} }]);
+      row("HandlerInnerFunction", HandlerInnerFunction, [{}, {}]);
+      row("HandlerElement", HandlerElement, [{ node: {} }, { node: {} }]);
+      row("HandlerNextToAStore", HandlerNextToAStore, [{ c: 1 }, { c: 1 }, { c: 2 }]);
+      row("HandlerNextToADeadRead", HandlerNextToADeadRead, [{ c: 1, node: a }, { c: 1, node: a }, { c: 2, node: b }]);
+      row("useRestNextToAnOptional", useRestNextToAnOptional, [{ node: a, el }, { node: a, el }]);
+      row("useCallbackRootDeps", useCallbackRootDeps, [a, a, b], h => h());
+      row("useCallbackPathDeps", useCallbackPathDeps, [{ node: a }, { node: a }, { node: b }], h => h());
+      for (const [name, fn] of Object.entries({ useRenderBare, useRenderUnusedConst, useMemoCallback, usePattern, useCoercion, useSpread })) row(name, fn, ds);
+      row("RenderBetween", RenderBetween, [{ d: 1 }, { d: 1 }, { d: 2 }]);
+      row("useParam", useParam, ds, f => f(el));
+      row("useParam, null", useParam, ds, f => f(null));
+    `;
+    const each = (log: string) => `${log} | ${log} | ${log}`;
+    const followed = "a.x | a.x | b.x";
+    // "upstream": the read is not kept.
+    const rows: [name: string, log: string, size: number | "-", kind?: "upstream"][] = [
+      ["useBare", each("el.x"), 2],
+      ["useVoid", each("el.x"), 2],
+      ["useUnusedConst", each("el.x"), 2],
+      ["useComputed", each("el.x"), 2],
+      ["useCallResult", each("el.f() el.f().x"), 3],
+      ["useChain", each("el.y el.y.y el.y.y.x"), 2],
+      ["useDeadStore", "el.x a=1 | el.x a=1 | el.x a=2", 3],
+      ["useOperands", each("el.x el.x el.x el.x"), 2],
+      ["useBetweenWrites", each("a el.x b"), 2],
+      ["useCleanup", each("el.x"), 2],
+      ["useNestedClosure", each("el.x"), 2],
+      ["useHandler, invoked", each("el.x"), 2],
+      ["useHandler, not invoked", each("-"), 2],
+      ["useMethod", each("el.x"), 2],
+      ["useFlash", "el.x | el.x el.x", 2],
+      ["usePropReceiver", followed, 2],
+      ["usePropPath", followed, 2],
+      ["useRefReceiver", "a.x . | a.x . | b.x .", 2],
+      ["useLocalReceiver", followed, 4],
+      ["useUndefinedReceiver", "throws TypeError | throws TypeError", 2],
+      ["useOptionalReceiver", "a.y a.y.x | a.y a.y.x | b.y b.y.x", 2],
+      ["HandlerSibling", "- | -", 8],
+      ["HandlerPattern", "- | -", 8],
+      ["HandlerOptional", "- | -", 2],
+      ["HandlerInnerFunction", "- | -", 2],
+      ["HandlerElement", "- | -", 9],
+      ["HandlerNextToAStore", "w1.x | w1.x | w2.x", 10],
+      ["HandlerNextToADeadRead", each("-"), 8],
+      ["useRestNextToAnOptional", "a.x el.x | a.x el.x", 6],
+      ["useCallbackRootDeps", followed, 2],
+      // Left as written: the compiler takes the root for the dependency, and the array names a path of it.
+      ["useCallbackPathDeps", followed, "-"],
+      ["useRenderBare", each("el.x"), "-", "upstream"],
+      ["useRenderUnusedConst", each("el.x"), "-", "upstream"],
+      ["useMemoCallback", each("el.x"), 2, "upstream"],
+      ["usePattern", each("el.x"), 2, "upstream"],
+      ["useCoercion", each("el.valueOf"), 2, "upstream"],
+      ["useSpread", each("el.iterator"), 2, "upstream"],
+      ["RenderBetween", each("el.x"), 7, "upstream"],
+      ["useParam", each("el.x"), 2, "upstream"],
+      ["useParam, null", each("throws TypeError"), 2, "upstream"],
+    ];
+    const nothing = (log: string) => log.replace(/[^|]+/g, " - ").trim();
+    for (const minifySyntax of [false, true] as const) {
+      itBundled(`react-compiler/UnusedReadInANestedFunction-plain-syntax=${minifySyntax}`, {
+        files: { "/entry.jsx": entry, ...files },
+        target: "browser",
+        backend: "cli",
+        minifySyntax,
+        run: { stdout: rows.map(([name, log]) => `${name}: ${log} [-]`).join("\n") },
+      });
+      itBundled(`react-compiler/UnusedReadInANestedFunction-compiled-syntax=${minifySyntax}`, {
+        files: { "/entry.jsx": entry, ...files },
+        reactCompiler: true,
+        target: "browser",
+        backend: "cli",
+        minifySyntax,
+        run: {
+          stdout: rows
+            .map(([name, log, size, kind]) => `${name}: ${kind === "upstream" ? nothing(log) : log} [${size}]`)
+            .join("\n"),
+        },
+      });
+    }
+    // SSR output renders once and has no effects: there the read goes in every row, as upstream takes it. The rows of
+    // an effect print nothing there in any build. The rows of a handler, a method and a callback are what holds this.
+    itBundled("react-compiler/UnusedReadInANestedFunction-ssr", {
+      files: { "/entry.jsx": entry, ...files },
+      reactCompiler: true,
+      target: "bun",
+      backend: "api",
+      run: { stdout: rows.map(([name, log]) => `${name}: ${nothing(log)} [-]`).join("\n") },
+    });
+
+    // The two effects are from @wordpress/block-editor (hooks/duotone) and @medusajs/dashboard (theme-provider).
+    for (const reactCompiler of [false, true] as const) {
+      itBundled(`react-compiler/UnusedReadInAnEffectOfRealCode-${reactCompiler ? "compiled" : "plain"}`, {
+        files: {
+          "/entry.jsx": /* jsx */ `
+            import { useEffect } from "react";
+            let log = [];
+            const blockElement = {
+              style: { display: "block", setProperty: (name, value) => log.push(name + "=" + value) },
+              get offsetHeight() { log.push("offsetHeight"); return 0; },
+            };
+            function useDuotoneStyles({ colors }) {
+              useEffect(() => {
+                const display = blockElement.style.display;
+                blockElement.style.setProperty("display", "inline-block");
+                // Simply accessing el.offsetHeight flushes layout and style changes
+                blockElement.offsetHeight;
+                blockElement.style.setProperty("display", display);
+              }, [colors]);
+            }
+            const css = {};
+            const view = { getComputedStyle: () => (log.push("getComputedStyle"), { get opacity() { log.push("opacity"); return "1"; } }) };
+            function ThemeProvider({ value, children }) {
+              useEffect(() => {
+                // force the browser to repaint
+                view.getComputedStyle(css).opacity;
+                log.push("remove");
+              }, [value]);
+              return <div>{children}</div>;
+            }
+            const render = (fn, props) => { globalThis.rendering = fn; log = []; fn(props); return log.join(" "); };
+            console.log(["#000", "#000", "#fff"].map(colors => render(useDuotoneStyles, { colors })).join(" | "));
+            console.log(["dark", "dark", "light"].map(value => render(ThemeProvider, { value })).join(" | "));
+          `,
+          ...files,
+        },
+        reactCompiler,
+        target: "browser",
+        backend: "cli",
+        run: {
+          stdout: [
+            each("display=inline-block offsetHeight display=block"),
+            each("getComputedStyle opacity remove"),
+          ].join("\n"),
+        },
+        onAfterBundle(api) {
+          expect(api.readFile("/out.js").includes("react.memo_cache_sentinel")).toBe(reactCompiler);
+        },
+      });
+    }
+  }
+
   // A `try` body that can't throw loses its handler and `try` terminal, but the code after the `try` must be kept.
   itBundled("react-compiler/DeadTryBodyKeepsTheCodeAfterIt", {
     files: {
@@ -4359,6 +4636,8 @@ describe("bundler", () => {
   // A local whose name ends in "Ref" is taken for a ref once its `.current` is read. Listing it in an effect's dependencies
   // used to be reported as reading a ref during render, unless it was initialized in one of a few ways. The expected sizes
   // come from babel-plugin-react-compiler 0.0.0-experimental-a1856f3-20260507, which only refuses `pier.bollard`.
+  // It has 2 for `const x = bollardRef.current; x;`, where it takes the read for dead code. Bun keeps a read in an
+  // effect, so the effect reads `bollardRef` as it does with `?.`.
   describe("react-compiler/ALocalNamedLikeARef", () => {
     const remove = "bollardRef.current.remove();";
     test.each([
@@ -4367,7 +4646,7 @@ describe("bundler", () => {
       ["const bollardRef = pier?.bollard;", "bollardRef?.current.remove();", 4],
       ["const bollardRef = pier?.bollard;", "bollardRef.current?.remove();", 4],
       ["const bollardRef = pier?.bollard;", "const x = bollardRef?.current; x;", 3],
-      ["const bollardRef = pier?.bollard;", "const x = bollardRef.current; x;", 2],
+      ["const bollardRef = pier?.bollard;", "const x = bollardRef.current; x;", 3],
       ["const bollardRef = pier ? pier.bollard : undefined;", remove, 4],
       ["const bollardRef = pier && pier.bollard;", remove, 4],
       ["const bollardRef = pier?.a?.bollard;", remove, 4],

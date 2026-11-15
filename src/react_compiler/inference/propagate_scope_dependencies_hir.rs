@@ -1190,6 +1190,10 @@ fn get_assumed_invoked_functions_impl(
                     // Recursively traverse into other function expressions
                     // TS passes the shared temporaries map to the recursive call
                     let inner_func = &env.functions[lowered_func.func.0 as usize];
+                    // Not in upstream: a handler of an element that only a kept read uses would count as invoked.
+                    if inner_func.keeps_unread_reads {
+                        continue;
+                    }
                     let lambdas_called =
                         get_assumed_invoked_functions_impl(inner_func, env, temporaries);
                     if let Some(entry) = temporaries.get_mut(instr.lvalue.identifier) {
@@ -1311,8 +1315,11 @@ fn collect_non_nulls_in_blocks(
 
             // Handle assumed-invoked inner functions
             if let InstructionValue::FunctionExpression { lowered_func, .. } = &instr.value {
-                if ctx.assumed_invoked_fns.contains(&lowered_func.func) {
-                    let inner_func = &env.functions[lowered_func.func.0 as usize];
+                let inner_func = &env.functions[lowered_func.func.0 as usize];
+                // Not in upstream: a function that keeps a read that nothing uses gives no non-null fact.
+                if ctx.assumed_invoked_fns.contains(&lowered_func.func)
+                    && !inner_func.keeps_unread_reads
+                {
                     // Build nested fn immutable context
                     let nested_fn_immutable_context: HashSet<IdentifierId> =
                         if ctx.nested_fn_immutable_context.is_some() {
@@ -2138,6 +2145,19 @@ fn visit_inner_function_blocks(
     env: &mut Environment,
 ) {
     if !env.has_stack() {
+        return;
+    }
+
+    // Not in upstream: a function that keeps a read that nothing uses is a dependency by its captures, not by paths.
+    if env.functions[func_id.0 as usize].keeps_unread_reads {
+        let func = std::mem::replace(
+            &mut env.functions[func_id.0 as usize],
+            crate::ssa::enter_ssa::placeholder_function(),
+        );
+        for place in &func.context {
+            ctx.visit_operand_root(place, env);
+        }
+        env.functions[func_id.0 as usize] = func;
         return;
     }
 

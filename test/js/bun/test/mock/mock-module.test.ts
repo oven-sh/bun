@@ -1891,6 +1891,34 @@ describe.concurrent("a module mocked without a factory", () => {
 });
 
 describe.concurrent("a name that import and require() resolve to two files", () => {
+  test("a name whose file for require() is a native addon", async () => {
+    await expectFixturesToPass(
+      {
+        "node_modules/addon/package.json": JSON.stringify({
+          name: "addon",
+          exports: { ".": { import: "./esm.mjs", require: "./addon.node" } },
+        }),
+        "node_modules/addon/esm.mjs": `(globalThis.loaded ??= []).push("addon esm"); export const which = "real esm";`,
+        // Not an addon: process.dlopen() throws on it.
+        "node_modules/addon/addon.node": "not an addon",
+        "addon.test.js": `
+          import { expect, jest, mock, spyOn, test } from "bun:test";
+          test("require() gets the mock, and the addon is not opened until the mock has ended", async () => {
+            const dlopen = spyOn(process, "dlopen");
+            mock.module("addon", () => ({ which: "mock" }));
+            expect([require("addon").which, (await import("addon")).which]).toEqual(["mock", "mock"]);
+            expect(dlopen).not.toHaveBeenCalled();
+            jest.unmock("addon");
+            expect(() => require("addon")).toThrow(expect.objectContaining({ code: "ERR_DLOPEN_FAILED" }));
+            expect(dlopen).toHaveBeenCalledTimes(1);
+            expect(globalThis.loaded).toBeUndefined();
+          });
+        `,
+      },
+      1,
+    );
+  });
+
   // Every sequence of up to three of `calls` that has a mock and no jest.unmock() before it, which would end nothing.
   const sequences = (calls: string[], steps: string[] = []): string[][] => {
     const mocked = steps.some(step => step.startsWith("mock"));

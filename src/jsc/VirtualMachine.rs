@@ -391,6 +391,8 @@ pub struct VirtualMachine {
     /// The door out of this thread (`bun_jsc::vm_handle`): tickets for work
     /// that leaves it are taken here, and `teardown` waits on it.
     handle: core::mem::ManuallyDrop<crate::VmHandle>,
+    /// `handle.closed()`, or `destroy` has dropped `handle`.
+    pub(crate) closed: Cell<bool>,
     pub pending_ipc: Cell<Option<PendingIpc>>,
     pub hot_reload_counter: Cell<u32>,
 
@@ -2410,6 +2412,8 @@ impl VirtualMachine {
         // something new (a multipart upload's next part); sweep again so it is
         // cancelled rather than waited out.
         vm.handle.close_and_wait(|| {
+            // The last call follows the close.
+            vm.closed.set(vm.handle.closed());
             vm.release_queued_work();
             // SAFETY: fn contract.
             let _ = unsafe { Self::stop_phase_sweep(this, kind) };
@@ -5248,6 +5252,7 @@ impl VirtualMachine {
         unsafe {
             (*this).regular_event_loop.deinit();
             (*this).macro_event_loop.deinit();
+            (*this).closed.set(true);
             // The shared inner goes when the last outside holder lets go.
             core::mem::ManuallyDrop::drop(&mut (*this).handle);
 

@@ -1224,7 +1224,7 @@ impl<T: JsPayload> StrongWrapper<T> {
     /// [`try_with`](Self::try_with) for a C callback. `f` can drop the `StrongWrapper`.
     ///
     /// # Safety
-    /// `payload` is the payload of a wrapper that a `StrongWrapper` roots.
+    /// `payload` is the payload of a wrapper that a `StrongWrapper` roots, or the VM is closed.
     pub unsafe fn try_with_payload_ptr<R>(
         payload: *const T,
         f: impl FnOnce(BorrowedWrapper<'_, T>) -> R,

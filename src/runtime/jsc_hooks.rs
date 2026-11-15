@@ -110,6 +110,7 @@ pub(crate) struct RuntimeState {
     node_fs: JsCell<Option<crate::node::fs::NodeFS>>,
     /// Installed while `process.on("memoryPressure", ...)` has a listener.
     pub(crate) memory_pressure_watcher: crate::node::memory_pressure::WatcherSlot,
+    pub(crate) quic_endpoints: crate::node::quic::endpoint::EndpointRegistry,
     /// `bun lint`: what runs the rules of JavaScript plugins in this VM.
     pub(crate) lint: core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>>,
     /// The `uv_loop_t` that addons get for this VM. Stored inline because addons
@@ -360,6 +361,7 @@ unsafe fn init_runtime_state(
         matcher_pass: Cell::new(ptr::null()),
         node_fs: JsCell::new(None),
         memory_pressure_watcher: Default::default(),
+        quic_endpoints: Default::default(),
         lint: core::cell::OnceCell::new(),
         // SAFETY: `vm` is the live VM being initialized. `VirtualMachine::init`
         // wrote `handle` before calling this hook.

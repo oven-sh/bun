@@ -555,7 +555,7 @@ impl VirtualMachine {
     /// See [`VmHandle::closed`].
     #[inline]
     pub fn closed(&self) -> bool {
-        self.handle_ref().closed()
+        self.closed.get()
     }
 }
 

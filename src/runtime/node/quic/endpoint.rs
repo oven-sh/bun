@@ -7,6 +7,7 @@ use core::net::SocketAddr;
 use core::ptr::null;
 use core::sync::atomic::Ordering::Relaxed;
 use core::sync::atomic::{AtomicU8, AtomicU16, AtomicU64};
+use std::borrow::Cow;
 
 use bun_io::KeepAlive;
 use bun_jsc::bindgen::{BorrowedWrapper, JsLocal, JsScope, JsStructure, JsWrapper, StrongWrapper};
@@ -15,11 +16,11 @@ use bun_lsquic_sys as lsquic;
 use bun_ptr::{CellExt as _, RefPtr};
 use bun_uws as uws;
 
-use crate::jsc_hooks::timer_all;
+use crate::jsc_hooks::{runtime_state, timer_all};
 use crate::node::net::block_list::BlockList;
 use crate::timer::{EventLoopTimerState, EventLoopTimerTag, OwnedTimer};
 
-use super::aliased_struct::{AliasedStruct, all_atomic_struct};
+use super::aliased_struct::{AliasedStruct, all_atomic_struct, put_state_and_stats};
 use super::callbacks;
 use super::engine::{self, Engine, EngineCell, OutSpec, StrongCtx};
 use super::now_ns;
@@ -31,6 +32,7 @@ bun_core::declare_scope!(quic, hidden);
 
 all_atomic_struct! {
     /// Mirrors Node's `Endpoint::State`.
+    #[derive(Default)]
     pub(crate) struct EndpointState {
         pub bound: AtomicU8,
         pub(crate) receiving: AtomicU8,
@@ -153,7 +155,7 @@ pub(crate) struct QuicEndpoint {
     poll_ref: KeepAlive,
     /// Set before the socket is created, taken by `deliver_endpoint_close`.
     this_value: StrongWrapperCell<QuicEndpoint>,
-    /// Key in `ENDPOINT_REGISTRY`.
+    /// Key in `endpoint_registry()`.
     registry_key: Cell<Option<Key>>,
 
     /// Both can coexist on one endpoint — Node allows that.
@@ -189,8 +191,10 @@ pub(crate) struct QuicEndpoint {
     block_list_allow: Cell<bool>,
     pub(crate) event_loop_timer: OwnedTimer,
     pending_endpoint_close: Cell<bool>,
+    /// The `CLOSECONTEXT_*` that the pending close reports.
+    close_context: Cell<u8>,
     /// Intrusive node on the loop's node:quic driver list; linked only while
-    /// this endpoint holds a socket. `us_nq_loop_flush_if_pending` runs the
+    /// this endpoint is bound. `us_nq_loop_flush_if_pending` runs the
     /// process pass once per loop turn when `pending` is set.
     nq_driver: UsNqDriver,
     nq_registered: Cell<bool>,
@@ -319,7 +323,7 @@ unsafe fn with_socket_user(
     f: impl FnOnce(BorrowedWrapper<'_, QuicEndpoint>),
 ) {
     let user = uws::udp::Socket::opaque_mut(socket).user();
-    // SAFETY: `this_value` roots it until the socket is closed.
+    // SAFETY: `this_value` roots it until the socket is closed. Only a closed VM drops it before that.
     unsafe { StrongWrapper::try_with_payload_ptr(user.cast(), f) };
 }
 
@@ -364,17 +368,19 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     // SAFETY: as above.
     unsafe { with_socket_user(socket, |this| this.on_drain()) }
 }
-/// uSockets also closes a socket by itself, on some errors.
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     // SAFETY: as above.
-    unsafe { with_socket_user(socket, |this| this.socket.set(None)) }
+    unsafe { with_socket_user(socket, |this| this.on_close()) }
 }
 extern "C" fn on_recv_error(_socket: *mut uws::udp::Socket, _errno: c_int, _is_errqueue: c_int) {}
 
-thread_local! {
-    /// A server may advertise another local endpoint's address as its
-    /// preferred_address (RFC 9000 sec 9.6).
-    static ENDPOINT_REGISTRY: StrongWrapperMap<QuicEndpoint> = const { StrongWrapperMap::new() };
+/// A server may advertise another local endpoint's address as its
+/// preferred_address (RFC 9000 sec 9.6).
+#[derive(Default)]
+pub(crate) struct EndpointRegistry(StrongWrapperMap<QuicEndpoint>);
+
+fn endpoint_registry() -> &'static StrongWrapperMap<QuicEndpoint> {
+    &runtime_state().quic_endpoints.0
 }
 
 /// Header byte 0 bit 7 (RFC 8999 sec 5.1): 1 = long header, 0 = short.
@@ -402,6 +408,19 @@ impl QuicEndpoint {
         self.schedule_process();
     }
 
+    /// uSockets closes a socket by itself on a poll error. `process` reports the sessions, then closes the endpoint.
+    fn on_close(&self) {
+        if self.closed.get() {
+            return;
+        }
+        self.socket.set(None);
+        self.close_context.set(CLOSECONTEXT_RECEIVE_FAILURE);
+        self.mark_closing();
+        self.server_engine.clear();
+        self.client_engine.clear();
+        self.schedule_process();
+    }
+
     fn on_packet(
         this: BorrowedWrapper<'_, Self>,
         payload: &[u8],
@@ -423,13 +442,14 @@ impl QuicEndpoint {
                 return;
             }
             let is_this = |other: &Self| core::ptr::eq(other, this.payload());
-            let forwarded = ENDPOINT_REGISTRY.with(|registry| {
-                let (owner, is_server) = registry.find_map(|key, other| {
-                    if is_this(other) {
-                        return None;
-                    }
-                    Some((key, other.cid_owner_is_server(dcid)?))
-                })?;
+            let registry = endpoint_registry();
+            let owner = registry.find_map(|key, other| {
+                if is_this(other) {
+                    return None;
+                }
+                Some((key, other.cid_owner_is_server(dcid)?))
+            });
+            let forwarded = owner.and_then(|(owner, is_server)| {
                 registry.with(owner, |other| {
                     if other.peer_blocked(peer) {
                         return;
@@ -446,14 +466,12 @@ impl QuicEndpoint {
             }
             // May be a stateless reset (RFC 9000 sec 10.3).
             if payload.len() >= STATELESS_RESET_MIN_LEN {
-                ENDPOINT_REGISTRY.with(|registry| {
-                    registry.for_each(|other| {
-                        if is_this(&other) || other.peer_blocked(peer) {
-                            return;
-                        }
-                        other.for_each_engine(|e| e.packet_in(&other, payload, local, peer));
-                        Self::process(other, false);
-                    })
+                registry.for_each(|other| {
+                    if is_this(&other) || other.peer_blocked(peer) {
+                        return;
+                    }
+                    other.for_each_engine(|e| e.packet_in(&other, payload, local, peer));
+                    Self::process(other, false);
                 });
             }
         }
@@ -553,12 +571,10 @@ impl QuicEndpoint {
     }
 
     fn find_socket_by_addr(&self, addr: Option<SocketAddr>) -> Option<*mut uws::udp::Socket> {
-        ENDPOINT_REGISTRY.with(|registry| {
-            registry.find_map(|_, other| {
-                (!core::ptr::eq(other, self) && other.local_addr.get().decode() == addr)
-                    .then(|| other.socket.get())
-            })?
-        })
+        endpoint_registry().find_map(|_, other| {
+            (!core::ptr::eq(other, self) && other.local_addr.get().decode() == addr)
+                .then(|| other.socket.get())
+        })?
     }
 }
 
@@ -873,7 +889,7 @@ impl QuicEndpoint {
             client_is_http: Cell::new(false),
             processing: Cell::new(false),
             followup_due: Cell::new(false),
-            sessions: StrongWrapperMap::new(),
+            sessions: StrongWrapperMap::default(),
             server_local_tp: Cell::new(lsquic::NqTransportParams::default()),
             client_local_tp: Cell::new(lsquic::NqTransportParams::default()),
             pending_new_sessions: Cell::new(Vec::new()),
@@ -885,6 +901,7 @@ impl QuicEndpoint {
             block_list_allow: Cell::new(block_list_allow),
             event_loop_timer: OwnedTimer::init_paused(EventLoopTimerTag::QuicEndpoint),
             pending_endpoint_close: Cell::new(false),
+            close_context: Cell::new(CLOSECONTEXT_CLOSE),
             nq_driver: UsNqDriver::default(),
             nq_registered: Cell::new(false),
             send_scope_depth: Cell::new(0),
@@ -893,12 +910,7 @@ impl QuicEndpoint {
         let state = this.state.to_array_buffer(cx.global())?;
         let stats = this.stats.to_array_buffer(cx.global())?;
         let this_value = structure.create(&cx.heap, this);
-        let js_value = this_value.to_js();
-        let global = cx.global();
-        js_value.put(global, b"state", state);
-        js_value.put(global, b"stats", stats);
-        js_value.put(global, b"stateByteOffset", JSValue::js_number(0.0));
-        js_value.put(global, b"statsByteOffset", JSValue::js_number(0.0));
+        put_state_and_stats(cx.global(), this_value.to_js(), state, stats, 0);
         Ok(this_value)
     }
 
@@ -960,7 +972,7 @@ impl QuicEndpoint {
             this.deliver_endpoint_close(CLOSECONTEXT_BIND_FAILURE, err);
             return;
         }
-        // Linked only while we hold a socket, so an idle endpoint costs
+        // Linked only while bound, so an idle endpoint costs
         // the loop nothing.
         Self::link_loop_driver(this);
         this.socket.set(Some(socket));
@@ -980,17 +992,14 @@ impl QuicEndpoint {
         this.state.bound.store(1, Relaxed);
         this.state.receiving.store(1, Relaxed);
         this.update_keepalive();
-        if this.registry_key.get().is_none() {
-            ENDPOINT_REGISTRY.with(|registry| {
-                let key = registry.next_key();
-                registry.insert(key, this.to_strong());
-                this.registry_key.set(Some(key));
-            });
-        }
+        let registry = endpoint_registry();
+        let key = registry.next_key();
+        registry.insert(key, this.to_strong());
+        this.registry_key.set(Some(key));
     }
 
     fn update_keepalive(&self) {
-        if self.closed.get() || self.socket.get().is_none() {
+        if self.closed.get() {
             return;
         }
         let busy = self.state.listening.load(Relaxed) != 0 || !self.sessions.is_empty();
@@ -1151,7 +1160,7 @@ impl QuicEndpoint {
     pub(crate) fn on_timer_fire(&self) {
         self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
         if self.pending_endpoint_close.replace(false) {
-            self.deliver_endpoint_close(CLOSECONTEXT_CLOSE, 0);
+            self.deliver_endpoint_close(self.close_context.get(), 0);
             return;
         }
         self.this_value.with(|this| Self::process(this, false));
@@ -1561,7 +1570,7 @@ impl QuicEndpoint {
             uws::udp::Socket::opaque_mut(socket).close();
         }
         if let Some(key) = self.registry_key.take() {
-            ENDPOINT_REGISTRY.with(|registry| registry.remove(key));
+            endpoint_registry().remove(key);
         }
         true
     }
@@ -1772,6 +1781,17 @@ impl QuicEndpoint {
             max_idle_timeout: idle_ms,
             ..tp
         });
+        let ticket = session_ticket
+            .as_array_buffer(global)
+            .filter(|_| config.enable_early_data);
+        let resume = match &ticket {
+            Some(buf) if buf.can_change_under_borrow() => Cow::Owned(
+                buf.try_copy_bytes()
+                    .ok_or_else(|| global.throw_out_of_memory())?,
+            ),
+            Some(buf) => Cow::Borrowed(buf.byte_slice()),
+            None => Cow::default(),
+        };
         let key = self.sessions.next_key();
         let strong = QuicSession::create(
             global,
@@ -1786,13 +1806,9 @@ impl QuicEndpoint {
             .servername
             .as_deref()
             .and_then(|s| CStr::from_bytes_until_nul(s).ok());
-        let ticket = session_ticket
-            .as_array_buffer(global)
-            .filter(|_| config.enable_early_data);
-        let resume = ticket.as_ref().map_or(&[][..], |buf| buf.byte_slice());
         self.client_engine.with(|engine| {
             engine.set_idle_timeout_ms(idle_ms.min(c_uint::MAX as u64) as c_uint);
-            engine.connect(&strong, &self.local_addr.get(), &remote, sni, resume);
+            engine.connect(&strong, &self.local_addr.get(), &remote, sni, &resume);
         });
         let session = strong.payload();
         if session.conn.is_null() {
@@ -1936,13 +1952,17 @@ impl QuicEndpoint {
         true
     }
 
+    fn mark_closing(&self) {
+        self.closing.set(true);
+        self.state.closing.store(1, Relaxed);
+        self.state.listening.store(0, Relaxed);
+    }
+
     pub(crate) fn close_gracefully(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) {
         if self.closed.get() || self.closing.get() {
             return;
         }
-        self.closing.set(true);
-        self.state.closing.store(1, Relaxed);
-        self.state.listening.store(0, Relaxed);
+        self.mark_closing();
         self.this_value
             .set(StrongWrapper::new(this_value, cx.global()));
         if self.sessions.is_empty() && self.engine_conn_count() == 0 {

@@ -59,7 +59,7 @@ use crate::node;
 use crate::node::types::PathLikeExt as _;
 use crate::node::types::{Encoding, PathOrFileDescriptor};
 use crate::webcore::blob::BlobExt as _;
-use crate::webcore::body::{Action as BodyValueLockedAction, InternalBlob, Value as BodyValue};
+use crate::webcore::body::{InternalBlob, Tag as BodyTag, Value as BodyValue};
 use crate::webcore::headers_ref::any_blob_content_type_opt;
 use crate::webcore::s3::client as s3;
 use crate::webcore::{
@@ -983,13 +983,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(req) = request_ref!() {
-            let body_value = req.get_body_value();
-            let already_used = match body_value {
-                BodyValue::Used => true,
-                BodyValue::Locked(locked) => {
-                    locked.action != BodyValueLockedAction::None
-                        || locked.is_disturbed::<Request>(global_this, first_arg)
-                }
+            let body_value = req.body();
+            let already_used = match body_value.tag() {
+                BodyTag::Used => true,
+                BodyTag::Locked => body_value.is_disturbed::<Request>(global_this, first_arg),
                 _ => false,
             };
             if already_used {
@@ -1002,7 +999,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
 
             body_value.to_blob_if_in_memory();
-            if matches!(*body_value, BodyValue::Locked(_)) {
+            if body_value.tag() == BodyTag::Locked {
                 if let Some(readable) = req.get_body_readable_stream() {
                     if readable.is_disturbed(global_this) || readable.is_locked(global_this) {
                         return Err(global_this
@@ -1016,35 +1013,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         readable_stream::Strong::init(readable, global_this),
                     ));
                 }
-                let body_value = req.get_body_value();
-                if let BodyValue::Locked(locked) = body_value {
-                    if locked.readable.has() {
-                        break 'extract_body Some(HTTPRequestBody::ReadableStream(
-                            readable_stream::Strong::init(
-                                locked.readable.get().unwrap(),
-                                global_this,
-                            ),
-                        ));
-                    }
-                }
-                let readable = body_value.to_readable_stream(&global_this.js_thread(context))?;
-                if !readable.is_empty_or_undefined_or_null() {
-                    if let BodyValue::Locked(locked) = body_value {
-                        if locked.readable.has() {
-                            break 'extract_body Some(HTTPRequestBody::ReadableStream(
-                                readable_stream::Strong::init(
-                                    locked.readable.get().unwrap(),
-                                    global_this,
-                                ),
-                            ));
-                        }
-                    }
+                body_value.to_readable_stream(&global_this.js_thread(context))?;
+                if let Some(readable) = body_value.readable() {
+                    break 'extract_body Some(HTTPRequestBody::ReadableStream(
+                        readable_stream::Strong::init(readable, global_this),
+                    ));
                 }
             }
 
-            break 'extract_body Some(HTTPRequestBody::AnyBlob(
-                req.get_body_value().use_as_any_blob(),
-            ));
+            break 'extract_body Some(HTTPRequestBody::AnyBlob(body_value.use_as_any_blob()));
         }
 
         if let Some(req) = request_init_object {

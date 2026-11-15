@@ -559,17 +559,17 @@ impl<'a> Cmd<'a> {
                 )?;
             }
         } else if let Some(req) = jsval.as_class_ref::<crate::webcore::Response>() {
-            req.get_body_value().to_blob_if_possible();
+            req.body().to_blob_if_possible();
             if flags.stdin() {
-                let b = req.get_body_value().use_as_any_blob();
+                let b = req.body().use_as_any_blob();
                 stdio[STDIN_NO].extract_blob(global, b, STDIN_NO as i32)?;
             }
             if flags.stdout() {
-                let b = req.get_body_value().use_as_any_blob();
+                let b = req.body().use_as_any_blob();
                 stdio[STDOUT_NO].extract_blob(global, b, STDOUT_NO as i32)?;
             }
             if flags.stderr() {
-                let b = req.get_body_value().use_as_any_blob();
+                let b = req.body().use_as_any_blob();
                 stdio[STDERR_NO].extract_blob(global, b, STDERR_NO as i32)?;
             }
         } else {

@@ -21,6 +21,7 @@ pub mod StandaloneModuleGraph;
 pub mod compiled_program;
 mod executable_file;
 pub mod executable_request;
+mod payload;
 pub use compiled_program::{
     CompiledEntryPointInput, CompiledPackageNameInput, CompiledPathAliasInput, CompiledProgramInput,
 };

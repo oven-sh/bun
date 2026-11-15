@@ -384,7 +384,7 @@ extern "C" void Bun__BytecodeOrder__takeRecording(void* ctx, void (*take)(void* 
 }
 
 // BUN_BYTECODE_DIGEST_OUT: JSC::digestOfAllCachedCode for one module of the executable.
-extern "C" bool Bun__BytecodeOrder__digestModule(JSC::VM* vm, const BunString* source, const BunString* originPath, bool isModule, uint8_t* bytecode, size_t bytecodeSize, uint32_t entryOffset, uint64_t* digest, uint32_t* codeBlocks)
+extern "C" bool Bun__BytecodeOrder__digestModule(JSC::VM* vm, const BunString* source, const BunString* originPath, bool isModule, const uint8_t* bytecode, size_t bytecodeSize, uint32_t entryOffset, uint64_t* digest, uint32_t* codeBlocks)
 {
     JSC::JSLockHolder locker(*vm);
     JSC::SourceCode sourceCode = JSC::makeSource(source->toWTFString(), toSourceOrigin(originPath->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);

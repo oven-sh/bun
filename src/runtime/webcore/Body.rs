@@ -142,7 +142,7 @@ impl Body {
 // ────────────────────────────────────────────────────────────────────────────
 
 pub struct PendingValue {
-    pub(crate) promise: Option<JSValue>,
+    pub(crate) promise: Option<jsc::Strong>,
     pub(crate) readable: webcore::readable_stream::Strong,
     // writable: webcore::Sink
 
@@ -1046,14 +1046,13 @@ impl Value {
                 return Ok(());
             }
 
-            if let Some(promise_) = locked.promise.take() {
-                let promise = promise_.as_any_promise().unwrap();
+            if let Some(root) = locked.promise.take() {
+                let promise = root.get().as_any_promise().unwrap();
                 let content_type = locked.take_content_type();
                 // `wrap` turns what the conversion throws (a string too long, a JSON parse error) into a rejection.
                 promise.wrap(cx.global(), |_| {
                     locked.action.convert(new, content_type, cx)
                 })?;
-                promise_.unprotect();
             }
         }
         Ok(())
@@ -1147,19 +1146,11 @@ impl Value {
                 unreachable!()
             };
 
-            if let Some(promise_value) = locked.promise.take() {
-                // `unprotect` + `ensure_still_alive` are non-Drop side effects
-                // (GC root decrement) that must run even if
-                // reject_with_async_stack errors.
-                let promise_value = scopeguard::guard(promise_value, |p| {
-                    p.unprotect();
-                    p.ensure_still_alive();
-                });
-                if let Some(promise) = promise_value.as_any_promise() {
-                    if promise.status() == jsc::js_promise::Status::Pending {
-                        promise.reject_with_async_stack(global, err_ref.to_js(global))?;
-                    }
-                }
+            if let Some(root) = locked.promise.take()
+                && let Some(promise) = root.get().as_any_promise()
+                && promise.status() == jsc::js_promise::Status::Pending
+            {
+                promise.reject_with_async_stack(global, err_ref.to_js(global))?;
             }
 
             // The Promise version goes before the ReadableStream version incase the Promise version is used too.
@@ -1187,7 +1178,6 @@ impl Value {
         }
         Ok(())
     }
-
     fn locked_stream_to_tee(
         &mut self,
         cx: &bun_jsc::JsThread<'_>,
@@ -1391,7 +1381,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         self.check_body_stream_ref(global_this);
     }
 
-    /// Shared body-clone for `Request::cloned` / `clone_value`: clone through the
+    /// Shared body-clone for `Request` and `Response`: clone through the
     /// JS-side cached stream when present, then resync this owner's
     /// `body`/`stream` cache slots with whatever the body now holds.
     fn clone_body_value_via_cached_stream(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<Value> {
@@ -1431,15 +1421,14 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         locked.action = action;
         let Some(readable) = owned_readable.or_else(|| locked.readable.get()) else {
             let promise = JSPromise::create(global_this).to_js();
-            locked.promise = Some(promise);
-            promise.protect();
+            locked.promise = Some(jsc::Strong::create(promise, global_this));
             if let Some(on_start_buffering) = locked.on_start_buffering.take() {
                 // Last use of `locked`: the producer may settle the body, and so replace it.
                 on_start_buffering(locked.task.unwrap());
             }
             return Ok(promise);
         };
-        // Don't protect() this promise: the stream keeps it alive, and nothing would unprotect it (#13678).
+        // Don't root this promise: the stream keeps it alive (#13678).
         let promise = match &mut locked.action {
             Action::GetJSON => global_this.readable_stream_to_json(readable.value),
             Action::GetArrayBuffer => global_this.readable_stream_to_array_buffer(readable.value),
@@ -1524,7 +1513,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
             Action::GetBlob => {
                 if let Some(header) = self.get_content_type() {
-                    content_type = MimeType::init(header.slice(), true).into();
+                    content_type = MimeType::init(header.slice()).into();
                 }
             }
             _ => {}

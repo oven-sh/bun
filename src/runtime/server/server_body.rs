@@ -948,8 +948,7 @@ fn warn_about_idle_timeout_once() {
 // defined once in `super` (mod.rs). This file contributes additional inherent
 // methods on the same type — there is no separate Phase-A struct.
 pub(super) use super::{
-    CreateJsRequest, DetachRequestOnDrop, NewServer, PreparedRequest, ServerRequestContext,
-    UserRoute,
+    CreateJsRequest, DispatchedRequest, NewServer, PreparedRequest, ServerRequestContext, UserRoute,
 };
 
 impl<const SSL: bool, const DEBUG: bool> uws_sys::web_socket::WebSocketUpgradeServer<SSL>
@@ -1137,7 +1136,7 @@ fn request_ip(config: &ServerConfig, cx: &mut JsScope<'_>, request: &Request) ->
     if config.address.is_unix() {
         return Ok(JSValue::NULL);
     }
-    let Some(info) = request.request_context.get_remote_socket_info() else {
+    let Some(info) = request.request_context.get().get_remote_socket_info() else {
         return Ok(JSValue::NULL);
     };
     crate::socket::socket_address::SocketAddress::create_dto(
@@ -1168,7 +1167,7 @@ fn set_request_timeout<'a>(
     let value = seconds.to_u32();
 
     if let Some(request) = request.as_class_ref::<Request>() {
-        let _ = request.request_context.set_timeout(value);
+        let _ = request.request_context.get().set_timeout(value);
     } else if let Some(response) = request.as_class_ref::<NodeHTTPResponse>() {
         response.set_timeout((value % 255) as u8);
     } else {
@@ -1317,12 +1316,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         };
         // SAFETY: from_js returns a live *mut Request (rooted by the caller's
-        // argument). Shared, re-derived after each JS re-entry point below; the
-        // one field write at the end goes through `request_ptr`.
+        // argument). Shared, re-derived after each JS re-entry point below.
         let request = unsafe { &*request_ptr };
 
         if request
             .request_context
+            .get()
             .server_ptr()
             .is_some_and(|owner| !core::ptr::addr_eq(owner, &raw const *self))
         {
@@ -1331,10 +1330,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             )));
         }
 
-        let Some(upgrader_ptr) = request
-            .request_context
-            .get::<ServerRequestContext<SSL, DEBUG, false>>()
-        else {
+        let Some(upgrader_ptr) = request.request_context.get().get::<ServerRequestContext<
+            SSL,
+            DEBUG,
+            false,
+        >>() else {
             return Ok(false);
         };
         // SAFETY: tagged pointer just matched this monomorphization.
@@ -1446,9 +1446,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 request.url.set(BunString::EMPTY);
             }
 
-            // SAFETY: plain-field detach through the root pointer; the shared
-            // borrow above is not used past this point.
-            unsafe { (*request_ptr).request_context = AnyRequestContext::NULL };
+            request.request_context.set(AnyRequestContext::NULL);
             upgrader.request_weakref.set(request::WeakRef::EMPTY);
 
             options.data.ensure_still_alive();
@@ -1750,7 +1748,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         } else {
             None
         };
-        let request: *mut Request = if let Some(url_utf8) = url_arg {
+        let request = RefPtr::new(if let Some(url_utf8) = url_arg {
             let temp_url_str = url_utf8.slice();
 
             if temp_url_str.is_empty() {
@@ -1802,27 +1800,26 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
             }
 
-            Request::new(Request::init2(
+            Request::init2(
                 BunString::clone_utf8(url.href),
                 headers,
                 // Moves `body` into the per-VM hive pool (ref_count = 1).
                 crate::webcore::body::hive_alloc(body),
                 method,
-            ))
+            )
         } else if let Some(request_) = request_arg {
             request_.clone(&global.js_thread_of_caller())?
         } else {
             let fetch_error = Fetch::fetch_type_error_string(input);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(global, format_args!("{}", fetch_error));
             return Ok(JSPromise::rejected_promise(global, err).to_js());
-        };
+        });
 
         debug_assert!(!self.config.get().on_request.is_empty()); // confirmed above
         let global_this = self.global();
         let on_request = self.config.get().on_request;
-        // SAFETY: `request` was just allocated via `heap::alloc`; its ref
-        // transfers to the JS wrapper inside `to_js`.
-        let request_value = unsafe { Request::to_js(request, &global_this) };
+        let request_ptr = request.this_ptr();
+        let request_value = Request::to_js(request, &global_this);
         let this_value = self.js_value_assert_alive();
         let response_value =
             match on_request.call(&global_this, this_value, &[request_value, this_value]) {
@@ -1852,10 +1849,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if let Some(resp) = <Response as bun_jsc::JsClass>::from_js(response_value) {
             // SAFETY: `from_js` returns a live `*mut Response` (owned by its
-            // JS wrapper, which `response_value` keeps alive). `request` is
+            // JS wrapper, which `response_value` keeps alive). The request is
             // kept alive by `request_value` (its JS wrapper) for the duration
             // of this synchronous frame.
-            unsafe { (*resp).set_url((*request).url.get().clone()) };
+            unsafe { (*resp).set_url(request_ptr.url.get().clone()) };
         }
         Ok(JSPromise::resolved_promise_value(global, response_value))
     }
@@ -2177,16 +2174,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             call_route(
                 global,
                 user_route.id,
-                prepared.request_object,
+                prepared.request.native.as_ptr(),
                 server_js,
                 route_list,
-                &mut prepared.js_request,
+                &mut prepared.request.js,
                 req.as_ptr(),
             )
         })
         .unwrap_or_else(|err| global.take_exception(err));
 
-        Self::handle_request(this, &should_deinit_context, &prepared, req, response_value);
+        Self::handle_request(this, &should_deinit_context, prepared, req, response_value);
     }
 
     /// Calls the `fetch` handler. `upgrade_ctx` as in [`Self::on_user_route_request`].
@@ -2223,29 +2220,26 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         debug_assert!(!on_request.is_empty());
         let global = server.global_this();
         let response_value =
-            match on_request.call(global, server_js, &[prepared.js_request, server_js]) {
+            match on_request.call(global, server_js, &[prepared.request.js, server_js]) {
                 Ok(v) => v,
                 Err(err) => global.take_exception(err),
             };
 
-        Self::handle_request(this, &should_deinit_context, &prepared, req, response_value);
+        Self::handle_request(this, &should_deinit_context, prepared, req, response_value);
     }
 
     /// Hands what the handler returned to the `RequestContext`, then frees it or makes the request asynchronous.
     fn handle_request<const MUX: bool>(
         this: *mut Self,
         should_deinit_context: &core::cell::Cell<bool>,
-        prepared: &PreparedRequest<SSL, DEBUG, MUX>,
+        prepared: PreparedRequest<SSL, DEBUG, MUX>,
         req: uws::AnyRequest,
         response_value: JSValue,
     ) {
-        // SAFETY: `ctx.request_weakref` keeps `request_object` alive. The uWS request does not outlive this function.
-        let _detach_guard = unsafe { DetachRequestOnDrop::new(prepared.request_object) };
-
+        let PreparedRequest { request, ctx } = prepared;
         // SAFETY: `ctx` can't be freed while `defer_deinit_until_callback_completes` is set, and `this` is the live server.
-        let (ctx, server) = unsafe { (&*prepared.ctx, &*this) };
-        ctx.on_response(server, prepared.js_request, response_value);
-        prepared.js_request.ensure_still_alive();
+        let (ctx, server) = unsafe { (&*ctx, &*this) };
+        ctx.on_response(server, request.js, response_value);
 
         ctx.defer_deinit_until_callback_completes.set(None);
 
@@ -2260,11 +2254,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         // uWS reuses `req` for the next request, so an asynchronous one copies what it needs.
-        ctx.to_async(
-            req.as_ptr(),
-            // SAFETY: live (see above), and no other borrow of the Request is outstanding.
-            unsafe { &mut *prepared.request_object },
-        );
+        ctx.to_async(req.as_ptr(), &request.native);
     }
 
     fn should_warn_about_idle_timeout(&self) -> bool {
@@ -2365,22 +2355,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         ctx.signal
             .set(Some(PendingAbortSignal::new(signal.clone())));
 
-        // The JS wrapper frees it, or `ctx.request_weakref` does for `CreateJsRequest::No`.
-        let request_object_ptr: *mut Request = Request::new(Request::init(
+        let request = RefPtr::new(Request::init(
             ctx.method,
             AnyRequestContext::init(ctx_ptr),
             SSL,
             Some(signal),
             body_hive,
         ));
-        // SAFETY: freshly leaked from `heap::into_raw`, so it carries the allocation's provenance.
-        ctx.request_weakref
-            .set(unsafe { bun_ptr::WeakPtr::<Request>::init_ref(request_object_ptr) });
+        ctx.request_weakref.set(bun_ptr::WeakPtr::new(&request));
 
         // `Request.url` and `.headers` read a `uws::Request` lazily. HTTP/2 and HTTP/3 have none, so both are filled in now.
         if MUX {
-            // SAFETY: freshly leaked.
-            copy_url_and_headers_of_mux_request(unsafe { &*request_object_ptr }, &req, SSL);
+            copy_url_and_headers_of_mux_request(&request, &req, SSL);
             ctx.req.set(None);
         }
 
@@ -2428,19 +2414,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         Some(PreparedRequest {
-            js_request: match create_js_request {
-                // SAFETY: from `Request::new` above; the wrapper adopts its ref.
-                CreateJsRequest::Yes => unsafe { Request::to_js(request_object_ptr, global) },
-                CreateJsRequest::Bake => {
-                    match Request::to_js_for_bake(request_object_ptr, global) {
-                        Ok(v) => v,
-                        Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-                        Err(_) => return None,
-                    }
-                }
-                CreateJsRequest::No => JSValue::ZERO,
-            },
-            request_object: request_object_ptr,
+            request: DispatchedRequest::new(request, create_js_request, global)?,
             ctx: ctx_ptr,
         })
     }

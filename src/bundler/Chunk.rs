@@ -21,7 +21,7 @@ use crate::analyze_transpiled_module;
 use crate::bun_css;
 use crate::bun_fs;
 
-use crate::Graph::Graph;
+use crate::BundleV2;
 #[cfg(debug_assertions)]
 use crate::LinkerContext;
 use crate::bundled_ast::CssAstRef;
@@ -43,9 +43,9 @@ pub struct Chunk<'a> {
     /// This is a random string and is used to represent the output path of this
     /// chunk before the final output path has been computed. See OutputPiece
     /// for more info on this technique.
-    pub(crate) unique_key: &'static [u8],
+    pub(crate) unique_key: &'a [u8],
     /// Like `unique_key`, but replaced with `id()` rather than the chunk's path.
-    pub(crate) id_key: &'static [u8],
+    pub(crate) id_key: &'a [u8],
 
     /// Maps source index to bytes contributed to this chunk's output (for metafile).
     /// The value is updated during parallel chunk generation to track bytesInOutput.
@@ -563,7 +563,7 @@ impl IntermediateOutput {
     pub fn code<'d>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
-        parse_graph: &Graph,
+        bundle: &BundleV2<'_>,
         linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
         // Note: `chunk` aliases `&chunks[i]`. The body only reads both, so
@@ -581,7 +581,7 @@ impl IntermediateOutput {
         match shift_tracking {
             SourceMapShiftTracking::Enabled => self.code_with_source_map_shifts::<true>(
                 allocator_to_use,
-                parse_graph,
+                bundle,
                 linker_graph,
                 import_prefix,
                 chunk,
@@ -592,7 +592,7 @@ impl IntermediateOutput {
             ),
             SourceMapShiftTracking::Disabled => self.code_with_source_map_shifts::<false>(
                 allocator_to_use,
-                parse_graph,
+                bundle,
                 linker_graph,
                 import_prefix,
                 chunk,
@@ -612,7 +612,7 @@ impl IntermediateOutput {
     pub(crate) fn code_standalone<'d>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
-        parse_graph: &Graph,
+        bundle: &BundleV2<'_>,
         linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
         // See `code()` note — `chunk` aliases `chunks[i]`; body is read-only.
@@ -629,7 +629,7 @@ impl IntermediateOutput {
         match shift_tracking {
             SourceMapShiftTracking::Enabled => self.code_with_source_map_shifts::<true>(
                 allocator_to_use,
-                parse_graph,
+                bundle,
                 linker_graph,
                 import_prefix,
                 chunk,
@@ -640,7 +640,7 @@ impl IntermediateOutput {
             ),
             SourceMapShiftTracking::Disabled => self.code_with_source_map_shifts::<false>(
                 allocator_to_use,
-                parse_graph,
+                bundle,
                 linker_graph,
                 import_prefix,
                 chunk,
@@ -656,7 +656,7 @@ impl IntermediateOutput {
     pub(crate) fn code_with_source_map_shifts<const ENABLE_SOURCE_MAP_SHIFTS: bool>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
-        graph: &Graph,
+        bundle: &BundleV2<'_>,
         linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
         // See `code()` note — `chunk` aliases `chunks[i]`; body is read-only.
@@ -670,6 +670,7 @@ impl IntermediateOutput {
         // `LinkerGraph.files` SoA (`items_entry_point_chunk_index`) lands with
         // the LinkerGraph work. `bun_paths` / `bun_core::fmt::count` /
         // `bun_alloc::alloc_slice` surfaces are tracked upstream.
+        let graph = &bundle.graph;
         let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files =
             graph.input_files.items_unique_key_for_additional_file();
@@ -766,7 +767,7 @@ impl IntermediateOutput {
                                     let output_file =
                                         additional_output_file_index(files.slice().last().unwrap());
 
-                                    &graph.additional_output_files.as_slice()[output_file].dest_path
+                                    &linker_graph.additional_output_files[output_file].dest_path
                                 }
                                 QueryKind::Chunk => &chunks[index].final_rel_path,
                                 QueryKind::Scb => {
@@ -777,7 +778,7 @@ impl IntermediateOutput {
                                 QueryKind::HtmlImport => {
                                     count += HTMLImportManifest::count_escaped_json(
                                         piece.query.index(),
-                                        graph,
+                                        bundle,
                                         linker_graph,
                                         chunks,
                                     );
@@ -929,8 +930,7 @@ impl IntermediateOutput {
                                             .advance(&unique_key_for_additional_files[index]);
                                     }
 
-                                    break 'brk &graph.additional_output_files.as_slice()
-                                        [output_file]
+                                    break 'brk &linker_graph.additional_output_files[output_file]
                                         .dest_path;
                                 }
                                 QueryKind::Chunk => 'brk: {
@@ -958,7 +958,7 @@ impl IntermediateOutput {
                                     let before_len = cursor.len();
                                     HTMLImportManifest::write_escaped_json(
                                         piece.query.index(),
-                                        graph,
+                                        bundle,
                                         linker_graph,
                                         chunks,
                                         &mut cursor,
@@ -1434,7 +1434,7 @@ impl<'a> CssImportOrder<'a> {
     }
 
     #[cfg(debug_assertions)]
-    pub(crate) fn fmt<'r>(&'r self, ctx: &'r LinkerContext<'a>) -> CssImportOrderDebug<'r, 'a> {
+    pub(crate) fn fmt<'r>(&'r self, ctx: &'r LinkerContext<'_, 'a>) -> CssImportOrderDebug<'r, 'a> {
         CssImportOrderDebug { inner: self, ctx }
     }
 }
@@ -1442,7 +1442,7 @@ impl<'a> CssImportOrder<'a> {
 #[cfg(debug_assertions)]
 pub(crate) struct CssImportOrderDebug<'r, 'a> {
     inner: &'r CssImportOrder<'a>,
-    ctx: &'r LinkerContext<'a>,
+    ctx: &'r LinkerContext<'r, 'a>,
 }
 
 #[cfg(debug_assertions)]
@@ -1466,8 +1466,6 @@ impl fmt::Display for CssImportOrderDebug<'_, '_> {
                 write!(writer, "\"{}\"", bstr::BStr::new(&path.pretty))?;
             }
             CssImportOrderKind::SourceIndex(source_index) => {
-                // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid
-                // for the lifetime of the link step that owns this LinkerContext.
                 let source =
                     &self.ctx.parse_graph().input_files.items_source()[source_index.get() as usize];
                 write!(

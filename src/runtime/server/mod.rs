@@ -366,14 +366,53 @@ pub(crate) type ServerRequestContext<const SSL: bool, const DEBUG: bool, const M
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CreateJsRequest {
     Yes,
+    /// `Bun__ServerRouteList__callRoute` makes the wrapper, which takes over the ref.
     No,
     Bake,
 }
 
-/// The JS `Request`, the heap `webcore::Request` behind it and the request's `RequestContext`.
+/// A `Request` while the uWS callback that lent it a `uws::Request` is on the stack.
+pub(crate) struct DispatchedRequest {
+    /// Owns `native`'s ref.
+    pub(crate) js: JSValue,
+    pub(crate) native: bun_ptr::ThisPtr<crate::webcore::Request>,
+}
+
+impl DispatchedRequest {
+    fn new(
+        request: bun_ptr::RefPtr<crate::webcore::Request>,
+        create_js_request: CreateJsRequest,
+        global: &jsc::JSGlobalObject,
+    ) -> Option<Self> {
+        let native = request.this_ptr();
+        let js = match create_js_request {
+            CreateJsRequest::Yes => crate::webcore::Request::to_js(request, global),
+            CreateJsRequest::Bake => {
+                match crate::webcore::Request::to_js_for_bake(request, global) {
+                    Ok(v) => v,
+                    Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
+                    Err(_) => return None,
+                }
+            }
+            CreateJsRequest::No => {
+                let _ = request.into_raw();
+                JSValue::ZERO
+            }
+        };
+        Some(Self { js, native })
+    }
+}
+
+impl Drop for DispatchedRequest {
+    fn drop(&mut self) {
+        self.native.request_context.get().detach_request();
+        self.js.ensure_still_alive();
+    }
+}
+
+/// A request's `Request` and `RequestContext`.
 pub(crate) struct PreparedRequest<const SSL: bool, const DEBUG: bool, const MUX: bool> {
-    pub(crate) js_request: JSValue,
-    pub(crate) request_object: *mut crate::webcore::Request,
+    pub(crate) request: DispatchedRequest,
     pub ctx: *mut ServerRequestContext<SSL, DEBUG, MUX>,
 }
 
@@ -389,48 +428,21 @@ impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG, false> {
         // By saving a request, all information from `req` must be
         // copied since the provided uws.Request will be re-used for
         // future requests (stack allocated).
-        // SAFETY: `ctx`/`request_object` are the freshly-allocated
-        // `RequestContext` slot and heap `Request` produced by
+        // SAFETY: `ctx` is the freshly-allocated `RequestContext` slot produced by
         // `prepare_js_request_context` for this frame.
         unsafe {
             (*self.ctx).to_async(
                 std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
-                &mut *self.request_object,
+                &self.request.native,
             );
         }
 
         SavedRequest {
-            js_request: jsc::StrongOptional::create(self.js_request, global),
-            request: self.request_object,
-            ctx: AnyRequestContext::init(self.ctx),
+            js_request: jsc::Strong::create(self.request.js, global),
+            request: self.request.native,
+            ctx: any_request_context::AnyRequestContextRef::new(AnyRequestContext::init(self.ctx)),
             response: resp,
         }
-    }
-}
-
-/// RAII: on drop, detaches the borrowed stack `uws::Request` from the heap
-/// `webcore::Request` so the JS request
-/// object never dangles a pointer past the uWS frame it borrowed.
-pub(crate) struct DetachRequestOnDrop(*mut crate::webcore::Request);
-
-impl DetachRequestOnDrop {
-    /// # Safety
-    /// `request_object` must point to a live heap `webcore::Request` (the one
-    /// produced by `Request::new` / `PreparedRequest::save`) and remain valid
-    /// for the guard's lifetime — kept alive by `ctx.request_weakref`.
-    #[inline]
-    unsafe fn new(request_object: *mut crate::webcore::Request) -> Self {
-        Self(request_object)
-    }
-}
-
-impl Drop for DetachRequestOnDrop {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: per `new()` contract — `self.0` is the heap allocation
-        // produced by `Request::new`; kept alive by `ctx.request_weakref`
-        // until `RequestContext::deinit` releases it.
-        unsafe { (*self.0).request_context.detach_request() };
     }
 }
 
@@ -654,11 +666,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
             }
             SavedRequestUnion::Saved(data) => PreparedRequest {
-                js_request: data
-                    .js_request
-                    .get()
-                    .expect("Request was unexpectedly freed"),
-                request_object: data.request,
+                request: DispatchedRequest {
+                    js: data.js_request.get(),
+                    native: data.request,
+                },
                 // SAFETY: `SavedRequest` was produced by `PreparedRequest::save`
                 // for this exact (SSL,DEBUG) monomorphization, so the erased
                 // `AnyRequestContext` payload is `ServerRequestContext<SSL, DEBUG, false>`.
@@ -675,7 +686,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // The conservative GC scan reaches the heap allocation as well as the
         // stack, so a small Vec is sound.
         let mut args: Vec<JSValue> = Vec::with_capacity(ARG_COUNT + 1);
-        args.push(prepared.js_request);
+        args.push(prepared.request.js);
         args.extend_from_slice(&extra_args);
 
         let _entered = self.vm().enter_event_loop_scope_without_checkpoint();
@@ -685,15 +696,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             Err(err) => global.take_exception(err),
         };
 
-        let is_stack = matches!(req, SavedRequestUnion::Stack(_));
-        let request_object = prepared.request_object;
-        // uWS request will not live longer than this function — only detach
-        // when it's the stack-allocated original (a saved request already
-        // copied everything it needs).
-        // SAFETY: `request_object` is kept alive by `ctx.request_weakref` for
-        // the request's lifetime.
-        let _detach_guard = is_stack.then(|| unsafe { DetachRequestOnDrop::new(request_object) });
-
         // SAFETY: `ctx` was just allocated (or saved) by this server; the
         // `defer_deinit_...` flag set below keeps it alive across `on_response`.
         let ctx_ref = unsafe { &*ctx };
@@ -702,13 +704,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         ctx_ref
             .defer_deinit_until_callback_completes
             .set(Some(bun_ptr::BackRef::new(&should_deinit_context)));
-        ctx_ref.on_response(self, prepared.js_request, response_value);
+        ctx_ref.on_response(self, prepared.request.js, response_value);
         ctx_ref
             .defer_deinit_until_callback_completes
             .set(original_state);
-
-        // Reference in the stack here in case it is not for whatever reason
-        prepared.js_request.ensure_still_alive();
 
         if should_deinit_context.get() {
             ctx_ref.deinit();
@@ -724,13 +723,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // since the provided uws.Request will be re-used for future requests (stack allocated).
         match req {
             SavedRequestUnion::Stack(r) => {
-                // SAFETY: `r` is the live stack `uws::Request`; `request_object`
-                // is the heap `Request` kept alive by `ctx.request_weakref`.
                 ctx_ref.to_async(
                     std::ptr::from_ref::<uws::Request>(r)
                         .cast_mut()
                         .cast::<c_void>(),
-                    unsafe { &mut *request_object },
+                    &prepared.request.native,
                 );
             }
             SavedRequestUnion::Saved(_) => {} // info already copied
@@ -3177,29 +3174,17 @@ pub(crate) mod http_server_agent {
 
 // ─── SavedRequest ────────────────────────────────────────────────────────────
 pub(crate) struct SavedRequest {
-    /// May be `.empty` until
-    /// `prepare_js_request_context` populates it; `deinit` must tolerate the
-    /// empty state.
-    pub(crate) js_request: jsc::StrongOptional,
-    pub(crate) request: *mut crate::webcore::Request,
-    pub ctx: AnyRequestContext,
+    pub(crate) js_request: jsc::Strong,
+    pub(crate) request: bun_ptr::ThisPtr<crate::webcore::Request>,
+    pub(crate) ctx: any_request_context::AnyRequestContextRef,
     pub(crate) response: uws::AnyResponse,
-}
-
-impl SavedRequest {
-    /// Release the JS strong ref and
-    /// drop the request-context refcount. `request`/`response` are non-owning.
-    pub(crate) fn deinit(&mut self) {
-        self.js_request.deinit();
-        self.ctx.deref();
-    }
 }
 
 pub(crate) enum SavedRequestUnion<'a> {
     /// Direct pointer to a µWebSockets request that is still on the stack.
     Stack(&'a mut uws::Request),
     /// Heap-allocated copy that persists beyond the initial handler frame.
-    Saved(SavedRequest),
+    Saved(&'a SavedRequest),
 }
 
 /// Frees the server outside the finalizer that can drop the last ref. Same pointer as the server, one tag per monomorphization.

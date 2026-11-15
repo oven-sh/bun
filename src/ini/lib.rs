@@ -119,7 +119,7 @@ mod draft {
 
     use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
     use bun_ast::E::Rope;
-    use bun_ast::{E, Expr, ExprData, StoreRef};
+    use bun_ast::{AstArena, E, Expr, ExprData, StoreRef};
     use bun_ast::{Loc, Log, Source};
     use bun_collections::VecExt;
     use bun_core::{Output, ZStr};
@@ -150,6 +150,7 @@ mod draft {
         pub(crate) src: &'a [u8],
         pub out: Expr,
         pub(crate) env: &'a DotEnvLoader,
+        bump: &'a AstArena,
     }
 
     // The result type depends on the usage (`.section -> *Rope`, `.key ->
@@ -180,18 +181,24 @@ mod draft {
     }
 
     impl<'a> Parser<'a> {
-        pub fn init(source: &'a Source<'a>, env: &'a DotEnvLoader) -> Parser<'a> {
+        pub fn init(
+            source: &'a Source<'a>,
+            env: &'a DotEnvLoader,
+            bump: &'a AstArena,
+        ) -> Parser<'a> {
             Parser {
                 src: source.contents.as_ref(),
-                out: Expr::init(E::Object::default(), Loc::EMPTY),
+                out: Expr::allocate(bump, E::Object::default(), Loc::EMPTY),
                 source,
                 env,
+                bump,
             }
         }
 
         // deinit -> Drop: `logger` is owned and drops automatically.
 
-        pub fn parse(&mut self, bump: &'a Arena) -> OOM<()> {
+        pub fn parse(&mut self) -> OOM<()> {
+            let bump = self.bump;
             let src = self.src;
             let env = self.env;
             let source_path = self.source.path.text;
@@ -346,7 +353,7 @@ mod draft {
                             )?
                             .into_value();
                         }
-                        break 'brk Expr::init(E::EString::init(b""), Loc::EMPTY);
+                        break 'brk Expr::allocate(bump, E::EString::init(b""), Loc::EMPTY);
                     }
                     Expr::init(E::Boolean { value: true }, Loc::EMPTY)
                 };
@@ -371,10 +378,14 @@ mod draft {
                         if !matches!(val.data, ExprData::EArray(_)) {
                             let mut arr = E::Array::default();
                             arr.push(bump, val)?;
-                            head.put(bump, key, Expr::init(arr, Loc::EMPTY))?;
+                            head.put(bump, key, Expr::allocate(bump, arr, Loc::EMPTY))?;
                         }
                     } else {
-                        head.put(bump, key, Expr::init(E::Array::default(), Loc::EMPTY))?;
+                        head.put(
+                            bump,
+                            key,
+                            Expr::allocate(bump, E::Array::default(), Loc::EMPTY),
+                        )?;
                     }
                 }
 
@@ -402,8 +413,8 @@ mod draft {
             env: &DotEnvLoader,
             source_path: &[u8],
             usage: Usage,
-            bump: &'a Arena,
-            ropealloc: &'a Arena,
+            bump: &'a AstArena,
+            ropealloc: &'a AstArena,
             val_: &'a [u8],
             offset_: i32,
         ) -> OOM<PrepareResult<'a>> {
@@ -441,7 +452,8 @@ mod draft {
                                 // Still need to expand env vars in the content
                                 if usage == Usage::Value {
                                     let expanded = Self::expand_env_vars(env, bump, val)?;
-                                    return Ok(PrepareResult::Value(Expr::init(
+                                    return Ok(PrepareResult::Value(Expr::allocate(
+                                        bump,
                                         E::EString::init(expanded),
                                         Loc { start: offset },
                                     )));
@@ -460,7 +472,8 @@ mod draft {
                             str_
                         };
                         if usage == Usage::Value {
-                            return Ok(PrepareResult::Value(Expr::init(
+                            return Ok(PrepareResult::Value(Expr::allocate(
+                                bump,
                                 E::EString::init(expanded),
                                 Loc { start: offset },
                             )));
@@ -691,18 +704,21 @@ mod draft {
                     }
                     Usage::Value => {
                         if !did_any_escape {
-                            return Ok(PrepareResult::Value(Expr::init(
+                            return Ok(PrepareResult::Value(Expr::allocate(
+                                bump,
                                 E::EString::init(val),
                                 Loc { start: offset },
                             )));
                         }
                         if unesc.len() <= STACK_BUF_SIZE {
-                            return Ok(PrepareResult::Value(Expr::init(
+                            return Ok(PrepareResult::Value(Expr::allocate(
+                                bump,
                                 E::EString::init(bump.alloc_slice_copy(&unesc)),
                                 Loc { start: offset },
                             )));
                         }
-                        return Ok(PrepareResult::Value(Expr::init(
+                        return Ok(PrepareResult::Value(Expr::allocate(
+                            bump,
                             E::EString::init(unesc.into_bump_slice()),
                             Loc { start: offset },
                         )));
@@ -723,7 +739,8 @@ mod draft {
             }
             // fallthrough from `break 'out` above
             if usage == Usage::Value {
-                return Ok(PrepareResult::Value(Expr::init(
+                return Ok(PrepareResult::Value(Expr::allocate(
+                    bump,
                     E::EString::init(val),
                     Loc { start: offset },
                 )));
@@ -882,9 +899,9 @@ mod draft {
             Ok(None)
         }
 
-        fn single_str_rope(ropealloc: &'a Arena, str_: &[u8]) -> OOM<&'a mut Rope<'a>> {
+        fn single_str_rope(ropealloc: &'a AstArena, str_: &[u8]) -> OOM<&'a mut Rope<'a>> {
             let rope = ropealloc.alloc(Rope {
-                head: Expr::init(E::EString::init(str_), Loc::EMPTY),
+                head: Expr::allocate(ropealloc, E::EString::init(str_), Loc::EMPTY),
                 next: None,
             });
             Ok(rope)
@@ -892,12 +909,12 @@ mod draft {
 
         fn commit_rope_part(
             bump: &'a Arena,
-            ropealloc: &'a Arena,
+            ropealloc: &'a AstArena,
             unesc: &mut ArenaVec<'a, u8>,
             existing_rope: &mut Option<&'a mut Rope<'a>>,
         ) -> OOM<()> {
             let slice = bump.alloc_slice_copy(&unesc[..]);
-            let expr = Expr::init(E::EString::init(slice), Loc::EMPTY);
+            let expr = Expr::allocate(ropealloc, E::EString::init(slice), Loc::EMPTY);
             if let Some(r) = existing_rope.as_deref_mut() {
                 r.append(expr, ropealloc);
             } else {
@@ -910,16 +927,16 @@ mod draft {
             Ok(())
         }
 
-        fn str_to_rope(ropealloc: &'a Arena, key: &[u8]) -> OOM<&'a mut Rope<'a>> {
+        fn str_to_rope(ropealloc: &'a AstArena, key: &[u8]) -> OOM<&'a mut Rope<'a>> {
             let Some(mut dot_idx) = next_dot(key) else {
                 let rope = ropealloc.alloc(Rope {
-                    head: Expr::init(E::EString::init(key), Loc::EMPTY),
+                    head: Expr::allocate(ropealloc, E::EString::init(key), Loc::EMPTY),
                     next: None,
                 });
                 return Ok(rope);
             };
             let rope_head: &'a mut Rope<'a> = ropealloc.alloc(Rope {
-                head: Expr::init(E::EString::init(&key[..dot_idx]), Loc::EMPTY),
+                head: Expr::allocate(ropealloc, E::EString::init(&key[..dot_idx]), Loc::EMPTY),
                 next: None,
             });
 
@@ -929,12 +946,18 @@ mod draft {
                     Some(n) if segments < MAX_SECTION_ROPE_SEGMENTS => dot_idx + 1 + n,
                     _ => {
                         let rest = &key[dot_idx + 1..];
-                        rope_head.append(Expr::init(E::EString::init(rest), Loc::EMPTY), ropealloc);
+                        rope_head.append(
+                            Expr::allocate(ropealloc, E::EString::init(rest), Loc::EMPTY),
+                            ropealloc,
+                        );
                         break;
                     }
                 };
                 let part = &key[dot_idx + 1..next_dot_idx];
-                rope_head.append(Expr::init(E::EString::init(part), Loc::EMPTY), ropealloc);
+                rope_head.append(
+                    Expr::allocate(ropealloc, E::EString::init(part), Loc::EMPTY),
+                    ropealloc,
+                );
                 segments += 1;
                 dot_idx = next_dot_idx;
             }
@@ -1368,10 +1391,10 @@ mod draft {
         source_idx: u32,
         configs: &mut Vec<ConfigItem>,
     ) -> OOM<()> {
-        let arena = Arena::new();
+        let arena = AstArena::new();
         let bump = &arena;
-        let mut parser = Parser::init(source, env);
-        parser.parse(bump)?;
+        let mut parser = Parser::init(source, env, bump);
+        parser.parse()?;
         // Need to be very, very careful here with strings.
         // They are allocated in the Parser's arena, which of course gets
         // deinitialized at the end of the scope.

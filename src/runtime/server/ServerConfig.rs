@@ -914,7 +914,7 @@ impl ServerConfig {
                     };
 
                     let mut user_options = crate::bake::UserOptions {
-                        arena: bun_alloc::Arena::new(),
+                        arena: bun_ast::AstArena::new(),
                         root: bun_core::ZBox::from_bytes(
                             bun_paths::fs::FileSystem::instance().top_level_dir(),
                         ),

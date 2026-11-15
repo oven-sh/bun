@@ -15,7 +15,6 @@ use bun_sys as Syscall;
 
 use crate::bun_fs::FileSystem;
 use crate::bun_json;
-use crate::initialize_store;
 
 use super::directories;
 use crate::lifecycle_script_runner::{
@@ -457,9 +456,8 @@ fn put_npm_package_env(
         bun_ast::Source::init_path_string(package_json_path.as_bytes(), json_buf.as_slice());
     let log = bun_ast::Log::init();
 
-    initialize_store();
-
-    let Ok(parsed) = bun_json::ParsedJson::parse_package_json(&json_src, &log) else {
+    let arena = bun_ast::AstArena::new();
+    let Ok(parsed) = bun_json::ParsedJson::parse_package_json(&json_src, &log, &arena) else {
         return Ok(());
     };
     let own: [(&[u8], &[u8]); 2] = [
@@ -467,13 +465,13 @@ fn put_npm_package_env(
         (b"npm_package_version", b"version"),
     ];
     for (variable, property) in own {
-        if let Some(value) = parsed.root.get(property) {
+        if let Some(value) = parsed.root().get(property) {
             if let Some(value) = value.as_utf8_string_literal() {
                 script_env.put(variable, value)?;
             }
         }
     }
-    let Some(config) = parsed.root.get(b"config") else {
+    let Some(config) = parsed.root().get(b"config") else {
         return Ok(());
     };
 

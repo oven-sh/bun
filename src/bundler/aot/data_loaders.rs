@@ -5,7 +5,7 @@ use bun_alloc::Arena;
 use bun_aot::diagnostic_codes::Code;
 use bun_aot::diagnostics::log_diagnostic;
 use bun_aot::load::source_provider::{DataFailure, SourceFile, is_short_blank_text};
-use bun_ast::{Expr, Loader, Loc, Log, Source};
+use bun_ast::{AstArena, Expr, Loader, Loc, Log, Source};
 use bun_core::strings;
 use bun_sema::atom::Interner;
 use bun_sema::hir_from_data::{DataModule, DataValue, DatabasePlace};
@@ -173,7 +173,7 @@ fn parse_tree<'a>(
     format: StructuredFormat,
     source: &'a Source,
     log: &Log,
-    scratch: &'a Arena,
+    scratch: &'a AstArena,
 ) -> Option<Expr> {
     match format {
         StructuredFormat::Json => {

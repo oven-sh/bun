@@ -182,8 +182,7 @@ pub trait Host: Sync {
     /// that's `Value` with a name repeated at the end. If it's `Null`, the field is repeated with a
     /// `null` after its other value. If it's a `map[string]string` that's neither `Valid` nor an
     /// object, the field is repeated last with its `Value`.
-    /// Whatever the parser leaves in `arena`, which belongs to the calling thread, is garbage.
-    fn parse_package_json(&self, arena: &crate::session::Arena, text: &[u8]) -> Option<Json>;
+    fn parse_package_json(&self, text: &[u8]) -> Option<Json>;
     /// `ExtendedConfigCache`, for a host that reads many configuration files. Returns what
     /// `cache_extended_config` stored for the file at `path`.
     fn extended_config(&self, _path: &[u8]) -> Option<CachedConfig> {
@@ -2841,8 +2840,7 @@ impl<'h> Resolver<'h> {
         // `getPackageJsonInfo`: a file that can't be read or parsed is a package without fields.
         let package = self.is_file(&path).then(|| {
             let text = self.read_manifest_text(&path);
-            let json =
-                text.and_then(|text| (self.host).parse_package_json(self.session.arena(), &text));
+            let json = text.and_then(|text| (self.host).parse_package_json(&text));
             let json = json.unwrap_or(Json::Null);
             let stored_field = |name: &[u8]| Some(self.keep(json.get(name)?.as_str()?));
             Package {

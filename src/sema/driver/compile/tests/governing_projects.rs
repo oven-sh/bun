@@ -525,8 +525,8 @@ impl Host for ListingCounter {
     ) -> hir::File<'s> {
         self.disk.parse(arena, path, text, atoms, options)
     }
-    fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
-        self.disk.parse_package_json(arena, text)
+    fn parse_package_json(&self, text: &[u8]) -> Option<Json> {
+        self.disk.parse_package_json(text)
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
         self.disk.parallel(count, work);

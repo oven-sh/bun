@@ -1280,7 +1280,7 @@ fn installed_major(host: &dyn Host, config: &[u8]) -> Option<(Vec<u8>, Json)> {
 
 fn major_of_typescript_at(host: &dyn Host, package: &[u8]) -> Option<(Vec<u8>, Json)> {
     let text = host.read(&inside(package, b"package.json"))?;
-    let fields = host.parse_package_json(Session::new().arena(), &text)?;
+    let fields = host.parse_package_json(&text)?;
     let version = fields.get(b"version")?.as_str()?;
     let major = &version[..strings::index_of_char_usize(version, b'.')?];
     let major: u32 = std::str::from_utf8(major).ok()?.parse().ok()?;
@@ -1910,7 +1910,6 @@ fn dependencies_not_installed(
             missing.push((from, package));
         }
     }
-    let arena = Arena::new();
     let nearest = |from| {
         let mut manifests = ancestors(from).map(|dir| join(dir, b"package.json"));
         manifests.find(|path| host.is_file(path))
@@ -1927,7 +1926,7 @@ fn dependencies_not_installed(
             continue;
         }
         let text = host.read(&manifest);
-        let Some(json) = text.and_then(|text| host.parse_package_json(&arena, &text)) else {
+        let Some(json) = text.and_then(|text| host.parse_package_json(&text)) else {
             continue;
         };
         // The types of `@scope/name` are in `@types/scope__name`.
@@ -3354,8 +3353,8 @@ impl Host for WithOutputs<'_> {
     ) -> Option<bun_sema::hir::File<'s>> {
         self.disk.parse_top_level(arena, path, text, atoms, options)
     }
-    fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
-        self.disk.parse_package_json(arena, text)
+    fn parse_package_json(&self, text: &[u8]) -> Option<Json> {
+        self.disk.parse_package_json(text)
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
         match self.built_now {
@@ -4155,7 +4154,7 @@ fn has_no_installed_dependencies(host: &dyn Host, config: &[u8]) -> bool {
     let mut manifests = above().map(|it| inside(it, b"package.json"));
     let manifest = manifests.find(|it| host.is_file(it));
     let text = manifest.and_then(|it| host.read(&it));
-    let fields = text.and_then(|it| host.parse_package_json(Session::new().arena(), &it));
+    let fields = text.and_then(|it| host.parse_package_json(&it));
     let packages_in = |field: &[u8]| fields.as_ref()?.get(field)?.as_object();
     let fields = [
         &b"dependencies"[..],

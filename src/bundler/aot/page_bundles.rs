@@ -49,26 +49,26 @@ fn create_page_outputs(
     pages: &[&[u8]],
     log: &Log,
 ) -> Result<PageOutputs, Failed> {
-    with_ast_scope(|heap| {
+    with_ast_scope(|ast_arena| {
         let page_log = Log::init();
-        let mut transpiler = create_page_transpiler(context, heap, &page_log);
+        let mut transpiler = create_page_transpiler(context, ast_arena, &page_log);
         let any_loop = AnyEventLoop::default();
         let carrier = context.bundle();
 
         let mut bundle = BundleV2::init(
             &mut transpiler,
             None,
-            heap,
+            ast_arena,
             Some(NonNull::from(&any_loop)),
             Some(NonNull::from(carrier.graph.pool().worker_pool())),
-            heap,
+            ast_arena,
         );
         bundle.plugins = carrier.plugins;
         bundle.plugin_context = carrier.plugin_context;
         bundle.completion = carrier.completion;
         bundle.file_map = carrier.file_map;
 
-        let result = run(&mut bundle, pages, heap);
+        let result = run(&mut bundle, pages, ast_arena);
         drop(bundle);
 
         let has_page_errors = page_log.has_errors();
@@ -89,10 +89,10 @@ fn create_page_outputs(
 
 fn create_page_transpiler<'h>(
     context: &BuildContext,
-    heap: &'h Arena,
+    ast_arena: &'h bun_ast::AstArena,
     log: &'h Log,
 ) -> Transpiler<'h> {
-    let mut transpiler = Transpiler::for_worker(context.bundle().transpiler(), heap, log);
+    let mut transpiler = Transpiler::for_worker(context.bundle().transpiler(), ast_arena, log);
 
     let options = &mut transpiler.options;
     options.type_check = None;

@@ -2,6 +2,7 @@
 //! Dispatch lives in codecs.rs; this file is the codec body.
 
 use core::ffi::{c_int, c_void};
+use core::marker::PhantomData;
 use core::ptr::NonNull;
 
 use super::codecs;
@@ -76,9 +77,8 @@ impl Default for WebPData {
 }
 
 /// `struct WebPChunkIterator` — cursor into a VP8X chunk list. Only `chunk`
-/// is read; `pad`/`private_` are libwebp-internal bookkeeping that
-/// `WebPDemuxReleaseChunkIterator` walks. `chunk.bytes` is a borrowed view
-/// INTO the original input buffer — dupe it out before `WebPDemuxDelete`.
+/// is read; the rest is libwebp's. `chunk.bytes` is a borrowed view
+/// INTO the original input buffer.
 #[repr(C)]
 struct WebPChunkIterator {
     chunk_num: c_int,
@@ -103,14 +103,14 @@ unsafe extern "C" {
         version: c_int,
     ) -> *mut WebPDemuxer;
     fn WebPDemuxDelete(dmux: *mut WebPDemuxer);
-    fn WebPDemuxGetI(dmux: *const WebPDemuxer, feature: c_int) -> u32;
-    fn WebPDemuxGetChunk(
-        dmux: *const WebPDemuxer,
-        fourcc: *const u8,
+    safe fn WebPDemuxGetI(dmux: &WebPDemuxer, feature: c_int) -> u32;
+    safe fn WebPDemuxGetChunk(
+        dmux: &WebPDemuxer,
+        fourcc: &[u8; 4],
         chunk_number: c_int,
-        iter: *mut WebPChunkIterator,
+        iter: &mut WebPChunkIterator,
     ) -> c_int;
-    fn WebPDemuxReleaseChunkIterator(iter: *mut WebPChunkIterator);
+    safe fn WebPDemuxReleaseChunkIterator(iter: &mut WebPChunkIterator);
 
     safe fn WebPNewInternal(version: c_int) -> *mut WebPMux;
     fn WebPMuxDelete(mux: *mut WebPMux);
@@ -122,6 +122,62 @@ unsafe extern "C" {
         copy_data: c_int,
     ) -> c_int;
     fn WebPMuxAssemble(mux: *mut WebPMux, assembled_data: *mut WebPData) -> c_int;
+}
+
+impl Drop for WebPChunkIterator {
+    fn drop(&mut self) {
+        WebPDemuxReleaseChunkIterator(self);
+    }
+}
+
+struct Demux<'a>(NonNull<WebPDemuxer>, PhantomData<&'a [u8]>);
+
+impl<'a> Demux<'a> {
+    fn new(bytes: &'a [u8]) -> Option<Self> {
+        let data = WebPData {
+            bytes: bytes.as_ptr(),
+            size: bytes.len(),
+        };
+        // SAFETY: the demuxer borrows `bytes`, which outlive it; a null state pointer is allowed.
+        let dmux = unsafe {
+            WebPDemuxInternal(
+                &raw const data,
+                0,
+                core::ptr::null_mut(),
+                WEBP_DEMUX_ABI_VERSION,
+            )
+        };
+        Some(Self(NonNull::new(dmux)?, PhantomData))
+    }
+
+    fn icc_profile(&self) -> Option<&'a [u8]> {
+        let dmux = WebPDemuxer::opaque_ref(self.0.as_ptr());
+        if WebPDemuxGetI(dmux, WEBP_FF_FORMAT_FLAGS) & ICCP_FLAG == 0 {
+            return None;
+        }
+        let mut iter = WebPChunkIterator {
+            chunk_num: 0,
+            num_chunks: 0,
+            chunk: WebPData::default(),
+            pad: [0; 6],
+            private_: core::ptr::null_mut(),
+        };
+        if WebPDemuxGetChunk(dmux, b"ICCP", 1, &mut iter) == 0
+            || iter.chunk.bytes.is_null()
+            || iter.chunk.size == 0
+        {
+            return None;
+        }
+        // SAFETY: the chunk is a view into the bytes `new` borrowed.
+        Some(unsafe { core::slice::from_raw_parts(iter.chunk.bytes, iter.chunk.size) })
+    }
+}
+
+impl Drop for Demux<'_> {
+    fn drop(&mut self) {
+        // SAFETY: from `WebPDemuxInternal`, deleted once.
+        unsafe { WebPDemuxDelete(self.0.as_ptr()) }
+    }
 }
 
 struct Mux(NonNull<WebPMux>);
@@ -188,55 +244,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
         // The demuxer reads each chunk tag more than once and crashes if the
         // reads disagree, so give it a copy that JS can't write to.
         let bytes = bytes.to_vec();
-        let data = WebPData {
-            bytes: bytes.as_ptr(),
-            size: bytes.len(),
-        };
-        // SAFETY: `data` points to a valid WebPData; null state ptr is allowed.
-        let dmux = unsafe {
-            WebPDemuxInternal(
-                &raw const data,
-                0,
-                core::ptr::null_mut(),
-                WEBP_DEMUX_ABI_VERSION,
-            )
-        };
-        if dmux.is_null() {
-            break 'blk None;
-        }
-        let _free_dmux = scopeguard::guard(dmux, |d| {
-            // SAFETY: d was returned by WebPDemuxInternal above and is non-null; matching destructor.
-            unsafe { WebPDemuxDelete(d) }
-        });
-        // SAFETY: dmux is a live demuxer handle.
-        if unsafe { WebPDemuxGetI(dmux, WEBP_FF_FORMAT_FLAGS) } & ICCP_FLAG == 0 {
-            break 'blk None;
-        }
-        let mut iter = WebPChunkIterator {
-            chunk_num: 0,
-            num_chunks: 0,
-            chunk: WebPData::default(),
-            pad: [0; 6],
-            private_: core::ptr::null_mut(),
-        };
-        // SAFETY: dmux is live; fourcc reads exactly 4 bytes; iter is a valid out-param.
-        if unsafe { WebPDemuxGetChunk(dmux, b"ICCP".as_ptr(), 1, &raw mut iter) } == 0 {
-            break 'blk None;
-        }
-        let iter = scopeguard::guard(iter, |mut it| {
-            // SAFETY: it was populated by WebPDemuxGetChunk above; matching release call.
-            unsafe { WebPDemuxReleaseChunkIterator(&raw mut it) }
-        });
-        if iter.chunk.bytes.is_null() {
-            break 'blk None;
-        }
-        if iter.chunk.size == 0 {
-            break 'blk None;
-        }
-        // SAFETY: chunk.bytes points into `bytes` for chunk.size bytes per libwebp contract.
-        break 'blk Some(
-            unsafe { core::slice::from_raw_parts(iter.chunk.bytes, iter.chunk.size) }.to_vec(),
-        );
+        Demux::new(&bytes).and_then(|demux| demux.icc_profile().map(<[u8]>::to_vec))
     };
     Ok(codecs::Decoded {
         rgba: out,

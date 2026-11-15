@@ -7,7 +7,7 @@
 // on the existing null-check.
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tls as tlsCert } from "harness";
 import { join } from "node:path";
 
 // `script` is the source of a script, or the arguments that run a fixture file.
@@ -19,7 +19,7 @@ async function run(script: string | string[], expected = "ok", env: Record<strin
     // Disable the external ASAN symbolizer: when the UAF fires it can wedge
     // on a broken pipe to llvm-symbolizer and the subprocess never exits,
     // turning a clear assertion failure into a test timeout.
-    env: { ...bunEnv, ...env, ASAN_OPTIONS: "symbolize=0:abort_on_error=1:allow_user_segv_handler=1" },
+    env: { ...bunEnv, ASAN_OPTIONS: "symbolize=0:abort_on_error=1:allow_user_segv_handler=1", ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -126,6 +126,26 @@ describe.concurrent.skipIf(!isASAN && !isDebug)("tls.connect({socket: Duplex}) d
         });
       });
     `);
+  });
+
+  test.serial.skipIf(!isASAN || !isLinux)("or leak the socket when that error follows destroy()", async () => {
+    await run(
+      `
+      // Not while the script is evaluated: leaksan.supp hides what that allocates.
+      setImmediate(() => {
+        const duplex = new (require("node:stream").Duplex)({ read() {}, write(chunk, enc, cb) { cb(); } });
+        require("node:tls").connect({ socket: duplex }).destroy();
+        duplex.emit("data", "string, not a buffer");
+        setImmediate(() => console.log("ok"));
+      });
+    `,
+      "ok",
+      {
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: "allow_user_segv_handler=1:detect_leaks=1",
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "../../../leaksan.supp")}`,
+      },
+    );
   });
 
   // Serial: four debug subprocesses at once reach the default test timeout on a loaded machine.

@@ -13,6 +13,7 @@ use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell, JsRef, JsResult};
+use bun_ptr::RefPtr;
 use bun_sys::{self, Fd};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -23,7 +24,7 @@ use crate::generated_bindgen::listener::{TLSListener, js_Listener as js};
 use crate::socket::SSLConfig;
 use crate::socket::uws_jsc::{ListenApi, ListenTarget, throw_listen_error};
 use crate::socket::{
-    Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
+    Handlers, NativeRef, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
 };
 
 #[cfg(windows)]
@@ -621,33 +622,16 @@ impl Listener {
         flags
     }
 
-    #[cfg(windows)]
-    pub(crate) fn on_name_pipe_created<const SSL: bool>(
-        listener: &Listener,
-    ) -> bun_ptr::ThisPtr<NewSocket<SSL>> {
-        // The pipe attaches later, and `on_create` only touches a socket that is connected.
-        Self::on_create::<SSL>(listener, uws::NewSocketHandler::<SSL>::DETACHED)
-    }
-
-    /// Called from `BunListener::on_open` (uws dispatch) for every accepted socket.
-    /// Allocates the `NewSocket` wrapper, stashes it in the socket ext, then
-    /// re-stamps the kind to `.bun_socket_{tcp,tls}` so subsequent events route
-    /// straight to `BunSocket` (the listener arm only fires once per accept).
-    pub(crate) fn on_create<const SSL: bool>(
-        listener: &Listener,
-        socket: uws::NewSocketHandler<SSL>,
-    ) -> bun_ptr::ThisPtr<NewSocket<SSL>> {
+    /// The socket of an accepted connection. It has no transport yet.
+    fn new_accepted<const SSL: bool>(listener: &Listener) -> RefPtr<NewSocket<SSL>> {
         jsc::mark_binding!();
         log!("onCreate");
 
         debug_assert!(SSL == listener.ssl);
 
-        let this_socket = NewSocket::<SSL>::new(Some(Rc::clone(&listener.handlers)));
-        this_socket.socket.set(socket);
-        this_socket.protos.set(listener.protos.clone());
-        this_socket.flags.set(listener.accepted_socket_flags());
-        let s = this_socket;
-        s.ref_();
+        let s = NewSocket::<SSL>::new(Some(Rc::clone(&listener.handlers)));
+        s.protos.set(listener.protos.clone());
+        s.flags.set(listener.accepted_socket_flags());
         // Each accepted socket holds the event loop on its own (same as a
         // client socket after `connect_finish`), so `conn.unref()` works and
         // `server.unref()`/`server.close()` don't tear out live connections'
@@ -658,24 +642,35 @@ impl Listener {
             let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
         }
-        if let Some(ctx) = socket.ext::<*mut c_void>() {
-            // SAFETY: ext storage is at least pointer-sized; we stash *mut NewSocket<SSL>
-            unsafe { *ctx = this_socket.as_ptr().cast::<c_void>() };
-        }
-        if let uws::InternalSocket::Connected(s) = socket.socket {
-            // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-            bun_opaque::opaque_deref_mut(s).set_kind(if SSL {
-                uws_sys::SocketKind::BunSocketTls
-            } else {
-                uws_sys::SocketKind::BunSocketTcp
-            });
-        }
         // Whether or not there is a `timeout` handler yet: `reload()` and `--hot` can bring one.
         if listener.default_timeout {
-            this_socket.timeout_seconds.set(120);
+            s.timeout_seconds.set(120);
+        }
+        s
+    }
+
+    /// Called from `BunListener::on_open` (uws dispatch) for every accepted socket.
+    /// Allocates the `NewSocket` wrapper, stashes it in the socket ext, then
+    /// re-stamps the kind to `.bun_socket_{tcp,tls}` so subsequent events route
+    /// straight to `BunSocket` (the listener arm only fires once per accept).
+    pub(crate) fn on_create<const SSL: bool>(
+        listener: &Listener,
+        accepted: *mut uws_sys::us_socket_t,
+    ) -> bun_ptr::ThisPtr<NewSocket<SSL>> {
+        let this_socket = Self::new_accepted::<SSL>(listener);
+        let s = this_socket.this_ptr();
+        let socket = uws::NewSocketHandler::<SSL>::from(accepted);
+        s.socket.set(socket);
+        *NativeRef::of(accepted) = NativeRef::new(this_socket);
+        uws_sys::us_socket_t::opaque_mut(accepted).set_kind(if SSL {
+            uws_sys::SocketKind::BunSocketTls
+        } else {
+            uws_sys::SocketKind::BunSocketTcp
+        });
+        if listener.default_timeout {
             socket.set_timeout(120);
         }
-        this_socket
+        s
     }
 
     pub(crate) fn dispose(&self, _: &mut JsScope<'_>) {
@@ -822,8 +817,8 @@ impl Listener {
     /// `Bun.connect`, and node:net's dial (which hands in the socket it already made).
     pub(crate) fn connect_inner(
         cx: &bun_jsc::JsThread<'_>,
-        prev_maybe_tcp: Option<*mut TCPSocket>,
-        prev_maybe_tls: Option<*mut TLSSocket>,
+        prev_maybe_tcp: Option<&TCPSocket>,
+        prev_maybe_tls: Option<&TLSSocket>,
         opts: JSValue,
     ) -> JsResult<JSValue> {
         // What script of a disposed `Bun.ModuleGraph` opens is closed at once and reports nothing.
@@ -998,7 +993,7 @@ impl Drop for Listener {
 // Note: hoisted from the body of connect_inner; dispatched via const generic.
 fn connect_finish<const IS_SSL: bool>(
     cx: &bun_jsc::JsThread<'_>,
-    maybe_previous: Option<*mut NewSocket<IS_SSL>>,
+    maybe_previous: Option<&NewSocket<IS_SSL>>,
     handlers: Rc<Handlers>,
     connection: UnixOrHost,
     local_binding: Option<(Box<[u8]>, u16)>,
@@ -1012,9 +1007,9 @@ fn connect_finish<const IS_SSL: bool>(
     promise_value: JSValue,
 ) -> JsResult<JSValue> {
     let vm = handlers.vm;
-    let socket: bun_ptr::ThisPtr<NewSocket<IS_SSL>> = if let Some(prev_ptr) = maybe_previous {
-        // SAFETY: caller passes a live NewSocket<IS_SSL>, owned by its JS wrapper.
-        let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
+    // Either the caller's JS-owned socket (reconnect) or a fresh one.
+    let socket_ref = if let Some(prev) = maybe_previous {
+        let prev = prev.ref_guard();
         debug_assert!(prev.this_value.get().is_not_empty());
         // `node:net` allows `socket.connect()` on an already-connected /
         // still-connecting socket. Close the previous native socket before
@@ -1032,17 +1027,14 @@ fn connect_finish<const IS_SSL: bool>(
     } else {
         NewSocket::<IS_SSL>::new(Some(handlers))
     };
-    socket.connection.set(Some(connection));
-    socket.local_binding.set(local_binding);
-    socket
+    socket_ref.connection.set(Some(connection));
+    socket_ref.local_binding.set(local_binding);
+    socket_ref
         .protos
         .set(ssl.as_mut().and_then(|s| s.take_protos()));
-    socket
+    socket_ref
         .server_name
         .set(ssl.as_mut().and_then(|s| s.take_server_name()));
-    // Either the caller's JS-owned socket (reconnect) or the fresh one above.
-    let socket_ref = socket;
-    socket_ref.ref_();
     NewSocket::<IS_SSL>::data_set_cached(
         socket_ref.this_value_for_connect(cx.global()),
         cx.global(),
@@ -1058,7 +1050,7 @@ fn connect_finish<const IS_SSL: bool>(
     });
     // Held for the connect attempt regardless of `ref_pollref_on_connect`; `on_open` applies that.
     socket_ref.poll_ref.ref_(bun_io::js_vm_ctx());
-    let opened = match socket_ref.do_connect(cx, owned_ssl_ctx) {
+    let opened = match NewSocket::do_connect(&socket_ref, cx, owned_ssl_ctx) {
         Ok(opened) => opened,
         Err(errno) => {
             let is_unix = port.is_none();
@@ -1077,16 +1069,10 @@ fn connect_finish<const IS_SSL: bool>(
                 bun_sys::SystemErrno::SUCCESS => bun_sys::SystemErrno::ECONNREFUSED,
                 errno => errno,
             };
-            {
-                let this = socket;
-                let handled = NewSocket::<IS_SSL>::handle_connect_error(this, errno);
-                // Balance the unconditional `socket_ref.ref_()` above.
-                NewSocket::deref(&this);
-                // A `connectError` handler that threw on this synchronous failure
-                // throws from `connect()`.
-                handled?;
-                return Ok(promise_value);
-            }
+            // A `connectError` handler that threw on this synchronous failure
+            // throws from `connect()`.
+            NewSocket::handle_connect_error(socket_ref, errno, 0)?;
+            return Ok(promise_value);
         }
     };
 
@@ -1245,7 +1231,7 @@ impl WindowsNamedPipeListeningContext {
     fn on_client_connect(this: *mut Self, status: uv::ReturnCode) {
         // SAFETY: `this` is the `data` pointer libuv hands back; it was set to a
         // live heap `WindowsNamedPipeListeningContext` in `listen_named_pipe`.
-        // Shared borrow — `on_name_pipe_created` re-enters JS; the one `&mut`
+        // Shared borrow — `new_accepted` re-enters JS; the one `&mut`
         // (the `uv_pipe` field) is taken through the root pointer below.
         let this_ref = unsafe { &*this };
         if status != uv::ReturnCode::ZERO || this_ref.listener.is_none() {
@@ -1257,13 +1243,13 @@ impl WindowsNamedPipeListeningContext {
         let listener: &Listener = listener_ref.get();
         // An accepted pipe is the listening script's.
         let entered = this_ref.vm.enter_context(listener.context);
-        use crate::socket::windows_named_pipe::SocketType as PipeSocketType;
+        use crate::socket::windows_named_pipe::OwnedSocket;
         // Owned for the whole accept: JS below can replace the slot through setSecureContext().
         let ssl_ctx = listener.secure_ctx.get().clone();
-        let socket: PipeSocketType = if ssl_ctx.is_some() {
-            PipeSocketType::Tls(Listener::on_name_pipe_created::<true>(listener))
+        let socket: OwnedSocket = if ssl_ctx.is_some() {
+            OwnedSocket::Tls(Listener::new_accepted::<true>(listener))
         } else {
-            PipeSocketType::Tcp(Listener::on_name_pipe_created::<false>(listener))
+            OwnedSocket::Tcp(Listener::new_accepted::<false>(listener))
         };
 
         let client =

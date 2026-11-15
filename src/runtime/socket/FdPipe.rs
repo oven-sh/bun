@@ -2,9 +2,9 @@
 
 use core::cell::Cell;
 
-use bun_jsc::JsResult;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_ptr::ThisPtr;
+use bun_jsc::{JsCell, JsResult};
+use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_uws::{SocketTCP, Transport};
 
@@ -15,8 +15,8 @@ use crate::dispatch::fold;
 pub(crate) struct FdPipe {
     handle: bun_uws::TransportHandle,
     fd: Fd,
-    /// `None` once closed. `connect_finish` took the connection's ref on it, and `on_close` releases that ref.
-    socket: Cell<Option<ThisPtr<TCPSocket>>>,
+    /// `None` once closed.
+    socket: JsCell<Option<RefPtr<TCPSocket>>>,
     is_shutdown: Cell<bool>,
     rejected_send_error: Cell<i32>,
     /// The task that closes and frees `self` is in the queue.
@@ -35,14 +35,15 @@ bun_jsc::impl_abort_handle_owner!(FdPipe, abort_handle, |this, _cause| {
 impl FdPipe {
     /// Makes `fd` the transport of `socket` and reports it open.
     pub(crate) fn open(
-        socket: ThisPtr<TCPSocket>,
+        owned: RefPtr<TCPSocket>,
         fd: Fd,
         context: &bun_jsc::ScriptExecutionContext,
     ) -> JsResult<()> {
+        let socket = owned.this_ptr();
         let this = bun_core::heap::into_raw(Box::new(Self {
             handle: Default::default(),
             fd,
-            socket: Cell::new(Some(socket)),
+            socket: JsCell::new(Some(owned)),
             is_shutdown: Cell::new(false),
             rejected_send_error: Cell::new(0),
             is_queued: Cell::new(false),
@@ -85,7 +86,7 @@ impl FdPipe {
 
     #[cfg(not(windows))]
     pub(crate) fn on_poll(&self) {
-        if let Some(socket) = self.socket.get() {
+        if let Some(socket) = self.socket.get().as_ref().map(RefPtr::this_ptr) {
             fold(TCPSocket::on_writable(
                 socket,
                 SocketTCP::from_transport(&raw const self.handle),

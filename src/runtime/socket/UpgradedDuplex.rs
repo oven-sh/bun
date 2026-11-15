@@ -236,14 +236,9 @@ impl UpgradedDuplex {
         let js_wrapper = self.js_wrapper;
         js_wrapper.ensure_still_alive();
 
-        // Taken first: `on_close` consumes this ref, and a throw from `duplex.end()` below must not reach the closed socket.
+        // Taken first: a throw from `duplex.end()` below must not reach the closed socket.
         if let Some(tls) = self.tls.replace(None) {
-            fold(TLSSocket::on_close(
-                tls.into_this_ptr(),
-                self.socket(),
-                0,
-                None,
-            ));
+            fold(TLSSocket::on_close(tls, self.socket(), 0, None));
         }
         self.release_connection();
         // closes the underlying duplex
@@ -434,10 +429,10 @@ impl UpgradedDuplex {
         self.debug_assert_kept_alive();
         // Neuter the listener thunks while the wrapper is still strongly held.
         self.teardown();
-        // `tls.socket` is this engine, so `handle_connect_error` consumes the ref `tls` held.
         fold(TLSSocket::handle_connect_error(
-            tls.into_this_ptr(),
+            tls,
             bun_sys::SystemErrno::ECONNREFUSED,
+            0,
         ));
     }
 
@@ -557,7 +552,6 @@ impl UpgradedDuplex {
         let engine = unsafe { ThisPtr::new(this) };
         engine.handle.set(this);
         if let Some(tls) = engine.tls.get() {
-            tls.ref_();
             tls.socket.set(engine.socket());
             // No poll ref: the stream's events drive this engine, so like node's TLSWrap over a JS stream it doesn't hold the loop open.
             tls.mark_active();
@@ -766,8 +760,8 @@ impl bun_event_loop::Taskable for UpgradedDuplex {
         if let Some(tls) = engine.tls.replace(None) {
             // Neuter the listener thunks while the wrapper is still strongly held.
             engine.teardown();
-            // Consumes our ref and detaches the socket, so its finalizer finds nothing to reach into. `Err` is left for the release dispatcher's fold.
-            let _ = TLSSocket::on_close(tls.into_this_ptr(), engine.socket(), 0, None);
+            // Detaches the socket, so its finalizer finds nothing to reach into. `Err` is left for the release dispatcher's fold.
+            let _ = TLSSocket::on_close(tls, engine.socket(), 0, None);
         }
         // Not `release_connection`: at zero that queues the hop this call stands in for.
         if engine.take_connection_ref() {

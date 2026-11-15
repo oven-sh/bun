@@ -317,6 +317,13 @@ impl OwnedSslCtx {
     }
 }
 
+impl core::ops::Deref for OwnedSslCtx {
+    type Target = SSL_CTX;
+    fn deref(&self) -> &SSL_CTX {
+        SSL_CTX::opaque_ref(self.0.as_ptr())
+    }
+}
+
 impl Clone for OwnedSslCtx {
     /// Another reference to the same `SSL_CTX` (`SSL_CTX_up_ref`).
     fn clone(&self) -> Self {
@@ -333,8 +340,34 @@ impl Drop for OwnedSslCtx {
     }
 }
 
-/// Owns one `SSL_SESSION` reference.
-pub struct OwnedSslSession(core::ptr::NonNull<SSL_SESSION>);
+/// An owner of one reference, released on drop. `Option<$name>` is a nullable `$handle *`.
+macro_rules! owned_handle {
+    ($($name:ident($handle:ident) => $free:ident;)+) => {$(
+        #[doc = concat!("Owns one `", stringify!($handle), "` reference.")]
+        #[repr(transparent)]
+        pub struct $name(core::ptr::NonNull<$handle>);
+
+        impl core::ops::Deref for $name {
+            type Target = $handle;
+            fn deref(&self) -> &$handle {
+                $handle::opaque_ref(self.0.as_ptr())
+            }
+        }
+
+        impl Drop for $name {
+            fn drop(&mut self) {
+                // SAFETY: we own exactly one reference, released once.
+                unsafe { $free(self.0.as_ptr()) }
+            }
+        }
+    )+};
+}
+
+owned_handle! {
+    OwnedSslSession(SSL_SESSION) => SSL_SESSION_free;
+    OwnedX509(X509) => X509_free;
+    OwnedX509Store(X509_STORE) => X509_STORE_free;
+}
 
 impl OwnedSslSession {
     pub fn retain(session: &SSL_SESSION) -> Self {
@@ -342,33 +375,27 @@ impl OwnedSslSession {
         Self(session.into())
     }
 
+    pub fn from_der(der: &[u8]) -> Option<Self> {
+        let len = c_long::try_from(der.len()).expect("int cast");
+        // SAFETY: BoringSSL reads at most `len` bytes of `der`.
+        unsafe { d2i_SSL_SESSION(core::ptr::null_mut(), &mut der.as_ptr(), len) }
+    }
+
     pub fn as_ptr(&self) -> *mut SSL_SESSION {
         self.0.as_ptr()
     }
 }
-
-impl Drop for OwnedSslSession {
-    fn drop(&mut self) {
-        // SAFETY: we own exactly one reference, released once.
-        unsafe { SSL_SESSION_free(self.0.as_ptr()) }
-    }
-}
-
-/// Owns one `X509` reference.
-#[repr(transparent)]
-pub struct OwnedX509(core::ptr::NonNull<X509>);
 
 impl OwnedX509 {
     pub fn retain(cert: &X509) -> Self {
         X509_up_ref(cert);
         Self(cert.into())
     }
-}
 
-impl core::ops::Deref for OwnedX509 {
-    type Target = X509;
-    fn deref(&self) -> &X509 {
-        X509::opaque_ref(self.0.as_ptr())
+    pub fn from_der(der: &[u8]) -> Option<Self> {
+        let len = c_long::try_from(der.len()).expect("int cast");
+        // SAFETY: BoringSSL reads at most `len` bytes of `der`.
+        unsafe { d2i_X509(core::ptr::null_mut(), &mut der.as_ptr(), len) }
     }
 }
 
@@ -378,10 +405,40 @@ impl core::ops::DerefMut for OwnedX509 {
     }
 }
 
-impl Drop for OwnedX509 {
+/// Finds the issuer of a certificate in a trust store.
+pub struct IssuerLookup<'a>(
+    core::ptr::NonNull<X509_STORE_CTX>,
+    core::marker::PhantomData<&'a X509_STORE>,
+);
+
+impl<'a> IssuerLookup<'a> {
+    pub fn new(store: &'a X509_STORE) -> Option<Self> {
+        let ctx = core::ptr::NonNull::new(X509_STORE_CTX_new())?;
+        let lookup = Self(ctx, core::marker::PhantomData);
+        // SAFETY: the context keeps a pointer to `store`, which outlives it.
+        let ready = unsafe {
+            X509_STORE_CTX_init(
+                ctx.as_ptr(),
+                store,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+            )
+        };
+        (ready == 1).then_some(lookup)
+    }
+
+    pub fn issuer_of(&self, cert: &X509) -> Option<OwnedX509> {
+        let mut issuer = None;
+        // SAFETY: `new` initialized the context.
+        unsafe { X509_STORE_CTX_get1_issuer(&mut issuer, self.0.as_ptr(), cert) };
+        issuer
+    }
+}
+
+impl Drop for IssuerLookup<'_> {
     fn drop(&mut self) {
-        // SAFETY: we own exactly one reference, released once.
-        unsafe { X509_free(self.0.as_ptr()) }
+        // SAFETY: we own the context, freed once.
+        unsafe { X509_STORE_CTX_free(self.0.as_ptr()) }
     }
 }
 
@@ -720,8 +777,7 @@ impl SSL {
 
     /// The peer's leaf certificate. A server's cert chain leaves it out.
     pub fn peer_certificate(&self) -> Option<OwnedX509> {
-        // SAFETY: `self` is a live SSL; the result is null or a new reference.
-        core::ptr::NonNull::new(unsafe { SSL_get_peer_certificate(self) }).map(OwnedX509)
+        SSL_get_peer_certificate(self)
     }
 
     /// The peer's leaf certificate, borrowed from this SSL's cert chain.
@@ -862,10 +918,10 @@ unsafe extern "C" {
     pub fn SSL_get_peer_cert_chain(ssl: *const SSL) -> *mut struct_stack_st_X509;
 
     // ── X509 ─────────────────────────────────────────────────────────────
-    pub fn d2i_X509(out: *mut *mut X509, inp: *mut *const u8, len: c_long) -> *mut X509;
+    fn d2i_X509(out: *mut *mut X509, inp: &mut *const u8, len: c_long) -> Option<OwnedX509>;
     pub fn i2d_X509(x: *const X509, outp: *mut *mut u8) -> c_int;
     safe fn X509_up_ref(x: &X509) -> c_int;
-    pub fn X509_free(x509: *mut X509);
+    fn X509_free(x509: *mut X509);
     fn X509_get_signature_nid(x509: *const X509) -> c_int;
     fn X509_get0_signature(
         out_sig: *mut *const asn1_string_st,
@@ -1022,7 +1078,7 @@ pub type pem_password_cb = unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut 
 
 unsafe extern "C" {
     // ── SSL_CTX ──────────────────────────────────────────────────────────
-    pub fn SSL_CTX_free(ctx: *mut SSL_CTX);
+    fn SSL_CTX_free(ctx: *mut SSL_CTX);
     pub fn SSL_CTX_get_verify_mode(ctx: *const SSL_CTX) -> c_int;
     pub fn SSL_CTX_set_session_id_context(
         ctx: *mut SSL_CTX,
@@ -1069,7 +1125,7 @@ unsafe extern "C" {
         protos: *const u8,
         protos_len: usize,
     ) -> c_int;
-    pub fn SSL_CTX_get_cert_store(ctx: *const SSL_CTX) -> *mut X509_STORE;
+    pub safe fn SSL_CTX_get_cert_store(ctx: &SSL_CTX) -> Option<&X509_STORE>;
     fn OPENSSL_free(ptr: *mut c_void);
     pub fn SSL_CTX_get0_param(ctx: *mut SSL_CTX) -> *mut c_void;
     pub fn SSL_get_group_id(ssl: *const SSL) -> u16;
@@ -1124,7 +1180,7 @@ unsafe extern "C" {
     // ── BIO ──────────────────────────────────────────────────────────────
     pub fn BIO_new(method: *const BIO_METHOD) -> *mut BIO;
     fn BIO_free(bio: *mut BIO) -> c_int;
-    pub fn BIO_new_mem_buf(buf: *const c_void, len: ossl_ssize_t) -> *mut BIO;
+    fn BIO_new_mem_buf(buf: *const c_void, len: ossl_ssize_t) -> *mut BIO;
     pub safe fn BIO_get_new_index() -> c_int;
     pub fn BIO_meth_new(r#type: c_int, name: *const c_char) -> *mut BIO_METHOD;
     pub fn BIO_meth_set_write(
@@ -1288,13 +1344,33 @@ unsafe extern "C" {
     /// Returns a static NUL-terminated string, never NULL.
     pub safe fn X509_verify_cert_error_string(err: c_long) -> *const c_char;
 
-    /// Returns a NEW reference (caller frees) or null when the peer sent no
-    /// certificate.
-    fn SSL_get_peer_certificate(ssl: *const SSL) -> *mut X509;
+    fn X509_STORE_free(store: *mut X509_STORE);
+    safe fn X509_STORE_CTX_new() -> *mut X509_STORE_CTX;
+    fn X509_STORE_CTX_init(
+        ctx: *mut X509_STORE_CTX,
+        store: &X509_STORE,
+        x509: *mut X509,
+        chain: *mut struct_stack_st_X509,
+    ) -> c_int;
+    fn X509_STORE_CTX_free(ctx: *mut X509_STORE_CTX);
+    /// Leaves `issuer` as it is when there is none.
+    fn X509_STORE_CTX_get1_issuer(
+        issuer: &mut Option<OwnedX509>,
+        ctx: *mut X509_STORE_CTX,
+        x: &X509,
+    ) -> c_int;
+
+    /// `None` when the peer sent no certificate.
+    safe fn SSL_get_peer_certificate(ssl: &SSL) -> Option<OwnedX509>;
     /// Returns a BORROWED reference to the context's leaf certificate, or null.
     pub fn SSL_CTX_get0_certificate(ctx: *const SSL_CTX) -> *mut X509;
 
     pub fn SSL_set_session(ssl: *mut SSL, session: *mut SSL_SESSION) -> c_int;
     safe fn SSL_SESSION_up_ref(session: &SSL_SESSION) -> c_int;
     fn SSL_SESSION_free(session: *mut SSL_SESSION);
+    fn d2i_SSL_SESSION(
+        out: *mut *mut SSL_SESSION,
+        inp: &mut *const u8,
+        len: c_long,
+    ) -> Option<OwnedSslSession>;
 }

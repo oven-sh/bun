@@ -55,8 +55,8 @@ pub(crate) struct WindowsNamedPipe {
     /// Held until the pipe closes, or fails to open.
     pub(super) self_ref: Cell<Option<RefPtr<Self>>>,
     handle: uws::TransportHandle,
-    /// Holds one ref on the socket while not `None`. `on_close` and `fail_connect` release it.
-    socket: Cell<SocketType>,
+    /// `on_close` and `fail_connect` hand it to the socket's last event.
+    socket: JsCell<Option<OwnedSocket>>,
     global_this: GlobalRef,
     is_open: Cell<bool>,
     /// In no uSockets group, so the context that opened it closes it through this when it stops.
@@ -99,43 +99,42 @@ enum Target<'a> {
     Path(&'a [u8]),
 }
 
-/// The socket this pipe is the transport of.
-#[derive(Copy, Clone)]
-pub(crate) enum SocketType {
-    Tls(bun_ptr::ThisPtr<TLSSocket>),
-    Tcp(bun_ptr::ThisPtr<TCPSocket>),
-    None,
+/// A ref on the socket this pipe is the transport of.
+#[derive(Clone)]
+pub(crate) enum OwnedSocket {
+    Tls(RefPtr<TLSSocket>),
+    Tcp(RefPtr<TCPSocket>),
 }
 
-impl SocketType {
-    pub(crate) fn of<const SSL: bool>(socket: bun_ptr::ThisPtr<NewSocket<SSL>>) -> Self {
-        let socket = socket.as_ptr();
-        // SAFETY: `socket` is live, `NewSocket<true>` is `TLSSocket` and `NewSocket<false>` is `TCPSocket`.
+impl OwnedSocket {
+    pub(crate) fn of<const SSL: bool>(socket: RefPtr<NewSocket<SSL>>) -> Self {
+        let socket = socket.into_raw();
+        // SAFETY: the same ref. `NewSocket<true>` is `TLSSocket` and `NewSocket<false>` is `TCPSocket`.
         unsafe {
             if SSL {
-                Self::Tls(bun_ptr::ThisPtr::new(socket.cast()))
+                Self::Tls(RefPtr::from_raw(socket.cast()))
             } else {
-                Self::Tcp(bun_ptr::ThisPtr::new(socket.cast()))
+                Self::Tcp(RefPtr::from_raw(socket.cast()))
             }
         }
     }
 }
 
-/// Runs `$body`, written over `NewSocket<$ssl>`, for the socket in `$socket`, and folds what its handlers left pending. `SocketType::None` is a no-op.
+/// Runs `$body`, written over `NewSocket<$ssl>`, for the socket in `$socket`, and folds what its handlers left pending.
 macro_rules! match_socket {
     ($socket:expr, |$s:ident: NewSocket<$ssl:ident>| $body:expr) => {
         match $socket {
-            SocketType::Tls($s) => {
+            Some(OwnedSocket::Tls($s)) => {
                 const $ssl: bool = true;
                 let _ = $ssl;
                 crate::dispatch::fold($body)
             }
-            SocketType::Tcp($s) => {
+            Some(OwnedSocket::Tcp($s)) => {
                 const $ssl: bool = false;
                 let _ = $ssl;
                 crate::dispatch::fold($body)
             }
-            SocketType::None => {}
+            None => {}
         }
     };
 }
@@ -246,8 +245,8 @@ impl WindowsNamedPipe {
     }
 
     fn dispatch_writable(&self) {
-        match_socket!(self.socket.get(), |s: NewSocket<SSL>| {
-            NewSocket::on_writable(s, self.handle::<SSL>())
+        match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
+            NewSocket::on_writable(s.this_ptr(), self.handle::<SSL>())
         });
     }
 
@@ -332,8 +331,8 @@ impl WindowsNamedPipe {
         let _keep_alive = self.keep_alive();
         if err == bun_sys::E::EOF {
             // we received FIN but we dont allow half-closed connections right now
-            match_socket!(self.socket.get(), |s: NewSocket<SSL>| {
-                NewSocket::on_end(s, self.handle::<SSL>())
+            match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
+                NewSocket::on_end(s.this_ptr(), self.handle::<SSL>())
             });
             self.close_writer();
             return;
@@ -346,7 +345,7 @@ impl WindowsNamedPipe {
         bun_output::scoped_log!(WindowsNamedPipe, "onError");
         let _keep_alive = self.keep_alive();
         if self.is_open.get() {
-            match_socket!(self.socket.get(), |s: NewSocket<SSL>| {
+            match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
                 s.handle_error(err.to_js(&self.global_this))
             });
         } else {
@@ -358,26 +357,23 @@ impl WindowsNamedPipe {
     /// `connectError` is the last event of a socket whose connect failed, so this pipe forgets the socket: neither `on_close`, which still fires on the asynchronous failure path, nor `Drop` touches it again.
     fn fail_connect(&self, errno: SystemErrno) {
         // Cleared before `connectError` runs JS, which may connect the same socket again through a new pipe.
-        let socket = self.socket.replace(SocketType::None);
-        match_socket!(socket, |s: NewSocket<SSL>| {
-            let failed = NewSocket::handle_connect_error(s, errno);
-            s.get().deref();
-            failed
+        match_socket!(self.socket.take(), |s: NewSocket<SSL>| {
+            NewSocket::handle_connect_error(s, errno, 0)
         });
     }
 
     fn on_open(&self) {
         bun_output::scoped_log!(WindowsNamedPipe, "onOpen");
         self.is_open.set(true);
-        match_socket!(self.socket.get(), |s: NewSocket<SSL>| {
-            NewSocket::on_open(s, self.handle::<SSL>())
+        match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
+            NewSocket::on_open(s.this_ptr(), self.handle::<SSL>())
         });
     }
 
     fn on_data(&self, decoded_data: &[u8]) {
         bun_output::scoped_log!(WindowsNamedPipe, "onData ({})", decoded_data.len());
-        match_socket!(self.socket.get(), |s: NewSocket<SSL>| {
-            NewSocket::on_data(s, self.handle::<SSL>(), decoded_data)
+        match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
+            NewSocket::on_data(s.this_ptr(), self.handle::<SSL>(), decoded_data)
         });
     }
 
@@ -422,8 +418,13 @@ impl WindowsNamedPipe {
         bun_output::scoped_log!(WindowsNamedPipe, "onHandshake");
         let _keep_alive = self.keep_alive();
 
-        match_socket!(self.socket.get(), |s: NewSocket<SSL>| {
-            NewSocket::on_handshake(s, self.handle::<SSL>(), handshake_success as i32, ssl_error)
+        match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
+            NewSocket::on_handshake(
+                s.this_ptr(),
+                self.handle::<SSL>(),
+                handshake_success as i32,
+                ssl_error,
+            )
         });
         // Retry writes parked during the handshake; a TLS 1.2 client's completion sends nothing.
         if handshake_success && !self.is_shutdown() {
@@ -440,11 +441,8 @@ impl WindowsNamedPipe {
         self.pipe.set(None);
         if !self.flags.get().is_closed() {
             self.update_flags(|f| f.set(Flags::IS_CLOSED, true)); // only call onClose once
-            let socket = self.socket.replace(SocketType::None);
-            match_socket!(socket, |s: NewSocket<SSL>| {
-                let closed = NewSocket::on_close(s, self.handle::<SSL>(), 0, None);
-                s.get().deref();
-                closed
+            match_socket!(self.socket.take(), |s: NewSocket<SSL>| {
+                NewSocket::on_close(s, self.handle::<SSL>(), 0, None)
             });
             self.release_resources();
             self.self_ref.set(None);
@@ -503,19 +501,19 @@ impl WindowsNamedPipe {
             return;
         }
 
-        match_socket!(self.socket.get(), |s: NewSocket<SSL>| {
-            NewSocket::on_timeout(s, self.handle::<SSL>())
+        match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
+            NewSocket::on_timeout(s.this_ptr(), self.handle::<SSL>())
         });
     }
 
-    /// The transport of `socket`, on which it takes a ref.
-    pub(crate) fn create(cx: &bun_jsc::JsThread<'_>, socket: SocketType) -> ThisPtr<Self> {
+    /// The transport of `socket`.
+    pub(crate) fn create(cx: &bun_jsc::JsThread<'_>, socket: OwnedSocket) -> ThisPtr<Self> {
         let global_this = GlobalRef::from(cx.global());
         let this = bun_core::heap::into_raw(Box::new(WindowsNamedPipe {
             ref_count: Cell::new(1),
             self_ref: Cell::new(None),
             handle: Default::default(),
-            socket: Cell::new(socket),
+            socket: JsCell::new(Some(socket)),
             vm: global_this.bun_vm(),
             global_this,
             is_open: Cell::new(false),
@@ -538,10 +536,6 @@ impl WindowsNamedPipe {
             (*this).handle.set(this);
         }
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
-        match_socket!(socket, |s: NewSocket<SSL>| {
-            s.ref_();
-            Ok(())
-        });
         // SAFETY: initialised above with a count of 1, and heap-pinned. Dropping the handle disarms it.
         let self_ref = unsafe {
             bun_jsc::AbortHandle::arm_owner(this, cx.context());
@@ -557,10 +551,10 @@ impl WindowsNamedPipe {
         cx: &bun_jsc::JsThread<'_>,
         target: Target<'_>,
         ssl_ctx: Option<boringssl::OwnedSslCtx>,
-        socket: SocketType,
+        socket: OwnedSocket,
     ) -> Result<(), SystemErrno> {
         let pipe = Self::create(cx, socket);
-        match_socket!(socket, |s: NewSocket<SSL>| {
+        match_socket!(pipe.socket.get(), |s: NewSocket<SSL>| {
             s.socket.set(pipe.handle::<SSL>());
             Ok(())
         });
@@ -571,10 +565,8 @@ impl WindowsNamedPipe {
         if started.is_ok() {
             return Ok(());
         }
-        pipe.socket.set(SocketType::None);
-        match_socket!(socket, |s: NewSocket<SSL>| {
+        match_socket!(pipe.socket.take(), |s: NewSocket<SSL>| {
             s.socket.set(uws::NewSocketHandler::<SSL>::DETACHED);
-            s.get().deref();
             Ok(())
         });
         pipe.self_ref.set(None);
@@ -586,7 +578,7 @@ impl WindowsNamedPipe {
         cx: &bun_jsc::JsThread<'_>,
         fd: Fd,
         ssl_ctx: Option<boringssl::OwnedSslCtx>,
-        socket: SocketType,
+        socket: OwnedSocket,
     ) -> Result<(), SystemErrno> {
         Self::attach(cx, Target::Fd(fd), ssl_ctx, socket)
     }
@@ -596,7 +588,7 @@ impl WindowsNamedPipe {
         cx: &bun_jsc::JsThread<'_>,
         path: &[u8],
         ssl_ctx: Option<boringssl::OwnedSslCtx>,
-        socket: SocketType,
+        socket: OwnedSocket,
     ) -> Result<(), SystemErrno> {
         Self::attach(cx, Target::Path(path), ssl_ctx, socket)
     }
@@ -971,12 +963,6 @@ impl Transport for WindowsNamedPipe {
 impl Drop for WindowsNamedPipe {
     fn drop(&mut self) {
         LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
-        // A pipe that never opened and never failed still holds its socket.
-        let socket = self.socket.replace(SocketType::None);
-        match_socket!(socket, |s: NewSocket<SSL>| {
-            s.get().deref();
-            Ok(())
-        });
         self.release_resources();
     }
 }

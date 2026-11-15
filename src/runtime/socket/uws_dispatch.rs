@@ -17,6 +17,7 @@ use bun_uws::NewSocketHandler;
 use bun_uws_sys::socket_group::VTable;
 use bun_uws_sys::{ConnectingSocket, SocketKind, us_bun_verify_error_t, us_socket_t, vtable};
 
+use super::NativeRef;
 use super::uws_handlers as handlers;
 
 /// kind → vtable. Rust kinds get a monomorphized `Trampolines<H>` vtable
@@ -203,18 +204,13 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     data: *mut u8,
     len: c_int,
 ) -> *mut us_socket_t {
-    // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref
-    // (`s` is non-null per loop.c contract).
-    let s_ref = us_socket_t::opaque_mut(s);
-    debug_assert!(s_ref.kind() == SocketKind::BunSocketTls);
+    debug_assert!(us_socket_t::opaque_mut(s).kind() == SocketKind::BunSocketTls);
     // `bun.jsc.API.NewSocket(true)` → the runtime-local `socket::NewSocket<true>`.
     type TLSSocket = super::NewSocket<true>;
-    // The ext slot for `BunSocketTls` always holds a live `TLSSocket`, stamped
-    // at construction.
-    let tls: bun_ptr::ThisPtr<TLSSocket> =
-        s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>().unwrap();
+    // The ext slot of an open `BunSocketTls` holds its `TLSSocket`.
+    let tls = NativeRef::<true>::of(s).get().unwrap();
     if let Some(raw) = tls.twin.get().as_ref() {
-        let raw: *mut TLSSocket = raw.as_ptr();
+        let raw = raw.this_ptr();
         // A negative length from the C side means there is nothing to deliver;
         // never panic across the `extern "C"` boundary.
         let Ok(len) = usize::try_from(len) else {
@@ -223,16 +219,11 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
         // SAFETY: `data` points to `len` readable bytes from the TLS BIO; loop.c
         // guarantees the buffer outlives this call.
         let slice = unsafe { core::slice::from_raw_parts(data, len) };
-        // SAFETY: `twin` holds a live +1 ref to the `[raw, _]` half, so `raw`
-        // is live for `ThisPtr::new`; dispatch is single-threaded so no
-        // aliasing `&mut` exists.
-        crate::dispatch::fold(unsafe {
-            TLSSocket::on_data(
-                bun_ptr::ThisPtr::new(raw),
-                NewSocketHandler::<true>::from(s),
-                slice,
-            )
-        });
+        crate::dispatch::fold(TLSSocket::on_data(
+            raw,
+            NewSocketHandler::<true>::from(s),
+            slice,
+        ));
     }
     s
 }

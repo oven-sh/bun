@@ -502,7 +502,7 @@ describe("Bun.stripANSI", () => {
     expect(Bun.stripANSI(undefined as any)).toBe("undefined");
   });
 
-  // Large inputs take the runtime-dispatched Highway escape-scan kernel
+  // Large inputs take the runtime-dispatched escape-scan kernel
   // (findEscapeCharacter delegates to it past a 1 KB length threshold); shorter
   // inputs use the inlined scan. Both implement the identical broad-mask +
   // exact-match contract, so the core invariant is: a long all-ASCII prefix (no

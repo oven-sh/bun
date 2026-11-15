@@ -43,7 +43,7 @@ namespace Bun {
 
 using namespace JSC;
 
-// Exercises WebCore::lowercaseHeaderName — the Highway-SIMD-backed header-name
+// Exercises WebCore::lowercaseHeaderName — the SIMD-backed header-name
 // lowercasing used by the Headers iterator — directly from JS so a test can
 // check it against a scalar reference across lengths and alignments.
 JSC_DEFINE_HOST_FUNCTION(jsFunction_lowercaseHeaderNameSIMD, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

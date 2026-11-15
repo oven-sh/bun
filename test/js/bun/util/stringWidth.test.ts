@@ -1647,13 +1647,13 @@ describe("ANSI escapes across SIMD chunk boundaries", () => {
   });
 });
 
-// The UTF-16 path has a SIMD bulk kernel (highway_visible_utf16_width) that
+// The UTF-16 path has a SIMD bulk kernel (visible_utf16_width) that
 // counts runs of codepoints which are always their own grapheme cluster with
 // a fixed width, bailing to the scalar grapheme loop for everything else.
 // These tests pin the kernel's allowlisted ranges against the scalar
 // classifier and the clustering behavior at the bail points.
 describe("UTF-16 bulk width fast path", () => {
-  // Must mirror the ranges in ClassifyBulkUTF16Unit (highway_strings.cpp).
+  // Must mirror the ranges in has_fixed_width (src/simd/kernels/width.rs).
   const narrowRanges: Array<[number, number]> = [
     [0x20, 0x7e],
     [0xa0, 0x2ff],

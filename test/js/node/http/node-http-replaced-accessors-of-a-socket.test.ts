@@ -45,7 +45,7 @@ writableHighWaterMark on the socket, GET, end(body): 0 1 1 1 0
 writableHighWaterMark on the socket, GET, write(), end(body): 0 2 2 2 0
 writableHighWaterMark on the socket, GET, a content-length, write(), end(): 0 2 2 2 0
 writableHighWaterMark on the socket, POST with the body read: 0 1 1 1 0
-writableHighWaterMark on the socket, POST with the body read, write(), end(body): 0 3 3 3 0
+writableHighWaterMark on the socket, POST with the body read, write(), end(body): 0 2 2 2 0
 writableHighWaterMark on the socket, POST with the body ignored: 0 1 1 1 0
 writableEnded on the socket, GET, end(body): 0 0 0 0 0
 writableEnded on the socket, GET, write(), end(body): 0 0 0 0 0
@@ -87,7 +87,7 @@ writableHighWaterMark on an heir of the prototype of the socket, GET, end(body):
 writableHighWaterMark on an heir of the prototype of the socket, GET, write(), end(body): 0 2 2 2 0
 writableHighWaterMark on an heir of the prototype of the socket, GET, a content-length, write(), end(): 0 2 2 2 0
 writableHighWaterMark on an heir of the prototype of the socket, POST with the body read: 0 1 1 1 0
-writableHighWaterMark on an heir of the prototype of the socket, POST with the body read, write(), end(body): 0 3 3 3 0
+writableHighWaterMark on an heir of the prototype of the socket, POST with the body read, write(), end(body): 0 2 2 2 0
 writableHighWaterMark on an heir of the prototype of the socket, POST with the body ignored: 0 1 1 1 0
 writableEnded on an heir of the prototype of the socket, GET, end(body): 0 0 0 0 0
 writableEnded on an heir of the prototype of the socket, GET, write(), end(body): 0 0 0 0 0

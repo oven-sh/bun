@@ -120,7 +120,6 @@ static JSValue processBindingNativesReturnUndefined(VM& vm, JSObject* bindingObj
     internal/fs/watchfile                       processBindingNativesGetter     PropertyCallback
     internal/html                               processBindingNativesGetter     PropertyCallback
     internal/http                               processBindingNativesGetter     PropertyCallback
-    internal/http/FakeSocket                    processBindingNativesGetter     PropertyCallback
     internal/linkedlist                         processBindingNativesGetter     PropertyCallback
     internal/primordials.js                     processBindingNativesGetter     PropertyCallback
     internal/promisify                          processBindingNativesGetter     PropertyCallback

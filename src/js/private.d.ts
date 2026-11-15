@@ -1493,7 +1493,6 @@ interface $BunModules {
   "internal/fs/watchfile": $ModuleValue<typeof import("./internal/fs/watchfile")>;
   "internal/html": $ModuleValue<typeof import("./internal/html")>;
   "internal/http": $ModuleValue<typeof import("./internal/http")>;
-  "internal/http/FakeSocket": $ModuleValue<typeof import("./internal/http/FakeSocket")>;
   "internal/inspector/cdp": $ModuleValue<typeof import("./internal/inspector/cdp")>;
   "internal/linkedlist": $ModuleValue<typeof import("./internal/linkedlist")>;
   "internal/net/isIP": $ModuleValue<typeof import("./internal/net/isIP")>;

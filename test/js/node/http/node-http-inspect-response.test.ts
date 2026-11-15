@@ -9,7 +9,6 @@ const internalFields = ["headerBits", "HeaderShape", "heldChunk", "isFlushSchedu
 const internalKeys = [
   "kExchange",
   "kAutoDestroyed",
-  "fakeSocket",
   "kPipelinedResponses",
   "keepAliveTimeoutSet",
   "socketTimeoutTimer",
@@ -94,7 +93,7 @@ test("the internal own keys of the request, the response and the socket of a ser
   const { text } = await requestOnce(async (request, response) => {
     const socket = request.socket;
     expectInternalKeys(request, []);
-    expectInternalKeys(response, ["fakeSocket"]);
+    expectInternalKeys(response, []);
     expectInternalKeys(socket, ["keepAliveTimeoutSet"]);
     expect(response.socket).toBe(socket);
     socket.setTimeout(60_000);
@@ -102,13 +101,13 @@ test("the internal own keys of the request, the response and the socket of a ser
     response.write("a");
     for await (const _chunk of request);
     expectInternalKeys(request, []);
-    expectInternalKeys(response, ["fakeSocket"]);
+    expectInternalKeys(response, []);
     expectInternalKeys(socket, ["keepAliveTimeoutSet"]);
     const finished = once(response, "finish");
     response.end("b");
     await finished;
     expectInternalKeys(request, []);
-    expectInternalKeys(response, ["fakeSocket"]);
+    expectInternalKeys(response, []);
     expectInternalKeys(socket, ["keepAliveTimeoutSet"]);
   });
   expect(text).toBe("ab");
@@ -162,9 +161,7 @@ test("a Proxy of the response answers the request", async () => {
     proxy.end("b");
   });
   expect({ status, header: headers.get("x-a"), text }).toEqual({ status: 201, header: "1", text: "ab" });
-  expect([...new Set(describeKeys(trapped))].filter(key => internalKeys.includes(key as string))).toEqual([
-    "fakeSocket",
-  ]);
+  expect([...new Set(describeKeys(trapped))].filter(key => internalKeys.includes(key as string))).toEqual([]);
 });
 
 test("a Proxy of a Proxy of the response answers the request", async () => {

@@ -63,7 +63,6 @@ const {
   isTlsSymbol,
   drainMicrotasks,
   getMaxHTTPHeaderSize,
-  fakeSocketSymbol,
   kOutHeaders,
   kNeedDrain,
   kFailHeldWrites,
@@ -73,7 +72,6 @@ const {
 } = require("internal/http");
 // The key that internal/timers exports as `kTimeout`.
 const kTimeout = Symbol.for("::buntimeout::");
-const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
 
 const { IncomingMessage, kReqShouldKeepAlive, readStart } = require("node:_http_incoming");
@@ -87,7 +85,6 @@ const {
   parseUniqueHeadersOption,
 } = require("node:_http_outgoing");
 const OutgoingMessagePrototype = OutgoingMessage.prototype;
-const outgoingSocketSetter = Object.getOwnPropertyDescriptor(OutgoingMessagePrototype, "socket")!.set!;
 const kConnections = Symbol("http.server.connections");
 const buntls = Symbol.for("::buntls::");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
@@ -1240,7 +1237,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // process.nextTick (see ServerResponse.prototype.end) and nothing
           // between the 'request' emit and here drains the tick queue.
           http_res[kDetachedFrom] = socket;
-          http_res.detachSocket(socket);
+          // The connection is free for the next response at once. res.socket stays until 'finish', where Node detaches:
+          // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L1209
+          if (socket._httpMessage === http_res) releaseSocket(http_res, socket);
           startNextResponse(socket);
           return;
         }
@@ -1599,7 +1598,11 @@ Server.prototype[kLeaveHttp] = function (socket, req) {
   if (!http.leaveHttp(false)) return;
   socket[kHandle] = undefined;
   socket[kUpgradeStream] = undefined;
-  res?.detachSocket(socket);
+  // No 'finish' comes for this response, so it keeps its socket, like in Node. The connection lets go of it, which Node's does not.
+  if (res != null && socket._httpMessage === res) {
+    res[kDetachedFrom] = socket;
+    releaseSocket(res, socket);
+  }
   if (socket[kConnectionState] !== undefined) socket.once("close", abortWaitingResponses.bind(undefined, socket));
   // A reader that waits for the rest of the body gets 'end', like in Node 25 and older.
   if (!req.complete) onDataIncomingMessage.$call(req, undefined, true, NodeHTTPResponseAbortEvent.none);
@@ -1649,8 +1652,8 @@ const kKeepAliveTimeoutSet = Symbol("keepAliveTimeoutSet");
 // The timers' clock at the last response write or finish. Rescheduling the socket timer each time is slow, so onSocketTimeoutTimerExpired moves the deadline instead.
 const kLastResponseWrite = Symbol("lastResponseWrite");
 const kStopParsingOnCloseListener = Symbol("kStopParsingOnCloseListener");
-// The socket the dispatcher already detached a synchronously-finished response from,
-// so the 'finish' listener does not detach it or send the next response a second time.
+// The connection that was freed under a response which still has it as its socket: the dispatcher frees it when a
+// response finished inside its listener, so the 'finish' listener does not send the next response a second time.
 const kDetachedFrom = Symbol("kDetachedFrom");
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js (socketOnError)
@@ -2057,7 +2060,6 @@ function connectionState(socket) {
 function waitForSocket(res, socket, state) {
   pauseIfBackedUp(socket, state);
   res._onPendingData = state.onPendingData;
-  res[fakeSocketSymbol] = null;
   const { outgoing } = state;
   outgoing[outgoing.length - 1] = res;
   startNextResponse(socket);
@@ -2133,7 +2135,6 @@ function parserOnIncoming(server, socket, state, req, keepAlive) {
   if (socket._httpMessage) {
     // There are already pending outgoing res, append.
     state.outgoing.push(res);
-    res[fakeSocketSymbol] = null;
   } else {
     res.assignSocket(socket);
   }
@@ -2947,11 +2948,10 @@ function emitResponseFinish() {
   const parser = socket?.parser;
   if (parser != null && parser.incoming === req && (req.readableEnded || req.destroyed)) parser.incoming = null;
   onResponseFinishHandleSocket(socket?.server, socket, this);
-  // The dispatcher detached a synchronously-finished response itself;
-  // sending the next response again here would skip one.
-  if (detachedFrom !== undefined) return;
   if (socket != null) this.detachSocket(socket);
-  startNextResponse(socket);
+  // The dispatcher freed the connection of a synchronously-finished response itself;
+  // sending the next response again here would skip one.
+  if (detachedFrom === undefined) startNextResponse(socket);
 }
 
 // Runs when a response has finished, like the transport-related half of
@@ -3073,46 +3073,32 @@ Object.defineProperty(ServerResponse.prototype, "headers", {
   },
 });
 
-Object.defineProperty(ServerResponse.prototype, "socket", {
-  get() {
-    // null while the response is queued behind a pipelined one, like Node.js.
-    const socket = this[fakeSocketSymbol];
-    return socket !== undefined ? socket : (this[fakeSocketSymbol] = new FakeSocket(this));
-  },
-  set(value) {
-    this[fakeSocketSymbol] = value ?? undefined;
-    outgoingSocketSetter.$call(this, value);
-  },
-});
-
-Object.defineProperty(ServerResponse.prototype, "connection", {
-  get() {
-    return this.socket;
-  },
-  set(value) {
-    this.socket = value;
-  },
-});
-
 Object.defineProperty(ServerResponse.prototype, "writableCorked", {
   get() {
-    const handle = this[kHandle];
-    if (!handle || holdsOutput(handle)) return outgoingWritableCorked!.$call(this);
-    return this.socket?.writableCorked ?? 0;
+    const socket = connectionToCork(this);
+    return socket ? (socket.writableCorked ?? 0) : outgoingWritableCorked!.$call(this);
   },
   set(_value) {},
 });
 
 ServerResponse.prototype.cork = function cork() {
-  const handle = this[kHandle];
-  if (!handle || holdsOutput(handle)) return OutgoingMessagePrototype.cork.$call(this);
-  this.socket?.cork();
+  const socket = connectionToCork(this);
+  if (!socket) return OutgoingMessagePrototype.cork.$call(this);
+  socket.cork();
 };
 
 ServerResponse.prototype.uncork = function uncork() {
   if (!this[kHandle] || outgoingWritableCorked!.$call(this) > 0) return OutgoingMessagePrototype.uncork.$call(this);
-  this.socket?.uncork();
+  this[kSocket]?.uncork();
 };
+
+// The connection, for a response whose cork() corks it without a count: end() takes every such cork off.
+// Any other response counts, like Node's, and the connection gets the corks back when the response lets go of it.
+function connectionToCork(res) {
+  const handle = res[kHandle];
+  if (!handle || holdsOutput(handle) || res.finished) return;
+  return res[kSocket];
+}
 
 function holdsOutput(handle) {
   return (handle.flags & NodeHTTPResponseFlags.holds) !== 0;
@@ -3163,8 +3149,7 @@ ServerResponse.prototype._writeRaw = function (chunk, encoding, callback) {
   if (!handle) {
     // Standalone path: OutgoingMessage._writeRaw buffers to outputData while
     // no socket is assigned yet (kSocket is null) and flushes the buffer
-    // ahead of the chunk once one is - writing through the auto-creating
-    // `socket` getter here would drop the bytes into a FakeSocket.
+    // ahead of the chunk once one is.
     return OutgoingMessagePrototype._writeRaw.$apply(this, arguments);
   }
   handle.writeInformational(chunk, encoding);
@@ -3394,10 +3379,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     socketWritableState.corked = 1;
     socket.uncork();
   }
-  // The socket is NOT detached here: like Node.js, res.socket stays assigned
-  // until the response 'finish' machinery runs (the dispatcher detaches it
-  // right after a synchronously-finished handler returns, or via its 'finish'
-  // listener otherwise), so handlers can still reach res.socket after end().
+  // Like in Node, res.socket stays assigned until the 'finish' machinery detaches it, so a handler can reach it after end().
   this.finished = true;
   process.nextTick(markResponseEndedNT, this);
   // assignSocket() emits it for a response that waits for the socket.
@@ -3545,9 +3527,10 @@ const kBytesBuffered = Symbol("kBytesBuffered");
 const kAccountingFlushScheduled = Symbol("kAccountingFlushScheduled");
 function flushWriteAccountingNT(res) {
   res[kAccountingFlushScheduled] = false;
-  const needsDrain = (res[kBytesBuffered] ?? 0) >= res.writableHighWaterMark;
+  const buffered = res[kBytesBuffered] ?? 0;
   res[kBytesBuffered] = 0;
-  if (!needsDrain || res.destroyed || res.finished) return;
+  // An ended response owes no 'drain', so its connection is not asked for its mark.
+  if (res.finished || buffered < res.writableHighWaterMark || res.destroyed) return;
   const handle = res[kHandle];
   if (handle?.bufferedAmount > 0) {
     // The handle may still reference the caller's buffer for an unsent tail, so 'drain' waits for its drain callback.
@@ -3581,15 +3564,18 @@ ServerResponse.prototype._callPendingCallbacks = function () {
 ServerResponse.prototype.detachSocket = function (socket) {
   // socket can be null when the stream destroyer detached the request's
   // socket (req.socket = null) before the response finished.
-  if (socket && socket._httpMessage === this) {
-    if (socket[kCloseCallback]) socket[kCloseCallback] = undefined;
-    socket.removeListener("close", onServerResponseClose);
-    socket._httpMessage = null;
-    if (this.destroyed && socket.destroyed) socket[kDetachedWhileClosing] = this;
-  }
+  if (socket && socket._httpMessage === this) releaseSocket(this, socket);
 
   this.socket = null;
 };
+
+// Frees the connection for the next response. The response itself keeps `socket` until detachSocket().
+function releaseSocket(res, socket) {
+  if (socket[kCloseCallback]) socket[kCloseCallback] = undefined;
+  socket.removeListener("close", onServerResponseClose);
+  socket._httpMessage = null;
+  if (res.destroyed && socket.destroyed) socket[kDetachedWhileClosing] = res;
+}
 
 ServerResponse.prototype._implicitHeader = function () {
   if (this._header) return;
@@ -3759,6 +3745,8 @@ ServerResponse.prototype.destroy = function (err?: Error) {
   const socket = this[kSocket];
   if (socket) {
     socket.destroy(err);
+    // A connection that was freed under this response tells it nothing of its close.
+    if (this[kDetachedFrom] === socket) process.nextTick(emitCloseNT, this);
   } else {
     process.nextTick(emitCloseNT, this);
   }

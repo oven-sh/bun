@@ -30,8 +30,8 @@ test("the accessors of a response answer for a plain object and for the prototyp
     answers[key] = [{}, http.ServerResponse.prototype].map(receiver => typeof Reflect.get(response, key, receiver));
   }
   expect(answers).toEqual({
-    socket: ["object", "object"],
-    connection: ["undefined", "object"],
+    socket: ["undefined", "undefined"],
+    connection: ["undefined", "undefined"],
     headersSent: ["boolean", "boolean"],
     writableLength: ["number", "number"],
     writableNeedDrain: ["undefined", "undefined"],

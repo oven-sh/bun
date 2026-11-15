@@ -406,9 +406,3 @@ pub(crate) enum DrainResult {
     EstimatedSize(usize),
     Aborted,
 }
-
-#[derive(Copy, Clone, Eq, PartialEq, core::marker::ConstParamTy)]
-pub(crate) enum Lifetime {
-    Clone,
-    Transfer,
-}

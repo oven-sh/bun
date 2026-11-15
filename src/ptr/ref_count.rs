@@ -2,7 +2,6 @@
 //! `RefPtr<T>`, the owning handle to one such ref.
 
 use core::cell::Cell;
-use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -196,8 +195,6 @@ impl Count for RefCount {
 pub struct ThreadSafeRefCount {
     raw_count: AtomicU32,
     debug: DebugData,
-    /// The host type has to `unsafe impl Send` and `Sync` itself.
-    _not_send: PhantomData<*const ()>,
 }
 
 impl ThreadSafeRefCount {
@@ -206,7 +203,6 @@ impl ThreadSafeRefCount {
         Self {
             raw_count: AtomicU32::new(1),
             debug: DebugData::empty(),
-            _not_send: PhantomData,
         }
     }
 
@@ -293,7 +289,7 @@ impl<T: RefCounted> Drop for RefPtr<T> {
 
 // Like `Arc<T>`: sending or sharing a `RefPtr` sends/shares `&T` and may run
 // `T`'s destructor on another thread.
-// SAFETY: see above; hosts opt in by being `Send + Sync` themselves, with an atomic count.
+// SAFETY: see above; the host is `Send + Sync`, with an atomic count.
 unsafe impl<T: RefCounted<Count = ThreadSafeRefCount> + Send + Sync> Send for RefPtr<T> {}
 // SAFETY: see above.
 unsafe impl<T: RefCounted<Count = ThreadSafeRefCount> + Send + Sync> Sync for RefPtr<T> {}
@@ -423,7 +419,7 @@ impl<T: RefCounted> RefPtr<T> {
         (!released).then(|| ManuallyDrop::into_inner(this))
     }
 
-    /// An associated function, so that it does not shadow `T::has_one_ref`.
+    /// An associated function, as `Rc::strong_count`.
     #[inline]
     pub fn has_one_ref(this: &Self) -> bool {
         this.count().get() == 1
@@ -775,11 +771,6 @@ mod tests {
         ref_count: ThreadSafeRefCount,
         payload: Box<u32>,
     }
-
-    // SAFETY: the count is atomic, and `payload` is never written.
-    unsafe impl Send for Shared {}
-    // SAFETY: as above.
-    unsafe impl Sync for Shared {}
 
     impl Shared {
         fn new(payload: u32) -> RefPtr<Shared> {

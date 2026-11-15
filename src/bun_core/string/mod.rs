@@ -1656,25 +1656,6 @@ impl Utf8WithString {
         }
         self.string = String::EMPTY;
     }
-
-    /// For a holder that may be dropped on any thread (a `Blob` store): the
-    /// bytes end up owned by this value alone — the transcoded `utf8` if
-    /// there is one (the WTF backing is dropped), else a
-    /// [`String::thread_isolated_copy`] that is never handed to JS.
-    pub fn thread_isolated_copy(self) -> Self {
-        if self.string.tag != Tag::WTFStringImpl {
-            return self;
-        }
-        let string = if self.utf8.is_some() {
-            String::EMPTY
-        } else {
-            self.string.thread_isolated_copy()
-        };
-        Self {
-            utf8: self.utf8,
-            string,
-        }
-    }
 }
 
 // PORTING.md: ZStr/WStr are length-carrying NUL-terminated slices.

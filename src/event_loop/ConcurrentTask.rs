@@ -106,6 +106,7 @@ pub mod task_tag {
         S3RefusedRequest,
         S3UploadWriterCollected,  // MultiPartUpload (its `writer()` was collected before `end()`)
         SendQueueDeferred,        // bun_runtime::ipc::SendQueue (close / after-close hop)
+        ServePluginsLoadTask,
         ServerAllConnectionsClosedTask,
         HTTPServerDeinit,
         HTTPSServerDeinit,

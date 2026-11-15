@@ -10,7 +10,7 @@ use crate::error_code::ErrorBuilder;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
     CommonStrings, DOMExceptionCode, ErrorableString, JSValue, JsError, JsResult, MAX_SAFE_INTEGER,
-    MIN_SAFE_INTEGER, VM,
+    MIN_SAFE_INTEGER, VM, Weak,
 };
 use bun_core::EncodedSlice;
 
@@ -27,15 +27,7 @@ use bun_core::{String as BunString, StringView};
 // ──────────────────────────────────────────────────────────────────────────────
 bun_opaque::opaque_ffi! { pub struct JSGlobalObject; }
 
-/// VM-lifetime handle to a `JSGlobalObject`, stored as a raw pointer.
-///
-/// Replaces the `&'static`-lifetime `JSGlobalObject` borrows scattered across
-/// heap structs. `'static` was a lie — the global lives as long as its
-/// `VirtualMachine`, not the process — and the lie forced every constructor to
-/// erase a short-lived `&JSGlobalObject` to `'static`. `GlobalRef`
-/// centralises that one `unsafe` inside [`Deref`] (the global outlives any
-/// struct that holds a `GlobalRef`; see `LIFETIMES.tsv` JSC_BORROW), and the
-/// `From<&JSGlobalObject>` impl makes construction safe at every call site.
+/// A raw pointer to a `JSGlobalObject`, not a GC root: use [`WeakGlobalRef`] if nothing else roots it.
 ///
 /// `Copy` so it drops in for the old reference fields; `!Send + !Sync` via
 /// `BackRef<JSGlobalObject>` (since `JSGlobalObject: !Sync`), matching
@@ -55,10 +47,6 @@ impl core::ops::Deref for GlobalRef {
     type Target = JSGlobalObject;
     #[inline(always)]
     fn deref(&self) -> &JSGlobalObject {
-        // Constructed only from a live `&JSGlobalObject`; the global is owned
-        // by the VM and outlives every JSC_BORROW holder (LIFETIMES.tsv).
-        // `BackRef::get` encapsulates the single deref for what was previously
-        // ~90 lifetime erasures to `'static`.
         self.0.get()
     }
 }
@@ -73,6 +61,32 @@ impl From<&JSGlobalObject> for GlobalRef {
 impl core::fmt::Debug for GlobalRef {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("GlobalRef").field(&self.0).finish()
+    }
+}
+
+/// A [`GlobalRef`] that is `None` once the global has been collected.
+pub struct WeakGlobalRef {
+    global: GlobalRef,
+    /// `None` for `vm.global()`, which only `bun test --isolate` unprotects before teardown.
+    weak: Option<Weak<()>>,
+}
+
+impl WeakGlobalRef {
+    pub fn new(global: &JSGlobalObject) -> Self {
+        let vm = global.bun_vm();
+        let can_be_collected =
+            vm.test_isolation_enabled.get() || !core::ptr::eq(global, vm.global());
+        Self {
+            global: GlobalRef::new(global),
+            weak: can_be_collected.then(|| Weak::create_passive(global.to_js_value(), global)),
+        }
+    }
+
+    pub fn get(&self) -> Option<GlobalRef> {
+        match &self.weak {
+            Some(weak) => weak.get().map(|_| self.global),
+            None => Some(self.global),
+        }
     }
 }
 

@@ -3131,14 +3131,18 @@ struct AttributeNames<'a, U: Unit> {
     first: [&'a [U]; LINEAR_ATTRIBUTE_LIMIT],
     /// Filled once there are more than fit in `first`.
     all: HashMap<&'a [U], ()>,
-    count: usize,
+    len: usize,
 }
 
 impl<'a, U: Unit> AttributeNames<'a, U> {
+    fn clear(&mut self) {
+        self.len = 0;
+    }
+
     #[inline(always)]
     fn contains(&self, name: &[U]) -> bool {
-        if self.count <= LINEAR_ATTRIBUTE_LIMIT {
-            self.first[..self.count]
+        if self.len <= LINEAR_ATTRIBUTE_LIMIT {
+            self.first[..self.len]
                 .iter()
                 .any(|&first| name_eq(first, name))
         } else {
@@ -3147,18 +3151,18 @@ impl<'a, U: Unit> AttributeNames<'a, U> {
     }
 
     #[inline(always)]
-    fn push(&mut self, name: &'a [U]) {
-        if self.count < LINEAR_ATTRIBUTE_LIMIT {
-            self.first[self.count] = name;
+    fn insert(&mut self, name: &'a [U]) {
+        if self.len < LINEAR_ATTRIBUTE_LIMIT {
+            self.first[self.len] = name;
         } else {
             self.spill(name);
         }
-        self.count += 1;
+        self.len += 1;
     }
 
     #[cold]
     fn spill(&mut self, name: &'a [U]) {
-        if self.count == LINEAR_ATTRIBUTE_LIMIT {
+        if self.len == LINEAR_ATTRIBUTE_LIMIT {
             self.all.clear();
             for first in self.first {
                 self.all.insert(first, ());
@@ -3251,7 +3255,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             attribute_names: AttributeNames {
                 first: [&[]; LINEAR_ATTRIBUTE_LIMIT],
                 all: HashMap::default(),
-                count: 0,
+                len: 0,
             },
         }
     }
@@ -4201,7 +4205,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     /// Returns whether the tag was an empty-element tag.
     #[inline]
     fn parse_attributes(&mut self, element: &'a [U]) -> PResult<bool> {
-        self.attribute_names.count = 0;
+        self.attribute_names.clear();
         let defs = if self.attlists.is_empty() {
             None
         } else {
@@ -4227,7 +4231,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                         let collapse = collapse_for(name);
                         let value = self.scanner.scan_att_value(quote, collapse)?;
                         self.sink.attribute(name, value);
-                        self.attribute_names.push(name);
+                        self.attribute_names.insert(name);
                         continue;
                     }
                     TagStep::Slow => {}
@@ -4255,7 +4259,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                 return Err(self.unexpected("a quoted attribute value"));
             };
             self.sink.attribute(name, value);
-            self.attribute_names.push(name);
+            self.attribute_names.insert(name);
         };
         if let Some(defs) = defs {
             for def in &defs.defs {
@@ -4263,7 +4267,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                     && !self.attribute_names.contains(def.name)
                 {
                     self.sink.attribute(def.name, value);
-                    self.attribute_names.push(def.name);
+                    self.attribute_names.insert(def.name);
                 }
             }
         }

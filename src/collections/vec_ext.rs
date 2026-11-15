@@ -24,7 +24,7 @@ pub trait InAstHeap {}
 impl<T> InAstHeap for bun_alloc::AstVec<T> {}
 
 /// The allocation of `list`, for elements that borrow something else. std collects this in place.
-pub fn recycle<T, U>(mut list: Vec<T>) -> Vec<U> {
+pub fn recycle_vec<T, U>(mut list: Vec<T>) -> Vec<U> {
     const { assert!(size_of::<T>() == size_of::<U>() && align_of::<T>() == align_of::<U>()) };
     list.clear();
     list.into_iter().map(|_| unreachable!()).collect()

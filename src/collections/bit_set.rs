@@ -455,14 +455,12 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
 
 /// A bit set of runtime-known size. Sets that are copied or combined must be the same length.
 #[derive(Default)]
-pub struct BitSetOver<Masks> {
+pub struct DynamicBitSet<Masks = Box<[usize]>> {
     /// The number of valid items in this bit set
     bit_length: usize,
     /// The bit masks, ordered with lower indices first. Padding bits at the end must be zeroed.
     masks: Masks,
 }
-
-pub type DynamicBitSet = BitSetOver<Box<[usize]>>;
 
 /// The bits of the last mask that are not padding.
 #[inline(always)]
@@ -522,7 +520,7 @@ impl DynamicBitSet {
     }
 }
 
-impl<Masks: Deref<Target = [usize]>> BitSetOver<Masks> {
+impl<Masks: Deref<Target = [usize]>> DynamicBitSet<Masks> {
     /// Returns the number of bits in this bit set
     #[inline(always)]
     pub fn bit_length(&self) -> usize {
@@ -582,13 +580,13 @@ impl<Masks: Deref<Target = [usize]>> BitSetOver<Masks> {
 
     /// Returns true iff every corresponding bit in both
     /// bit sets are the same.
-    pub fn eql(&self, other: &BitSetOver<impl Deref<Target = [usize]>>) -> bool {
+    pub fn eql(&self, other: &DynamicBitSet<impl Deref<Target = [usize]>>) -> bool {
         self.bit_length == other.bit_length && *self.masks == *other.masks
     }
 
     /// Returns true iff the first bit set is the subset
     /// of the second one.
-    pub fn subset_of(&self, other: &BitSetOver<impl Deref<Target = [usize]>>) -> bool {
+    pub fn subset_of(&self, other: &DynamicBitSet<impl Deref<Target = [usize]>>) -> bool {
         if self.bit_length != other.bit_length {
             return false;
         }
@@ -610,7 +608,7 @@ impl<Masks: Deref<Target = [usize]>> BitSetOver<Masks> {
     }
 }
 
-impl<Masks: DerefMut<Target = [usize]>> BitSetOver<Masks> {
+impl<Masks: DerefMut<Target = [usize]>> DynamicBitSet<Masks> {
     #[inline(always)]
     fn clear_padding(&mut self) {
         if let Some(last) = self.masks.last_mut() {
@@ -621,7 +619,7 @@ impl<Masks: DerefMut<Target = [usize]>> BitSetOver<Masks> {
     #[inline(always)]
     fn zip_masks(
         &mut self,
-        other: &BitSetOver<impl Deref<Target = [usize]>>,
+        other: &DynamicBitSet<impl Deref<Target = [usize]>>,
         f: impl Fn(usize, usize) -> usize,
     ) {
         debug_assert!(other.bit_length == self.bit_length);
@@ -662,12 +660,12 @@ impl<Masks: DerefMut<Target = [usize]>> BitSetOver<Masks> {
         self.clear_padding();
     }
 
-    pub fn copy_from(&mut self, other: &BitSetOver<impl Deref<Target = [usize]>>) {
+    pub fn copy_from(&mut self, other: &DynamicBitSet<impl Deref<Target = [usize]>>) {
         debug_assert!(other.bit_length == self.bit_length);
         self.masks.copy_from_slice(&other.masks);
     }
 
-    pub fn set_union(&mut self, other: &BitSetOver<impl Deref<Target = [usize]>>) {
+    pub fn set_union(&mut self, other: &DynamicBitSet<impl Deref<Target = [usize]>>) {
         self.zip_masks(other, |a, b| a | b);
     }
 
@@ -675,7 +673,7 @@ impl<Masks: DerefMut<Target = [usize]>> BitSetOver<Masks> {
         self.zip_masks(other, |a, b| a & b);
     }
 
-    pub fn set_exclude(&mut self, other: &BitSetOver<impl Deref<Target = [usize]>>) {
+    pub fn set_exclude(&mut self, other: &DynamicBitSet<impl Deref<Target = [usize]>>) {
         self.zip_masks(other, |a, b| a & !b);
     }
 }
@@ -699,16 +697,16 @@ impl DynamicBitSetList {
         len * i as usize..len * i as usize + len
     }
 
-    pub fn at(&self, i: u32) -> BitSetOver<&[usize]> {
-        BitSetOver {
+    pub fn at(&self, i: u32) -> DynamicBitSet<&[usize]> {
+        DynamicBitSet {
             bit_length: self.bit_length as usize,
             masks: &self.buf[self.row(i)],
         }
     }
 
-    pub fn at_mut(&mut self, i: u32) -> BitSetOver<&mut [usize]> {
+    pub fn at_mut(&mut self, i: u32) -> DynamicBitSet<&mut [usize]> {
         let row = self.row(i);
-        BitSetOver {
+        DynamicBitSet {
             bit_length: self.bit_length as usize,
             masks: &mut self.buf[row],
         }
@@ -957,7 +955,7 @@ pub struct Range {
 mod tests {
     use super::*;
 
-    fn members(set: &BitSetOver<impl Deref<Target = [usize]>>) -> Vec<usize> {
+    fn members(set: &DynamicBitSet<impl Deref<Target = [usize]>>) -> Vec<usize> {
         let mut iter = set.iterator::<true, true>();
         core::iter::from_fn(|| iter.next()).collect()
     }

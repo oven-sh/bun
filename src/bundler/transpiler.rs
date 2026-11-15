@@ -787,7 +787,7 @@ pub struct ParseOptions<'a, 'b> {
     /// See: https://nodejs.org/api/packages.html#type
     pub module_type: options::ModuleType,
 
-    pub runtime_transpiler_cache: Option<&'b mut dyn js_ast::RuntimeTranspilerCache>,
+    pub runtime_transpiler_cache: Option<&'b mut dyn js_ast::TranspilerCache>,
 
     pub keep_json_and_toml_as_one_statement: bool,
     pub allow_bytecode_cache: bool,
@@ -2078,7 +2078,7 @@ impl<'a> Transpiler<'a> {
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
-        runtime_transpiler_cache: Option<&dyn js_printer::RuntimeTranspilerCache>,
+        runtime_transpiler_cache: Option<&dyn js_printer::TranspilerCacheWriter>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<usize> {
         // Routed through the T0 ftrace subset like the
@@ -2184,7 +2184,7 @@ impl<'a> Transpiler<'a> {
         symbols: bun_ast::symbol::Map,
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
-        runtime_transpiler_cache: Option<&dyn js_printer::RuntimeTranspilerCache>,
+        runtime_transpiler_cache: Option<&dyn js_printer::TranspilerCacheWriter>,
     ) -> crate::Result<usize> {
         let opts = js_printer::Options {
             bundling: false,
@@ -2227,7 +2227,7 @@ impl<'a> Transpiler<'a> {
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         exports_kind: bun_ast::ExportsKind,
-        runtime_transpiler_cache: Option<&dyn js_printer::RuntimeTranspilerCache>,
+        runtime_transpiler_cache: Option<&dyn js_printer::TranspilerCacheWriter>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<usize> {
         self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, false>(
@@ -2255,7 +2255,7 @@ impl<'a> Transpiler<'a> {
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         exports_kind: bun_ast::ExportsKind,
-        runtime_transpiler_cache: Option<&dyn js_printer::RuntimeTranspilerCache>,
+        runtime_transpiler_cache: Option<&dyn js_printer::TranspilerCacheWriter>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<usize> {
         let opts = js_printer::Options {
@@ -2342,7 +2342,7 @@ impl<'a> Transpiler<'a> {
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
         handler: js_printer::SourceMapHandler<'_>,
-        runtime_transpiler_cache: Option<&dyn js_printer::RuntimeTranspilerCache>,
+        runtime_transpiler_cache: Option<&dyn js_printer::TranspilerCacheWriter>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<usize> {
         // env_var feature_flag getters return `Option<bool>`

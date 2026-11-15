@@ -5,7 +5,7 @@
     clippy::too_many_arguments
 )]
 
-use core::cell::{Cell, RefCell};
+use core::cell::{Cell, OnceCell, RefCell};
 use core::ffi::c_void;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
@@ -831,13 +831,25 @@ use bun_io::FixedBufferStream;
 // ──────────────────────────────────────────────────────────────────────────
 
 const ENABLE_AUTO_CORK: bool = true;
-const ENABLE_ALLOCATOR_POOL: bool = true; // ENABLE HIVE ALLOCATOR OPTIMIZATION
 const MAX_BUFFER_SIZE: u32 = 32768;
 
 /// `bun.HiveArray(H2FrameParser, 256).Fallback` — per-thread slab of 256
 /// parser slots with heap fallback. Lazily boxed on first use (the inline
 /// array is ~tens of KB and would otherwise sit in every thread's TLS).
 type H2FrameParserHiveAllocator = HiveArrayFallback<H2FrameParser, 256>;
+
+struct Pool(OnceCell<Box<H2FrameParserHiveAllocator>>);
+
+impl Drop for Pool {
+    /// `process.exit()` does not unwind, so a frame under it can still hold a parser.
+    fn drop(&mut self) {
+        if let Some(pool) = self.0.take()
+            && pool.hive.used.iter_set().next().is_some()
+        {
+            Box::leak(pool);
+        }
+    }
+}
 
 // Exactly one max-size TLS record of plaintext: every full-buffer flush is one SSL_write
 // producing one full 16 KB record (uSockets' BIO sends per record, so corking beyond a
@@ -869,13 +881,7 @@ thread_local! {
     /// `#[thread_local]`, and nothing derefs a parser at thread exit).
     static CORKED_H2: Cell<ManuallyDrop<Option<RefPtr<H2FrameParser>>>> =
         const { Cell::new(ManuallyDrop::new(None)) };
-    // `ManuallyDrop` inside the `Box`: the TLS destructor runs after
-    // `WebWorker::destroy` has raw-deallocated the VM, so `HiveArray::Drop`
-    // on any leaked parser would touch freed JSC/uws state. Skip slot
-    // teardown (a leaked parser is a bug anyway) while still freeing the
-    // pool allocation itself.
-    static POOL: RefCell<Option<Box<ManuallyDrop<H2FrameParserHiveAllocator>>>> =
-        const { RefCell::new(None) };
+    static POOL: Pool = const { Pool(OnceCell::new()) };
 }
 
 /// One wire-order piece of a multi-frame send_data batch (see BATCH_SEGMENTS).
@@ -961,20 +967,6 @@ impl TxFrameTracker {
                 }
             }
         }
-    }
-}
-
-/// The `+1` a native frame holds on the parser while it runs code that can free it (an inbound
-/// dispatch, a write that re-enters JS). Live guards are counted in
-/// `H2FrameParser::native_keepalives` so `finalize` can release the ones whose frame will never
-/// return — see `release_refs_stranded_by_exit`.
-struct Keepalive(RefPtr<H2FrameParser>);
-
-impl Drop for Keepalive {
-    fn drop(&mut self) {
-        let live = &self.0.native_keepalives;
-        debug_assert!(live.get() > 0);
-        live.set(live.get() - 1);
     }
 }
 
@@ -1109,9 +1101,6 @@ pub(crate) struct H2FrameParser {
     /// frame and header-block boundaries.
     tx_tracker: Cell<TxFrameTracker>,
     ref_count: bun_ptr::RefCount<Self>, // intrusive — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
-    /// Number of live `Keepalive` guards: the `+1`s held by native frames currently on the stack.
-    /// Read only by `release_refs_stranded_by_exit()`.
-    native_keepalives: Cell<u32>,
 
     /// Held while the deferred flush is registered.
     auto_flush_ref: JsCell<Option<RefPtr<Self>>>,
@@ -1137,23 +1126,19 @@ pub(crate) struct H2FrameParser {
 }
 
 impl H2FrameParser {
-    /// `RefCounted` destructor (and the constructor's error path): drop in
-    /// place, then return the slot to the pool (or free the Box).
-    fn release(this: *mut Self) {
-        if ENABLE_ALLOCATOR_POOL {
-            POOL.with_borrow_mut(|pool| {
-                // SAFETY: `this` is a live, fully-initialised allocation we exclusively
-                // own; `put` drops it in place and recycles the storage.
-                unsafe {
-                    pool.as_mut()
-                        .expect("H2FrameParser released before constructor initialised pool")
-                        .put(this)
-                }
-            });
-        } else {
-            // SAFETY: `this` was `heap::alloc`'d in `constructor`.
-            unsafe { bun_core::heap::destroy(this) };
-        }
+    /// `RefCounted` destructor: drop in place, then return the slot to the pool.
+    ///
+    /// # Safety
+    /// `this` came from `POOL` on this thread and nothing else refers to it.
+    unsafe fn release(this: *mut Self) {
+        POOL.with(|pool| {
+            let pool = pool
+                .0
+                .get()
+                .expect("H2FrameParser released before constructor initialised pool");
+            // SAFETY: fn contract.
+            unsafe { pool.put(this) }
+        });
     }
 
     /// Safe accessor for the JSC_BORROW global.
@@ -1169,13 +1154,6 @@ impl H2FrameParser {
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
         std::ptr::from_ref::<Self>(self).cast_mut()
-    }
-
-    /// Hold a `+1` for the extent of a native frame that can re-enter JS (and therefore free the
-    /// parser). Counted, so `finalize` can release it if `process.exit()` strands the frame.
-    fn keepalive(&self) -> Keepalive {
-        self.native_keepalives.set(self.native_keepalives.get() + 1);
-        Keepalive(self.ref_guard())
     }
 
     #[inline]
@@ -1251,22 +1229,13 @@ pub(crate) struct SignalRef {
     stream_id: u32,
 }
 
-bun_jsc::impl_abort_handle_owner!(
-    SignalRef,
-    abort_handle,
-    keep_alive = |this| -> RefPtr<H2FrameParser> {
-        // SAFETY: trait contract — `this` is live.
-        unsafe { (*this).parser.ref_guard() }
-    },
-    |this, cause| {
-        if let bun_jsc::AbortCause::Signal(reason) = cause {
-            // SAFETY: trait contract — `this` is live; aborting the stream frees it.
-            let (parser, stream_id) = unsafe { ((*this).parser.as_ptr(), (*this).stream_id) };
-            // SAFETY: `keep_alive` holds the parser.
-            unsafe { (*parser).abort_stream_for_signal(stream_id, reason) };
-        }
+bun_jsc::impl_abort_handle_owner!(SignalRef, abort_handle, |this, cause| {
+    if let bun_jsc::AbortCause::Signal(reason) = cause {
+        // SAFETY: trait contract — `this` is live until aborting the stream frees it.
+        let (parser, stream_id) = unsafe { ((*this).parser.clone(), (*this).stream_id) };
+        parser.abort_stream_for_signal(stream_id, reason);
     }
-);
+});
 
 #[derive(Default)]
 struct PendingQueue {
@@ -1712,9 +1681,6 @@ impl Stream {
             client.outbound_queue_size.get()
         );
 
-        // dispatch_write_callback re-enters JS; a destroy there can drop the
-        // socket's ref and free `client` between iterations.
-        let _keepalive = client.keepalive();
         while let Some(item) = queue.dequeue() {
             let frame = item;
             let len = frame.slice().len();
@@ -2507,8 +2473,6 @@ impl H2FrameParser {
             // the cork's auto-flush is already registered.
             return 0;
         }
-        // Keep `self` alive across the re-entrant JS calls below.
-        let _keepalive = self.keepalive();
 
         let mut written = self.uncork();
         written += match self.native_socket.get() {
@@ -2581,7 +2545,6 @@ impl H2FrameParser {
     }
 
     pub(crate) fn _write(&self, bytes: &[u8]) -> bool {
-        let _keepalive = self.keepalive();
         match self.native_socket.get() {
             BunSocket::Tls(socket) => self.generic_write(socket.get(), bytes),
             BunSocket::Tcp(socket) => self.generic_write(socket.get(), bytes),
@@ -2826,7 +2789,6 @@ impl H2FrameParser {
     }
 
     pub(crate) fn on_auto_flush(&self) -> bool {
-        let _keepalive = self.keepalive();
         // An empty write buffer here means a later write in the same flush()
         // cycle already drained the bytes the failing send left behind (racy
         // one-off errnos, e.g. macOS EPROTOTYPE) - the transport recovered, and
@@ -3129,11 +3091,12 @@ impl NativeSocketWrite for &TCPSocket {
     }
 }
 
-extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
-    // SAFETY: `ctx` is the `*const H2FrameParser` registered by
-    // `register_auto_flush`; `DeferredTaskQueue::run` feeds it back unchanged
-    // on the JS thread. `on_auto_flush` takes `&self`.
-    unsafe { (*(ctx.cast_const().cast::<H2FrameParser>())).on_auto_flush() }
+/// # Safety
+/// `ctx` is the live parser that registered this task.
+unsafe extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
+    // SAFETY: fn contract.
+    let parser = unsafe { RefPtr::init_ref(ctx.cast::<H2FrameParser>()) };
+    parser.on_auto_flush()
 }
 
 // (`JsValueArrayPush` / `VmReportExtraMemory` shims removed —
@@ -4919,7 +4882,6 @@ impl H2FrameParser {
 
         let stream_id = stream.id;
         let mut enqueued = false;
-        let _keepalive = self.keepalive();
 
         let can_close = close && !stream.wait_for_trailers.get();
         if payload.is_empty() {
@@ -6965,7 +6927,6 @@ impl H2FrameParser {
 
     pub(crate) fn on_native_read(&self, data: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(H2FrameParser, "onNativeRead");
-        let _keepalive = self.keepalive();
         // Engine-driven inbound: all reads flow through the rewritten connection engine.
         self.rewrite_read(data);
         // What a frame callback left pending stopped the engine (`should_stop`);
@@ -6977,10 +6938,6 @@ impl H2FrameParser {
     }
 
     pub(crate) fn on_native_writable(&self) {
-        // flush() re-enters JS (write callbacks, onStreamEnd, onWantTrailers);
-        // that JS can destroy the session and drop the socket's ref, so the
-        // keepalive must span the whole loop, not just each flush() call.
-        let _keepalive = self.keepalive();
         // flush() ends in flush_stream_queue() → write() → cork(), leaving the
         // newly-serialized frames in CORK_BUFFER (not on the wire). Returning
         // here would let loop.c see last_write_failed==0 and disarm WRITABLE,
@@ -6997,9 +6954,6 @@ impl H2FrameParser {
 
     pub(crate) fn on_native_close(&self) {
         bun_output::scoped_log!(H2FrameParser, "onNativeClose");
-        // detach_native_socket can drop the socket's last ref (`Link::WriteOnly`),
-        // so match on_native_read/on_native_writable and hold our own +1.
-        let _keepalive = self.keepalive();
         self.native_socket.note_socket_closed();
         self.detach_native_socket();
     }
@@ -7058,7 +7012,6 @@ impl H2FrameParser {
         let init = H2FrameParser {
             abort_handle: bun_jsc::AbortHandle::for_owner::<H2FrameParser>(),
             ref_count: bun_ptr::RefCount::init(),
-            native_keepalives: Cell::new(0),
             handlers: JsCell::new(Handlers::new(global_object)),
             global_this: GlobalRef::from(global_object),
             strong_this: JsCell::new(JsRef::empty()),
@@ -7125,31 +7078,17 @@ impl H2FrameParser {
             hdr_block: JsCell::new(Vec::new()),
             hdr_meta: JsCell::new(Vec::new()),
         };
-        let this: *mut H2FrameParser = if ENABLE_ALLOCATOR_POOL {
-            POOL.with_borrow_mut(|pool| {
-                let pool = pool.get_or_insert_with(|| {
-                    // SAFETY: `from_raw` reclaims the pointer `into_raw` gave
-                    // up back into an owning `Box`. `ManuallyDrop<T>` is
-                    // `repr(transparent)` over `T`, so the pointer cast is a
-                    // layout no-op.
-                    unsafe {
-                        Box::from_raw(
-                            Box::into_raw(H2FrameParserHiveAllocator::new_boxed())
-                                .cast::<ManuallyDrop<H2FrameParserHiveAllocator>>(),
-                        )
-                    }
-                });
-                pool.get_init(init).as_ptr()
-            })
-        } else {
-            bun_core::heap::into_raw(Box::new(init))
-        };
-        // SAFETY: `this` was just allocated above; the wrapper adopts its one ref.
-        let this_value = structure.create(&cx.heap, unsafe { RefPtr::from_raw(this) });
+        let this = POOL.with(|pool| {
+            pool.0
+                .get_or_init(H2FrameParserHiveAllocator::new_boxed)
+                .get_init(init)
+        });
+        // SAFETY: `this` was just allocated above, with one ref.
+        let this = unsafe { RefPtr::from_raw(this.as_ptr()) };
+        let this_ref: &Self = &this;
+        let this_value = structure.create(&cx.heap, this.clone());
         let js_value = this_value.to_js();
         let global_object = cx.global();
-        // SAFETY: `this_value` holds a ref.
-        let this_ref = unsafe { &*this };
         // Detaches the socket attached below when a later `?` throws.
         let guard = scopeguard::guard(this_ref, Self::detach);
         this_ref
@@ -7302,7 +7241,7 @@ impl H2FrameParser {
         if let Some(context) = vm.as_graph_context(vm.context_of_caller()) {
             // SAFETY: `this` is heap-pinned (pool slot or Box); it leaves its context in
             // `release_from_js` or when it drops.
-            unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };
+            unsafe { bun_jsc::AbortHandle::arm_owner(this.as_ptr(), context) };
         }
 
         // Note: `HPACK::init` returns a C-allocated wrapper that must be
@@ -7363,18 +7302,13 @@ impl H2FrameParser {
         self.hpack.set(None);
     }
 
-    /// `process.exit()` never unwinds: the VM is destructed from inside the `exit()` call, so
-    /// every `+1` taken by a frame that was still on the stack when JS called it — an inbound
-    /// dispatch (`on_native_read`), a write that re-entered JS (`_write`, `send_data`) — is never
-    /// released, and neither is the cork slot's ref nor the queued auto-flush task's. `Drop`
-    /// therefore never runs and the parser leaks everything it owns (LeakSanitizer sees the
-    /// refcount's own debug map, the HPACK handle, the read/write buffers).
-    ///
-    /// Called from `finalize` only while the VM is shutting down: the event loop is dead, no JS
-    /// (and no stranded frame) can run again, so releasing those refs cannot make anything
-    /// observe a freed parser. The socket's `+1` (`attach_native_callback`) is deliberately left
-    /// alone — it has a live owner that releases it in `NewSocket::finalize`.
+    /// Once the VM shuts down, nothing aborts a stream, uncorks or runs the auto-flush task any
+    /// more, so their refs would keep `Drop` from running. The socket's `+1`
+    /// (`attach_native_callback`) has a live owner that releases it in `NewSocket::finalize`.
     fn release_refs_stranded_by_exit(&self) {
+        for stream in self.streams.borrow().values() {
+            drop(stream.signal.take());
+        }
         // `uncork()` would `_write()` the corked bytes, which re-enters JS on a non-native
         // socket; the process is exiting, so drop them and just release the slot's ref.
         if Self::corked() == Some(self.as_ctx_ptr()) {
@@ -7385,18 +7319,13 @@ impl H2FrameParser {
         self.transport_write_fatal.set(false);
         self.pending_header_compression_error.set(false);
         self.unregister_auto_flush();
-        let stranded = self.native_keepalives.replace(0);
-        for _ in 0..stranded {
-            // SAFETY: the ref of a `Keepalive` that will not drop. The wrapper still holds one.
-            unsafe { bun_ptr::RefCount::<Self>::deref(self.as_ctx_ptr()) };
-        }
     }
 }
 
 bun_jsc::impl_abort_handle_owner!(H2FrameParser, abort_handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is live (armed ⇒ not dropped). The wrapper this makes
-    // collectible is not finalized under this call.
-    unsafe { (*this).release_from_js() }
+    // SAFETY: trait contract — `this` is live (armed ⇒ not dropped).
+    let parser = unsafe { RefPtr::init_ref(this) };
+    parser.release_from_js()
 });
 
 impl Drop for H2FrameParser {
@@ -7412,12 +7341,6 @@ impl H2FrameParser {
         bun_output::scoped_log!(H2FrameParser, "finalize");
         self.strong_this.set(JsRef::empty());
         if VirtualMachine::get().is_shutting_down() {
-            // The signals first: they hold refs.
-            for stream in self.streams.borrow().values() {
-                drop(stream.signal.take());
-            }
-            // Then the refs of frames/tasks that will never run again, so the
-            // wrapper's deref can actually reach zero and run `Drop`.
             self.release_refs_stranded_by_exit();
         }
     }

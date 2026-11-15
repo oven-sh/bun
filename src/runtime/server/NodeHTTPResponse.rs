@@ -21,7 +21,7 @@ use crate::node::{Encoding, StringOrBuffer};
 use crate::server::jsc::{
     self, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
 };
-use crate::server::{AnyServer, AnyServerTag, HTTPStatusText};
+use crate::server::{AnyServer, AnyServerTag, HTTPStatusText, PendingRequest, Served};
 
 bun_core::declare_scope!(NodeHTTPResponse, visible);
 
@@ -79,7 +79,7 @@ pub(crate) struct NodeHTTPResponse {
     pub(crate) body_read_state: Cell<BodyReadState>,
     pub(crate) body_read_ref: jsc::Ref,
     /// Held until `mark_request_as_done`.
-    pending_ref: JsCell<Option<RefPtr<Self>>>,
+    pending_ref: JsCell<Option<PendingRequest<RefPtr<Self>>>>,
     /// What the handler returned, with the ref of the dispatch that waits for it.
     pub(crate) promise: JsCell<Option<(StrongOptional, RefPtr<Self>)>>,
     pub(crate) server: AnyServer,
@@ -679,11 +679,8 @@ impl NodeHTTPResponse {
         self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
         drop(self.held.replace(None));
 
-        let server = self.server;
         self.poll_ref.unref(vm);
         self.unregister_auto_flush();
-
-        server.on_request_complete();
     }
 
     /// Unroots `promise`.
@@ -2707,6 +2704,12 @@ impl NodeHTTPResponse {
     }
 }
 
+impl Served for RefPtr<NodeHTTPResponse> {
+    fn served_by(&self) -> Option<AnyServer> {
+        Some(self.server)
+    }
+}
+
 impl Drop for NodeHTTPResponse {
     fn drop(&mut self) {
         debug_assert!(!self.body_read_ref.has.get());
@@ -2794,7 +2797,9 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         auto_flush_ref: JsCell::new(None),
         held: JsCell::new(None),
     });
-    response.pending_ref.set(Some(response.clone()));
+    response
+        .pending_ref
+        .set(Some(PendingRequest::new(response.clone())));
 
     if *has_body {
         response.body_read_ref.r#ref(vm);

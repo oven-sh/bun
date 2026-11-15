@@ -1713,6 +1713,22 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         Ok(())
     }
 
+    /// `get_or_put` for a `V` without a default: on a miss, returns what puts the value.
+    pub fn get_or_vacant(&mut self, key: &[u8]) -> Result<&mut V, impl FnOnce(V)> {
+        use hashbrown::hash_map::RawEntryMut;
+        let hash = self.hash_key(key);
+        match self
+            .inner
+            .raw_entry_mut()
+            .from_key_hashed_nocheck(hash, key)
+        {
+            RawEntryMut::Occupied(e) => Ok(e.into_mut()),
+            RawEntryMut::Vacant(e) => Err(move |value| {
+                e.insert_hashed_nocheck(hash, owned_key::<A>(key), value);
+            }),
+        }
+    }
+
     /// Insert `value` under `key` **without copying the key bytes**. This is
     /// the zero-copy path: `key` is stored as `StringHashMapKey::Static`, so the caller
     /// must guarantee the bytes genuinely live for `'static` — in practice

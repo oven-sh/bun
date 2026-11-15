@@ -62,7 +62,7 @@ pub(super) use super::html_bundle::{self as html_bundle, HTMLBundle};
 pub(super) use super::any_request_context::AnyRequestContext;
 pub(super) use super::file_route::FileRoute;
 pub(super) use super::node_http_response::NodeHTTPResponse;
-pub(super) use super::request_context::{DeferDeinitFlag, UpgradeState};
+pub(super) use super::request_context::{Dispatch, UpgradeState};
 pub(super) use super::server_config::{self as server_config, ServerConfig};
 pub(super) use super::server_web_socket::ServerWebSocket;
 pub(super) use super::static_route::StaticRoute;
@@ -512,8 +512,7 @@ pub(crate) enum ServePluginsState {
         /// Promise may be empty if the plugin load finishes synchronously.
         plugin: JSBundler::OwnedPlugin,
         promise: jsc::JSPromiseStrong,
-        /// Each holds a ref, released once the route is told the outcome.
-        html_bundle_routes: Vec<RefPtr<html_bundle::Route>>,
+        html_bundle_routes: Vec<html_bundle::PendingBuild>,
         /// Server whose DevServer is waiting for the plugins to load.
         dev_server: Option<super::AnyServer>,
     },
@@ -564,7 +563,8 @@ impl ServePlugins {
                 } => {
                     match cb {
                         ServePluginsCallback::HtmlBundleRoute(route) => {
-                            html_bundle_routes.push(RefPtr::from_this(route));
+                            html_bundle_routes
+                                .push(html_bundle::PendingBuild::new(RefPtr::from_this(route)));
                         }
                         ServePluginsCallback::DevServer => {
                             // one dev server per server
@@ -711,10 +711,7 @@ impl ServePlugins {
         self.state = ServePluginsState::Loaded(plugin);
 
         for route in html_bundle_routes {
-            bun_core::handle_oom(html_bundle::Route::on_plugins_resolved(
-                route.this_ptr(),
-                Some(loaded),
-            ));
+            bun_core::handle_oom(html_bundle::Route::on_plugins_resolved(route, Some(loaded)));
         }
         if let Some(server) = dev_server {
             if let Some(dev) = server.dev_server_mut() {
@@ -985,11 +982,8 @@ impl<const SSL: bool, const DEBUG: bool> uws_sys::web_socket::WebSocketUpgradeSe
 }
 
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
-    /// Construct the cross-module `super::AnyServer` back-reference. Routes
-    /// (StaticRoute/FileRoute/HTMLBundle) store this so they can call back
-    /// into `on_pending_request` / `on_request_complete`.
     #[inline]
-    fn as_any_server(&self) -> super::AnyServer {
+    pub(super) fn as_any_server(&self) -> super::AnyServer {
         super::AnyServer::from(std::ptr::from_ref::<Self>(self))
     }
 
@@ -2146,12 +2140,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return;
         };
 
-        let should_deinit_context = core::cell::Cell::new(false);
         let Some(mut prepared) = Self::prepare_js_request_context::<MUX>(
             this,
             req,
             resp,
-            Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::No,
             user_route.route.method.specific(),
             upgrade_ctx,
@@ -2183,7 +2175,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         })
         .unwrap_or_else(|err| global.take_exception(err));
 
-        Self::handle_request(this, &should_deinit_context, prepared, req, response_value);
+        Self::handle_request(this, prepared, req, response_value);
     }
 
     /// Calls the `fetch` handler. `upgrade_ctx` as in [`Self::on_user_route_request`].
@@ -2200,12 +2192,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return;
         };
 
-        let should_deinit_context = core::cell::Cell::new(false);
         let Some(prepared) = Self::prepare_js_request_context::<MUX>(
             this,
             req,
             resp,
-            Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::Yes,
             None,
             upgrade_ctx,
@@ -2225,33 +2215,23 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 Err(err) => global.take_exception(err),
             };
 
-        Self::handle_request(this, &should_deinit_context, prepared, req, response_value);
+        Self::handle_request(this, prepared, req, response_value);
     }
 
     /// Hands what the handler returned to the `RequestContext`, then frees it or makes the request asynchronous.
     fn handle_request<const MUX: bool>(
         this: *mut Self,
-        should_deinit_context: &core::cell::Cell<bool>,
         prepared: PreparedRequest<SSL, DEBUG, MUX>,
         req: uws::AnyRequest,
         response_value: JSValue,
     ) {
         let PreparedRequest { request, ctx } = prepared;
-        // SAFETY: `ctx` can't be freed while `defer_deinit_until_callback_completes` is set, and `this` is the live server.
-        let (ctx, server) = unsafe { (&*ctx, &*this) };
-        ctx.on_response(server, request.js, response_value);
-
-        ctx.defer_deinit_until_callback_completes.set(None);
-
-        if should_deinit_context.get() {
-            ctx.deinit();
+        // SAFETY: `this` is the live server.
+        let server = unsafe { &*this };
+        let Some(ctx) = ServerRequestContext::respond(ctx, server, request.js, response_value)
+        else {
             return;
-        }
-
-        if ctx.should_render_missing() {
-            ctx.render_missing();
-            return;
-        }
+        };
 
         // uWS reuses `req` for the next request, so an asynchronous one copies what it needs.
         ctx.to_async(req.as_ptr(), &request.native);
@@ -2269,7 +2249,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         this: *mut Self,
         mut req: uws::AnyRequest,
         resp: uws::AnyResponse,
-        should_deinit_context: Option<DeferDeinitFlag>,
         create_js_request: CreateJsRequest,
         method: Option<http::Method>,
         upgrade_ctx: Option<&mut WebSocketUpgradeContext>,
@@ -2302,7 +2281,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             resp.send_when_complete();
         }
 
-        server.on_pending_request();
         req.set_yield(false);
 
         if server.should_warn_about_idle_timeout() {
@@ -2324,13 +2302,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 server,
                 req.as_ptr(),
                 resp,
-                should_deinit_context,
                 method,
             );
             slot.assume_init().as_ptr()
         };
         // SAFETY: initialized by `create`.
-        let ctx = unsafe { &*ctx_ptr };
+        let ctx = Dispatch::new(unsafe { &*ctx_ptr });
         if let Some(upgrade_ctx) = upgrade_ctx {
             ctx.upgrade_context
                 .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)));
@@ -2415,7 +2392,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         Some(PreparedRequest {
             request: DispatchedRequest::new(request, create_js_request, global)?,
-            ctx: ctx_ptr,
+            ctx,
         })
     }
 

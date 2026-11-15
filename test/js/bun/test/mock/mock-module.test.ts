@@ -1552,7 +1552,7 @@ describe.concurrent("a module mocked without a factory", () => {
       1,
       [],
       // With a concurrent JIT, the loops can end before the functions are compiled.
-      { BUN_JSC_useConcurrentJIT: "0" },
+      { BUN_JSC_useConcurrentJIT: "0", BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "1000" },
     );
   });
 

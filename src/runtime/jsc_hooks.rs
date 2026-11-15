@@ -175,12 +175,6 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
     &runtime_state().global_dns_data
 }
 
-/// [`RuntimeState::request_pools`] of this thread's VM.
-#[inline]
-pub(crate) fn request_pools() -> &'static crate::server::RequestPools {
-    &runtime_state().request_pools
-}
-
 /// [`RuntimeState::stat_watcher_scheduler`] of `vm`.
 pub(crate) fn stat_watcher_scheduler(
     vm: &VirtualMachine,
@@ -206,6 +200,14 @@ pub(crate) fn sql_rare(vm: &VirtualMachine) -> &bun_sql_jsc::jsc::RareData {
 #[cfg(windows)]
 pub(crate) fn path_watchers() -> &'static crate::node::win_watcher::PathWatchers {
     runtime_state().path_watchers.get_or_init(Default::default)
+}
+
+/// [`RuntimeState::request_pools`] of `vm`.
+pub(crate) fn request_pools(vm: &VirtualMachine) -> &crate::server::RequestPools {
+    let state = vm.runtime_state.get().cast::<RuntimeState>();
+    debug_assert!(!state.is_null(), "request_pools before init_runtime_state");
+    // SAFETY: as `timer_all`.
+    unsafe { &(*state).request_pools }
 }
 
 /// [`RuntimeState::lint`] of this thread's VM.
@@ -352,9 +354,9 @@ unsafe fn init_runtime_state(
                 )
             }
         },
-        request_pools: crate::server::RequestPools::default(),
         #[cfg(windows)]
         path_watchers: Default::default(),
+        request_pools: Default::default(),
         wake_ctx: None,
         cron_jobs: JsCell::default(),
         stat_watcher_scheduler: JsCell::new(None),

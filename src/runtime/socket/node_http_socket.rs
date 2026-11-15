@@ -11,7 +11,7 @@ use bun_uws_sys::response::PerMessageDeflateParams;
 
 use super::{Handlers, NewSocket, SocketFlags};
 use crate::dispatch::fold;
-use crate::server::{AnyServer, ServerWebSocket};
+use crate::server::{AnyServer, PendingRequest, ServerWebSocket};
 
 type Transport<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
@@ -220,7 +220,7 @@ unsafe fn adopt_into_web_socket<'a>(
     // SAFETY: `init` just stored `ws` inline in its JS wrapper, which `ws` keeps alive.
     let ws_ref = unsafe { &*ws };
     // The server doesn't count the connection until the WebSocket opens, so this keeps a stopped server from draining.
-    server.on_pending_request();
+    let pending = PendingRequest::new(server);
     // SAFETY: the caller's contract.
     let adopted = unsafe {
         Bun__NodeHTTPSocket__adoptIntoWebSocket(
@@ -237,7 +237,7 @@ unsafe fn adopt_into_web_socket<'a>(
             handle,
         )
     };
-    server.on_request_complete();
+    drop(pending);
     if adopted.is_null() {
         ws_ref.discard_unopened();
         return None;

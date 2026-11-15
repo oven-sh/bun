@@ -200,7 +200,7 @@ fn generate_chunk_json(
 /// Called after `generate_chunks_in_parallel` has emitted every chunk's output.
 /// Chunk references (unique_keys) are resolved to their final output paths.
 /// The caller is responsible for freeing the returned slice.
-pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Result<Box<[u8]>> {
+pub(crate) fn generate(c: &LinkerContext, chunks: &[Chunk]) -> crate::Result<Box<[u8]>> {
     // Use StringJoiner so we can use breakOutputIntoPieces to resolve chunk references
     let mut j = StringJoiner::default();
     // errdefer j.deinit() — handled by Drop
@@ -458,7 +458,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
     // `&chunks[0]` directly — overlapping shared borrows are fine.
     let code_result = intermediate.code(
         None,
-        parse_graph,
+        c.bundle,
         &c.graph,
         b"", // no import prefix for metafile
         &chunks[0],

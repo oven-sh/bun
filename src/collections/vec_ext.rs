@@ -19,10 +19,6 @@ use core::fmt;
 use bun_alloc::AllocError;
 use bun_core::strings;
 
-/// The lists that a plain `Vec` has to be copied into.
-pub trait InAstHeap {}
-impl<T> InAstHeap for bun_alloc::AstVec<T> {}
-
 pub trait VecExt<T>: Sized {
     // ── constructors ──────────────────────────────────────────────────────
     fn init_capacity(n: usize) -> Self;
@@ -30,12 +26,6 @@ pub trait VecExt<T>: Sized {
     fn from_slice(items: &[T]) -> Self
     where
         T: Clone;
-    fn move_from_list(list: Vec<T>) -> Self
-    where
-        Self: InAstHeap;
-    fn from_owned_slice(items: Box<[T]>) -> Self
-    where
-        Self: InAstHeap;
     /// Copies `items` into a fresh `A` allocation.
     fn from_arena_slice(items: &[T]) -> Self
     where
@@ -74,8 +64,7 @@ pub trait VecExt<T>: Sized {
     where
         T: Copy;
     fn ordered_remove(&mut self, index: usize) -> T;
-    /// Reserves `additional` and returns the first `additional` slots of
-    /// spare capacity as `MaybeUninit<T>`. The
+    /// Reserves `additional` and returns that many slots of spare capacity. The
     /// caller writes some prefix then calls `set_len` (or [`uv_commit`] for
     /// `Vec<u8>`) to commit. Unlike `spare_capacity_mut()` the returned slice
     /// is exactly `additional` long, not `capacity - len`.
@@ -115,19 +104,6 @@ impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
         let mut v = Vec::with_capacity_in(items.len(), A::default());
         v.extend_from_slice(items);
         v
-    }
-    #[inline]
-    fn move_from_list(list: Vec<T>) -> Self {
-        let mut v = Vec::with_capacity_in(list.len(), A::default());
-        v.extend(list);
-        v
-    }
-    #[inline]
-    fn from_owned_slice(items: Box<[T]>) -> Self
-    where
-        Self: InAstHeap,
-    {
-        Self::move_from_list(items.into_vec())
     }
     #[inline]
     fn from_arena_slice(items: &[T]) -> Self

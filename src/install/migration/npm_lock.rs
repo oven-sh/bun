@@ -1167,7 +1167,7 @@ pub(super) fn apply_root_overrides(
         ],
     );
     let source = bun_ast::Source::init_path_string(package_json_path, contents.as_slice());
-    let arena = bun_alloc::Arena::new();
+    let arena = bun_ast::AstArena::new();
     let Ok(parsed) = bun_json::parse_package_json_utf8_with_opts(
         bun_json::JSONOptions {
             json_warn_duplicate_keys: false,

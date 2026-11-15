@@ -3573,18 +3573,13 @@ pub(crate) fn serialize_json_source_map_for_standalone(
     string_payload: &mut Vec<u8>,
     json_source: &[u8],
 ) -> crate::Result<()> {
-    use bun_ast::ExprData as AstData;
-
     let json_src = bun_ast::Source::init_path_string("sourcemap.json", json_source);
     let log = bun_ast::Log::init();
 
-    // the allocator given to the JS parser is not respected for all parts
-    // of the parse, so we need to remember to reset the ast store
-    let _reset_guard = bun_ast::StoreResetGuard::new();
-
-    let parsed = bun_parsers::json::ParsedJson::parse_json(&json_src, &log)
+    let arena = bun_ast::AstArena::new();
+    let parsed = bun_parsers::json::ParsedJson::parse_json(&json_src, &log, &arena)
         .map_err(|_| crate::Error::InvalidSourceMap)?;
-    let json = parsed.root;
+    let json = parsed.root();
 
     let mappings_str = json
         .get(b"mappings")
@@ -3592,24 +3587,14 @@ pub(crate) fn serialize_json_source_map_for_standalone(
     let map_vlq: &[u8] = mappings_str
         .as_utf8_string_literal()
         .ok_or(crate::Error::InvalidSourceMap)?;
-    let sources_content = match json
+    let sources_content = json
         .get(b"sourcesContent")
-        .ok_or(crate::Error::InvalidSourceMap)?
-        .data
-    {
-        AstData::EArrayJSON(arr) => arr,
-        _ => return Err(crate::Error::InvalidSourceMap),
-    };
-    let sources_content = sources_content.get();
-    let sources_paths = match json
+        .and_then(bun_ast::JsonView::as_e_array_json)
+        .ok_or(crate::Error::InvalidSourceMap)?;
+    let sources_paths = json
         .get(b"sources")
-        .ok_or(crate::Error::InvalidSourceMap)?
-        .data
-    {
-        AstData::EArrayJSON(arr) => arr,
-        _ => return Err(crate::Error::InvalidSourceMap),
-    };
-    let sources_paths = sources_paths.get();
+        .and_then(bun_ast::JsonView::as_e_array_json)
+        .ok_or(crate::Error::InvalidSourceMap)?;
     if sources_content.items().len() != sources_paths.items().len() {
         return Err(crate::Error::InvalidSourceMap);
     }

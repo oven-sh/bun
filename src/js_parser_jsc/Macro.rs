@@ -34,7 +34,7 @@ fn is_macro_path(str: &[u8]) -> bool {
 
 fn call_macro(
     ctx: MacroContext<'_>,
-    bump: &bun_alloc::Arena,
+    bump: &bun_ast::AstArena,
     import_record_path: &[u8],
     source_dir: &[u8],
     log: &Log,
@@ -210,7 +210,7 @@ fn __bun_macro_collect_vm_garbage() {
 #[unsafe(no_mangle)]
 fn __bun_macro_context_call(
     ctx: MacroContext<'_>,
-    bump: &bun_alloc::Arena,
+    bump: &bun_ast::AstArena,
     import_record_path: &[u8],
     source_dir: &[u8],
     log: &Log,
@@ -409,7 +409,7 @@ pub(crate) struct Run<'a> {
     pub(crate) vm: &'a VirtualMachine,
     pub(crate) global: &'a JSGlobalObject,
     /// The parser's arena: the returned `Expr` joins its AST.
-    pub(crate) bump: &'a bun_alloc::Arena,
+    pub(crate) bump: &'a bun_ast::AstArena,
     pub(crate) log: &'a Log,
     pub(crate) source: &'a Source<'a>,
     pub(crate) visited: VisitMap<'a>,
@@ -421,7 +421,7 @@ impl<'a> Run<'a> {
     pub(crate) fn run_async(
         vm: &VirtualMachine,
         log: &Log,
-        bump: &bun_alloc::Arena,
+        bump: &bun_ast::AstArena,
         caller: Expr,
         args: &[JSValue],
         source: &Source,
@@ -552,7 +552,11 @@ impl<'a> Run<'a> {
                         .map_err(|_| MacroError::MacroFailed);
                 }
 
-                return Ok(Expr::init(E::EString::EMPTY, self.caller.loc));
+                return Ok(Expr::allocate(
+                    self.bump,
+                    E::EString::EMPTY,
+                    self.caller.loc,
+                ));
             }
 
             T::Boolean => {
@@ -576,7 +580,8 @@ impl<'a> Run<'a> {
                 // Process all array items
                 let mut array = ExprNodeList::init_capacity(iter.len as usize);
                 // (errdefer free deleted — drops on `?`)
-                let expr = Expr::init(
+                let expr = Expr::allocate(
+                    self.bump,
                     E::Array {
                         items: bun_alloc::AstAlloc::vec(),
                         was_originally_macro: true,
@@ -613,7 +618,8 @@ impl<'a> Run<'a> {
                 }
 
                 // Reserve a placeholder to break cycles.
-                let expr = Expr::init(
+                let expr = Expr::allocate(
+                    self.bump,
                     E::Object {
                         properties: bun_alloc::AstAlloc::vec(),
                         was_originally_macro: true,
@@ -646,7 +652,8 @@ impl<'a> Run<'a> {
                     // (arena-owned per the parser's `Str` convention). Copy the
                     // key into the arena so it outlives the temporary `to_owned_slice()` Vec.
                     let key_bytes: &[u8] = self.bump.alloc_slice_copy(&prop.to_owned_slice());
-                    let key = Expr::init(E::EString::init(key_bytes), self.caller.loc);
+                    let key =
+                        Expr::allocate(self.bump, E::EString::init(key_bytes), self.caller.loc);
                     VecExt::append(
                         &mut properties,
                         G::Property {
@@ -695,7 +702,8 @@ impl<'a> Run<'a> {
                 // `E::EString::init_utf16` lifetime-erases the slice
                 // (arena-owned per the parser's `Str` convention).
                 let arena_slice: &[u16] = self.bump.alloc_slice_copy(&utf16_bytes);
-                return Ok(Expr::init(
+                return Ok(Expr::allocate(
+                    self.bump,
                     E::EString::init_utf16(arena_slice),
                     self.caller.loc,
                 ));
@@ -754,7 +762,7 @@ impl Runner {
     fn run(
         vm: &VirtualMachine,
         log: &Log,
-        bump: &bun_alloc::Arena,
+        bump: &bun_ast::AstArena,
         function_name: &[u8],
         caller: Expr,
         source: &Source,
@@ -813,7 +821,7 @@ impl Runner {
         struct CallData<'c> {
             vm: &'c VirtualMachine,
             log: &'c Log,
-            bump: &'c bun_alloc::Arena,
+            bump: &'c bun_ast::AstArena,
             caller: Expr,
             js_args: &'c [JSValue],
             source: &'c Source<'c>,
@@ -871,7 +879,7 @@ unsafe extern "C" {
 /// leaf below both. Only call site is the macro `Response`/`Blob` arm above.
 fn expr_from_blob(
     bytes: &[u8],
-    bump: &bun_alloc::Arena,
+    bump: &bun_ast::AstArena,
     content_type: &[u8],
     log: &Log,
     loc: bun_ast::Loc,
@@ -923,7 +931,8 @@ fn expr_from_blob(
             &owned[..]
         };
         let data = Str::new(bump.alloc_slice_copy(unquoted));
-        return Ok(Expr::init(
+        return Ok(Expr::allocate(
+            bump,
             E::String {
                 data,
                 ..Default::default()
@@ -947,7 +956,8 @@ fn expr_from_blob(
     i += mid.len();
     let n = bun_base64::encode(&mut buf[i..], bytes);
     let data = Str::new(&buf[..i + n]);
-    Ok(Expr::init(
+    Ok(Expr::allocate(
+        bump,
         E::String {
             data,
             ..Default::default()

@@ -317,9 +317,8 @@ fn has_script(name: &[u8], path: &[u8], contents: &[u8]) -> Result<bool, Unparsa
     if !(spellings.iter()).any(|it| bun_core::strings::contains(contents, it)) {
         return Ok(false);
     }
-    bun_ast::initialize_store();
     let source = bun_ast::Source::init_path_string(path, contents);
-    let (log, bump) = (bun_ast::Log::init(), bun_alloc::Arena::new());
+    let (log, bump) = (bun_ast::Log::init(), bun_ast::AstArena::new());
     match bun_parsers::json::parse_package_json_utf8(&source, &log, &bump) {
         Ok(json) => Ok((json.as_property(b"scripts"))
             .and_then(|scripts| scripts.expr.as_property(name))

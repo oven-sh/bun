@@ -253,7 +253,7 @@ impl Host for StatementsHost {
         StatementParser::parse(file, text, atoms, arena)
     }
 
-    fn parse_package_json(&self, _arena: &Arena, text: &[u8]) -> Option<Json> {
+    fn parse_package_json(&self, text: &[u8]) -> Option<Json> {
         let (name, version) = strings::rsplit_once_char(text, b'@')?;
         if name.is_empty() {
             return None;
@@ -292,7 +292,7 @@ impl Host for StatementsHost {
 }
 
 impl CodeHost for StatementsHost {
-    fn parse_runtime_tsconfig(&self, _arena: &Arena, text: &[u8]) -> Option<Json> {
+    fn parse_runtime_tsconfig(&self, text: &[u8]) -> Option<Json> {
         let names = strings::split(text, b"\n").filter(|name| !name.is_empty());
         let flags = names
             .map(|name| (name.to_vec(), Json::Bool(true)))

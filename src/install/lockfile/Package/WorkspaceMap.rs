@@ -133,11 +133,10 @@ pub(crate) enum NamesArray<'a> {
 }
 
 impl<'a> NamesArray<'a> {
-    pub(crate) fn from_expr(expr: &'a js_ast::Expr, value_loc: bun_ast::Loc) -> Option<Self> {
-        match &expr.data {
-            js_ast::ExprData::EArray(arr) => Some(NamesArray::Mutable(arr.get())),
-            js_ast::ExprData::EArrayJSON(arr) => Some(NamesArray::Immutable(arr.get(), value_loc)),
-            _ => None,
+    pub(crate) fn from_json(expr: js_ast::JsonView<'a>, value_loc: bun_ast::Loc) -> Option<Self> {
+        match expr.as_e_array_json() {
+            Some(arr) => Some(NamesArray::Immutable(arr, value_loc)),
+            None => expr.as_e_array().map(NamesArray::Mutable),
         }
     }
 
@@ -192,9 +191,7 @@ fn process_workspace_name(
             log,
             abs_package_json_path,
             GetJSONOptions {
-                init_reset_store: false,
                 guess_indentation: true,
-                ..Default::default()
             },
         )
         .unwrap()?;
@@ -369,7 +366,10 @@ impl WorkspaceMap {
             }
         });
         let Some(q) = names else { return Ok(0) };
-        let Some(arr) = NamesArray::from_expr(&q.expr, super::value_loc_of(source, q.loc)) else {
+        let Some(arr) = NamesArray::from_json(
+            js_ast::JsonView::from(&q.expr),
+            super::value_loc_of(source, q.loc),
+        ) else {
             return Ok(0);
         };
         self.process_names_array(json_cache, log, arr, source, q.loc, None, missing_workspace)

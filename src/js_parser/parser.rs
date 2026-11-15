@@ -1674,7 +1674,7 @@ impl Default for DeferredArrowArgErrors {
 }
 
 pub fn new_lazy_export_ast<'bump>(
-    bump: &'bump bun_alloc::Arena,
+    bump: &'bump bun_ast::AstArena,
     define: &'bump mut Define,
     opts: ParserOptions<'bump>,
     log_to_copy_into: &bun_ast::Log,
@@ -1695,7 +1695,7 @@ pub fn new_lazy_export_ast<'bump>(
 }
 
 pub fn new_lazy_export_ast_impl<'bump>(
-    bump: &'bump bun_alloc::Arena,
+    bump: &'bump bun_ast::AstArena,
     define: &'bump mut Define,
     opts: ParserOptions<'bump>,
     log_to_copy_into: &bun_ast::Log,

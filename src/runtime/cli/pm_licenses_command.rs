@@ -402,30 +402,28 @@ fn read_package_info_at(
 
 fn read_package_info(path: &[u8], dir: &[u8], log: &Log) -> Option<PackageInfo> {
     let contents = File::read_from(Fd::cwd(), path).ok()?;
-    bun_ast::initialize_store_or_reset();
+    let arena = bun_ast::AstArena::new();
     let source = Source::init_path_string(path, contents.as_slice());
-    Some(
-        match JSON::parse_package_json_utf8(&source, log, crate::cli::cli_arena()) {
-            Ok(json) => PackageInfo {
-                name: string_field(&json, b"name"),
-                version: string_field(&json, b"version"),
-                license: license_of(&json),
-                homepage: string_field(&json, b"homepage").or_else(|| repository_of(&json)),
-                author: author_of(&json),
-                description: string_field(&json, b"description"),
-                path: platform_dir(dir),
-            },
-            Err(_) => PackageInfo {
-                name: None,
-                version: None,
-                license: UNKNOWN_LICENSE.into(),
-                homepage: None,
-                author: None,
-                description: None,
-                path: platform_dir(dir),
-            },
+    Some(match JSON::parse_package_json_utf8(&source, log, &arena) {
+        Ok(json) => PackageInfo {
+            name: string_field(&json, b"name"),
+            version: string_field(&json, b"version"),
+            license: license_of(&json),
+            homepage: string_field(&json, b"homepage").or_else(|| repository_of(&json)),
+            author: author_of(&json),
+            description: string_field(&json, b"description"),
+            path: platform_dir(dir),
         },
-    )
+        Err(_) => PackageInfo {
+            name: None,
+            version: None,
+            license: UNKNOWN_LICENSE.into(),
+            homepage: None,
+            author: None,
+            description: None,
+            path: platform_dir(dir),
+        },
+    })
 }
 
 fn platform_dir(dir: &[u8]) -> Box<[u8]> {

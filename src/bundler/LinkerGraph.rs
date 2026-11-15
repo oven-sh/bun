@@ -1,3 +1,5 @@
+use core::sync::SyncView;
+
 use crate::bundled_ast;
 use crate::mal_prelude::*;
 use bun_alloc::Arena;
@@ -5,7 +7,7 @@ use bun_ast::ImportKind;
 use bun_ast::base::RefTag;
 use bun_ast::server_component_boundary;
 use bun_ast::symbol;
-use bun_ast::{DeclaredSymbol, DeclaredSymbolList, Dependency, Symbol};
+use bun_ast::{AstArena, DeclaredSymbol, DeclaredSymbolList, Dependency, Symbol};
 use bun_collections::{AutoBitSet, DynamicBitSet as BitSet, MultiArrayList, VecExt};
 use bun_core::RawSlice;
 
@@ -226,6 +228,8 @@ pub struct LinkerGraph<'a> {
 
     /// The bundle's arena, `BundleV2.graph.heap`.
     bump: &'a Arena,
+    /// `BundleV2.graph.ast_arena`. `SyncView`: workers share `&LinkerGraph`, and `AstArena` is `!Sync`.
+    ast_arena: SyncView<&'a AstArena>,
 
     pub(crate) code_splitting: bool,
 
@@ -289,14 +293,20 @@ impl<'a> LinkerGraph<'a> {
         self.bump
     }
 
-    pub(crate) fn new(bump: &'a Arena) -> Self {
+    #[inline]
+    pub(crate) fn ast_arena(&mut self) -> &'a AstArena {
+        self.ast_arena.as_mut()
+    }
+
+    pub(crate) fn new(ast_arena: &'a AstArena) -> Self {
         LinkerGraph {
             files: FileList::default(),
             files_live: BitSet::default(),
             parts_live: Vec::new(),
             entry_points: entry_point::List::default(),
             symbols: symbol::Map::default(),
-            bump,
+            bump: ast_arena.heap(),
+            ast_arena: SyncView::new(ast_arena),
             code_splitting: false,
             ast: MultiArrayList::default(),
             meta: MultiArrayList::default(),

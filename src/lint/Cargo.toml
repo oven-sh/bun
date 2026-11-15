@@ -8,7 +8,6 @@ path = "lib.rs"
 
 [dependencies]
 bun_sema.workspace = true
-bun_alloc.workspace = true
 bun_ast.workspace = true
 bun_collections.workspace = true
 bun_core.workspace = true

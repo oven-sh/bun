@@ -3165,7 +3165,8 @@ struct Emitted {
     /// The directories that contain the files, and all their ancestors, each with the projects that emitted into it.
     directories: ShardedMap<Vec<u8>, Guarded<Vec<usize>>>,
     has_files: AtomicBool,
-    /// By project: the number of projects built before it. `usize::MAX` if it isn't built.
+    /// By project: the number of projects built before it. `usize::MAX` if it isn't built. The lock of `Builds` orders
+    /// the accesses that `WithOutputs::sees` answers with true.
     built_after: Vec<AtomicUsize>,
     /// By project: `Output::pending`.
     pending: Vec<OnceLock<Arc<FxHashSet<Vec<u8>>>>>,
@@ -3719,13 +3720,15 @@ fn check_with_references(
     // A project that isn't reported only checks the sources of the declaration files that other programs read. The
     // builds run in rounds: a program that asks for a pending file ends once it's loaded, and the next round emits the
     // file. So `root` is loaded twice, which only pays if there are enough other files.
+    const MAX_ROOT_FILES_PER_OTHER_FILE: usize = 2;
     let roots_of_root = root_index.map_or(0, |it| roots[it].len());
+    let roots_of_others = roots.iter().map(Vec::len).sum::<usize>() - roots_of_root;
     let emits_on_demand = request.plan_options.reports_only_requested_paths
         && !reports_references
         && !reads_sources
         // The trace tells which directories exist.
         && !options_of_projects.iter().any(|it| it.trace_resolution)
-        && roots.iter().map(Vec::len).sum::<usize>() * 2 >= roots_of_root * 3;
+        && roots_of_root <= roots_of_others * MAX_ROOT_FILES_PER_OTHER_FILE;
     // What is emitted under `noEmitOnError` depends on the errors of every file.
     let is_on_demand = |index: usize| {
         let options = &options_of_projects[index];
@@ -3738,7 +3741,7 @@ fn check_with_references(
     // By project: the paths of the declaration files that are asked for.
     let mut wanted: Vec<FxHashSet<Vec<u8>>> = vec![FxHashSet::default(); count];
     let demanded: Guarded<FxHashSet<(usize, Vec<u8>)>> = Guarded::default();
-    // By project: `Report::needs_files_left_out`
+    // By project: `Report::needs_files_left_out`. The lock of `Builds` orders the accesses.
     let needs_every_file: Vec<AtomicBool> = (0..count).map(|_| AtomicBool::new(false)).collect();
     let times_of_unreported: Guarded<Vec<(Vec<u8>, Duration)>> = Guarded::default();
     // By project: `None` until it's built from the final text of everything it reads.
@@ -3993,6 +3996,13 @@ fn check_with_references(
     let reports: Vec<Guarded<Option<Report>>> = (0..count).map(|_| Guarded::new(None)).collect();
     let build_all = |round: &Round<'_>| {
         let emitted = &round.emitted;
+        // A chain of references is otherwise in memory one project at a time. A program that is only loaded takes about
+        // a third of the memory of one that is checked.
+        const MAX_LOADED_AT_ONCE: usize = 3;
+        let max_concurrent = match emits_on_demand && round.number == 0 {
+            true => max_concurrent.min(MAX_LOADED_AT_ONCE),
+            false => max_concurrent,
+        };
         let (mut waiting, mut waits_for) = (vec![Vec::new(); count], vec![0; count]);
         for (index, first) in up_stream.iter().enumerate() {
             if is_postponed_at_once(round, index) {
@@ -5318,6 +5328,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
             times_of_files.lock().push((file, took));
         }
     };
+    // Read after the threads have joined.
     let needs_files_left_out = AtomicBool::new(false);
     // Checks files outside the queue. Whatever the checker stores is dropped with it.
     let check_chunk = |files: &[FileId], expected: Requested| {

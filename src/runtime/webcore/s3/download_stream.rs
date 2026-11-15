@@ -273,7 +273,7 @@ impl S3HttpDownloadStreamingTask {
     /// HTTP request; `mutex` serializes against `on_response`.
     pub(crate) fn http_callback(
         this: *mut Self,
-        finished: bun_http::Finished,
+        finished: Option<bun_http::FinishedRequest>,
         result: HTTPClientResult,
     ) {
         drop(finished);

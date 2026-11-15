@@ -8,6 +8,7 @@ use crate::api::standalone_graph_jsc::is_asset;
 use crate::api::{SocketAddress, js_bundler as JSBundler};
 use crate::bake::router as FrameworkRouter;
 use crate::bake::{self as bake};
+use crate::generated_bindgen::html_bundle::js_HTMLBundle;
 use crate::generated_bindgen::server::ServerProtocol;
 use crate::generated_bindgen::server_body::{
     BunServe__onRejectPlugins, BunServe__onResolvePlugins,
@@ -33,7 +34,7 @@ use bun_jsc::{
 };
 use bun_paths as paths;
 use bun_paths::resolve_path::SpillBuf;
-use bun_ptr::{AsCtxPtr, CellExt as _, RefPtr, VecCellExt as _};
+use bun_ptr::{CellExt as _, RefPtr, VecCellExt as _};
 use bun_removable_features::{Feature, is_removed};
 use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
@@ -714,7 +715,7 @@ impl AnyRoute {
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
         use bun_collections::zig_hash_map::MapEntry as StdEntry;
-        if let Some(html_bundle) = argument.as_class_this_ptr::<HTMLBundle>() {
+        if let Some(html_bundle) = js_HTMLBundle::ref_from_js(argument) {
             let entry = init_ctx
                 .dedupe_html_bundle_map
                 .entry(html_bundle.as_ptr().cast_const());
@@ -1109,16 +1110,20 @@ pub(crate) fn on_reject_plugins(
 }
 
 /// The `options` argument of `server.upgrade(request, options)`. Each property is read once.
-struct UpgradeOptions {
+struct UpgradeOptions<'a> {
     data: JSValue,
-    headers: Option<HeadersInit>,
+    headers: Option<HeadersInit<'a>>,
     /// `Sec-WebSocket-Protocol` from `headers`. An empty value rejects every protocol the
     /// client offered.
     protocol: Option<bun_core::Utf8Bytes<'static>>,
 }
 
-impl UpgradeOptions {
-    fn from_js(global: &JSGlobalObject, options: JSValue) -> JsResult<Self> {
+impl<'a> UpgradeOptions<'a> {
+    fn from_js(
+        global: &JSGlobalObject,
+        options: JSValue,
+        headers_slot: &'a mut Option<JSValue>,
+    ) -> JsResult<Self> {
         let mut this = Self {
             data: JSValue::ZERO,
             headers: None,
@@ -1146,7 +1151,7 @@ impl UpgradeOptions {
                 "upgrade options.headers must be a Headers or an object"
             )));
         }
-        this.headers = HeadersInit::from_js(global, headers_value)?;
+        this.headers = HeadersInit::from_js(global, headers_slot.insert(headers_value))?;
         if let Some(headers) = &this.headers
             && headers.fast_has(jsc::HTTPHeaderName::SecWebSocketProtocol)
         {
@@ -1391,7 +1396,7 @@ where
             .first()
             .map_or(JSValue::UNDEFINED, |compress| compress.to_js());
         let compress = compress.is_undefined() || compress.to_boolean();
-        let payload = payload_from_js(global, "publish", data.to_js(), Accept::AnyOrNullish)?;
+        let payload = payload_from_js(global, "publish", *data, Accept::AnyOrNullish)?;
         let bytes = payload.bytes();
 
         if self.config.get().websocket.is_none() {
@@ -1419,7 +1424,7 @@ where
         cx: &mut JsScope<'_>,
         request: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        let request = request.to_js().as_class_ref::<Request>().ok_or_else(|| {
+        let request = request.as_class_ref::<Request>().ok_or_else(|| {
             cx.global()
                 .throw_invalid_arguments(format_args!("Expected Request object"))
         })?;
@@ -1483,14 +1488,11 @@ where
             return Ok(false);
         }
 
-        let Some(request_ptr) = <Request as bun_jsc::JsClass>::from_js(request) else {
+        let Some(request) = <Request as bun_jsc::JsClass>::from_js(&request) else {
             return Err(
                 global.throw_invalid_arguments(format_args!("upgrade requires a Request object"))
             );
         };
-        // SAFETY: from_js returns a live *mut Request (rooted by the caller's
-        // argument). Shared, re-derived after each JS re-entry point below.
-        let request = unsafe { &*request_ptr };
 
         if request
             .request_context
@@ -1564,7 +1566,8 @@ where
             return Ok(false);
         }
 
-        let options = UpgradeOptions::from_js(global, options.to_js())?;
+        let mut headers_slot = None;
+        let options = UpgradeOptions::from_js(global, options.to_js(), &mut headers_slot)?;
         let sec_websocket_protocol = options.protocol.as_deref().unwrap_or(&offered_protocols);
 
         // The option getters may have already upgraded, responded to, or closed the request.
@@ -1602,9 +1605,6 @@ where
             let detached = upgrader.resp.take();
 
             // Snapshot the lazy url before detaching (mirrors to_async_without_abort_handler).
-            // SAFETY: re-derived after the JS-running option getters above; still
-            // the live JsClass payload for `request`.
-            let request = unsafe { &*request_ptr };
             if request.ensure_url().is_err() {
                 request.url.set(BunString::EMPTY);
             }
@@ -1888,7 +1888,7 @@ where
                 }
 
                 if let Some(headers_) = init.fast_get(global, jsc::BuiltinName::Headers)? {
-                    if let Some(headers__) = FetchHeaders::cast_(headers_, global.vm()) {
+                    if let Some(headers__) = FetchHeaders::cast_(&headers_, global.vm()) {
                         // Copy the headers like `new Request(url, { headers })` does.
                         headers = headers__.clone_this(global)?;
                     } else {
@@ -1959,12 +1959,8 @@ where
             return Ok(response_value);
         }
 
-        if let Some(resp) = <Response as bun_jsc::JsClass>::from_js(response_value) {
-            // SAFETY: `from_js` returns a live `*mut Response` (owned by its
-            // JS wrapper, which `response_value` keeps alive). The request is
-            // kept alive by `request_value` (its JS wrapper) for the duration
-            // of this synchronous frame.
-            unsafe { (*resp).set_url(request_ptr.url.get().clone()) };
+        if let Some(resp) = <Response as bun_jsc::JsClass>::from_js(&response_value) {
+            resp.set_url(request_ptr.url.get().clone());
         }
         Ok(JSPromise::resolved_promise_value(global, response_value))
     }

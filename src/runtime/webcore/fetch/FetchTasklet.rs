@@ -619,7 +619,7 @@ impl FetchTasklet {
                     if self.result.has_more {
                         bytes.on_data(StreamResult::Temporary(chunk));
                     } else {
-                        readable.value.ensure_still_alive();
+                        let _keep = jsc::EnsureStillAlive(readable.value);
                         response.detach_readable_stream(global_this);
                         bytes.on_data(StreamResult::TemporaryAndDone(chunk));
                     }

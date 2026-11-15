@@ -1386,13 +1386,12 @@ impl Run<'_> {
                     let Some(redis) = bun_object.get(global, "redis")? else {
                         return Ok(());
                     };
-                    let Some(client) = redis.as_::<crate::valkey_jsc::js_valkey::JSValkeyClient>()
+                    let Some(client) =
+                        redis.as_class_ref::<crate::valkey_jsc::js_valkey::JSValkeyClient>()
                     else {
                         return Ok(());
                     };
-                    // SAFETY: `as_` returns a live payload pointer owned by the JS
-                    // wrapper; accessed here under the API lock.
-                    unsafe { &*client }.do_connect(global, redis)?;
+                    client.do_connect(global, redis)?;
                     Ok(())
                 })
             };

@@ -72,8 +72,7 @@ impl JSString {
 
     #[inline]
     pub fn ensure_still_alive(&self) {
-        // Keep the cell pointer observable to the GC's conservative stack scan.
-        core::hint::black_box(std::ptr::from_ref::<Self>(self));
+        self.to_js().ensure_still_alive();
     }
 
     /// Throws when resolving a rope runs out of memory.

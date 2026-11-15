@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::sync::atomic::Ordering;
 
 use crate::{
-    CommonAbortReason, DOMWrapped, JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine,
+    CommonAbortReason, JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine, WrapperGuard,
 };
 use bun_event_loop::EventLoopTimer::{Clock, OwnedTimer, Tag as TimerTag, TimerRef};
 
@@ -137,9 +137,9 @@ impl AbortSignal {
         unsafe { AbortSignalRef::adopt(WebCore__AbortSignal__ref(self)) }
     }
 
-    pub fn from_js(value: JSValue) -> Option<DOMWrapped<AbortSignal>> {
+    pub fn from_js(value: &JSValue) -> Option<WrapperGuard<'_, AbortSignal>> {
         // SAFETY: a `JSAbortSignal` holds a ref on what it wraps.
-        unsafe { DOMWrapped::new(value, WebCore__AbortSignal__fromJS(value)) }
+        unsafe { WrapperGuard::new(value, WebCore__AbortSignal__fromJS(*value)) }
     }
 
     pub fn to_js(&self, global: &JSGlobalObject) -> JSValue {
@@ -223,7 +223,7 @@ impl AbortSignal {
     /// moved here because inherent impls cannot be added to a type alias.)
     #[inline]
     pub fn ref_from_js(value: JSValue) -> Option<AbortSignalRef> {
-        AbortSignal::from_js(value).map(|signal| signal.ref_())
+        AbortSignal::from_js(&value).map(|signal| signal.ref_())
     }
 }
 

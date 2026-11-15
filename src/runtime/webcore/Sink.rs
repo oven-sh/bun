@@ -18,7 +18,7 @@ use bun_jsc::{
     ErrorCode, JSGlobalObject, JSValue, JsCell, JsClass, JsError, JsResult, JsThread,
     SysErrorJsc as _,
 };
-use bun_ptr::{AliasableBox, BackRef, RawSlice};
+use bun_ptr::{AliasableBox, BackRef};
 use bun_removable_features::removable_body_behind_value;
 use bun_sys::{self as sys, Error as SysError};
 
@@ -59,7 +59,7 @@ macro_rules! impl_js_sink_forwarders {
         }
         fn write_bytes(
             &mut self,
-            data: &$crate::webcore::streams::Result,
+            data: &$crate::webcore::streams::Result<'_>,
         ) -> $crate::webcore::streams::result::Writable {
             Self::write(self, data)
         }
@@ -68,7 +68,7 @@ macro_rules! impl_js_sink_forwarders {
         }
         fn write_latin1(
             &mut self,
-            data: &$crate::webcore::streams::Result,
+            data: &$crate::webcore::streams::Result<'_>,
         ) -> $crate::webcore::streams::result::Writable {
             Self::write_latin1(self, data)
         }
@@ -90,9 +90,9 @@ pub(crate) trait JsSinkType: Sized + 'static {
     const NAME: &'static str;
 
     fn memory_cost(&self) -> usize;
-    fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable;
+    fn write_bytes(&mut self, data: &streams::Result<'_>) -> streams::result::Writable;
     fn write_utf16(&mut self, text: &[u16]) -> streams::result::Writable;
-    fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
+    fn write_latin1(&mut self, data: &streams::Result<'_>) -> streams::result::Writable;
     fn end(&mut self, err: Option<SysError>) -> sys::Result<()>;
     fn end_from_js(&mut self, cx: &JsThread<'_>) -> sys::Result<JSValue>;
     fn flush_from_js(&mut self, cx: &JsThread<'_>, wait: bool) -> sys::Result<JSValue>;
@@ -202,11 +202,11 @@ fn write_chunk<'a, T: JsSinkType>(
             if bytes.is_empty() {
                 return streams::Writable::Owned(0);
             }
-            sink.write_bytes(&Temporary(RawSlice::new(bytes)))
+            sink.write_bytes(&Temporary(bytes))
         }),
         SinkChunk::Text(text) if text.is_empty() => return Ok(JSValue::js_number(0.0)),
         SinkChunk::Text(text) if text.is_utf16() => sink.write_utf16(text.utf16()),
-        SinkChunk::Text(text) => sink.write_latin1(&Temporary(RawSlice::new(text.latin1()))),
+        SinkChunk::Text(text) => sink.write_latin1(&Temporary(text.latin1())),
         SinkChunk::Other(value) => return Err(throw_invalid_chunk(cx.global(), value.to_js())),
     };
     Ok(written.to_js(&cx.js_thread()))
@@ -879,7 +879,7 @@ impl ReadableSinkController {
             return Ok(JSValue::js_number(0.0));
         }
         // SAFETY: the controller is attached, so the sink is live.
-        let written = unsafe { sink.to_sink_handle() }.write(&Temporary(RawSlice::new(bytes)));
+        let written = unsafe { sink.to_sink_handle() }.write(&Temporary(bytes));
         Ok(written.to_js(&cx.js_thread()))
     }
 

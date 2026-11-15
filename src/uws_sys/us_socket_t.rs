@@ -1,4 +1,5 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::marker::PhantomData;
 use core::ptr::{self, NonNull};
 
 use bun_boringssl_sys::OwnedSslCtx;
@@ -69,9 +70,25 @@ pub enum QueuedInput {
 /// Layout-compatible with `struct us_iovec_t` in libusockets.h (== POSIX iovec).
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct UsIoVec {
-    pub base: *const core::ffi::c_void,
-    pub len: usize,
+pub struct UsIoVec<'a> {
+    base: *const u8,
+    len: usize,
+    _marker: PhantomData<&'a [u8]>,
+}
+
+impl<'a> UsIoVec<'a> {
+    pub fn new(bytes: &'a [u8]) -> Self {
+        Self {
+            base: bytes.as_ptr(),
+            len: bytes.len(),
+            _marker: PhantomData,
+        }
+    }
+
+    pub(crate) fn as_slice(self) -> &'a [u8] {
+        // SAFETY: these are the parts of the slice that `new` took.
+        unsafe { core::slice::from_raw_parts(self.base, self.len) }
+    }
 }
 
 impl us_socket_t {
@@ -422,10 +439,9 @@ impl us_socket_t {
     /// sends on platforms without it). Same closed/shutdown gating and
     /// partial-write poll handling as `raw_write`. Plain-TCP only by contract:
     /// raw writes bypass TLS framing.
-    pub(crate) fn raw_writev(&mut self, iov: &[UsIoVec]) -> i32 {
+    pub(crate) fn raw_writev(&mut self, iov: &[UsIoVec<'_>]) -> i32 {
         bun_core::scoped_log!(uws, "us_socket_raw_writev({:p}, {})", self, iov.len());
-        // SAFETY: iov entries reference memory owned by the caller for the
-        // duration of this call; the C side only reads them synchronously.
+        // SAFETY: the C side only reads the entries, and their bytes, during the call.
         unsafe {
             c::us_socket_raw_writev(
                 self,
@@ -571,7 +587,7 @@ mod c {
         ) -> i32;
         pub(super) fn us_socket_raw_writev(
             s: *mut us_socket_t,
-            iov: *const super::UsIoVec,
+            iov: *const super::UsIoVec<'_>,
             count: i32,
         ) -> i32;
         pub(super) fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32)

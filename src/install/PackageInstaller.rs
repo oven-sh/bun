@@ -1172,12 +1172,9 @@ impl<'a> PackageInstaller<'a> {
 
     /// Check if a tree is ready to start running lifecycle scripts
     fn can_run_scripts(&self, scripts_tree_id: lockfile::tree::Id) -> bool {
-        let deps = self
-            .tree_ids_to_trees_the_id_depends_on
-            .at(scripts_tree_id as usize);
+        let deps = self.tree_ids_to_trees_the_id_depends_on.at(scripts_tree_id);
         // .monotonic is okay because this value isn't modified from any other thread.
-        (deps.subset_of(&self.completed_trees.unmanaged)
-            || deps.eql(&self.completed_trees.unmanaged))
+        deps.subset_of(&self.completed_trees)
             && LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
                 < self.manager().options.max_concurrent_lifecycle_scripts
     }
@@ -1504,10 +1501,11 @@ impl<'a> PackageInstaller<'a> {
 
         // fixes an assertion failure where a transitive dependency is a git dependency newly added to the lockfile after the list of dependencies has been resized
         // this assertion failure would also only happen after the lockfile has been written to disk and the summary is being printed.
-        if self.successfully_installed.bit_length() < self.lockfile().packages.len() {
-            let new = Bitset::init_empty(self.lockfile().packages.len()).unwrap_or_oom();
-            let old = core::mem::replace(&mut self.successfully_installed, new);
-            old.copy_into(&mut self.successfully_installed);
+        let len = self.lockfile().packages.len();
+        if self.successfully_installed.bit_length() < len {
+            self.successfully_installed
+                .resize(len, false)
+                .unwrap_or_oom();
         }
     }
 

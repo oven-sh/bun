@@ -46,7 +46,7 @@ impl readable_stream::SourceContext for ByteBlobLoader {
         streams::Start::ChunkSize(self.chunk_size)
     }
 
-    fn on_pull(&self, buffer: &mut [u8], array: JSValue) -> streams::Result {
+    fn on_pull(&self, buffer: &mut [u8], array: JSValue) -> streams::Result<'_> {
         array.ensure_still_alive();
         let _keep = bun_jsc::EnsureStillAlive(array);
         if self.store.get().is_none() || self.done.get() {

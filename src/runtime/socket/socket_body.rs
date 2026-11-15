@@ -184,21 +184,17 @@ extern "C" fn select_alpn_callback(
             };
             let global = handlers.global_object;
             let this_value = this.get_this_value(&global);
-            let wire_len = inlen as usize;
+            // SAFETY: `in_` is valid for `inlen` per the callback contract.
+            let client_protocols = unsafe { core::slice::from_raw_parts(in_, inlen as usize) };
             // BoringSSL's ALPN callback is these sockets' landing frame for this
             // event: whatever it leaves pending is folded before returning to C.
-            let buffer = match JSValue::create_buffer_from_length(&global, wire_len) {
+            let buffer = match jsc::ArrayBuffer::create_buffer(&global, client_protocols) {
                 Ok(b) => b,
                 Err(err) => {
                     crate::dispatch::fold(Err(err));
                     return boringssl_sys::SSL_TLSEXT_ERR_ALERT_FATAL;
                 }
             };
-            if let Some(ab) = buffer.as_array_buffer(&global) {
-                // SAFETY: `ab.ptr` points at a fresh `wire_len`-byte JS buffer
-                // and `in_` is valid for `inlen` per the callback contract.
-                unsafe { core::ptr::copy_nonoverlapping(in_, ab.ptr, wire_len) };
-            }
             // SAFETY: `ssl` is the live SSL handle passed into this ALPN
             // callback; SSL_get_servername reads the negotiated SNI name and
             // returns NULL or a NUL-terminated string owned by the SSL.
@@ -1956,7 +1952,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `session_buffer` fault rule simulates the allocation throwing: that
     /// failure needs JSC heap exhaustion, so it is unreachable from a test
     /// without injection.
-    fn create_dispatch_buffer(global: &JSGlobalObject, len: usize) -> JsResult<JSValue> {
+    fn create_dispatch_buffer(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
         #[cfg(socket_fault_injection)]
         {
             let mut out: isize = 0;
@@ -1977,7 +1973,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 return Err(global.throw_out_of_memory());
             }
         }
-        JSValue::create_buffer_from_length(global, len)
+        jsc::ArrayBuffer::create_buffer(global, bytes)
     }
 
     /// A new resumable TLS session arrived (the peer's NewSessionTicket was
@@ -2011,14 +2007,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
-        let buffer = Self::create_dispatch_buffer(&global, session.len())?;
-        if let Some(ab) = buffer.as_array_buffer(&global) {
-            // SAFETY: `ab.ptr` points to a freshly-created `session.len()`-byte
-            // JS buffer kept alive on the stack; `session` is valid for its length.
-            unsafe {
-                core::ptr::copy_nonoverlapping(session.as_ptr(), ab.ptr, session.len());
-            }
-        }
+        let buffer = Self::create_dispatch_buffer(&global, session)?;
         let result = match callback.call(&global, this_value, &[this_value, buffer]) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
@@ -2054,14 +2043,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
-        let buffer = Self::create_dispatch_buffer(&global, line.len())?;
-        if let Some(ab) = buffer.as_array_buffer(&global) {
-            // SAFETY: `ab.ptr` points to a freshly-created `line.len()`-byte
-            // JS buffer kept alive on the stack; `line` is valid for its length.
-            unsafe {
-                core::ptr::copy_nonoverlapping(line.as_ptr(), ab.ptr, line.len());
-            }
-        }
+        let buffer = Self::create_dispatch_buffer(&global, line)?;
         let result = match callback.call(&global, this_value, &[this_value, buffer]) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
@@ -2500,7 +2482,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// Vectored raw write for plain-TCP sockets: all chunks reach the fd in one
     /// writev. Callers guarantee this socket has no TLS layer (raw writes bypass
     /// SSL framing). Updates bytes_written like the scalar path.
-    pub(crate) fn write_vectored_raw(&self, iov: &[bun_uws_sys::UsIoVec]) -> i32 {
+    pub(crate) fn write_vectored_raw(&self, iov: &[bun_uws_sys::UsIoVec<'_>]) -> i32 {
         let socket = self.socket.get();
         if socket.is_shutdown() || socket.is_closed() {
             return -1;

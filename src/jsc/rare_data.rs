@@ -194,7 +194,7 @@ pub struct RareData {
     pub(crate) cleanup_hooks_after_teardown_wait: JsCell<Vec<CleanupHook>>,
 
     #[cfg(not(windows))]
-    pub(crate) file_polls: OnceCell<Box<JsCell<FilePollStore>>>,
+    pub(crate) file_polls: OnceCell<Box<FilePollStore>>,
 
     /// Embedded socket groups for kinds that aren't tied to a Listener / server.
     /// Lazily linked into the loop on first socket; never separately allocated.
@@ -619,10 +619,9 @@ impl RareData {
     }
 
     #[cfg(not(windows))]
-    pub(crate) fn file_polls_ptr(&self) -> *mut FilePollStore {
+    pub(crate) fn file_polls(&self) -> &FilePollStore {
         self.file_polls
-            .get_or_init(|| Box::new(JsCell::new(FilePollStore::init())))
-            .as_ptr()
+            .get_or_init(|| Box::new(FilePollStore::init()))
     }
 
     // ── lazy-init: entropy ─────────────────────────────────────────────────
@@ -751,11 +750,6 @@ impl RareData {
             .with_mut(|hooks| hooks.push(CleanupHook::from(global_this, ctx, func)));
     }
 
-    /// The loop a first `spawn_sync_event_loop` call made.
-    pub fn existing_spawn_sync_event_loop(&self) -> Option<&SpawnSyncEventLoop> {
-        self.spawn_sync_event_loop_.get().map(|el| &**el)
-    }
-
     /// `None` if the loop cannot be created; nothing is cached, so a later call retries.
     pub fn spawn_sync_event_loop(&self, vm: &VirtualMachine) -> Option<&SpawnSyncEventLoop> {
         if self.spawn_sync_event_loop_.get().is_none() {
@@ -763,7 +757,7 @@ impl RareData {
             let el = unsafe { SpawnSyncEventLoop::init(vm) }?;
             let _ = self.spawn_sync_event_loop_.set(el);
         }
-        self.existing_spawn_sync_event_loop()
+        self.spawn_sync_event_loop_.get().map(|el| &**el)
     }
 
     // ── watch-mode listen sockets ─────────────────────────────────────────

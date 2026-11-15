@@ -253,9 +253,7 @@ impl Mv {
         };
         if let Some(e) = task.err.take() {
             task.shared.error_signal.store(true, Ordering::SeqCst);
-            if err.is_none() {
-                *err = Some(e);
-            }
+            err.get_or_insert(e);
         }
         *tasks_done += 1;
         let (all_done, had_err) = (*tasks_done >= *task_count, err.is_some());

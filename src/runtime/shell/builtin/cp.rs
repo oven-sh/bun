@@ -444,7 +444,9 @@ impl ShellCpTask {
     }
 
     /// The `ShellAsyncCpTask`'s completion, on the thread that runs the script.
-    /// SAFETY: see [`ShellTask::run_from_main_thread`].
+    ///
+    /// # Safety
+    /// See [`ShellTask::run_from_main_thread`].
     pub(crate) unsafe fn cp_on_finish(
         mut self: Box<Self>,
         src: PathLike<'static>,
@@ -460,10 +462,7 @@ impl ShellCpTask {
         unsafe { ShellTask::run_from_main_thread(self) };
     }
 
-    /// Unlike most shell builtins this is NOT a `PoolTask` (which auto-enqueues back to main
-    /// on return): on the
-    /// success path the [`ShellAsyncCpTask`](crate::node::fs::ShellAsyncCpTask)
-    /// owns the bounce-back via `cp_on_finish`.
+    /// Not a `PoolTask`: once a copy starts, `cp_on_finish` reports it.
     fn schedule(
         interp: &mut Interpreter<'_>,
         cmd: NodeId,

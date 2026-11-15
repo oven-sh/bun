@@ -3156,7 +3156,7 @@ impl<'a> HTTPClient<'a> {
         buffer: &mut bun_io::StreamBuffer,
         data: &[u8],
     ) -> bool {
-        // Any Err is backpressure; a fatal SSL error already ran on_close, which may have freed the client.
+        // on_close may have freed the client: on Err return `true` without touching it.
         let pending = buffer.slice().len();
         if pending > 0 {
             let Ok(n) = ProxyTunnel::write(proxy, buffer.slice()) else {

@@ -77,7 +77,7 @@ pub(crate) fn generate_compile_result_for_css_chunk(
             let options = printer_options(c.options.minify_whitespace);
             let mut printer = new_printer(c, arena, &mut allocating_writer, &options, None);
             let printed = if names.is_empty() {
-                empty_blocks_to_css(conditions, &mut printer)
+                layer_order_to_css(conditions, &mut printer)
             } else {
                 blocks_to_css(conditions, &mut printer, &|d| {
                     layer::statement_to_css(names, d)
@@ -129,7 +129,7 @@ pub(crate) fn generate_compile_result_for_css_chunk(
                             .map(drop)
                     })
                 } else {
-                    empty_blocks_to_css(conditions, &mut printer)
+                    layer_order_to_css(conditions, &mut printer)
                 }
             });
             if printer.finish(printed).is_err() {
@@ -206,7 +206,7 @@ fn blocks_to_css<'p>(
 }
 
 /// Empty blocks have no effect, but the name of a layer still sets the layer order.
-fn empty_blocks_to_css(
+fn layer_order_to_css(
     conditions: &[ImportConditionsRef],
     dest: &mut Printer,
 ) -> Result<(), PrintErr> {

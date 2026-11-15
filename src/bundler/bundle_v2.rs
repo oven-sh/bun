@@ -5526,7 +5526,7 @@ pub mod bv2_impl {
             // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
             let mut css_too_deep = Vec::new();
             for entry_point in start.css_entry_points.keys() {
-                match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&linker, self.graph.heap, &[*entry_point]) {
+                match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&linker, &[*entry_point]) {
                     Ok(order) => chunks.push(Chunk {
                         entry_point: chunk::EntryPoint::non_entry_point(
                             entry_point.get(),

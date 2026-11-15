@@ -471,6 +471,26 @@ The exception is a `vi.mock()` call in a module that is imported with a static i
 
 A mocked builtin such as `node:fs` is mocked for every importer with all of them.
 
+With `mock.module()`, `jest.mock()` and `jest.doMock()`, the importers include CommonJS packages in `node_modules`. One that calls `require()` of the mocked package after the mock is made gets the object the factory returned. The same is true when the mocked package has one file for `import` and another for `require()`, as `axios` does (see [Path Resolution](#path-resolution)). For such a package, earlier versions of Bun gave the CommonJS package the real file that `require()` loads.
+
+If the object has `__esModule: true` and a `default`, `require()` gets the value of `default` instead, so the CommonJS package sees only what that value has. The exception is a mocked package with one file for both `import` and `require()` that was loaded before the mock was made. `require()` of that package can get the object itself.
+
+`require()` can't wait for an async factory. Until the factory has settled, a CommonJS package that requires the mocked package can get the real package, or fail with `require() async module "..." is unsupported`. To avoid both, use a factory that returns the object itself and not a promise, with `jest.requireActual()` for the original, as below.
+
+A factory that returns only some of the names, or only `default`, leaves the CommonJS package without the rest. When the CommonJS package uses a name that is missing, it fails with an error such as `axios.create is not a function`. Spread the real package in the factory to keep the rest:
+
+```ts
+import { jest, mock } from "bun:test";
+
+const get = mock(async () => ({ data: { id: 1, name: "Ada" } }));
+
+mock.module("axios", () => {
+  const real = jest.requireActual("axios");
+  const axios = { ...(real.default ?? real), get };
+  return { ...axios, default: axios };
+});
+```
+
 ### Mocking Without a Factory
 
 You can call `vi.mock(path)` and `jest.mock(path)` without a factory. `mock.module()` always needs one.

@@ -985,6 +985,33 @@ int open64(const char *file, int flags, ...) {
       expect(exited).toBe(128 + abort);
     });
 
+    // Bun defines pthread_sigmask() itself and finds the one of libc with dlsym(), which takes the lock of the
+    // loader. The signal comes inside a dlsym() of startup, which holds that lock: the dlsym() of this shim never
+    // returns from then on.
+    test.skipIf(!isGlibc)("a function that dlsym() looks for", async () => {
+      using dir = tempDir("crash-inside-dlsym", {});
+      const shim = /* c */ `
+static int crashed;
+
+void *dlsym(void *handle, const char *name) {
+  static void *(*next)(void *, const char *);
+  if (crashed) for (;;) pause();
+  if (!next) next = dlvsym(RTLD_NEXT, "dlsym", "${isArm64 ? "GLIBC_2.17" : "GLIBC_2.2.5"}");
+  if (strcmp(name, "__cxa_thread_atexit_impl") == 0) {
+    crashed = 1;
+    CRASH;
+  }
+  return next(handle, name);
+}
+`;
+      await using proc = spawnWithShim(String(dir), "raise(SIGABRT)", shim, [bunExe(), "-e", "0"]);
+      const [stdout, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("abort() called");
+      expect(stderr).toContain("oh no: Bun has crashed");
+      expect({ stdout, exited }).toEqual({ stdout: "", exited: 128 + abort });
+    });
+
     // The list of builtin modules was a sorted set behind a lock, and a module was recorded by a comparison of
     // names under that lock. A table of slots has no comparison: the signal never comes and the program ends.
     test.skipIf(!isGlibc)("the list of builtin modules", async () => {

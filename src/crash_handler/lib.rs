@@ -3291,6 +3291,16 @@ mod draft {
                 let mut set: libc::sigset_t = bun_core::ffi::zeroed();
                 libc::sigemptyset(&raw mut set);
                 libc::sigaddset(&raw mut set, sig);
+                // On Linux the executable defines pthread_sigmask(), and its first call finds libc's with dlsym().
+                #[cfg(target_os = "linux")]
+                libc::syscall(
+                    libc::SYS_rt_sigprocmask,
+                    libc::SIG_UNBLOCK,
+                    &raw const set,
+                    core::ptr::null_mut::<libc::sigset_t>(),
+                    size_of::<libc::c_ulong>(),
+                );
+                #[cfg(not(target_os = "linux"))]
                 libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, core::ptr::null_mut());
             }
 

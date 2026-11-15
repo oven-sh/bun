@@ -1318,7 +1318,7 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
         return Ok(v);
     }
     // NOTE (layering): `bun_dotenv::Loader::get_s3_credentials` returns the
-    // T2 POD mirror; lift it into the refcounted `bun_s3_signing::S3Credentials`
+    // T2 POD mirror; lift it into the `bun_s3_signing::S3Credentials`
     // here at the high-tier call site (dotenv ≤T2 may not name s3_signing T5).
     let env_creds =
         crate::webcore::fetch::s3_credentials_from_env(vm.env_loader().get_s3_credentials());
@@ -1337,7 +1337,7 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
         Err(err) => return Err(err),
     };
     let client = S3Client {
-        credentials: aws_options.credentials.dupe(),
+        credentials: aws_options.credentials,
         options: aws_options.options,
         acl: aws_options.acl,
         storage_class: aws_options.storage_class,

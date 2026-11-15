@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 
 test("Worker from a Blob", async () => {
   const worker = new Worker(
@@ -226,5 +226,49 @@ test("object URL created in one worker is usable and revocable across threads", 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe('{"count":100,"ok":true}\na exited 0');
+  expect(exitCode).toBe(0);
+});
+
+test("writer() on two threads does not free the credentials of an S3 file shared through an object URL", async () => {
+  using dir = tempDir("worker-object-url-s3", {
+    "main.mjs": `
+      import { resolveObjectURL } from "node:buffer";
+      import { once } from "node:events";
+      import { setImmediate } from "node:timers/promises";
+      import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
+
+      // Nothing is written, so no request is sent.
+      async function makeWriters(file) {
+        for (let i = 0; i < ${isDebug ? 40 : isASAN ? 5_000 : 50_000}; i++) file.writer();
+        Bun.gc(true);
+        // A collected writer releases the credentials in a task.
+        await setImmediate();
+      }
+
+      if (isMainThread) {
+        const client = new Bun.S3Client({ accessKeyId: "key-id", secretAccessKey: "secret", bucket: "bucket" });
+        const file = client.file("key");
+        const started = new Int32Array(new SharedArrayBuffer(4));
+        const worker = new Worker(new URL(import.meta.url), { workerData: { url: URL.createObjectURL(file), started } });
+        const exited = once(worker, "exit");
+        await once(worker, "message");
+        Atomics.store(started, 0, 1);
+        Atomics.notify(started, 0);
+        await makeWriters(file);
+        const [code] = await exited;
+        console.log(code, new URL(file.presign()).searchParams.get("X-Amz-Credential").split("/")[0]);
+      } else {
+        const file = resolveObjectURL(workerData.url);
+        parentPort.postMessage("ready");
+        if (Atomics.wait(workerData.started, 0, 0, 10_000) === "timed-out") throw new Error("not started");
+        await makeWriters(file);
+      }
+      process.exit(0);
+    `,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("0 key-id");
   expect(exitCode).toBe(0);
 });

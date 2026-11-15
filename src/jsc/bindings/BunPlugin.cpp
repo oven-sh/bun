@@ -71,6 +71,7 @@ extern "C" bool Bun__AOT__runsTestFilesAgain();
 namespace Zig {
 
 static void evictModulesAndTheirImporters(Zig::GlobalObject*, Vector<String>&& modules);
+static void letModuleMockAnswerRequirePath(Zig::GlobalObject*, const String& key, JSC::JSObject* mock);
 #if ENABLE(AOT)
 static void clearCompiledProgramFailures(Zig::GlobalObject*, std::optional<JSC::AOT::ModuleID> patched = std::nullopt);
 #endif
@@ -507,6 +508,7 @@ void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSOb
     virtualModules->set(path, JSC::Strong<JSC::JSObject> { vm, mockObject });
     // The later mock of a path has it: a mock of the path itself takes it from a mock of a name that require() resolves to that path.
     globalObject->onLoadPlugins.moduleMockKeysByRequirePath.remove(path);
+    letModuleMockAnswerRequirePath(globalObject, path, mockObject);
 #if ENABLE(AOT)
     noteMockOutsideRegistry(globalObject, path);
 #endif
@@ -787,6 +789,15 @@ static JSModuleMock* moduleMockOfRequirePath(Zig::GlobalObject* globalObject, co
     auto turn = keys.find(path);
     auto* mock = turn == keys.end() ? nullptr : registeredModuleMock(globalObject, turn->value);
     return mock && mock->requirePath && mock->requirePath->tryGetValue().data == path ? mock : nullptr;
+}
+
+// `mock` is registered under `key`. From here on it answers require() of the path that require() resolves its name to, unless something stands under that path itself: the later mock of a path has it.
+static void letModuleMockAnswerRequirePath(Zig::GlobalObject* globalObject, const String& key, JSC::JSObject* mock)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    auto* requirePath = uncheckedDowncast<JSModuleMock>(mock)->requirePath.get();
+    if (requirePath && !plugins.virtualModules->contains(requirePath->tryGetValue().data))
+        plugins.moduleMockKeysByRequirePath.set(requirePath->tryGetValue().data, key);
 }
 
 // jest.resetModules() swaps in a new JSModuleMock with the same factory, which still counts as the same mock.

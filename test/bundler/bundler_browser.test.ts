@@ -1,4 +1,5 @@
 import assert from "assert";
+import type { PluginBuilder } from "bun";
 import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
@@ -487,6 +488,30 @@ describe("bundler", () => {
       "<bun>": ['"pkg" is disabled due to "browser" field in package.json (entry point)'],
     },
   });
+  for (const [name, entryPoints, plugins] of [
+    ["Imported", ["/entry.js"], undefined],
+    ["ImportedAfterPlugin", ["/entry.js"], (build: PluginBuilder) => void build.onResolve({ filter: /pkg/ }, () => {})],
+    ["EntryPoint", ["/pkg"], undefined],
+  ] as const) {
+    itBundled("browser/ModuleFieldDisabledByBrowserFieldHasRelativePathComment" + name, {
+      files: {
+        "/entry.js": `import { value } from "./pkg"; console.log(value);`,
+        "/pkg/package.json": JSON.stringify({
+          main: "./main.js",
+          module: "./module.js",
+          browser: { "./module.js": false },
+        }),
+        "/pkg/main.js": `exports.value = Math.random();`,
+        "/pkg/module.js": `export const value = Math.random();`,
+      },
+      entryPoints: [...entryPoints],
+      plugins,
+      target: "browser",
+      onAfterBundle(api) {
+        expect(api.readFile("out.js")).toMatch(/^\/\/ pkg\/\w+\.js$/m);
+      },
+    });
+  }
   itBundled("browser/EntryPointIsNodeBuiltinStubbedForBrowser", {
     // Browser builds replace "fs" (and node:* builtins without a polyfill) with
     // an empty module, so as entry points they have nothing to bundle either.

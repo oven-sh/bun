@@ -8,7 +8,7 @@ use crate::{Chunk, EntryPoint, Index, IndexInt, LinkerContext, PartRange, chunk,
 use bun_core::perf;
 
 pub(crate) fn find_all_imported_parts_in_js_order<'a>(
-    this: &LinkerContext<'a>,
+    this: &LinkerContext<'_, 'a>,
     chunks: &mut [Chunk<'a>],
 ) -> Result<(), crate::Error> {
     let _trace = perf::trace("Bundler.findAllImportedPartsInJSOrder");
@@ -42,7 +42,7 @@ pub(crate) fn find_all_imported_parts_in_js_order<'a>(
     let order = WalkOrder::collect(this, chunks.len(), walks);
 
     struct Ctx<'a, 'f> {
-        c: &'f LinkerContext<'a>,
+        c: &'f LinkerContext<'f, 'a>,
         chunk_of_file: &'f [u32],
         order: &'f WalkOrder,
     }
@@ -77,13 +77,13 @@ pub(crate) fn find_all_imported_parts_in_js_order<'a>(
 }
 
 fn run_walks<'a>(
-    this: &LinkerContext<'a>,
+    this: &LinkerContext<'_, 'a>,
     plan: &WalkPlan,
     chunks: &[Chunk<'a>],
     walks: &mut [EntryWalk],
 ) {
     struct WalkCtx<'a, 'f> {
-        c: &'f LinkerContext<'a>,
+        c: &'f LinkerContext<'f, 'a>,
         plan: &'f WalkPlan,
         chunks: &'f [Chunk<'a>],
     }
@@ -328,7 +328,7 @@ impl WalkPlan {
     /// walks of the first such entry point by rank, each with the chunks that it lays out in place of their owner.
     fn find_safe_walks<'a>(
         &mut self,
-        this: &LinkerContext<'a>,
+        this: &LinkerContext<'_, 'a>,
         chunks: &[Chunk<'a>],
         walks: &[EntryWalk],
     ) -> Vec<EntryWalk> {
@@ -989,7 +989,7 @@ impl EntryWalk {
 }
 
 struct ChunkLayout<'a, 'ctx> {
-    c: &'a LinkerContext<'ctx>,
+    c: &'a LinkerContext<'a, 'ctx>,
     files: Vec<IndexInt>,
     part_ranges: Vec<PartRange>,
     parts_prefix: Vec<PartRange>,

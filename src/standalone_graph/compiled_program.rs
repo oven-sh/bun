@@ -2755,7 +2755,9 @@ pub(crate) mod tests {
         file_indices: &[Option<u32>],
         prefix_length: usize,
     ) -> crate::Result<Written> {
-        let mut builder = StringBuilder::init_capacity(prefix_length + capacity(input));
+        let mut builder = StringBuilder::default();
+        builder.cap = prefix_length + capacity(input);
+        builder.allocate().unwrap();
         let _ = builder.append_count(&vec![0xAA; prefix_length]);
         let image = append_image(&mut builder, input, ImagePlace::InGraph)?;
         let paths = append_entry_point_paths(&mut builder, input);

@@ -2,6 +2,7 @@ use bun_alloc::ArenaVecExt as _;
 use bun_collections::VecExt;
 
 use crate::Error;
+use crate::Macro::{MacroContext, MacroRemap};
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_core;
 use bun_core::strings;
@@ -140,7 +141,8 @@ pub struct Options<'a> {
     pub code_splitting: bool,
     pub package_version: &'a [u8],
 
-    pub macro_context: Option<&'a mut MacroContext>,
+    pub macro_context: Option<MacroContext<'a>>,
+    pub macro_remap: Option<&'a MacroRemap>,
 
     pub warn_about_unbundled_modules: bool,
 
@@ -182,16 +184,15 @@ pub struct Options<'a> {
 impl<'a> Options<'a> {
     /// Field-by-field clone for the bundler's empty-file fallback
     /// (`getEmptyAST(..., opts, ...)` after `caches.js.parse(..., opts, ...)`
-    /// returned null). `parse()` consumes `opts`,
-    /// and `Options` is not `Clone` because `macro_context` is `&'a mut`.
+    /// returned null). `parse()` consumes `opts`.
     ///
     /// Co-located with the struct so adding a field is a hard error here —
     /// the struct-literal below has no `..Default::default()` tail. Callers
     /// take this snapshot *before* moving `opts` into `parse()`.
     ///
     /// Intentionally NOT carried over (lazy-export / `into_lazy_export_ast` does
-    /// not consult them; carrying them would alias or double-own):
-    /// - `macro_context` (`&'a mut`) — macro evaluation runs only on the full
+    /// not consult them):
+    /// - `macro_context`, `macro_remap` — macro evaluation runs only on the full
     ///   parse path.
     /// - `features.replace_exports` — visit-pass-only; the lazy stub has no
     ///   user statements to rewrite.
@@ -257,6 +258,7 @@ impl<'a> Options<'a> {
             code_splitting: self.code_splitting,
             package_version: self.package_version,
             macro_context: None,
+            macro_remap: None,
             warn_about_unbundled_modules: self.warn_about_unbundled_modules,
             allow_unresolved: self.allow_unresolved,
             module_type: self.module_type,
@@ -321,8 +323,6 @@ impl<'a> Options<'a> {
     }
 
     pub fn init(jsx: options::JSX::Pragma, loader: options::Loader) -> Options<'static> {
-        // `macro_context` is `None`
-        // (see field comment); caller overwrites before use.
         let mut opts = Options {
             ts: loader.is_typescript(),
             jsx,
@@ -337,10 +337,8 @@ impl<'a> Options<'a> {
             bundle: false,
             code_splitting: false,
             package_version: b"",
-            // Materializing an invalid `&mut T` is immediate UB regardless of
-            // use, so model "not yet set" as `None`; callers must assign `Some(_)`
-            // before any read site `.unwrap()`s it.
             macro_context: None,
+            macro_remap: None,
             warn_about_unbundled_modules: true,
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
             module_type: options::ModuleType::Unknown,
@@ -2660,8 +2658,3 @@ struct PragmaState {
     seen_cjs: bool,
     seen_bytecode: bool,
 }
-
-#[cfg(target_arch = "wasm32")]
-pub type MacroContext = Option<*mut c_void>;
-#[cfg(not(target_arch = "wasm32"))]
-pub type MacroContext = crate::Macro::MacroContext;

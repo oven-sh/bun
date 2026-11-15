@@ -37,8 +37,7 @@ pub trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
 // The only impl: `OwnedTask::__callback` trusts `from_task_ptr`, so no type may override it.
 impl<T: bun_core::IntrusiveField<Task>> IntrusiveWorkTask for T {}
 
-/// An [`IntrusiveWorkTask`] that a [`ThreadPool`] takes ownership of by value
-/// (`Box<Self>`). [`Batch::from_owned`] performs the `Box` →
+/// An [`IntrusiveWorkTask`] that a [`ThreadPool`] owns. [`Batch::from_owned`] performs the `Box` →
 /// raw-pointer hand-off and [`__callback`](OwnedTask::__callback) recovers
 /// `Box<Self>` via [`IntrusiveWorkTask::from_task_ptr`], so call sites never
 /// touch `Box::into_raw`/`from_raw` directly.

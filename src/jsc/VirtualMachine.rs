@@ -178,6 +178,8 @@ pub struct VirtualMachine {
     /// `InitOptions::log` or `own_log`. `transpiler` and its resolver write to it too.
     pub log: &'static bun_ast::Log,
     own_log: bun_ast::Log,
+    /// Of `log`, which has another one while it is redirected.
+    pub log_level: bun_ast::Level,
     /// Path of the entry module: the user's module that runs first. `None` when there is none, as
     /// for `bun bake`, where the program is a built-in module (`main_entry_point`). BACKREF —
     /// borrows process-argv, the resolver's
@@ -3071,6 +3073,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).own_log).write(core::mem::take(&mut opts.own_log));
             // `'static` as in `get()`: until this thread is done with script.
             addr_of_mut!((*vm).log).write(opts.log.unwrap_or(&(*vm).own_log));
+            addr_of_mut!((*vm).log_level).write((*vm).log.level.get());
             addr_of_mut!((*vm).bun_watcher).write(JsCell::new(None));
             addr_of_mut!((*vm).main).write(JsCell::new(None));
             addr_of_mut!((*vm).main_entry_point).write(Cell::new(MainEntryPoint::File));

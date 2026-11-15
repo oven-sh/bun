@@ -22,11 +22,6 @@ use crate::options::{self, BundleOptions, ImportPathFormat};
 use crate::options_impl::Target as BundleTarget;
 use crate::transpiler::{ParseResult, ResolveQueue, ResolveResults};
 
-pub struct Linker {
-    // arena field dropped — global mimalloc (callers pass `bun.default_allocator`)
-    pub log: *mut Log,
-}
-
 const RUNTIME_SOURCE_PATH: &[u8] = b"bun:wrap";
 
 static RELATIVE_PATHS_LIST: LazyLock<BSSStringList> =
@@ -69,241 +64,174 @@ mod hardcoded_module {
 pub(crate) fn dupe(src: &[u8]) -> &'static [u8] {
     bun_core::handle_oom(RELATIVE_PATHS_LIST.append(src))
 }
-impl Linker {
-    /// Exclusive borrow of the owning `Transpiler.log`.
-    ///
-    /// SAFETY: `self.log` is the `*mut Log` copied from `Transpiler.log` in
-    /// `configure_linker*` / `set_log`. Callers borrow `&mut self.linker`
-    /// field-disjointly from `Transpiler.log`, and no callee reached from a
-    /// `Linker` method re-derives a borrow of `*self.log`, so the `&mut`
-    /// returned here is exclusive for its lifetime. Never null.
-    #[inline]
-    pub(crate) fn log_mut(&mut self) -> &mut Log {
-        debug_assert!(!self.log.is_null());
-        // SAFETY: non-null backref to `Transpiler.log` set in `configure_linker*`;
-        // callers borrow `&mut self.linker` field-disjointly so no other live
-        // borrow of `*self.log` exists for the returned lifetime.
-        unsafe { &mut *self.log }
-    }
 
-    pub(crate) fn init(log: *mut Log) -> Self {
-        Self { log }
-    }
+fn get_mod_key(file_path: &PFs::Path<'_>, fd: Option<Fd>) -> crate::Result<Fs::ModKey> {
+    // Borrow the cached fd; own the freshly-opened one.
+    let _owned: Option<bun_sys::File>;
+    let raw_fd = match fd {
+        Some(f) => {
+            _owned = None;
+            f
+        }
+        None => {
+            let f = bun_sys::open_file(file_path.text, bun_sys::OpenFlags::READ_ONLY)?;
+            let raw = f.handle();
+            _owned = Some(f);
+            raw
+        }
+    };
+    let file = bun_sys::File::borrow(&raw_fd);
+    Fs::FileSystem::set_max_fd(file.handle().native());
+    Ok(Fs::ModKey::from_file(file)?)
+}
 
-    // ── getModKey / getHashedFilename ────────────────────────────────────
-    // `ModKey` lives at module scope (`bun_resolver::fs::ModKey`)
-    // alongside `RealFS`. `file_path` is typed `PFs::Path` (not `Fs::Path`)
-    // so `get_hashed_filename` — whose callers all build `PFs::Path` — can
-    // forward directly; only `.text` (a `&[u8]`) is read.
-    pub(crate) fn get_mod_key(
-        &mut self,
-        file_path: &PFs::Path<'_>,
-        fd: Option<Fd>,
-    ) -> crate::Result<Fs::ModKey> {
-        // Borrow the cached fd; own the freshly-opened one.
-        let _owned: Option<bun_sys::File>;
-        let raw_fd = match fd {
-            Some(f) => {
-                _owned = None;
-                f
-            }
-            None => {
-                let f = bun_sys::open_file(file_path.text, bun_sys::OpenFlags::READ_ONLY)?;
-                let raw = f.handle();
-                _owned = Some(f);
-                raw
-            }
-        };
-        let file = bun_sys::File::borrow(&raw_fd);
-        Fs::FileSystem::set_max_fd(file.handle().native());
-        // spec called `Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs,
-        // path, file)`; both leading args are unread (fs.rs:1386). The inline
-        // `bun_resolver::fs::RealFS` and the full-port
-        // `fs_full::RealFS` are distinct types, so route through the
-        // RealFS-agnostic `from_file` wrapper added alongside the `ModKey`
-        // re-export.
-        Ok(Fs::ModKey::from_file(file)?)
-    }
+pub(crate) fn get_hashed_filename(
+    file_path: &PFs::Path<'_>,
+    fd: Option<Fd>,
+) -> crate::Result<&'static [u8]> {
+    let modkey = get_mod_key(file_path, fd)?;
+    let mut hash_name_buf = [0u8; 1024];
+    Ok(dupe(modkey.hash_name(file_path.text, &mut hash_name_buf)?))
+}
 
-    pub(crate) fn get_hashed_filename(
-        &mut self,
-        file_path: &PFs::Path<'_>,
-        fd: Option<Fd>,
-    ) -> crate::Result<&'static [u8]> {
-        let modkey = self.get_mod_key(file_path, fd)?;
-        let mut hash_name_buf = [0u8; 1024];
-        Ok(dupe(modkey.hash_name(file_path.text, &mut hash_name_buf)?))
-    }
+/// Rewrites the import records of builtins and of the runtime in place.
+pub fn link<const IGNORE_RUNTIME: bool, const IS_BUN: bool>(
+    log: &Log,
+    options: &BundleOptions<'_>,
+    file_path: &Fs::Path<'_>,
+    result: &mut ParseResult,
+    origin: &URL<'_>,
+    import_path_format: ImportPathFormat,
+) -> crate::Result<()> {
+    let (target, rewrite_jest_for_tests) = (options.target, options.rewrite_jest_for_tests);
 
-    /// This modifies the Ast in-place! It rewrites the import records of builtins
-    /// and of the runtime.
-    ///
-    /// `import_path_format` is a runtime arg rather than a const generic —
-    /// `options::ImportPathFormat` doesn't derive `ConstParamTy`, and the
-    /// crate doesn't enable `adt_const_params`.
-    pub fn link<const IGNORE_RUNTIME: bool, const IS_BUN: bool>(
-        &mut self,
-        options: &BundleOptions<'_>,
-        file_path: &Fs::Path<'_>,
-        result: &mut ParseResult,
-        origin: &URL<'_>,
-        import_path_format: ImportPathFormat,
-    ) -> crate::Result<()> {
-        let (target, rewrite_jest_for_tests) = (options.target, options.rewrite_jest_for_tests);
+    let source_dir = file_path.source_dir();
 
-        let source_dir = file_path.source_dir();
+    match result.loader {
+        options::Loader::Jsx | options::Loader::Js | options::Loader::Ts | options::Loader::Tsx => {
+            let source = &result.source;
+            for import_record in result.ast.import_records.as_mut_slice() {
+                if import_record.flags.contains(ImportRecordFlags::IS_UNUSED) {
+                    continue;
+                }
 
-        match result.loader {
-            options::Loader::Jsx
-            | options::Loader::Js
-            | options::Loader::Ts
-            | options::Loader::Tsx => {
-                let source = &result.source;
-                for import_record in result.ast.import_records.as_mut_slice() {
-                    if import_record.flags.contains(ImportRecordFlags::IS_UNUSED) {
+                if !IGNORE_RUNTIME {
+                    if import_record.path.namespace == b"runtime" {
+                        let relative_name =
+                            bun_paths::resolve_path::relative(source_dir, RUNTIME_SOURCE_PATH);
+                        import_record.path = match import_path_format {
+                            ImportPathFormat::AbsoluteUrl => PFs::Path::init_with_namespace(
+                                dupe(&origin.join_alloc(b"", b"", b"bun:wrap", b"", b"")?),
+                                b"bun",
+                            ),
+                            ImportPathFormat::AbsolutePath => PFs::Path::init_with_pretty(
+                                RUNTIME_SOURCE_PATH,
+                                dupe(relative_name),
+                            ),
+                            ImportPathFormat::Relative => {
+                                let text = if relative_name.len() > 1
+                                    && !(relative_name[0] == SEP || relative_name[0] == b'.')
+                                {
+                                    dupe(&strings::concat(&[b"./", relative_name]))
+                                } else {
+                                    dupe(relative_name)
+                                };
+                                PFs::Path::init_with_pretty(text, text)
+                            }
+                            ImportPathFormat::PackagePath => unreachable!(),
+                        };
+                        continue;
+                    }
+                }
+
+                if IS_BUN {
+                    if let Some(replacement) = hardcoded_module::get(
+                        import_record.path.text,
+                        target,
+                        hardcoded_module::AliasOptions {
+                            rewrite_jest_for_tests,
+                        },
+                    ) {
+                        if replacement.tag == ImportRecordTag::Builtin
+                            && import_record.kind.is_common_js()
+                        {
+                            continue;
+                        }
+                        import_record.path.text = replacement.path;
+                        import_record.tag = replacement.tag;
+                        import_record
+                            .flags
+                            .insert(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                        continue;
+                    }
+                    if strings::starts_with(import_record.path.text, b"node:") {
+                        // if a module is not found here, it is not found at all so we can just disable it
+                        if when_module_not_found::<IS_BUN>(log, target, import_record, source)? {
+                            return Err(crate::Error::ResolveMessage);
+                        }
                         continue;
                     }
 
-                    if !IGNORE_RUNTIME {
-                        if import_record.path.namespace == b"runtime" {
-                            let relative_name =
-                                bun_paths::resolve_path::relative(source_dir, RUNTIME_SOURCE_PATH);
-                            import_record.path = match import_path_format {
-                                ImportPathFormat::AbsoluteUrl => PFs::Path::init_with_namespace(
-                                    dupe(&origin.join_alloc(b"", b"", b"bun:wrap", b"", b"")?),
-                                    b"bun",
-                                ),
-                                ImportPathFormat::AbsolutePath => PFs::Path::init_with_pretty(
-                                    RUNTIME_SOURCE_PATH,
-                                    dupe(relative_name),
-                                ),
-                                ImportPathFormat::Relative => {
-                                    let text = if relative_name.len() > 1
-                                        && !(relative_name[0] == SEP || relative_name[0] == b'.')
-                                    {
-                                        dupe(&strings::concat(&[b"./", relative_name]))
-                                    } else {
-                                        dupe(relative_name)
-                                    };
-                                    PFs::Path::init_with_pretty(text, text)
-                                }
-                                ImportPathFormat::PackagePath => unreachable!(),
-                            };
-                            continue;
-                        }
-                    }
-
-                    if IS_BUN {
-                        if let Some(replacement) = hardcoded_module::get(
-                            import_record.path.text,
-                            target,
-                            hardcoded_module::AliasOptions {
-                                rewrite_jest_for_tests,
-                            },
-                        ) {
-                            if replacement.tag == ImportRecordTag::Builtin
-                                && import_record.kind.is_common_js()
-                            {
-                                continue;
-                            }
-                            import_record.path.text = replacement.path;
-                            import_record.tag = replacement.tag;
-                            import_record
-                                .flags
-                                .insert(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
-                            continue;
-                        }
-                        if strings::starts_with(import_record.path.text, b"node:") {
-                            // if a module is not found here, it is not found at
-                            // all so we can just disable it
-                            if Self::when_module_not_found::<IS_BUN>(
-                                self.log_mut(),
-                                target,
-                                import_record,
-                                source,
-                            )? {
-                                return Err(crate::Error::ResolveMessage);
-                            }
-                            continue;
-                        }
-
-                        if let Some(builtin) = bun_resolve_builtins::Alias::bun_prefixed_builtin(
-                            import_record.path.text,
-                        ) {
-                            import_record.path = PFs::Path::init(builtin);
-                        }
+                    if let Some(builtin) =
+                        bun_resolve_builtins::Alias::bun_prefixed_builtin(import_record.path.text)
+                    {
+                        import_record.path = PFs::Path::init(builtin);
                     }
                 }
             }
-
-            _ => {}
         }
-        Ok(())
+
+        _ => {}
+    }
+    Ok(())
+}
+
+fn when_module_not_found<const IS_BUN: bool>(
+    log: &Log,
+    target: BundleTarget,
+    import_record: &mut ImportRecord,
+    source: &bun_ast::Source,
+) -> crate::Result<bool> {
+    if import_record
+        .flags
+        .contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+    {
+        import_record.path.is_disabled = true;
+        import_record
+            .flags
+            .insert(ImportRecordFlags::WAS_UNRESOLVED);
+        return Ok(false);
     }
 
-    // Takes the disjoint pieces explicitly rather than `&mut self` plus
-    // overlapping sub-borrows of `result`.
-    fn when_module_not_found<const IS_BUN: bool>(
-        log: &mut Log,
-        target: BundleTarget,
-        import_record: &mut ImportRecord,
-        source: &bun_ast::Source,
-    ) -> crate::Result<bool> {
-        if import_record
-            .flags
-            .contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+    if IS_BUN {
+        // make these happen at runtime
+        if import_record.kind == ImportKind::Require
+            || import_record.kind == ImportKind::RequireResolve
+            || import_record.kind == ImportKind::Dynamic
         {
-            import_record.path.is_disabled = true;
-            import_record
-                .flags
-                .insert(ImportRecordFlags::WAS_UNRESOLVED);
             return Ok(false);
         }
+    }
 
-        if IS_BUN {
-            // make these happen at runtime
-            if import_record.kind == ImportKind::Require
-                || import_record.kind == ImportKind::RequireResolve
-                || import_record.kind == ImportKind::Dynamic
-            {
-                return Ok(false);
-            }
-        }
-
-        if !import_record.path.text.is_empty() && resolver::is_package_path(import_record.path.text)
-        {
-            if target == BundleTarget::Browser && options::is_node_builtin(import_record.path.text)
-            {
-                log.add_resolve_error(
-                    Some(source),
-                    import_record.range,
-                    format_args!(
-                        "Could not resolve: \"{}\". Try setting --target=\"node\"",
-                        bstr::BStr::new(import_record.path.text)
-                    ),
-                    import_record.path.text,
-                    import_record.kind,
-                    bun_ast::Error::ModuleNotFound,
-                );
-            } else {
-                log.add_resolve_error(
-                    Some(source),
-                    import_record.range,
-                    format_args!(
-                        "Could not resolve: \"{}\". Maybe you need to \"bun install\"?",
-                        bstr::BStr::new(import_record.path.text)
-                    ),
-                    import_record.path.text,
-                    import_record.kind,
-                    bun_ast::Error::ModuleNotFound,
-                );
-            }
+    if !import_record.path.text.is_empty() && resolver::is_package_path(import_record.path.text) {
+        if target == BundleTarget::Browser && options::is_node_builtin(import_record.path.text) {
+            log.add_resolve_error(
+                Some(source),
+                import_record.range,
+                format_args!(
+                    "Could not resolve: \"{}\". Try setting --target=\"node\"",
+                    bstr::BStr::new(import_record.path.text)
+                ),
+                import_record.path.text,
+                import_record.kind,
+                bun_ast::Error::ModuleNotFound,
+            );
         } else {
             log.add_resolve_error(
                 Some(source),
                 import_record.range,
                 format_args!(
-                    "Could not resolve: \"{}\"",
+                    "Could not resolve: \"{}\". Maybe you need to \"bun install\"?",
                     bstr::BStr::new(import_record.path.text)
                 ),
                 import_record.path.text,
@@ -311,36 +239,48 @@ impl Linker {
                 bun_ast::Error::ModuleNotFound,
             );
         }
-        Ok(true)
+    } else {
+        log.add_resolve_error(
+            Some(source),
+            import_record.range,
+            format_args!(
+                "Could not resolve: \"{}\"",
+                bstr::BStr::new(import_record.path.text)
+            ),
+            import_record.path.text,
+            import_record.kind,
+            bun_ast::Error::ModuleNotFound,
+        );
+    }
+    Ok(true)
+}
+
+fn resolve_result_hash_key(resolve_result: &resolver::Result) -> u64 {
+    let path = resolve_result.path_const().expect("unreachable");
+    let top_level_dir = Fs::FileSystem::get().top_level_dir();
+    let mut hash_key = path.text;
+
+    // Shorter hash key is faster to hash
+    if strings::starts_with(path.text, top_level_dir) {
+        hash_key = &path.text[top_level_dir.len()..];
     }
 
-    pub(crate) fn resolve_result_hash_key(resolve_result: &resolver::Result) -> u64 {
-        let path = resolve_result.path_const().expect("unreachable");
-        let top_level_dir = Fs::FileSystem::get().top_level_dir();
-        let mut hash_key = path.text;
+    bun_wyhash::hash(hash_key)
+}
 
-        // Shorter hash key is faster to hash
-        if strings::starts_with(path.text, top_level_dir) {
-            hash_key = &path.text[top_level_dir.len()..];
-        }
+pub(crate) fn enqueue_resolve_result(
+    resolve_results: &mut ResolveResults,
+    resolve_queue: &mut ResolveQueue,
+    resolve_result: resolver::Result<'static>,
+) -> crate::Result<bool> {
+    let hash_key = resolve_result_hash_key(&resolve_result);
 
-        bun_wyhash::hash(hash_key)
+    // `found_existing` is whether the key was already present.
+    let found_existing = resolve_results.contains_key(&hash_key);
+    if !found_existing {
+        resolve_results.insert(hash_key, ());
+        resolve_queue.push_back(resolve_result);
     }
 
-    pub(crate) fn enqueue_resolve_result(
-        resolve_results: &mut ResolveResults,
-        resolve_queue: &mut ResolveQueue,
-        resolve_result: resolver::Result<'static>,
-    ) -> crate::Result<bool> {
-        let hash_key = Self::resolve_result_hash_key(&resolve_result);
-
-        // `found_existing` is whether the key was already present.
-        let found_existing = resolve_results.contains_key(&hash_key);
-        if !found_existing {
-            resolve_results.insert(hash_key, ());
-            resolve_queue.push_back(resolve_result);
-        }
-
-        Ok(!found_existing)
-    }
+    Ok(!found_existing)
 }

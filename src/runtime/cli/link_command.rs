@@ -50,9 +50,9 @@ pub(crate) fn init_for_link(
     }
 
     // Print the messages from loading the config files, because nothing below does.
-    if manager.log_mut().has_any() {
-        let _ = manager.log_mut().print(Output::error_writer());
-        manager.log_mut().reset();
+    if manager.log().has_any() {
+        let _ = manager.log().print(Output::error_writer());
+        manager.log().reset();
     }
 
     Ok((manager, original_cwd))
@@ -85,7 +85,7 @@ pub(crate) fn load_package_for_link(
     };
     lockfile.init_empty();
 
-    let log = manager.log_mut();
+    let log = manager.log();
     package.parse::<()>(
         &mut lockfile,
         manager,

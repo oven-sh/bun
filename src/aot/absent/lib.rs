@@ -23,8 +23,8 @@ fn absent() -> ! {
 }
 
 bun_aot_interface::define_linked_functions! {
-    fn bun_aot_compile(_options: &Options<'_>, _provider: &dyn SourceProvider, _log: &mut Log) -> Result<Compilation, BuildFailed> { absent() }
-    fn bun_aot_log_diagnostic(_log: &mut Log, _code: Code, _arguments: &[&[u8]]) { absent() }
+    fn bun_aot_compile(_options: &Options<'_>, _provider: &dyn SourceProvider, _log: &Log) -> Result<Compilation, BuildFailed> { absent() }
+    fn bun_aot_log_diagnostic(_log: &Log, _code: Code, _arguments: &[&[u8]]) { absent() }
     fn bun_aot_parse_json<'s>(_text: &[u8], _arena: &'s Arena, _atoms: &Interner<'s>) -> Option<&'s DataValue<'s>> { absent() }
     fn bun_aot_check_option_word(_earlier_words: &[Box<[u8]>], _word: &[u8]) -> Result<(), RejectedOptionWord> { Ok(()) }
     fn bun_aot_used_features(_result: &EngineResult) -> UsedFeatures { absent() }

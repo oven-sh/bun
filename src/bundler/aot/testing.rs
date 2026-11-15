@@ -45,8 +45,8 @@ fn set_up_process(directory: &'static [u8]) -> bool {
 /// front end starts, and `log` says why.
 pub fn with_front_end_inputs<R>(
     inputs: &FrontEndInputs<'_>,
-    log: &mut Log,
-    then: impl FnOnce(&Options<'_>, &dyn SourceProvider, &mut Log) -> R,
+    log: &Log,
+    then: impl FnOnce(&Options<'_>, &dyn SourceProvider, &Log) -> R,
 ) -> Option<R> {
     // A build fills the loader it is handed, so each has its own, as in `Bun.build`.
     let mut environment = Loader::init();
@@ -64,7 +64,7 @@ pub fn with_front_end_inputs<R>(
     }
     FileSystem::get().set_top_level_dir(directory);
     let environment = Some(&raw mut environment);
-    let transpiler = Transpiler::init(&arena, &raw mut *log, transform_options, environment);
+    let transpiler = Transpiler::init(&arena, log, transform_options, environment);
     let transpiler = arena.alloc(transpiler.ok()?);
     transpiler.options.compile_mode = crate::options::CompileMode::Executable;
     // As the command line has it without `--env`.
@@ -72,7 +72,7 @@ pub fn with_front_end_inputs<R>(
     // And without `--minify-syntax`, which the options begin with where the target is Bun.
     transpiler.options.minify_syntax = false;
     transpiler.configure_defines().ok()?;
-    transpiler.configure_linker();
+    transpiler.configure_from_tsconfig();
     let input = OptionsInput {
         bundle_options: &transpiler.options,
         entry_points: inputs.entry_points,

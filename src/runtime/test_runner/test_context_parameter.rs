@@ -96,8 +96,8 @@ impl ContextParameter {
         options.features.no_macros = true;
         options.suppress_warnings_about_weird_code = true;
         let define = bun_js_parser::Define::default();
-        let mut log = bun_ast::Log::init();
-        bun_js_parser::Parser::init(options, &mut log, &source, &define, &arena)
+        let log = bun_ast::Log::init();
+        bun_js_parser::Parser::init(options, &log, &source, &define, &arena)
             .and_then(|parser| {
                 parser.parse_only(|parsed| {
                     let [Stmt { data: StmtData::SExpr(only), .. }] = parsed.stmts else {

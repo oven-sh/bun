@@ -15,15 +15,15 @@ fn load(read_file: &dyn Fn() -> Option<Cow<'static, [u8]>>) -> Loaded {
         default_loader: Loader::Ts,
         read_file,
     };
-    let mut log = Log::init();
-    let loaded = WithoutServices.load(&request, &mut log).unwrap();
-    assert!(log.msgs.is_empty());
+    let log = Log::init();
+    let loaded = WithoutServices.load(&request, &log).unwrap();
+    assert_eq!(log.msgs_len(), 0);
     loaded
 }
 
 fn assert_unsupported(log: &Log, feature: &[u8]) {
-    assert_eq!((log.msgs.len(), log.errors), (1, 1));
-    let message = &log.msgs[0];
+    assert_eq!((log.msgs_len(), log.errors.get()), (1, 1));
+    let message = &log.msgs.take()[0];
     assert_eq!(message.kind, Kind::Err);
     assert!(message.data.text.starts_with(b"TS100050: "));
     assert!(strings::contains(&message.data.text, feature));
@@ -53,8 +53,8 @@ fn load_reports_missing_file() {
 fn has_no_plugins_or_defines() {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
-    let mut log = Log::init();
-    let options = WithoutServices.fold_options(session.arena(), &atoms, &mut log);
+    let log = Log::init();
+    let options = WithoutServices.fold_options(session.arena(), &atoms, &log);
     assert!(options.defines.is_empty());
     assert!(options.dropped_calls.is_empty());
     assert!(options.features.is_empty());
@@ -65,11 +65,11 @@ fn has_no_plugins_or_defines() {
         importer: PROGRAM_FILE,
         kind: ImportKind::Stmt,
     };
-    let resolution = WithoutServices.resolve(&request, &mut log).unwrap();
+    let resolution = WithoutServices.resolve(&request, &log).unwrap();
     assert!(matches!(resolution, Resolution::NotHandled));
     assert!(!WithoutServices.has_load_plugin(PROGRAM_FILE));
-    assert!(WithoutServices.finish_deferred_loads(&mut log).is_empty());
-    assert!(log.msgs.is_empty());
+    assert!(WithoutServices.finish_deferred_loads(&log).is_empty());
+    assert_eq!(log.msgs_len(), 0);
 }
 
 #[test]
@@ -82,9 +82,9 @@ fn json_loaders_parse_values() {
             contents: br#"{"a":[1,-2,null]}"#,
             loader,
         };
-        let mut log = Log::init();
+        let log = Log::init();
         let module = WithoutServices
-            .parse_data(&file, session.arena(), &atoms, &mut log)
+            .parse_data(&file, session.arena(), &atoms, &log)
             .unwrap();
         let items = [
             DataValue::Number(1.0),
@@ -97,7 +97,7 @@ fn json_loaders_parse_values() {
             exports_keys: true,
         };
         assert_eq!(module, expected);
-        assert!(log.msgs.is_empty());
+        assert_eq!(log.msgs_len(), 0);
     }
 }
 
@@ -116,16 +116,16 @@ fn text_loader_returns_string_and_replaces_ill_formed_bytes() {
             contents,
             loader: Loader::Text,
         };
-        let mut log = Log::init();
+        let log = Log::init();
         let module = WithoutServices
-            .parse_data(&file, session.arena(), &atoms, &mut log)
+            .parse_data(&file, session.arena(), &atoms, &log)
             .unwrap();
         let expected = DataModule::Value {
             default: &DataValue::String(atoms.intern(text)),
             exports_keys: false,
         };
         assert_eq!(module, expected);
-        assert!(log.msgs.is_empty());
+        assert_eq!(log.msgs_len(), 0);
     }
 }
 
@@ -138,12 +138,12 @@ fn invalid_json_fails() {
         contents: br#"{"a":"#,
         loader: Loader::Json,
     };
-    let mut log = Log::init();
-    let result = WithoutServices.parse_data(&file, session.arena(), &atoms, &mut log);
+    let log = Log::init();
+    let result = WithoutServices.parse_data(&file, session.arena(), &atoms, &log);
     assert!(matches!(result, Err(DataFailure::InvalidText)));
-    assert_eq!((log.msgs.len(), log.errors), (1, 1));
+    assert_eq!((log.msgs_len(), log.errors.get()), (1, 1));
     assert_eq!(
-        &*log.msgs[0].data.text,
+        &*log.msgs.take()[0].data.text,
         b"\"/project/broken.json\" is not valid JSON"
     );
 }
@@ -164,8 +164,8 @@ fn other_loaders_are_unsupported() {
             contents: b"a = 1",
             loader,
         };
-        let mut log = Log::init();
-        let result = WithoutServices.parse_data(&file, session.arena(), &atoms, &mut log);
+        let log = Log::init();
+        let result = WithoutServices.parse_data(&file, session.arena(), &atoms, &log);
         assert!(matches!(result, Err(DataFailure::Build)));
         assert_unsupported(&log, feature);
     }
@@ -173,7 +173,7 @@ fn other_loaders_are_unsupported() {
 
 #[test]
 fn embedded_files_are_always_distinct() {
-    let mut log = Log::init();
-    assert!(WithoutServices.check_embedded_files(&mut log).is_ok());
-    assert!(log.msgs.is_empty());
+    let log = Log::init();
+    assert!(WithoutServices.check_embedded_files(&log).is_ok());
+    assert_eq!(log.msgs_len(), 0);
 }

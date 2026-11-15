@@ -1,7 +1,6 @@
 use bun_collections::VecExt;
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::ptr::NonNull;
 
 use bun_ast::DisableStoreReset;
 use bun_ast::{E, Expr, ExprData, ExprNodeList, G, ToJSError};
@@ -38,7 +37,7 @@ fn call_macro(
     bump: &bun_alloc::Arena,
     import_record_path: &[u8],
     source_dir: &[u8],
-    log: &mut Log,
+    log: &Log,
     source: &Source,
     import_range: Range,
     caller: Expr,
@@ -152,6 +151,7 @@ fn call_macro(
             };
             load_macro(
                 vm,
+                log,
                 is_new_vm,
                 input_specifier,
                 function_name,
@@ -169,19 +169,31 @@ fn call_macro(
     let _mode_guard = MacroModeGuard::new(vm);
     vm.event_loop().ensure_waker();
 
-    let ret = vm.run_with_api_lock(|| {
-        Runner::run(
-            vm,
-            log,
-            bump,
-            function_name,
-            caller,
-            source,
-            hash,
-            JSValue::from_encoded(ctx.javascript_object.0 as usize),
-        )
+    let ret = with_vm_logging_to(vm, log, || {
+        vm.run_with_api_lock(|| {
+            Runner::run(
+                vm,
+                log,
+                bump,
+                function_name,
+                caller,
+                source,
+                hash,
+                JSValue::from_encoded(ctx.javascript_object.0 as usize),
+            )
+        })
     });
     Ok(ret?)
+}
+
+/// Runs `f`, and moves what `vm` logs meanwhile to `log`.
+fn with_vm_logging_to<R>(vm: &VirtualMachine, log: &Log, f: impl FnOnce() -> R) -> R {
+    let mut logged = Log::with_level(log.level.get());
+    let redirect = vm.log.redirect(&mut logged);
+    let result = f();
+    drop(redirect);
+    logged.append_to(log);
+    result
 }
 
 // `bun_js_parser` cannot name `Transpiler` or JSC types, so it calls these, which are resolved at link time.
@@ -201,7 +213,7 @@ fn __bun_macro_context_call(
     bump: &bun_alloc::Arena,
     import_record_path: &[u8],
     source_dir: &[u8],
-    log: &mut Log,
+    log: &Log,
     source: &Source,
     import_range: Range,
     caller: Expr,
@@ -238,7 +250,7 @@ fn __bun_macro_context_call(
 }
 
 fn init_macro_vm(
-    log: &mut Log,
+    log: &Log,
     env: Option<&DotEnvLoader>,
     transform_options: &TransformOptions,
 ) -> crate::Result<&'static VirtualMachine> {
@@ -258,17 +270,20 @@ fn init_macro_vm(
         None => None,
     };
 
-    Ok(VirtualMachine::init(VirtualMachineInitOptions {
+    let vm = VirtualMachine::init(VirtualMachineInitOptions {
         transform_options,
-        log: Some(NonNull::from(log)),
+        owned_log: Log::init(),
         owned_env_loader,
         is_main_thread: false,
         ..Default::default()
-    })?)
+    })?;
+    vm.log.append_to(log);
+    Ok(vm)
 }
 
 fn load_macro(
     vm: &VirtualMachine,
+    log: &Log,
     is_new_vm: bool,
     input_specifier: &[u8],
     function_name: &[u8],
@@ -278,12 +293,12 @@ fn load_macro(
     // Covers `configure_defines` and the macro module's top-level code.
     let _mode_guard = MacroModeGuard::new(vm);
     vm.event_loop().ensure_waker();
-    if is_new_vm {
-        vm.transpiler.with_mut(|t| t.configure_defines())?;
-    }
-
-    let loaded_result =
-        vm.load_macro_entry_point(input_specifier, function_name, specifier, hash)?;
+    let loaded_result = with_vm_logging_to(vm, log, || -> crate::Result<_> {
+        if is_new_vm {
+            vm.transpiler.with_mut(|t| t.configure_defines())?;
+        }
+        Ok(vm.load_macro_entry_point(input_specifier, function_name, specifier, hash)?)
+    })?;
 
     // SAFETY: `loaded_result` is a live heap-allocated `JSInternalPromise`
     // returned by `loadAndEvaluateModule`.
@@ -395,7 +410,7 @@ pub(crate) struct Run<'a> {
     pub(crate) global: &'a JSGlobalObject,
     /// The parser's arena: the returned `Expr` joins its AST.
     pub(crate) bump: &'a bun_alloc::Arena,
-    pub(crate) log: &'a mut Log,
+    pub(crate) log: &'a Log,
     pub(crate) source: &'a Source<'a>,
     pub(crate) visited: VisitMap<'a>,
     pub(crate) is_top_level: bool,
@@ -405,7 +420,7 @@ pub(crate) struct Run<'a> {
 impl<'a> Run<'a> {
     pub(crate) fn run_async(
         vm: &VirtualMachine,
-        log: &mut Log,
+        log: &Log,
         bump: &bun_alloc::Arena,
         caller: Expr,
         args: &[JSValue],
@@ -742,7 +757,7 @@ impl<'a> Run<'a> {
 impl Runner {
     fn run(
         vm: &VirtualMachine,
-        log: &mut Log,
+        log: &Log,
         bump: &bun_alloc::Arena,
         function_name: &[u8],
         caller: Expr,
@@ -844,7 +859,7 @@ impl Runner {
 
         struct CallData<'c> {
             vm: &'c VirtualMachine,
-            log: &'c mut Log,
+            log: &'c Log,
             bump: &'c bun_alloc::Arena,
             caller: Expr,
             js_args: &'c [JSValue],
@@ -905,7 +920,7 @@ fn expr_from_blob(
     bytes: &[u8],
     bump: &bun_alloc::Arena,
     content_type: &[u8],
-    log: &mut Log,
+    log: &Log,
     loc: bun_ast::Loc,
 ) -> crate::Result<Expr> {
     use bun_ast::{E, ExprData, StoreStr as Str};

@@ -430,7 +430,7 @@ impl<'a> YarnLock<'a> {
 fn append_package_json(
     this: &mut Lockfile,
     manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     workspace_path: Option<SemverString>,
 ) -> Result<LockfilePackage, Error> {
     let mut path = AutoAbsPath::init_top_level_dir();
@@ -577,7 +577,7 @@ fn bind_importer_dependencies(
 pub(crate) fn migrate_yarn_lockfile(
     this: &mut Lockfile,
     manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     data: &[u8],
 ) -> Result<LoadResult, Error> {
     // Yarn reads a file as v1 only when the marker is in the comment lines at its top.
@@ -863,7 +863,7 @@ pub(crate) fn migrate_yarn_lockfile(
                     Some(name_hash),
                     sliced_string.slice,
                     &sliced_string,
-                    Some(&mut *log),
+                    Some(log),
                     None,
                 )
                 .unwrap_or_default();

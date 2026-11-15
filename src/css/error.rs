@@ -50,14 +50,14 @@ impl<'bump> Err<ParserError<'bump>> {
 impl<T: fmt::Display> Err<T> {
     pub fn add_to_logger(
         &self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &bun_ast::Source,
     ) -> Result<(), bun_core::Error> {
         use std::io::Write as _;
         let mut text: Vec<u8> = Vec::new();
         write!(&mut text, "{}", self.kind).map_err(|_| bun_core::Error::WriteFailed)?;
 
-        log.add_msg(bun_ast::Msg {
+        log.add_counted_msg(bun_ast::Msg {
             kind: bun_ast::Kind::Err,
             data: bun_ast::Data {
                 location: match &self.loc {
@@ -69,8 +69,6 @@ impl<T: fmt::Display> Err<T> {
             },
             ..Default::default()
         });
-
-        log.errors += 1;
         Ok(())
     }
 }

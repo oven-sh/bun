@@ -42,7 +42,7 @@ pub(crate) struct OptionsInput<'r, 'i, 'a> {
 
 pub(crate) fn options_from_bundler<'r>(
     input: &OptionsInput<'r, '_, '_>,
-    log: &mut Log,
+    log: &Log,
 ) -> Option<Options<'r>> {
     let is_supported = report_unsupported_options(input.bundle_options, log);
     let entry_points = expand_entry_points(
@@ -82,7 +82,7 @@ pub(crate) fn options_from_bundler<'r>(
 }
 
 #[rustfmt::skip]
-fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> bool {
+fn report_unsupported_options(options: &BundleOptions<'_>, log: &Log) -> bool {
     // Every field is named: a new bundler option must not compile until it is classified here.
     let BundleOptions {
         banner, footer, output_format, target, bytecode, transform_only,
@@ -102,7 +102,7 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         fold_chunks: _, module_preload: _, react_fast_refresh: _, emit_dce_annotations: _,
         tree_shaking: _, tree_shaking_override: _, dead_code_elimination: _, inlining: _,
         optimize_imports: _, out_extensions: _, compile_mode: _, production: _, env: _,
-        log: _, origin: _, output_dir: _, output_dir_handle: _, write: _, preserve_extensions: _,
+        origin: _, output_dir: _, output_dir_handle: _, write: _, preserve_extensions: _,
         entry_points: _, import_path_format: _, defines_loaded: _, mark_builtins_as_external: _,
         polyfill_node_globals: _, load_tsconfig_json: _, load_package_json: _, conditions: _,
         extra_cjs_extensions: _, global_cache: _, install_preference: _, install: _,
@@ -379,7 +379,7 @@ fn sorted_unique<T: Ord>(list: impl Iterator<Item = T>) -> Vec<T> {
 fn path_options(
     input: &OptionsInput<'_, '_, '_>,
     entry_points: &[Vec<u8>],
-    log: &mut Log,
+    log: &Log,
 ) -> Option<PathOptions> {
     let root_directory = root_directory(input, entry_points, log)?;
     let entry_point_names = entry_point_names(input, entry_points, &root_directory, log)?;
@@ -405,7 +405,7 @@ fn path_options(
 fn root_directory(
     input: &OptionsInput<'_, '_, '_>,
     entry_points: &[Vec<u8>],
-    log: &mut Log,
+    log: &Log,
 ) -> Option<Vec<u8>> {
     let written = &input.bundle_options.root_dir[..];
     if written.is_empty() {
@@ -517,7 +517,7 @@ fn follow_links(input: &OptionsInput<'_, '_, '_>, entry_points: Vec<Vec<u8>>) ->
 fn start_with_first_script(
     input: &OptionsInput<'_, '_, '_>,
     mut entry_points: Vec<Vec<u8>>,
-    log: &mut Log,
+    log: &Log,
 ) -> Option<Vec<Vec<u8>>> {
     let is_script = |entry: &Vec<u8>| {
         let loader = input.bundle_options.loader(bun_paths::extension(entry));
@@ -554,7 +554,7 @@ fn entry_point_names(
     input: &OptionsInput<'_, '_, '_>,
     entry_points: &[Vec<u8>],
     root_directory: &[u8],
-    log: &mut Log,
+    log: &Log,
 ) -> Option<Vec<Vec<u8>>> {
     let mut template = entry_name_template(&input.bundle_options.entry_naming);
     if template
@@ -587,7 +587,7 @@ fn embedded_entry_point_names(
     working_directory: &[u8],
     entry_points: &[Vec<u8>],
     root_directory: &[u8],
-    log: &mut Log,
+    log: &Log,
 ) -> Option<Vec<Vec<u8>>> {
     let compile_name = Some(&options.compile_entry_point_name[..]).filter(|name| !name.is_empty());
     let mut template = output_name_template(&options.entry_naming);
@@ -610,7 +610,7 @@ fn embedded_entry_point_names(
     without_equal_names(names.collect::<Option<_>>()?, log)
 }
 
-fn without_equal_names(names: Vec<Vec<u8>>, log: &mut Log) -> Option<Vec<Vec<u8>>> {
+fn without_equal_names(names: Vec<Vec<u8>>, log: &Log) -> Option<Vec<Vec<u8>>> {
     let mut sorted: Vec<&Vec<u8>> = names.iter().collect();
     sorted.shared_sort_unstable();
     let mut has_duplicate = false;
@@ -674,7 +674,7 @@ pub fn expand_entry_points<T: AsRef<[u8]>>(
     entry_points: &[T],
     working_directory: &[u8],
     file_map: Option<&FileMap>,
-    log: &mut Log,
+    log: &Log,
 ) -> Option<Vec<Vec<u8>>> {
     let mut expanded = Vec::new();
     let mut absolute_paths = bun_collections::StringSet::new();

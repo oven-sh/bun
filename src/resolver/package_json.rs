@@ -312,7 +312,7 @@ impl FileSystemPackageJsonExt for crate::fs::FileSystem {
 impl PackageJSON {
     pub fn parse_macros_json(
         macros: js_ast::Expr,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         json_source: &bun_ast::Source,
     ) -> MacroMap {
         let mut macro_map = MacroMap::default();
@@ -402,11 +402,8 @@ impl PackageJSON {
         let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
 
         let r_fs = fs::FileSystem::get();
-        // SAFETY: PORT (Stacked Borrows) — `r.log()` returns a RAW `*mut` (see
-        // the `Resolver::log()` note), and no other `&mut *r.log` retag occurs
-        // while this one is live in this function. Caller upholds the
-        // single-thread `Resolver` aliasing contract.
-        let r_log: &mut bun_ast::Log = unsafe { &mut *r.log() };
+        let unread_log = bun_ast::Log::init();
+        let r_log = r.log().unwrap_or(&unread_log);
 
         // TODO: remove this extra copy
         let parts: [&[u8]; 2] = [input_path, b"package.json"];
@@ -820,7 +817,7 @@ impl PackageJSON {
                                 &package_json.version,
                                 DependencyVersionTag::Npm,
                                 &sliced,
-                                Some(&mut *r_log),
+                                Some(r_log),
                             ) {
                                 if dependency_version.is_exact_npm() {
                                     if let Some(resolved) = pm.lockfile_resolve(
@@ -949,7 +946,7 @@ impl PackageJSON {
                                         name_hash,
                                         version_str,
                                         &sliced_str,
-                                        Some(&mut *r_log),
+                                        Some(r_log),
                                         !strings::contains(
                                             package_json_path,
                                             NODE_MODULES_PATH.as_bytes(),
@@ -1098,7 +1095,7 @@ impl ExportsMap {
 
     pub(crate) fn parse(
         source: &bun_ast::Source,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         json: js_ast::Expr,
     ) -> Option<ExportsMap> {
         let mut visitor = Visitor {
@@ -1119,7 +1116,7 @@ impl ExportsMap {
 
 pub(crate) struct Visitor<'a> {
     pub(crate) source: &'a bun_ast::Source<'a>,
-    pub(crate) log: &'a mut bun_ast::Log,
+    pub(crate) log: &'a bun_ast::Log,
     stack_check: StackCheck,
 }
 

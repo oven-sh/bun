@@ -279,7 +279,7 @@ impl Buffers {
 
 pub(crate) fn load(
     stream: &mut Stream,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     pm_: Option<&PackageManager>,
     packages_len: usize,
 ) -> crate::Result<Buffers> {

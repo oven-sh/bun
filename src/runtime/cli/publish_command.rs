@@ -253,16 +253,15 @@ impl Context {
 
         let bump = bun_alloc::Arena::new();
         let json_source = bun_ast::Source::init_path_string(b"package.json", package_json_contents);
-        let mut json =
-            match json_mod::parse_package_json_utf8(&json_source, manager.log_mut(), &bump) {
-                Ok(j) => j,
-                Err(bun_parsers::Error::Alloc(_)) => return Err(PackError::OutOfMemory),
-                Err(_) => {
-                    let _ = manager.log_mut().print(Output::error_writer());
-                    Output::err_generic("failed to parse tarball package.json", ());
-                    Global::crash();
-                }
-            };
+        let mut json = match json_mod::parse_package_json_utf8(&json_source, manager.log(), &bump) {
+            Ok(j) => j,
+            Err(bun_parsers::Error::Alloc(_)) => return Err(PackError::OutOfMemory),
+            Err(_) => {
+                let _ = manager.log().print(Output::error_writer());
+                Output::err_generic("failed to parse tarball package.json", ());
+                Global::crash();
+            }
+        };
         pack::drop_shadowed_properties(json);
 
         if pack::is_private_package(&json) {
@@ -688,9 +687,9 @@ impl PublishCommand {
         }
 
         let source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
-        let mut log = bun_ast::Log::init();
+        let log = bun_ast::Log::init();
         let bump = bun_alloc::Arena::new();
-        let Ok(json) = json_mod::parse_utf8(&source, &mut log, &bump) else {
+        let Ok(json) = json_mod::parse_utf8(&source, &log, &bump) else {
             return false;
         };
 
@@ -746,7 +745,8 @@ impl PublishCommand {
 
     /// Returns false if `--tolerate-republish` is set and the registry already had this
     /// `name@version`, so nothing was sent.
-    fn publish(manager: &PackageManager, ctx: &Context) -> Result<bool, AllocError> {
+    fn publish(manager: &mut PackageManager, ctx: &Context) -> Result<bool, AllocError> {
+        let log = manager.log();
         let registry = manager.scope_for_package_name(&ctx.package_name);
         let registry_url = registry.url.url();
 
@@ -846,7 +846,7 @@ impl PublishCommand {
             )?;
         }
 
-        let otp = Self::get_otp(manager, ctx, registry, &mut response_buf)?;
+        let otp = Self::get_otp(manager, log, ctx, registry, &mut response_buf)?;
 
         let otp_headers = Self::construct_publish_headers(
             manager,
@@ -909,16 +909,16 @@ impl PublishCommand {
 
     fn get_otp(
         manager: &PackageManager,
+        log: &bun_ast::Log,
         ctx: &Context,
         registry: &Npm::Registry::Scope,
         response_buf: &mut MutableString,
     ) -> Result<Box<[u8]>, AllocError> {
         let bump = bun_alloc::Arena::new();
-        let manager_log: &mut bun_ast::Log = manager.log_mut();
         let res_source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
 
         'try_web: {
-            let json = match json_mod::parse_utf8(&res_source, manager_log, &bump) {
+            let json = match json_mod::parse_utf8(&res_source, log, &bump) {
                 Ok(json) => json,
                 Err(bun_parsers::Error::Alloc(_)) => return Err(AllocError),
                 // https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/node_modules/npm-registry-fetch/lib/check-response.js#L65
@@ -1028,7 +1028,7 @@ impl PublishCommand {
                         let otp_done_source =
                             bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
                         let otp_done_json =
-                            match json_mod::parse_utf8(&otp_done_source, manager_log, &done_bump) {
+                            match json_mod::parse_utf8(&otp_done_source, log, &done_bump) {
                                 Ok(j) => j,
                                 Err(bun_parsers::Error::Alloc(_)) => return Err(AllocError),
                                 Err(_) => {

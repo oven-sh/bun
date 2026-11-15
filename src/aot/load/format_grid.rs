@@ -33,8 +33,8 @@ fn is_commonjs_to_bun_run(text: &str, define: &Define) -> Option<bool> {
     options.features.lower_using = false;
     options.features.ascii_only = true;
     let source = Source::init_path_string(PATH, text.as_bytes());
-    let mut log = Log::init();
-    let parser = Parser::init(options, &mut log, &source, define, &arena).ok()?;
+    let log = Log::init();
+    let parser = Parser::init(options, &log, &source, define, &arena).ok()?;
     match parser.parse().ok()? {
         bun_js_parser::Result::Ast(ast) if !log.has_errors() => {
             Some(ast.exports_kind == ExportsKind::Cjs)

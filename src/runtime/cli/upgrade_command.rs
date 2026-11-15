@@ -280,14 +280,14 @@ impl UpgradeCommand {
             _ => return Err(crate::Error::HTTPError),
         }
 
-        let mut log = bun_ast::Log::init();
+        let log = bun_ast::Log::init();
         let source =
             bun_ast::Source::init_path_string(b"releases.json", metadata_body.list.as_slice());
         bun_ast::initialize_store();
         // `JSON::parse_utf8` needs a bump arena; this is a one-shot
         // CLI path so use the process-lifetime CLI arena.
         let bump: &'static Bump = crate::cli::cli_arena();
-        let expr = match JSON::parse_utf8(&source, &mut log, bump) {
+        let expr = match JSON::parse_utf8(&source, &log, bump) {
             Ok(e) => e,
             Err(err) => {
                 if !SILENT {
@@ -295,7 +295,7 @@ impl UpgradeCommand {
                     refresher.end();
                     refresher.refresh();
 
-                    if log.errors > 0 {
+                    if log.has_errors() {
                         let _ = log.print(Output::error_writer());
                         Global::exit(1);
                     } else {
@@ -311,7 +311,7 @@ impl UpgradeCommand {
             }
         };
 
-        if log.errors > 0 {
+        if log.has_errors() {
             if !SILENT {
                 let refresher = refresher.expect("infallible: progress active");
                 refresher.end();

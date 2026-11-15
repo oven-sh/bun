@@ -318,12 +318,12 @@ fn parse_js<'a>(
     opts.transform_only = true;
     opts.suppress_warnings_about_weird_code = true;
     let define: &'a bun_js_parser::Define = arena.alloc(bun_js_parser::Define::default());
-    let mut log = bun_ast::Log::init();
-    let parser = bun_js_parser::Parser::init(opts, &mut log, source, define, arena).ok()?;
+    let log = bun_ast::Log::init();
+    let parser = bun_js_parser::Parser::init(opts, &log, source, define, arena).ok()?;
     let bun_js_parser::Result::Ast(ast) = parser.parse().ok()? else {
         return None;
     };
-    (log.errors == 0).then_some(ast)
+    (!log.has_errors()).then_some(ast)
 }
 
 /// In a source map, a lone `\r`, U+2028 and U+2029 also end a line. This maps each such line of
@@ -940,7 +940,7 @@ fn normalize_json(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
     let _store = StoreScope::enter();
     let arena = Arena::new();
     let source = bun_ast::Source::init_path_string(path, bytes);
-    let expr = bun_parsers::json::parse_utf8(&source, &mut bun_ast::Log::init(), &arena).ok()?;
+    let expr = bun_parsers::json::parse_utf8(&source, &bun_ast::Log::init(), &arena).ok()?;
     let mut writer = bun_js_printer::BufferWriter::init();
     writer.append_newline = true;
     let mut printer = bun_js_printer::BufferPrinter::init(writer);

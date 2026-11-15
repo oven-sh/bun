@@ -17,6 +17,7 @@ use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, MainEntryPoint, VirtualMachine};
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_md::root as md;
+use bun_options_types::context::IS_SILENT;
 use bun_options_types::schema::api;
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
@@ -73,7 +74,7 @@ pub(crate) struct ExecCfg {
 }
 
 /// Per-caller knobs for [`RunCommand::configure_env_for_run`] and
-/// [`RunCommand::configure_env_for_run_without_linker`].
+/// [`RunCommand::configure_env_for_run_without_tsconfig`].
 #[derive(Clone, Copy)]
 pub(crate) struct ConfigureEnvOptions {
     /// Report a current directory that cannot be read on stderr. When `false`
@@ -566,7 +567,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     /// Allocates a
     /// process-lifetime `Transpiler`, primes its resolver/env, reads the
-    /// top-level `DirInfo`, configures the bundler linker / JSX runtime, and
+    /// top-level `DirInfo`, applies the nearest `tsconfig.json`, and
     /// seeds the `npm_*` env vars.
     ///
     /// Returns the initialized `Transpiler` and a `DirInfo` borrowed from the
@@ -575,9 +576,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// Hot-path note: the common `bun run <package.json script>` case never
     /// transpiles anything through this `Transpiler` (it shells out / boots a
     /// fresh VM with its own transpiler), so it should call
-    /// [`Self::configure_env_for_run_without_linker`] instead — that skips the
-    /// `configure_linker()` + `load_tsconfig_json` work, which is the single
-    /// largest block of bundler/linker code otherwise faulted in by `bun run`.
+    /// [`Self::configure_env_for_run_without_tsconfig`] instead.
     pub(crate) fn configure_env_for_run<'t>(
         ctx: &mut ContextData,
         this_transpiler: &'t mut ::core::mem::MaybeUninit<Transpiler<'static>>,
@@ -587,11 +586,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, true)
     }
 
-    /// Like [`Self::configure_env_for_run`] but does **not** construct the
-    /// bundler linker or enable `load_tsconfig_json` — for callers that only
+    /// Like [`Self::configure_env_for_run`], without [`Transpiler::configure_from_tsconfig`]: for callers that only
     /// use the returned `Transpiler` for module resolution / env / `$PATH`
     /// lookup (the `bun run <script>` dispatch path), never for transpiling.
-    pub(crate) fn configure_env_for_run_without_linker<'t>(
+    pub(crate) fn configure_env_for_run_without_tsconfig<'t>(
         ctx: &mut ContextData,
         this_transpiler: &'t mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
@@ -600,19 +598,18 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, false)
     }
 
-    /// `configure_linker()` + `load_tsconfig_json` setup, factored into a
-    /// `#[cold]` callee so the bundler-linker/JSX-runtime code it pulls in does
+    /// A `#[cold]` callee so the code it pulls in does
     /// not share `.text` pages with the hot `bun run <script>` dispatch path.
     #[cold]
     #[inline(never)]
     #[cfg_attr(
         any(target_os = "linux", target_os = "android"),
-        unsafe(link_section = ".text.unlikely.configure_run_transpiler_linker")
+        unsafe(link_section = ".text.unlikely.configure_run_transpiler_from_tsconfig")
     )]
-    fn configure_run_transpiler_linker(this_transpiler: &mut Transpiler<'static>) {
+    fn configure_run_transpiler_from_tsconfig(this_transpiler: &mut Transpiler<'static>) {
         this_transpiler.resolver.opts.load_tsconfig_json = true;
         this_transpiler.options.load_tsconfig_json = true;
-        this_transpiler.configure_linker();
+        this_transpiler.configure_from_tsconfig();
     }
 
     fn configure_env_for_run_impl<'t>(
@@ -620,7 +617,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         this_transpiler: &'t mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
         opts: ConfigureEnvOptions,
-        with_linker: bool,
+        with_tsconfig: bool,
     ) -> crate::Result<(&'t mut Transpiler<'static>, &'static bun_resolver::DirInfo)> {
         let args = ctx.args.clone();
         let env_is_none = env.is_none();
@@ -630,7 +627,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // Out-param constructor — `configure_env_for_run` writes the whole struct.
         // `Transpiler` holds `&Arena`/`Box`/enum fields (non-null invariants),
         // so callers MUST pass a `MaybeUninit` slot.
-        let this_transpiler = this_transpiler.write(Transpiler::init(arena, ctx.log, args, env)?);
+        let this_transpiler = this_transpiler.write(Transpiler::init(arena, ctx.log(), args, env)?);
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
         let env_loader = this_transpiler.env_mut();
         env_loader.quiet = true;
@@ -643,13 +640,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         this_transpiler.options.global_cache = ctx.debug.global_cache;
         this_transpiler.resolver.opts.global_cache = ctx.debug.global_cache;
 
-        // Bundler-linker + JSX-runtime config: only callers that actually
-        // transpile through this `Transpiler` need it. `configure_linker`'s
-        // auto-JSX step reads the cwd `DirInfo` (and, with `load_tsconfig_json`
+        // Only callers that transpile need it. It reads the cwd `DirInfo` (and, with `load_tsconfig_json`
         // on, its `tsconfig.json`) — keep it ahead of the `read_dir_info` below
         // so that read populates/uses the same cache entry.
-        if with_linker {
-            Self::configure_run_transpiler_linker(this_transpiler);
+        if with_tsconfig {
+            Self::configure_run_transpiler_from_tsconfig(this_transpiler);
         }
 
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
@@ -658,9 +653,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 if !opts.log_errors {
                     return Err(crate::Error::CouldntReadCurrentDirectory);
                 }
-                // SAFETY: `ctx.log` set in `create_context_data` (single-
-                // threaded CLI startup), process-lifetime.
-                let _ = unsafe { ctx.log() }.print(Output::error_writer());
+                let _ = ctx.log().print(Output::error_writer());
                 pretty_errorln!(
                     "<r><red>error<r><d>:<r> <b>{}<r> loading directory {}",
                     bstr::BStr::new(err.name()),
@@ -672,8 +665,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 return Err(err.into());
             }
             Ok(None) => {
-                // SAFETY: see `Err` arm above.
-                let _ = unsafe { ctx.log() }.print(Output::error_writer());
+                let _ = ctx.log().print(Output::error_writer());
                 pretty_errorln!("error loading current directory");
                 Output::flush();
                 return Err(crate::Error::CouldntReadCurrentDirectory);
@@ -783,7 +775,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let more = arguments.iter().map(|it| &it[..]).filter(is_page);
         let more = more.filter(|_| is_page(&path)).map(EntryPoint::file);
         let entry_points: Vec<EntryPoint> = std::iter::once(main).chain(more).collect();
-        check_before(&entry_points, before_read)
+        check_before(&ctx.args, &entry_points, before_read)
     }
 
     /// What the module loader loads the main module at `path` with, where `boot` is given `loader`.
@@ -919,7 +911,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let mut args = ctx.args.clone();
         args.write = Some(false);
         args.target = Some(api::Target::Bun);
-        let mut bundle = Transpiler::init(cli_arena(), ctx.log, args, None)?;
+        let mut bundle = Transpiler::init(cli_arena(), ctx.log(), args, None)?;
         bundle.run_env_loader(bundle.options.env.disable_default_env_files)?;
 
         let mini = bun_event_loop::MiniEventLoop::init_global(
@@ -971,7 +963,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 crate::cli::run_compiled::NonFileTarget::ShellScript(entry_path),
             );
             // It has no entry point to start from, like a script of a package.json.
-            if ctx.runtime_options.check && !crate::cli::check_command::check_project_before(None) {
+            if ctx.runtime_options.check
+                && !crate::cli::check_command::check_project_before(&ctx.args, None)
+            {
                 Global::exit(1);
             }
             let exit_code = Self::boot_bun_shell(ctx, entry_path)?;
@@ -1026,7 +1020,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let vm = VirtualMachine::init(VmInitOptions {
             transform_options: ctx.args.clone(),
             argv: std::mem::take(&mut ctx.passthrough).leak(),
-            log: ::core::ptr::NonNull::new(ctx.log),
+            log: ctx.log,
             debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
             global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
@@ -1120,10 +1114,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         Self::set_time_zone_from_env(vm);
 
-        // SAFETY: `vm.log` set in `init`; `b.env` is the long-lived
-        // `DotEnv::Loader` allocated/retained for the VM (never null after
-        // `Transpiler::init`).
-        bun_http::async_http::load_env(unsafe { vm.log.get().unwrap().as_mut() }, vm.env_loader());
+        bun_http::async_http::load_env(vm.log, vm.env_loader());
 
         vm.load_extra_env();
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
@@ -1220,7 +1211,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         let vm = VirtualMachine::init_with_module_graph(bun_jsc::virtual_machine::Options {
-            log: std::ptr::NonNull::new(ctx.log),
+            log: ctx.log,
             args: ctx.args.clone(),
             argv: std::mem::take(&mut ctx.passthrough).leak(),
             graph: Some(graph),
@@ -1267,10 +1258,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             Self::set_time_zone_from_env(vm);
         }
 
-        // SAFETY: `vm.log` set in `init`; `b.env` is the long-lived
-        // `DotEnv::Loader` allocated/retained for the VM (never null after
-        // `Transpiler::init`).
-        bun_http::async_http::load_env(unsafe { vm.log.get().unwrap().as_mut() }, vm.env_loader());
+        bun_http::async_http::load_env(vm.log, vm.env_loader());
 
         vm.load_extra_env();
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
@@ -1521,7 +1509,7 @@ impl Run<'_> {
             }
             Some(Unchecked::Project) => {
                 let watching = crate::cli::check_command::watching(vm);
-                !crate::cli::check_command::check_project_before(watching)
+                !crate::cli::check_command::check_project_before(&ctx.args, watching)
             }
         };
         let loaded = (!has_type_errors).then(|| vm.load_entry_point(entry));
@@ -1555,9 +1543,9 @@ impl Run<'_> {
 
                 let _ = promise.result(vm.jsc_vm());
 
-                if log_has_msgs(vm) {
+                if vm.log.has_msgs() {
                     dump_build_error(vm);
-                    log_clear_msgs(vm);
+                    vm.log.with_msgs(Vec::clear);
                 }
             }
             Some(Err(err)) => entry_point_load_failed(vm, &err.into()),
@@ -1648,7 +1636,7 @@ impl Run<'_> {
             vm.on_before_exit();
         }
 
-        if log_has_msgs(vm) {
+        if vm.log.has_msgs() {
             dump_build_error(vm);
             Output::flush();
         }
@@ -1683,24 +1671,6 @@ impl Run<'_> {
     }
 }
 
-#[inline]
-fn log_has_msgs(vm: &VirtualMachine) -> bool {
-    match vm.log.get() {
-        // SAFETY: `vm.log` is a process-lifetime `&mut Log` written once in
-        // `VirtualMachine::init`; never freed, single-threaded CLI.
-        Some(p) => unsafe { !(*p.as_ptr()).msgs.is_empty() },
-        None => false,
-    }
-}
-
-#[inline]
-fn log_clear_msgs(vm: &VirtualMachine) {
-    if let Some(p) = vm.log.get() {
-        // SAFETY: see `log_has_msgs`.
-        unsafe { (*p.as_ptr()).msgs.clear() };
-    }
-}
-
 #[cold]
 #[inline(never)]
 #[cfg_attr(
@@ -1709,11 +1679,7 @@ fn log_clear_msgs(vm: &VirtualMachine) {
 )]
 fn dump_build_error(vm: &VirtualMachine) {
     Output::flush();
-    if let Some(log) = vm.log.get() {
-        // SAFETY: `vm.log` set in `init`; single-threaded CLI.
-        let log = unsafe { &mut *log.as_ptr() };
-        let _ = log.print(Output::error_writer_buffered());
-    }
+    let _ = vm.log.print(Output::error_writer_buffered());
     Output::flush();
 }
 
@@ -1747,9 +1713,9 @@ fn exit_with_unhandled_note(vm: &VirtualMachine) -> ! {
     unsafe(link_section = ".text.unlikely.entry_point_load_failed")
 )]
 fn entry_point_load_failed(vm: &VirtualMachine, err: &crate::Error) -> ! {
-    if log_has_msgs(vm) {
+    if vm.log.has_msgs() {
         dump_build_error(vm);
-        log_clear_msgs(vm);
+        vm.log.with_msgs(Vec::clear);
     } else {
         pretty_errorln!(
             "Error occurred loading entry point: {}",
@@ -1812,9 +1778,7 @@ impl RunCommand {
         unsafe(link_section = ".text.unlikely.boot_failed_exit")
     )]
     fn boot_failed_exit(ctx: &mut ContextData, display_name: &[u8], err: &crate::Error) -> ! {
-        // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
-        // CLI startup) and is process-lifetime.
-        let _ = unsafe { ctx.log() }.print(Output::error_writer());
+        let _ = ctx.log().print(Output::error_writer());
 
         pretty_errorln!(
             "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
@@ -2131,7 +2095,7 @@ impl RunCommand {
             && let Some(arg) =
                 (passthrough.iter()).find(|arg| bun_which::batch_arg_has_cmd_metachars(arg))
         {
-            if !ctx.debug.silent {
+            if !IS_SILENT.load() {
                 pretty_errorln!(
                     "<r><red>error<r>: Failed to run \"<b>{}<r>\": argument {} contains a cmd.exe special character and cannot be passed to a .bat/.cmd file",
                     bstr::BStr::new(Self::basename_or_bun(executable)),
@@ -2147,7 +2111,7 @@ impl RunCommand {
             argv.push(p.clone());
         }
 
-        let silent = ctx.debug.silent;
+        let silent = IS_SILENT.load();
 
         // TODO: remember to free this when we add --filter or --concurrent
         // in the meantime we don't need to free it.
@@ -2402,15 +2366,15 @@ impl RunCommand {
         // `&Arena`/`Box`/enum fields), so use `MaybeUninit` and let
         // `configure_env_for_run` `.write()` the whole struct.
         //
-        // Use the `_without_linker` variant: nothing reached from here
+        // Use the `_without_tsconfig` variant: nothing reached from here
         // transpiles through `this_transpiler` — the script-string path shells
         // out, and the file-entry-point path boots a fresh VM with its own
-        // transpiler — so the bundler-linker / `tsconfig.json` / JSX-runtime
+        // transpiler — so the `tsconfig.json` / JSX-runtime
         // setup would be dead weight (and the largest block of bundler code
         // otherwise faulted in for a plain `bun run <script>`).
         let this_transpiler: &'static mut ::core::mem::MaybeUninit<Transpiler<'static>> =
             cli_arena().alloc(::core::mem::MaybeUninit::<Transpiler<'static>>::uninit());
-        let (this_transpiler, root_dir_info) = Self::configure_env_for_run_without_linker(
+        let (this_transpiler, root_dir_info) = Self::configure_env_for_run_without_tsconfig(
             ctx,
             this_transpiler,
             None,
@@ -2502,7 +2466,7 @@ impl RunCommand {
                         // field of `ctx` but `run_package_script_foreground`
                         // takes `&mut ContextData`; clone the slice up-front.
                         let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
-                        let silent = ctx.debug.silent;
+                        let silent = IS_SILENT.load();
                         let use_system_shell = ctx.debug.use_system_shell;
 
                         crate::cli::run_compiled::reject(
@@ -2511,7 +2475,7 @@ impl RunCommand {
                         );
                         // A script has no entry point to start from: the project is checked, as by `bun check`.
                         if ctx.runtime_options.check
-                            && !crate::cli::check_command::check_project_before(None)
+                            && !crate::cli::check_command::check_project_before(&ctx.args, None)
                         {
                             Global::exit(1);
                         }
@@ -2722,7 +2686,7 @@ impl RunCommand {
                     );
                     // It has no entry point to start from, like a script of a package.json.
                     if ctx.runtime_options.check
-                        && !crate::cli::check_command::check_project_before(None)
+                        && !crate::cli::check_command::check_project_before(&ctx.args, None)
                     {
                         Global::exit(1);
                     }
@@ -3181,9 +3145,7 @@ impl RunCommand {
         unsafe(link_section = ".text.unlikely.exec_as_if_node_boot_failed")
     )]
     fn exec_as_if_node_boot_failed(ctx: &mut ContextData, basename: &[u8], err: crate::Error) -> ! {
-        // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
-        // CLI startup), process-lifetime.
-        let _ = unsafe { ctx.log() }.print(Output::error_writer());
+        let _ = ctx.log().print(Output::error_writer());
 
         Output::err(
             err,
@@ -3547,7 +3509,7 @@ impl RunCommand {
 
         let args = ctx.args.clone();
 
-        let Ok(mut this_transpiler) = Transpiler::init(cli_arena(), ctx.log, args, None) else {
+        let Ok(mut this_transpiler) = Transpiler::init(cli_arena(), ctx.log(), args, None) else {
             return Ok(shell_out);
         };
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
@@ -3558,7 +3520,7 @@ impl RunCommand {
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
         this_transpiler.resolver.store_fd = true;
-        this_transpiler.configure_linker();
+        this_transpiler.configure_from_tsconfig();
 
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
         let Some(root_dir_info) = this_transpiler
@@ -4000,8 +3962,7 @@ impl BunXFastPath {
     fn direct_launch_callback(wpath: &mut [u16], ctx: bun_options_types::context::Context<'_>) {
         let utf8 = strings::to_utf8_alloc(wpath).into_boxed_slice();
         if let Err(err) = RunCommand::boot(ctx, utf8, None) {
-            // SAFETY: `ctx.log` was set in `create_context_data`.
-            let _ = unsafe { &mut *ctx.log }.print(Output::error_writer());
+            let _ = ctx.log().print(Output::error_writer());
             Output::err(
                 err,
                 "Failed to run bin \"<b>{}<r>\"",

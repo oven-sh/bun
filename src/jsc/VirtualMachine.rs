@@ -89,10 +89,9 @@ pub struct InitOptions {
     pub transform_options: bun_options_types::schema::api::TransformOptions,
     /// Consumed by `RuntimeHooks::init_runtime_state` → `configureDebugger`.
     pub debugger: bun_options_types::context::Debugger,
-    /// When `Some`, [`init`] adopts
-    /// the caller's log instead of boxing a fresh one (CLI-path macros pass the
-    /// transpiler's log so macro load errors land in the bundle output).
-    pub log: Option<NonNull<bun_ast::Log>>,
+    pub log: Option<&'static bun_ast::Log>,
+    /// Used when `log` is `None`.
+    pub owned_log: bun_ast::Log,
     /// Forwarded to
     /// `RuntimeHooks::init_runtime_state` so the high-tier `Transpiler::init`
     /// reuses the caller's env loader.
@@ -100,7 +99,7 @@ pub struct InitOptions {
     /// Overrides `env_loader`. The VM owns it and frees it with its runtime state.
     pub owned_env_loader: Option<Box<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
-    /// `--install=...`; the resolver needs it before `configure_linker()` caches package.json.
+    /// `--install=...`; the resolver needs it before `configure_from_tsconfig()` caches package.json.
     pub global_cache: bun_options_types::global_cache::GlobalCache,
     pub smol: bool,
     pub eval_mode: bool,
@@ -126,6 +125,7 @@ impl Default for InitOptions {
             transform_options: Default::default(),
             debugger: Default::default(),
             log: None,
+            owned_log: bun_ast::Log::default(),
             env_loader: None,
             owned_env_loader: None,
             graph: None,
@@ -175,9 +175,11 @@ pub struct VirtualMachine {
     /// `None` when hot reload is disabled.
     pub bun_watcher: JsCell<Option<std::sync::Arc<bun_watcher::Watcher>>>,
     pub(crate) console: Box<crate::console_object::ConsoleObject>,
-    // BORROW_PARAM (`&'a mut bun_ast::Log` per LIFETIMES.tsv) — raw NonNull
-    // used because VM is self-referential and cannot carry `<'a>`.
-    pub log: Cell<Option<NonNull<bun_ast::Log>>>,
+    /// `InitOptions::log` or `owned_log`. `transpiler` and its resolver write to it too.
+    pub log: &'static bun_ast::Log,
+    owned_log: bun_ast::Log,
+    /// The level of `log` at `init`; `Log::redirect` swaps the level too.
+    pub log_level: bun_ast::Level,
     /// Path of the entry module: the user's module that runs first. `None` when there is none, as
     /// for `bun bake`, where the program is a built-in module (`main_entry_point`). BACKREF —
     /// borrows process-argv, the resolver's
@@ -1515,23 +1517,6 @@ impl VirtualMachine {
             .swap(0, core::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Safe shared accessor for the per-VM `bun_ast::Log`. The log is
-    /// `Box::leak`ed in `init()` and outlives the VM.
-    #[inline]
-    pub fn log_ref(&self) -> Option<&bun_ast::Log> {
-        // Reborrow `&mut Log` → `&Log`; the single `unsafe` deref lives in
-        // `log_mut()` (set-once `Option<NonNull>` accessor pattern).
-        self.log_mut().map(|l| &*l)
-    }
-
-    /// Safe `&mut bun_ast::Log` accessor. See [`Self::log_ref`].
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub fn log_mut(&self) -> Option<&mut bun_ast::Log> {
-        // SAFETY: see `log_ref`; single-JS-thread invariant.
-        self.log.get().map(|mut p| unsafe { p.as_mut() })
-    }
-
     /// Safe `&WebWorker` accessor for the optional owning worker. The
     /// `WebWorker` is a heap allocation owned by C++ that outlives this VM.
     #[inline]
@@ -2276,7 +2261,7 @@ impl VirtualMachine {
     /// Returns its exit code.
     ///
     /// # Safety
-    /// `this` is this thread's VM, made without a caller's `log`; this thread holds
+    /// `this` is this thread's VM; this thread holds
     /// its API lock and abandons it; nothing else can reach the VM.
     pub unsafe fn exit_and_free(this: *mut Self) -> u8 {
         // SAFETY: fn contract.
@@ -2289,9 +2274,7 @@ impl VirtualMachine {
         // SAFETY: sole owner; nothing past this point dereferences the VM.
         unsafe {
             core::ptr::drop_in_place(&raw mut (*this).console);
-            if let Some(log) = (*this).log.take() {
-                bun_core::heap::destroy(log.as_ptr());
-            }
+            core::ptr::drop_in_place(&raw mut (*this).owned_log);
             VMHolder::set_vm(None);
             // The VM was `alloc_zeroed(Layout::<VirtualMachine>())` in
             // `init`, NOT `Box::new` — dealloc the raw storage directly so
@@ -3043,11 +3026,6 @@ impl VirtualMachine {
     pub fn init(mut opts: InitOptions) -> crate::CrateResult<&'static VirtualMachine> {
         jsc::mark_binding();
 
-        let log: *mut bun_ast::Log = match opts.log {
-            Some(l) => l.as_ptr(),
-            None => bun_core::heap::into_raw(Box::new(bun_ast::Log::default())),
-        };
-
         // SAFETY: VM is large + self-referential; allocate zeroed and fill in
         // place. The
         // allocation lives for the thread lifetime (never freed on the main
@@ -3096,8 +3074,10 @@ impl VirtualMachine {
             use core::ptr::addr_of_mut;
             addr_of_mut!((*vm).global).write(Cell::new(core::ptr::null_mut()));
             addr_of_mut!((*vm).console).write(console);
-            // `log` is a fresh leaked Box; outlives the VM.
-            addr_of_mut!((*vm).log).write(Cell::new(NonNull::new(log)));
+            addr_of_mut!((*vm).owned_log).write(core::mem::take(&mut opts.owned_log));
+            // `'static` like `get()`: `exit_and_free` drops `owned_log`.
+            addr_of_mut!((*vm).log).write(opts.log.unwrap_or(&(*vm).owned_log));
+            addr_of_mut!((*vm).log_level).write((*vm).log.level.get());
             addr_of_mut!((*vm).bun_watcher).write(JsCell::new(None));
             addr_of_mut!((*vm).pending_reloads).write(OnceCell::new());
             addr_of_mut!((*vm).main).write(JsCell::new(None));
@@ -3591,7 +3571,7 @@ pub fn process_fetch_log(
     global_this: &JSGlobalObject,
     specifier: &bun_core::String,
     referrer: &bun_core::String,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     err: crate::CrateError,
 ) -> JSValue {
     use crate::{BuildMessage, ResolveMessage};
@@ -3615,7 +3595,8 @@ pub fn process_fetch_log(
         })
     };
 
-    match log.msgs.len() {
+    let mut msgs = log.msgs.take();
+    match msgs.len() {
         0 => {
             let msg = bun_ast::Msg {
                 data: bun_ast::range_data(
@@ -3629,9 +3610,7 @@ pub fn process_fetch_log(
         }
 
         1 => {
-            // Note: `Msg` is not `Copy`, so move it out — the caller deinits
-            // the log immediately after, so consuming the vec is sound.
-            let msg = log.msgs.swap_remove(0);
+            let msg = msgs.swap_remove(0);
             msg_to_js(msg)
         }
 
@@ -3643,8 +3622,8 @@ pub fn process_fetch_log(
             // the earlier cells and free their native
             // `BuildMessage`/`ResolveMessage` out from under us.
             let mut errors_stack: [JSValue; 256] = [JSValue::default(); 256];
-            let len = log.msgs.len().min(errors_stack.len());
-            for (i, msg) in log.msgs.drain(..len).enumerate() {
+            let len = msgs.len().min(errors_stack.len());
+            for (i, msg) in msgs.drain(..len).enumerate() {
                 errors_stack[i] = msg_to_js(msg);
             }
 
@@ -3733,7 +3712,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
 #[derive(Default)]
 pub struct Options {
     pub args: bun_options_types::schema::api::TransformOptions,
-    pub log: Option<NonNull<bun_ast::Log>>,
+    pub log: Option<&'static bun_ast::Log>,
     // BORROW_PARAM (`&'a mut bun_dotenv::Loader`) — caller-owned; the loader
     // outlives the VM, so the inner lifetime is erased to `'static`.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
@@ -4432,9 +4411,9 @@ impl VirtualMachine {
         let global = self.global();
         let reason = if global.has_exception() {
             Err(jsc::JsError::Thrown)
-        } else if let Some(log) = self.log_mut().filter(|log| log.has_errors()) {
-            let reason = log.to_js(global, format_args!("Failed to reload"));
-            log.reset();
+        } else if self.log.has_errors() {
+            let reason = self.log.to_js(global, format_args!("Failed to reload"));
+            self.log.reset();
             reason
         } else {
             Ok(global.create_error_instance(format_args!(
@@ -4483,8 +4462,7 @@ impl VirtualMachine {
     /// Note: shares ~90% with [`init`]; the differences are (a) the
     /// transpiler is built without `Config::configureTransformOptionsForBunVM`,
     /// (b) `standalone_module_graph` is mandatory and propagated into the
-    /// resolver, (c) `configureLinkerWithAutoJSX(false)` instead of
-    /// `configureLinker()`. Rather than re-open-code the 80-line struct init,
+    /// resolver. Rather than re-open-code the 80-line struct init,
     /// we route through [`init`] and patch the deltas.
     pub fn init_with_module_graph(opts: Options) -> crate::CrateResult<&'static VirtualMachine> {
         let graph = opts.graph.expect("init_with_module_graph requires graph");
@@ -4504,9 +4482,6 @@ impl VirtualMachine {
         vm.transpiler
             .with_mut(|t| t.resolver.standalone_module_graph = Some(graph));
         vm.let_heap_take_initial_module_graph(graph);
-        // Avoid reading from tsconfig.json & package.json when in standalone mode
-        vm.transpiler
-            .with_mut(|t| t.configure_linker_with_auto_jsx(false));
         IS_SMOL_MODE.store(opts.smol, core::sync::atomic::Ordering::Relaxed);
         Ok(vm)
     }
@@ -4549,9 +4524,7 @@ impl VirtualMachine {
             // Without it `/$bunfs/...` specifiers resolve against the real filesystem.
             t.resolver.standalone_module_graph = opts.graph;
             if opts.graph.is_none() {
-                t.configure_linker();
-            } else {
-                t.configure_linker_with_auto_jsx(false);
+                t.configure_from_tsconfig();
             }
         });
         Ok(vm)
@@ -4737,14 +4710,12 @@ impl VirtualMachine {
             specifier: lr.specifier,
             referrer: referrer_clone.slice(),
             input_specifier: specifier,
-            log: std::ptr::from_mut::<bun_ast::Log>(log),
             virtual_source: lr.virtual_source,
             global_object,
             flags,
             extra: &extra,
         };
-        // SAFETY: `log` outlives the call.
-        let result = unsafe { ModuleLoader::__bun_transpile_source_code(guard.0, &args) };
+        let result = ModuleLoader::__bun_transpile_source_code(guard.0, &args, log);
         if result.is_err() && flags == FetchFlags::PrintSource {
             guard.1 = true; // errdefer
         }
@@ -5188,54 +5159,8 @@ impl VirtualMachine {
         }
 
         // Swap in a fresh log so resolver errors don't pollute the VM's main log.
-        // `vm.log` is set unconditionally in `init` and never cleared,
-        // so the `Option` is purely a
-        // zeroed-init nicety; the `expect` is infallible.
-        let old_log: NonNull<bun_ast::Log> = jsc_vm.log.get().expect("vm.log set in init");
-        let old_transpiler_log: *mut bun_ast::Log = jsc_vm.transpiler.get().log;
         let mut log = bun_ast::Log::default();
-        let log_ptr = &raw mut log;
-        jsc_vm.log.set(NonNull::new(log_ptr));
-        jsc_vm.transpiler.with_mut(|t| t.set_log(log_ptr));
-        if let Some(pm) = jsc_vm.transpiler.get().resolver.package_manager {
-            // SAFETY: the `dyn AutoInstaller` is always `PackageManager`
-            // (sole impl — see `VirtualMachine::package_manager`).
-            unsafe { (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = log_ptr };
-        }
-        // Note: the restore must fire on every exit
-        // (including `?` from `ResolveMessage::create` below), so the VM's
-        // `log` cannot be left pointing at the dropped stack `log`.
-        struct RestoreLog<'a> {
-            vm: &'a VirtualMachine,
-            old_log: NonNull<bun_ast::Log>,
-            old_transpiler_log: *mut bun_ast::Log,
-        }
-        impl Drop for RestoreLog<'_> {
-            fn drop(&mut self) {
-                let jsc_vm = self.vm;
-                jsc_vm.log.set(Some(self.old_log));
-                jsc_vm.transpiler.with_mut(|t| {
-                    t.log = self.old_transpiler_log;
-                    t.resolver.log = self.old_log;
-                    t.linker.log = self.old_log.as_ptr();
-                });
-                // `_resolve` may have lazily created the PM with
-                // `pm.log = resolver.log` (our stack `log`), so restore even
-                // if it was `None` when we swapped.
-                if let Some(pm) = jsc_vm.transpiler.get().resolver.package_manager {
-                    // SAFETY: sole `dyn AutoInstaller` impl is `PackageManager`.
-                    unsafe {
-                        (*pm.cast::<bun_install::PackageManager>().as_ptr()).log =
-                            self.old_log.as_ptr();
-                    }
-                }
-            }
-        }
-        let _restore = RestoreLog {
-            vm: jsc_vm,
-            old_log,
-            old_transpiler_log,
-        };
+        let redirect = jsc_vm.log.redirect(&mut log);
 
         if mode == ResolveMode::Esm {
             let is_from_disk = jsc_vm.is_code_from_disk(source_utf8.slice());
@@ -5249,18 +5174,19 @@ impl VirtualMachine {
             IS_A_FILE_PATH,
             global_cache,
         );
+        drop(redirect);
         if mode == ResolveMode::Esm {
             (jsc_vm.transpiler).with_mut(|t| t.resolver.resolves_for_code_from_disk = false);
         }
         if let Err(err) = resolve_result {
             let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
-            let resolve_msg_index = log
-                .msgs
+            let msgs = log.msgs.get_mut();
+            let resolve_msg_index = msgs
                 .iter()
                 .position(|m| matches!(m.metadata, bun_ast::Metadata::Resolve(_)));
             let mut msg = match resolve_msg_index {
-                Some(i) => log.msgs[i].clone(),
+                Some(i) => msgs[i].clone(),
                 None => {
                     let printed = crate::ResolveMessage::fmt(
                         specifier_utf8.slice(),
@@ -5281,7 +5207,7 @@ impl VirtualMachine {
             };
             // `log` dies with this frame. Deduplicated: `_resolve`'s retry can log a failure twice.
             let mut notes = core::mem::take(&mut msg.notes).into_vec();
-            for (i, logged) in log.msgs.iter().enumerate() {
+            for (i, logged) in msgs.iter().enumerate() {
                 if Some(i) == resolve_msg_index
                     || !matches!(logged.kind, bun_ast::Kind::Err | bun_ast::Kind::Warn)
                     || notes.iter().any(|note| note.text == logged.data.text)
@@ -6048,11 +5974,7 @@ impl VirtualMachine {
                 self.had_errors
                     .set(self.had_errors.get() || build_error.msg.kind == bun_ast::Kind::Err);
                 if exception_list.is_some() {
-                    // `log_mut()` is the centralized set-once `Option<NonNull>`
-                    // accessor — single audited deref lives there.
-                    if let Some(log) = self.log_mut() {
-                        let _ = log.add_msg(build_error.msg.clone());
-                    }
+                    self.log.add_msg(build_error.msg.clone());
                 }
                 bun_core::Output::flush();
                 return true;
@@ -6068,11 +5990,7 @@ impl VirtualMachine {
                 self.had_errors
                     .set(self.had_errors.get() || resolve_error.msg.kind == bun_ast::Kind::Err);
                 if exception_list.is_some() {
-                    // `log_mut()` is the centralized set-once `Option<NonNull>`
-                    // accessor — single audited deref lives there.
-                    if let Some(log) = self.log_mut() {
-                        let _ = log.add_msg(resolve_error.msg.clone());
-                    }
+                    self.log.add_msg(resolve_error.msg.clone());
                 }
                 bun_core::Output::flush();
                 return true;

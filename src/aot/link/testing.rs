@@ -217,8 +217,8 @@ impl TestUnit {
 fn bind_loaded_build(build: &mut Build<'_>, loaded: &LoadedBuild<'_, '_>) -> BoundBuild {
     let bound = build.bind_modules(loaded);
     if build.diagnostics.has_errors() {
-        let mut log = Log::init();
-        replace(&mut build.diagnostics, Diagnostics::new()).write_to(&mut log);
+        let log = Log::init();
+        replace(&mut build.diagnostics, Diagnostics::new()).write_to(&log);
         panic!("module binding failed:\n{}", describe_messages(&log));
     }
     bound.expect("module binding reports every failure")
@@ -282,8 +282,8 @@ fn with_bound_build_without_bun_modules<R>(
         let bound = bind_loaded_build(build, &loaded);
         Ok(then(build, &loaded, &bound))
     });
-    let mut log = Log::init();
-    match build.finish(result, &mut log) {
+    let log = Log::init();
+    match build.finish(result, &log) {
         Ok((value, _)) => value,
         Err(failed) => panic!(
             "the build failed in stage \"{}\":\n{}",

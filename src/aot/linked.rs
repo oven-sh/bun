@@ -74,11 +74,11 @@ fn wrap_entry(entry: ReportEntry) -> interface::report::ReportEntry {
 }
 
 interface::define_linked_functions! {
-    fn bun_aot_compile(options: &Options<'_>, provider: &dyn SourceProvider, log: &mut Log) -> Result<interface::Compilation, interface::BuildFailed> {
+    fn bun_aot_compile(options: &Options<'_>, provider: &dyn SourceProvider, log: &Log) -> Result<interface::Compilation, interface::BuildFailed> {
         compile(options, provider, log).map(wrap_compilation).map_err(wrap_failure)
     }
 
-    fn bun_aot_log_diagnostic(log: &mut Log, code: Code, arguments: &[&[u8]]) {
+    fn bun_aot_log_diagnostic(log: &Log, code: Code, arguments: &[&[u8]]) {
         log_diagnostic(log, code, arguments);
     }
 

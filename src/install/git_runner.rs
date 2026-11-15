@@ -114,7 +114,7 @@ impl Finalize {
             .git_finalize
             .take()
             .expect("a clone or checkout task carries its finalize step");
-        let log = &mut task.log;
+        let log = &task.log;
         let result = match (finalize, &mut task.job) {
             (Finalize::Repo(fd), Job::GitClone { repo, .. }) => {
                 *repo = fd;
@@ -147,7 +147,7 @@ impl Finalize {
 /// Strips the fresh checkout in `staging`, moves it into the cache, and reads its `package.json`.
 fn finish_checkout(
     req: &Task::GitCheckoutRequest,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     staging: CacheStaging,
     tree: &[u8],
 ) -> Result<ExtractData, Error> {
@@ -397,7 +397,7 @@ pub(crate) fn bundles_dependencies(package_dir: &bun_sys::Dir) -> bool {
         return false;
     };
     let source = bun_ast::Source::init_path_string("package.json", &contents[..]);
-    crate::bun_json::ParsedJson::parse_package_json(&source, &mut bun_ast::Log::init()).is_ok_and(
+    crate::bun_json::ParsedJson::parse_package_json(&source, &bun_ast::Log::init()).is_ok_and(
         |parsed| {
             let root = &parsed.root;
             // Either `true` or a non-empty list of names. `as_array` returns `None` for `[]`.
@@ -419,7 +419,7 @@ pub(crate) fn read_package_json_in(package_dir: &bun_sys::Dir) -> bun_sys::Maybe
 /// `json` is the result of `read_package_json_in(package_dir)`.
 fn read_package_json(
     req: &Task::GitCheckoutRequest,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     package_dir: &bun_sys::Dir,
     json: bun_sys::Maybe<Vec<u8>>,
 ) -> Result<ExtractData, Error> {
@@ -525,7 +525,7 @@ impl CacheStaging {
     /// already exists and passes `is_complete`.
     fn publish(
         self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         name: &[u8],
         folder_name: &[u8],
         is_complete: &dyn Fn(&bun_sys::Dir) -> bool,
@@ -720,7 +720,7 @@ fn has_no_links(dir: &bun_sys::Dir) -> bool {
 fn finish_clone(
     id: Task::Id,
     req: &Task::GitCloneRequest,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     staging: CacheStaging,
     url: &[u8],
     replaces: bool,
@@ -870,7 +870,7 @@ impl GitSubprocess {
 
     fn log_failure(&self, args: core::fmt::Arguments<'_>) {
         let is_required = self.is_required();
-        let log = &mut self.task().log;
+        let log = &self.task().log;
         if is_required {
             log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
         } else {

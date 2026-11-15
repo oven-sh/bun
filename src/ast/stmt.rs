@@ -1,6 +1,6 @@
 use crate::expr::{self, Expr};
 use crate::s as S;
-use crate::{AstArena, DebugOnlyDisabler, StoreRef};
+use crate::{AstArena, StoreRef};
 
 #[derive(Clone, Copy)]
 pub struct Stmt {
@@ -9,18 +9,11 @@ pub struct Stmt {
 }
 
 impl Stmt {
-    /// Associated wrapper so downstream crates can call
-    /// `crate::Stmt::data_store_reset()` without naming the thread-local
-    /// Store module path.
-    #[inline]
-    pub fn data_store_reset() {
-        data::Store::reset();
-    }
-
-    pub fn assign(a: Expr, b: Expr) -> Stmt {
-        Stmt::alloc(
+    pub fn assign(bump: &AstArena, a: Expr, b: Expr) -> Stmt {
+        Stmt::allocate(
+            bump,
             S::SExpr {
-                value: Expr::assign(a, b),
+                value: Expr::assign(bump, a, b),
                 ..Default::default()
             },
             a.loc,
@@ -78,52 +71,17 @@ const NONE: S::Empty = S::Empty {};
 /// corresponding `Data` variant; the arm list is the `impl_statement_data!`
 /// invocation below.
 pub trait StatementData: Sized {
-    /// Wrap an already-allocated payload.
-    fn wrap_ref(ptr: StoreRef<Self>) -> Data;
-    /// Store-append `self` and wrap.
-    fn store_alloc(self) -> Data;
     /// Arena-allocate `self` and wrap.
     fn arena_alloc(self, bump: &AstArena) -> Data;
 }
 
 impl Stmt {
     #[inline]
-    pub fn init<T: StatementData>(orig_data: StoreRef<T>, loc: crate::Loc) -> Stmt {
-        Stmt {
-            loc,
-            data: T::wrap_ref(orig_data),
-        }
-    }
-
-    #[inline]
-    fn comptime_alloc<T: StatementData>(orig_data: T, loc: crate::Loc) -> Stmt {
-        Stmt {
-            loc,
-            data: orig_data.store_alloc(),
-        }
-    }
-
-    fn allocate_data<T: StatementData>(bump: &AstArena, orig_data: T, loc: crate::Loc) -> Stmt {
+    pub fn allocate<T: StatementData>(bump: &AstArena, orig_data: T, loc: crate::Loc) -> Stmt {
         Stmt {
             loc,
             data: orig_data.arena_alloc(bump),
         }
-    }
-
-    #[inline]
-    pub fn alloc<T: StatementData>(orig_data: T, loc: crate::Loc) -> Stmt {
-        Stmt::comptime_alloc(orig_data, loc)
-    }
-}
-
-pub type Disabler = DebugOnlyDisabler<Stmt>;
-
-impl Stmt {
-    /// When the lifetime of an Stmt.Data's pointer must exist longer than reset() is called, use this function.
-    /// Be careful to free the memory (or use an arena that does it for you)
-    /// Also, prefer Stmt.init or Stmt.alloc when possible. This will be slower.
-    pub fn allocate<T: StatementData>(bump: &AstArena, orig_data: T, loc: crate::Loc) -> Stmt {
-        Stmt::allocate_data(bump, orig_data, loc)
     }
 
     pub fn allocate_expr(bump: &AstArena, expr: Expr) -> Stmt {
@@ -141,17 +99,11 @@ impl Stmt {
 // ─── StatementData impls ───────────────────────────────────────────────────
 
 macro_rules! impl_statement_data {
-    // Pointer-payload variants: stored via Store / arena.
+    // Pointer-payload variants: stored in the arena.
     ( ptr: $( ($ty:ty, $variant:ident) ),* $(,)?
       ; inline: $( ($ity:ty, $ivariant:ident) ),* $(,)? ) => {
         $(
             impl StatementData for $ty {
-                #[inline]
-                fn wrap_ref(ptr: StoreRef<Self>) -> Data { Data::$variant(ptr) }
-                #[inline]
-                fn store_alloc(self) -> Data {
-                    Data::$variant(data::Store::append(self))
-                }
                 #[inline]
                 fn arena_alloc(self, bump: &AstArena) -> Data {
                     Data::$variant(bump.alloc_node(self))
@@ -160,10 +112,6 @@ macro_rules! impl_statement_data {
         )*
         $(
             impl StatementData for $ity {
-                #[inline]
-                fn wrap_ref(_ptr: StoreRef<Self>) -> Data { Data::$ivariant(<$ity>::default()) }
-                #[inline]
-                fn store_alloc(self) -> Data { Data::$ivariant(self) }
                 #[inline]
                 fn arena_alloc(self, _bump: &AstArena) -> Data { Data::$ivariant(self) }
             }
@@ -407,47 +355,4 @@ impl Data {
     // These variants store the payload directly (no `StoreRef`); all are
     // zero-sized `Copy` types. Returned by value for symmetry with
     // `expr::Data::e_boolean()` etc.
-}
-
-// `new_store!` emits `pub mod stmt_store { pub struct Store; ... }` with
-// `init/append/reset/destroy`.
-crate::new_store!(
-    stmt_store,
-    [
-        S::Block,
-        S::Break,
-        S::Class,
-        S::Comment,
-        S::Continue,
-        S::Directive,
-        S::DoWhile,
-        S::Enum,
-        S::ExportClause,
-        S::ExportDefault,
-        S::ExportEquals,
-        S::ExportFrom,
-        S::ExportStar,
-        S::SExpr,
-        S::ForIn,
-        S::ForOf,
-        S::For,
-        S::Function,
-        S::If,
-        S::Import,
-        S::Label,
-        S::Local,
-        S::Namespace,
-        S::Return,
-        S::Switch,
-        S::Throw,
-        S::Try,
-        S::While,
-        S::With,
-    ],
-    128
-);
-
-pub mod data {
-    use super::*;
-    crate::thread_local_ast_store!(stmt_store::Store, "Stmt");
 }

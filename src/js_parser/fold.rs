@@ -1,11 +1,10 @@
 #![warn(unused_must_use)]
-use bun_collections::VecExt;
 use bun_core::feature_flags as FeatureFlags;
 
 use crate::p::P;
 use crate::parser::{self as js_parser, IdentifierOpts, RelocateVars, RelocateVarsMode};
 use bun_ast::ast_result::CommonJSNamedExport;
-use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S};
+use bun_ast::{self as js_ast, AstBox, Binding, E, Expr, Flags, G, LocRef, S};
 
 // ── local EString shims ────────────────────────────────────────────────────
 // E.rs currently carries two `impl EString` blocks (live + round-C draft) with
@@ -81,12 +80,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
         let mut value: Expr = Expr::EMPTY;
         for decl in decls {
-            let binding =
-                Binding::to_expr(&decl.binding, p.arena, p, Self::wrap_identifier_hoisting);
+            let binding = Binding::to_expr(
+                &decl.binding,
+                p.ast_arena,
+                p,
+                Self::wrap_identifier_hoisting,
+            );
             if let Some(decl_value) = decl.value {
-                value = Expr::join_with_comma(value, Expr::assign(binding, decl_value));
+                value = Expr::join_with_comma(
+                    value,
+                    p.ast_arena,
+                    Expr::assign(p.ast_arena, binding, decl_value),
+                );
             } else if mode == RelocateVarsMode::ForInOrForOf {
-                value = Expr::join_with_comma(value, binding);
+                value = Expr::join_with_comma(value, p.ast_arena, binding);
             }
         }
 
@@ -221,8 +228,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                         loc: name_loc,
                                         ref_: new_ref,
                                     };
-                                    // SAFETY: module_scope is arena-owned and valid for the parser lifetime.
-                                    VecExt::append(&mut p.module_scope_mut().generated, new_ref);
+                                    p.module_scope.generated.push(p.ast_arena, new_ref);
 
                                     p.import_items_for_namespace
                                         .get_mut(&id.ref_)
@@ -240,13 +246,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                         bun_ast::ImportItemStatus::Generated;
                                     // Not bound to an export, it reads `ns.a`.
                                     if let Some(import_record_index) = dynamic_record {
-                                        symbol.namespace_alias =
-                                            Some(bun_alloc::ast_box(G::NamespaceAlias {
+                                        symbol.namespace_alias = Some(AstBox::new_in(
+                                            G::NamespaceAlias {
                                                 namespace_ref: id.ref_,
                                                 alias: js_ast::StoreStr::new(name),
                                                 import_record_index,
                                                 was_originally_property_access: true,
-                                            }));
+                                            },
+                                            p.ast_arena,
+                                        ));
                                     }
 
                                     new_ref
@@ -478,21 +486,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                 }
 
                                 // Note: lookup is split from insertion for borrowck.
-                                let ref_ = if let Some(existing) =
-                                    p.commonjs_named_exports.get(name)
-                                {
-                                    existing.loc_ref.ref_
-                                } else {
-                                    let sym_name: &'a [u8] = p.arena.alloc_slice_copy(
-                                        format!("${}", bun_core::fmt::fmt_identifier(name))
-                                            .as_bytes(),
-                                    );
-                                    let new_ref =
-                                        p.new_symbol(js_ast::symbol::Kind::Other, sym_name);
-                                    // SAFETY: module_scope is arena-owned and valid for 'a.
-                                    VecExt::append(&mut p.module_scope_mut().generated, new_ref);
-                                    p.commonjs_named_exports
-                                        .put(
+                                let ref_ =
+                                    if let Some(existing) = p.commonjs_named_exports.get(name) {
+                                        existing.loc_ref.ref_
+                                    } else {
+                                        let sym_name: &'a [u8] = p.arena.alloc_slice_copy(
+                                            format!("${}", bun_core::fmt::fmt_identifier(name))
+                                                .as_bytes(),
+                                        );
+                                        let new_ref =
+                                            p.new_symbol(js_ast::symbol::Kind::Other, sym_name);
+                                        p.module_scope.generated.push(p.ast_arena, new_ref);
+                                        p.commonjs_named_exports.put(
+                                            p.ast_arena,
                                             name,
                                             CommonJSNamedExport {
                                                 loc_ref: LocRef {
@@ -503,14 +509,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                                 assign_count: 0,
                                                 decl_value: Default::default(),
                                             },
-                                        )
-                                        .expect("unreachable");
-                                    if p.commonjs_named_exports_needs_conversion == u32::MAX {
-                                        p.commonjs_named_exports_needs_conversion =
-                                            (p.commonjs_named_exports.count() - 1) as u32;
-                                    }
-                                    new_ref
-                                };
+                                        );
+                                        if p.commonjs_named_exports_needs_conversion == u32::MAX {
+                                            p.commonjs_named_exports_needs_conversion =
+                                                (p.commonjs_named_exports.count() - 1) as u32;
+                                        }
+                                        new_ref
+                                    };
                                 p.note_commonjs_export_use(name, ref_, identifier_opts);
 
                                 p.ignore_usage(id.ref_);
@@ -700,25 +705,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                         );
                                         let new_ref =
                                             p.new_symbol(js_ast::symbol::Kind::Other, sym_name);
-                                        // SAFETY: module_scope is arena-owned and valid for 'a.
-                                        VecExt::append(
-                                            &mut p.module_scope_mut().generated,
-                                            new_ref,
-                                        );
-                                        p.commonjs_named_exports
-                                            .put(
-                                                name,
-                                                CommonJSNamedExport {
-                                                    loc_ref: LocRef {
-                                                        loc: name_loc,
-                                                        ref_: new_ref,
-                                                    },
-                                                    needs_decl: true,
-                                                    assign_count: 0,
-                                                    decl_value: Default::default(),
+                                        p.module_scope.generated.push(p.ast_arena, new_ref);
+                                        p.commonjs_named_exports.put(
+                                            p.ast_arena,
+                                            name,
+                                            CommonJSNamedExport {
+                                                loc_ref: LocRef {
+                                                    loc: name_loc,
+                                                    ref_: new_ref,
                                                 },
-                                            )
-                                            .expect("unreachable");
+                                                needs_decl: true,
+                                                assign_count: 0,
+                                                decl_value: Default::default(),
+                                            },
+                                        );
                                         if p.commonjs_named_exports_needs_conversion == u32::MAX {
                                             p.commonjs_named_exports_needs_conversion =
                                                 (p.commonjs_named_exports.count() - 1) as u32;
@@ -754,7 +754,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                     loc,
                                 }
                             } else {
-                                Expr::init(E::Object::default(), loc)
+                                Expr::allocate(p.ast_arena, E::Object::default(), loc)
                             });
                         }
                         if name == b"accept" {
@@ -783,7 +783,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         );
                         if in_lookup_table {
                             if enabled {
-                                return Some(Expr::init(
+                                return Some(Expr::allocate(
+                                    p.ast_arena,
                                     E::Dot {
                                         target: Expr::init_identifier(p.hmr_api_ref, target.loc),
                                         name: name_static,

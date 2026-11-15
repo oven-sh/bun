@@ -1,6 +1,6 @@
 //! The bundler-side worker pool that
 //! wraps `bun_threading::thread_pool::ThreadPool` and owns the per-thread
-//! [`Worker`] state (mimalloc arena, per-thread `Transpiler` clone, AST store).
+//! [`Worker`] state (mimalloc arena, per-thread `Transpiler` clone).
 //!
 //! `Worker::new` builds the per-worker
 //! `Transpiler` via `Transpiler::for_worker` (per-field deep clone — no
@@ -281,7 +281,6 @@ pub struct Worker {
 
     pub(crate) temporary_arena: AstArena,
     pub(crate) stmt_list: StmtList,
-    ast_memory_store: bun_ast::ASTMemoryAllocator,
 
     /// `ThreadPoolLib.Thread.current` — `None` when called off a pool thread.
     /// `ParentRef` (not raw `*mut`) because the pool-owned `Thread` strictly
@@ -304,7 +303,7 @@ impl Worker {
     }
 }
 
-/// This thread's [`Worker`], whose AST store is the active one until the drop.
+/// This thread's [`Worker`]. Borrows of it end with the guard.
 pub(crate) struct WorkerGuard(&'static mut Worker);
 
 impl Deref for WorkerGuard {
@@ -317,12 +316,6 @@ impl Deref for WorkerGuard {
 impl DerefMut for WorkerGuard {
     fn deref_mut(&mut self) -> &mut Worker {
         self.0
-    }
-}
-
-impl Drop for WorkerGuard {
-    fn drop(&mut self) {
-        self.0.ast_memory_store.pop();
     }
 }
 
@@ -348,11 +341,7 @@ impl Worker {
     // borrow. Tying it to `ctx`'s lifetime would
     // forbid the `worker` ↔ `ctx` re-borrows in `ParseTask::run_*`.
     pub(crate) fn get(ctx: &BundleV2<'_>) -> WorkerGuard {
-        let worker = ctx.graph.pool().get_worker(ctx);
-
-        worker.ast_memory_store.push();
-
-        WorkerGuard(worker)
+        WorkerGuard(ctx.graph.pool().get_worker(ctx))
     }
 
     fn new(ctx: &BundleV2<'_>) -> AliasableBox<Worker> {
@@ -372,8 +361,6 @@ impl Worker {
             macro_load_states: Default::default(),
             temporary_arena: AstArena::new(),
             stmt_list: StmtList::init(),
-            // Shares `heap` with the parser: mimalloc caches only the last heap a thread touched.
-            ast_memory_store: bun_ast::ASTMemoryAllocator::borrowing(arena),
             thread: NonNull::new(ThreadPoolLib::Thread::current()).map(bun_ptr::ParentRef::from),
             drop_task: ThreadPoolLib::Task {
                 node: ThreadPoolLib::Node::default(),

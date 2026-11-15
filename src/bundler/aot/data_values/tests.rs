@@ -1,9 +1,7 @@
-use bun_alloc::AstAlloc;
-use bun_ast::{AstArena, ExprNodeList, Ref, Source};
+use bun_ast::{ExprNodeList, Ref, Source};
 use bun_parsers::json::{parse_json_into_arena, parse_utf8};
 use bun_sema::session::Session;
 
-use super::super::services::with_ast_scope;
 use super::*;
 
 const NESTING_DEPTH: usize = 100_000;
@@ -11,7 +9,7 @@ const NESTING_DEPTH: usize = 100_000;
 fn with_scope(test: impl for<'s> FnOnce(&Interner<'s>, &'s Arena, &AstArena)) {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
-    with_ast_scope(|scratch| test(&atoms, session.arena(), scratch));
+    test(&atoms, session.arena(), &AstArena::new());
 }
 
 fn parse_tape(text: &'static [u8], scratch: &AstArena) -> Expr {
@@ -25,79 +23,81 @@ fn parse_tree(text: &'static [u8], scratch: &AstArena) -> Expr {
     parse_utf8(&source, &Log::default(), scratch).unwrap_or_else(|_| panic!("valid JSON"))
 }
 
-fn write_error(root: &Expr, scratch: &Arena) -> NotData {
+fn write_error(root: &Expr, scratch: &AstArena) -> NotData {
     match write_expr(root, scratch, &mut ValueCounter::default()) {
         Err(error) => error,
         Ok(()) => panic!("expected an error"),
     }
 }
 
-fn string_expr(text: &'static [u8]) -> Expr {
-    Expr::init(E::EString::init(text), Loc::EMPTY)
+fn string_expr(scratch: &AstArena, text: &'static [u8]) -> Expr {
+    Expr::allocate(scratch, E::EString::init(text), Loc::EMPTY)
 }
 
 fn number_expr(value: f64) -> Expr {
     Expr::init(E::Number::new(value), Loc::EMPTY)
 }
 
-fn object_with(property: G::Property) -> Expr {
-    let mut properties: G::PropertyList = AstAlloc::vec();
-    properties.push(property);
+fn object_with(scratch: &AstArena, property: G::Property) -> Expr {
+    let properties = G::PropertyList::from_slice_in(&[property], scratch);
     let object = E::Object {
         properties,
         ..Default::default()
     };
-    Expr::init(object, Loc::EMPTY)
+    Expr::allocate(scratch, object, Loc::EMPTY)
 }
 
-fn object_with_keys(keys: &[Expr]) -> Expr {
-    let mut properties: G::PropertyList = AstAlloc::vec();
-    properties.extend(keys.iter().enumerate().map(|(index, key)| G::Property {
-        key: Some(*key),
-        value: Some(number_expr(index as f64)),
-        ..G::Property::default()
-    }));
+fn object_with_keys(scratch: &AstArena, keys: &[Expr]) -> Expr {
+    let properties = G::PropertyList::from_iter_in(
+        keys.iter().enumerate().map(|(index, key)| G::Property {
+            key: Some(*key),
+            value: Some(number_expr(index as f64)),
+            ..G::Property::default()
+        }),
+        scratch,
+    );
     let object = E::Object {
         properties,
         ..Default::default()
     };
-    Expr::init(object, Loc::EMPTY)
+    Expr::allocate(scratch, object, Loc::EMPTY)
 }
 
-fn array_from(elements: &[Expr]) -> Expr {
-    let mut items: ExprNodeList = AstAlloc::vec();
-    items.extend(elements.iter().copied());
+fn array_from(scratch: &AstArena, elements: &[Expr]) -> Expr {
+    let items = ExprNodeList::from_slice_in(elements, scratch);
     let array = E::Array {
         items,
         ..Default::default()
     };
-    Expr::init(array, Loc::EMPTY)
+    Expr::allocate(scratch, array, Loc::EMPTY)
 }
 
-fn array_of(first: Expr, second: Expr) -> Expr {
-    array_from(&[first, second])
+fn array_of(scratch: &AstArena, first: Expr, second: Expr) -> Expr {
+    array_from(scratch, &[first, second])
 }
 
-fn object_from(values: &[Expr]) -> Expr {
-    let mut properties: G::PropertyList = AstAlloc::vec();
-    properties.extend(values.iter().enumerate().map(|(index, value)| G::Property {
-        key: Some(number_expr(index as f64)),
-        value: Some(*value),
-        ..G::Property::default()
-    }));
+fn object_from(scratch: &AstArena, values: &[Expr]) -> Expr {
+    let properties = G::PropertyList::from_iter_in(
+        values.iter().enumerate().map(|(index, value)| G::Property {
+            key: Some(number_expr(index as f64)),
+            value: Some(*value),
+            ..G::Property::default()
+        }),
+        scratch,
+    );
     let object = E::Object {
         properties,
         ..Default::default()
     };
-    Expr::init(object, Loc::EMPTY)
+    Expr::allocate(scratch, object, Loc::EMPTY)
 }
 
-fn object_with_value_count(value_count: usize) -> Expr {
+fn object_with_value_count(scratch: &AstArena, value_count: usize) -> Expr {
     let mut shared_values = vec![(number_expr(1.0), 1)];
     while let Some(&(value, count)) = shared_values.last()
         && 2 * count + 1 < value_count
     {
-        shared_values.push((array_of(value, value), 2 * count + 1));
+        shared_values.push((array_of(scratch, value, value), 2 * count + 1));
     }
     let mut remaining = value_count - 1;
     let mut members = Vec::new();
@@ -107,7 +107,7 @@ fn object_with_value_count(value_count: usize) -> Expr {
             remaining -= count;
         }
     }
-    object_from(&members)
+    object_from(scratch, &members)
 }
 
 #[derive(Default)]
@@ -158,9 +158,9 @@ impl ValueSink for ValueCounter {
     }
 }
 
-fn big_int_expr(digits: &'static [u8]) -> Expr {
+fn big_int_expr(scratch: &AstArena, digits: &'static [u8]) -> Expr {
     let value = E::Str::new(digits);
-    Expr::init(E::BigInt { value }, Loc::EMPTY)
+    Expr::allocate(scratch, E::BigInt { value }, Loc::EMPTY)
 }
 
 fn reported_text(error: NotData) -> Vec<u8> {
@@ -247,14 +247,17 @@ fn repeated_key_in_large_object() {
 #[cfg_attr(miri, ignore)]
 fn scalar_keys_become_property_keys() {
     with_scope(|atoms, arena, scratch| {
-        let root = object_with_keys(&[
-            number_expr(404.0),
-            number_expr(-0.0),
-            number_expr(1.5),
-            Expr::init(E::Boolean { value: true }, Loc::EMPTY),
-            Expr::init(E::Boolean { value: false }, Loc::EMPTY),
-            Expr::init(E::Null, Loc::EMPTY),
-        ]);
+        let root = object_with_keys(
+            scratch,
+            &[
+                number_expr(404.0),
+                number_expr(-0.0),
+                number_expr(1.5),
+                Expr::init(E::Boolean { value: true }, Loc::EMPTY),
+                Expr::init(E::Boolean { value: false }, Loc::EMPTY),
+                Expr::init(E::Null, Loc::EMPTY),
+            ],
+        );
         let value = data_value_from_expr(&root, scratch, arena, atoms).expect("data");
         let names: [&[u8]; 6] = [b"404", b"0", b"1.5", b"true", b"false", b"null"];
         let expected: Vec<(Atom, DataValue<'_>)> = names
@@ -270,7 +273,14 @@ fn scalar_keys_become_property_keys() {
 #[cfg_attr(miri, ignore)]
 fn number_key_repeats_string_key() {
     with_scope(|atoms, arena, scratch| {
-        let root = object_with_keys(&[string_expr(b"1"), string_expr(b"a"), number_expr(1.0)]);
+        let root = object_with_keys(
+            scratch,
+            &[
+                string_expr(scratch, b"1"),
+                string_expr(scratch, b"a"),
+                number_expr(1.0),
+            ],
+        );
         let value = data_value_from_expr(&root, scratch, arena, atoms).expect("data");
         let expected = [
             (atoms.intern(b"1"), DataValue::Number(2.0)),
@@ -285,13 +295,13 @@ fn number_key_repeats_string_key() {
 fn collection_key_is_not_data() {
     with_scope(|_, _, scratch| {
         let keys = [
-            array_from(&[]),
-            Expr::init(E::Object::default(), Loc::EMPTY),
+            array_from(scratch, &[]),
+            Expr::allocate(scratch, E::Object::default(), Loc::EMPTY),
             Expr::init(E::Undefined, Loc::EMPTY),
-            big_int_expr(b"1"),
+            big_int_expr(scratch, b"1"),
         ];
         for key in keys {
-            let root = object_with_keys(&[key]);
+            let root = object_with_keys(scratch, &[key]);
             assert!(matches!(write_error(&root, scratch), NotData::Expression));
         }
     });
@@ -333,14 +343,14 @@ fn escaped_surrogates_stay_canonical() {
 #[cfg_attr(miri, ignore)]
 fn surrogate_halves_of_rope_parts_are_joined() {
     with_scope(|atoms, arena, scratch| {
-        let Data::EString(tail) = string_expr(b"\xED\xB8\x80").data else {
+        let Data::EString(tail) = string_expr(scratch, b"\xED\xB8\x80").data else {
             panic!("expected a string");
         };
         let mut head = E::EString::init(b"\xED\xA0\xBD");
         head.next = Some(tail);
         head.end = Some(tail);
         head.rope_len = 6;
-        let root = Expr::init(head, Loc::EMPTY);
+        let root = Expr::allocate(scratch, head, Loc::EMPTY);
         let value = data_value_from_expr(&root, scratch, arena, atoms).expect("data");
         assert_eq!(
             *value,
@@ -364,7 +374,7 @@ fn well_formed_text_is_borrowed() {
 fn hole_is_undefined() {
     with_scope(|atoms, arena, scratch| {
         let hole = Expr::init(E::Missing, Loc::EMPTY);
-        let root = array_from(&[number_expr(1.0), hole, number_expr(2.0)]);
+        let root = array_from(scratch, &[number_expr(1.0), hole, number_expr(2.0)]);
         let value = data_value_from_expr(&root, scratch, arena, atoms).expect("data");
         let expected = [
             DataValue::Number(1.0),
@@ -380,10 +390,10 @@ fn hole_is_undefined() {
 #[cfg_attr(miri, ignore)]
 fn big_int_takes_decimal_digits_only() {
     with_scope(|atoms, arena, scratch| {
-        let decimal = big_int_expr(b"10");
+        let decimal = big_int_expr(scratch, b"10");
         let value = data_value_from_expr(&decimal, scratch, arena, atoms).expect("data");
         assert_eq!(*value, DataValue::BigInt(atoms.intern(b"10")));
-        let hexadecimal = big_int_expr(b"0x10");
+        let hexadecimal = big_int_expr(scratch, b"0x10");
         assert!(matches!(
             write_error(&hexadecimal, scratch),
             NotData::Expression
@@ -420,7 +430,7 @@ fn proto_key_stays_own_key() {
 fn utf16_string_keeps_lone_surrogate() {
     with_scope(|atoms, arena, scratch| {
         let units: &[u16] = scratch.alloc_slice_copy(&[0x61u16, 0xD800]);
-        let root = Expr::init(E::EString::init_utf16(units), Loc::EMPTY);
+        let root = Expr::allocate(scratch, E::EString::init_utf16(units), Loc::EMPTY);
         let value = data_value_from_expr(&root, scratch, arena, atoms).expect("data");
         assert_eq!(*value, DataValue::String(atoms.intern(b"a\xED\xA0\x80")));
     });
@@ -430,7 +440,7 @@ fn utf16_string_keeps_lone_surrogate() {
 #[cfg_attr(miri, ignore)]
 fn rope_is_flattened() {
     with_scope(|atoms, arena, scratch| {
-        let tail = string_expr(b"def");
+        let tail = string_expr(scratch, b"def");
         let Data::EString(tail) = tail.data else {
             panic!("expected a string");
         };
@@ -438,7 +448,7 @@ fn rope_is_flattened() {
         head.next = Some(tail);
         head.end = Some(tail);
         head.rope_len = 6;
-        let root = Expr::init(head, Loc::EMPTY);
+        let root = Expr::allocate(scratch, head, Loc::EMPTY);
         let value = data_value_from_expr(&root, scratch, arena, atoms).expect("data");
         assert_eq!(*value, DataValue::String(atoms.intern(b"abcdef")));
     });
@@ -450,7 +460,7 @@ fn deep_array_converts() {
     with_scope(|atoms, arena, scratch| {
         let mut root = number_expr(1.0);
         for _ in 0..NESTING_DEPTH {
-            root = array_from(&[root]);
+            root = array_from(scratch, &[root]);
         }
         let value = data_value_from_expr(&root, scratch, arena, atoms).expect("data");
         assert_eq!(nesting_depth(value), NESTING_DEPTH);
@@ -462,30 +472,40 @@ fn deep_array_converts() {
 fn expressions_are_not_data() {
     with_scope(|_, _, scratch| {
         let identifier = Expr::init(E::Identifier::init(Ref::NONE), Loc::EMPTY);
-        let call = Expr::init(
+        let call = Expr::allocate(
+            scratch,
             E::Call {
                 target: identifier,
                 ..Default::default()
             },
             Loc::EMPTY,
         );
-        let spread = object_with(G::Property {
-            kind: G::PropertyKind::Spread,
-            value: Some(identifier),
-            ..G::Property::default()
-        });
-        let getter = object_with(G::Property {
-            kind: G::PropertyKind::Get,
-            key: Some(string_expr(b"a")),
-            value: Some(string_expr(b"b")),
-            ..G::Property::default()
-        });
-        let initialized = object_with(G::Property {
-            key: Some(string_expr(b"a")),
-            value: Some(string_expr(b"b")),
-            initializer: Some(string_expr(b"c")),
-            ..G::Property::default()
-        });
+        let spread = object_with(
+            scratch,
+            G::Property {
+                kind: G::PropertyKind::Spread,
+                value: Some(identifier),
+                ..G::Property::default()
+            },
+        );
+        let getter = object_with(
+            scratch,
+            G::Property {
+                kind: G::PropertyKind::Get,
+                key: Some(string_expr(scratch, b"a")),
+                value: Some(string_expr(scratch, b"b")),
+                ..G::Property::default()
+            },
+        );
+        let initialized = object_with(
+            scratch,
+            G::Property {
+                key: Some(string_expr(scratch, b"a")),
+                value: Some(string_expr(scratch, b"b")),
+                initializer: Some(string_expr(scratch, b"c")),
+                ..G::Property::default()
+            },
+        );
         for root in [identifier, call, spread, getter, initialized] {
             assert!(matches!(write_error(&root, scratch), NotData::Expression));
         }
@@ -496,11 +516,11 @@ fn expressions_are_not_data() {
 #[cfg_attr(miri, ignore)]
 fn object_containing_itself_is_cyclic() {
     with_scope(|_, _, scratch| {
-        let root = Expr::init(E::Object::default(), Loc::EMPTY);
+        let root = Expr::allocate(scratch, E::Object::default(), Loc::EMPTY);
         let Data::EObject(mut object) = root.data else {
             panic!("expected an object");
         };
-        object.append_property(string_expr(b"self"), root);
+        object.append_property(scratch, string_expr(scratch, b"self"), root);
         assert!(matches!(write_error(&root, scratch), NotData::Cyclic));
     });
 }
@@ -509,8 +529,8 @@ fn object_containing_itself_is_cyclic() {
 #[cfg_attr(miri, ignore)]
 fn shared_object_is_written_twice() {
     with_scope(|atoms, arena, scratch| {
-        let shared = Expr::init(E::Object::default(), Loc::EMPTY);
-        let root = array_of(shared, shared);
+        let shared = Expr::allocate(scratch, E::Object::default(), Loc::EMPTY);
+        let root = array_of(scratch, shared, shared);
         let value = data_value_from_expr(&root, scratch, arena, atoms).expect("data");
         let items = [DataValue::Object(&[]), DataValue::Object(&[])];
         assert_eq!(*value, DataValue::Array(&items));
@@ -524,7 +544,7 @@ fn multiplying_shared_nodes_is_too_large() {
         let mut root = number_expr(1.0);
         let mut value_count = 1;
         while value_count <= max_data_nodes() {
-            root = array_of(root, root);
+            root = array_of(scratch, root, root);
             value_count = 2 * value_count + 1;
         }
         assert!(matches!(write_error(&root, scratch), NotData::TooLarge));
@@ -535,13 +555,13 @@ fn multiplying_shared_nodes_is_too_large() {
 #[cfg_attr(miri, ignore)]
 fn limit_counts_values_and_not_keys() {
     with_scope(|_, _, scratch| {
-        let largest = object_with_value_count(max_data_nodes());
+        let largest = object_with_value_count(scratch, max_data_nodes());
         let mut counter = ValueCounter::default();
         write_expr(&largest, scratch, &mut counter).expect("as many values as the limit allows");
         assert_eq!(counter.values, max_data_nodes());
         assert!(counter.keys > 0);
 
-        let oversized = object_with_value_count(max_data_nodes() + 1);
+        let oversized = object_with_value_count(scratch, max_data_nodes() + 1);
         let result = write_expr(&oversized, scratch, &mut ValueCounter::default());
         assert!(matches!(result, Err(NotData::TooLarge)));
     });
@@ -559,7 +579,7 @@ fn limit_is_equal_in_every_build() {
 fn toml_date_time_names_its_class() {
     with_scope(|atoms, arena, scratch| {
         let date = E::EString::init_toml_datetime(b"1979-05-27", E::TomlDateTimeKind::LocalDate);
-        let root = Expr::init(date, Loc::EMPTY);
+        let root = Expr::allocate(scratch, date, Loc::EMPTY);
         let expected = DataValue::Temporal {
             class: atoms.intern(b"PlainDate"),
             text: atoms.intern(b"1979-05-27"),

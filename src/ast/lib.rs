@@ -1,11 +1,4 @@
 #![feature(allocator_api)]
-// `#[thread_local]` for the per-node-allocation hot-path TLS
-// (`DATA_STORE_OVERRIDE`, `Expr/Stmt::data::Store::{INSTANCE,
-// MEMORY_ALLOCATOR, DISABLE_RESET}`, `store_ast_alloc_heap::ARENA`): bare
-// `__thread` slot, vs the `thread_local!`
-// macro's `LocalKey` wrapper. All are `Cell<*mut _>` / `Cell<bool>` (no
-// destructor, const init).
-#![feature(thread_local)]
 //! A [`Source`] borrows for `'a`. A diagnostic owns its bytes, so a [`Log`] may outlive the `Source`.
 
 use core::cell::Cell;
@@ -2559,7 +2552,8 @@ pub fn to_source(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys::Resul
 // ───────────────────────────────────────────────────────────────────────────
 
 pub mod arena;
-pub mod ast_memory_allocator;
+pub mod ast_hash_map;
+pub mod ast_vec;
 pub mod b;
 pub mod base;
 pub mod binding;
@@ -2572,7 +2566,6 @@ pub mod fold_string_addition;
 pub mod g;
 pub mod json;
 pub mod known_global;
-pub mod new_store;
 pub mod op;
 pub mod s;
 pub mod scope;
@@ -2602,7 +2595,8 @@ pub use loader::{Loader, LoaderHashTable, SideEffects};
 pub use target::Target;
 
 pub use arena::AstArena;
-pub use ast_memory_allocator::ASTMemoryAllocator;
+pub use ast_hash_map::{AstArrayHashMap, AstStringArrayHashMap, AstStringHashMap};
+pub use ast_vec::{AstBox, AstVec};
 pub use b as B;
 pub use base::{Index, IndexInt};
 pub use binding::Binding;
@@ -2703,276 +2697,6 @@ impl Default for Indentation {
 pub enum IndentationCharacter {
     Tab,
     Space,
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// Store helpers — debug guards + thread-local side-arena lifecycle for the
-// AST `NewStore` slabs.
-// ───────────────────────────────────────────────────────────────────────────
-
-/// `DebugOnlyDisabler<T>` — debug-build re-entrancy guard around Store
-/// access. No-op in release; in debug, `assert()` panics while the per-type
-/// disable count is non-zero.
-///
-/// Rust cannot declare a generic `#[thread_local]` static, so the debug
-/// build keeps one thread-local `TypeId` multiset (each `disable()`
-/// pushes `TypeId::of::<T>()`, each `enable()` pops one occurrence; the
-/// membership count is the per-type counter).
-pub struct DebugOnlyDisabler<T>(core::marker::PhantomData<T>);
-
-#[cfg(debug_assertions)]
-mod debug_disabler_state {
-    std::thread_local! {
-        /// Multiset of currently-disabled store types (one entry per
-        /// outstanding `disable()`); debug builds only.
-        pub(super) static DISABLED: core::cell::RefCell<Vec<core::any::TypeId>> =
-            const { core::cell::RefCell::new(Vec::new()) };
-    }
-}
-
-impl<T: 'static> DebugOnlyDisabler<T> {
-    #[inline]
-    pub fn assert() {
-        #[cfg(debug_assertions)]
-        debug_disabler_state::DISABLED.with(|d| {
-            assert!(
-                !d.borrow().contains(&core::any::TypeId::of::<T>()),
-                "[{}] called while disabled (did you forget to call enable?)",
-                core::any::type_name::<T>(),
-            );
-        });
-    }
-    #[inline]
-    pub(crate) fn disable() {
-        #[cfg(debug_assertions)]
-        debug_disabler_state::DISABLED.with(|d| d.borrow_mut().push(core::any::TypeId::of::<T>()));
-    }
-    #[inline]
-    pub(crate) fn enable() {
-        #[cfg(debug_assertions)]
-        debug_disabler_state::DISABLED.with(|d| {
-            let mut v = d.borrow_mut();
-            let pos = v
-                .iter()
-                .rposition(|t| *t == core::any::TypeId::of::<T>())
-                .expect("DebugOnlyDisabler::enable without matching disable");
-            v.remove(pos);
-        });
-    }
-    /// RAII scope: `disable()` now, `enable()` on drop.
-    #[inline]
-    pub fn scope() -> DebugOnlyDisablerScope<T> {
-        Self::disable();
-        DebugOnlyDisablerScope(core::marker::PhantomData)
-    }
-}
-
-/// Guard returned by [`DebugOnlyDisabler::scope`]; re-enables on drop.
-#[must_use = "disabler is re-enabled on drop; bind to a named local"]
-pub struct DebugOnlyDisablerScope<T: 'static>(core::marker::PhantomData<T>);
-impl<T: 'static> Drop for DebugOnlyDisablerScope<T> {
-    #[inline]
-    fn drop(&mut self) {
-        DebugOnlyDisabler::<T>::enable();
-    }
-}
-
-/// Per-thread side [`bun_alloc::ast_alloc::AstAllocState`] that backs
-/// `AstAlloc` while the bundler's `Stmt.Data.Store` / `Expr.Data.Store`
-/// block-store is active and **no** `ASTMemoryAllocator` scope is in effect.
-/// See `NewStore::reset` for the leak this closes.
-pub mod store_ast_alloc_heap {
-    use core::cell::Cell;
-    use core::ptr;
-
-    use bun_alloc::ast_alloc::{self, AstAllocState};
-
-    /// Address of this thread's installed side state (the "entered" flag and
-    /// the identity check for `reset()`/`exit()`). Never dereferenced.
-    #[thread_local]
-    static STATE_ID: Cell<*const AstAllocState> = Cell::new(ptr::null());
-    /// The `AST_ALLOC` occupant displaced by `enter()`, restored by `exit()`.
-    #[thread_local]
-    static PREVIOUS: Cell<Option<Box<AstAllocState>>> = Cell::new(None);
-
-    /// `true` iff the state this module installed is the one currently active
-    /// (i.e. no other scope is stacked on top of it).
-    fn owns_active_state() -> bool {
-        core::ptr::eq(ast_alloc::active_state_id(), STATE_ID.get())
-    }
-
-    pub(crate) fn enter() {
-        if bun_core::getenv_z(bun_core::zstr!("BUN_DISABLE_STORE_AST_HEAP")).is_some() {
-            return;
-        }
-        if !STATE_ID.get().is_null() {
-            return;
-        }
-        let state = ast_alloc::acquire_state();
-        STATE_ID.set(&raw const *state);
-        PREVIOUS.set(ast_alloc::swap_state(Some(state)));
-    }
-
-    pub fn reset() {
-        if STATE_ID.get().is_null() {
-            enter();
-            return;
-        }
-        // Skip if another scope's state is stacked on top — resetting it
-        // would free that scope's live data.
-        if !owns_active_state() {
-            debug_assert!(
-                false,
-                "store_ast_alloc_heap::reset while another AstAllocState is installed"
-            );
-            return;
-        }
-        ast_alloc::reset_active_state();
-    }
-
-    pub(crate) fn exit() {
-        if STATE_ID.get().is_null() {
-            return;
-        }
-        // Skip if another scope's state is stacked on top.
-        if !owns_active_state() {
-            debug_assert!(
-                false,
-                "store_ast_alloc_heap::exit while another AstAllocState is installed"
-            );
-            return;
-        }
-        STATE_ID.set(ptr::null());
-        if let Some(state) = ast_alloc::swap_state(PREVIOUS.take()) {
-            ast_alloc::release_state(state);
-        }
-    }
-}
-
-// ── DATA_STORE_OVERRIDE ────────────────────────────────────────────────────
-// Thread-local override arena for `Expr`/`Stmt` boxed payloads.
-//
-// When non-null, `Expr::init`
-// allocates boxed payloads into this arena instead of the long-lived block
-// store, so a scoped caller (YAML/TOML/JSONC parse) can bulk-free the whole
-// tree by dropping the arena. Set/restored by `ASTMemoryAllocator::Scope`.
-#[thread_local]
-static DATA_STORE_OVERRIDE: core::cell::Cell<*const bun_alloc::Arena> =
-    core::cell::Cell::new(core::ptr::null());
-
-#[inline]
-fn data_store_override() -> *const bun_alloc::Arena {
-    DATA_STORE_OVERRIDE.get()
-}
-#[inline]
-fn set_data_store_override(p: *const bun_alloc::Arena) {
-    DATA_STORE_OVERRIDE.set(p);
-}
-
-/// Copy `bytes` into the active AST arena so the slice shares the same
-/// lifetime as the `StoreRef`-backed `Expr` nodes that reference it
-/// (bulk-freed on Store reset). Callers
-/// building an `EString` from a scratch buffer must intern the bytes here, not
-/// into a function-local bump, or `EString.data` dangles when that bump drops.
-/// The lifetime is erased per the `StoreStr` convention — arena ownership, not
-/// a leak.
-pub fn data_store_dupe_str(bytes: &[u8]) -> &'static [u8] {
-    let ov = DATA_STORE_OVERRIDE.get();
-    if !ov.is_null() {
-        // SAFETY: override is installed by an RAII `ASTMemoryAllocator::Scope`
-        // that outlives this call, so `*ov` is a live `Arena`. The returned
-        // slice is borrowed from that arena; its lifetime is widened to
-        // `'static` per the `StoreStr` convention (arena ownership, bulk-freed
-        // on scope drop — callers must not hold it past that boundary).
-        return unsafe {
-            let dup: *const [u8] = (*ov).alloc_slice_copy(bytes);
-            &*dup
-        };
-    }
-    // No override arena: allocate in the thread-local AST heap (`AstAlloc`),
-    // which is reset alongside the Expr/Stmt stores. `AstAlloc` is a `'static`
-    // ZST, so `Vec::leak` already yields `&'static mut [u8]` — no `transmute`
-    // needed. Storage lives until `store_ast_alloc_heap::reset()`; callers must
-    // not hold the slice across that boundary (same contract as every
-    // `StoreRef`/`StoreStr`).
-    let mut v: Vec<u8, bun_alloc::AstAlloc> = bun_alloc::AstAlloc::vec();
-    v.extend_from_slice(bytes);
-    v.leak()
-}
-
-/// RAII scope for [`store_ast_alloc_heap`]: `enter()` on construction,
-/// `exit()` on drop.
-#[must_use = "side-arena heap lives until this guard drops"]
-pub struct StoreAstAllocHeap(());
-impl StoreAstAllocHeap {
-    #[inline]
-    pub fn new() -> Self {
-        store_ast_alloc_heap::enter();
-        Self(())
-    }
-}
-impl Drop for StoreAstAllocHeap {
-    #[inline]
-    fn drop(&mut self) {
-        store_ast_alloc_heap::exit();
-    }
-}
-
-/// RAII guard that resets the thread-local `Stmt.Data.Store` and
-/// `Expr.Data.Store` slabs on scope exit.
-#[must_use = "store reset runs on drop; bind to a named local"]
-pub struct StoreResetGuard(());
-impl StoreResetGuard {
-    #[inline]
-    pub fn new() -> Self {
-        Self(())
-    }
-}
-impl Drop for StoreResetGuard {
-    #[inline]
-    fn drop(&mut self) {
-        stmt::data::Store::reset();
-        expr::data::Store::reset();
-    }
-}
-
-/// Idempotently create both thread-local AST node stores (`Expr.Data.Store`
-/// + `Stmt.Data.Store`). Safe to call repeatedly — `Store::create()` is a
-/// no-op once the slab (or an `ASTMemoryAllocator` override) is installed,
-/// so no `Once` guard is needed (and a process-global `Once` would be wrong
-/// anyway: the backing `INSTANCE` is `#[thread_local]`).
-#[inline]
-pub fn initialize_store() {
-    expr::data::Store::create();
-    stmt::data::Store::create();
-}
-
-/// RAII guard that pins the thread-local `disable_reset` flag on both AST
-/// `Store`s for its scope.
-#[must_use = "disable_reset is restored on drop; bind to a named local"]
-pub struct DisableStoreReset {
-    prev_expr: bool,
-    prev_stmt: bool,
-}
-impl DisableStoreReset {
-    #[inline]
-    pub fn new() -> Self {
-        let prev_expr = expr::data::Store::disable_reset();
-        let prev_stmt = stmt::data::Store::disable_reset();
-        expr::data::Store::set_disable_reset(true);
-        stmt::data::Store::set_disable_reset(true);
-        Self {
-            prev_expr,
-            prev_stmt,
-        }
-    }
-}
-impl Drop for DisableStoreReset {
-    #[inline]
-    fn drop(&mut self) {
-        expr::data::Store::set_disable_reset(self.prev_expr);
-        stmt::data::Store::set_disable_reset(self.prev_stmt);
-    }
 }
 
 #[cfg(test)]

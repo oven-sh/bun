@@ -82,7 +82,6 @@ pub(crate) fn normalize(path: &[u8], bytes: &[u8], options: Options) -> Option<N
     }
     let mut out = match kind_for(path)? {
         Kind::Js(loader) => {
-            let _store = StoreScope::enter();
             let arena = AstArena::new();
             let source = bun_ast::Source::init_path_string(path, bytes);
             let ast = parse_js(&arena, &source, loader, options)?;
@@ -108,7 +107,6 @@ pub(crate) fn normalize_minified_pair(
     if old.len() > MAX_BYTES || new.len() > MAX_BYTES {
         return None;
     }
-    let _store = StoreScope::enter();
     let (arena_o, arena_n) = (AstArena::new(), AstArena::new());
     let source_o = bun_ast::Source::init_path_string(path, old);
     let source_n = bun_ast::Source::init_path_string(path, new);
@@ -164,7 +162,6 @@ fn key_pair(
     if old.len() > MAX_BYTES || new.len() > MAX_BYTES {
         return None;
     }
-    let _store = StoreScope::enter();
     let (arena_o, arena_n) = (AstArena::new(), AstArena::new());
     let source_o = bun_ast::Source::init_path_string(path, old);
     let source_n = bun_ast::Source::init_path_string(path, new);
@@ -285,16 +282,6 @@ pub(crate) fn looks_minified(bytes: &[u8]) -> bool {
         .filter(|&l| l > 256)
         .sum();
     bytes.len() > 256 && long * 2 > bytes.len()
-}
-
-/// The parser allocates nodes from thread-local stores; keep them alive for the ASTs in this scope, reset after.
-struct StoreScope(bun_ast::StoreResetGuard);
-impl StoreScope {
-    fn enter() -> StoreScope {
-        bun_ast::expr::data::Store::create();
-        bun_ast::stmt::data::Store::create();
-        StoreScope(bun_ast::StoreResetGuard::new())
-    }
 }
 
 fn parse_js<'a>(

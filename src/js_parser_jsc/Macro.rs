@@ -1,9 +1,7 @@
-use bun_collections::VecExt;
 use core::cell::Cell;
 use core::ffi::c_void;
 
-use bun_ast::DisableStoreReset;
-use bun_ast::{E, Expr, ExprData, ExprNodeList, G, ToJSError};
+use bun_ast::{AstVec, E, Expr, ExprData, ExprNodeList, G, ToJSError};
 use bun_ast::{Log, Range, Source};
 use bun_bundler::options::TransformOptions;
 use bun_bundler::{Transpiler, entry_points::MacroEntryPoint};
@@ -63,7 +61,6 @@ fn call_macro(
         );
         return Err(crate::Error::MacroFailed);
     }
-    let _store_guard = DisableStoreReset::new();
     let import_record_path_without_macro_prefix = if is_macro_path(import_record_path) {
         &import_record_path[NAMESPACE_WITH_COLON.len()..]
     } else {
@@ -578,12 +575,12 @@ impl<'a> Run<'a> {
                 let mut iter = JSArrayIterator::init(value, self.global)?;
 
                 // Process all array items
-                let mut array = ExprNodeList::init_capacity(iter.len as usize);
+                let mut array = ExprNodeList::with_capacity_in(iter.len as usize, self.bump);
                 // (errdefer free deleted — drops on `?`)
                 let expr = Expr::allocate(
                     self.bump,
                     E::Array {
-                        items: bun_alloc::AstAlloc::vec(),
+                        items: AstVec::new(),
                         was_originally_macro: true,
                         ..Default::default()
                     },
@@ -596,7 +593,7 @@ impl<'a> Run<'a> {
                     if elem.is_missing() {
                         continue;
                     }
-                    VecExt::append(&mut array, elem);
+                    array.push(self.bump, elem);
                     i += 1;
                 }
 
@@ -621,7 +618,7 @@ impl<'a> Run<'a> {
                 let expr = Expr::allocate(
                     self.bump,
                     E::Object {
-                        properties: bun_alloc::AstAlloc::vec(),
+                        properties: AstVec::new(),
                         was_originally_macro: true,
                         ..Default::default()
                     },
@@ -642,7 +639,7 @@ impl<'a> Run<'a> {
                 // `object_iter` dropped at scope exit (was `defer object_iter.deinit()`)
 
                 // Build properties list
-                let mut properties = G::PropertyList::init_capacity(object_iter.len);
+                let mut properties = G::PropertyList::with_capacity_in(object_iter.len, self.bump);
                 // (errdefer clearAndFree deleted — drops on `?`)
 
                 while let Some((prop, prop_value)) = object_iter.next()? {
@@ -654,8 +651,8 @@ impl<'a> Run<'a> {
                     let key_bytes: &[u8] = self.bump.alloc_slice_copy(&prop.to_owned_slice());
                     let key =
                         Expr::allocate(self.bump, E::EString::init(key_bytes), self.caller.loc);
-                    VecExt::append(
-                        &mut properties,
+                    properties.push(
+                        self.bump,
                         G::Property {
                             flags: E::own_key_property_flags(&key),
                             key: Some(key),

@@ -1,6 +1,15 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  withoutAsanQuarantine,
+} from "harness";
 import { chmodSync, statSync } from "node:fs";
 import path from "path";
 
@@ -18,7 +27,7 @@ const stripAnsi = Bun.stripANSI;
 async function runRepl(
   input: string | string[],
   options: {
-    env?: Record<string, string>;
+    env?: NodeJS.Dict<string>;
     cwd?: string;
     /** Where the REPL keeps .bun_repl_history. Defaults to an empty directory. */
     home?: string;
@@ -427,6 +436,28 @@ describe.concurrent("Bun REPL", () => {
       const filePath = path.join(String(dir), "test.js");
       const { outputs, stderr, exitCode } = await runRepl([`.load ${filePath}`, "loadedVar", ".exit"]);
       expect(outputs).toEqual([`Loading ${filePath}...\n42`, "42"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".load does not leak the parsed file", async () => {
+      using dir = tempDir("repl-load-leak", {
+        "holes.js": `() => [${Buffer.alloc(100_000, ",")}]; 0`,
+      });
+      const { outputs, stderr, exitCode } = await runRepl(
+        [
+          ...Array(3).fill(".load holes.js"),
+          "Bun.gc(true); var before = process.memoryUsage.rss(); 0",
+          ...Array(30).fill(".load holes.js"),
+          "Bun.gc(true); (process.memoryUsage.rss() - before) / 1024 / 1024",
+          ".exit",
+        ],
+        { cwd: String(dir), env: withoutAsanQuarantine(bunEnv) },
+      );
+      const loaded = "Loading holes.js...\n0";
+      expect(outputs.slice(0, -1)).toEqual([...Array(3).fill(loaded), "0", ...Array(30).fill(loaded)]);
+      // A leak keeps 1.5 MiB per load.
+      expect(Number(outputs.at(-1))).toBeLessThan(isASAN || isDebug ? 18 : 15);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });

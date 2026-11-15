@@ -250,6 +250,7 @@ dependencies = [
 name = "bun_ast"
 version = "0.0.0"
 dependencies = [
+ "allocator-api2",
  "bitflags",
  "bstr",
  "bun_alloc",
@@ -409,7 +410,6 @@ dependencies = [
  "bun_ast",
  "bun_bundler",
  "bun_clap",
- "bun_collections",
  "bun_core",
  "bun_install_types",
  "bun_io",
@@ -817,7 +817,6 @@ dependencies = [
  "bun_alloc",
  "bun_ast",
  "bun_base64",
- "bun_collections",
  "bun_core",
  "bun_dotenv",
  "bun_install_types",
@@ -1256,7 +1255,6 @@ dependencies = [
 name = "bun_lint_react_compiler"
 version = "0.0.0"
 dependencies = [
- "bun_alloc",
  "bun_ast",
  "bun_core",
  "bun_lint",

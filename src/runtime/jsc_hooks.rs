@@ -467,14 +467,11 @@ unsafe fn init_runtime_state(
                 //
                 // Unwind the per-VM state this hook set up before the
                 // `Transpiler::init` attempt: the `RuntimeState` box + its TLS
-                // slot (set above) and the thread-local AST stores that
-                // `Transpiler::init` `create()`d before it failed.
+                // slot (set above).
                 // Mirrors `deinit_runtime_state`, which is the teardown the
                 // `Ok` path would otherwise reach.
                 RUNTIME_STATE.set(ptr::null_mut());
                 drop(owned);
-                bun_ast::expr::data::Store::deinit();
-                bun_ast::stmt::data::Store::deinit();
                 return Err(e.into());
             }
         }
@@ -660,15 +657,6 @@ unsafe fn deinit_runtime_state(state: OpaqueRuntimeState) {
         debug_assert!(state.cron_jobs.get().is_empty());
         drop(state);
     }
-    // Free the thread-local AST stores allocated by `Transpiler::init`
-    // (via `Store::create()`). They live in TLS without a Drop, so each worker
-    // thread strands a `Box<Store>` plus its lazily-allocated block chain when
-    // the thread exits. `deinit()` is a no-op if a bundler arena currently owns
-    // the allocator (`memory_allocator()` non-null) or the store was never
-    // created. After the `RuntimeState` drop above nothing on this thread
-    // touches the stores again.
-    bun_ast::expr::data::Store::deinit();
-    bun_ast::stmt::data::Store::deinit();
 }
 
 /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
@@ -1955,16 +1943,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
         | L::Xml
         | L::Text
         | L::Md => {
-            // `bun_ast::ASTMemoryAllocator::Scope`.
-            let mut _ast_scope = bun_ast::ast_memory_allocator::Scope::default();
-            _ast_scope.enter();
-
-            // `Transpiler::reset_store`. Inline only the
-            // block-store half; `AstAlloc` gets its own per-transpile state
-            // below, so the side module's long-lived state is not touched.
-            bun_ast::Expr::data_store_reset();
-            bun_ast::Stmt::data_store_reset();
-
             let hash = bun_watcher::Watcher::get_hash(path.text);
             let is_main = jsc_vm.main() == Some(path.text);
             let is_preload = jsc_vm.is_in_preload.get() && jsc_vm.preload_hash.get() == hash;
@@ -1981,9 +1959,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             // Stable heap address (Box interior); survives the move into
             // `arena_guard` and into the VM slot on give-back.
             let arena_ptr: *const bun_ast::AstArena = &raw const *arena;
-            // Captured before `arena` moves into `arena_guard` (the Box
-            // interior is address-stable across the move).
-            let arena_heap: *mut bun_alloc::mimalloc::Heap = arena.heap_ptr();
             let give_back_arena = true;
             // Note: a scopeguard so `?`-early-returns still run the cleanup.
             let mut arena_guard = scopeguard::guard(
@@ -2026,16 +2001,13 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                                 // the costly half (per-page free-list/bitmap
                                 // teardown, plus `_mi_stats_merge_from`'s
                                 // `mi_stats_t` walk when stats are compiled in).
-                                // Because `AstAlloc::deallocate` is a no-op (the
-                                // AST graph is abandoned, not freed — see the
-                                // `Expr::Data::clone_in` aliasing invariant in
-                                // `ast_alloc.rs`), this heap's footprint only
+                                // Most of what a parse allocates is abandoned, so this heap's footprint only
                                 // *grows* across retained modules, so a tight
                                 // cap means a `mi_heap_destroy` every few
                                 // modules — and `next lint` transpiles a few
                                 // hundred. `mi_heap_collect` can't substitute:
                                 // it only returns *empty* pages, and there are
-                                // none while the dead AST blocks pin them. So
+                                // none while the dead blocks pin them. So
                                 // the lever is the cap: raise it to the spec's
                                 // 8 MB (matching every other
                                 // `reset_retain_with_limit` call site) so the
@@ -2054,10 +2026,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     // else: drop the fresh Box.
                 },
             );
-            // Per-transpile `AstAlloc` state spilling into the transpile
-            // arena. Declared after `arena_guard` so it drops before the
-            // guard can reset that heap.
-            let _ast_alloc_scope = bun_alloc::ast_alloc::ScopedAstAlloc::with_spill(arena_heap);
 
             let mut cache = RuntimeTranspilerCache::default();
 

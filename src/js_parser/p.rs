@@ -1,4 +1,3 @@
-use bun_collections::VecExt;
 // This file defines the `P` parser struct (generic over typescript/jsx/scan_only
 // const params) and its core methods.
 
@@ -8,8 +7,8 @@ use std::io::Write as _;
 use bun_alloc::Arena as Bump;
 
 use bun_alloc::ArenaVecExt as _;
-use bun_ast::{ImportKind, ImportRecord};
-use bun_collections::{ArrayHashMap, HashMap, StringHashMap};
+use bun_ast::{AstBox, AstStringHashMap, AstVec, ImportKind, ImportRecord};
+use bun_collections::{ArrayHashMap, HashMap};
 use bun_core::Output;
 use bun_core::strings;
 use bun_ptr::CellExt as _;
@@ -811,9 +810,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     where
         T: js_ast::expr::IntoExprData,
     {
-        // The import-record side-effect is order-independent of `Expr.init`'s
-        // Store allocation.
-        let expr = Expr::init(t, loc);
+        let expr = Expr::allocate(self.ast_arena, t, loc);
         if SCAN_ONLY {
             if let js_ast::ExprData::ECall(call) = expr.data {
                 if let js_ast::ExprData::EIdentifier(ident) = call.target.data {
@@ -839,7 +836,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     where
         T: js_ast::stmt::StatementData,
     {
-        Stmt::alloc(t, loc)
+        Stmt::allocate(self.ast_arena, t, loc)
     }
 
     pub(crate) fn load_name_from_ref(&self, r#ref: Ref) -> &'a [u8] {
@@ -983,7 +980,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             self.report_stack_overflow(arg.loc);
             return None;
         }
-        let root = Expr::init(E::If { ..*first }, arg.loc);
+        let root = Expr::allocate(self.ast_arena, E::If { ..*first }, arg.loc);
         let mut link = root.data.e_if().expect("infallible: variant checked");
         loop {
             link.yes = self.transpose_each_branch(link.yes, leaf)?;
@@ -992,7 +989,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 link.no = leaf(self, no);
                 return Some(root);
             };
-            link.no = Expr::init(E::If { ..*next }, no.loc);
+            link.no = Expr::allocate(self.ast_arena, E::If { ..*next }, no.loc);
             link = link.no.data.e_if().expect("infallible: variant checked");
         }
     }
@@ -1090,18 +1087,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 // does off a namespace object, rather than failing the build.
                 self.symbols[item.local.inner_index() as usize].import_item_status =
                     bun_ast::ImportItemStatus::Generated;
-                bun_core::handle_oom(self.named_imports.put(
+                self.named_imports.put(
+                    self.ast_arena,
                     item.local,
                     js_ast::NamedImport {
                         alias: Some(item.alias),
                         alias_loc: bun_ast::Loc::EMPTY,
                         namespace_ref: item.namespace_ref,
                         import_record_index: record,
-                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                        local_parts_with_uses: AstVec::new(),
                         alias_is_star: false,
                         is_exported: false,
                     },
-                ));
+                );
             }
         }
     }
@@ -1388,7 +1386,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             return None;
         }
         let ns = self.new_symbol(js_ast::symbol::Kind::Other, b"require_ns");
-        VecExt::append(&mut self.module_scope_mut().generated, ns);
+        self.module_scope.generated.push(self.ast_arena, ns);
         self.import_items_for_namespace
             .insert(ns, ImportItemForNamespaceMap::default());
         self.dynamic_import_namespace_locals
@@ -1450,7 +1448,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 .into_bump_str()
                 .as_bytes();
                 let ns = self.new_symbol(js_ast::symbol::Kind::Other, name);
-                VecExt::append(&mut self.module_scope_mut().generated, ns);
+                self.module_scope.generated.push(self.ast_arena, ns);
                 self.import_items_for_namespace
                     .insert(ns, ImportItemForNamespaceMap::default());
                 self.imports_to_convert_from_dynamic_import
@@ -1530,7 +1528,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         self.new_expr(
             E::Call {
                 target: require_resolve_ref,
-                args: ExprNodeList::init_one(arg),
+                args: ExprNodeList::from_slice_in(&[arg], self.ast_arena),
                 ..Default::default()
             },
             arg.loc,
@@ -1584,7 +1582,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             return self.new_expr(
                 E::Call {
                     target: self.value_for_require(arg.loc),
-                    args: ExprNodeList::init_one(arg),
+                    args: ExprNodeList::from_slice_in(&[arg], self.ast_arena),
                     ..Default::default()
                 },
                 arg.loc,
@@ -1715,7 +1713,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 self.new_expr(
                     E::Call {
                         target: self.value_for_require(arg.loc),
-                        args: ExprNodeList::init_one(arg),
+                        args: ExprNodeList::from_slice_in(&[arg], self.ast_arena),
                         ..Default::default()
                     },
                     arg.loc,
@@ -1806,8 +1804,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
         let list = ScopeUseList {
             tracked: true,
-            points: bun_alloc::AstAlloc::vec_from_slice(&self.scope_uses),
-            spans: bun_alloc::AstAlloc::vec_from_slice(&spans),
+            points: AstVec::from_slice_in(&self.scope_uses, self.ast_arena),
+            spans: AstVec::from_slice_in(&spans, self.ast_arena),
         };
         self.scope_uses = Vec::new();
         list
@@ -1884,7 +1882,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     where
         T: js_ast::binding::BindingAlloc,
     {
-        Binding::alloc(self.arena, t, loc)
+        Binding::alloc(self.ast_arena, t, loc)
     }
 
     pub(crate) fn record_exported_binding(&mut self, binding: Binding) {
@@ -1945,12 +1943,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             );
         } else if !self.is_deoptimized_common_js() {
             self.named_exports.put(
+                self.ast_arena,
                 alias,
                 js_ast::NamedExport {
                     alias_loc: loc,
                     ref_: r#ref,
                 },
-            )?;
+            );
         }
         Ok(())
     }
@@ -2032,11 +2031,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     pub(crate) fn take_symbol_uses(&mut self) -> Result<SymbolUseMap, bun_alloc::AllocError> {
         let mut map = core::mem::take(&mut self.symbol_uses);
         map.clear_retaining_capacity();
-        map.ensure_total_capacity(self.part_uses.len())?;
+        map.ensure_total_capacity(self.ast_arena, self.part_uses.len());
         let generation = u64::from(self.part_generation) << 32;
         for (at, &(ref_, use_)) in self.part_uses.iter().enumerate() {
             if self.part_use_slot[ref_.inner_index() as usize] == generation | at as u64 {
-                map.put_assume_capacity(ref_, use_);
+                map.put(self.ast_arena, ref_, use_);
             }
         }
         self.part_uses.clear();
@@ -2349,8 +2348,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             record.path.namespace = b"runtime";
             record.flags.insert(bun_ast::ImportRecordFlags::IS_INTERNAL);
         }
-        let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
-        declared_symbols.ensure_total_capacity(imports.len())?;
+        let mut declared_symbols =
+            bun_ast::DeclaredSymbolList::with_capacity_in(imports.len(), self.ast_arena);
         let mut properties = BumpVec::<B::Property>::with_capacity_in(imports.len(), self.arena);
         for &import in imports {
             let r = self
@@ -2371,10 +2370,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 value,
                 default_value: None,
             });
-            declared_symbols.append_assume_capacity(DeclaredSymbol {
-                ref_: r,
-                is_top_level: true,
-            });
+            declared_symbols.append(
+                self.ast_arena,
+                DeclaredSymbol {
+                    ref_: r,
+                    is_top_level: true,
+                },
+            );
         }
         let binding = self.b(
             B::Object {
@@ -2391,11 +2393,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             },
             bun_ast::Loc::EMPTY,
         );
-        let mut decls = G::DeclList::init_capacity(1);
-        decls.append_assume_capacity(G::Decl {
-            binding,
-            value: Some(value),
-        });
+        let decls = G::DeclList::from_slice_in(
+            &[G::Decl {
+                binding,
+                value: Some(value),
+            }],
+            self.ast_arena,
+        );
         let stmt = self.s(
             S::Local {
                 kind: js_ast::LocalKind::KVar,
@@ -2407,7 +2411,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         parts.push(js_ast::Part {
             stmts: self.arena.alloc_slice_fill_with(1, |_| stmt).into(),
             declared_symbols,
-            import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_id),
+            import_record_indices: js_ast::PartImportRecordIndices::from_slice_in(
+                &[import_record_id],
+                self.ast_arena,
+            ),
             tag: bun_ast::PartTag::Runtime,
             ..Default::default()
         });
@@ -2464,16 +2471,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     name: LocRef::default(),
                 }
             });
-        let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
-        declared_symbols.ensure_total_capacity(imports.len() + 1)?;
+        let mut declared_symbols =
+            bun_ast::DeclaredSymbolList::with_capacity_in(imports.len() + 1, self.ast_arena);
 
         let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, namespace_identifier);
-        declared_symbols.append_assume_capacity(DeclaredSymbol {
-            ref_: namespace_ref,
-            is_top_level: true,
-        });
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        VecExt::append(&mut self.module_scope_mut().generated, namespace_ref);
+        declared_symbols.append(
+            self.ast_arena,
+            DeclaredSymbol {
+                ref_: namespace_ref,
+                is_top_level: true,
+            },
+        );
+        self.module_scope
+            .generated
+            .push(self.ast_arena, namespace_ref);
         for (&(alias_name, ref_), clause_item) in imports.iter().zip(clause_items.iter_mut()) {
             *clause_item = js_ast::ClauseItem {
                 alias: js_ast::StoreStr::new(alias_name),
@@ -2484,37 +2495,44 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     loc: bun_ast::Loc::default(),
                 },
             };
-            declared_symbols.append_assume_capacity(DeclaredSymbol {
-                ref_,
-                is_top_level: true,
-            });
+            declared_symbols.append(
+                self.ast_arena,
+                DeclaredSymbol {
+                    ref_,
+                    is_top_level: true,
+                },
+            );
 
             // ensure every e_import_identifier holds the namespace
             if self.options.features.hot_module_reloading {
                 let symbol = &mut self.symbols[ref_.inner_index() as usize];
                 if symbol.namespace_alias.is_none() {
-                    symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
-                        namespace_ref,
-                        alias: js_ast::StoreStr::new(alias_name),
-                        import_record_index: import_record_i,
-                        was_originally_property_access: false,
-                    }));
+                    symbol.namespace_alias = Some(AstBox::new_in(
+                        js_ast::NamespaceAlias {
+                            namespace_ref,
+                            alias: js_ast::StoreStr::new(alias_name),
+                            import_record_index: import_record_i,
+                            was_originally_property_access: false,
+                        },
+                        self.ast_arena,
+                    ));
                 }
             }
 
             self.is_import_item.insert(ref_, ());
             self.named_imports.put(
+                self.ast_arena,
                 ref_,
                 js_ast::NamedImport {
                     alias: Some(js_ast::StoreStr::new(alias_name)),
                     alias_loc: bun_ast::Loc::default(),
                     namespace_ref,
                     import_record_index: import_record_i,
-                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                    local_parts_with_uses: AstVec::new(),
                     alias_is_star: false,
                     is_exported: false,
                 },
-            )?;
+            );
         }
 
         let import_stmt = self.s(
@@ -2551,7 +2569,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         parts.push(js_ast::Part {
             stmts: stmts.into(),
             declared_symbols,
-            import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_i),
+            import_record_indices: js_ast::PartImportRecordIndices::from_slice_in(
+                &[import_record_i],
+                self.ast_arena,
+            ),
             tag,
             can_be_removed_if_unused: is_jsx,
             force_tree_shaking: is_jsx,
@@ -2606,16 +2627,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             arena,
         );
 
-        let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
-        declared_symbols.ensure_total_capacity(len)?;
+        let mut declared_symbols =
+            bun_ast::DeclaredSymbolList::with_capacity_in(len, self.ast_arena);
 
         let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"RefreshRuntime");
-        declared_symbols.append_assume_capacity(DeclaredSymbol {
-            ref_: namespace_ref,
-            is_top_level: true,
-        });
-        // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-        VecExt::append(&mut self.module_scope_mut().generated, namespace_ref);
+        declared_symbols.append(
+            self.ast_arena,
+            DeclaredSymbol {
+                ref_: namespace_ref,
+                is_top_level: true,
+            },
+        );
+        self.module_scope
+            .generated
+            .push(self.ast_arena, namespace_ref);
 
         for entry in clauses {
             if entry.enabled {
@@ -2639,23 +2664,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         },
                     });
                 }
-                declared_symbols.append_assume_capacity(DeclaredSymbol {
-                    ref_: entry.r#ref,
-                    is_top_level: true,
-                });
+                declared_symbols.append(
+                    self.ast_arena,
+                    DeclaredSymbol {
+                        ref_: entry.r#ref,
+                        is_top_level: true,
+                    },
+                );
                 self.is_import_item.insert(entry.r#ref, ());
                 self.named_imports.put(
+                    self.ast_arena,
                     entry.r#ref,
                     js_ast::NamedImport {
                         alias: Some(js_ast::StoreStr::new(entry.name)),
                         alias_loc: bun_ast::Loc::EMPTY,
                         namespace_ref,
                         import_record_index,
-                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                        local_parts_with_uses: AstVec::new(),
                         alias_is_star: false,
                         is_exported: false,
                     },
-                )?;
+                );
             }
         }
 
@@ -2678,10 +2707,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             self.s(
                 S::Local {
                     kind: js_ast::s::Kind::KConst,
-                    decls: G::DeclList::from_slice(&[Decl {
-                        binding,
-                        value: Some(value),
-                    }]),
+                    decls: G::DeclList::from_slice_in(
+                        &[Decl {
+                            binding,
+                            value: Some(value),
+                        }],
+                        self.ast_arena,
+                    ),
                     ..Default::default()
                 },
                 bun_ast::Loc::EMPTY,
@@ -2705,7 +2737,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         parts.push(js_ast::Part {
             stmts: stmts.into(),
             declared_symbols,
-            import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_index),
+            import_record_indices: js_ast::PartImportRecordIndices::from_slice_in(
+                &[import_record_index],
+                self.ast_arena,
+            ),
             tag: bun_ast::PartTag::Runtime,
             ..Default::default()
         });
@@ -3348,9 +3383,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             }
         }
 
-        self.module_scope_mut()
+        self.module_scope
             .generated
-            .ensure_unused_capacity(generated_symbols_count as usize * 3);
+            .reserve(self.ast_arena, generated_symbols_count as usize * 3);
 
         self.exports_ref =
             self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"exports")?;
@@ -3510,7 +3545,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                 self.new_symbol(js_ast::symbol::Kind::Hoisted, original_name);
                             // No live `&` borrow of `scope` exists here (the members
                             // snapshot was taken by value); `StoreRef` `DerefMut`.
-                            VecExt::append(&mut scope.generated, hoisted_ref);
+                            scope.generated.push(self.ast_arena, hoisted_ref);
                             self.hoisted_ref_for_sloppy_mode_block_fn
                                 .insert(value.ref_, hoisted_ref);
                             value.ref_ = hoisted_ref;
@@ -3580,7 +3615,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                 // no key write is needed here.
                                 // SAFETY: `name` is a symbol's `original_name`.
                                 *unsafe {
-                                    _scope.get_or_put_member_with_hash(name, hash.unwrap())
+                                    _scope.get_or_put_member_with_hash(
+                                        self.ast_arena,
+                                        name,
+                                        hash.unwrap(),
+                                    )
                                 }
                                 .value_ptr = member_in_scope;
 
@@ -3647,14 +3686,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                             // into this symbol but continue hoisting past this catch scope
                             self.symbols[existing_idx].link.set(value.ref_);
                             // SAFETY: `name` is a symbol's `original_name`.
-                            *unsafe { _scope.get_or_put_member_with_hash(name, hash.unwrap()) }
-                                .value_ptr = value;
+                            *unsafe {
+                                _scope.get_or_put_member_with_hash(
+                                    self.ast_arena,
+                                    name,
+                                    hash.unwrap(),
+                                )
+                            }
+                            .value_ptr = value;
                         }
 
                         if _scope.kind_stops_hoisting() {
                             // SAFETY: `name` is a symbol's `original_name`.
-                            *unsafe { _scope.get_or_put_member_with_hash(name, hash.unwrap()) }
-                                .value_ptr = value;
+                            *unsafe {
+                                _scope.get_or_put_member_with_hash(
+                                    self.ast_arena,
+                                    name,
+                                    hash.unwrap(),
+                                )
+                            }
+                            .value_ptr = value;
                             break;
                         }
 
@@ -3738,31 +3789,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         loc: bun_ast::Loc,
     ) -> Result<usize, crate::Error> {
         let mut parent: js_ast::StoreRef<Scope> = self.current_scope;
-        let arena = self.arena;
-        // Consume the arena `&mut Scope` directly into a `NonNull` so the
-        // SharedRW raw-pointer tag derived inside `NonNull::from` is the one
-        // stored in `parent.children` / `current_scope` / `scopes_in_order`.
-        // Deriving `scope_nn` from a `&mut` reborrow and then writing through
-        // the original `&mut` would pop `scope_nn`'s tag off the borrow stack
-        // (Stacked Borrows); going `&mut → NonNull → StoreRef` avoids that —
-        // every later deref/store goes through the `StoreRef` wrapping `scope_nn`.
-        // `..Scope::EMPTY` (a `const`) instead of `..Default::default()` so the
-        // remaining fields are filled from a compile-time value: no temporary
-        // `Scope` is built via the `Default` chain and then partially dropped,
-        // and the `members`/`children`/`generated` empty headers const-fold.
-        // This runs once per pushed scope (every block/fn/class body).
-        let scope_nn: NonNull<Scope> = NonNull::from(arena.alloc(Scope {
-            kind: KIND,
-            parent: Some(parent),
-            ..Scope::EMPTY
-        }));
-        // `StoreRef` wraps the SharedRW `NonNull` derived above; every later
-        // `Deref`/`DerefMut` goes through `scope_nn`, so reborrows do not pop
-        // its tag (see comment above).
-        let mut scope = js_ast::StoreRef::from(scope_nn);
+        // Copying `Scope::EMPTY` avoids building a `Scope` on the stack.
+        let mut scope = self.ast_arena.alloc_node(Scope::EMPTY);
+        scope.kind = KIND;
+        scope.parent = Some(parent);
 
         // `parent != scope` (fresh alloc) so the two `&mut` do not alias.
-        VecExt::append(&mut parent.children, scope);
+        parent.children.push(self.ast_arena, scope);
         scope.strict_mode = parent.strict_mode;
 
         self.current_scope = scope;
@@ -3837,7 +3870,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     // lexer string-table (see `get_or_put_member_with_hash`),
                     // both of which outlive every arena-backed `Scope`. Avoids
                     // a per-argument `mi_heap_malloc` on every function body.
-                    unsafe { scope.members.put(key, value) };
+                    unsafe { scope.members.put(self.ast_arena, key, value) };
                 }
             }
         }
@@ -4265,7 +4298,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             .into_bump_str()
             .as_bytes();
             stmt.namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, name);
-            VecExt::append(&mut self.current_scope_mut().generated, stmt.namespace_ref);
+            self.current_scope
+                .generated
+                .push(self.ast_arena, stmt.namespace_ref);
         }
 
         let mut item_refs = ImportItemForNamespaceMap::new();
@@ -4291,12 +4326,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 if self.options.features.hot_module_reloading {
                     let symbol = &mut self.symbols[r#ref.inner_index() as usize];
                     if symbol.namespace_alias.is_none() {
-                        symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
-                            namespace_ref: stmt.namespace_ref,
-                            alias: js_ast::StoreStr::new(b"default"),
-                            import_record_index: stmt.import_record_index,
-                            was_originally_property_access: false,
-                        }));
+                        symbol.namespace_alias = Some(AstBox::new_in(
+                            js_ast::NamespaceAlias {
+                                namespace_ref: stmt.namespace_ref,
+                                alias: js_ast::StoreStr::new(b"default"),
+                                import_record_index: stmt.import_record_index,
+                                was_originally_property_access: false,
+                            },
+                            self.ast_arena,
+                        ));
                     }
                 }
 
@@ -4377,12 +4415,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             if self.options.features.hot_module_reloading {
                 let symbol = &mut self.symbols[r#ref.inner_index() as usize];
                 if symbol.namespace_alias.is_none() {
-                    symbol.namespace_alias = Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
-                        namespace_ref: stmt.namespace_ref,
-                        alias: js_ast::StoreStr::new(alias),
-                        import_record_index: stmt.import_record_index,
-                        was_originally_property_access: false,
-                    }));
+                    symbol.namespace_alias = Some(AstBox::new_in(
+                        js_ast::NamespaceAlias {
+                            namespace_ref: stmt.namespace_ref,
+                            alias: js_ast::StoreStr::new(alias),
+                            import_record_index: stmt.import_record_index,
+                            was_originally_property_access: false,
+                        },
+                        self.ast_arena,
+                    ));
                 }
             }
 
@@ -4537,7 +4578,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             ref_: self.new_symbol(js_ast::symbol::Kind::Other, identifier),
         };
 
-        VecExt::append(&mut self.current_scope_mut().generated, name.ref_);
+        self.current_scope.generated.push(self.ast_arena, name.ref_);
 
         name
     }
@@ -4577,7 +4618,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 let mut i: usize = (children.len_u32() - 1) as usize;
                 loop {
                     if children.mut_(i).as_ptr() == child.scope {
-                        let _ = children.ordered_remove(i);
+                        let _ = children.remove(i);
                         break;
                     }
                     if i == 0 {
@@ -4610,12 +4651,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     .original_name
                     .slice();
                 exported_members.put(
+                    self.ast_arena,
                     name,
                     js_ast::TSNamespaceMember {
                         loc: binding.loc,
                         data: js_ast::ts::Data::Property,
                     },
-                )?;
+                );
                 self.ref_to_ts_namespace_member
                     .insert(id.r#ref, js_ast::ts::Data::Property);
             }
@@ -4753,14 +4795,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             None
         };
 
-        let exported_members = map
-            .unwrap_or_else(|| js_ast::StoreRef::from_bump(self.arena.alloc(Default::default())));
-        js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
+        let exported_members = map.unwrap_or_else(|| self.ast_arena.alloc_node(Default::default()));
+        self.ast_arena.alloc_node(js_ast::TSNamespaceScope {
             exported_members,
             is_enum_scope,
             arg_ref: Ref::NONE,
             property_accesses: Default::default(),
-        }))
+        })
     }
 
     // TODO:
@@ -4917,7 +4958,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         if member.is_none() {
             // SAFETY: `name` is `'static`.
             unsafe {
-                self.module_scope_mut().members.put(
+                self.module_scope.members.put(
+                    self.ast_arena,
                     name,
                     js_ast::scope::Member {
                         ref_,
@@ -4932,7 +4974,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         // this module will be unable to reference this symbol. However, we must
         // still add the symbol to the scope so it gets minified (automatically-
         // generated code may still reference the symbol).
-        VecExt::append(&mut self.module_scope_mut().generated, ref_);
+        self.module_scope.generated.push(self.ast_arena, ref_);
         Ok(ref_)
     }
 
@@ -4979,7 +5021,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             let hashed = self.hash_generated_name(name);
             self.new_symbol(kind, hashed)
         };
-        VecExt::append(&mut self.module_scope_mut().generated, ref_);
+        self.module_scope.generated.push(self.ast_arena, ref_);
         ref_
     }
 
@@ -5027,9 +5069,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         // SAFETY: see key-lifetime note above — `name: &'a [u8]` outlives the
         // arena-owned `Scope` map.
         let entry = unsafe {
-            scope
-                .members
-                .get_or_put_hashed(js_ast::scope::Members::hash(name), name)
+            scope.members.get_or_put_hashed(
+                self.ast_arena,
+                js_ast::scope::Members::hash(name),
+                name,
+            )
         };
         if entry.found_existing {
             let existing: js_ast::scope::Member = *entry.value_ptr;
@@ -5468,9 +5512,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 };
                 let declaration_entry = already_declared.get_or_put(ref_)?;
                 if !declaration_entry.found_existing {
-                    let mut decls = bun_alloc::AstAlloc::vec();
-                    VecExt::append(
-                        &mut decls,
+                    let mut decls = AstVec::new();
+                    decls.push(
+                        self.ast_arena,
                         Decl {
                             binding: self.b(js_ast::b::Identifier { r#ref: ref_ }, local.loc),
                             value: None,
@@ -5483,10 +5527,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         },
                         local.loc,
                     ));
-                    self.declared_symbols.append(DeclaredSymbol {
-                        ref_,
-                        is_top_level: true,
-                    })?;
+                    self.declared_symbols.append(
+                        self.ast_arena,
+                        DeclaredSymbol {
+                            ref_,
+                            is_top_level: true,
+                        },
+                    );
                 }
             }
             self.relocated_top_level_vars.clear();
@@ -5511,7 +5558,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     if m.is_empty() {
                         None
                     } else {
-                        Some(bun_alloc::ast_box(m))
+                        Some(AstBox::new_in(m, self.ast_arena))
                     }
                 },
                 declared_symbols: self.declared_symbols.to_owned_slice(),
@@ -5520,7 +5567,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         &mut self.import_records_for_current_part,
                         BumpVec::new_in(self.arena),
                     );
-                    js_ast::PartImportRecordIndices::from_slice(v.as_slice())
+                    js_ast::PartImportRecordIndices::from_slice_in(v.as_slice(), self.ast_arena)
                 },
                 // SAFETY: fresh bump allocation, uniquely owned by the new Part.
                 scopes: bun_ast::StoreSlice::new_mut(
@@ -5545,7 +5592,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             // if the part is dead, invalidate all the usage counts
             let symbol_uses = self.take_symbol_uses()?;
             self.clear_symbol_usages_from_dead_part(&js_ast::Part {
-                declared_symbols: self.declared_symbols.clone()?,
+                declared_symbols: self.declared_symbols.clone_in(self.ast_arena),
                 symbol_uses,
                 ..Default::default()
             });
@@ -5813,11 +5860,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             if !self.is_revisit_for_substitution {
                 let call = self
                     .import_symbol_property_uses
-                    .get_or_put_value(self.exports_ref, Default::default())
-                    .expect("OOM")
+                    .get_or_put_value(self.ast_arena, self.exports_ref, Default::default())
                     .value_ptr
-                    .get_or_put_value(name, Default::default())
-                    .expect("OOM");
+                    .get_or_put_value(self.ast_arena, name, Default::default());
                 call.count_estimate += 1;
                 call.is_call_target = true;
             }
@@ -5856,7 +5901,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             let Some(uses) = part.import_symbol_property_uses.as_mut() else {
                 continue;
             };
-            let Some(calls) = uses.remove(&self.exports_ref) else {
+            let Some(calls) = uses.remove(self.ast_arena, &self.exports_ref) else {
                 continue;
             };
             if uses.is_empty() {
@@ -5874,8 +5919,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 .sum();
             if count > 0 {
                 part.symbol_uses
-                    .get_or_put_value(self.exports_ref, Default::default())
-                    .expect("OOM")
+                    .get_or_put_value(self.ast_arena, self.exports_ref, Default::default())
                     .value_ptr
                     .merge(js_ast::symbol::Use::unscoped(count));
             }
@@ -6565,14 +6609,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         use_.subtract(1);
         // note: this use is not removed as we assume it exists later
 
-        let gop = self
-            .import_symbol_property_uses
-            .get_or_put_value(base, Default::default())
-            .expect("unreachable");
+        let gop = self.import_symbol_property_uses.get_or_put_value(
+            self.ast_arena,
+            base,
+            Default::default(),
+        );
         let inner_use = gop
             .value_ptr
-            .get_or_put_value(name, Default::default())
-            .expect("unreachable");
+            .get_or_put_value(self.ast_arena, name, Default::default());
         inner_use.count_estimate += 1;
         inner_use.is_call_target |= opts.is_call_target() || opts.is_template_tag();
         true
@@ -6636,10 +6680,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             crate::parser::Runtime::ReplaceableExport::Delete => false,
             crate::parser::Runtime::ReplaceableExport::Replace(value) => {
                 let count = stmts.len();
-                let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
-                    binding: self.b(B::Identifier { r#ref: name_ref }, loc),
-                    value: Some(*value),
-                }]);
+                let decls = js_ast::g::DeclList::from_slice_in(
+                    &[G::Decl {
+                        binding: self.b(B::Identifier { r#ref: name_ref }, loc),
+                        value: Some(*value),
+                    }],
+                    self.ast_arena,
+                );
                 let mut local = self.s(
                     S::Local {
                         is_export: true,
@@ -6665,10 +6712,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 let inject_ref = self
                     .declare_symbol(js_ast::symbol::Kind::Other, loc, name)
                     .expect("unreachable");
-                let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
-                    binding: self.b(B::Identifier { r#ref: inject_ref }, loc),
-                    value: Some(*value),
-                }]);
+                let decls = js_ast::g::DeclList::from_slice_in(
+                    &[G::Decl {
+                        binding: self.b(B::Identifier { r#ref: inject_ref }, loc),
+                        value: Some(*value),
+                    }],
+                    self.ast_arena,
+                );
                 let mut local = self.s(
                     S::Local {
                         is_export: true,
@@ -6849,10 +6899,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 .put_no_clobber(name_ref, ())
                 .expect("oom");
 
-            let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
-                binding: self.b(B::Identifier { r#ref: name_ref }, name_loc),
-                value: None,
-            }]);
+            let decls = js_ast::g::DeclList::from_slice_in(
+                &[G::Decl {
+                    binding: self.b(B::Identifier { r#ref: name_ref }, name_loc),
+                    value: None,
+                }],
+                self.ast_arena,
+            );
 
             if self.current_scope == self.module_scope {
                 // Top-level namespace: "var"
@@ -6900,6 +6953,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     );
                     let right = self.new_expr(E::Object::default(), name_loc);
                     break 'arg_expr Expr::assign(
+                        self.ast_arena,
                         Expr::init_identifier(name_ref, name_loc),
                         self.new_expr(
                             E::Binary {
@@ -6931,7 +6985,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             ..Default::default()
         }]));
 
-        let args_list = ExprNodeList::init_one(arg_expr);
+        let args_list = ExprNodeList::from_slice_in(&[arg_expr], self.ast_arena);
 
         let target = 'target: {
             // "(() => { foo() })()" => "(() => foo())()"
@@ -7086,7 +7140,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             // so clone the value.
             js_ast::ExprData::EObject(_) | js_ast::ExprData::EArray(_) => {
                 let shared = Expr { data: value, loc };
-                if let Ok(copy) = shared.deep_clone_no_detach(self.ast_arena, self.stack_check) {
+                if let Ok(copy) = shared.deep_clone_with_check(self.ast_arena, self.stack_check) {
                     return copy;
                 }
             }
@@ -7258,7 +7312,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                             let args = self
                                                 .arena
                                                 .alloc_slice_copy(&[arg0, *arg_decorator]);
-                                            let args = ExprNodeList::from_arena_slice(args);
+                                            let args =
+                                                ExprNodeList::from_slice_in(args, self.ast_arena);
                                             let call = self.call_runtime(
                                                 arg_decorator.loc,
                                                 b"__legacyDecorateParamTS",
@@ -7329,7 +7384,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         full.extend_from_slice(&prop.ts_decorators);
                         full.extend_from_slice(&param_decorators);
                         full.extend_from_slice(&array);
-                        let full_items = ExprNodeList::from_bump_vec(full);
+                        let full_items = ExprNodeList::from_slice_in(&full, self.ast_arena);
                         let array_expr = self.new_expr(
                             E::Array {
                                 items: full_items,
@@ -7343,7 +7398,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                             descriptor_key,
                             descriptor_kind,
                         ]);
-                        let args = ExprNodeList::from_arena_slice(args_slice);
+                        let args = ExprNodeList::from_slice_in(args_slice, self.ast_arena);
 
                         let decorator = self.call_runtime(
                             prop.key.expect("infallible: prop has key").loc,
@@ -7420,9 +7475,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
                         // remove fields with decorators from class body. Move static members outside of class.
                         if prop.flags.contains(Flags::Property::IsStatic) {
-                            static_members.push(Stmt::assign(target, initializer));
+                            static_members.push(Stmt::assign(self.ast_arena, target, initializer));
                         } else {
-                            instance_members.push(Stmt::assign(target, initializer));
+                            instance_members.push(Stmt::assign(
+                                self.ast_arena,
+                                target,
+                                initializer,
+                            ));
                         }
                         continue;
                     }
@@ -7471,7 +7530,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                             let target = self.new_expr(E::Super {}, stmt.loc);
                             let arguments_ref =
                                 self.new_symbol(js_ast::symbol::Kind::Unbound, arguments_str);
-                            VecExt::append(&mut self.current_scope_mut().generated, arguments_ref);
+                            self.current_scope
+                                .generated
+                                .push(self.ast_arena, arguments_ref);
 
                             let spread_inner =
                                 self.new_expr(E::Identifier::init(arguments_ref), stmt.loc);
@@ -7481,7 +7542,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                 },
                                 stmt.loc,
                             );
-                            let args = ExprNodeList::init_one(super_);
+                            let args = ExprNodeList::from_slice_in(&[super_], self.ast_arena);
 
                             let call_value = self.new_expr(
                                 E::Call {
@@ -7552,11 +7613,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 stmts.extend_from_slice(&static_decorators);
                 if is_decorated {
                     let decorators = core::mem::take(&mut s_class.class.ts_decorators);
-                    let mut array = ExprNodeList::init_capacity(
+                    let mut array = ExprNodeList::with_capacity_in(
                         decorators.len() + constructor_param_decorators.len() + 1,
+                        self.ast_arena,
                     );
-                    array.extend_from_slice(&decorators);
-                    array.extend_from_slice(&constructor_param_decorators);
+                    array.extend_from_slice(self.ast_arena, &decorators);
+                    array.extend_from_slice(self.ast_arena, &constructor_param_decorators);
 
                     if self.options.features.emit_decorator_metadata {
                         if let Some(cf) = constructor_function {
@@ -7571,7 +7633,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                         .serialize_metadata(ca.ts_metadata)
                                         .expect("unreachable");
                                 }
-                                let items = ExprNodeList::from_arena_slice(param_array);
+                                let items =
+                                    ExprNodeList::from_slice_in(param_array, self.ast_arena);
                                 self.new_expr(
                                     E::Array {
                                         items,
@@ -7582,7 +7645,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                             } else {
                                 self.new_expr(
                                     E::Array {
-                                        items: bun_alloc::AstAlloc::vec(),
+                                        items: AstVec::new(),
                                         ..Default::default()
                                     },
                                     bun_ast::Loc::EMPTY,
@@ -7593,8 +7656,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                 bun_ast::Loc::EMPTY,
                             );
                             let args_slice = self.arena.alloc_slice_copy(&[label, args1]);
-                            let args = ExprNodeList::from_arena_slice(args_slice);
-                            array.push(self.call_runtime(stmt.loc, b"__legacyMetadataTS", args));
+                            let args = ExprNodeList::from_slice_in(args_slice, self.ast_arena);
+                            array.push(
+                                self.ast_arena,
+                                self.call_runtime(stmt.loc, b"__legacyMetadataTS", args),
+                            );
                         }
                     }
 
@@ -7609,11 +7675,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     );
                     let class_ident = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
                     let args_slice = self.arena.alloc_slice_copy(&[array_expr, class_ident]);
-                    let args = ExprNodeList::from_arena_slice(args_slice);
+                    let args = ExprNodeList::from_slice_in(args_slice, self.ast_arena);
 
                     let lhs = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
                     let rhs = self.call_runtime(stmt.loc, b"__legacyDecorateClassTS", args);
-                    stmts.push(Stmt::assign(lhs, rhs));
+                    stmts.push(Stmt::assign(self.ast_arena, lhs, rhs));
 
                     self.record_usage(class_ref);
                     self.record_usage(class_ref);
@@ -7655,7 +7721,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 let label = self.new_expr(E::EString::from_static($label), bun_ast::Loc::EMPTY);
                 let value = $value;
                 let args = self.arena.alloc_slice_copy(&[label, value]);
-                let args = ExprNodeList::from_arena_slice(args);
+                let args = ExprNodeList::from_slice_in(args, self.ast_arena);
                 array.push(self.call_runtime(loc, b"__legacyMetadataTS", args));
             }};
         }
@@ -7687,7 +7753,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                     .serialize_metadata(method_arg.ts_metadata)
                                     .expect("unreachable");
                             }
-                            let items = ExprNodeList::from_arena_slice(args_array);
+                            let items = ExprNodeList::from_slice_in(args_array, self.ast_arena);
                             let arr = self.new_expr(
                                 E::Array {
                                     items,
@@ -7723,7 +7789,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         {
                             let arr = self.new_expr(
                                 E::Array {
-                                    items: bun_alloc::AstAlloc::vec(),
+                                    items: AstVec::new(),
                                     ..Default::default()
                                 },
                                 bun_ast::Loc::EMPTY,
@@ -7754,7 +7820,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                     .serialize_metadata(method_arg.ts_metadata)
                                     .expect("unreachable");
                             }
-                            let items = ExprNodeList::from_arena_slice(args_array);
+                            let items = ExprNodeList::from_slice_in(args_array, self.ast_arena);
                             let arr = self.new_expr(
                                 E::Array {
                                     items,
@@ -8170,7 +8236,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         for item in to_flatten.children.slice() {
             let mut item = *item;
             item.parent = Some(parent);
-            VecExt::append(&mut parent.children, item);
+            parent.children.push(self.ast_arena, item);
         }
     }
 
@@ -8296,7 +8362,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         };
         let r#ref = self.new_symbol(js_ast::symbol::Kind::Other, name);
 
-        VecExt::append(&mut scope.generated, r#ref);
+        scope.generated.push(self.ast_arena, r#ref);
 
         r#ref
     }
@@ -8326,13 +8392,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         while !scope.kind_stops_hoisting() || scope.kind == js_ast::scope::Kind::FunctionArgs {
             scope = scope.parent.unwrap();
         }
-        VecExt::append(&mut scope.generated, ref_);
-        self.declared_symbols
-            .append(DeclaredSymbol {
+        scope.generated.push(self.ast_arena, ref_);
+        self.declared_symbols.append(
+            self.ast_arena,
+            DeclaredSymbol {
                 ref_,
                 is_top_level: scope == self.module_scope,
-            })
-            .expect("oom");
+            },
+        );
     }
 
     pub(crate) fn should_lower_using_declarations(&self, stmts: &[Stmt]) -> bool {
@@ -8478,7 +8545,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         let call = self.new_expr(
             E::Call {
                 target: Expr::init_identifier(self.react_refresh.register_ref, loc),
-                args: ExprNodeList::from_slice(&[Expr::init_identifier(r#ref, loc), label_expr]),
+                args: ExprNodeList::from_slice_in(
+                    &[Expr::init_identifier(r#ref, loc), label_expr],
+                    self.ast_arena,
+                ),
                 ..Default::default()
             },
             loc,
@@ -8525,7 +8595,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         self.new_expr(
             E::Call {
                 target: Expr::init_identifier(self.server_components_wrap_ref, bun_ast::Loc::EMPTY),
-                args: ExprNodeList::from_slice(&[val, module_path, name_expr]),
+                args: ExprNodeList::from_slice_in(&[val, module_path, name_expr], self.ast_arena),
                 ..Default::default()
             },
             bun_ast::Loc::EMPTY,
@@ -8578,12 +8648,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             // TODO: fix the renamer bug. this bug theoretically affects all
             // usages of temp refs, but i cannot find another example of it
             // breaking (like with `using`)
-            self.declared_symbols
-                .append(DeclaredSymbol {
+            self.declared_symbols.append(
+                self.ast_arena,
+                DeclaredSymbol {
                     is_top_level: true,
                     ref_: signature_cb,
-                })
-                .expect("oom");
+                },
+            );
         }
         let ctx: &mut crate::HookContext = ctx_storage.as_mut().unwrap();
 
@@ -8706,7 +8777,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         ));
         self.s(
             S::Local {
-                decls: G::DeclList::init_one(G::Decl { binding, value }),
+                decls: G::DeclList::from_slice_in(&[G::Decl { binding, value }], self.ast_arena),
                 ..Default::default()
             },
             loc,
@@ -8751,7 +8822,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             // () => [useCustom1, useCustom2]
             let array = self.new_expr(
                 E::Array {
-                    items: ExprNodeList::from_slice(ctx.user_hooks.values()),
+                    items: ExprNodeList::from_slice_in(ctx.user_hooks.values(), self.ast_arena),
                     ..Default::default()
                 },
                 loc,
@@ -8774,7 +8845,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         self.new_expr(
             E::Call {
                 target: Expr::init_identifier(ctx.signature_cb, loc),
-                args: ExprNodeList::from_slice(args.as_slice()),
+                args: ExprNodeList::from_slice_in(args.as_slice(), self.ast_arena),
                 ..Default::default()
             },
             loc,
@@ -8891,19 +8962,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     part.can_be_removed_if_unused = false;
                 }
                 if part.declared_symbols.len() == 0 {
-                    part.declared_symbols = self.declared_symbols.clone().expect("unreachable");
+                    part.declared_symbols = self.declared_symbols.clone_in(self.ast_arena);
                 } else {
                     part.declared_symbols
-                        .append_list(&self.declared_symbols)
-                        .expect("unreachable");
+                        .append_list(self.ast_arena, &self.declared_symbols);
                 }
 
                 if part.import_record_indices.is_empty() {
-                    part.import_record_indices =
-                        Vec::from_arena_slice(self.import_records_for_current_part.as_slice());
+                    part.import_record_indices = AstVec::from_slice_in(
+                        self.import_records_for_current_part.as_slice(),
+                        self.ast_arena,
+                    );
                 } else {
-                    part.import_record_indices
-                        .append_slice(self.import_records_for_current_part.as_slice());
+                    part.import_record_indices.extend_from_slice(
+                        self.ast_arena,
+                        self.import_records_for_current_part.as_slice(),
+                    );
                 }
 
                 if let Some(removed) = before.get_mut(parts_end) {
@@ -8919,7 +8993,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 for stmt in part.stmts.iter() {
                     if let js_ast::StmtData::SExportClause(clause) = &stmt.data {
                         for item in clause.items.iter() {
-                            if let Some(import) = self.named_imports.get_ptr_mut(&item.name.ref_) {
+                            if let Some(import) = self.named_imports.get_mut(&item.name.ref_) {
                                 import.is_exported = true;
                             }
                         }
@@ -9110,6 +9184,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 symbols: &'s [Symbol],
                 part_index: u32,
             }
+            let ast_arena = self.ast_arena;
             for (part_index, part) in parts.iter_mut().enumerate() {
                 let mut ctx = Ctx {
                     top_level: &mut top_level_symbols_to_parts,
@@ -9126,18 +9201,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         let r#ref = js_ast::symbol::follow_symbols(ctx.symbols, input);
 
                         ctx.top_level
-                            .entry(r#ref)
-                            .or_insert_with(bun_alloc::AstAlloc::vec)
-                            .push(ctx.part_index);
+                            .get_or_put(ast_arena, r#ref)
+                            .value_ptr
+                            .push(ast_arena, ctx.part_index);
                     },
                 );
             }
 
             // Pulling in the exports of this module always pulls in the export part
             top_level_symbols_to_parts
-                .entry(self.exports_ref)
-                .or_insert_with(bun_alloc::AstAlloc::vec)
-                .push(js_ast::NAMESPACE_EXPORT_PART_INDEX);
+                .get_or_put(ast_arena, self.exports_ref)
+                .value_ptr
+                .push(ast_arena, js_ast::NAMESPACE_EXPORT_PART_INDEX);
         }
 
         let force_cjs_to_esm = self.unwrap_all_requires
@@ -9188,7 +9263,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
         let ts_enums = self.compute_ts_enums_map(arena)?;
 
-        let char_freq = self.compute_character_frequency().map(bun_alloc::ast_box);
+        let char_freq = self
+            .compute_character_frequency()
+            .map(|freq| AstBox::new_in(freq, self.ast_arena));
         let scope_uses = self.take_scope_uses();
 
         let module_scope_strict = self.module_scope().strict_mode;
@@ -9246,8 +9323,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             exports_ref: self.exports_ref,
             wrapper_ref,
             module_ref: self.module_ref,
-            export_star_import_records: bun_alloc::AstAlloc::vec_from_slice(
+            export_star_import_records: AstVec::from_slice_in(
                 self.export_star_import_records.as_slice(),
+                self.ast_arena,
             ),
             approximate_newline_count: self.lexer.approximate_newline_count,
             exports_kind,
@@ -9318,7 +9396,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
         use bun_ast::{InlinedEnumValue, InlinedEnumValueDecoded};
         let mut map = bun_ast::ast_result::TsEnumsMap::default();
-        map.ensure_total_capacity(self.top_level_enums.len())?;
+        map.ensure_total_capacity(self.ast_arena, self.top_level_enums.len());
         for r#ref in self.top_level_enums.iter() {
             // Only the newest symbol of a merged `enum E {} enum E {}` is looked up. It has no link.
             if self.symbols[r#ref.inner_index() as usize].has_link() {
@@ -9331,20 +9409,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 unreachable!("top_level_enums entry missing namespace member data");
             };
             let ns: &js_ast::TSNamespaceMemberMap = namespace;
-            let mut inner_map = StringHashMap::<InlinedEnumValue, bun_alloc::AstAlloc>::default();
-            inner_map.ensure_total_capacity(ns.count())?;
+            let mut inner_map = AstStringHashMap::<InlinedEnumValue>::default();
+            inner_map.reserve(self.ast_arena, ns.count());
             for i in 0..ns.count() {
-                let key = &ns.keys()[i];
+                let key = ns.keys()[i];
                 let val = &ns.values()[i];
                 match val.data {
                     js_ast::ts::Data::EnumNumber(num) => {
-                        inner_map.put_assume_capacity(
+                        inner_map.put_borrowed(
+                            self.ast_arena,
                             key,
                             InlinedEnumValue::encode(InlinedEnumValueDecoded::Number(num)),
                         );
                     }
                     js_ast::ts::Data::EnumString(str_) => {
-                        inner_map.put_assume_capacity(
+                        inner_map.put_borrowed(
+                            self.ast_arena,
                             key,
                             InlinedEnumValue::encode(InlinedEnumValueDecoded::String(
                                 str_.as_ptr(),
@@ -9354,7 +9434,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     _ => continue,
                 }
             }
-            map.put_assume_capacity(*r#ref, inner_map);
+            map.put(self.ast_arena, *r#ref, self.ast_arena.alloc_node(inner_map));
         }
         Ok(map)
     }
@@ -9454,17 +9534,16 @@ impl<'a, 'log, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, 'log, TYPESC
         // ~one scope per 64 source bytes covers most files without regrowth.
         let mut scope_order =
             ScopeOrderList::with_capacity_in((source.contents.len() / 64).max(1), arena);
-        let scope_obj = arena.alloc(Scope {
+        let mut scope = ast_arena.alloc_node(Scope {
             members: Default::default(),
-            children: bun_alloc::AstAlloc::vec(),
-            generated: bun_alloc::AstAlloc::vec(),
+            children: AstVec::new(),
+            generated: AstVec::new(),
             kind: js_ast::scope::Kind::Entry,
             label_ref: Ref::NONE,
             parent: None,
             ..Default::default()
         });
-        scope_obj.members.reserve(estimated_symbol_count);
-        let scope = js_ast::StoreRef::from_bump(scope_obj);
+        scope.members.reserve(ast_arena, estimated_symbol_count);
 
         scope_order.push(Some(ScopeOrder::new(loc_module_scope, scope.as_ptr())));
 
@@ -9523,7 +9602,7 @@ impl<'a, 'log, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, 'log, TYPESC
         }
 
         let mut symbol_uses = SymbolUseMap::default();
-        let _ = symbol_uses.ensure_total_capacity(estimated_symbol_count);
+        symbol_uses.ensure_total_capacity(ast_arena, estimated_symbol_count);
 
         // JSX transform mode — was the `<J: JsxT>` const-generic parameter,
         // now a runtime field (matches `Parser::parse`'s own `if jsx.parse`
@@ -9770,7 +9849,7 @@ impl LowerUsingDeclarationsContext {
                     decl.value = Some(p.call_runtime(
                         value_loc,
                         b"__using",
-                        ExprNodeList::from_arena_slice(args),
+                        ExprNodeList::from_slice_in(args, p.ast_arena),
                     ));
                 }
             }
@@ -9833,10 +9912,13 @@ impl LowerUsingDeclarationsContext {
                         stmts[end as usize] = p.s(
                             S::Local {
                                 kind: js_ast::s::Kind::KVar,
-                                decls: G::DeclList::init_one(G::Decl {
-                                    binding,
-                                    value: Some(value),
-                                }),
+                                decls: G::DeclList::from_slice_in(
+                                    &[G::Decl {
+                                        binding,
+                                        value: Some(value),
+                                    }],
+                                    p.ast_arena,
+                                ),
                                 ..Default::default()
                             },
                             stmt.loc,
@@ -9932,7 +10014,11 @@ impl LowerUsingDeclarationsContext {
                     loc,
                 ),
             ]);
-            p.call_runtime(loc, b"__callDispose", ExprNodeList::from_arena_slice(args))
+            p.call_runtime(
+                loc,
+                b"__callDispose",
+                ExprNodeList::from_slice_in(args, p.ast_arena),
+            )
         };
 
         let finally_stmts: &'a mut [Stmt] = if self.has_await_using {
@@ -9959,10 +10045,13 @@ impl LowerUsingDeclarationsContext {
             let promise_binding = p.b(B::Identifier { r#ref: promise_ref }, loc);
             let stmt0 = p.s(
                 S::Local {
-                    decls: G::DeclList::init_one(Decl {
-                        binding: promise_binding,
-                        value: Some(call_dispose),
-                    }),
+                    decls: G::DeclList::from_slice_in(
+                        &[Decl {
+                            binding: promise_binding,
+                            value: Some(call_dispose),
+                        }],
+                        p.ast_arena,
+                    ),
                     ..Default::default()
                 },
                 loc,
@@ -10014,10 +10103,13 @@ impl LowerUsingDeclarationsContext {
         let stack_init = p.new_expr(E::Array::default(), loc);
         result.push(p.s(
             S::Local {
-                decls: G::DeclList::init_one(Decl {
-                    binding: stack_binding,
-                    value: Some(stack_init),
-                }),
+                decls: G::DeclList::from_slice_in(
+                    &[Decl {
+                        binding: stack_binding,
+                        value: Some(stack_init),
+                    }],
+                    p.ast_arena,
+                ),
                 kind: js_ast::s::Kind::KLet,
                 ..Default::default()
             },
@@ -10035,16 +10127,16 @@ impl LowerUsingDeclarationsContext {
             );
             let has_err_binding = p.b(B::Identifier { r#ref: has_err_ref }, loc);
             let has_err_value = p.new_expr(E::Number::new(1.0), loc);
-            let mut decls = bun_alloc::AstAlloc::vec();
-            VecExt::append(
-                &mut decls,
+            let mut decls = AstVec::new();
+            decls.push(
+                p.ast_arena,
                 Decl {
                     binding: err_binding,
                     value: Some(err_value),
                 },
             );
-            VecExt::append(
-                &mut decls,
+            decls.push(
+                p.ast_arena,
                 Decl {
                     binding: has_err_binding,
                     value: Some(has_err_value),

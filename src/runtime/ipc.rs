@@ -1749,7 +1749,7 @@ impl bun_event_loop::Taskable for SendQueue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::SendQueueDeferred;
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the SendQueue root queued with a held ref.
-        drop(unsafe { RefPtr::from_raw(this) });
+        unsafe { RefPtr::decrement_strong_count(this) };
     }
     /// The channel's own close hop.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {

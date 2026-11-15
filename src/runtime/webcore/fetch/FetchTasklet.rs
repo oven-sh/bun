@@ -49,13 +49,13 @@ use boringssl::c::OwnedX509;
 
 // ConcurrentTask::from() needs `Taskable`; tag is declared in bun_event_loop
 // but the impl lives next to the type (cycle-break).
-/// The "last ref dropped on the HTTP thread → deinit on the JS thread" hop:
+/// Carries the last ref from the HTTP thread to the JS thread:
 /// same pointer, its own tag, so teardown can tell it from a progress update.
 #[repr(transparent)]
 pub(crate) struct FetchTaskletDeinitHop(FetchTasklet);
 impl Taskable for FetchTaskletDeinitHop {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletDeinit;
-    /// The last ref dropped on the HTTP thread while we were tearing down:
+    /// The HTTP thread handed over the last ref while we were tearing down:
     /// deinit here, on the JS thread with the heap alive, as the hop intended.
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract.
@@ -71,7 +71,7 @@ impl FetchTaskletDeinitHop {
     /// `this` is the tasklet the hop was created from, whose last ref it owns. JS thread.
     pub(crate) unsafe fn run(this: *mut Self) {
         // SAFETY: fn contract.
-        drop(unsafe { RefPtr::from_raw(this.cast::<FetchTasklet>()) });
+        unsafe { RefPtr::decrement_strong_count(this.cast::<FetchTasklet>()) };
     }
 }
 
@@ -83,7 +83,7 @@ impl Taskable for FetchTaskletRequestDrain {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletRequestDrain;
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract; the task owns a ref.
-        drop(unsafe { RefPtr::from_raw(this.cast::<FetchTasklet>()) });
+        unsafe { RefPtr::decrement_strong_count(this.cast::<FetchTasklet>()) };
     }
     /// Enters no context.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {

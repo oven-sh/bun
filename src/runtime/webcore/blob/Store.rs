@@ -28,8 +28,8 @@ pub(crate) use bun_jsc::webcore_types::store::{
 
 // ──────────────────────────────────────────────────────────────────────────
 // Extension traits — `bun_runtime`-tier behaviour layered on the `bun_jsc`
-// data types. Inherent data-only methods (`size`/`shared_view`/`ref_`/`deref`/
-// `init`/…) live on the `bun_jsc` types directly.
+// data types. Inherent data-only methods (`size`/`shared_view`/`init`/…)
+// live on the `bun_jsc` types directly.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) trait StoreExt {
@@ -300,15 +300,4 @@ impl S3Ext for S3 {
 
         Ok(value)
     }
-}
-
-/// JSC `ArrayBuffer` external
-/// deallocator callback for buffers backed by a `Blob.Store`. C++ stashes a
-/// `*mut Store` as the deallocator context; this releases that ref.
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn BlobArrayBuffer_deallocator(
-    _bytes: *mut core::ffi::c_void,
-    store: RefPtr<Store>,
-) {
-    drop(store);
 }

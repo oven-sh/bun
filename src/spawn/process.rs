@@ -110,9 +110,6 @@ fn call_exit_handler(h: ProcessExitHandler, status: Status, rusage: &Rusage) {
 }
 
 /// Shared borrows only. What may free the process, or hands out its address, takes a `ThisPtr`.
-// bun.ptr.ThreadSafeRefCount → intrusive (FFI-crossing: *mut Process recovered
-// via `container_of` in on_exit_uv / on_close_uv). Per PORTING.md §Pointers,
-// keep the embedded count.
 #[derive(bun_ptr::RefCounted)]
 pub struct Process {
     pub pid: PidT,

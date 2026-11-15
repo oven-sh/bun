@@ -9,9 +9,8 @@ use core::ptr::{NonNull, null, null_mut};
 use bun_core::ffi::{slice, slice_mut};
 use bun_jsc::bindgen::{JsPayload, StrongWrapper};
 use bun_lsquic_sys::{self as lsquic, Conn, Stream, lsquic_conn, lsquic_stream};
-use bun_ptr::{AliasableBox, CellExt as _};
+use bun_ptr::{AliasableBox, CellExt as _, OptionCellExt as _};
 
-use super::endpoint::match_sni;
 use super::session::StoredAddr;
 use super::tls::TlsContext;
 use super::{QuicEndpoint, QuicSession, QuicStream};
@@ -69,8 +68,6 @@ impl Engine {
                 is_http as c_int,
                 ctx.as_ptr().cast(),
                 settings.as_ptr(),
-                // Node accepts a list, so the SSL_CTX owns ALPN.
-                null(),
             )
         };
         Some(Self {
@@ -135,7 +132,7 @@ impl Engine {
         local: &StoredAddr,
         peer: &StoredAddr,
         servername: Option<&CStr>,
-        resume: &[u8],
+        sess_resume: &[u8],
     ) {
         // SAFETY: as in `packet_in`. The result is null or live, and is only used here.
         let conn = unsafe {
@@ -148,12 +145,12 @@ impl Engine {
                 null_mut(),
                 servername.map_or(null(), CStr::as_ptr),
                 0,
-                if resume.is_empty() {
+                if sess_resume.is_empty() {
                     null()
                 } else {
-                    resume.as_ptr()
+                    sess_resume.as_ptr()
                 },
-                resume.len(),
+                sess_resume.len(),
                 // `options.token` is validated in JS but deliberately not
                 // replayed: handing it to lsquic breaks the token and zero-rtt
                 // tests, at the cost of the Retry RTT it would have saved.
@@ -227,13 +224,13 @@ impl Drop for Engine {
     }
 }
 
-/// Empty while `with` runs.
+/// Empty while `with_taken` runs.
 #[derive(Default)]
 pub(super) struct EngineCell(Cell<Option<Engine>>);
 
 impl EngineCell {
     pub(super) fn is_some(&self) -> bool {
-        self.0.with_taken(|engine| engine.is_some())
+        self.0.is_some()
     }
 
     pub(super) fn set(&self, engine: Engine) {
@@ -244,7 +241,7 @@ impl EngineCell {
         self.0.set(None);
     }
 
-    pub(super) fn with<R>(&self, f: impl FnOnce(&mut Engine) -> R) -> Option<R> {
+    pub(super) fn with_taken<R>(&self, f: impl FnOnce(&mut Engine) -> R) -> Option<R> {
         self.0.with_taken(|engine| engine.as_mut().map(f))
     }
 }
@@ -315,6 +312,8 @@ impl StrongCtx<QuicStream> {
     }
 }
 
+/// Not `try_with_payload_ptr`: the close callbacks have to unbind after the VM is closed.
+///
 /// # Safety
 /// `ctx` is null, or `StrongCtx::<T>::bind` set it and it is still bound. `f` does not drop that `StrongCtx`.
 unsafe fn with_ctx<T: Unbind, R>(ctx: *mut c_void, f: impl FnOnce(&T) -> R) -> Option<R> {
@@ -410,11 +409,7 @@ unsafe extern "C" fn Bun__nodeQuic__lookupCert(
     unsafe {
         if !sni.is_null() {
             let host = CStr::from_ptr(sni).to_bytes();
-            let found = with_endpoint(ctx, |e| {
-                e.sni_contexts
-                    .with_taken(|entries| match_sni(entries, host).map(TlsContext::raw))
-            });
-            if let Some(Some(found)) = found {
+            if let Some(found) = with_endpoint(ctx, |e| e.lookup_cert(host)).flatten() {
                 return found;
             }
         }

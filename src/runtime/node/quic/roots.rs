@@ -5,7 +5,7 @@ use core::cell::Cell;
 use core::marker::PhantomData;
 
 use bun_jsc::bindgen::{BorrowedWrapper, JsPayload, StrongWrapper};
-use bun_ptr::CellExt as _;
+use bun_ptr::{CellExt as _, OptionCellExt as _};
 
 /// An optional `StrongWrapper` that is set and taken through `&self`.
 pub(super) struct StrongWrapperCell<T>(Cell<Option<StrongWrapper<T>>>);
@@ -21,6 +21,10 @@ impl<T: JsPayload> StrongWrapperCell<T> {
 
     pub(super) fn take(&self) -> Option<StrongWrapper<T>> {
         self.0.take()
+    }
+
+    pub(super) fn is_none(&self) -> bool {
+        self.0.is_none()
     }
 
     /// `f` can change the cell.
@@ -84,7 +88,7 @@ impl<T: JsPayload, V: Borrow<StrongWrapper<T>>> StrongWrapperMap<T, V> {
     }
 
     /// The map is empty while `f` runs.
-    pub(super) fn with_value<R>(&self, key: Key, f: impl FnOnce(&V) -> R) -> Option<R> {
+    pub(super) fn with_taken<R>(&self, key: Key, f: impl FnOnce(&V) -> R) -> Option<R> {
         self.entries
             .with_taken(|entries| Some(f(&entries[binary_search(entries, key).ok()?].1)))
     }

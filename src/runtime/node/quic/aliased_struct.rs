@@ -44,7 +44,7 @@ macro_rules! all_atomic_struct {
 }
 pub(super) use all_atomic_struct;
 
-/// The ArrayBuffer holds a reference, so detaching or transferring it does not free `T`.
+/// The ArrayBuffer holds a reference, so detaching or transferring it does not free `T`. Fields use `Relaxed`: none of them guards other memory.
 pub(super) struct AliasedStruct<T>(Arc<T>);
 
 impl<T: AllAtomic> AliasedStruct<T> {

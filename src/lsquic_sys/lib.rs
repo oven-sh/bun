@@ -32,6 +32,8 @@ pub struct iovec {
     iov_len: usize,
 }
 
+bun_core::assert_ffi_layout!(iovec, 16, 8; iov_base @ 0, iov_len @ 8);
+
 impl iovec {
     pub fn as_slice(&self) -> &[u8] {
         // SAFETY: see the type.
@@ -96,10 +98,10 @@ unsafe extern "C" {
     pub fn lsquic_conn_get_ctx(c: *const lsquic_conn) -> *mut c_void;
     pub fn lsquic_conn_get_peer_ctx(c: *const lsquic_conn, local_sa: *const c_void) -> *mut c_void;
     pub fn lsquic_conn_get_engine(c: *mut lsquic_conn) -> *mut lsquic_engine;
-    pub fn lsquic_conn_set_ctx(c: *mut lsquic_conn, ctx: *mut c_void);
+    fn lsquic_conn_set_ctx(c: *mut lsquic_conn, ctx: *mut c_void);
     pub fn lsquic_conn_close(c: *mut lsquic_conn);
     fn lsquic_conn_going_away(c: *mut lsquic_conn);
-    pub fn lsquic_conn_status(c: *mut lsquic_conn, errbuf: *mut c_char, bufsz: usize) -> c_int;
+    fn lsquic_conn_status(c: *mut lsquic_conn, errbuf: *mut c_char, bufsz: usize) -> c_int;
     pub fn lsquic_conn_make_stream(c: *mut lsquic_conn);
     pub fn lsquic_conn_make_uni_stream(c: *mut lsquic_conn);
     pub fn lsquic_conn_get_sockaddr(
@@ -146,7 +148,6 @@ unsafe extern "C" {
         is_http: c_int,
         ctx: *mut c_void,
         settings: *const lsquic_engine_settings,
-        alpn: *const c_char,
     ) -> *mut lsquic_engine;
     pub fn us_nq_stream_reset(s: *mut lsquic_stream, code: u64);
     pub fn us_nq_hset_pairs(hset: *mut c_void, len: *mut usize) -> *const c_char;
@@ -318,7 +319,7 @@ settings_setters! {
 
 /// `$Handle` is null or points to what lsquic has not freed. Each method reads the pointer again.
 macro_rules! impl_handle {
-    ($Handle:ident, $Bound:ident, $raw:ty, $get_ctx:ident, $set_ctx:ident, $on_close:literal) => {
+    ($Handle:ident, $Bound:ident, $raw:ty, $get_ctx:ident, $set_ctx:ident) => {
         impl $Handle {
             /// # Safety
             /// `raw` is null, or lsquic does not free it while the result is in use.
@@ -334,15 +335,11 @@ macro_rules! impl_handle {
             }
         }
 
-        #[doc = concat!("A [`", stringify!($Handle), "`] that outlives a callback. `", $on_close, "` unbinds it.")]
-        #[derive(Default)]
-        pub struct $Bound($Handle);
-
         impl $Bound {
             /// Stores `handle` and sets its ctx. Does nothing if it has a ctx.
             ///
             /// # Safety
-            #[doc = concat!("`", $on_close, "` has not run for `handle`, and it unbinds `self` when it gets `ctx`.")]
+            /// The close callback has not run for `handle`, and it unbinds `self` when it gets `ctx`.
             /// `ctx` is valid for the callbacks until `self` is unbound or dropped.
             pub unsafe fn bind(&self, handle: &$Handle, ctx: *mut c_void) {
                 let Some(raw) = handle.raw() else { return };
@@ -383,13 +380,16 @@ macro_rules! impl_handle {
 #[derive(Default)]
 pub struct Conn(Cell<Option<NonNull<lsquic_conn>>>);
 
+/// A [`Conn`] that outlives a callback. `on_conn_closed` unbinds it.
+#[derive(Default)]
+pub struct BoundConn(Conn);
+
 impl_handle!(
     Conn,
     BoundConn,
     lsquic_conn,
     lsquic_conn_get_ctx,
-    lsquic_conn_set_ctx,
-    "on_conn_closed"
+    lsquic_conn_set_ctx
 );
 
 impl Conn {
@@ -502,13 +502,16 @@ impl Conn {
 #[derive(Default)]
 pub struct Stream(Cell<Option<NonNull<lsquic_stream>>>);
 
+/// A [`Stream`] that outlives a callback. `on_close` unbinds it.
+#[derive(Default)]
+pub struct BoundStream(Stream);
+
 impl_handle!(
     Stream,
     BoundStream,
     lsquic_stream,
     lsquic_stream_get_ctx,
-    lsquic_stream_set_ctx,
-    "on_close"
+    lsquic_stream_set_ctx
 );
 
 impl Stream {
@@ -524,10 +527,12 @@ impl Stream {
             Some(buf[..usize::try_from(n).ok()?].assume_init_ref())
         }
     }
-    pub fn write(&self, buf: &[u8]) -> isize {
-        let Some(s) = self.raw() else { return -1 };
+    /// How many bytes were written: 0 if lsquic returns an error.
+    pub fn write(&self, buf: &[u8]) -> usize {
+        let Some(s) = self.raw() else { return 0 };
         // SAFETY: as above.
-        unsafe { lsquic_stream_write(s, buf.as_ptr().cast(), buf.len()) }
+        let n = unsafe { lsquic_stream_write(s, buf.as_ptr().cast(), buf.len()) };
+        usize::try_from(n).unwrap_or(0)
     }
     pub fn flush(&self) {
         let Some(s) = self.raw() else { return };
@@ -582,8 +587,8 @@ impl Stream {
     }
     /// `expected` is the caller's header-pair count; the shim rejects a buffer
     /// that does not parse to exactly that many pairs.
-    pub fn send_headers(&self, nul_joined: &[u8], expected: c_int, eos: bool) -> c_int {
-        let Some(s) = self.raw() else { return -1 };
+    pub fn send_headers(&self, nul_joined: &[u8], expected: c_int, eos: bool) -> bool {
+        let Some(s) = self.raw() else { return false };
         // SAFETY: as above; lsquic copies the buffer before returning.
         unsafe {
             us_nq_stream_send_headers(
@@ -592,7 +597,7 @@ impl Stream {
                 nul_joined.len(),
                 expected,
                 eos as c_int,
-            )
+            ) == 0
         }
     }
     /// RFC 9218 Extensible HTTP Priority: urgency 0-7, incremental 0/1.

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d6861dbd59c52394231c89ff7bae0bcff81e31756f79b40db9ee7cee0562b4a5.
+// Written against that file with the SHA-256 40868569948f404f80de31bab6c37b8eabb03939a088a829355d5d8883c504fe.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -899,7 +899,7 @@ function adoptTLSPair(
   raw.connecting = false;
   self._handle = pair[1];
 }
-// A second connect() has replaced the fd that was to be adopted.
+// readyState 2: a second connect() is pending, and has replaced the fd that was to be adopted.
 function destroyIfReconnecting(connection: $Node.Socket, handle: SocketHandle) {
   if (!connection.connecting || handle.readyState !== 2) return false;
   connection.destroy(new ErrnoException(uv().UV_EISCONN, "connect"));

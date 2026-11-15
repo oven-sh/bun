@@ -596,6 +596,18 @@ describe.concurrent("--no-follow-imports with references", () => {
       [isShown("16")],
       ["lib/src/unused.ts", "lib/src/used.ts"],
     ],
+    [
+      "every file of a much smaller project beside one with noEmitOnError",
+      {
+        "app/tsconfig.json": project(["base", "lib"]),
+        ...Object.fromEntries([1, 2, 3, 4].map(it => [`app/src/more${it}.ts`, "export {};\n"])),
+        "base/tsconfig.json": project([], { noEmitOnError: true }),
+        "base/src/one.ts": "export {};\n",
+        "lib/src/used.ts": "export const value = 17;\n",
+      },
+      [isShown("17")],
+      ["base/src/one.ts", "lib/src/unused.ts", "lib/src/used.ts"],
+    ],
   ])("checks %s", async (_, files, errors, checked, links = {}) => {
     const result = await run(
       {

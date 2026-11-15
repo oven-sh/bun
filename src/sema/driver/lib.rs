@@ -3722,20 +3722,20 @@ fn check_with_references(
     // file. So `root` is loaded twice, which only pays if there are enough other files.
     const MAX_ROOT_FILES_PER_OTHER_FILE: usize = 2;
     let roots_of_root = root_index.map_or(0, |it| roots[it].len());
-    let roots_of_others = roots.iter().map(Vec::len).sum::<usize>() - roots_of_root;
+    // What is emitted under `noEmitOnError` depends on the errors of every file.
+    let may_leave_files_out = |&index: &usize| {
+        let options = &options_of_projects[index];
+        Some(index) != root_index && (!options.no_emit_on_error || options.no_emit)
+    };
+    let others = (0..count).filter(may_leave_files_out);
+    let roots_of_others: usize = others.map(|it| roots[it].len()).sum();
     let emits_on_demand = request.plan_options.reports_only_requested_paths
         && !reports_references
         && !reads_sources
         // The trace tells which directories exist.
         && !options_of_projects.iter().any(|it| it.trace_resolution)
         && roots_of_root <= roots_of_others * MAX_ROOT_FILES_PER_OTHER_FILE;
-    // What is emitted under `noEmitOnError` depends on the errors of every file.
-    let is_on_demand = |index: usize| {
-        let options = &options_of_projects[index];
-        emits_on_demand
-            && Some(index) != root_index
-            && (!options.no_emit_on_error || options.no_emit)
-    };
+    let is_on_demand = |index: usize| emits_on_demand && may_leave_files_out(&index);
     /// Every project emits all of its files, which ends a long chain of requests.
     const LAST_ROUND: usize = 3;
     // By project: the paths of the declaration files that are asked for.

@@ -730,15 +730,11 @@ pub(crate) fn run_task(
         ),
 
         // ── server / bundler / streams ───────────────────────────────────
-        task_tag::ServePluginsLoad => in_features!(
-            [Bundler],
-            (
-                load: ServePluginsLoad = *boxed!(task, ServePluginsLoad),
-                global: &JSGlobalObject = global,
-            ) -> JsResult<()> {
-                load.run(global)
-            }
-        )?,
+        task_tag::ServePluginsLoad => {
+            boxed_arm!(task, [Bundler], |load: ServePluginsLoad| -> JsResult<()> {
+                load.run()
+            })?
+        }
         task_tag::ServerAllConnectionsClosedTask => boxed_arm!(
             task,
             [Serve],

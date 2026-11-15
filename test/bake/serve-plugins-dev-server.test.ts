@@ -613,8 +613,8 @@ describe.concurrent.each(["true", "{ hmr: false }", "false"])("development: %s",
     return { stdout, stderr, exitCode };
   }
 
-  // A plugin that is already imported is set up without a turn of the event loop.
-  test("a plugin can stop the server as it is set up", async () => {
+  // server.ts imports the plugin so that setup() runs without waiting for the module to load.
+  test("a plugin's setup() can call server.stop(true)", async () => {
     const { stdout, stderr, exitCode } = await run({
       "plugin.ts": `export default { name: "stops", setup: () => globalThis.stop() };`,
       "server.ts": `
@@ -632,18 +632,45 @@ describe.concurrent.each(["true", "{ hmr: false }", "false"])("development: %s",
     expect(exitCode).toBe(0);
   });
 
-  test("the request that starts the load of a plugin that fails at once gets a 500", async () => {
+  test("a plugin's setup() does not run once server.stop(true) was called", async () => {
     const { stdout, stderr, exitCode } = await run({
-      "plugin.ts": `export default { name: "throws", setup() { throw new Error("plugin failed on purpose"); } };`,
+      "plugin.ts": `export default { name: "late", setup: () => void (globalThis.stopped && console.log("setup")) };`,
       "server.ts": `
         import html from "./index.html";
         import "./plugin.ts";
+        const stop = () => ((globalThis.stopped = server.stop(true)), new Response());
+        const server = Bun.serve({ port: 0, hostname: "127.0.0.1", development: ${development}, routes: { "/": html, "/stop": stop } });
+        const connect = async () => {
+          const closed = Promise.withResolvers();
+          const socket = { data() {}, close: closed.resolve };
+          return [await Bun.connect({ hostname: server.hostname, port: server.port, socket }), closed.promise];
+        };
+        // The server reads both requests before it runs a task.
+        const [[first, firstClosed], [second, secondClosed]] = [await connect(), await connect()];
+        first.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n");
+        second.write("GET /stop HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n");
+        await Promise.all([firstClosed, secondClosed]);
+        await globalThis.stopped;
+        console.log(server.pendingRequests);
+      `,
+    });
+    expect(stdout, stderr).toBe("0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("responds with 500 to the first request when a plugin's setup() throws synchronously", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "plugin.ts": `export default { name: "throws", setup() { throw new Error("plugin failed on purpose"); } };`,
+      "server.ts": `
+        import { heapStats } from "bun:jsc";
+        import html from "./index.html";
+        import "./plugin.ts";
         using server = Bun.serve({ port: 0, development: ${development}, routes: { "/": html } });
-        console.log((await fetch(server.url)).status);
+        console.log((await fetch(server.url)).status, heapStats().protectedObjectTypeCounts.BundlerPlugin ?? 0);
       `,
     });
     expect(stderr.match(/^error: plugin failed on purpose$/gm), stderr).toHaveLength(1);
-    expect(stdout).toBe("500\n");
+    expect(stdout).toBe("500 0\n");
     expect(exitCode).toBe(0);
   });
 });

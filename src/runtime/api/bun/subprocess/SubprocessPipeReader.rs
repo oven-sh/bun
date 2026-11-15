@@ -103,19 +103,14 @@ impl PipeReader {
                 return;
             }
             if let bun_sys::Result::Err(err) = this.reader.start_with_current_pipe() {
-                // Route through the same teardown as a read-callback error
-                // (matches POSIX's register_poll failure path), and let the
-                // caller proceed to the sibling pipe.
-                // Returning Err would have the caller throw after try_kill
-                // without unwinding this pipe or the never-started sibling.
+                // As a read error, so that the caller proceeds to the sibling pipe.
                 Self::on_read_status(this, ReadStatus::Failed(err));
             }
         }
 
         #[cfg(not(windows))]
         {
-            // Defer poll registration until JS first pulls so the kernel
-            // pipe buffer provides backpressure and the child blocks.
+            // No poll until JS first pulls, so that the child blocks on the pipe.
             this.reader.set_flags(PosixFlags::IS_PAUSED, lazy);
             this.reader
                 .set_flags(PosixFlags::SOCKET | PosixFlags::NONBLOCKING, true);

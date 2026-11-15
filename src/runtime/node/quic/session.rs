@@ -17,14 +17,14 @@ use bun_jsc::{
 };
 
 use bun_lsquic_sys as lsquic;
-use bun_ptr::CellExt as _;
+use bun_ptr::{CellExt as _, OptionCellExt as _};
 
 use crate::socket::SocketAddress;
 use crate::socket::socket_address::{inet, sockaddr};
 
 use super::aliased_struct::{AliasedStruct, all_atomic_struct, put_state_and_stats};
 use super::callbacks;
-use super::endpoint::{MS_PER_SEC, QuicEndpoint};
+use super::endpoint::{Closes, MS_PER_SEC, QuicEndpoint};
 use super::engine::{self, StrongCtx};
 use super::now_ns;
 use super::roots::{Key, StrongWrapperCell, StrongWrapperMap};
@@ -338,7 +338,7 @@ pub(super) struct SessionOptions {
     datagram_drop_newest: bool,
     qlog: bool,
     verify_peer_manually: bool,
-    application: Option<Strong>,
+    application_options: Option<Strong>,
 }
 
 impl SessionOptions {
@@ -361,11 +361,19 @@ impl SessionOptions {
             this.verify_peer_manually =
                 bun_core::String::from_js(v, global)?.to_owned_slice() == b"manual";
         }
-        this.application = options
+        this.application_options = options
             .get(global, "application")?
             .filter(|v| v.is_object())
             .map(|app| Strong::create(app, global));
         Ok(this)
+    }
+
+    pub(super) fn clone_with_global(&self, global: &JSGlobalObject) -> Self {
+        let application_options = self.application_options.as_ref();
+        Self {
+            application_options: application_options.map(|app| Strong::create(app.get(), global)),
+            ..*self
+        }
     }
 }
 
@@ -425,7 +433,7 @@ impl QuicSession {
         key: Key,
         is_server: bool,
         application: Application,
-        options: &SessionOptions,
+        options: SessionOptions,
     ) -> JsResult<StrongCtx<QuicSession>> {
         let session = Self {
             conn: lsquic::BoundConn::default(),
@@ -469,12 +477,7 @@ impl QuicSession {
             hsk_snapshot: OnceCell::new(),
             close_reported: Cell::new(false),
             destroyed: Cell::new(false),
-            application_options_js: StrongCell::from(
-                options
-                    .application
-                    .as_ref()
-                    .map(|app| Strong::create(app.get(), global)),
-            ),
+            application_options_js: StrongCell::from(options.application_options),
         };
         // This is the only write to the application fields, like node's `Session::SetApplication`.
         let s = session.state();
@@ -639,7 +642,7 @@ impl QuicSession {
         };
         stream.bind(raw);
         let qs = stream.payload();
-        qs.on_open(this.is_server);
+        qs.on_opened(this.is_server);
         qs.mark_wrote_to_lsquic();
         this.bump_stream_stat(id, false);
         this.push_event(SessionEvent::StreamReady {
@@ -730,7 +733,7 @@ impl QuicSession {
         &self,
         this_value: JSValue,
         global: &JSGlobalObject,
-        defer_closes: bool,
+        closes: Closes,
     ) {
         self.refresh_conn_stats();
         self.deliver_pending_tickets(this_value, global);
@@ -748,7 +751,7 @@ impl QuicSession {
             }) else {
                 break;
             };
-            if (dispatched_js || defer_closes)
+            if (dispatched_js || closes == Closes::Defer)
                 && matches!(event, SessionEvent::Closed | SessionEvent::GoawayReceived)
             {
                 self.events.with_taken(|e| e.insert(0, event));
@@ -1303,9 +1306,7 @@ impl QuicSession {
         if stream.mark_close_reported() {
             return;
         }
-        // A suppressed stream was never surfaced to JS, so it gets
-        // no onStreamClose -- but it still has to leave `streams`,
-        // or it lives until teardown.
+        // JS never saw a suppressed stream, so it gets no onStreamClose. It still has to leave `streams`.
         if !stream.is_announce_suppressed() {
             // Runs the parked reader wakeup — user JS, which may destroy this stream.
             stream.end_read_side(global);
@@ -1665,7 +1666,7 @@ impl QuicSession {
     }
 
     pub(super) fn maybe_finish_deferred_close(&self) {
-        if self.deferred_close.with_taken(|d| d.is_none()) || self.destroyed.get() {
+        if self.deferred_close.is_none() || self.destroyed.get() {
             return;
         }
         if self.any_stream_undelivered() {
@@ -2102,9 +2103,9 @@ impl QuicSession {
         // MAX_STREAMS grant.
         let queue = self.pending_local_streams(uni);
         while let Some(key) = queue.with_taken(VecDeque::pop_front) {
-            let opened = self.streams.with_value(key, |pending| {
+            let opened = self.streams.with_taken(key, |pending| {
                 pending.bind(raw);
-                pending.payload().on_open(self.is_server);
+                pending.payload().on_opened(self.is_server);
             });
             if opened.is_some() {
                 self.push_event(SessionEvent::StreamReady {

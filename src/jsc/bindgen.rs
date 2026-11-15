@@ -1189,18 +1189,12 @@ impl<T: JsPayload> StrongWrapper<T> {
     }
 
     pub fn payload(&self) -> &T {
-        // SAFETY: `to_js` checked that the root holds. No borrow is used after a later teardown:
-        // `global_exit` does not return, and the caller of `exit_and_free` vouches for it. `new`
-        // checked that the payload is only ever shared.
-        unsafe { &*(self.to_js().encoded() as *const T).byte_add(T::PAYLOAD_OFFSET) }
+        BorrowedWrapper::<T>(self.to_js(), PhantomData).payload()
     }
 
     /// The global object of the wrapper's class. In a `ShadowRealm` it is not the VM's.
     pub fn global(&self) -> &JSGlobalObject {
-        // SAFETY: as `payload`. Every structure that the cell takes holds this global object.
-        unsafe {
-            &*extern_types::Bun__Bindgen__globalObjectOf(self.to_js().encoded() as *mut c_void)
-        }
+        BorrowedWrapper::<T>(self.to_js(), PhantomData).global()
     }
 
     /// `None` once the VM is closed.
@@ -1253,13 +1247,16 @@ impl<'a, T: JsPayload> BorrowedWrapper<'a, T> {
     }
 
     pub fn payload(self) -> &'a T {
-        // SAFETY: as `StrongWrapper::payload`: only its `try_with` functions make a `BorrowedWrapper`.
+        // SAFETY: only `StrongWrapper` makes a `BorrowedWrapper`, after it checked that the root
+        // holds. No borrow is used after a later teardown: `global_exit` does not return, and the
+        // caller of `exit_and_free` vouches for it. `StrongWrapper::new` checked that the payload
+        // is only ever shared.
         unsafe { &*(self.0.encoded() as *const T).byte_add(T::PAYLOAD_OFFSET) }
     }
 
     /// As [`StrongWrapper::global`].
     pub fn global(self) -> &'a JSGlobalObject {
-        // SAFETY: as `StrongWrapper::global`.
+        // SAFETY: as `payload`. Every structure that the cell takes holds this global object.
         unsafe { &*extern_types::Bun__Bindgen__globalObjectOf(self.0.encoded() as *mut c_void) }
     }
 

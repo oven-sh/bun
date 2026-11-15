@@ -3,6 +3,8 @@ use core::ffi::c_void;
 use bun_base64::VLQ;
 use bun_core::strings;
 use bun_removable_features::Feature;
+#[cfg(unix)]
+use bun_removable_features::trap::TRAP_OF_REMOVED_CODE;
 
 use crate::build_id::{build_id, write_hexadecimal};
 
@@ -200,15 +202,6 @@ pub(crate) fn removed_feature_entered(pc: usize) -> Option<Feature> {
     }
     bun_removable_features::removed_feature_at(pc)
 }
-
-#[cfg(unix)]
-const TRAP_OF_REMOVED_CODE: &[u8] = if cfg!(target_arch = "aarch64") {
-    &[0; 4]
-} else if cfg!(target_os = "macos") {
-    &[0xcc]
-} else {
-    &[0xf4]
-};
 
 #[cfg(unix)]
 pub(crate) fn is_at_trap_of_removed_code(pc: usize) -> bool {

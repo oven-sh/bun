@@ -1017,11 +1017,6 @@ impl PackageManager {
 
     pub(crate) fn crash(&mut self) -> ! {
         if self.options.log_level != package_manager_options::LogLevel::Silent {
-            // SAFETY: `self.log` points to a separate `bun_ast::Log` allocation (borrowed from
-            // `ctx.log`) that outlives the singleton. `&mut self` only covers the pointer field,
-            // not the pointee. `bun_ast::Log::print` takes `&self`,
-            // so we only need a shared borrow here — the sole invariant is
-            // that no `&mut bun_ast::Log` to the pointee is live, which holds on this path.
             let _ = self.log_mut().print(Output::error_writer());
         }
         Global::crash();
@@ -1201,12 +1196,11 @@ fn configure_env_for_scripts_run(this: &mut PackageManager) -> Result<(), Error>
         // https://github.com/nodejs/node-gyp/blob/7d883b5cf4c26e76065201f85b0be36d5ebdcc0e/lib/build.js#L150-L184
         let thread_count = bun_core::get_thread_count();
         if thread_count > 2 {
-            let t_env = this.env_mut();
-            if !t_env.has(b"JOBS") {
+            let env = this.env_mut();
+            if !env.has(b"JOBS") {
                 let mut int_buf = bun_core::fmt::ItoaBuf::new();
                 let jobs_str = bun_core::fmt::itoa(&mut int_buf, thread_count);
-                t_env
-                    .map
+                env.map
                     .put_alloc_value(b"JOBS", jobs_str)
                     .expect("unreachable");
             }
@@ -1801,7 +1795,7 @@ pub fn config_ignores_scripts(
     env: &dot_env::Loader,
     cwd: &[u8],
 ) -> Result<bool, Error> {
-    ::bun_bunfig::arguments::load_config(
+    bun_bunfig::arguments::load_config(
         bun_options_types::command_tag::Tag::InstallCommand,
         None,
         ctx,
@@ -1829,7 +1823,7 @@ pub fn config_ignores_scripts(
 /// Those are the files that the `bun add` spawned by `bunx` reads. This is for `bunx`, which has no
 /// `PackageManager`.
 pub fn user_cache_directory(env: &dot_env::Loader, cwd: &[u8]) -> Option<Box<[u8]>> {
-    let bunfig = (::bun_bunfig::arguments::load_user_install_section().ok())
+    let bunfig = (bun_bunfig::arguments::load_user_install_section().ok())
         .flatten()
         .unwrap_or_default();
     if bunfig.cache_directory.is_some() {
@@ -2239,9 +2233,9 @@ pub fn init(
     if cli.global {
         // `globalDir` is only read from the user's own bunfig or from the `--config` file.
         if cli.config.is_some() {
-            ::bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
+            bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
         } else {
-            ::bun_bunfig::arguments::load_global_bunfig(CONFIG_TAG, ctx);
+            bun_bunfig::arguments::load_global_bunfig(CONFIG_TAG, ctx);
         }
 
         // Non-consuming peek: `ctx.install` is
@@ -2440,7 +2434,7 @@ pub fn init(
     // `loadConfig` was moved down into `bun_bunfig`
     // (MOVE_DOWN b0) so install can call it directly — no fn-pointer hook.
     if !(cli.global && cli.config.is_some()) {
-        ::bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
+        bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
     }
     // SAFETY: main-thread global
     let root_package_json_path: &'static ZStr = unsafe {
@@ -2860,7 +2854,7 @@ fn init_with_runtime_once(
             merged = &mut nearer_bunfig;
             continue;
         }
-        match ::bun_bunfig::arguments::load_install_section(dir) {
+        match bun_bunfig::arguments::load_install_section(dir) {
             Ok(Some(nearer)) => match merged.as_deref_mut() {
                 Some(above) => overlay_bunfig_install(above, *nearer),
                 None => *merged = Some(nearer),
@@ -2871,7 +2865,7 @@ fn init_with_runtime_once(
     }
     // This also finds a scanner in a folder between the two. `bun install` wouldn't read that file,
     // but when in doubt, the scanner counts.
-    let has_scanner = ::bun_bunfig::arguments::has_security_scanner(start_dir, project_dir);
+    let has_scanner = bun_bunfig::arguments::has_security_scanner(start_dir, project_dir);
     // A scanner only sees what `bun install` is about to install, so auto-install is refused.
     if [
         bun_install,

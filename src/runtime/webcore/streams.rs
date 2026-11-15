@@ -1006,7 +1006,7 @@ pub(crate) enum HTTPServerWritableState {
 pub struct HTTPServerWritable<const SSL: bool> {
     pub(crate) res: Option<uws::AnyResponse>,
     pub(crate) buffer: Vec<u8>,
-    /// `destroy` hands it back.
+    /// `finalize` or `Drop` returns it to `ByteListPool`.
     pub(crate) pooled_buffer: ManuallyDrop<Option<Box<ByteListPoolNode>>>,
     pub offset: BlobSizeType,
 

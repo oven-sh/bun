@@ -133,7 +133,7 @@ pub(crate) fn try_runtime_state() -> Option<&'static RuntimeState> {
 
 /// [`runtime_state`] without the thread-local.
 #[inline]
-pub(crate) fn state_of(vm: &VirtualMachine) -> &RuntimeState {
+pub(crate) fn runtime_state_of(vm: &VirtualMachine) -> &RuntimeState {
     let state = vm.runtime_state.get().cast::<RuntimeState>();
     debug_assert!(!state.is_null(), "RuntimeState not installed");
     // SAFETY: as `runtime_state`.
@@ -149,7 +149,7 @@ pub(crate) fn timer_all() -> &'static timer::All {
 /// [`timer_all`] without the thread-local.
 #[inline]
 pub(crate) fn timer_all_of(vm: &VirtualMachine) -> &timer::All {
-    &state_of(vm).timer
+    &runtime_state_of(vm).timer
 }
 
 /// [`timer_all`] for hooks that also run without a `RuntimeState`.
@@ -170,7 +170,7 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
 pub(crate) fn stat_watcher_scheduler(
     vm: &VirtualMachine,
 ) -> &JsCell<Option<bun_ptr::RefPtr<StatWatcherScheduler>>> {
-    &state_of(vm).stat_watcher_scheduler
+    &runtime_state_of(vm).stat_watcher_scheduler
 }
 
 /// [`RuntimeState::ssl_ctx_cache`] of this thread's VM.
@@ -181,7 +181,7 @@ pub(crate) fn ssl_ctx_cache() -> &'static crate::api::SSLContextCache::SSLContex
 
 /// [`RuntimeState::sql_rare`] of `vm`.
 pub(crate) fn sql_rare(vm: &VirtualMachine) -> &bun_sql_jsc::jsc::RareData {
-    &state_of(vm).sql_rare
+    &runtime_state_of(vm).sql_rare
 }
 
 /// [`RuntimeState::path_watchers`] of this thread's VM.
@@ -192,10 +192,7 @@ pub(crate) fn path_watchers() -> &'static crate::node::win_watcher::PathWatchers
 
 /// [`RuntimeState::request_pools`] of `vm`.
 pub(crate) fn request_pools(vm: &VirtualMachine) -> &crate::server::RequestPools {
-    let state = vm.runtime_state.get().cast::<RuntimeState>();
-    debug_assert!(!state.is_null(), "request_pools before init_runtime_state");
-    // SAFETY: as `timer_all`.
-    unsafe { &(*state).request_pools }
+    &runtime_state_of(vm).request_pools
 }
 
 /// [`RuntimeState::lint`] of this thread's VM.
@@ -221,7 +218,7 @@ pub(crate) fn take_lint_vm() -> Option<Box<crate::cli::lint_js::LintVm>> {
 /// `vm` must point at a live `VirtualMachine` whose `runtime_state` was set by
 /// `init_runtime_state`.
 #[inline]
-pub(crate) unsafe fn runtime_state_of(vm: *mut VirtualMachine) -> *mut RuntimeState {
+pub(crate) unsafe fn runtime_state_ptr_of(vm: *mut VirtualMachine) -> *mut RuntimeState {
     // One field is read: this may run off the VM's JS thread.
     // SAFETY: per fn contract — `vm` is live and `runtime_state` was set by
     // `init_runtime_state` to a `*mut RuntimeState`.
@@ -1017,10 +1014,10 @@ pub(crate) fn with_node_fs<R>(
     vm: &'static VirtualMachine,
     f: impl FnOnce(&mut crate::node::fs::NodeFS) -> R,
 ) -> R {
-    state_of(vm).node_fs.with_mut(|node_fs| {
+    runtime_state_of(vm).node_fs.with_mut(|node_fs| {
         f(node_fs.get_or_insert_with(|| crate::node::fs::NodeFS {
             sync_error_buf: bun_paths::path_buffer_pool::get(),
-            // It gates the embedded-file lookups inside `node:fs`.
+            // `vm` gates the embedded-file lookups inside `node:fs`.
             vm: vm.standalone_module_graph.is_some().then_some(vm),
         }))
     })

@@ -8,18 +8,11 @@ use self::StringEncoding as Encoding;
 use bun_alloc::ArenaVec as BumpVec;
 use smallvec::SmallVec;
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Moved from `bun_shell`:
-//   StringEncoding, SrcAscii, SrcUnicode, ShellCharIter, CharIter
-// These live here so `bun_shell` (higher tier) can depend on `shell_parser`
-// without a back-edge. `bun_shell` re-exports these under its old paths.
-// ═══════════════════════════════════════════════════════════════════════════
-
 use bun_core::strings::{CodepointIterator, Cursor};
 
 /// Encoding of the shell input bytes being expanded.
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum StringEncoding {
+enum StringEncoding {
     Ascii,
     Wtf8,
 }
@@ -157,7 +150,7 @@ enum ShellSrc<'a> {
     Unicode(SrcUnicode<'a>),
 }
 
-pub struct ShellCharIter<'a, const E: StringEncoding> {
+struct ShellCharIter<'a, const E: StringEncoding> {
     src: ShellSrc<'a>,
 }
 
@@ -443,20 +436,15 @@ fn check_brace_group_count(tokens: &[Token]) -> Result<(), ParserError> {
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ParserError {
-    #[error("OutOfMemory")]
-    OutOfMemory,
     #[error("UnexpectedToken")]
     UnexpectedToken,
     #[error("TooManyBraces")]
     TooManyBraces,
 }
 
-bun_core::oom_from_alloc!(ParserError);
-
 impl From<ParserError> for crate::Error {
     fn from(e: ParserError) -> Self {
         match e {
-            ParserError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
             ParserError::UnexpectedToken => crate::Error::UnexpectedToken,
             ParserError::TooManyBraces => crate::Error::TooManyBraces,
         }
@@ -928,7 +916,13 @@ fn build_expansion_table(
     Ok(())
 }
 
-pub type Lexer<'a> = NewLexer<'a, { Encoding::Ascii }>;
+pub fn tokenize(src: &[u8]) -> LexerOutput {
+    if bun_core::strings::is_all_ascii(src) {
+        NewLexer::<{ Encoding::Ascii }>::tokenize(src)
+    } else {
+        NewLexer::<{ Encoding::Wtf8 }>::tokenize(src)
+    }
+}
 
 type Chars<'a, const E: Encoding> = ShellCharIter<'a, E>;
 
@@ -937,14 +931,14 @@ pub struct LexerOutput {
     pub contains_nested: bool,
 }
 
-pub struct NewLexer<'a, const ENCODING: Encoding> {
+struct NewLexer<'a, const ENCODING: Encoding> {
     chars: Chars<'a, ENCODING>,
     tokens: Vec<Token>,
     contains_nested: bool,
 }
 
 impl<'a, const ENCODING: Encoding> NewLexer<'a, ENCODING> {
-    pub fn tokenize(src: &'a [u8]) -> LexerOutput {
+    fn tokenize(src: &'a [u8]) -> LexerOutput {
         let mut this = Self {
             chars: Chars::<ENCODING>::init(src),
             tokens: Vec::new(),
@@ -1172,7 +1166,7 @@ mod tests {
         for test_case in test_cases {
             let TestCase(src, expected) = test_case;
             // NOTE: don't use arena here so that we can test for memory leaks
-            let result = Lexer::tokenize(src);
+            let result = NewLexer::<{ Encoding::Ascii }>::tokenize(src);
             assert_eq!(result.tokens, expected);
         }
     }

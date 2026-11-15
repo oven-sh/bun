@@ -9,8 +9,6 @@ pub mod shared {
     pub mod column_identifier;
     #[path = "ConnectionFlags.rs"]
     pub mod connection_flags;
-    #[path = "Data.rs"]
-    pub mod data;
     #[path = "QueryStatus.rs"]
     pub mod query_status;
     #[path = "SQLQueryResultMode.rs"]
@@ -76,12 +74,12 @@ pub mod mysql {
         pub mod handshake_response41;
         #[path = "HandshakeV10.rs"]
         pub mod handshake_v10;
-        #[path = "NewReader.rs"]
-        pub mod new_reader;
         #[path = "NewWriter.rs"]
         pub mod new_writer;
         #[path = "OKPacket.rs"]
         pub mod ok_packet;
+        #[path = "PacketReader.rs"]
+        pub mod packet_reader;
         #[path = "PreparedStatement.rs"]
         pub mod prepared_statement;
         #[path = "ResultSetHeader.rs"]

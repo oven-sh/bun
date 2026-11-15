@@ -1826,7 +1826,7 @@ impl VirtualMachine {
         }
         // Idempotent; outside the `has_enabled_macro_mode` guard because
         // a `MacroLoadStates` is dropped per-job (RuntimeTranspilerStore
-        // job, JSTranspiler TransformTask, bundler `Worker::deinit`) and
+        // job, JSTranspiler TransformTask, bundler `Worker::drop`) and
         // frees the printer while this VM survives with the flag still set —
         // the next macro on the same pool thread would otherwise skip re-init
         // and panic at `SOURCE_CODE_PRINTER.get().expect(...)`.
@@ -4008,7 +4008,7 @@ pub fn drop_source_code_printer_if_macro_owned() {
 /// outlive the worker thread's TLS root and be reported by LSan once the
 /// `leak:bun_js_parser_jsc::Macro` suppression is gone.
 ///
-/// Only invoked from `bun_bundler::ThreadPool::Worker::deinit` (the call site
+/// Only invoked from `bun_bundler::ThreadPool::Worker::drop` (the call site
 /// is the discriminant — JS `Worker` threads never reach it). Not called from
 /// `MacroLoadStates::drop`: that path is reached from
 /// `transformSync` and a `JSTranspiler`'s drop (during a sweep),
@@ -6922,16 +6922,6 @@ impl VirtualMachine {
             };
         }
         #[inline]
-        fn splat_space(w: &mut dyn bun_io::Write, mut n: u64) -> crate::CrateResult<()> {
-            const SPACES: &[u8; 32] = b"                                ";
-            while n > 0 {
-                let chunk = n.min(32) as usize;
-                w.write_all(&SPACES[..chunk])?;
-                n -= chunk as u64;
-            }
-            Ok(())
-        }
-        #[inline]
         fn count_digits(n: i32) -> u64 {
             bun_core::fmt::digit_count(n) as u64
         }
@@ -6955,7 +6945,7 @@ impl VirtualMachine {
             let int_size = count_digits(display_line);
             let pad = max_line_number_pad.saturating_sub(int_size);
             last_pad = pad;
-            splat_space(writer, pad)?;
+            writer.splat_byte_all(b' ', pad as usize)?;
 
             let trimmed = source.trimmed_text();
             let clamped = &trimmed[..trimmed.len().min(MAX_LINE_LENGTH)];
@@ -7083,7 +7073,7 @@ impl VirtualMachine {
                     let display_line = source.line + 1;
                     let int_size = count_digits(display_line);
                     let pad = max_line_number_pad.saturating_sub(int_size);
-                    splat_space(writer, pad)?;
+                    writer.splat_byte_all(b' ', pad as usize)?;
 
                     let clamped = &trimmed[..trimmed.len().min(MAX_LINE_LENGTH)];
                     let hl = bun_core::fmt::fmt_javascript(
@@ -7113,7 +7103,7 @@ impl VirtualMachine {
                         {
                             let indent =
                                 max_line_number_pad + b" | ".len() as u64 + col.max(0) as u64;
-                            splat_space(writer, indent)?;
+                            writer.splat_byte_all(b' ', indent as usize)?;
                             pretty_write!(writer, "<red><b>^<r>\n")?;
                         } else {
                             writer.write_all(b"\n")?;
@@ -7235,7 +7225,7 @@ impl VirtualMachine {
 
                     let pad_left = longest_name.saturating_sub(field.length());
                     is_first_property = false;
-                    splat_space(writer, pad_left as u64)?;
+                    writer.splat_byte_all(b' ', pad_left)?;
                     pretty_write!(writer, " {}<r><d>:<r> ", field)?;
 
                     if allow_side_effects && global_ref.has_exception() {
@@ -7268,7 +7258,7 @@ impl VirtualMachine {
             if let Some(code_str) = code {
                 let pad_left = longest_name.saturating_sub(b"code".len());
                 is_first_property = false;
-                splat_space(writer, pad_left as u64)?;
+                writer.splat_byte_all(b' ', pad_left)?;
                 pretty_write!(
                     writer,
                     " code<r><d>:<r> <green>{}<r>\n",
@@ -7284,7 +7274,7 @@ impl VirtualMachine {
                         if cause == error_instance || formatter.visited_contains(cause) {
                             let pad_left = longest_name.saturating_sub(b"cause".len());
                             is_first_property = false;
-                            splat_space(writer, pad_left as u64)?;
+                            writer.splat_byte_all(b' ', pad_left)?;
                             pretty_write!(
                                 writer,
                                 " cause<r><d>:<r> <r><cyan>[Circular]<r><r><d>,<r>\n"

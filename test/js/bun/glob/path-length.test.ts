@@ -195,4 +195,41 @@ describe.skipIf(isWindows)("Glob path length", () => {
       expect(scanCode).toBe(0);
     });
   }
+
+  // A `.` or `..` that ends the pattern lists nothing, so the walk appends nothing for it. With a
+  // separator after it, it names the directory. The deepest directory is 4094 bytes below the
+  // root, 2 below the Linux limit.
+  test.skipIf(!isLinux)("a final `.` or `..` after `**/name` lists nothing below a 4094-byte path", async () => {
+    const root = tmpdirSync("bun-glob-overflow-final-dots-");
+    const name = Buffer.alloc(194, "a").toString();
+    await buildDeepTree(root, 21, name);
+
+    const fixture = `
+      const cwd = ${JSON.stringify(root)};
+      const scan = pattern => {
+        try {
+          const lengths = [...new Bun.Glob(pattern).scanSync({ cwd, onlyFiles: false })].map(p => p.length);
+          return lengths.sort((a, b) => a - b);
+        } catch (err) {
+          return err.code;
+        }
+      };
+      const name = ${JSON.stringify(name)};
+      console.log(JSON.stringify({ up: scan("**/" + name + "/.."), here: scan("**/" + name + "/."), dir: scan("**/" + name + "/../") }));
+    `;
+    await using scanProc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+    const [scanStdout, scanStderr, scanCode] = await Promise.all([
+      scanProc.stdout.text(),
+      scanProc.stderr.text(),
+      scanProc.exited,
+    ]);
+    expect(scanStderr).toBe("");
+    // Every level matches `name`. Level k is k * 195 - 1 bytes, and its `/..` adds 3.
+    expect(JSON.parse(scanStdout)).toEqual({
+      up: [],
+      here: [],
+      dir: Array.from({ length: 21 }, (_, level) => (level + 1) * 195 + 2),
+    });
+    expect(scanCode).toBe(0);
+  });
 });

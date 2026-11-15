@@ -141,6 +141,10 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           absoluteLiteralFile: [...new Bun.Glob(rootPosix + "/index.html").scanSync({})],
           enoentCode: errcode(() => [...new Bun.Glob("*").scanSync(missing)]),
           enotdirCode: errcode(() => [...new Bun.Glob("*").scanSync(indexHtml)]),
+          // "." and ".." segments in a pattern: the graph has no entries with those names.
+          dotSegmentAbsolute: [...new Bun.Glob("_app/./immutable/*.css").scanSync({ cwd: root, absolute: true })],
+          upAfterGlobstar: [...new Bun.Glob("**/chunks/../*.css").scanSync(root)],
+          upAfterGlobstarAbsolute: [...new Bun.Glob("**/chunks/../*.css").scanSync({ cwd: root, absolute: true })],
         };
         fs.rmSync(realDir, { recursive: true, force: true });
 
@@ -235,6 +239,10 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           absoluteLiteralFile: [],
           enoentCode: "ENOENT",
           enotdirCode: "ENOTDIR",
+          dotSegmentAbsolute: [join(r.client.root, "_app", "immutable", "app.css")],
+          // The walker writes the segment with "/" on every platform.
+          upAfterGlobstar: [join("_app", "immutable", "chunks") + "/.." + sep + "app.css"],
+          upAfterGlobstarAbsolute: [join(r.client.root, "_app", "immutable", "app.css")],
         },
         realDirPosix: expect.any(String),
       });
@@ -242,6 +250,31 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
       expect(r.client.recursive.join("\n")).not.toContain(sep === "/" ? "\\" : "/");
       // data.txt + config.json + 5 under client/
       expect(r.client.embeddedFileCount).toBeGreaterThanOrEqual(7);
+      expect(code).toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  // An asset from above the entry point keeps `..` in its embedded path, so the graph has a
+  // directory that is spelled `<root>/..`. A scan finds it only by the path as written.
+  test(
+    "Bun.Glob lists the directory that an asset above the root names with `..`",
+    async () => {
+      using dir = tempDir("bunfs-above-root", {
+        "app/index.ts": /* ts */ `
+          import logo from "../assets/logo.txt" with { type: "file" };
+          import path from "node:path";
+          const above = [...new Bun.Glob("../*").scanSync({ cwd: import.meta.dir, onlyFiles: false, absolute: true })];
+          console.log(JSON.stringify({ above, assets: path.normalize(path.dirname(logo)) }));
+        `,
+        "assets/logo.txt": "logo",
+      });
+      const entry = join(String(dir), "app");
+      await compile(entry, ["--asset-naming", "[dir]/[name].[ext]"]);
+      const { stdout, stderr, code } = await run(entry);
+      expect(stderr.trim()).toBe("");
+      const r = JSON.parse(stdout.trim());
+      expect(r.above).toEqual([r.assets]);
       expect(code).toBe(0);
     },
     TIMEOUT,

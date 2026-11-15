@@ -1097,8 +1097,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 }
                 // fd == INVALID falls through to the spec teardown below:
                 // the reader was never started (or already torn down), so
-                // there is no poll to wait on and the reader will not
-                // report — decrement here or the wait for `is_done` hangs.
+                // it will not report — decrement here or the wait for `is_done` hangs.
             }
             self.ipc_reader.deinit();
             self.remaining_fds -= 1;

@@ -1084,7 +1084,7 @@ impl ReadWriteLoop {
 #[cfg(windows)]
 extern "C" fn on_read(req: *mut libuv::fs_t) {
     // SAFETY: `req` is the `io_request` of the box that `read_write_loop_read` left to libuv.
-    let mut this = unsafe { bun_core::heap::take(CopyFileWindows::from_uv_fs(req)) };
+    let mut this = unsafe { CopyFileWindows::take_from_uv_fs(req) };
 
     let source_fd = this.read_write_loop.source_fd;
     // reshaped for borrowck — `read_buf.items` is `Vec` len-slice.
@@ -1120,7 +1120,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
 #[cfg(windows)]
 extern "C" fn on_write(req: *mut libuv::fs_t) {
     // SAFETY: `req` is the `io_request` of the box that `read_write_loop_write` left to libuv.
-    let mut this = unsafe { bun_core::heap::take(CopyFileWindows::from_uv_fs(req)) };
+    let mut this = unsafe { CopyFileWindows::take_from_uv_fs(req) };
     let buf_len = this.read_write_loop.read_buf.len();
 
     let destination_fd = this.read_write_loop.destination_fd;
@@ -1566,7 +1566,7 @@ impl Drop for CopyFileWindows {
 #[cfg(windows)]
 extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     // SAFETY: `req` is the `io_request` of the box that `copyfile` left to libuv.
-    let mut this = unsafe { bun_core::heap::take(CopyFileWindows::from_uv_fs(req)) };
+    let mut this = unsafe { CopyFileWindows::take_from_uv_fs(req) };
 
     let rc = this.io_request.result;
 
@@ -1643,7 +1643,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
 #[cfg(windows)]
 extern "C" fn on_chmod(req: *mut libuv::fs_t) {
     // SAFETY: `req` is the `io_request` of the box that `on_complete` left to libuv.
-    let this = unsafe { bun_core::heap::take(CopyFileWindows::from_uv_fs(req)) };
+    let this = unsafe { CopyFileWindows::take_from_uv_fs(req) };
 
     let rc = this.io_request.result;
     if let Some(mut err) = rc.to_error(bun_sys::Tag::chmod) {

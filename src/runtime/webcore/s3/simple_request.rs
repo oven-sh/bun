@@ -571,6 +571,7 @@ pub(crate) fn resolve_proxy(proxy_url: Option<&[u8]>, url: &[u8]) -> Box<[u8]> {
         Some(href) => Box::from(href),
         None => VirtualMachine::get()
             .env_loader()
+            .snapshot()
             .get_http_proxy_for(&URL::parse(url))
             .map(|proxy| Box::from(proxy.href))
             .unwrap_or_default(),

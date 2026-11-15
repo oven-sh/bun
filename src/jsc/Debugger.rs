@@ -11,6 +11,7 @@ use core::cell::Cell;
 use core::ffi::c_int;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 
 use bun_core::{String as BunString, StringView};
 use bun_io::KeepAlive;
@@ -351,7 +352,7 @@ impl Debugger {
             // it reaches back only through the (uncounted) handle to wake us.
             // That includes the environment: the debugger VM builds its
             // `process.env` from this copy, not from this thread's loader.
-            let env_map = this.env_loader().map.clone_with_allocator()?;
+            let env_map = this.env_loader().snapshot().map.clone_with_allocator()?;
             let init = DebuggerThreadInit {
                 debuggee: this.handle(),
                 ctx_id: dbg.script_execution_context_id.get(),
@@ -395,9 +396,8 @@ impl Debugger {
         bun_core::scoped_log!(debugger, "startJSDebuggerThread");
         jsc::mark_binding();
 
-        let mut env_loader = bun_dotenv::Loader::init_with_map(env_map);
         let options = crate::virtual_machine::InitOptions {
-            env_loader: Some(core::ptr::NonNull::from(&mut env_loader)),
+            env_loader: Some(Arc::new(bun_dotenv::Loader::init_with_map(env_map))),
             is_main_thread: false,
             ..Default::default()
         };

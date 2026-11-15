@@ -6,6 +6,7 @@
 use core::cell::{Cell, OnceCell};
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
+use std::sync::Arc;
 
 use bun_bundler::Transpiler;
 use bun_io as Async;
@@ -88,8 +89,8 @@ pub struct InitOptions {
     pub transform_options: bun_options_types::schema::api::TransformOptions,
     /// Consumed by `RuntimeHooks::init_runtime_state` → `configureDebugger`.
     pub debugger: bun_options_types::context::Debugger,
-    /// Used instead of `bun_dotenv::instance()`. Outlives the VM.
-    pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
+    /// The VM copies a loader that is shared.
+    pub env_loader: Option<Arc<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     /// `--install=...`; the resolver needs it before `configure_from_tsconfig()` caches package.json.
     pub global_cache: bun_options_types::global_cache::GlobalCache,
@@ -332,7 +333,8 @@ pub struct VirtualMachine {
     pub(crate) active_tasks: Cell<usize>,
 
     pub rare_data: OnceCell<Box<RareData>>,
-    pub proxy_env_storage: crate::rare_data::ProxyEnvStorage,
+    /// A second owner, so that `env_mut()` panics instead of changing the loader under a borrow.
+    env_loader: OnceCell<Arc<bun_dotenv::Loader>>,
     pending_internal_promise: JsCell<crate::strong::Optional>,
     pub pending_internal_promise_reported_at: Cell<u32>,
     pub hot_reload_deferred: Cell<bool>,
@@ -444,9 +446,6 @@ pub struct TestIsolationState {
     /// `Etc/UTC`). Empty means no override (local time). With `--isolate`, re-applied
     /// after every file so a `process.env.TZ` write stays with the file that made it.
     pub time_zone: OnceCell<Box<[u8]>>,
-    /// The proxy env keys as the env map held them at startup, restored after
-    /// every file. See [`crate::rare_data::ProxyEnvSnapshot`].
-    pub proxy_env: OnceCell<crate::rare_data::ProxyEnvSnapshot>,
     /// The synthetic allocation limit at startup, restored after every file.
     /// `setSyntheticAllocationLimitForTesting` lowers it process-wide.
     pub synthetic_allocation_limit: Cell<Option<usize>>,
@@ -1453,10 +1452,10 @@ impl VirtualMachine {
         self.event_loop().enter_scope_without_checkpoint()
     }
 
-    /// `vm.transpiler.env`, which lasts at least as long as the VM.
+    /// `vm.transpiler.env()`. The first call must come after the last write to it.
     #[inline]
-    pub fn env_loader(&self) -> &'static bun_dotenv::Loader {
-        self.transpiler.get().env()
+    pub fn env_loader(&self) -> &Arc<bun_dotenv::Loader> {
+        (self.env_loader).get_or_init(|| Arc::clone(self.transpiler.get().env()))
     }
 
     /// The process-lifetime resolver `FileSystem` singleton.
@@ -3026,7 +3025,9 @@ impl VirtualMachine {
         let preserve_symlinks = args.preserve_symlinks.unwrap_or(false);
         args.write = Some(false);
         args.target = Some(bun_options_types::schema::api::Target::Bun);
-        let env_loader = opts.env_loader.map(NonNull::as_ptr);
+        let mut env_loader = opts.env_loader.take().unwrap_or_default();
+        // `process.env` writes go to the loader, so no other VM may have it.
+        Arc::make_mut(&mut env_loader);
         let transpiler = Transpiler::init(arena, log, args, env_loader)?;
 
         let this = bun_core::heap::into_raw_nn(Box::<VirtualMachine>::new_uninit())
@@ -3112,7 +3113,7 @@ impl VirtualMachine {
             ref_strings: JsCell::default(),
             active_tasks: Cell::new(0),
             rare_data: OnceCell::new(),
-            proxy_env_storage: Default::default(),
+            env_loader: OnceCell::new(),
             pending_internal_promise: JsCell::default(),
             // Not `hot_reload_counter`'s 0, or a reload that races the first load drops its error.
             pending_internal_promise_reported_at: Cell::new(u32::MAX),
@@ -3706,9 +3707,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
 #[derive(Default)]
 pub struct Options {
     pub args: bun_options_types::schema::api::TransformOptions,
-    // BORROW_PARAM (`&'a mut bun_dotenv::Loader`) — caller-owned; the loader
-    // outlives the VM, so the inner lifetime is erased to `'static`.
-    pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
+    pub env_loader: Option<Arc<bun_dotenv::Loader>>,
     pub smol: bool,
     // LAYERING: real type is `bun_runtime::dns_jsc::Order` (forward
     // dep); stored as its `u8` repr.
@@ -3964,10 +3963,7 @@ impl VirtualMachine {
         if let Some(v) = self.default_tls_reject_unauthorized.get() {
             return v;
         }
-        self.transpiler
-            .get()
-            .env_mut()
-            .get_tls_reject_unauthorized()
+        self.env_loader().get_tls_reject_unauthorized()
     }
 
     /// The TLS 1.2 list assigned through `tls.DEFAULT_CIPHERS`, `None` when never assigned.
@@ -3997,7 +3993,6 @@ impl VirtualMachine {
                 _ => L::None,
             };
         }
-        // SAFETY: `transpiler.env` is set during init and live for VM lifetime.
         if let Some(verbose_fetch) = self.env_loader().get(b"BUN_CONFIG_VERBOSE_FETCH") {
             if verbose_fetch == b"true" || verbose_fetch == b"1" {
                 self.default_verbose_fetch.set(Some(1));
@@ -4018,7 +4013,7 @@ impl VirtualMachine {
 
     /// Applies env-derived runtime settings and adopts `NODE_CHANNEL_FD` for IPC.
     pub fn load_extra_env(&self) {
-        let map = &self.transpiler.get().env().map;
+        let map = &self.env_loader().map;
 
         if map.get(b"BUN_SHOW_BUN_STACKFRAMES").is_some() {
             self.hide_bun_stackframes.set(false);
@@ -5678,16 +5673,13 @@ impl VirtualMachine {
     /// in JSEnvironmentVariableMap.cpp) write past the env object: TZ into the
     /// WTF time zone override, NODE_TLS_REJECT_UNAUTHORIZED and
     /// BUN_CONFIG_VERBOSE_FETCH into per-VM caches, and the proxy keys into the
-    /// env map that seeds the next global's `process.env`. Put each back to
+    /// env loader that seeds the next global's `process.env`. Put each back to
     /// its startup state so a file's write does not reach the files after it.
     fn undo_process_env_side_effects(&self) {
         self.default_tls_reject_unauthorized.set(None);
         self.default_verbose_fetch.set(None);
         self.restore_test_time_zone();
-        if let Some(snapshot) = self.test_isolation_state.proxy_env.get() {
-            let mut slots = self.proxy_env_storage.lock();
-            slots.restore(&mut self.transpiler.get().env_mut().map, snapshot);
-        }
+        self.env_loader().reset_proxy_env();
     }
 
     /// Goes back to the time zone `bun test` started with. `delete process.env.TZ` in a test does this too.

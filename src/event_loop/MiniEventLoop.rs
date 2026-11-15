@@ -25,7 +25,6 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
-use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
 #[cfg(not(windows))]
 use bun_io::file_poll::Store as FilePollStore;
 use bun_threading::UnboundedQueue;
@@ -58,8 +57,6 @@ pub struct MiniEventLoop {
     pub loop_: &'static UwsLoop,
     #[cfg(not(windows))]
     file_polls: OnceCell<Box<FilePollStore>>,
-    /// `NonNull` so that [`EventLoopHandle::env`] can hand out a `*mut` with mutable provenance.
-    env: Option<NonNull<DotEnvLoader>>,
     // Opaque ctx assigned externally; only read/cleared here.
     #[cfg(not(windows))]
     after_event_loop_callback_ctx: Cell<Option<NonNull<c_void>>>,
@@ -73,23 +70,12 @@ thread_local! {
     static GLOBAL: Cell<Option<&'static MiniEventLoop>> = const { Cell::new(None) };
 }
 
-/// Returns this thread's loop. `env` only counts for the call that makes it.
-pub fn init_global(env: Option<&'static mut DotEnvLoader>) -> &'static MiniEventLoop {
+/// Returns this thread's loop.
+pub fn init_global() -> &'static MiniEventLoop {
     if let Some(global) = GLOBAL.get() {
         return global;
     }
-    let mut global = MiniEventLoop::init();
-
-    // The process-global loader is stored as `AtomicPtr<Loader>`.
-    global.env = env
-        .map(NonNull::from)
-        .or_else(|| NonNull::new(dotenv::INSTANCE.load(core::sync::atomic::Ordering::Acquire)));
-    if global.env.is_none() {
-        // Thread-lifetime singleton.
-        global.env = Some(bun_core::heap::into_raw_nn(Box::new(DotEnvLoader::init())));
-    }
-
-    let global: &'static MiniEventLoop = Box::leak(Box::new(global));
+    let global: &'static MiniEventLoop = Box::leak(Box::new(MiniEventLoop::init()));
     EventLoopHandle::init_mini(global).set_as_parent_of(global.loop_);
 
     GLOBAL.set(Some(global));
@@ -97,25 +83,6 @@ pub fn init_global(env: Option<&'static mut DotEnvLoader>) -> &'static MiniEvent
 }
 
 impl MiniEventLoop {
-    /// Raw pointer to the `DotEnv::Loader` backref.
-    ///
-    /// Returns `None` until [`init_global`] populates it. Neither a `&`- nor
-    /// a `&mut`-returning accessor is provided: the loader may be shared via
-    /// the process-global `dotenv::INSTANCE` (and `Transpiler::env`), and
-    /// other safe paths materialize `&mut DotEnvLoader` from the same
-    /// allocation via raw deref.
-    /// Handing out a long-lived `&DotEnvLoader` here would let safe code hold
-    /// it across one of those `&mut` paths → aliased `&`/`&mut` UB. Callers
-    /// deref the returned `NonNull` for a tightly-scoped borrow under their
-    /// own SAFETY contract instead.
-    ///
-    /// SAFETY (invariant): when `Some`, points to a thread-/process-lifetime
-    /// loader set in `init_global` that outlives `self` (never freed).
-    #[inline]
-    pub(crate) fn env_ptr(&self) -> Option<NonNull<DotEnvLoader>> {
-        self.env
-    }
-
     pub fn on_after_event_loop(&self) {
         #[cfg(not(windows))]
         if let Some(cb) = self.after_event_loop_callback.get() {
@@ -140,7 +107,6 @@ impl MiniEventLoop {
             loop_: UwsLoop::get(),
             #[cfg(not(windows))]
             file_polls: OnceCell::new(),
-            env: None,
             #[cfg(not(windows))]
             after_event_loop_callback_ctx: Cell::new(None),
             #[cfg(not(windows))]

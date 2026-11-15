@@ -44,6 +44,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             .init_transpiler(
                 arena,
                 log,
+                Arc::clone(global.bun_vm().env_loader()),
                 bake::Mode::Development,
                 renderer,
                 &unresolved_view,

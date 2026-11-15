@@ -1849,10 +1849,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     {
         // Resolve the executable via bun.which, matching Bun.spawn's behavior.
         let path_env = VirtualMachine::get()
-            .transpiler
-            .get()
-            .env()
-            .map
+            .env_loader()
             .get(b"PATH")
             .unwrap_or(b"");
         let argv0 = argv[0].to_bytes();
@@ -1870,7 +1867,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     #[cfg(unix)]
     let env = None;
     #[cfg(windows)]
-    let envp_owned = VirtualMachine::get().transpiler.get().env().map.to_envp();
+    let envp_owned = VirtualMachine::get().env_loader().snapshot().map.to_envp();
     #[cfg(windows)]
     let env = Some(envp_owned.as_list());
 

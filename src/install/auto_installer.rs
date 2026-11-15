@@ -22,6 +22,7 @@
 
 use core::mem::{align_of, size_of};
 use core::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 use bun_install_types::resolver_hooks as hooks;
 use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
@@ -445,14 +446,12 @@ fn __bun_resolver_parse_dependency(
 // SAFETY (callee contract):
 //   • `install` is `BundleOptions.install` (`?*Api.BunInstall`). The pointee is
 //     the CLI-owned `Box<BunInstall>` (process-lifetime), read-only.
-//   • `env` is the resolver's unwrapped `env_loader` (Transpiler-owned,
-//     process-lifetime). `init_with_runtime` stores it as `NonNull<Loader>`.
 #[unsafe(no_mangle)]
 #[inline(never)]
 unsafe fn __bun_resolver_init_package_manager(
     log: &bun_ast::Log,
     install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
-    mut env: core::ptr::NonNull<bun_dotenv::Loader>,
+    env: &Arc<bun_dotenv::Loader>,
     prefer_offline: bool,
     importer_dir: &[u8],
 ) -> core::result::Result<&'static mut dyn hooks::AutoInstaller, bun_resolver::Error> {
@@ -468,9 +467,6 @@ unsafe fn __bun_resolver_init_package_manager(
     // (see `run_command::wire_transpiler_from_ctx`); read-only borrow.
     let bun_install: Option<&crate::bun_schema::api::BunInstall> =
         install.map(|p| unsafe { p.as_ref() });
-    // SAFETY: caller guarantees `env` points at process-lifetime
-    // Transpiler-owned storage with no aliasing `&mut` live across this call.
-    let env_ref: &mut bun_dotenv::Loader = unsafe { env.as_mut() };
 
     let pm = crate::package_manager::init_with_runtime(
         log,
@@ -479,7 +475,7 @@ unsafe fn __bun_resolver_init_package_manager(
             prefer_offline,
             ..Default::default()
         },
-        env_ref,
+        env,
         importer_dir,
     )
     .map_err(|e| match e {

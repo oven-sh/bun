@@ -478,12 +478,8 @@ extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* global
         settleCodecChunk(globalObject, stream, thrown);
     else if (!step.more)
         settlePendingChunk(globalObject, stream, consumerFull(stream, step) && stream->m_nativeSinkController ? CodecOutcome::DoneSinkFull : CodecOutcome::Done);
-    else if (!consumerFull(stream, step)) {
-        if (coder) [[likely]]
-            dispatchStepOffThread(globalObject, stream, coder, jsUndefined(), nullptr, 0, false);
-        else
-            settleCodecChunk(globalObject, stream, JSValue());
-    }
+    else if (!consumerFull(stream, step))
+        dispatchStepOffThread(globalObject, stream, coder, jsUndefined(), nullptr, 0, false);
     // Otherwise the consumer continues the chunk once it has room.
     scope.assertNoException();
 }

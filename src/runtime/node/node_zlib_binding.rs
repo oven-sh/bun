@@ -51,7 +51,7 @@ pub(crate) trait CompressionContext: Send + 'static {
     fn do_work(&mut self, buffers: RawBuffers<'_>);
     fn reset(&mut self) -> Result<(), Error>;
     /// `[avail_out, avail_in]`, the order `_writeState` holds them in, or why `do_work` failed.
-    fn write_result(&mut self) -> Result<[u32; 2], Error>;
+    fn write_result(&self) -> Result<[u32; 2], Error>;
 }
 
 /// Stores a stream's copy of an input that `can_be_freed_while_pinned`.
@@ -64,24 +64,24 @@ struct InputCopy {
 }
 
 impl InputCopy {
-    /// False on OOM. `processCallback` resends one view with a growing `in_off`, so all of it is copied, once.
-    fn fill(&mut self, global: &JSGlobalObject, view: &[u8]) -> bool {
+    /// `processCallback` resends one view with a growing `in_off`, so all of it is copied, once.
+    fn fill(&mut self, global: &JSGlobalObject, view: &[u8]) -> JsResult<()> {
         let from = (view.as_ptr().addr(), view.len());
         if self.from != from {
             self.from = (0, 0);
             self.bytes.clear();
-            if self.bytes.try_reserve_exact(view.len()).is_err() {
-                return false;
-            }
+            self.bytes
+                .try_reserve_exact(view.len())
+                .map_err(|_| global.throw_out_of_memory())?;
             self.bytes.extend_from_slice(view);
             self.from = from;
             global.vm().report_extra_memory(self.bytes.len());
         }
-        true
+        Ok(())
     }
 }
 
-/// What one operation on a handle has to itself.
+/// The part of a handle that an async `write()` moves to the thread pool.
 pub(crate) struct Stream<C> {
     pub(crate) context: C,
     input_copy: InputCopy,
@@ -96,6 +96,7 @@ impl<C> Stream<C> {
     }
 }
 
+/// The codecs `memcpy` from `in` to `out`.
 fn throw_if_overlapping(
     global: &JSGlobalObject,
     in_buf: &ArrayBuffer,
@@ -158,9 +159,7 @@ impl PendingBuffers {
         let mut in_buf = pin(in_js)?;
         // The pool thread reads the input later: it gets a copy if the pin can't keep the bytes mapped.
         let input = if in_buf.can_be_freed_while_pinned() {
-            if !input_copy.fill(global, in_buf.byte_slice()) {
-                return Err(global.throw_out_of_memory());
-            }
+            input_copy.fill(global, in_buf.byte_slice())?;
             PendingInput::Copied(in_range)
         } else {
             in_buf.narrow(in_range.start, in_range.len());
@@ -517,16 +516,13 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
             // just a flush
             ArrayBuffer::default()
         } else {
-            let mut in_buf = match in_js.as_array_buffer(global_this) {
-                Some(b) => b,
-                None => {
-                    return Err(global_this
-                        .err(
-                            ErrorCode::INVALID_ARG_TYPE,
-                            format_args!("The \"in\" argument must be a TypedArray or DataView"),
-                        )
-                        .throw());
-                }
+            let Some(mut in_buf) = in_js.as_array_buffer(global_this) else {
+                return Err(global_this
+                    .err(
+                        ErrorCode::INVALID_ARG_TYPE,
+                        format_args!("The \"in\" argument must be a TypedArray or DataView"),
+                    )
+                    .throw());
             };
             let (in_off, in_len) = (jsv_to_u32(in_off.to_js()), jsv_to_u32(in_len.to_js()));
             if in_buf.byte_len < in_off as usize + in_len as usize {
@@ -592,6 +588,7 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
             return Ok(());
         }
         let Some(mut stream) = self.stream().take() else {
+            // Node throws a plain `Error` here.
             return Err(
                 global_this.throw_value(global_this.create_error_instance(format_args!(
                     "Cannot reset zlib stream while a write is in progress"
@@ -608,25 +605,26 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
     }
 
     fn close(&self) {
-        if self.stream().take().is_none() && !self.closed().get() {
+        let stream = self.stream().take();
+        if stream.is_none() && !self.closed().get() {
             self.pending_close().set(true);
             return;
         }
         self.pending_close().set(false);
         self.closed().set(true);
+        drop(stream);
     }
 
     /// The callback can re-enter any member, so the stream has to be back in its cell.
     fn emit_error(&self, global_this: &JSGlobalObject, this_value: JSValue, err_: &Error) {
-        let msg_value = match bun_string_jsc::create_utf8_for_js(global_this, err_.msg.to_bytes()) {
-            Ok(v) => v,
-            Err(_) => return,
+        let Ok(msg_value) = bun_string_jsc::create_utf8_for_js(global_this, err_.msg.to_bytes())
+        else {
+            return;
         };
         let err_value: JSValue = JSValue::js_number(f64::from(err_.err));
-        let code_value = match bun_string_jsc::create_utf8_for_js(global_this, err_.code.to_bytes())
-        {
-            Ok(v) => v,
-            Err(_) => return,
+        let Ok(code_value) = bun_string_jsc::create_utf8_for_js(global_this, err_.code.to_bytes())
+        else {
+            return;
         };
 
         // The `zlib.ts` wrapper installs `onerror` right after construction,

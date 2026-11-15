@@ -1930,7 +1930,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           name: "addon",
           exports: { ".": { import: "./esm.mjs", require: "./addon.node" } },
         }),
-        "node_modules/addon/esm.mjs": `(globalThis.loaded ??= []).push("addon esm"); export const which = "real esm";`,
+        "node_modules/addon/esm.mjs": esm("addon"),
         // Not an addon: process.dlopen() throws on it.
         "node_modules/addon/addon.node": "not an addon",
         "addon.test.js": `

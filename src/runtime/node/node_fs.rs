@@ -1672,11 +1672,7 @@ mod _async_tasks {
         pub(crate) unsafe fn destroy(this: *mut Self) {
             // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
             // reclaim ownership (paired with the Box::leak in create()).
-            let mut task = unsafe { bun_core::heap::take(this) };
-            // A result nobody took (the request's context stopped: released unrun).
-            if let Ok(result) = core::mem::replace(&mut task.result, Err(sys::Error::default())) {
-                result.discard();
-            }
+            let task = unsafe { bun_core::heap::take(this) };
             // `bun_sys::Error` frees its path on Drop.
             task.r#ref.unref(bun_io::js_vm_ctx());
         }
@@ -1855,14 +1851,6 @@ mod _async_tasks {
     /// Each `ret::*` type implements this by forwarding to its inherent method.
     pub(crate) trait FsReturn {
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
-        /// The result is not going to be reported (the context of the script that asked has
-        /// stopped): release what only that script could have released.
-        #[inline]
-        fn discard(self)
-        where
-            Self: Sized,
-        {
-        }
         /// Returns how many bytes the job wrote into the caller's buffer.
         #[inline]
         fn bytes_read(&self) -> u64 {
@@ -1899,14 +1887,10 @@ mod _async_tasks {
             self.to_js_newly_created(global)
         }
     }
-    impl FsReturn for FD {
+    impl FsReturn for sys::File {
         #[inline]
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-            Ok(crate::node::types::FdJsc::to_js(self, global))
-        }
-        #[inline]
-        fn discard(self) {
-            self.close();
+            Ok(crate::node::types::FdJsc::to_js(self.into_raw(), global))
         }
     }
     impl FsReturn for StringOrBuffer<'_> {
@@ -1980,17 +1964,9 @@ mod _async_tasks {
 
     /// One `fs.promises.*` operation on the work pool. The arguments' JS-backed
     /// buffers are pinned and rooted (`ThreadIsolated`) and read under the job's ticket.
-    pub(crate) struct AsyncFSTask<R: FsReturn, A, const F: NodeFSFunctionEnum> {
-        pub args: ThreadIsolated<A>,
+    pub(crate) struct AsyncFSTask<R, A, const F: NodeFSFunctionEnum> {
         pub(crate) result: Maybe<R>,
-    }
-    impl<R: FsReturn, A, const F: NodeFSFunctionEnum> Drop for AsyncFSTask<R, A, F> {
-        /// A job whose context stopped is dropped with its result untaken.
-        fn drop(&mut self) {
-            if let Ok(result) = core::mem::replace(&mut self.result, Err(sys::Error::default())) {
-                result.discard();
-            }
-        }
+        pub args: ThreadIsolated<A>,
     }
     // SAFETY: results are plain data / owned buffers / WTF strings built off
     // thread for hand-off (`ret::*`); `ThreadIsolated<A>` is Send by its contract.
@@ -2131,36 +2107,32 @@ mod _async_tasks {
             Some(done)
         }
 
-        fn then(
-            mut this: Self,
-            js: AsyncFSJs,
-            cx: &bun_jsc::JsThread<'_>,
-        ) -> bun_jsc::JsResult<()> {
+        fn then(this: Self, js: AsyncFSJs, cx: &bun_jsc::JsThread<'_>) -> bun_jsc::JsResult<()> {
+            let Self { result, mut args } = this;
             let global_object = cx.global();
             let _dispatch = js.tracker.dispatch(global_object);
 
             move_waiting_descriptors();
-            if let Ok(result) = &this.result {
-                this.args.write_back(result.bytes_read());
+            if let Ok(result) = &result {
+                args.write_back(result.bytes_read());
             }
-            let success = this.result.is_ok();
+            let success = result.is_ok();
             let completion = &js.completion;
-            let converted = match core::mem::replace(&mut this.result, Err(sys::Error::default())) {
+            let converted = match result {
                 Err(err) => completion.error_to_js(global_object, &err),
                 Ok(res) => FsReturn::fs_to_js(res, global_object),
             };
             completion.ensure_still_alive();
 
             let aborted = if Self::HAVE_ABORT_SIGNAL && converted.is_ok() {
-                this.args
-                    .signal()
+                args.signal()
                     .and_then(|signal| signal.node_abort_error_if_aborted(global_object))
             } else {
                 None
             };
 
             // The arguments pin their buffers. A callback runs inside `resolve`/`reject`, and a pinned buffer cannot be transferred.
-            drop(this);
+            drop(args);
 
             match aborted {
                 Some(abort_error) => completion.reject(global_object, Ok(abort_error)),
@@ -5262,7 +5234,7 @@ pub(crate) mod ret {
     pub(crate) type Lstat = StatOrNotFound;
     pub(crate) type Mkdir = StringOrUndefined;
     pub(crate) type Mkdtemp = StringOrBuffer<'static>;
-    pub(crate) type Open = FD;
+    pub(crate) type Open = sys::File;
     pub(crate) type WriteFile = ();
     pub(crate) type Readv = Read;
     pub(crate) type StatFS = node::StatFS;
@@ -6804,6 +6776,7 @@ impl NodeFS {
                 Ok(fd)
             }
         }
+        .map(sys::File::from_fd)
     }
 
     #[cfg(windows)]
@@ -6811,14 +6784,15 @@ impl NodeFS {
         if let Some(err) = rc.to_error(sys::Tag::open) {
             if err.get_errno() == E::ENOENT && compiled_program_graph().is_some() {
                 return open_embedded_path(args.flags.as_int(), args.path.slice())
-                    .unwrap_or_else(|| Err(err.with_path(args.path.slice())));
+                    .unwrap_or_else(|| Err(err.with_path(args.path.slice())))
+                    .map(sys::File::from_fd);
             }
             return Err(err.with_path(args.path.slice()));
         }
         if args.flags.as_int() & FLAGS_OF_WRITES != 0 {
             note_written_file(args.path.slice());
         }
-        Ok(FD::from_uv(rc.to_fd()))
+        Ok(sys::File::from_fd(FD::from_uv(rc.to_fd())))
     }
 
     #[cfg(windows)]

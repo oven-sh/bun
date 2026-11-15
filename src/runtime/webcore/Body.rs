@@ -880,10 +880,9 @@ impl Value {
                 // Blob.Store owns a `Vec`, so dupe out of the
                 // codec's allocator here. The hot path (`.bytes()`) hands the
                 // codec buffer to JS without this copy.
-                // SAFETY: `encoded.bytes` is the codec-owned slice; copy then drop frees it.
-                let owned: Box<[u8]> = Box::from(unsafe { encoded.bytes.as_ref() });
+                let owned = encoded.to_vec();
                 drop(encoded);
-                let blob = Blob::init(owned.into_vec(), global_this);
+                let blob = Blob::init(owned, global_this);
                 blob.content_type
                     .set(blob::BlobContentType::Static(mime.as_bytes()));
                 blob.content_type_was_set.set(true);

@@ -276,21 +276,6 @@ fn pooled_socket_mut<'a, const SSL: bool>(p: *mut PooledSocket<SSL>) -> &'a mut 
     unsafe { &mut *p }
 }
 
-impl<const SSL: bool> PooledSocket<SSL> {
-    /// Drop the strong refs the pool holds while a socket is parked
-    /// (proxy_tunnel / h2_session) and clear the heap-owned
-    /// `target_hostname`. Called from `Drop` and `add_memory_back_to_pool`
-    /// before the slot is recycled or its socket force-closed.
-    ///
-    /// Centralises the intrusive-rc `deref` so each caller doesn't repeat the
-    /// pair of `unsafe { …::deref(nn.as_ptr()) }`.
-    fn release_parked_refs(&mut self) {
-        self.target_hostname = Box::default();
-        self.proxy_tunnel = None;
-        self.h2_session = None;
-    }
-}
-
 #[derive(Clone, Copy)]
 struct PoolKey<'a> {
     required_for_socket: PeerVerification,
@@ -936,13 +921,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
                 // Transfer tunnel ownership (the parked strong ref) to the caller.
                 let tunnel: Option<RefPtr<ProxyTunnel>> = socket.proxy_tunnel.take();
-                socket.target_hostname = Box::default();
                 let h2_session = socket.h2_session.take();
                 let verification = socket.verification;
-                // SAFETY: `socket_ptr` is a fully-initialized hive slot; the
-                // owned-heap fields (tunnel/target_hostname/h2_session)
-                // were just moved out / cleared, so the in-place drop in `put`
-                // touches only trivially-droppable residuals.
+                // SAFETY: `socket_ptr` is a fully-initialized hive slot.
                 let ok = unsafe { pool.put(socket_ptr) };
                 debug_assert!(ok);
                 bun_core::scoped_log!(
@@ -1259,7 +1240,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
         while let Some(idx) = iter.next() {
             let pooled = pooled_socket_mut(pool.at(u16::try_from(idx).expect("int cast")));
             // Not shutdown(): its close callback would deref the freed HTTPClient in the ext slot.
-            pooled.release_parked_refs();
+            pooled.proxy_tunnel = None;
+            pooled.h2_session = None;
             pooled.http_socket.close(uws::CloseKind::Failure);
         }
     }
@@ -1471,16 +1453,7 @@ impl<const SSL: bool> Handler<SSL> {
 
     unsafe fn add_memory_back_to_pool(pooled_ptr: *mut PooledSocket<SSL>) {
         // SAFETY: caller guarantees `pooled_ptr` points at a live HiveArray slot.
-        // Hoist `owner` and clear the slot's owned resources first; the
-        // `&mut HiveArray` receiver formed by `pending_sockets.put` (covering
-        // this very slot) is created only after the `&mut PooledSocket` borrow
-        // is dropped — avoids Stacked Borrows invalidation of the slot pointer.
-        // SAFETY: see fn-level contract.
-        let (owner, transport) = unsafe {
-            let slot = &mut *pooled_ptr;
-            slot.release_parked_refs();
-            (slot.owner, slot.transport)
-        };
+        let (owner, transport) = unsafe { ((*pooled_ptr).owner, (*pooled_ptr).transport) };
         // SAFETY: owner is the HiveArray backing this slot; address-stable
         // (static or Box-allocated) and outlives any pooled entry.
         let ok = unsafe {

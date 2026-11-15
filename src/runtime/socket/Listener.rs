@@ -1026,6 +1026,7 @@ impl Listener {
                     let tls = if let Some(prev) = prev_maybe_tls {
                         let prev = prev.ref_guard();
                         debug_assert!(!prev.this_value.get().is_empty());
+                        prev.detach_for_reconnect();
                         prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
                             prev.socket.get().socket,
@@ -1117,6 +1118,7 @@ impl Listener {
                     let tcp = if let Some(prev) = prev_maybe_tcp {
                         let prev = prev.ref_guard();
                         debug_assert!(!prev.this_value.get().is_empty());
+                        prev.detach_for_reconnect();
                         prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
                             prev.socket.get().socket,

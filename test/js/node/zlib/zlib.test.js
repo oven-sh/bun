@@ -107,6 +107,26 @@ describe("zlib", () => {
     expect(() => gunzipSync(data, { library: "zlib" })).toThrow(new Error("incorrect header check"));
   });
 
+  // zlib takes a 32-bit length. The pages that are never written stay virtual.
+  describe("an input of 2**32 bytes", () => {
+    it("gunzipSync reads it", () => {
+      const input = new Uint8Array(2 ** 32);
+      input.set(gzipSync("hello"));
+      // What it takes for the size of the output.
+      input[2 ** 32 - 4] = 5;
+      expect(Buffer.from(gunzipSync(input)).toString()).toBe("hello");
+    });
+
+    it(
+      "gzipSync compresses all of it",
+      () => {
+        const crc32AndSize = Buffer.from(gzipSync(new Uint8Array(2 ** 32), { level: 3 }).subarray(-8));
+        expect(crc32AndSize.toString("hex")).toBe("8def02d200000000");
+      },
+      isDebug || isASAN ? 60_000 : 20_000,
+    );
+  });
+
   it("flush() takes a numeric string or a BigInt, and any kind after end()", async () => {
     for (const kind of ["2", 2n]) {
       const gzip = zlib.createGzip();
@@ -1012,6 +1032,35 @@ describe("async write buffer lifetime", () => {
       deflate.close();
     }
   });
+});
+
+it.each([
+  ["createGzip", "gunzipSync"],
+  ["createBrotliCompress", "brotliDecompressSync"],
+  ["createZstdCompress", "zstdDecompressSync"],
+])("%s treats a chunk that was detached while it was queued as empty", async (create, inverse) => {
+  const chunks = [];
+  const compressor = zlib[create]().on("data", chunk => chunks.push(chunk));
+  const queued = Buffer.from(new ArrayBuffer(16));
+  const { promise, resolve, reject } = Promise.withResolvers();
+  compressor.write("first");
+  compressor.write(queued, error => (error ? reject(error) : resolve()));
+  queued.buffer.transfer();
+  await promise;
+  await new Promise(done => compressor.flush(compressor._finishFlushFlag, done));
+  expect(zlib[inverse](Buffer.concat(chunks)).toString()).toBe("first");
+  compressor.close();
+});
+
+it("a stream of a ShadowRealm keeps its async context across a write", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  new ShadowRealm().evaluate(
+    `report => void Promise.all([import("node:zlib"), import("node:async_hooks")]).then(([zlib, hooks]) => {
+       const storage = new hooks.AsyncLocalStorage();
+       storage.run("kept", () => zlib.createGzip().once("data", () => report(storage.getStore())).end("x"));
+     })`,
+  )(resolve);
+  expect(await promise).toBe("kept");
 });
 
 describe("async write pins are released", () => {

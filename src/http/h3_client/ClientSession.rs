@@ -6,6 +6,7 @@ use core::sync::atomic::Ordering;
 use std::collections::VecDeque;
 
 use bun_core::strings;
+use bun_picohttp as picohttp;
 use bun_uws::quic;
 
 use super::encode;
@@ -312,7 +313,14 @@ impl ClientSession {
     /// `done` = the lsquic stream is gone; deliver whatever is buffered then
     /// detach. Mirrors H2's `ClientSession.deliverStream` so the HTTPClient state
     /// machine sees the same call sequence regardless of transport.
-    pub(crate) fn deliver(&mut self, thread: &mut HTTPThread, index: usize, done: bool) {
+    /// `headers` is empty except from `handle_stream_headers`.
+    pub(crate) fn deliver(
+        &mut self,
+        thread: &mut HTTPThread,
+        index: usize,
+        headers: &[picohttp::Header<'_>],
+        done: bool,
+    ) {
         let st = &mut self.streams[index];
         let Some(mut client) = st.client.take() else {
             if done {
@@ -331,7 +339,7 @@ impl ClientSession {
             let (result, response) = match client.apply_multiplexed_headers(
                 thread,
                 u32::from(st.status_code),
-                &st.decoded_headers,
+                headers,
             ) {
                 Ok(r) => r,
                 Err(e) => {

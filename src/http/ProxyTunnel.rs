@@ -263,25 +263,6 @@ fn is_reusable(wrapper: &SSLWrapper) -> bool {
 }
 
 impl HTTPClient<'_> {
-    /// [`ProxyTunnel::write`] for data that does not borrow `self`.
-    pub(crate) fn write_to_proxy_tunnel<const IS_SSL: bool>(
-        &mut self,
-        thread: &mut HTTPThread,
-        socket: HTTPSocket<IS_SSL>,
-        lent_wrapper: Option<&SSLWrapper>,
-        buf: &[u8],
-    ) -> ControlFlow<NextStep, Option<usize>> {
-        let Some(tunnel) = &mut self.proxy_tunnel else {
-            return Continue(None);
-        };
-        match tunnel.write(socket, lent_wrapper, buf) {
-            Ok(written) => Continue(written),
-            Err(TunnelClosed) => self
-                .on_proxy_tunnel_close(thread, Error::ConnectionClosed, socket)
-                .map_continue(|()| None),
-        }
-    }
-
     pub(crate) fn on_proxy_tunnel_close<const IS_SSL: bool>(
         &mut self,
         thread: &mut HTTPThread,

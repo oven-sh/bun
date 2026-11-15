@@ -41,7 +41,7 @@ unsafe extern "C" {
     ) -> bool;
     safe fn WebCore__FetchHeaders__createEmpty() -> HeadersRef;
     safe fn WebCore__FetchHeaders__createFromPicoHeaders_(
-        arg0: &FfiSlice<'_, picohttp::Header>,
+        arg0: &FfiSlice<'_, picohttp::Header<'_>>,
     ) -> HeadersRef;
     safe fn WebCore__FetchHeaders__createFromUWS(arg1: &bun_uws::Request) -> HeadersRef;
     fn WebCore__FetchHeaders__deref(arg0: *mut FetchHeaders);
@@ -115,7 +115,7 @@ impl HeadersRef {
         WebCore__FetchHeaders__createEmpty()
     }
 
-    pub fn create_from_pico_headers(pico_headers_list: &[picohttp::Header]) -> Self {
+    pub fn create_from_pico_headers(pico_headers_list: &[picohttp::Header<'_>]) -> Self {
         WebCore__FetchHeaders__createFromPicoHeaders_(&FfiSlice::new(pico_headers_list))
     }
 }

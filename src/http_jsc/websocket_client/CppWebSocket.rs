@@ -113,7 +113,7 @@ unsafe extern "C" {
         status_code: u16,
         status_message: FfiSlice<'_>,
         // C++ reads these as `WebCore::WebSocket::HandshakeRawHeader`, which has the same layout.
-        headers: FfiSlice<'_, picohttp::Header>,
+        headers: FfiSlice<'_, picohttp::Header<'_>>,
         is_upgrade: bool,
         body: FfiSlice<'_>,
     ) -> HandshakeResult;

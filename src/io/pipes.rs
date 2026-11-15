@@ -37,8 +37,7 @@ impl PollOrFd {
         Some(result)
     }
 
-    /// # Safety
-    /// `owner` is what `__bun_run_io` takes its tag for, until `self` is dropped or has another owner.
+    /// SAFETY: `owner` is what `__bun_run_io` takes its tag for, until `self` is dropped or has another owner.
     pub(crate) unsafe fn set_owner(&self, owner: Owner) {
         self.owner.set(owner);
         // SAFETY: caller contract. The poll leaves `self` by `take_from` alone, which replaces its owner.
@@ -102,16 +101,7 @@ impl PollOrFd {
         let fd = self.get_fd();
         #[cfg(not(target_os = "macos"))]
         let close_async = true;
-        // workaround kqueue bug.
-        // 1) non-blocking FIFO
-        // 2) open for writing only = fd 2, nonblock
-        // 3) open for reading only = fd 3, nonblock
-        // 4) write(3, "something") = 9
-        // 5) read(2, buf, 9) = 9
-        // 6) read(2, buf, 9) = -1 (EAGAIN)
-        // 7) ON ANOTHER THREAD: close(3) = 0,
-        // 8) kevent(2, EVFILT_READ, EV_ADD | EV_ENABLE | EV_DISPATCH, 0, 0, 0) = 0
-        // 9) ??? No more events for fd 2
+        // kqueue misses the EOF of a non-blocking FIFO whose write end closes on another thread just before the read end is re-armed.
         #[cfg(target_os = "macos")]
         let close_async = self.with_poll(|poll| {
             poll.has_flag(FilePollFlag::PollWritable) && poll.has_flag(FilePollFlag::Nonblocking)

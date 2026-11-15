@@ -2403,7 +2403,6 @@ impl BlobExt for Blob {
 // JSC-integration methods (host fns, to_js/from_js, S3/file I/O state machines)
 // ──────────────────────────────────────────────────────────────────────────
 
-use self::write_file::WriteFileWaitFromLockedValueTask;
 use crate::api::archive::Archive;
 use crate::image::Image;
 use crate::node;
@@ -3140,10 +3139,10 @@ fn write_file_with_empty_source_to_destination(
     ))
 }
 
-pub(crate) fn write_file_with_source_destination(
+fn write_file_with_source_destination(
     cx: &bun_jsc::JsThread<'_>,
-    source_blob: &mut Blob,
-    destination_blob: &mut Blob,
+    source_blob: &Blob,
+    destination_blob: &Blob,
     options: &WriteFileOptions,
 ) -> JsResult<JSValue> {
     let destination_store = destination_blob
@@ -3515,7 +3514,7 @@ pub(crate) fn write_file_internal(
     }
 
     // if path_or_blob is a path, convert it into a file blob
-    let mut destination_blob: Blob = match path_or_blob {
+    let destination_blob: Blob = match path_or_blob {
         PathOrBlob::Path(path) => {
             // What is written lies on the disk from then on, which is asked first.
             let new_blob = match is_held_at_source_path(path) {
@@ -3541,64 +3540,32 @@ pub(crate) fn write_file_internal(
     };
 
     // TODO: implement a writev() fast path
-    let mut source_blob: Blob = 'brk: {
-        // `Response` and `Request` both expose `get_body_value()` /
-        // `get_body_readable_stream()`; one helper takes the
-        // body-value pointer and a `get_stream` closure.
-        let mut body_dispatch = |body_value: *mut webcore::body::Value,
-                                 get_stream: &mut dyn FnMut() -> Option<ReadableStream>|
+    let source_blob: Blob = 'brk: {
+        let body_dispatch = |body: &webcore::Body,
+                             get_stream: &dyn Fn() -> Option<ReadableStream>|
          -> JsResult<core::ops::ControlFlow<JSValue, Blob>> {
             use core::ops::ControlFlow;
-            use webcore::body::Value as BodyValue;
-            enum BodyTag {
-                Use,
-                Error,
-                Locked,
-            }
-            // `body_value` is `&mut Body::Value` from a live JS heap
-            // Response/Request, held raw so every borrow below is
-            // scoped and none spans the JS-running calls in the arms.
+            use webcore::body::{Tag as BodyTag, Value as BodyValue};
             // A stream someone holds a reader on, or has read from, is theirs.
-            let existing = get_stream().or_else(|| {
-                // SAFETY: scoped exclusive borrow; runs no JS.
-                match unsafe { &mut *body_value } {
-                    BodyValue::Locked(locked) => locked.readable.get(),
-                    _ => None,
-                }
-            });
-            if let Some(readable) = existing {
+            if let Some(readable) = get_stream() {
                 if readable.is_locked(cx.global()) || readable.is_disturbed(cx.global()) {
                     return Ok(ControlFlow::Break(body_used_rejection(cx.global())));
                 }
             }
             // A body that is all here (also behind an untouched `.body` stream) is written as a blob.
-            // SAFETY: scoped exclusive borrow; runs no JS.
-            unsafe { (*body_value).to_blob_if_possible() };
-            // SAFETY: scoped shared read of the variant tag.
-            let tag = match unsafe { &*body_value } {
-                BodyValue::Error(_) => BodyTag::Error,
-                BodyValue::Locked(locked) if !locked.has_consumer() => BodyTag::Locked,
-                BodyValue::Locked(_) | BodyValue::Used => {
-                    return Ok(ControlFlow::Break(body_used_rejection(cx.global())));
-                }
-                _ => BodyTag::Use,
-            };
-            match tag {
-                BodyTag::Use => {
-                    // SAFETY: exclusive borrow scoped to the call; `use_()` runs no JS.
-                    Ok(ControlFlow::Continue(unsafe { (*body_value).use_() }))
-                }
+            body.to_blob_if_possible();
+            if body.has_consumer() {
+                return Ok(ControlFlow::Break(body_used_rejection(cx.global())));
+            }
+            match body.tag() {
+                BodyTag::Used => Ok(ControlFlow::Break(body_used_rejection(cx.global()))),
+                BodyTag::Blob
+                | BodyTag::WTFStringImpl
+                | BodyTag::InternalBlob
+                | BodyTag::Empty
+                | BodyTag::Null => Ok(ControlFlow::Continue(body.use_())),
                 BodyTag::Error => {
-                    let err_js = {
-                        // SAFETY: exclusive borrow; ends before `use_()` below.
-                        let BodyValue::Error(err_ref) = (unsafe { &mut *body_value }) else {
-                            unreachable!()
-                        };
-                        err_ref.to_js(cx.global())
-                    };
-                    // SAFETY: exclusive borrow scoped to the call; no other
-                    // borrow of the body value is live.
-                    let _ = unsafe { (*body_value).use_() };
+                    let err_js = body.error_to_js(cx.global()).unwrap();
                     Ok(ControlFlow::Break(
                         JSPromise::rejected_promise(cx.global(), err_js).to_js(),
                     ))
@@ -3612,16 +3579,8 @@ pub(crate) fn write_file_internal(
                         let s3 = dest_store.data.as_s3();
                         let aws_options =
                             s3.get_credentials_with_options(options.extra_options, cx.global())?;
-                        // SAFETY: exclusive borrow scoped to the call (may run JS).
-                        let _ = unsafe { (*body_value).to_readable_stream(cx) }?;
-                        let readable_opt = get_stream().or_else(|| {
-                            // SAFETY: re-borrow after `to_readable_stream`.
-                            let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
-                                return None;
-                            };
-                            locked.readable.get()
-                        });
-                        if let Some(readable) = readable_opt {
+                        let _ = body.to_readable_stream(cx)?;
+                        if let Some(readable) = get_stream() {
                             if readable.is_disturbed(cx.global()) {
                                 return Err(cx.global().throw_invalid_arguments(format_args!(
                                     "ReadableStream has already been used"
@@ -3654,79 +3613,19 @@ pub(crate) fn write_file_internal(
                     // A body that is a stream, or that its producer can stream (fetch, the
                     // server, HTMLRewriter): pipe it into the file instead of collecting it in
                     // memory first. The stream also outlives the Response it came from.
-                    let streamable = get_stream().is_some() || {
-                        // SAFETY: scoped exclusive borrow; runs no JS.
-                        let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
-                            unreachable!()
-                        };
-                        locked.readable.has() || locked.on_start_streaming.is_some()
+                    let _ = body.to_readable_stream(cx)?;
+                    let (Some(readable), BodyTag::Locked) = (get_stream(), body.tag()) else {
+                        // The producer was aborted.
+                        return Ok(ControlFlow::Continue(body.use_()));
                     };
-                    if streamable {
-                        // SAFETY: exclusive borrow scoped to the call (may run JS).
-                        let _ = unsafe { (*body_value).to_readable_stream(cx) }?;
-                        let readable = get_stream().or_else(|| {
-                            // SAFETY: re-borrow after `to_readable_stream`.
-                            let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
-                                return None;
-                            };
-                            locked.readable.get()
-                        });
-                        // SAFETY: scoped; `to_readable_stream` may have replaced the value.
-                        let body = unsafe { &*body_value };
-                        if let (Some(readable), BodyValue::Locked(_)) = (readable, body) {
-                            let promise = destination_blob
-                                .pipe_readable_stream_to_blob(cx, readable, &options)?;
-                            // The destination could not be opened: the stream was not touched and
-                            // is still the body's.
-                            let failed = promise.as_any_promise().is_some_and(|p| {
-                                matches!(p.status(), jsc::js_promise::Status::Rejected)
-                            });
-                            if !failed {
-                                // SAFETY: scoped exclusive write; the stream now belongs to the sink.
-                                unsafe { *body_value = BodyValue::Used };
-                            }
-                            return Ok(ControlFlow::Break(promise));
-                        }
-                        // The producer settled the body while the stream was being made.
-                        // SAFETY: scoped borrows, as in the arms above.
-                        match unsafe { &mut *body_value } {
-                            BodyValue::Locked(_) => {}
-                            BodyValue::Error(err) => {
-                                let err_js = err.to_js(cx.global());
-                                // SAFETY: `err` is not used after `to_js`, so this is the only
-                                // live borrow of the value.
-                                let _ = unsafe { (*body_value).use_() };
-                                return Ok(ControlFlow::Break(
-                                    JSPromise::rejected_promise(cx.global(), err_js).to_js(),
-                                ));
-                            }
-                            // SAFETY: the match borrow ended with the pattern; no other borrow is live.
-                            _ => return Ok(ControlFlow::Continue(unsafe { (*body_value).use_() })),
-                        }
-                    }
-                    let task = Box::new(WriteFileWaitFromLockedValueTask {
-                        global_this: bun_ptr::BackRef::new(cx.global()),
-                        context: cx.context().id(),
-                        // Move `destination_blob` by value into the task.
-                        file_blob: core::mem::replace(
-                            &mut destination_blob,
-                            Blob::init_empty(cx.global()),
-                        ),
-                        promise: jsc::JSPromiseStrong::init(cx.global()),
-                        mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
-                    });
-                    let promise = task.promise.value();
-                    // SAFETY: re-borrow after the early-return paths.
-                    let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
-                        unreachable!()
-                    };
-                    let producer_hook = locked.on_start_buffering.take().zip(locked.task);
-                    locked.task = Some(bun_core::heap::into_raw_nn(task).cast::<c_void>());
-                    locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
-                    // Signalled last (see `PendingValue::on_start_buffering`):
-                    // `then_wrap` may run and `*body_value` be replaced inside.
-                    if let Some((on_start_buffering, producer_task)) = producer_hook {
-                        on_start_buffering(producer_task);
+                    let promise =
+                        destination_blob.pipe_readable_stream_to_blob(cx, readable, &options)?;
+                    // The destination could not be opened: the stream is untouched and still the body's.
+                    let failed = promise
+                        .as_any_promise()
+                        .is_some_and(|p| matches!(p.status(), jsc::js_promise::Status::Rejected));
+                    if !failed {
+                        body.set(BodyValue::Used);
                     }
                     Ok(ControlFlow::Break(promise))
                 }
@@ -3734,19 +3633,17 @@ pub(crate) fn write_file_internal(
         };
 
         // `as_class_ref` is the safe shared-borrow downcast (one audited unsafe
-        // in `JSValue`); `get_body_value` / `get_body_readable_stream` both
+        // in `JSValue`); `body` / `get_body_readable_stream` both
         // take `&self` (interior mutability for the body cell).
         if let Some(response) = data.as_class_ref::<Response>() {
-            let bv = std::ptr::from_mut(response.get_body_value());
-            match body_dispatch(bv, &mut || response.get_body_readable_stream())? {
+            match body_dispatch(response.body(), &|| response.get_body_readable_stream())? {
                 core::ops::ControlFlow::Break(v) => return Ok(v),
                 core::ops::ControlFlow::Continue(b) => break 'brk b,
             }
         }
 
         if let Some(request) = data.as_class_ref::<Request>() {
-            let bv = std::ptr::from_mut(request.get_body_value());
-            match body_dispatch(bv, &mut || request.get_body_readable_stream())? {
+            match body_dispatch(request.body(), &|| request.get_body_readable_stream())? {
                 core::ops::ControlFlow::Break(v) => return Ok(v),
                 core::ops::ControlFlow::Continue(b) => break 'brk b,
             }
@@ -3767,7 +3664,7 @@ pub(crate) fn write_file_internal(
         break 'brk Blob::get::<false>(cx.global(), data)?;
     };
 
-    write_file_with_source_destination(cx, &mut source_blob, &mut destination_blob, &options)
+    write_file_with_source_destination(cx, &source_blob, &destination_blob, &options)
 }
 
 fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult<()> {

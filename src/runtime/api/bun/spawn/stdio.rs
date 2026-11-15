@@ -2,7 +2,7 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 use bun_sys::{self as sys, Fd};
 
 // `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
-// say `webcore::ReadableStream` / `webcore::body::Value`.
+// say `webcore::ReadableStream` / `webcore::Body`.
 use crate::webcore;
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::node_types::PathOrFileDescriptor;
@@ -253,7 +253,7 @@ impl Stdio {
         out_stdio: &mut Stdio,
         cx: &bun_jsc::JsThread<'_>,
         i: i32,
-        body: &mut webcore::body::Value,
+        body: &webcore::Body,
         is_sync: bool,
     ) -> JsResult<()> {
         body.to_blob_if_possible();
@@ -262,12 +262,12 @@ impl Stdio {
             return out_stdio.extract_blob(cx.global(), blob, i);
         }
 
-        match body {
-            webcore::body::Value::Null | webcore::body::Value::Empty => {
+        match body.tag() {
+            webcore::body::Tag::Null | webcore::body::Tag::Empty => {
                 *out_stdio = Stdio::Ignore;
                 return Ok(());
             }
-            webcore::body::Value::Used => {
+            webcore::body::Tag::Used => {
                 return Err(cx
                     .global()
                     .err(
@@ -276,15 +276,16 @@ impl Stdio {
                     )
                     .throw());
             }
-            webcore::body::Value::Error(err) => {
-                return Err(cx.global().throw_value(err.to_js(cx.global())));
+            webcore::body::Tag::Error => {
+                let err = body.error_to_js(cx.global()).unwrap();
+                return Err(cx.global().throw_value(err));
             }
 
             // handled above.
-            webcore::body::Value::Blob(_)
-            | webcore::body::Value::WTFStringImpl(_)
-            | webcore::body::Value::InternalBlob(_) => unreachable!(),
-            webcore::body::Value::Locked(_) => {
+            webcore::body::Tag::Blob
+            | webcore::body::Tag::WTFStringImpl
+            | webcore::body::Tag::InternalBlob => unreachable!(),
+            webcore::body::Tag::Locked => {
                 if is_sync {
                     return Err(cx.global().throw_invalid_arguments(format_args!(
                         "ReadableStream cannot be used in sync mode"
@@ -439,9 +440,9 @@ impl Stdio {
             // `value` is on the stack. `dupe()` only bumps the store refcount.
             return out_stdio.extract_blob(cx.global(), webcore::blob::Any::Blob(blob.dupe()), i);
         } else if let Some(req) = value.as_class_ref::<webcore::Request>() {
-            return Self::extract_body_value(out_stdio, cx, i, req.get_body_value(), is_sync);
+            return Self::extract_body_value(out_stdio, cx, i, req.body(), is_sync);
         } else if let Some(res) = value.as_class_ref::<webcore::Response>() {
-            return Self::extract_body_value(out_stdio, cx, i, res.get_body_value(), is_sync);
+            return Self::extract_body_value(out_stdio, cx, i, res.body(), is_sync);
         }
 
         if let Some(stream_) = webcore::ReadableStream::from_js(value, cx.global())? {

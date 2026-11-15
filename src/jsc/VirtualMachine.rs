@@ -203,7 +203,7 @@ pub struct VirtualMachine {
     pub entry_point: Cell<bun_bundler::entry_points::ServerEntryPoint>,
     pub origin: bun_url::URL<'static>,
     /// Opaque per-VM `bun_runtime` state (boxed `timer::All` +
-    /// `Body::Value::HiveAllocator` + …). Set by
+    /// `Body::HiveAllocator` + …). Set by
     /// `RuntimeHooks::init_runtime_state` in [`init`]; reclaimed by
     /// `RuntimeHooks::deinit_runtime_state` in [`destroy`]. Null when no high
     /// tier is installed (e.g. `bun_jsc` unit tests).
@@ -2675,7 +2675,7 @@ pub enum CancelHotRunTimers {
 }
 
 pub struct RuntimeHooks {
-    /// `bun.api.Timer.All.init()` + `Body.Value.HiveAllocator.init()` +
+    /// `bun.api.Timer.All.init()` + `Body.HiveAllocator.init()` +
     /// `configureDebugger()` — everything `init()` does that names a
     /// `bun_runtime` type. Called once with the freshly-boxed VM AFTER
     /// `vm.global` / `vm.jsc_vm` are populated;
@@ -3003,7 +3003,7 @@ impl VirtualMachine {
     /// `VirtualMachine.init(opts)` — allocate + wire the per-thread VM.
     ///
     /// Note: every step that names a `bun_runtime` / `bun_webcore` type
-    /// (`Timer.All.init`, `Body.Value.HiveAllocator`, `configureDebugger`,
+    /// (`Timer.All.init`, `Body.HiveAllocator`, `configureDebugger`,
     /// `Config.configureTransformOptionsForBunVM`, `ParentDeathWatchdog`) is
     /// dispatched through `RuntimeHooks::init_runtime_state` so `bun_jsc` does
     /// not name those types directly. The hook receives the boxed VM after the

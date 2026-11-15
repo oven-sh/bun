@@ -4,10 +4,11 @@
 use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
 
+use bun_jsc::JSGlobalObject;
 use bun_ptr::{RefCounted, RefPtr};
 use bun_uws as uws;
 
-use crate::webcore::CookieMap;
+use crate::webcore::{CookieMap, DrainResult, ReadableStream};
 
 use super::request_context::RequestContext;
 use super::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
@@ -270,6 +271,24 @@ impl AnyRequestContext {
 
     pub fn on_request_body_stream_drained(self) {
         dispatch!(self, (), |_T, ctx| ctx.on_request_body_stream_drained())
+    }
+
+    pub(crate) fn on_start_buffering(self) {
+        dispatch!(self, (), |_T, ctx| ctx.on_start_buffering())
+    }
+
+    pub(crate) fn on_start_streaming_request_body(self) -> DrainResult {
+        dispatch!(self, DrainResult::Aborted, |_T, ctx| ctx
+            .on_start_streaming_request_body())
+    }
+
+    pub(crate) fn on_request_body_readable_stream_available(
+        self,
+        global_this: &JSGlobalObject,
+        readable: ReadableStream,
+    ) {
+        dispatch!(self, (), |_T, ctx| ctx
+            .on_request_body_readable_stream_available(global_this, readable))
     }
 
     pub fn write_chunk(

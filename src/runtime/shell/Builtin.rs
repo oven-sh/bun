@@ -596,12 +596,8 @@ impl Builtin {
             if redirect.stderr() {
                 stderr = Some(BuiltinIO::ArrayBuf { buf: root()?, i: 0 });
             }
-        } else if let Some(body) = crate::webcore::body::Value::from_request_or_response(jsval) {
-            // SAFETY: returned a live JSC-owned `*mut Value` borrowed
-            // from a Response/Request wrapper.
-            let body = unsafe { &mut *body };
-            let is_file_blob = matches!(body, crate::webcore::body::Value::Blob(b)
-                if !b.needs_to_read_file());
+        } else if let Some(body) = crate::webcore::Body::from_request_or_response(&jsval) {
+            let is_file_blob = body.with_blob(|b| !b.needs_to_read_file()).unwrap_or(false);
             if (redirect.stdout() || redirect.stderr()) && !is_file_blob {
                 return Err(global.throw(format_args!(
                     "Cannot redirect stdout/stderr to an immutable blob. Expected a file"

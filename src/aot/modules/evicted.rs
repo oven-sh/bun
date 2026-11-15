@@ -238,22 +238,45 @@ enum LoadTarget {
     AnyFile,
 }
 
-impl LoadTarget {
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum RequestedBy {
+    StatementOrRequire,
+    AwaitedImportCall,
+    Job,
+}
+
+#[derive(Copy, Clone)]
+enum Request {
+    File {
+        file: FileId,
+        requested_by: RequestedBy,
+    },
+    FileFoundByName,
+    AnyFile,
+}
+
+impl Request {
+    fn target(self) -> LoadTarget {
+        match self {
+            Request::File { file, .. } => LoadTarget::File(file),
+            Request::FileFoundByName => LoadTarget::FileFoundByName,
+            Request::AnyFile => LoadTarget::AnyFile,
+        }
+    }
+
     fn file(self) -> Option<FileId> {
         match self {
-            LoadTarget::File(file) => Some(file),
-            LoadTarget::FileFoundByName | LoadTarget::AnyFile => None,
+            Request::File { file, .. } => Some(file),
+            Request::FileFoundByName | Request::AnyFile => None,
         }
     }
 }
 
 #[derive(Copy, Clone)]
 struct Load {
-    target: LoadTarget,
+    request: Request,
     timing: LoadTiming,
     is_hoisted: bool,
-    is_import_call: bool,
-    is_asked_by_job: bool,
     position: u32,
 }
 
@@ -372,7 +395,7 @@ fn collect_loads(
                 }
                 calls.push(call);
             }
-            let mut is_asked_by_job = false;
+            let mut requested_by = RequestedBy::StatementOrRequire;
             let (mut timing, is_hoisted, position) = match site.kind {
                 ImportSiteKind::Require(call)
                 | ImportSiteKind::ImportMetaRequire(call)
@@ -382,12 +405,13 @@ fn collect_loads(
                     text.place_of(hir[call].pos),
                 ),
                 ImportSiteKind::ImportCall(call) | ImportSiteKind::ImportByTestRunner(call) => {
-                    let timing = text.find_timing_of_call(call);
-                    is_asked_by_job = !text.is_awaited_at_once(call);
-                    let timing = match is_asked_by_job {
-                        false => timing,
-                        true => timing.max(LoadTiming::Guarded),
-                    };
+                    let mut timing = text.find_timing_of_call(call);
+                    if text.is_awaited_at_once(call) {
+                        requested_by = RequestedBy::AwaitedImportCall;
+                    } else {
+                        requested_by = RequestedBy::Job;
+                        timing = timing.max(LoadTiming::Guarded);
+                    }
                     (timing, false, text.place_of(hir[call].pos))
                 }
                 ImportSiteKind::ImportEquals(import) => {
@@ -418,10 +442,10 @@ fn collect_loads(
                 timing = LoadTiming::Conditional;
             }
             let is_linked_with_importer = is_hoisted && scan.interop.kind != ModuleKind::CommonJs;
-            let load_of = |target: LoadTarget| Load {
-                target,
-                timing: match target {
-                    LoadTarget::File(target)
+            let load_of = |request: Request| Load {
+                request,
+                timing: match request.file() {
+                    Some(target)
                         if is_linked_with_importer && files.is_imported_as_es_module(target) =>
                     {
                         timing.max(LoadTiming::Conditional)
@@ -429,47 +453,39 @@ fn collect_loads(
                     _ => timing,
                 },
                 is_hoisted,
-                is_import_call: matches!(
-                    site.kind,
-                    ImportSiteKind::ImportCall(_) | ImportSiteKind::ImportByTestRunner(_)
-                ),
-                is_asked_by_job,
                 position,
             };
+            let load_of_file = |file: FileId| load_of(Request::File { file, requested_by });
             match answer {
                 &ScannedSite::Module(ModuleRef::File(target)) => {
-                    of_file.push(load_of(LoadTarget::File(target)));
+                    of_file.push(load_of_file(target));
                 }
                 ScannedSite::Candidates(range) => {
                     for module in scan.modules_spelled_in(range) {
                         if let ModuleRef::File(target) = module {
-                            of_file.push(load_of(LoadTarget::File(target)));
+                            of_file.push(load_of_file(target));
                         }
                     }
                 }
-                ScannedSite::AllModules => of_file.push(load_of(match finds_by_name_alone {
-                    true => LoadTarget::FileFoundByName,
-                    false => LoadTarget::AnyFile,
-                })),
+                ScannedSite::AllModules => of_file.push(load_of(Request::AnyFile)),
                 ScannedSite::Module(_) | ScannedSite::Unresolved | ScannedSite::Erased => {}
             }
         }
         if loads_by_unseen_name {
             of_file.push(Load {
-                target: LoadTarget::FileFoundByName,
+                request: Request::FileFoundByName,
                 timing: LoadTiming::Deferred,
                 is_hoisted: false,
-                is_import_call: false,
-                is_asked_by_job: false,
                 position: 0,
             });
         }
         of_file.extend(texts_of_file.iter().map(|spelling| Load {
-            target: LoadTarget::File(spelling.spelled),
+            request: Request::File {
+                file: spelling.spelled,
+                requested_by: RequestedBy::Job,
+            },
             timing: (text.find_timing_of_call(spelling.text)).max(LoadTiming::Guarded),
             is_hoisted: false,
-            is_import_call: false,
-            is_asked_by_job: true,
             position: text.place_of(hir[spelling.text].pos),
         }));
         of_file.sort_by_key(|load| (!load.is_hoisted, load.position));
@@ -860,7 +876,7 @@ fn add_cyclic_import_loads(
     for &file in all_files {
         let of_file = loads.of(file).iter();
         let during_load = of_file.filter(|load| load.timing != LoadTiming::Deferred);
-        edges[file.idx()].extend(during_load.filter_map(|load| Some(load.target.file()?.0)));
+        edges[file.idx()].extend(during_load.filter_map(|load| Some(load.request.file()?.0)));
     }
     let component_of = strongly_connected_components(&edges).0;
     let mut is_added = vec![false; loads.by_file.len()];
@@ -869,7 +885,7 @@ fn add_cyclic_import_loads(
             continue;
         }
         let imports = loads.of(importer).iter().take_while(|load| load.is_hoisted);
-        for target in imports.filter_map(|load| load.target.file()) {
+        for target in imports.filter_map(|load| load.request.file()) {
             if !is_commonjs(target)
                 || component_of[target.idx()] != component_of[importer.idx()]
                 || core::mem::replace(&mut is_added[target.idx()], true)
@@ -883,7 +899,7 @@ fn add_cyclic_import_loads(
             let of_file = loads.of(target).iter();
             possible_loads.extend(of_file.map(|load| PossibleLoad {
                 earliest_time,
-                target: load.target,
+                target: load.request.target(),
                 may_be_caught: true,
             }));
         }
@@ -976,7 +992,7 @@ impl StartupWalk<'_> {
             next += 1;
             let hoisted = loads.of(importer).iter().take_while(|load| load.is_hoisted);
             for load in hoisted {
-                let Some(target) = load.target.file() else {
+                let Some(target) = load.request.file() else {
                     continue;
                 };
                 match load.timing {
@@ -1071,7 +1087,7 @@ impl StartupWalk<'_> {
                             true => 0,
                             false => earliest_time,
                         },
-                        target: load.target,
+                        target: load.request.target(),
                         may_be_caught: true,
                     }));
                 self.depth_of_starting_file[file.idx()] = NEVER;
@@ -1091,39 +1107,47 @@ impl StartupWalk<'_> {
                     || depth == 0
                     || !loads.some_body_awaits
                     || is_importer_commonjs);
-            match load.target {
-                LoadTarget::File(target) if self.depth_of_starting_file[target.idx()] != NEVER => {
+            match load.request {
+                Request::File {
+                    file: target,
+                    requested_by,
+                } if self.depth_of_starting_file[target.idx()] != NEVER => {
                     cycle_depth = cycle_depth.min(self.depth_of_starting_file[target.idx()]);
                     cycle_time = cycle_time.min(self.time);
-                    if load.is_asked_by_job {
+                    if requested_by == RequestedBy::Job {
                         self.add_possible_load(LoadTarget::File(target), true);
                     }
                 }
-                LoadTarget::File(target) if is_in_order => {
+                Request::File {
+                    file: target,
+                    requested_by,
+                } if is_in_order => {
                     if self.start_times[target.idx()] == NEVER {
                         let is_linked_with_importer = load.is_hoisted && !is_importer_commonjs;
                         let is_commonjs = (self.is_commonjs)(target);
+                        let is_import_call = requested_by == RequestedBy::AwaitedImportCall;
                         let started_by = match (is_linked_with_importer, is_commonjs) {
                             (true, _) => StartedBy::Loader,
-                            (false, false) if load.is_import_call => StartedBy::LoaderAsRootOfGraph,
+                            (false, false) if is_import_call => StartedBy::LoaderAsRootOfGraph,
                             (false, false) => StartedBy::LoaderAsRootOfSynchronousGraph,
                             (false, true) => StartedBy::Require,
                         };
                         self.start(target, depth + 1, started_by);
                     } else if self.may_have_thrown_in_window(target) {
-                        self.add_possible_load(load.target, true);
+                        self.add_possible_load(LoadTarget::File(target), true);
                     }
                 }
-                LoadTarget::File(target) => {
+                Request::File { file: target, .. } => {
                     let may_be_caught = load.timing == LoadTiming::Guarded
                         || self.may_have_thrown_in_window(target);
-                    self.add_possible_load(load.target, may_be_caught);
+                    self.add_possible_load(LoadTarget::File(target), may_be_caught);
                 }
-                LoadTarget::FileFoundByName | LoadTarget::AnyFile => {
-                    self.add_possible_load(load.target, load.timing == LoadTiming::Guarded);
+                Request::FileFoundByName | Request::AnyFile => {
+                    let may_be_caught = load.timing == LoadTiming::Guarded;
+                    self.add_possible_load(load.request.target(), may_be_caught);
                     let threw = self.files_started_in_windows.iter().copied();
                     let threw = threw.filter(|&file| self.may_have_thrown_in_window(file));
-                    let is_found_by_name = matches!(load.target, LoadTarget::FileFoundByName);
+                    let is_found_by_name = matches!(load.request, Request::FileFoundByName);
                     let threw: Vec<FileId> = threw
                         .filter(|file| {
                             !is_found_by_name
@@ -1163,7 +1187,7 @@ fn find_files_that_several_started_files_reach(
             }
             *first = number;
             for load in loads.of(file) {
-                to_follow.extend_from_slice(loads.files_behind(&load.target, all_files));
+                to_follow.extend_from_slice(loads.files_behind(&load.request.target(), all_files));
             }
         }
         while let Some(file) = reached_again.pop() {
@@ -1171,7 +1195,8 @@ fn find_files_that_several_started_files_reach(
                 continue;
             }
             for load in loads.of(file) {
-                reached_again.extend_from_slice(loads.files_behind(&load.target, all_files));
+                reached_again
+                    .extend_from_slice(loads.files_behind(&load.request.target(), all_files));
             }
         }
     }
@@ -1208,7 +1233,7 @@ fn find_files_that_may_be_loaded_behind_throw(
             match target {
                 LoadTarget::File(target) => to_follow.extend(loads.of(target).iter().map(|load| {
                     let catches = matches!(load.timing, LoadTiming::Guarded | LoadTiming::Deferred);
-                    (load.target, may_be_caught || catches)
+                    (load.request.target(), may_be_caught || catches)
                 })),
                 LoadTarget::FileFoundByName | LoadTarget::AnyFile => {
                     let files = loads.files_behind(&target, all_files).iter();

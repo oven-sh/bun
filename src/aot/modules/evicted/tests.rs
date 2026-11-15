@@ -52,18 +52,24 @@ fn a_load_out_of_sight_may_ask_for_the_file_that_a_text_spells_behind_its_throw(
 }
 
 #[test]
-fn a_load_by_a_computed_name_asks_for_what_is_found_by_name() {
+fn a_load_by_a_computed_name_may_ask_for_any_file() {
+    let lib = ("lib.cjs", "if (globalThis.first) throw 0;");
+    let computed = "globalThis.load = (name) => require(name);\nrequire('./lib.cjs');";
+    let may_run_again = files_that_run_again(&[("main.cjs", computed), lib]);
+    assert!(may_run_again.contains(&"lib.cjs"), "{may_run_again:?}");
+    let behind = "require('./lib.cjs');\nglobalThis.load = (name) => require(name);";
+    let may_run_again = files_that_run_again(&[("main.cjs", behind), lib]);
+    assert!(!may_run_again.contains(&"lib.cjs"), "{may_run_again:?}");
+}
+
+#[test]
+fn a_load_out_of_sight_asks_for_what_is_found_by_name() {
     let lib = ("lib.cjs", "if (globalThis.first) throw 0;");
     let other = ("other.cjs", "exports.value = 1;");
-    let unspelled = "globalThis.load = (name) => require(name);\nrequire('./lib.cjs');";
-    assert!(files_that_run_again(&[("main.cjs", unspelled), lib]).is_empty());
     let spelled = [
-        "globalThis.load = (name) => require(name);\nglobalThis.name = './lib.cjs';\nrequire('./lib.cjs');",
-        "globalThis.load = (name) => require(name);\nrequire('./lib.cjs');\nglobalThis.name = './lib.cjs';",
-        "globalThis.load = (name) => require(name);\nrequire('./lib.cjs');\nexports.name = () => './lib.cjs';",
-        "globalThis.load = (name) => require(name);\nrequire('./lib.cjs');\nexports.name = require.resolve('./lib.cjs');",
         "const handed = [require][0];\nrequire('./lib.cjs');\nhanded('./lib.cjs');",
         "const handed = [require][0];\nglobalThis.load = () => handed(globalThis.name);\nrequire('./lib.cjs');\nglobalThis.name = './lib.cjs';",
+        "const handed = [require][0];\nglobalThis.load = () => handed(globalThis.name);\nrequire('./lib.cjs');\nexports.name = require.resolve('./lib.cjs');",
     ];
     for main in spelled {
         assert_eq!(
@@ -72,11 +78,11 @@ fn a_load_by_a_computed_name_asks_for_what_is_found_by_name() {
             "{main}"
         );
     }
-    let held_by_a_pattern = "globalThis.load = (name) => require(name);\nrequire(globalThis.first ? './lib.cjs' : './other.cjs');";
+    let unspelled = "const handed = [require][0];\nglobalThis.load = () => handed(globalThis.name);\nrequire('./lib.cjs');";
+    assert!(files_that_run_again(&[("main.cjs", unspelled), lib]).is_empty());
+    let held_by_a_pattern = "const handed = [require][0];\nglobalThis.load = () => handed(globalThis.name);\nrequire(globalThis.first ? './lib.cjs' : './other.cjs');";
     let files = [("main.cjs", held_by_a_pattern), lib, other];
     assert_eq!(files_that_run_again(&files), ["lib.cjs", "other.cjs"]);
-    let behind = "require('./lib.cjs');\nglobalThis.load = (name) => require(name);\nglobalThis.name = './lib.cjs';";
-    assert!(files_that_run_again(&[("main.cjs", behind), lib]).is_empty());
 }
 
 #[test]
@@ -206,7 +212,7 @@ fn a_file_of_a_required_graph_may_run_again_for_one_behind_it() {
     );
     assert_eq!(
         files_that_run_again(&[main, graph, spells, first, by_a_name]),
-        ["first.cjs"]
+        ["spells.cjs", "first.cjs"]
     );
 }
 

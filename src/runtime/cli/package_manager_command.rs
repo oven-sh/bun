@@ -162,7 +162,7 @@ impl PackageManagerCommand {
     }
 
     #[cold]
-    pub(crate) fn print_hash(log: &mut bun_ast::Log, file: &File) -> crate::Result<()> {
+    pub(crate) fn print_hash(log: &bun_ast::Log, file: &File) -> crate::Result<()> {
         let bytes = match file.read_to_end() {
             Ok(bytes) => bytes,
             Err(err) => {
@@ -780,16 +780,16 @@ impl PackageManagerCommand {
                 }
             }
             let log_level = pm.options.log_level;
+            let log = pm.log();
             let pm_raw: *mut PackageManager = pm;
             // SAFETY: same split as `PackageManager::load_lockfile_from_cwd`, with the same FIXME.
             let load_lockfile = unsafe {
                 let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
-                let log: *mut bun_ast::Log = (*pm_raw).log;
                 migration::detect_and_load_other_lockfile(
                     &mut *lockfile,
                     Fd::cwd(),
                     &mut *pm_raw,
-                    &mut *log,
+                    log,
                 )
             };
             if matches!(load_lockfile, LoadResult::NotFound) {

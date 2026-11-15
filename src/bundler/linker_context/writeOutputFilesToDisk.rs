@@ -28,7 +28,7 @@ use crate::bytecode_sidecar::EXTENSION as BYTECODE_EXTENSION;
 
 pub(crate) fn write_output_files_to_disk(
     c: &mut LinkerContext,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     root_path: &[u8],
     chunks: &mut [Chunk],
     output_files: &mut OutputFileList,

@@ -1336,7 +1336,7 @@ pub trait AutoInstaller {
         name_hash: Option<u64>,
         version: &[u8],
         sliced: &bun_semver::SlicedString,
-        log: Option<&mut bun_ast::Log>,
+        log: Option<&bun_ast::Log>,
     ) -> Option<DependencyVersion>;
     /// A package's own `version`: records nothing.
     fn parse_dependency_with_tag(
@@ -1346,7 +1346,7 @@ pub trait AutoInstaller {
         version: &[u8],
         tag: DependencyVersionTag,
         sliced: &bun_semver::SlicedString,
-        log: Option<&mut bun_ast::Log>,
+        log: Option<&bun_ast::Log>,
     ) -> Option<DependencyVersion>;
     /// Pure string
     /// classification, but the table lives in `bun_install`.

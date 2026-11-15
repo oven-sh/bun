@@ -666,9 +666,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     if !opts.log_errors {
                         return Err(crate::Error::CouldntReadCurrentDirectory);
                     }
-                    // SAFETY: `ctx.log` set in `create_context_data` (single-
-                    // threaded CLI startup), process-lifetime.
-                    let _ = unsafe { ctx.log() }.print(Output::error_writer());
+                    let _ = ctx.log().print(Output::error_writer());
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>{}<r> loading directory {}",
                         bstr::BStr::new(err.name()),
@@ -680,8 +678,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     return Err(err.into());
                 }
                 Ok(None) => {
-                    // SAFETY: see `Err` arm above.
-                    let _ = unsafe { ctx.log() }.print(Output::error_writer());
+                    let _ = ctx.log().print(Output::error_writer());
                     pretty_errorln!("error loading current directory");
                     Output::flush();
                     return Err(crate::Error::CouldntReadCurrentDirectory);
@@ -1034,7 +1031,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let vm = VirtualMachine::init(VmInitOptions {
             transform_options: ctx.args.clone(),
             argv: std::mem::take(&mut ctx.passthrough).leak(),
-            log: ::core::ptr::NonNull::new(ctx.log),
+            log: ::core::ptr::NonNull::new(ctx.log.cast_mut()),
             debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
             global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
@@ -1129,10 +1126,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         Self::set_time_zone_from_env(vm);
 
-        // SAFETY: `vm.log` set in `init`; `b.env` is the long-lived
-        // `DotEnv::Loader` allocated/retained for the VM (never null after
-        // `Transpiler::init`).
-        bun_http::async_http::load_env(unsafe { vm.log.get().unwrap().as_mut() }, vm.env_loader());
+        bun_http::async_http::load_env(vm.log().unwrap(), vm.env_loader());
 
         vm.load_extra_env();
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
@@ -1229,7 +1223,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         let vm = VirtualMachine::init_with_module_graph(bun_jsc::virtual_machine::Options {
-            log: std::ptr::NonNull::new(ctx.log),
+            log: std::ptr::NonNull::new(ctx.log.cast_mut()),
             args: ctx.args.clone(),
             argv: std::mem::take(&mut ctx.passthrough).leak(),
             graph: Some(graph),
@@ -1276,10 +1270,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             Self::set_time_zone_from_env(vm);
         }
 
-        // SAFETY: `vm.log` set in `init`; `b.env` is the long-lived
-        // `DotEnv::Loader` allocated/retained for the VM (never null after
-        // `Transpiler::init`).
-        bun_http::async_http::load_env(unsafe { vm.log.get().unwrap().as_mut() }, vm.env_loader());
+        bun_http::async_http::load_env(vm.log().unwrap(), vm.env_loader());
 
         vm.load_extra_env();
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
@@ -1694,19 +1685,13 @@ impl Run<'_> {
 
 #[inline]
 fn log_has_msgs(vm: &VirtualMachine) -> bool {
-    match vm.log.get() {
-        // SAFETY: `vm.log` is a process-lifetime `&mut Log` written once in
-        // `VirtualMachine::init`; never freed, single-threaded CLI.
-        Some(p) => unsafe { !(*p.as_ptr()).msgs.is_empty() },
-        None => false,
-    }
+    vm.log().is_some_and(|log| log.msgs_len() > 0)
 }
 
 #[inline]
 fn log_clear_msgs(vm: &VirtualMachine) {
-    if let Some(p) = vm.log.get() {
-        // SAFETY: see `log_has_msgs`.
-        unsafe { (*p.as_ptr()).msgs.clear() };
+    if let Some(log) = vm.log() {
+        log.with_msgs(Vec::clear);
     }
 }
 
@@ -1718,9 +1703,7 @@ fn log_clear_msgs(vm: &VirtualMachine) {
 )]
 fn dump_build_error(vm: &VirtualMachine) {
     Output::flush();
-    if let Some(log) = vm.log.get() {
-        // SAFETY: `vm.log` set in `init`; single-threaded CLI.
-        let log = unsafe { &mut *log.as_ptr() };
+    if let Some(log) = vm.log() {
         let _ = log.print(Output::error_writer_buffered());
     }
     Output::flush();
@@ -1821,9 +1804,7 @@ impl RunCommand {
         unsafe(link_section = ".text.unlikely.boot_failed_exit")
     )]
     fn boot_failed_exit(ctx: &mut ContextData, display_name: &[u8], err: &crate::Error) -> ! {
-        // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
-        // CLI startup) and is process-lifetime.
-        let _ = unsafe { ctx.log() }.print(Output::error_writer());
+        let _ = ctx.log().print(Output::error_writer());
 
         pretty_errorln!(
             "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
@@ -3191,9 +3172,7 @@ impl RunCommand {
         unsafe(link_section = ".text.unlikely.exec_as_if_node_boot_failed")
     )]
     fn exec_as_if_node_boot_failed(ctx: &mut ContextData, basename: &[u8], err: crate::Error) -> ! {
-        // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
-        // CLI startup), process-lifetime.
-        let _ = unsafe { ctx.log() }.print(Output::error_writer());
+        let _ = ctx.log().print(Output::error_writer());
 
         Output::err(
             err,
@@ -4011,7 +3990,7 @@ impl BunXFastPath {
         let utf8 = strings::to_utf8_alloc(wpath).into_boxed_slice();
         if let Err(err) = RunCommand::boot(ctx, utf8, None) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
-            let _ = unsafe { &mut *ctx.log }.print(Output::error_writer());
+            let _ = unsafe { &*ctx.log }.print(Output::error_writer());
             Output::err(
                 err,
                 "Failed to run bin \"<b>{}<r>\"",

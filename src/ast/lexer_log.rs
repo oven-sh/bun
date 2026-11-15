@@ -7,9 +7,7 @@
 //! collapses both.
 //!
 //! The trait carries a `'s` lifetime so `source()` can hand back the lexer's
-//! stored `&'s Source<'s>` *without* borrowing `self` — that is what lets the
-//! provided bodies call `self.log_mut()` afterwards without a split-borrow
-//! conflict.
+//! stored `&'s Source<'s>` *without* borrowing `self`.
 
 use core::fmt;
 
@@ -22,7 +20,7 @@ pub trait LexerLog<'s> {
     type Err;
 
     // ── required state accessors ────────────────────────────────────────
-    fn log_mut(&mut self) -> &mut Log;
+    fn log(&self) -> &Log;
     /// NB: returns the lexer-stored `&'s Source<'s>`, *not* a `&self`-tied borrow.
     fn source(&self) -> &'s Source<'s>;
     fn prev_error_loc_mut(&mut self) -> &mut Loc;
@@ -47,7 +45,7 @@ pub trait LexerLog<'s> {
             return;
         }
         let source = self.source();
-        self.log_mut().add_error_fmt_opts(
+        self.log().add_error_fmt_opts(
             args,
             AddErrorOptions {
                 source: Some(source),
@@ -67,7 +65,7 @@ pub trait LexerLog<'s> {
             return Ok(());
         }
         let source = self.source();
-        self.log_mut().add_error_fmt_opts(
+        self.log().add_error_fmt_opts(
             args,
             AddErrorOptions {
                 source: Some(source),
@@ -84,7 +82,7 @@ pub trait LexerLog<'s> {
     fn syntax_error(&mut self) -> Result<(), Self::Err> {
         // Only add this if there is not already an error — a more descriptive
         // one may already have been emitted.
-        if !self.log_mut().has_errors() {
+        if !self.log().has_errors() {
             self.add_error(self.start(), format_args!("Syntax Error"));
         }
         Err(Self::syntax_err())

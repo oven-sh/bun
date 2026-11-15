@@ -2161,13 +2161,13 @@ impl<'a> Repl<'a> {
         opts.macro_context = unsafe { (*vm.transpiler.as_ptr()).macro_context.as_mut() };
 
         // Create log for errors
-        let mut log = bun_ast::Log::init();
+        let log = bun_ast::Log::init();
 
         // Create source
         let source = bun_ast::Source::init_path_string(b"[repl]", processed_code);
 
         // Parse with REPL transforms
-        let parser = match bun_js_parser::Parser::init(opts, &mut log, &source, define, &arena) {
+        let parser = match bun_js_parser::Parser::init(opts, &log, &source, define, &arena) {
             Ok(p) => p,
             Err(_) => return None,
         };
@@ -2182,7 +2182,7 @@ impl<'a> Repl<'a> {
         // Don't call ast.deinit() - the arena handles cleanup
 
         // Check for parse errors
-        if log.errors > 0 {
+        if log.errors.get() > 0 {
             return None;
         }
         // Print the transformed AST back to JavaScript

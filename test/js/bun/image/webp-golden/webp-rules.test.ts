@@ -1,7 +1,7 @@
 // The rules of the container and of the ALPH chunk one at a time, in files made by hand, and what holds for every file
 // that Bun.Image writes. https://www.rfc-editor.org/rfc/rfc9649
 import { describe, expect, test } from "bun:test";
-import { emptyProcessMaxRSS, runFixtureMaxRSS } from "harness";
+import { bunEnv, bunExe, emptyProcessMaxRSS, isASAN, runFixtureMaxRSS } from "harness";
 import { decoded, slow } from "../png-golden/check";
 import { decode, decodes, decodeToHex } from "../png-golden/decode";
 import { randomBytes } from "../png-golden/write";
@@ -312,6 +312,34 @@ describe("memory is written to as the rows come, not when the header does", asyn
       emptyProcessMaxRSS(),
     ]);
     expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(slow ? 256 : 64);
+  });
+});
+
+// src/webp/tests/refusals.rs refuses each allocation in turn. Only ASAN's allocator can be given a limit.
+test.concurrent.skipIf(!isASAN).each<[string, () => Buffer]>([
+  ["decoding", () => riff(vp8l(2048, 2048))],
+  ["encoding", () => pngOf(16383, 1, Buffer.from(Array.from({ length: 16383 * 4 }, randomBytes(1))))],
+])("refused memory is an error of its own when %s", async (_, file) => {
+  await using child = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const image = new Bun.Image(await Bun.stdin.bytes());
+      console.log(await image.webp({ lossless: true }).bytes().then(() => "done", error => error.code));`,
+    ],
+    env: {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=8"].join(":"),
+    },
+    stdin: file(),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  // It warns of the allocation.
+  expect({ stdout, exitCode, stderr: exitCode ? stderr : "" }).toEqual({
+    stdout: "ERR_OUT_OF_MEMORY\n",
+    exitCode: 0,
+    stderr: "",
   });
 });
 

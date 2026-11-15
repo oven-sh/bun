@@ -28,6 +28,7 @@ test.each(["png", "webp"])("bun_%s does not ask for memory in a way that aborts 
   const found: string[] = [];
   let scanned = 0;
   for await (const file of new Glob("**/*.rs").scan({ cwd: crate })) {
+    if (file.startsWith("tests" + path.sep)) continue;
     scanned++;
     readFileSync(path.join(crate, file), "utf8")
       .split("\n")

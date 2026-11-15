@@ -20,7 +20,7 @@ const cases = await loadCases();
 
 describe("Bun.Image reads and writes WebP the way it was recorded to", () => {
   test("decode", async () => {
-    expect(cases.decode.length).toBe(320);
+    expect(cases.decode.length).toBe(323);
     expect(await decodeDifferences(cases.decode)).toBe("");
   });
 
@@ -30,8 +30,8 @@ describe("Bun.Image reads and writes WebP the way it was recorded to", () => {
       layers: 283,
       sequence: 35,
       noise: 8,
-      stored: 27,
-      large: 10,
+      stored: 28,
+      large: 12,
     });
   });
 

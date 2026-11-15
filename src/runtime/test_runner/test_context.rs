@@ -10,7 +10,7 @@ use bun_jsc::{
     JSPromise, JSValue, JsClass as _, JsResult, Strong, StringJsc as _, bun_string_jsc,
 };
 use bun_paths::resolve_path;
-use bun_ptr::CellExt as _;
+use bun_ptr::{CellExt as _, VecCellExt as _};
 use bun_resolver::fs::FileSystem;
 
 use super::bun_test::js_fns::Signature;
@@ -94,7 +94,7 @@ impl TestContext {
     }
 
     pub(crate) fn add_fixture(&self, definition: usize) {
-        self.fixtures.with_taken(|fixtures| fixtures.push(definition));
+        self.fixtures.push(definition);
     }
 
     pub(crate) fn remove_fixture(&self, definition: usize) {

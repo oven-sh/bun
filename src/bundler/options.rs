@@ -1494,6 +1494,12 @@ pub struct BundleOptions<'a> {
     /// to determine if a development jsx-runtime is used (by going between
     /// "react-jsx" or "react-jsx-dev-runtime")
     pub force_node_env: ForceNodeEnv,
+    /// An explicit `env: "disable"` left `process.env.NODE_ENV` to the process that runs this bundle.
+    pub(crate) node_env_at_runtime: bool,
+    /// The `jsx` option of `Bun.build` asks for the development transform.
+    pub jsx_development_asked: bool,
+    /// What [`Self::leave_node_env_to_runtime`] took out of `define`. The page of an HTML import takes it back.
+    pub(crate) defines_left_to_runtime: Vec<defines::DotDefine>,
 
     pub ignore_module_resolution_errors: bool,
 
@@ -1540,11 +1546,63 @@ impl<'a> BundleOptions<'a> {
     }
 
     pub(crate) fn forced_jsx_development(&self) -> bool {
+        if self.leaves_jsx_mode_to_runtime() {
+            return false;
+        }
         match self.force_node_env {
             ForceNodeEnv::Development => true,
             ForceNodeEnv::Production => false,
             ForceNodeEnv::Unspecified => self.jsx.development,
         }
+    }
+
+    /// React picks its build when the bundle runs, and only its development build has `jsxDEV`.
+    fn leaves_jsx_mode_to_runtime(&self) -> bool {
+        self.node_env_at_runtime && !self.jsx_development_asked
+    }
+
+    /// `jsx` as it is set, for a parse task that does not take `development` from [`Self::forced_jsx_development`].
+    pub(crate) fn jsx_as_set(&self) -> jsx::Pragma {
+        let mut jsx = self.jsx.clone();
+        if self.leaves_jsx_mode_to_runtime() {
+            jsx.development = false;
+        }
+        jsx
+    }
+
+    /// After `configure_defines()` derived the mode of the build from them: takes the two defines that `define` does not state out of the table.
+    #[cold]
+    pub(crate) fn leave_node_env_to_runtime(&mut self) {
+        const NODE_ENV: &[u8] = b"NODE_ENV";
+        let is = |dot: &defines::DotDefine, name: &[u8]| matches!(&*dot.parts, [process, env, last] if &**process == b"process" && &**env == b"env" && &**last == name);
+        let stated = self.transform_options.define.as_ref();
+        for key in [default_user_defines::node_env::KEY, b"process.env.BUN_ENV"] {
+            if stated.is_some_and(|define| define.keys.iter().any(|stated| &**stated == key)) {
+                continue;
+            }
+            let name = &key[b"process.env.".len()..];
+            let Some(dots) = self.define.dots.get_mut(name) else {
+                continue;
+            };
+            if let Some(at) = dots.iter().position(|dot| is(dot, name)) {
+                self.defines_left_to_runtime.push(dots.remove(at));
+            }
+        }
+        self.node_env_at_runtime = !self.define.dots.get(NODE_ENV).is_some_and(|dots| {
+            dots.iter()
+                .any(|dot| is(dot, NODE_ENV) && dot.data.value.e_string().is_some())
+        });
+    }
+
+    /// For the scripts of an HTML import, which start from a copy of the server's options. A browser has no `process` to read from.
+    pub(crate) fn take_back_defines_left_to_runtime(&mut self) {
+        for dot in core::mem::take(&mut self.defines_left_to_runtime) {
+            let name: &[u8] = dot.parts.last().map_or(&[], |last| &**last);
+            if let Some(dots) = self.define.dots.get_mut(name) {
+                dots.push(dot);
+            }
+        }
+        self.node_env_at_runtime = false;
     }
 
     /// Per-worker deep clone — replaces the prior bitwise
@@ -1685,6 +1743,9 @@ impl<'a> BundleOptions<'a> {
             unwrap_commonjs_packages: self.unwrap_commonjs_packages,
             supports_multiple_outputs: self.supports_multiple_outputs,
             force_node_env: self.force_node_env,
+            node_env_at_runtime: self.node_env_at_runtime,
+            jsx_development_asked: self.jsx_development_asked,
+            defines_left_to_runtime: self.defines_left_to_runtime.clone(),
             ignore_module_resolution_errors: self.ignore_module_resolution_errors,
             optimize_imports: self.optimize_imports,
         }
@@ -1941,6 +2002,9 @@ impl<'a> BundleOptions<'a> {
             unwrap_commonjs_packages: Self::DEFAULT_UNWRAP_COMMONJS_PACKAGES,
             supports_multiple_outputs: true,
             force_node_env: ForceNodeEnv::Unspecified,
+            node_env_at_runtime: false,
+            jsx_development_asked: false,
+            defines_left_to_runtime: Vec::new(),
             ignore_module_resolution_errors: false,
             optimize_imports: None,
         };
@@ -2211,6 +2275,9 @@ pub struct Env {
 
     /// If true, disable loading of default .env files (from --no-env-file flag or bunfig)
     pub disable_default_env_files: bool,
+
+    /// `Bun.build` was given an `env` that turns injection off. A build with no `env` has the same `behavior`.
+    pub disable_stated: bool,
 }
 
 impl Default for Env {
@@ -2220,7 +2287,15 @@ impl Default for Env {
             prefix: Box::default(),
             files: Box::default(),
             disable_default_env_files: false,
+            disable_stated: false,
         }
+    }
+}
+
+impl Env {
+    /// Whether `process.env.NODE_ENV` and `process.env.BUN_ENV` stay as written in a bundle for `target`. A browser has no `process`.
+    pub fn leaves_node_env_to_runtime(&self, target: Target) -> bool {
+        self.disable_stated && matches!(target, Target::Bun | Target::Node)
     }
 }
 

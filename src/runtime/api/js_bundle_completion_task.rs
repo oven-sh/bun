@@ -869,6 +869,8 @@ impl JSBundleCompletionTask {
     ) -> bun_bundler::Result<&'a JSBundlerConfig> {
         transpiler.options.env.behavior = config.env_behavior;
         transpiler.options.env.prefix = Box::from(config.env_prefix.list.as_slice());
+        transpiler.options.env.disable_stated = config.env_disable_stated;
+        transpiler.options.jsx_development_asked = config.jsx_development_asked;
         // `BundleOptions.bundler_feature_flags: Option<Box<StringSet>>` owns
         // its set, so clone rather than alias `config.features`.
         transpiler.options.bundler_feature_flags = Some(Box::new(config.features.clone()?));

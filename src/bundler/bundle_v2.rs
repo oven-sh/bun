@@ -1894,6 +1894,7 @@ pub mod bv2_impl {
             let mut ct = Transpiler::for_worker(this_transpiler, arena, this_transpiler.log);
 
             ct.options.target = Target::Browser;
+            ct.options.take_back_defines_left_to_runtime();
             // Don't inherit SSR mode from the server target: the SSR pass
             // drops hook setter bindings, which is invalid for browser code.
             if ct.options.react_compiler.is_ssr() {
@@ -2928,6 +2929,22 @@ pub mod bv2_impl {
             })
         }
 
+        /// With defines left to the server's process, a page is built for the browser on every entry path, to get them back.
+        fn target_of_entry_point(
+            &mut self,
+            loader: Loader,
+            target: options::Target,
+        ) -> options::Target {
+            if loader == Loader::Html
+                && target.is_server_side()
+                && !self.transpiler.options.defines_left_to_runtime.is_empty()
+            {
+                self.ensure_client_transpiler();
+                return Target::Browser;
+            }
+            target
+        }
+
         /// `loader`: see `requested_file_loader`.
         pub(crate) fn enqueue_entry_item(
             &mut self,
@@ -2939,6 +2956,8 @@ pub mod bv2_impl {
             let path = result.path_const().expect(
                 "resolve_entry_point rejects disabled results and FileMap results have a path",
             );
+            let loader = self.requested_file_loader(path, loader);
+            let target = self.target_of_entry_point(loader, target);
 
             // The path of a file in memory is its key in `files`, as the caller wrote it.
             if !self.file_map.is_some_and(|files| files.contains(path.text)) {
@@ -2954,8 +2973,6 @@ pub mod bv2_impl {
             }
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
-
-            let loader = self.requested_file_loader(path, loader);
 
             let path = self.path_with_pretty_initialized(path, target)?;
             path.assert_pretty_is_valid();
@@ -3779,7 +3796,10 @@ pub mod bv2_impl {
             );
             let task: &mut ParseTask = self.arena().alloc(task_val);
             task.loader = Some(loader);
-            task.jsx = self.transpiler_for_target(known_target).options.jsx.clone();
+            task.jsx = self
+                .transpiler_for_target(known_target)
+                .options
+                .jsx_as_set();
             task.task.node.next = core::ptr::null_mut();
             task.io_task.node.next = core::ptr::null_mut();
             task.known_target = known_target;
@@ -4845,8 +4865,23 @@ pub mod bv2_impl {
                         path.namespace = &result.namespace;
                     }
                     if !result.external {
-                        let existing = this.graph.build_graphs
-                            [resolve.import_record.original_target]
+                        // A file that a plugin resolved the record to instead keeps its own loader.
+                        let loader = this.requested_file_loader(
+                            &path,
+                            resolve
+                                .import_record
+                                .loader
+                                .filter(|_| path.text == &*resolve.import_record.specifier),
+                        );
+                        let target = if resolve.import_record.kind == ImportKind::EntryPointBuild {
+                            this.target_of_entry_point(
+                                loader,
+                                resolve.import_record.original_target,
+                            )
+                        } else {
+                            resolve.import_record.original_target
+                        };
+                        let existing = this.graph.build_graphs[target]
                             .get_or_put(path.text)
                             .expect("oom");
                         if !existing.found_existing {
@@ -4857,24 +4892,12 @@ pub mod bv2_impl {
                             out_source_index = Some(source_index);
 
                             let path = this
-                                .path_with_pretty_initialized(
-                                    &path,
-                                    resolve.import_record.original_target,
-                                )
+                                .path_with_pretty_initialized(&path, target)
                                 .expect("oom");
                             // `GetOrPutResult` has no `key_ptr` — `get_or_put` already
                             // duped the key into the map (see PathToSourceIndexMap.rs).
 
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
-                            // A file that a plugin resolved the record to instead keeps its own loader.
-                            let loader = this.requested_file_loader(
-                                &path,
-                                resolve
-                                    .import_record
-                                    .loader
-                                    .filter(|_| path.text == &*resolve.import_record.specifier),
-                            );
-
                             this.graph
                                 .input_files
                                 .append(crate::Graph::InputFile {
@@ -4898,15 +4921,11 @@ pub mod bv2_impl {
                                     file: bun_sys::Fd::INVALID,
                                 },
                                 side_effects: bun_ast::SideEffects::HasSideEffects,
-                                jsx: this
-                                    .transpiler_for_target(resolve.import_record.original_target)
-                                    .options
-                                    .jsx
-                                    .clone(),
+                                jsx: this.transpiler_for_target(target).options.jsx_as_set(),
                                 source_index: bun_ast::Index::init(source_index.get()),
                                 module_type: options::ModuleType::Unknown,
                                 loader: Some(loader),
-                                known_target: resolve.import_record.original_target,
+                                known_target: target,
                                 is_entry_point: resolve.import_record.kind
                                     == ImportKind::EntryPointBuild,
                                 ..Default::default()

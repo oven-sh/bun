@@ -165,6 +165,10 @@ pub(crate) mod js_bundler {
         pub(crate) throw_on_error: bool,
         pub(crate) env_behavior: api::DotEnvBehavior,
         pub(crate) env_prefix: OwnedString,
+        /// `env` is "disable", false, null or 0. An absent `env` has the same `env_behavior`.
+        pub(crate) env_disable_stated: bool,
+        /// `jsx.development` is true, or `jsx.runtime` names the development transform.
+        pub(crate) jsx_development_asked: bool,
         pub(crate) compile: Option<CompileOptions>,
         /// In-memory files that can be used as entrypoints or imported.
         /// These files do not need to exist on disk.
@@ -235,6 +239,8 @@ pub(crate) mod js_bundler {
                 throw_on_error: true,
                 env_behavior: api::DotEnvBehavior::Disable,
                 env_prefix: OwnedString::default(),
+                env_disable_stated: false,
+                jsx_development_asked: false,
                 compile: None,
                 files: FileMap::default(),
                 metafile: false,
@@ -1151,6 +1157,7 @@ pub(crate) mod js_bundler {
                             "env must be 'inline', 'disable', or a string with a '*' character"
                         )));
                     }
+                    this.env_disable_stated = this.env_behavior == api::DotEnvBehavior::Disable;
                 }
             }
 
@@ -1180,6 +1187,7 @@ pub(crate) mod js_bundler {
                         this.jsx.runtime = jsx_runtime_to_api(runtime.runtime);
                         if let Some(dev) = runtime.development {
                             this.jsx.development = dev;
+                            this.jsx_development_asked = dev;
                         }
                     } else {
                         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -1207,6 +1215,7 @@ pub(crate) mod js_bundler {
 
                 if let Some(dev) = jsx_value.get_boolean_loose(global_this, "development")? {
                     this.jsx.development = dev;
+                    this.jsx_development_asked = dev;
                 }
 
                 if let Some(val) = jsx_value.get_boolean_loose(global_this, "sideEffects")? {

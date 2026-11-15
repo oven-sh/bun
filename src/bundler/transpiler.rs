@@ -482,6 +482,13 @@ impl<'a> Transpiler<'a> {
             self.options.set_production(true);
             self.resolver.opts.set_production(true);
         }
+        if self
+            .options
+            .env
+            .leaves_node_env_to_runtime(self.options.target)
+        {
+            self.options.leave_node_env_to_runtime();
+        }
         Ok(())
     }
 

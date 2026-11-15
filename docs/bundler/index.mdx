@@ -736,6 +736,52 @@ console.log(process.env.BAZ);
 
 Disables environment variable injection entirely.
 
+When `target` is `"bun"` or `"node"`, `Bun.build` also keeps `process.env.NODE_ENV` and `process.env.BUN_ENV` as you wrote them. The bundle reads both variables when it runs.
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./index.ts"],
+  outdir: "./out",
+  target: "bun",
+  env: "disable",
+});
+```
+
+For the input below:
+
+```js title="input.js" icon="/icons/javascript.svg"
+console.log(process.env.NODE_ENV);
+```
+
+Bun generates the same line, so `NODE_ENV=production bun ./out/index.js` prints `production`:
+
+```js title="output.js" icon="/icons/javascript.svg"
+console.log(process.env.NODE_ENV);
+```
+
+In such a bundle:
+
+- Bun keeps both branches of a test on `NODE_ENV` or `BUN_ENV`, and resolves the `import` and `require()` calls in both branches.
+- With the automatic JSX runtime, Bun compiles JSX to `jsx` from the `jsx-runtime` of the import source, which is `react/jsx-runtime` by default. The production build of React has no `jsxDEV`. To get `jsxDEV`, set [`jsx.development`](#jsx) to `true` and run the build without `NODE_ENV=production`.
+
+A browser has no `process` object. So `env: "disable"` does not change these two variables in a bundle that a browser loads: `Bun.build` still replaces them with the mode of the build. The mode of the build is the `BUN_ENV` of the process that runs `Bun.build`, or else its `NODE_ENV`, or else `"development"`. A bundle that a browser loads is a bundle for `target: "browser"`, which is the default target, or the scripts of an `.html` file that a build for `bun` imports.
+
+With an `.html` import, the server reads its mode when it runs and the page has the mode of the build. Use the same mode for the build and for the server when the server renders markup that the page hydrates.
+
+To keep the two reads in a bundle for a browser, define each variable as itself and turn the development transform of JSX off. A browser throws `ReferenceError` when it runs such a read without a `process` object, so the page or the tool that consumes the bundle has to provide `process.env`:
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./index.ts"],
+  outdir: "./out",
+  define: {
+    "process.env.NODE_ENV": "process.env.NODE_ENV",
+    "process.env.BUN_ENV": "process.env.BUN_ENV",
+  },
+  jsx: { development: false },
+});
+```
+
 ### sourcemap
 
 Specifies the type of sourcemap to generate.
@@ -1902,7 +1948,10 @@ interface BuildConfig {
    * Can be one of:
    * - `"inline"`: Injects environment variables into the bundled output by converting `process.env.FOO`
    *   references to string literals containing the actual environment variable values
-   * - `"disable"`: Disables environment variable injection entirely
+   * - `"disable"`: Disables environment variable injection entirely. When `target` is `"bun"` or `"node"`,
+   *   Bun also keeps `process.env.NODE_ENV` and `process.env.BUN_ENV` as written, and the bundle reads them
+   *   when it runs. In a bundle that a browser loads, Bun still replaces both with the mode of the build:
+   *   the `BUN_ENV` or `NODE_ENV` of the build process, or `"development"`.
    * - A string ending in `*`: Inlines environment variables that match the given prefix.
    *   For example, `"MY_PUBLIC_*"` will only include env vars starting with "MY_PUBLIC_"
    */

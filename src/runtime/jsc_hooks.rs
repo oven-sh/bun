@@ -2188,7 +2188,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 use bun_bundler::transpiler::{AlreadyBundled, ParseOptions, ParseResult};
                 use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
 
-                // One shot, so it is checked last.
+                // The `swap` consumes the flag, so it is last.
                 static SET_BREAK_POINT: AtomicBool = AtomicBool::new(true);
                 let set_breakpoint_on_first_line = is_main
                     && jsc_vm

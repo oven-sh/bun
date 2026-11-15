@@ -147,18 +147,15 @@ impl EventIterator {
             return None;
         }
         const NAME_OFFSET: usize = core::mem::offset_of!(w::FILE_NOTIFY_INFORMATION, FileName);
-        let (header, rest) = buf[self.offset..].split_first_chunk::<NAME_OFFSET>()?;
-        let &[next_entry_offset, action, name_len] = header.as_chunks().0 else {
-            unreachable!()
-        };
-        let next_entry_offset = u32::from_ne_bytes(next_entry_offset) as usize;
-        let filename = bun_core::cast_slice(&rest[..u32::from_ne_bytes(name_len) as usize]);
+        let record = &buf[self.offset..];
+        let [next_entry_offset, action, name_len]: [u32; 3] = bun_core::read_prefix(record)?;
+        let filename = bun_core::cast_slice(&record[NAME_OFFSET..][..name_len as usize]);
         self.has_next = next_entry_offset != 0;
-        self.offset += next_entry_offset;
+        self.offset += next_entry_offset as usize;
 
         // `transmute` into an exhaustive #[repr(u32)] enum is immediate UB on an unlisted
         // discriminant. Use a checked match — kernel docs guarantee 1..=5 today.
-        let action: Action = match u32::from_ne_bytes(action) {
+        let action: Action = match action {
             w::FILE_ACTION_ADDED => Action::Added,
             w::FILE_ACTION_REMOVED => Action::Removed,
             w::FILE_ACTION_MODIFIED => Action::Modified,
@@ -330,7 +327,7 @@ impl Drop for WindowsWatcher {
         // SAFETY: `self` owns both handles, and closing `INVALID_HANDLE_VALUE` does nothing.
         unsafe {
             w::CloseHandle(self.watcher.dir_handle);
-            // That completes the read. Until then the kernel may write to `self`.
+            // Closing `dir_handle` completes the read; until then the kernel may write to `buf`.
             if self.watcher.read_pending {
                 w::kernel32::GetQueuedCompletionStatus(
                     self.iocp,
@@ -352,14 +349,7 @@ pub(crate) enum Timeout {
     None = 0,
 }
 
-pub(crate) fn watch_loop(this: &Watcher, thread: &mut WatcherThread) -> bun_sys::Result<()> {
-    while this.running.load() {
-        watch_loop_cycle(this, thread)?;
-    }
-    Ok(())
-}
-
-fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bun_sys::Result<()> {
+pub(crate) fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bun_sys::Result<()> {
     let base_idx = thread.platform.base_idx;
 
     let mut event_id: usize = 0;

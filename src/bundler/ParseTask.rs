@@ -2318,7 +2318,7 @@ pub mod parse_worker {
         let will_close_file_descriptor = opened_own_fd
             && entry.fd.is_valid()
             && entry.fd.stdio_tag().is_none()
-            && worker_ctx.bun_watcher.is_none();
+            && worker_ctx.transpiler().resolver.watcher.is_none();
         if will_close_file_descriptor {
             let _ = entry.close_fd();
             task.contents_or_fd = ContentsOrFd::Fd {

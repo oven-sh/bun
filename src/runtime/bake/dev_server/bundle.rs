@@ -394,7 +394,6 @@ impl DevServer {
             )),
             heap_ref,
         );
-        bv2.bun_watcher = Some(std::sync::Arc::clone(&self.bun_watcher));
         bv2.asynchronous = true;
         bv2.dev_server = Some(self.bundler_handle());
 

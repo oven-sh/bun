@@ -658,7 +658,7 @@ impl FSEventsLoop {
         // signal close and wait
         self.enqueue_task_concurrent(Task::new(self, FSEventsLoop::stop));
         let _ = thread.join();
-        // Nothing clears it again, so nothing signals what is released below.
+        // From here on `reschedule` returns before it signals `signal_source` and `loop_`, released below.
         self.mutex.lock().has_scheduled_watchers = true;
 
         let cf = CoreFoundation::get();

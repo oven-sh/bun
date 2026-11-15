@@ -399,7 +399,7 @@ pub struct Resolver<'a> {
     pub debug_logs: Option<DebugLogs>,
     pub elapsed: u64, // tracing
 
-    pub watcher: Option<std::sync::Arc<bun_watcher::Watcher>>,
+    pub watcher: Option<Arc<bun_watcher::Watcher>>,
 
     pub caches: CacheSet,
     pub generation: Generation,
@@ -2712,7 +2712,7 @@ impl<'a> Resolver<'a> {
         Self::bust_dir_cache_in(&mut self.fs_mut().fs, path)
     }
 
-    /// The caches belong to the process, not to a resolver.
+    /// [`Self::bust_dir_cache`] without a resolver: both caches are process-wide.
     pub fn bust_dir_cache_in(fs: &mut Fs::file_system::RealFS, path: &[u8]) -> bool {
         let path = strings::without_trailing_slash_windows_path(path);
         Self::assert_valid_cache_key(path);

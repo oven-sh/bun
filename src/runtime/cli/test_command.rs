@@ -3288,11 +3288,9 @@ impl TestCommand {
         // which the transpiler never touches. The test harness syncs on the
         // "Ran N tests" summary (printed after this), so seeding completes
         // before the next file edit.
-        if ctx.test_options.changed.is_some()
-            && let Some(watcher) = vm.bun_watcher.get()
-        {
+        if ctx.test_options.changed.is_some() && vm.is_watcher_enabled() {
             for path in &changed_module_graph_files {
-                let _ = watcher.add_file_by_path_slow(path);
+                vm.add_to_watcher_if_needed(path);
             }
         }
 

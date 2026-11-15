@@ -1,16 +1,17 @@
 //! Bun's filesystem watcher implementation for linux using inotify
 //! https://man7.org/linux/man-pages/man7/inotify.7.html
 
-use core::ffi::{CStr, c_int};
+use core::ffi::c_int;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_core::{ZStr, env_var, output as Output};
 use bun_paths::MAX_PATH_BYTES;
-use bun_sys::{self, Fd};
+use bun_sys::{self, CloseOnDrop, Fd};
 use bun_threading::Futex;
 
 use crate::watcher_impl::{
-    MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex, Watcher, WatcherThread,
+    MAX_COUNT as max_count, Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher,
+    WatcherThread,
 };
 use bun_collections::index_sort;
 
@@ -28,7 +29,7 @@ const EVENTLIST_BYTES_SIZE: usize = (Event::LARGEST_SIZE / 2) * max_count;
 pub(crate) type Platform = INotifyWatcher;
 
 pub struct INotifyWatcher {
-    pub(crate) fd: Fd,
+    pub(crate) fd: CloseOnDrop,
 
     pub(crate) watch_count: AtomicU32,
     /// nanoseconds
@@ -50,11 +51,7 @@ impl<'a> Event<'a> {
 
     /// Only an event for a file inside a watched directory has one.
     pub fn name(&self) -> Option<&'a [u8]> {
-        Some(
-            CStr::from_bytes_until_nul(self.padded_name)
-                .ok()?
-                .to_bytes(),
-        )
+        (!self.padded_name.is_empty()).then(|| bun_core::slice_to_nul(self.padded_name))
     }
 }
 
@@ -66,15 +63,13 @@ impl<'a> Iterator for EventIterator<'a> {
 
     fn next(&mut self) -> Option<Event<'a>> {
         let bytes = core::mem::take(&mut self.0);
-        let (header, rest) = bytes.split_first_chunk::<{ Event::HEADER_SIZE }>()?;
-        let &[watch_descriptor, mask, _cookie, name_len] = header.as_chunks().0 else {
-            unreachable!()
-        };
-        let (padded_name, rest) = rest.split_at_checked(u32::from_ne_bytes(name_len) as usize)?;
+        let [wd, mask, _cookie, name_len]: [u32; 4] = bun_core::read_prefix(bytes)?;
+        let (padded_name, rest) =
+            bytes[Event::HEADER_SIZE..].split_at_checked(name_len as usize)?;
         self.0 = rest;
         Some(Event {
-            watch_descriptor: EventListIndex::from_ne_bytes(watch_descriptor),
-            mask: u32::from_ne_bytes(mask),
+            watch_descriptor: wd as EventListIndex,
+            mask,
             padded_name,
         })
     }
@@ -86,8 +81,9 @@ impl INotifyWatcher {
         let old_count = self.watch_count.fetch_add(1, Ordering::Release);
         let watch_file_mask =
             IN::EXCL_UNLINK | IN::MOVE_SELF | IN::DELETE_SELF | IN::MOVED_TO | IN::MODIFY;
-        let rc = bun_sys::linux::inotify_add_watch(self.fd.native(), pathname, watch_file_mask);
-        bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd, rc);
+        let rc =
+            bun_sys::linux::inotify_add_watch(self.fd.fd().native(), pathname, watch_file_mask);
+        bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd.fd(), rc);
         let result = if rc < 0 {
             Err(
                 bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::watch)
@@ -113,8 +109,8 @@ impl INotifyWatcher {
             | IN::ONLYDIR
             | IN::MOVED_TO
             | IN::MODIFY;
-        let rc = bun_sys::linux::inotify_add_watch(self.fd.native(), pathname, watch_dir_mask);
-        bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd, rc);
+        let rc = bun_sys::linux::inotify_add_watch(self.fd.fd().native(), pathname, watch_dir_mask);
+        bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd.fd(), rc);
         let result = if rc < 0 {
             Err(
                 bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::watch)
@@ -142,7 +138,7 @@ impl INotifyWatcher {
         let fd = Fd::from_native(raw);
         bun_core::scoped_log!(watcher, "{} init", fd);
         Ok(Self {
-            fd,
+            fd: CloseOnDrop::new(fd),
             coalesce_interval: env_var::BUN_INOTIFY_COALESCE_INTERVAL
                 .get()
                 .and_then(|v| isize::try_from(v).ok())
@@ -167,12 +163,12 @@ impl INotifyWatcher {
         loop {
             Futex::wait_forever(&self.watch_count, 0);
 
-            let rc = system::read(self.fd.native(), bytes);
+            let rc = system::read(self.fd.fd().native(), bytes);
             let errno = get_errno(rc);
             match errno {
                 E::SUCCESS => {
                     let read_len = usize::try_from(rc).expect("int cast");
-                    bun_core::scoped_log!(watcher, "{} read {} bytes", self.fd, read_len);
+                    bun_core::scoped_log!(watcher, "{} read {} bytes", self.fd.fd(), read_len);
                     if read_len == 0 {
                         return Ok(0);
                     }
@@ -181,7 +177,7 @@ impl INotifyWatcher {
                     if bytes.len() - read_len >= Event::LARGEST_SIZE {
                         // IN_MODIFY is very noisy, so wait 0.1ms to coalesce events.
                         let mut fds = [system::pollfd {
-                            fd: self.fd.native(),
+                            fd: self.fd.fd().native(),
                             events: (libc::POLLIN | libc::POLLERR) as _,
                             revents: 0,
                         }];
@@ -193,7 +189,7 @@ impl INotifyWatcher {
                         if poll_n > 0 {
                             'inner: loop {
                                 let rest = &mut bytes[read_len..];
-                                let new_rc = system::read(self.fd.native(), rest);
+                                let new_rc = system::read(self.fd.fd().native(), rest);
                                 let e = get_errno(new_rc);
                                 match e {
                                     E::SUCCESS => {
@@ -221,7 +217,11 @@ impl INotifyWatcher {
                 E::EAGAIN | E::EINTR => continue,
                 E::EINVAL => {
                     if cfg!(debug_assertions) {
-                        Output::err("EINVAL", "inotify read({}, {})", (self.fd, bytes.len()));
+                        Output::err(
+                            "EINVAL",
+                            "inotify read({}, {})",
+                            (self.fd.fd(), bytes.len()),
+                        );
                     }
                     return Err(bun_sys::Error {
                         errno: errno as u32 as _,
@@ -238,12 +238,6 @@ impl INotifyWatcher {
                 }
             }
         }
-    }
-}
-
-impl Drop for INotifyWatcher {
-    fn drop(&mut self) {
-        let _ = bun_sys::close(self.fd);
     }
 }
 
@@ -267,7 +261,6 @@ fn process_inotify_event_batch(
     events: &mut EventIterator<'_>,
     eventlist_index_scratch: &mut Vec<EventListIndex>,
 ) {
-    use crate::watcher_impl::WatchItemColumns;
     let _flush = Output::flush_guard();
 
     eventlist_index_scratch.clear();

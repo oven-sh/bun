@@ -1308,11 +1308,11 @@ impl<'a> PackageInstall<'a> {
             return None;
         }
 
-        let mut log = bun_ast::Log::init();
+        let log = bun_ast::Log::init();
 
         initialize_store();
 
-        let mut package_json_checker = bun_json::PackageJSONVersionChecker::init(source, &mut log);
+        let mut package_json_checker = bun_json::PackageJSONVersionChecker::init(source, &log);
         if package_json_checker.parse().is_err() || package_json_checker.has_errors() {
             return None;
         }

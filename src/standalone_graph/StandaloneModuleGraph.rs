@@ -3862,13 +3862,13 @@ pub(crate) fn serialize_json_source_map_for_standalone(
     use bun_ast::ExprData as AstData;
 
     let json_src = bun_ast::Source::init_path_string("sourcemap.json", json_source);
-    let mut log = bun_ast::Log::init();
+    let log = bun_ast::Log::init();
 
     // the allocator given to the JS parser is not respected for all parts
     // of the parse, so we need to remember to reset the ast store
     let _reset_guard = bun_ast::StoreResetGuard::new();
 
-    let parsed = bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log)
+    let parsed = bun_parsers::json::ParsedJson::parse_json(&json_src, &log)
         .map_err(|_| crate::Error::InvalidSourceMap)?;
     let json = parsed.root;
 

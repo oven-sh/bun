@@ -122,7 +122,7 @@ fn shown_effect(diagnostics: Diagnostics) -> Effect {
     let has_errors = diagnostics.has_errors();
     let has_internal_errors = diagnostics.has_internal_errors();
     let log = written(diagnostics);
-    let kinds: Vec<Kind> = log.msgs.iter().map(|message| message.kind).collect();
+    let kinds: Vec<Kind> = log.msgs.take().iter().map(|message| message.kind).collect();
     match (&kinds[..], has_errors, has_internal_errors) {
         ([], false, false) => Effect::Dropped,
         ([Kind::Warn], false, false) => Effect::Warns,
@@ -214,7 +214,7 @@ fn diagnostics_in_runtime_files_are_not_shown_to_users() {
         let warning = Diagnostic::new(Code::WorkerFileNotCompiled, start_of(file), &[b"./w.ts"]);
         diagnostics.add(Some(view), warning);
         assert!(!diagnostics.has_errors());
-        assert!(written(diagnostics).msgs.is_empty());
+        assert_eq!(written(diagnostics).msgs_len(), 0);
 
         let mut diagnostics = Diagnostics::new();
         let error = Diagnostic::new(Code::NestedTooDeeply, start_of(file), &[b"500"]);

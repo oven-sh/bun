@@ -67,8 +67,8 @@ const NARROW_CONFIGURATION: &str = concat!(
 );
 
 fn link_project(project: &TestProject, provider: &dyn SourceProvider) -> LinkOutcome {
-    let mut log = Log::init();
-    let result = link_program(&project.options(BUNDLED_LIBS), provider, &mut log);
+    let log = Log::init();
+    let result = link_program(&project.options(BUNDLED_LIBS), provider, &log);
     (result, log)
 }
 
@@ -101,8 +101,10 @@ fn link_successfully(files: &[(&str, &str)]) -> LinkedProgram {
 }
 
 fn has_message(log: &Log, kind: Kind, prefix: &str) -> bool {
-    let mut messages = log.msgs.iter().filter(|message| message.kind == kind);
-    messages.any(|message| message.data.text.starts_with(prefix.as_bytes()))
+    log.with_msgs(|messages| {
+        let mut messages = messages.iter().filter(|message| message.kind == kind);
+        messages.any(|message| message.data.text.starts_with(prefix.as_bytes()))
+    })
 }
 
 fn has_code(log: &Log, kind: Kind, number: u32) -> bool {
@@ -315,11 +317,11 @@ fn only_an_executable_refuses_a_store_to_an_import() {
     let mut project = TestProject::new(&files, &default_settings());
     let (result, log) = link_project(&project, &WithoutServices);
     expect_success(result, &log);
-    assert_eq!(log.errors, 0);
+    assert_eq!(log.errors.get(), 0);
     project.builds_executable = true;
     let (result, log) = link_project(&project, &WithoutServices);
     assert_eq!(expect_failure(result).stage, Stage::Lower);
-    assert_eq!(log.errors, 4);
+    assert_eq!(log.errors.get(), 4);
     assert!(has_code(&log, Kind::Err, 2632));
 }
 
@@ -418,11 +420,11 @@ fn type_error_stops_the_build_of_typescript_alone() {
     let typed = "const x: number = \"a\";\nconsole.log(x);";
     let (result, log) = link_files(&[("a.ts", typed)]);
     assert_eq!(expect_failure(result).stage, Stage::Lower);
-    assert_eq!(log.errors, 1);
+    assert_eq!(log.errors.get(), 1);
     let annotated = "/** @type {number} */\nconst x = \"a\";\nconsole.log(x);";
     let (result, log) = link_files(&[("a.js", annotated)]);
     expect_success(result, &log);
-    assert_eq!(log.errors, 0);
+    assert_eq!(log.errors.get(), 0);
 }
 
 #[test]
@@ -430,14 +432,14 @@ fn reports_all_stage_errors() {
     let text = "again: {\n  again: {}\n}\nmore: {\n  more: {}\n}\n";
     let (result, log) = link_files(&[("a.ts", text)]);
     assert_eq!(expect_failure(result).stage, Stage::Lower);
-    assert_eq!(log.errors, 2);
+    assert_eq!(log.errors.get(), 2);
 }
 
 #[test]
 fn successful_build_logs_warnings() {
     let (result, log) = link_files(&[("a.js", "try {\n  require(\"./nope\");\n} catch {}")]);
     expect_success(result, &log);
-    assert_eq!(log.errors, 0);
+    assert_eq!(log.errors.get(), 0);
     assert!(has_code(&log, Kind::Warn, Code::ModuleNotFound.number()));
 }
 
@@ -464,7 +466,7 @@ fn failed_import_statement_ships_nothing() {
     ];
     let (result, log) = link_files(&files);
     assert_eq!(expect_failure(result).stage, Stage::BindModules);
-    assert_eq!(log.errors, 1);
+    assert_eq!(log.errors.get(), 1);
     assert!(has_code(&log, Kind::Err, Code::ModuleNotFound.number()));
     assert!(has_code(&log, Kind::Warn, Code::ModuleNotFound.number()));
 }
@@ -551,8 +553,8 @@ fn compiles_runtime_module(source: &str, path: &[u8]) -> bool {
 
 fn count_library_functions(text: &str) -> usize {
     let project = TestProject::new(&[("a.ts", text)], &default_settings());
-    let mut log = Log::init();
-    let result = link_program(&project.options(BUNDLED_LIBS), &WithoutServices, &mut log);
+    let log = Log::init();
+    let result = link_program(&project.options(BUNDLED_LIBS), &WithoutServices, &log);
     expect_success(result, &log).program.runtime_functions.len()
 }
 
@@ -629,8 +631,8 @@ fn link_registered_functions(omits_builtin_modules: bool) -> Vec<RuntimeFunction
     let project = TestProject::new(&PROGRAM_WITH_STARTUP_CODE, &default_settings());
     let mut options = project.options(BUNDLED_LIBS);
     options.load.omits_builtin_modules = omits_builtin_modules;
-    let mut log = Log::init();
-    let result = link_program(&options, &WithoutServices, &mut log);
+    let log = Log::init();
+    let result = link_program(&options, &WithoutServices, &log);
     let entries = expect_success(result, &log).program.runtime_functions;
     entries.iter().map(|entry| entry.id).collect()
 }
@@ -665,8 +667,8 @@ fn finish_marks_internal_errors() {
         stage: Stage::LinkAndEmit,
         message: b"broken".to_vec(),
     });
-    let mut log = Log::init();
-    let failed = expect_failure(build.finish::<()>(Err(Stage::LinkAndEmit), &mut log));
+    let log = Log::init();
+    let failed = expect_failure(build.finish::<()>(Err(Stage::LinkAndEmit), &log));
     assert_eq!(failed.stage, Stage::LinkAndEmit);
     assert!(failed.is_internal_error);
     let message = "internal compiler error (LinkAndEmit): broken";
@@ -680,12 +682,12 @@ impl SourceProvider for CollidingPluginModule {
         &self,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> FoldOptions<'s> {
         WithoutServices.fold_options(arena, atoms, log)
     }
 
-    fn resolve(&self, request: &ResolveRequest<'_>, _log: &mut Log) -> Result<Resolution, Failed> {
+    fn resolve(&self, request: &ResolveRequest<'_>, _log: &Log) -> Result<Resolution, Failed> {
         Ok(match request.specifier {
             b"plugin-fs" => Resolution::Module {
                 namespace: b"node".to_vec(),
@@ -695,7 +697,7 @@ impl SourceProvider for CollidingPluginModule {
         })
     }
 
-    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+    fn load(&self, request: &LoadRequest<'_>, log: &Log) -> Result<Loaded, Failed> {
         if request.module.namespace == b"file" {
             return WithoutServices.load(request, log);
         }
@@ -706,7 +708,7 @@ impl SourceProvider for CollidingPluginModule {
         })
     }
 
-    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+    fn finish_deferred_loads(&self, log: &Log) -> Vec<DeferredLoad> {
         WithoutServices.finish_deferred_loads(log)
     }
 
@@ -715,12 +717,12 @@ impl SourceProvider for CollidingPluginModule {
         file: &SourceFile<'_>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<DataModule<'s>, DataFailure> {
         WithoutServices.parse_data(file, arena, atoms, log)
     }
 
-    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+    fn check_embedded_files(&self, log: &Log) -> Result<(), Failed> {
         WithoutServices.check_embedded_files(log)
     }
 }
@@ -747,12 +749,12 @@ impl SourceProvider for CountsNameChecks {
         &self,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> FoldOptions<'s> {
         WithoutServices.fold_options(arena, atoms, log)
     }
 
-    fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
+    fn resolve(&self, request: &ResolveRequest<'_>, log: &Log) -> Result<Resolution, Failed> {
         WithoutServices.resolve(request, log)
     }
 
@@ -760,7 +762,7 @@ impl SourceProvider for CountsNameChecks {
         WithoutServices.has_resolve_plugins()
     }
 
-    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+    fn load(&self, request: &LoadRequest<'_>, log: &Log) -> Result<Loaded, Failed> {
         WithoutServices.load(request, log)
     }
 
@@ -768,7 +770,7 @@ impl SourceProvider for CountsNameChecks {
         WithoutServices.has_load_plugin(module)
     }
 
-    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+    fn finish_deferred_loads(&self, log: &Log) -> Vec<DeferredLoad> {
         WithoutServices.finish_deferred_loads(log)
     }
 
@@ -777,12 +779,12 @@ impl SourceProvider for CountsNameChecks {
         file: &SourceFile<'_>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<DataModule<'s>, DataFailure> {
         WithoutServices.parse_data(file, arena, atoms, log)
     }
 
-    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+    fn check_embedded_files(&self, log: &Log) -> Result<(), Failed> {
         self.checks.fetch_add(1, Ordering::Relaxed);
         WithoutServices.check_embedded_files(log)
     }
@@ -804,20 +806,20 @@ impl SourceProvider for CannotTakeOneValue {
         &self,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> FoldOptions<'s> {
         WithoutServices.fold_options(arena, atoms, log)
     }
 
-    fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
+    fn resolve(&self, request: &ResolveRequest<'_>, log: &Log) -> Result<Resolution, Failed> {
         WithoutServices.resolve(request, log)
     }
 
-    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+    fn load(&self, request: &LoadRequest<'_>, log: &Log) -> Result<Loaded, Failed> {
         WithoutServices.load(request, log)
     }
 
-    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+    fn finish_deferred_loads(&self, log: &Log) -> Vec<DeferredLoad> {
         WithoutServices.finish_deferred_loads(log)
     }
 
@@ -826,7 +828,7 @@ impl SourceProvider for CannotTakeOneValue {
         file: &SourceFile<'_>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<DataModule<'s>, DataFailure> {
         if !file.path.ends_with(b"/list.mjs") {
             return WithoutServices.parse_data(file, arena, atoms, log);
@@ -835,7 +837,7 @@ impl SourceProvider for CannotTakeOneValue {
         Err(DataFailure::Build)
     }
 
-    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+    fn check_embedded_files(&self, log: &Log) -> Result<(), Failed> {
         WithoutServices.check_embedded_files(log)
     }
 }
@@ -877,16 +879,16 @@ impl SourceProvider for AssetPlugin {
         &self,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> FoldOptions<'s> {
         WithoutServices.fold_options(arena, atoms, log)
     }
 
-    fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
+    fn resolve(&self, request: &ResolveRequest<'_>, log: &Log) -> Result<Resolution, Failed> {
         WithoutServices.resolve(request, log)
     }
 
-    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+    fn load(&self, request: &LoadRequest<'_>, log: &Log) -> Result<Loaded, Failed> {
         if !request.module.path.ends_with(b"/logo.png") {
             return WithoutServices.load(request, log);
         }
@@ -897,7 +899,7 @@ impl SourceProvider for AssetPlugin {
         })
     }
 
-    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+    fn finish_deferred_loads(&self, log: &Log) -> Vec<DeferredLoad> {
         WithoutServices.finish_deferred_loads(log)
     }
 
@@ -910,7 +912,7 @@ impl SourceProvider for AssetPlugin {
         file: &SourceFile<'_>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<DataModule<'s>, DataFailure> {
         if file.loader != Loader::File {
             return WithoutServices.parse_data(file, arena, atoms, log);
@@ -921,7 +923,7 @@ impl SourceProvider for AssetPlugin {
         })
     }
 
-    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+    fn check_embedded_files(&self, log: &Log) -> Result<(), Failed> {
         WithoutServices.check_embedded_files(log)
     }
 }
@@ -944,10 +946,12 @@ fn plugin_that_answers_code_for_a_file_asset_fails_the_build() {
     let (result, log) = link_project(&project, &AssetPlugin { answers_with });
     assert!(!expect_failure(result).is_internal_error);
     let prefix = format!("TS{}: ", Code::UnsupportedOption.number());
-    let mut errors = log.msgs.iter().filter(|message| message.kind == Kind::Err);
-    let names_the_asset = errors.any(|message| {
-        let text = &message.data.text;
-        text.starts_with(prefix.as_bytes()) && text.contains_str("logo.png")
+    let names_the_asset = log.with_msgs(|messages| {
+        let mut errors = messages.iter().filter(|message| message.kind == Kind::Err);
+        errors.any(|message| {
+            let text = &message.data.text;
+            text.starts_with(prefix.as_bytes()) && text.contains_str("logo.png")
+        })
     });
     assert!(names_the_asset, "{}", describe_messages(&log));
 }
@@ -1439,7 +1443,7 @@ fn test_file_with_syntax_error_yields_a_program() {
     project.aot.runs_in_place = true;
     let (result, log) = link_project(&project, &WithoutServices);
     let program = expect_success(result, &log).program;
-    assert_eq!(log.errors, 0, "{}", describe_messages(&log));
+    assert_eq!(log.errors.get(), 0, "{}", describe_messages(&log));
     let print_body = |module: ModuleId| {
         let body = program.modules[module.index()].body;
         let body = body.expect("a test file has a body");
@@ -1799,8 +1803,8 @@ fn library_module_that_is_evaluated_without_code_stops_the_build() {
             true => Err(Stage::Any),
             false => Ok(()),
         };
-        let mut log = Log::init();
-        let failed = build.finish(result, &mut log).err();
+        let log = Log::init();
+        let failed = build.finish(result, &log).err();
         (failed, log)
     };
 
@@ -1812,9 +1816,9 @@ fn library_module_that_is_evaluated_without_code_stops_the_build() {
     );
     let message = "internal compiler error (Load): the program evaluates built-in modules that the load stage removed";
     assert!(has_message(&log, Kind::Err, message));
-    assert_eq!(log.msgs.len(), 1);
+    assert_eq!(log.msgs_len(), 1);
 
     let (failed, log) = finish_build(true);
     assert!(failed.is_none());
-    assert!(log.msgs.is_empty());
+    assert_eq!(log.msgs_len(), 0);
 }

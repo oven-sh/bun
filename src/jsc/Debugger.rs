@@ -404,14 +404,13 @@ impl Debugger {
         bun_core::scoped_log!(debugger, "startJSDebuggerThread");
         jsc::mark_binding();
 
-        let mut log = bun_ast::Log::default();
         let mut env_loader = bun_dotenv::Loader::init_with_map(env_map);
         let options = crate::virtual_machine::InitOptions {
             env_loader: Some(core::ptr::NonNull::from(&mut env_loader)),
             is_main_thread: false,
             ..Default::default()
         };
-        let vm = VirtualMachine::init(&raw mut log, options)
+        let vm = VirtualMachine::init(Box::leak(Box::default()), options)
             .unwrap_or_else(|_| panic!("Failed to create Debugger VM"));
         vm.event_loop().ensure_waker();
 
@@ -459,12 +458,10 @@ impl Debugger {
 
         let _ = this.global().handle_rejected_promises();
 
-        if let Some(log) = this.log_ref() {
-            if !log.msgs.is_empty() {
-                let _ = log.print(bun_core::Output::error_writer());
-                bun_core::pretty_errorln!("\n");
-                bun_core::Output::flush();
-            }
+        if this.log.has_msgs() {
+            let _ = this.log.print(bun_core::Output::error_writer());
+            bun_core::pretty_errorln!("\n");
+            bun_core::Output::flush();
         }
 
         bun_core::scoped_log!(debugger, "wake");

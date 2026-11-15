@@ -143,7 +143,7 @@ impl<'a> Installer<'a> {
         unsafe { &*self.manager }
     }
     #[inline]
-    pub(crate) fn manager_mut(&self) -> &'a mut PackageManager {
+    pub(crate) fn manager_mut(&mut self) -> &'a mut PackageManager {
         // SAFETY: BACKREF — never null; disjoint from `*self`. Main thread only.
         unsafe { &mut *self.manager }
     }
@@ -429,11 +429,9 @@ impl<'a> Installer<'a> {
         }
         bun_core::handle_oom(patch_task.apply());
 
-        if let crate::patch_install::Callback::Apply(apply) = &mut patch_task.callback {
+        if let crate::patch_install::Callback::Apply(apply) = &patch_task.callback {
             if apply.logger.has_errors() {
-                let mut log = Log::init();
-                apply.logger.append_to(&mut log);
-                return Err(TaskError::Patching(log));
+                return Err(TaskError::patching(&apply.logger));
             }
             let _ = apply.logger.print(Output::error_writer());
         }
@@ -462,9 +460,9 @@ impl<'a> Installer<'a> {
                     pkg,
                 );
             }
-            TaskError::Patching(patch_log) => {
+            TaskError::Patching(printed_log) => {
                 Output::err_generic("failed to patch package: {}@{}", pkg);
-                let _ = patch_log.print(Output::error_writer());
+                let _ = Output::error_writer().write_all(printed_log.as_bytes());
             }
             TaskError::Binaries(err) => {
                 Output::err(*err, "failed to link binaries for package: {}@{}", pkg);
@@ -1022,11 +1020,20 @@ pub enum TaskError {
     Binaries(crate::Error),
     /// (dependency entry, error)
     DependencyBinaries(Box<[(StoreEntryId, crate::Error)]>),
-    Patching(Log),
+    /// Not a `Log`: task threads share `Installer::tasks`.
+    Patching(String),
     Download {
         err: crate::Error,
         url: Box<[u8]>,
     },
+}
+
+impl TaskError {
+    fn patching(log: &Log) -> Self {
+        let mut printed = String::new();
+        let _ = log.print(&mut printed);
+        TaskError::Patching(printed)
+    }
 }
 
 type TaskResult<T> = core::result::Result<T, TaskError>;
@@ -1318,9 +1325,9 @@ impl Task {
         installer
             .append_store_path(&mut cwd, self.entry_id)
             .map_err(|err| TaskError::RunScripts(err.into()))?;
-        let mut log = Log::init();
+        let log = Log::init();
         let Some(list) = pkg_scripts
-            .get_list(&mut log, &mut cwd, dep_name, pkg_res, is_trusted)
+            .get_list(&log, &mut cwd, dep_name, pkg_res, is_trusted)
             .map_err(TaskError::RunScripts)?
         else {
             return Ok(false);
@@ -1349,12 +1356,12 @@ impl Task {
         let pkg_res = installer.resolution(entry_id);
         let mut pkg_dir = AutoAbsPath::init_top_level_dir();
 
-        let mut log = Log::init();
+        let log = Log::init();
         let list = installer
             .append_real_store_path(&mut pkg_dir, entry_id, which)
             .map_err(crate::Error::from)
             // `true` counts the scripts that would run, like the hoisted installer does.
-            .and_then(|()| pkg_scripts.get_list(&mut log, &mut pkg_dir, dep_name, pkg_res, true));
+            .and_then(|()| pkg_scripts.get_list(&log, &mut pkg_dir, dep_name, pkg_res, true));
         match list {
             Ok(Some(list)) => {
                 if manager.options.log_level.is_verbose() {
@@ -1492,7 +1499,7 @@ impl<'a> Installer<'a> {
 
         if let Some(patch) = lockfile.patched_dependencies.get(&name_and_version_hash) {
             let Some(contents_hash) = patch.patchfile_hash() else {
-                let mut log = Log::init();
+                let log = Log::init();
                 log.add_error_fmt_opts(
                     format_args!(
                         "the hash of patch file {} was not calculated before install, this is a bug in Bun",
@@ -1500,7 +1507,7 @@ impl<'a> Installer<'a> {
                     ),
                     Default::default(),
                 );
-                return Err(TaskError::Patching(log));
+                return Err(TaskError::patching(&log));
             };
             return Ok(PatchInfo::Patch(PatchInfoPatch {
                 name_and_version_hash,
@@ -2265,9 +2272,9 @@ impl<'a> Installer<'a> {
 
     /// Call on the main thread once every task is done. The warnings are logged in entry order, so
     /// the output does not depend on which task finished first.
-    pub(crate) fn warn_left_out_links(&self) {
+    pub(crate) fn warn_left_out_links(&self, log: &bun_ast::Log) {
         for text in self.tasks.iter().flat_map(|task| &task.left_out_links) {
-            self.manager().log_mut().add_warning_fmt(
+            log.add_warning_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!("{}", bun_core::fmt::escape_control_chars(text)),

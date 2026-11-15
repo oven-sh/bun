@@ -7,7 +7,7 @@ use bun_ast::flags;
 use bun_ast::op::Level;
 use bun_ast::{E, Expr, ExprNodeIndex, G};
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn parse_jsx_element(&mut self, loc: bun_ast::Loc) -> crate::CrateResult<Expr> {
         let p = self;
         // Nested child elements (`<a><b><c>...`) recurse back into this function,

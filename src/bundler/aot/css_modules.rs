@@ -13,7 +13,7 @@ pub(crate) fn exported_names<'s>(
     file: &SourceFile<'_>,
     arena: &'s Arena,
     atoms: &Interner<'s>,
-    log: &mut Log,
+    log: &Log,
 ) -> Result<&'s DataValue<'s>, Failed> {
     let contents = without_bom(file.contents.to_vec());
     match context.with_worker(|transpiler| load_exports(transpiler, file.path, &contents)) {

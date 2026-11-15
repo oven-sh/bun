@@ -283,7 +283,7 @@ impl Error {
         Some((pos, msg))
     }
 
-    pub(crate) fn add_to_log(&self, source: &Source, log: &mut Log) -> Result<(), AddToLogError> {
+    pub(crate) fn add_to_log(&self, source: &Source, log: &Log) -> Result<(), AddToLogError> {
         let Some((pos, msg)) = self.describe() else {
             return Err(match self {
                 Error::Oom => AddToLogError::OutOfMemory,
@@ -361,11 +361,7 @@ impl<'a> JSON5Parser<'a> {
         }
     }
 
-    pub fn parse(
-        source: &'a Source<'a>,
-        log: &mut Log,
-        bump: &'a Bump,
-    ) -> Result<Expr, ExternalError> {
+    pub fn parse(source: &'a Source<'a>, log: &Log, bump: &'a Bump) -> Result<Expr, ExternalError> {
         source.check_parseable_len(log, "JSON5 document")?;
         let mut parser = JSON5Parser {
             source: source.contents.as_ref(),

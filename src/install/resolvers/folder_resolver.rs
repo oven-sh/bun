@@ -231,20 +231,12 @@ fn read_package_json_from_disk(
 
     let mut package: LockfilePackage = Default::default();
 
-    // Borrow splitting: `manager.lockfile`, `manager`, and `manager.log` are
+    // Borrow splitting: `manager.lockfile` and `manager` are
     // needed simultaneously; borrowck rejects the overlap on `&mut self`,
-    // so split via raw pointer once here. `lockfile` and `log` are disjoint
-    // fields of `PackageManager`, and `parse{,_with_json}` only reaches
-    // `manager` through the `pm` argument. Through `pm` it never derefs `log`,
+    // so split via raw pointer once here. `parse{,_with_json}` reaches `manager` through `pm`,
     // and it derefs `lockfile` only under `Features::workspaces`, which none
     // of the `features` that `get_or_put` passes has.
-    //
-    // `log_mut()` reads the BACKREF `self.log: *mut Log` and returns the
-    // disjoint CLI `Log` allocation (lifetime decoupled from `&self`); call it
-    // safely *before* establishing `manager_ptr` so `log` is derived from a
-    // separate allocation and is unaffected by the `&mut *manager_ptr`
-    // reborrows below.
-    let log: &mut bun_ast::Log = manager.log_mut();
+    let log: &bun_ast::Log = manager.log();
     let manager_ptr: *mut PackageManager = manager;
 
     if resolver.tag == ResolutionTag::Workspace {
@@ -252,8 +244,7 @@ fn read_package_json_from_disk(
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace);
 
         // SAFETY: `manager_ptr` was just derived from the live `&mut PackageManager`
-        // argument; `log` points into a separate `Log` allocation (see the
-        // borrow-splitting comment above), so this `&mut` reborrow aliases no
+        // argument; `log` is a separate allocation, so this `&mut` reborrow aliases no
         // other live reference.
         let json = unsafe { &mut *manager_ptr }
             .workspace_package_json_cache
@@ -353,10 +344,10 @@ pub(crate) fn listed_dependencies(
     let mut joined = bun_paths::path_buffer_pool::get();
     let relative = GlobalOrRelative::Relative(tag);
     let paths = normalize_package_json_path(relative, &mut joined, non_normalized_path)?;
-    let mut log = bun_ast::Log::init();
+    let log = bun_ast::Log::init();
     // `bun add` in a workspace edits the copy in this cache before it writes the file.
     let entry = (manager.workspace_package_json_cache)
-        .get_with_path(&mut log, paths.abs.as_bytes(), Default::default())
+        .get_with_path(&log, paths.abs.as_bytes(), Default::default())
         .unwrap()
         .ok()?;
     let (source, json) = (entry.source.clone(), entry.root);
@@ -365,7 +356,7 @@ pub(crate) fn listed_dependencies(
     let parsed = listed.package.parse_with_json(
         &mut listed.lockfile,
         manager,
-        &mut log,
+        &log,
         &source,
         json,
         &mut OnlyDependencies,

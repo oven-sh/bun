@@ -28,7 +28,7 @@ struct ExecutableDestination {
     windows: WindowsOptions,
 }
 
-pub(super) fn add_notes(log: &mut Log, lines: Vec<Vec<u8>>) {
+pub(super) fn add_notes(log: &Log, lines: Vec<Vec<u8>>) {
     for line in lines {
         log.add_msg(Msg {
             kind: Kind::Note,
@@ -69,7 +69,7 @@ pub(super) fn plan_bundle_trimming(
 }
 
 fn add_compile_logs(
-    log: &mut Log,
+    log: &Log,
     report_messages: Vec<ReportMessage>,
     trim_log_lines: Vec<Vec<u8>>,
     developer_options: &[u8],
@@ -171,7 +171,7 @@ pub(super) fn compile(
     bundler: BundlerInputs<'_>,
 ) -> Result<CompiledExecutable, CompileError> {
     let destination = executable_destination(config, compile_options)?;
-    let (log, env) = (bundler.transpiler.log, bundler.transpiler.env);
+    let (log, env) = (bundler.transpiler.log(), bundler.transpiler.env);
 
     // Without an output directory a metafile is handed to the caller and not written.
     let outdir = &config.outdir.list[..];
@@ -234,7 +234,7 @@ pub(super) fn compile(
     }
 }
 
-fn fail_compilation(log: &mut Log, message: &[u8]) -> bun_bundler::Error {
+fn fail_compilation(log: &Log, message: &[u8]) -> bun_bundler::Error {
     if !message.is_empty() {
         log.add_error_fmt(
             None,
@@ -245,11 +245,10 @@ fn fail_compilation(log: &mut Log, message: &[u8]) -> bun_bundler::Error {
     bun_bundler::Error::BuildFailed
 }
 
-/// Separate from `compile`, in which the transpiler writes to `log` through its own pointer.
 pub(super) fn finish_compilation(
     config: &JSBundlerConfig,
     compiled: Result<CompiledExecutable, CompileError>,
-    log: &mut Log,
+    log: &Log,
 ) -> bun_bundler::Result<BuildResult> {
     let CompiledExecutable { outcome, full_path } =
         compiled.map_err(|error| fail_compilation(log, error.slice()))?;

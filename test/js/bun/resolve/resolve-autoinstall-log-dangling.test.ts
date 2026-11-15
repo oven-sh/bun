@@ -1,13 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, autoInstallTempDir as tempDir } from "harness";
 
-// When the runtime resolver's auto-install path lazily creates the
-// PackageManager, it snapshots `resolver.log` into `pm.log`. If the
-// PackageManager is created while the resolver log is pointed at a
-// stack-local `Log` inside `resolveMaybeNeedsTrailingSlash`, `pm.log` must be
-// restored to the VM log before returning, otherwise the next resolve at a
-// different stack depth dereferences dead stack memory when the HTTP task
-// fails and calls `manager.log_mut().add_error_fmt(...)`.
+// The PackageManager outlives the resolve that creates it, whose log is on the stack.
 test("repeated failing auto-install resolves at varying stack depth don't read a dangling pm.log", async () => {
   // Run from an empty dir so the resolver falls through to the auto-install
   // path instead of stopping at the repo's own node_modules.

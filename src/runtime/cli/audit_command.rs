@@ -256,7 +256,7 @@ impl AuditCommand {
 
         let root_package_json_path = pm.root_package_json_path;
         if let Err(e) = install_with_manager(pm, &mut *ctx, root_package_json_path, original_cwd) {
-            InstallCommand::handle_error(crate::Error::from(e))?;
+            InstallCommand::handle_error(ctx.log(), crate::Error::from(e))?;
             Global::exit(1);
         }
 
@@ -903,9 +903,9 @@ fn collect_vulnerabilities(
     }
 
     let source = bun_ast::Source::init_path_string(b"audit-response.json", response_text);
-    let mut log = bun_ast::Log::init();
+    let log = bun_ast::Log::init();
 
-    let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
+    let parsed = match bun_json::ParsedJson::parse_json(&source, &log) {
         Ok(e) => e,
         Err(_) => return Ok(Err(SkipReason::NotJson)),
     };

@@ -1300,13 +1300,13 @@ fn parse_package_json(arena: &Arena, text: &[u8]) -> Option<Json> {
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
     let _ast_scope = ast_memory_allocator.enter();
     let source = bun_ast::Source::init_path_string(b"package.json".as_slice(), text);
-    let mut log = bun_ast::Log::init();
-    let parsed = ParsedJson::parse_json(&source, &mut log).ok()?;
+    let log = bun_ast::Log::init();
+    let parsed = ParsedJson::parse_json(&source, &log).ok()?;
     let bun_ast::expr::Data::EObjectJSON(root) = parsed.root.data else {
         return None;
     };
     // The only warning is about a duplicate key.
-    unmarshal_fields(root.get(), log.warnings > 0)
+    unmarshal_fields(root.get(), log.warnings.get() > 0)
 }
 
 /// Every member of a JSON object, such as a source map.
@@ -1318,13 +1318,13 @@ pub(crate) fn parse_json_object(arena: &Arena, text: &[u8]) -> Option<Json> {
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
     let _ast_scope = ast_memory_allocator.enter();
     let source = bun_ast::Source::init_path_string(b"object.json".as_slice(), text);
-    let mut log = bun_ast::Log::init();
-    let parsed = ParsedJson::parse_json(&source, &mut log).ok()?;
+    let log = bun_ast::Log::init();
+    let parsed = ParsedJson::parse_json(&source, &log).ok()?;
     let bun_ast::expr::Data::EObjectJSON(root) = parsed.root.data else {
         return None;
     };
     let members = root.get().properties().iter().map(|property| {
-        let value = unmarshal_json_value(&property.value, log.warnings > 0)?;
+        let value = unmarshal_json_value(&property.value, log.warnings.get() > 0)?;
         Some((property.key.slice().to_vec(), value))
     });
     Some(Json::Object(members.collect::<Option<_>>()?))

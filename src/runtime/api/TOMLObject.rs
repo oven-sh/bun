@@ -22,7 +22,7 @@ pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
                     return Err(JsError::OutOfMemory);
                 }
                 Err(_) => {
-                    if let Some(first_msg) = log.msgs.first() {
+                    if let Some(first_msg) = log.msgs.get_mut().first() {
                         return Err(global.throw_value(global.create_syntax_error_instance(
                             format_args!(
                                 "TOML Parse error: {}",

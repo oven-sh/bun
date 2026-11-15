@@ -1,8 +1,6 @@
 //! What a build asks so that an executable finds its entry points by the names of their packages.
 
-use core::ptr::NonNull;
-
-use bun_ast::{ImportKind, Log};
+use bun_ast::ImportKind;
 use bun_core::strings;
 use bun_paths::is_sep_native;
 
@@ -249,8 +247,7 @@ impl Resolver<'_> {
             .collect();
         let folder = bun_paths::strings::without_trailing_slash(&folder);
         let public_root = bun_paths::strings::without_trailing_slash(root.public_path);
-        let mut unread_log = Log::default();
-        let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
+        let log_of_build = core::mem::take(&mut self.log);
         let prefers_module_field = core::mem::replace(&mut self.prefer_module_field, false);
         let mut names = Vec::new();
         let separator = &[bun_paths::SEP][..];
@@ -383,8 +380,7 @@ impl Resolver<'_> {
             .collect();
         compiled.sort_unstable();
         compiled.dedup();
-        let mut unread_log = Log::default();
-        let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
+        let log_of_build = core::mem::take(&mut self.log);
         let prefers_module_field = core::mem::replace(&mut self.prefer_module_field, false);
         let mut places = list_places(folders);
         places.retain(|place| {
@@ -520,8 +516,7 @@ impl Resolver<'_> {
         asked.dedup();
         let separator = &[bun_paths::SEP][..];
         let generation = self.generation;
-        let mut unread_log = Log::default();
-        let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
+        let log_of_build = core::mem::take(&mut self.log);
         let prefers_module_field = core::mem::replace(&mut self.prefer_module_field, false);
         let mut names = Vec::new();
         let is_compiled = |path: &[u8]| {
@@ -707,8 +702,7 @@ impl Resolver<'_> {
         let places = list_places(folders);
 
         // A name that leads nowhere is no error of the build.
-        let mut unread_log = Log::default();
-        let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
+        let log_of_build = core::mem::take(&mut self.log);
         // A bundler takes `module` where it can. `bun run`, whose answers these are, takes `main`.
         let prefers_module_field = core::mem::replace(&mut self.prefer_module_field, false);
         let mut names = Vec::new();
@@ -858,8 +852,7 @@ impl Resolver<'_> {
             .collect();
         let root_directory = bun_paths::strings::without_trailing_slash(&root_directory);
         let separator = &[bun_paths::SEP][..];
-        let mut unread_log = Log::default();
-        let log_of_build = core::mem::replace(&mut self.log, NonNull::from(&mut unread_log));
+        let log_of_build = core::mem::take(&mut self.log);
         let mut names = Vec::new();
         for name in refused {
             let Some(package) = Package::parse_name(&name.specifier) else {

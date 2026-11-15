@@ -78,7 +78,7 @@ impl ReplCommand {
             is_main_thread: true,
             ..Default::default()
         };
-        let vm = VirtualMachine::init(ctx.log, options)?;
+        let vm = VirtualMachine::init(ctx.log(), options)?;
 
         vm.preload.set(core::mem::take(&mut ctx.preloads));
         vm.dns_result_order.set(dns_order as u8);
@@ -106,7 +106,7 @@ impl ReplCommand {
             Global::exit(1);
         }
 
-        bun_http::async_http::load_env(vm.log_mut().unwrap(), vm.transpiler.get().env());
+        bun_http::async_http::load_env(vm.log, vm.transpiler.get().env());
         vm.load_extra_env();
 
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
@@ -133,10 +133,7 @@ impl ReplCommand {
         Output::flush();
         let writer = Output::error_writer_buffered();
         let _flush = Output::flush_guard();
-        if let Some(log) = vm.log.get() {
-            // SAFETY: log is a valid NonNull<Log> for the VM lifetime.
-            let _ = unsafe { (*log.as_ptr()).print(writer) };
-        }
+        let _ = vm.log.print(writer);
     }
 }
 

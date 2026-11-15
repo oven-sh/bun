@@ -95,7 +95,7 @@ impl Router {
     // it does not currently handle duplicate exact route matches. that's undefined behavior, for now.
     pub fn load_routes<R: ResolverLike>(
         &mut self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         root_dir_info: &DirInfo,
         resolver: &mut R,
         base_dir: &[u8],
@@ -255,7 +255,7 @@ struct RouteLoader<'a> {
     route_dirname_len: u16,
 
     dedupe_dynamic: ArrayHashMap<u32, &'static [u8]>,
-    log: &'a mut bun_ast::Log,
+    log: &'a bun_ast::Log,
     index: Option<Match>,
     static_list: StringHashMap<Match>,
     all_routes: Vec<Route>,
@@ -353,7 +353,7 @@ impl<'a> RouteLoader<'a> {
 
     fn load_all<R: ResolverLike>(
         config: RouteConfig,
-        log: &'a mut bun_ast::Log,
+        log: &'a bun_ast::Log,
         resolver: &mut R,
         root_dir_info: &DirInfo,
         base_dir: &[u8],
@@ -585,7 +585,7 @@ impl Route {
         base_: &[u8],
         extname: &[u8],
         entry: &Fs::Entry,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         public_dir_: &[u8],
         routes_dirname_len: u16,
     ) -> Option<Route> {
@@ -1062,7 +1062,7 @@ pub mod pattern {
         /// Validate a Route pattern, returning the number of route parameters.
         /// `None` means invalid. Error messages are logged.
         /// That way, we can provide a list of all invalid routes rather than failing the first time.
-        pub(crate) fn validate(input: &[u8], log: &mut bun_ast::Log) -> Option<ValidationResult> {
+        pub(crate) fn validate(input: &[u8], log: &bun_ast::Log) -> Option<ValidationResult> {
             if strings::CodepointIterator::needs_utf8_decoding(input) {
                 let source = bun_ast::Source::init_empty_file(input);
                 log.add_error_fmt(

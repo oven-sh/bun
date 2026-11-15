@@ -22,7 +22,7 @@ use super::{
 };
 
 /// [`MapEntry::save`] for a command that cannot go on without the new text.
-pub(crate) fn save_entry(entry: &mut MapEntry, root: bun_ast::Expr, log: &mut bun_ast::Log) {
+pub(crate) fn save_entry(entry: &mut MapEntry, root: bun_ast::Expr, log: &bun_ast::Log) {
     if let Err(err) = entry.save(root, log) {
         let verb = if matches!(err, Error::JsPrinter(_)) {
             "write"
@@ -53,9 +53,9 @@ pub(super) fn remove_dependencies_from_package_json(
 
 pub(super) fn package_json_entry_or_crash<'a>(
     manager: &'a mut PackageManager,
-    log: &mut bun_ast::Log,
     path: &[u8],
 ) -> &'a mut MapEntry {
+    let log = manager.log();
     let (verb, err) = match manager.workspace_package_json_cache.get_with_path(
         log,
         path,
@@ -105,9 +105,7 @@ pub fn update_package_json_and_install_with_manager(
             // `dependency::parse_with_tag` is the only consumer of `pm`; it inserts
             // into `pm.known_npm_aliases` for `npm:`-aliased positionals.
             Some(manager),
-            // SAFETY: `ctx.log` is set once during `Command::create()` (process-
-            // lifetime singleton) and is never null afterward.
-            unsafe { &mut *ctx.log },
+            ctx.log(),
             positionals,
             &mut update_requests,
             subcommand,
@@ -142,8 +140,8 @@ fn update_package_json_and_install_with_manager_with_updates(
     original_cwd: &[u8],
 ) -> Result<(), Error> {
     let log_level = manager.options.log_level;
-    if manager.log_mut().errors > 0 {
-        let _ = manager.log_mut().print(Output::error_writer());
+    if manager.log().has_errors() {
+        let _ = manager.log().print(Output::error_writer());
         Global::crash();
     }
 
@@ -228,9 +226,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     let original_package_json_path: Box<[u8]> =
         manager.original_package_json_path.as_bytes().into();
-    let log = manager.log_mut();
-    let current_package_json =
-        package_json_entry_or_crash(manager, log, &original_package_json_path);
+    let current_package_json = package_json_entry_or_crash(manager, &original_package_json_path);
     let mut current_package_json_root: bun_ast::Expr = current_package_json.root;
     // `bun add` and `bun link` put their dependency into the empty file.
     if current_package_json.source.contents.is_empty()
@@ -379,8 +375,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         root_package_json_path_buf[root_package_json_path_len] = 0;
         let root_package_json_path = &root_package_json_path_buf[..root_package_json_path_len];
 
-        let log = manager.log_mut();
-        let root = package_json_entry_or_crash(manager, log, root_package_json_path).root;
+        let root = package_json_entry_or_crash(manager, root_package_json_path).root;
         let root_is_targeted = manager
             .update_target_workspaces
             .as_deref()

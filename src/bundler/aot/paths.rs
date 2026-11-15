@@ -16,7 +16,7 @@ pub(super) fn relative_path(working_directory: &[u8], from: &[u8], to: &[u8]) ->
     fits.then(|| resolve_path::relative_platform::<Auto, false>(&from, &to).to_vec())
 }
 
-pub(super) fn report_long_path(log: &mut Log, kind: &str, path: &[u8]) {
+pub(super) fn report_long_path(log: &Log, kind: &str, path: &[u8]) {
     log.add_error_fmt(
         None,
         Loc::EMPTY,
@@ -184,11 +184,11 @@ mod tests {
 
     #[test]
     fn long_path_message_names_kind_and_path() {
-        let mut log = Log::init();
-        report_long_path(&mut log, "entry point", b"a.ts");
-        assert_eq!(log.errors, 1);
+        let log = Log::init();
+        report_long_path(&log, "entry point", b"a.ts");
+        assert_eq!(log.errors.get(), 1);
         assert_eq!(
-            &*log.msgs[0].data.text,
+            &*log.msgs.take()[0].data.text,
             b"the entry point \"a.ts\" is too long"
         );
     }

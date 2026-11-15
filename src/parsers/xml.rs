@@ -81,7 +81,7 @@ impl XML {
     /// that does not borrow the source) lives in `bump`.
     pub fn parse<'a>(
         source: &'a Source<'a>,
-        log: &mut Log,
+        log: &Log,
         bump: &'a Bump,
         options: Options,
     ) -> crate::Result<Expr> {
@@ -95,7 +95,7 @@ impl XML {
     pub fn parse_utf16<'a>(
         source: &'a Source<'a>,
         units: &'a [u16],
-        log: &mut Log,
+        log: &Log,
         bump: &'a Bump,
         mut options: Options,
     ) -> crate::Result<Expr> {
@@ -106,7 +106,7 @@ impl XML {
     fn parse_units<'a, U: Unit>(
         source: &'a Source<'a>,
         contents: &'a [U],
-        log: &mut Log,
+        log: &Log,
         bump: &'a Bump,
         options: Options,
     ) -> crate::Result<Expr> {
@@ -822,7 +822,7 @@ struct Scanner<'a, 'log, U: Unit> {
 
     bump: &'a Bump,
     source: &'a Source<'a>,
-    log: &'log mut Log,
+    log: &'log Log,
 }
 
 impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
@@ -3199,7 +3199,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     fn new(
         source: &'a Source<'a>,
         contents: &'a [U],
-        log: &'log mut Log,
+        log: &'log Log,
         bump: &'a Bump,
         options: Options,
         sink: S,

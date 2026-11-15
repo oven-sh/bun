@@ -622,7 +622,8 @@ impl All {
             node.in_heap.set(InHeap::Fake);
             self.fake_timers.post_auto_step();
         } else {
-            node.armed_in_drain.set(self.drain_seq.load(Ordering::Relaxed));
+            node.armed_in_drain
+                .set(self.drain_seq.load(Ordering::Relaxed));
             // SAFETY: see fn contract
             unsafe { self.timers.insert(timer) };
             node.state.set(EventLoopTimerState::ACTIVE);
@@ -789,7 +790,8 @@ impl All {
                     wtf.remove(timer);
                 }
                 node.next.set(*time);
-                node.armed_in_drain.set(self.drain_seq.load(Ordering::Relaxed));
+                node.armed_in_drain
+                    .set(self.drain_seq.load(Ordering::Relaxed));
                 wtf.insert(timer);
             }
             node.state.set(EventLoopTimerState::ACTIVE);

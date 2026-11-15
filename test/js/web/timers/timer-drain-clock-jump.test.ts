@@ -143,22 +143,28 @@ async function runWithJump(nested: boolean) {
   };
 }
 
-test.skipIf(!isLinux || !cc)("a timer drain with one clock reading seconds too high still returns to the poll", async () => {
-  expect(await runWithJump(false)).toEqual({
-    stderr: expect.stringMatching(/\[shim\] bumped [1-9]\d* readings/),
-    callbacks: "few",
-    gap5: "under a second",
-    nestedFired: 0,
-    exitCode: 0,
-  });
-});
+test.skipIf(!isLinux || !cc)(
+  "a timer drain with one clock reading seconds too high still returns to the poll",
+  async () => {
+    expect(await runWithJump(false)).toEqual({
+      stderr: expect.stringMatching(/\[shim\] bumped [1-9]\d* readings/),
+      callbacks: "few",
+      gap5: "under a second",
+      nestedFired: 0,
+      exitCode: 0,
+    });
+  },
+);
 
-test.skipIf(!isLinux || !cc)("a timer set after a nested event loop in the callback waits for the next turn too", async () => {
-  expect(await runWithJump(true)).toEqual({
-    stderr: expect.stringMatching(/\[shim\] bumped [1-9]\d* readings/),
-    callbacks: "few",
-    gap5: "under a second",
-    nestedFired: 1,
-    exitCode: 0,
-  });
-});
+test.skipIf(!isLinux || !cc)(
+  "a timer set after a nested event loop in the callback waits for the next turn too",
+  async () => {
+    expect(await runWithJump(true)).toEqual({
+      stderr: expect.stringMatching(/\[shim\] bumped [1-9]\d* readings/),
+      callbacks: "few",
+      gap5: "under a second",
+      nestedFired: 1,
+      exitCode: 0,
+    });
+  },
+);

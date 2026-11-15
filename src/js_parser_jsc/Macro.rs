@@ -695,8 +695,8 @@ impl<'a> Run<'a> {
                 }
 
                 if let Some(blob) = blob_ {
-                    // SAFETY: `blob` (a JS cell) is pinned for the call; the
-                    // shared-view/content-type slices borrow its store.
+                    // SAFETY: `value` owns `blob` and is live. `expr_from_blob` runs no script
+                    // and copies what it keeps.
                     let (bytes, ct) =
                         unsafe { ((*blob).shared_view(), (*blob).content_type_slice()) };
                     return expr_from_blob(bytes, self.bump, ct, self.log, self.caller.loc)
@@ -1095,8 +1095,7 @@ fn expr_from_blob(
     let is_json = essence.ends_with(b"/json") || essence.ends_with(b"+json");
 
     if is_json {
-        let source = &Source::init_path_string(b"fetch.json", bytes);
-        let mut out_expr: Expr = match bun_parsers::json::parse_for_macro(source, log, bump) {
+        let mut out_expr: Expr = match bun_parsers::json::parse_for_macro(bytes, log, bump) {
             Ok(e) => e,
             Err(_) => return Err(crate::Error::MacroFailed),
         };

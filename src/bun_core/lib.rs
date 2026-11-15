@@ -2516,9 +2516,7 @@ pub mod ffi {
     #[cfg(unix)]
     static UTSNAME: crate::Once<libc::utsname> = crate::Once::new();
 
-    /// Process-lifetime cached `uname(2)` result, for the analytics version
-    /// probe and the feature probes of `bun_sys`. Not for the crash report: it
-    /// can interrupt the first read, so it calls [`uname`].
+    /// Process-lifetime cached `uname(2)` result. Not for the crash report, which can interrupt the first read.
     #[cfg(unix)]
     #[inline]
     pub fn cached_uname() -> &'static libc::utsname {

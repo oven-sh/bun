@@ -3739,8 +3739,7 @@ static BUN_OPTIONS_ARGC: core::sync::atomic::AtomicUsize = core::sync::atomic::A
 /// Read accessor for the injected-arg count.
 ///
 /// Forces the lazy `argv_view()` init before reading: `argv()` is lazy, so a caller that reads
-/// `bun_options_argc()` *before* `argv()` (an entry point other than `main`,
-/// which reads the arguments first) would otherwise see 0 and miscount the
+/// `bun_options_argc()` *before* `argv()` (not `main`, which calls `argv()` first) would otherwise see 0 and miscount the
 /// BUN_OPTIONS-injected args when computing the passthrough offset.
 #[inline]
 pub fn bun_options_argc() -> usize {

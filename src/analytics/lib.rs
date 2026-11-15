@@ -436,8 +436,7 @@ pub mod generate_header {
             })
         }
 
-        /// What `for_os()` answers, read from the system again. `for_os()` keeps it in once-cells, and the crash
-        /// report must not wait for a cell: the crashed thread can be inside the first read of it.
+        /// `for_os()` without its once-cells, for the crash report: the crashed thread can be inside one.
         #[cfg(unix)]
         pub struct UncachedPlatform {
             #[cfg(target_os = "macos")]

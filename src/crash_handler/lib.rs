@@ -2389,8 +2389,7 @@ mod draft {
     #[unsafe(no_mangle)]
     static Bun__reported_memory_size: AtomicUsize = AtomicUsize::new(0);
 
-    /// The report is written on the thread that a signal or a fault interrupted. Nothing it prints may come from a
-    /// once-cell that is filled on first use or from behind a lock: the interrupted code can be inside the same one.
+    /// Runs on the thread that crashed. Read no once-cell and take no lock here: the interrupted code can be inside it.
     pub(crate) fn print_metadata(writer: &mut impl Write) -> crate::Result<()> {
         #[cfg(debug_assertions)]
         {
@@ -3186,9 +3185,7 @@ mod draft {
                 return;
             }
 
-            // curl gets neither the stdin nor the stdout of this process. A shell redirects them: fork() runs the
-            // fork handlers of the allocator, and the file actions of posix_spawn() come from the heap. Both take
-            // locks that the crashed thread can hold.
+            // The shell closes curl's stdin and stdout. fork() and the file actions of posix_spawn() take allocator locks.
             #[cfg(not(target_os = "android"))]
             {
                 let argv: [*const c_char; 6] = [

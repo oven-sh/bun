@@ -1821,7 +1821,6 @@ impl<'a> PackageInstaller<'a> {
             package_version,
             node_modules: node_modules_ref.get(),
             lockfile: self.lockfile(),
-            total_tasks: &self.manager().total_tasks,
             cache_dir_subpath: ZStr::EMPTY,
         };
         bun_output::scoped_log!(
@@ -2148,9 +2147,8 @@ impl<'a> PackageInstaller<'a> {
             let skip_delete = self.skip_delete && !outlived_root;
 
             let install_result: package_install::InstallResult = match resolution.tag {
-                resolution::Tag::Symlink | resolution::Tag::Workspace => {
-                    installer.install_from_link(skip_delete, destination_dir)
-                }
+                resolution::Tag::Symlink | resolution::Tag::Workspace => installer
+                    .install_from_link(skip_delete, destination_dir, &self.manager().total_tasks),
                 _ => 'result: {
                     let staging = self
                         .staging_lock
@@ -2177,6 +2175,7 @@ impl<'a> PackageInstaller<'a> {
                                 destination_dir,
                                 installer.get_install_method(),
                                 resolution.tag,
+                                &self.manager().total_tasks,
                             );
                         }
 
@@ -2210,7 +2209,11 @@ impl<'a> PackageInstaller<'a> {
                         installer.cache_dir = owned_cache_dir.fd();
 
                         let result = if resolution.tag == resolution::Tag::Root {
-                            installer.install_from_link(skip_delete, destination_dir)
+                            installer.install_from_link(
+                                skip_delete,
+                                destination_dir,
+                                &self.manager().total_tasks,
+                            )
                         } else if installer.cache_dir_subpath.as_bytes() != b"." {
                             // A folder that a package ships inside itself is linked from where it
                             // is.
@@ -2225,7 +2228,11 @@ impl<'a> PackageInstaller<'a> {
                                     cache_dir_subpath: shipped,
                                     ..installer
                                 }
-                                .install_from_link(false, destination_dir),
+                                .install_from_link(
+                                    false,
+                                    destination_dir,
+                                    &self.manager().total_tasks,
+                                ),
                                 None => package_install::InstallResult::fail(
                                     crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
                                     package_install::Step::OpeningCacheDir,
@@ -2238,6 +2245,7 @@ impl<'a> PackageInstaller<'a> {
                                 destination_dir,
                                 installer.get_install_method(),
                                 resolution.tag,
+                                &self.manager().total_tasks,
                             )
                         };
 
@@ -2294,6 +2302,7 @@ impl<'a> PackageInstaller<'a> {
                         destination_dir,
                         method,
                         resolution.tag,
+                        &self.manager().total_tasks,
                     );
                 }
             };

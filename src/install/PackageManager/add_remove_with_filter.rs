@@ -90,7 +90,8 @@ pub(crate) struct WorkspaceMembers {
 pub(crate) fn load_workspace_members(manager: &mut PackageManager) -> WorkspaceMembers {
     let root_path = root_package_json_path();
 
-    let entry = package_json_entry_or_crash(manager, &root_path);
+    let log = manager.log_mut();
+    let entry = package_json_entry_or_crash(manager, log, &root_path);
     let (root_expr, root_source) = (entry.root, entry.source.clone());
     let name_expr = root_expr.get(b"name");
     let root_name: Box<[u8]> = name_expr

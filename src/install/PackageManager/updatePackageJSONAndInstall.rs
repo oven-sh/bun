@@ -53,11 +53,11 @@ pub(super) fn remove_dependencies_from_package_json(
 
 pub(super) fn package_json_entry_or_crash<'a>(
     manager: &'a mut PackageManager,
+    log: &mut bun_ast::Log,
     path: &[u8],
 ) -> &'a mut MapEntry {
-    let log = manager.log_mut();
     let (verb, err) = match manager.workspace_package_json_cache.get_with_path(
-        &mut *log,
+        log,
         path,
         GetJSONOptions {
             guess_indentation: true,
@@ -228,7 +228,9 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     let original_package_json_path: Box<[u8]> =
         manager.original_package_json_path.as_bytes().into();
-    let current_package_json = package_json_entry_or_crash(manager, &original_package_json_path);
+    let log = manager.log_mut();
+    let current_package_json =
+        package_json_entry_or_crash(manager, log, &original_package_json_path);
     let mut current_package_json_root: bun_ast::Expr = current_package_json.root;
     // `bun add` and `bun link` put their dependency into the empty file.
     if current_package_json.source.contents.is_empty()
@@ -377,7 +379,8 @@ fn update_package_json_and_install_with_manager_with_updates(
         root_package_json_path_buf[root_package_json_path_len] = 0;
         let root_package_json_path = &root_package_json_path_buf[..root_package_json_path_len];
 
-        let root = package_json_entry_or_crash(manager, root_package_json_path).root;
+        let log = manager.log_mut();
+        let root = package_json_entry_or_crash(manager, log, root_package_json_path).root;
         let root_is_targeted = manager
             .update_target_workspaces
             .as_deref()

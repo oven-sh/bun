@@ -37,7 +37,6 @@ pub struct PackageInstall<'a> {
 
     pub(crate) node_modules: &'a NodeModulesFolder,
     pub lockfile: &'a Lockfile,
-    pub(crate) total_tasks: &'a Cell<u32>,
 }
 
 /// The file work of a `PackageInstall`. No lockfile and no manager, so any thread can do it.
@@ -2057,7 +2056,7 @@ pub(crate) fn move_aside(
 }
 
 impl<'a> PackageInstall<'a> {
-    pub(crate) fn uninstall_before_install(&self, destination_dir: &Dir) {
+    fn uninstall_before_install(&self, destination_dir: &Dir, total_tasks: &Cell<u32>) {
         let Some(temp_path) = move_aside(
             destination_dir,
             self.destination_dir_subpath,
@@ -2083,7 +2082,7 @@ impl<'a> PackageInstall<'a> {
             absolute_path: absolute_path.to_vec().into_boxed_slice(),
             task: WorkPoolTask::default(),
         });
-        self.total_tasks.update(|total| total + 1);
+        total_tasks.update(|total| total + 1);
         INBOX.pending_tasks.fetch_add(1, Ordering::Relaxed);
         pool.schedule(Batch::from_owned(task));
     }
@@ -2100,14 +2099,18 @@ impl<'a> PackageInstall<'a> {
         &mut self,
         skip_delete: bool,
         destination_dir: &Dir,
+        total_tasks: &Cell<u32>,
     ) -> InstallResult {
-        let dest_path = self.destination_dir_subpath;
         // If this fails, we don't care.
         // we'll catch it the next error
-        if !skip_delete && dest_path.as_bytes() != b"." {
-            self.uninstall_before_install(destination_dir);
+        if !skip_delete && self.destination_dir_subpath.as_bytes() != b"." {
+            self.uninstall_before_install(destination_dir, total_tasks);
         }
+        self.link_into(destination_dir)
+    }
 
+    fn link_into(&mut self, destination_dir: &Dir) -> InstallResult {
+        let dest_path = self.destination_dir_subpath;
         // `None` when there is no directory component.
         let dirname_slice =
             path::resolve_path::dirname::<path::platform::Auto>(dest_path.as_bytes());
@@ -2366,11 +2369,12 @@ impl<'a> PackageInstall<'a> {
         destination_dir: &Dir,
         method_: Method,
         resolution_tag: resolution::Tag,
+        total_tasks: &Cell<u32>,
     ) -> InstallResult {
         // If this fails, we don't care.
         // we'll catch it the next error
         if !skip_delete && self.destination_dir_subpath.as_bytes() != b"." {
-            self.uninstall_before_install(destination_dir);
+            self.uninstall_before_install(destination_dir, total_tasks);
         }
 
         PackageFiles {
@@ -2422,7 +2426,7 @@ impl<'a> PackageInstall<'a> {
                     destination_dir_subpath: dest,
                     ..*self
                 }
-                .install_from_link(true, destination_dir);
+                .link_into(destination_dir);
             }
         }
     }

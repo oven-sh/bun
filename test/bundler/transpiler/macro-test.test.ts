@@ -220,6 +220,57 @@ test("object destructuring of a macro result keeps every bound property regardle
   expect(exitCode).toBe(0);
 });
 
+test("destructuring a macro result keeps what another binding reads", async () => {
+  using dir = tempDir("macro-destructure-shared", {
+    "m.ts": `
+      export function objects() {
+        const shared = { x: 1, y: 2 };
+        return { a: shared, b: shared };
+      }
+      export function arrays() {
+        const shared = [1, 2, 3];
+        return [shared, shared];
+      }
+      export const object = () => ({ 0: "zero", a: { x: 1, y: 2 }, key: "value" });
+      export const yes = () => true;
+    `,
+    "index.ts": `
+      import { objects, arrays, object, yes } from "./m.ts" with { type: "macro" };
+      const { a: { x }, b: { y } } = objects();
+      const [[first], [, second, third]] = arrays();
+      const { a: { x: sameKeyX }, a: { y: sameKeyY } } = object();
+      const whole = object();
+      const { key } = yes() ? whole : whole;
+      const { [process.argv[2]]: computed } = object();
+      const { 0: numeric } = object();
+      console.log(JSON.stringify({ x, y, first, second, third, sameKeyX, sameKeyY, whole, key, computed, numeric }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts", "key"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim().split("\n").pop()!)).toEqual({
+    x: 1,
+    y: 2,
+    first: 1,
+    second: 2,
+    third: 3,
+    sameKeyX: 1,
+    sameKeyY: 2,
+    whole: { 0: "zero", a: { x: 1, y: 2 }, key: "value" },
+    key: "value",
+    computed: "value",
+    numeric: "zero",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // A `const` initialized with a macro result is inlined at each use, so every use shares one AST object.
 test("spreading a macro result into JSX doesn't change the other uses of its const", async () => {
   using dir = tempDir("macro-jsx-spread-run", {

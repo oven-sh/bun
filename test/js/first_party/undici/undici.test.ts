@@ -2,8 +2,20 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { Readable } from "node:stream";
-// @ts-ignore undici 5's types don't declare ping()
-import { ping, request, fetch as undiciFetch, WebSocket as UndiciWebSocket } from "undici";
+// @ts-ignore undici 5's types don't declare ping() and the undici 8 names
+import * as undici from "undici";
+import {
+  Agent,
+  Dispatcher,
+  Dispatcher1Wrapper,
+  errors,
+  ping,
+  request,
+  fetch as undiciFetch,
+  WebSocket as UndiciWebSocket,
+  WebSocketError,
+} from "undici";
+import undici8 from "undici8";
 
 import { createServer } from "../../../http-test-server";
 
@@ -570,7 +582,6 @@ describe.concurrent("WebSocket ping", () => {
 // undici8 is undici 8.12.4 from test/package.json. The built-in shim shadows the bare "undici"
 // specifier, so every name that the package exports and the shim does not is a link-time
 // SyntaxError for a static import.
-const undici8 = require("undici8");
 const missingFrom = (shim: object, upstream: object) => Object.keys(upstream).filter(name => !(name in shim));
 
 describe.concurrent("undici 8 exports", () => {
@@ -606,8 +617,6 @@ describe.concurrent("undici 8 exports", () => {
   }
 
   it("Dispatcher1Wrapper accepts every dispatcher of the shim and rejects the rest", () => {
-    const undici = require("undici");
-    const { Dispatcher, Dispatcher1Wrapper, errors } = undici;
     const dispatchers = [
       "Agent",
       "Pool",
@@ -633,12 +642,33 @@ describe.concurrent("undici 8 exports", () => {
 
     for (const bad of [undefined, null, {}, { dispatch: 1 }]) {
       expect(() => new Dispatcher1Wrapper(bad)).toThrow(errors.InvalidArgumentError);
-      expect(() => new Dispatcher1Wrapper(bad)).toThrow("Argument dispatcher must implement dispatch");
+      expect(() => new Dispatcher1Wrapper(bad)).toThrow(
+        expect.objectContaining({
+          name: "InvalidArgumentError",
+          code: "UND_ERR_INVALID_ARG",
+          message: "Argument dispatcher must implement dispatch",
+        }),
+      );
     }
   });
 
+  it("close() and destroy() settle on every dispatcher of the shim, wrapped or not", async () => {
+    for (const name of ["Agent", "Client", "Pool", "ProxyAgent", "RetryAgent", "MockAgent", "MockPool"]) {
+      const dispatcher = new undici[name]("http://localhost");
+      expect(await dispatcher.close()).toBe(null);
+      expect(await dispatcher.destroy()).toBe(null);
+      expect(await new Dispatcher1Wrapper(dispatcher).close()).toBe(null);
+      expect(await new Dispatcher1Wrapper(dispatcher).destroy(new Error("why"))).toBe(null);
+    }
+    const closed = Promise.withResolvers<unknown[]>();
+    const destroyed = Promise.withResolvers<unknown[]>();
+    new Agent().close((...args: unknown[]) => closed.resolve(args));
+    new Agent().destroy(new Error("why"), (...args: unknown[]) => destroyed.resolve(args));
+    expect(await closed.promise).toEqual([null, null]);
+    expect(await destroyed.promise).toEqual([null, null]);
+  });
+
   it("Dispatcher1Wrapper forwards to the wrapped dispatcher with HTTP/2 off", async () => {
-    const { Dispatcher1Wrapper } = require("undici");
     const calls: unknown[] = [];
     const handler = { onRequestStart() {} };
     const inner = {
@@ -666,25 +696,30 @@ describe.concurrent("undici 8 exports", () => {
   });
 
   it("fetch() with a Dispatcher1Wrapper as the dispatcher works as in @vercel/sandbox", async () => {
-    const { Agent, Dispatcher1Wrapper, fetch } = require("undici");
     await using server = Bun.serve({
       port: 0,
       fetch: req => Response.json({ method: req.method, path: new URL(req.url).pathname }),
     });
     const dispatcher = new Dispatcher1Wrapper(new Agent({ bodyTimeout: 0 }));
-    const response = await fetch(`${server.url.origin}/sandbox`, { method: "POST", dispatcher });
+    const response = await undiciFetch(`${server.url.origin}/sandbox`, { method: "POST", dispatcher } as any);
     expect(await response.json()).toEqual({ method: "POST", path: "/sandbox" });
   });
 
   it("WebSocketError is a DOMException with closeCode and reason", () => {
-    const { WebSocketError } = require("undici");
     const error = new WebSocketError("gone", { closeCode: 3001, reason: "bye" });
     expect(error instanceof DOMException).toBe(true);
     expect([error.name, error.message, error.closeCode, error.reason]).toEqual(["WebSocketError", "gone", 3001, "bye"]);
     expect(new WebSocketError().closeCode).toBe(null);
     expect(new WebSocketError("", { reason: "r" }).closeCode).toBe(1000);
-    expect(() => new WebSocketError("", { closeCode: 1001 })).toThrow(DOMException);
-    expect(() => new WebSocketError("", { reason: "x".repeat(124) })).toThrow(DOMException);
+    expect(new WebSocketError("", { closeCode: "3001" }).closeCode).toBe(3001);
+    expect(new WebSocketError("", { closeCode: 3001.9 }).closeCode).toBe(3001);
+    const invalidCode = expect.objectContaining({ name: "InvalidAccessError", message: "invalid code" });
+    for (const closeCode of [1001, 2999, 5000, NaN, "x"]) {
+      expect(() => new WebSocketError("", { closeCode })).toThrow(invalidCode);
+    }
+    expect(() => new WebSocketError("", { reason: Buffer.alloc(124, "x").toString() })).toThrow(
+      expect.objectContaining({ name: "SyntaxError", message: "Reason must be less than 123 bytes; received 124" }),
+    );
   });
 
   it("install() sets the globals that are Bun's own and leaves EventSource alone", async () => {

@@ -261,7 +261,22 @@ class Dispatcher extends EventEmitter {
     throw new Error("not implemented");
   }
 }
-class DispatcherBase extends Dispatcher {}
+type DispatcherCallback = (err: Error | null, data: null) => void;
+
+// https://github.com/nodejs/undici/blob/v8.12.4/lib/dispatcher/dispatcher-base.js
+// No dispatcher of the shim holds a connection, so close() and destroy() settle at once.
+class DispatcherBase extends Dispatcher {
+  close(callback?: DispatcherCallback) {
+    if (callback === undefined) return Promise.resolve(null);
+    queueMicrotask(() => callback(null, null));
+  }
+
+  destroy(err?: Error | DispatcherCallback | null, callback?: DispatcherCallback) {
+    if (typeof err === "function") callback = err;
+    if (callback === undefined) return Promise.resolve(null);
+    queueMicrotask(() => callback(null, null));
+  }
+}
 class Agent extends DispatcherBase {}
 class Pool extends DispatcherBase {
   request() {}
@@ -287,7 +302,7 @@ class EnvHttpProxyAgent extends DispatcherBase {
   }
 }
 
-class RetryAgent extends Dispatcher {
+class RetryAgent extends DispatcherBase {
   constructor() {
     super();
   }
@@ -295,7 +310,7 @@ class RetryAgent extends Dispatcher {
 
 class MockClient extends Client {}
 class MockPool extends Pool {}
-class MockAgent extends Dispatcher {}
+class MockAgent extends DispatcherBase {}
 class SnapshotAgent extends MockAgent {}
 class MockCallHistory {}
 class MockCallHistoryLog {}
@@ -398,7 +413,15 @@ class BodyTimeoutError extends UndiciError {}
 class RequestContentLengthMismatchError extends UndiciError {}
 class ConnectTimeoutError extends UndiciError {}
 class ResponseStatusCodeError extends UndiciError {}
-class InvalidArgumentError extends UndiciError {}
+class InvalidArgumentError extends UndiciError {
+  declare code: string;
+
+  constructor(message?: string) {
+    super(message || "Invalid Argument Error");
+    this.name = "InvalidArgumentError";
+    this.code = "UND_ERR_INVALID_ARG";
+  }
+}
 class InvalidReturnValueError extends UndiciError {}
 class RequestAbortedError extends AbortError {}
 class ClientDestroyedError extends UndiciError {}
@@ -511,7 +534,7 @@ class WebSocketError extends DOMException {
   constructor(message = "", init: { closeCode?: number; reason?: string } | null = {}) {
     super(`${message}`, "WebSocketError");
 
-    let code = init?.closeCode ?? null;
+    let code = init?.closeCode == null ? null : Math.trunc(Number(init.closeCode)) || 0;
     const reason = `${init?.reason ?? ""}`;
 
     if (code !== null && code !== 1000 && (code < 3000 || code > 4999)) {

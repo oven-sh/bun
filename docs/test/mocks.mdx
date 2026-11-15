@@ -818,6 +818,8 @@ Module mocks interact with both ESM and CommonJS module caches.
 
 Bun calls the factory at the next `import` or `require()` that gets the mock. If the mock updates a loaded module in place, Bun calls it when you mock the module instead. `mock.module()`, `jest.mock()` and `jest.doMock()` do that with a loaded module, and so do some `vi.mock()` and `vi.doMock()` calls (see [Differences from Vitest](#differences-from-vitest)).
 
+The exception is a name that `import` and `require()` resolve to two files (see [Path Resolution](#path-resolution)). `mock.module()`, `jest.mock()` and `jest.doMock()` update in place only the file that `import` loads. The file that `require()` loads is usually a CommonJS file. If that file is already loaded, the mock leaves it as it is, and what required it keeps the real exports. If only that file is loaded, Bun doesn't call the factory when you mock the name. The next `require()` of the name gets the mock.
+
 ### Path Resolution
 
 Bun resolves the module specifier the same way it resolves an `import`, supporting:

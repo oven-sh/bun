@@ -1838,6 +1838,11 @@ mod draft {
         if Environment::ENABLE_ASAN || !bun_core::CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) {
             return;
         }
+        let _ = update_posix_segfault_handler(Some(&mut repeated_crash_action()));
+    }
+
+    #[cfg(unix)]
+    fn repeated_crash_action() -> libc::sigaction {
         // SAFETY: zeroed sigaction is valid POD; we overwrite the fields we need.
         let mut act: libc::sigaction = bun_core::ffi::zeroed();
         act.sa_sigaction = handle_segfault_posix as *const () as usize;
@@ -1849,7 +1854,43 @@ mod draft {
         unsafe {
             libc::sigemptyset(&raw mut act.sa_mask);
         }
-        let _ = update_posix_segfault_handler(Some(&mut act));
+        act
+    }
+
+    /// # Safety
+    /// `action` must be valid for a write.
+    #[cfg(unix)]
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn CrashHandler__getAction(action: *mut libc::sigaction) -> bool {
+        if Environment::ENABLE_ASAN
+            || !bun_core::CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed)
+            || PANIC_STAGE.with(|stage| stage.get()) != 0
+        {
+            return false;
+        }
+        // SAFETY: caller contract.
+        unsafe { action.write(repeated_crash_action()) };
+        true
+    }
+
+    #[cfg(unix)]
+    #[unsafe(no_mangle)]
+    extern "C" fn CrashHandler__reportOwnCrash(
+        sig: c_int,
+        info: *mut libc::siginfo_t,
+        ctx: *mut c_void,
+    ) {
+        if Environment::ENABLE_ASAN || !bun_core::CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) {
+            return;
+        }
+        let Some((pc, _, _)) = fault_context_from_ucontext(ctx) else {
+            return;
+        };
+        // SAFETY: kernel provides a valid siginfo_t.
+        let (code, address) = unsafe { ((*info).si_code, (*info).si_addr() as usize) };
+        if crate::compiled_frames::is_own_stop(sig, code, address, pc) {
+            handle_segfault_posix(sig, info, ctx);
+        }
     }
 
     pub fn init() {

@@ -26,10 +26,12 @@ const [read_write, read_execute, fixed_private, anonymous] = [3, 5, 0x12, isDarw
 const map = () => console.log("mapped", libc.symbols.mmap(address, 16384, read_write, fixed_private | anonymous, -1, 0) === address);
 const mapFile = (file: string) =>
   console.log("mapped", libc.symbols.mmap(address, 16384, read_execute, fixed_private, openSync(file, "r"), 0) === address);
-// As the npm package signal-exit does. A breakpoint stops nothing then.
-if (how.endsWith("listening")) for (const signal of ["SIGTRAP", "SIGABRT", "SIGHUP"]) process.on(signal, () => {});
+// As the npm package signal-exit does, and for the signals of a fault too. A breakpoint stops nothing then.
+const signals = ["SIGTRAP", "SIGABRT", "SIGHUP", "SIGSEGV", "SIGBUS", "SIGILL"];
+if (how.endsWith("listening")) for (const signal of signals) process.on(signal, () => {});
+if (how.endsWith("not listening")) for (const signal of signals) process.removeAllListeners(signal);
 console.log("started");
-if (how === "call" || how.startsWith("call filled")) call();
+if (/^call( filled)?(,|$)/.test(how)) call();
 if (how === "read") read.u8(address);
 if (how === "call mapped data") (map(), call());
 if (how === "read mapped data") (map(), console.log(read.u8(address)));
@@ -130,10 +132,11 @@ function addRemovedRanges(executable: string) {
   if (!state || others.length) throw new Error("no state of removable features");
   const entry = Number(file.readBigUInt64LE(24));
   const code = segments.find(({ start, end }) => start <= entry && entry < end)!;
-  let at = file.indexOf(filler, code.offset);
-  while ((code.start + at - code.offset) % filler.length) at = file.indexOf(filler, at + 1);
-  const filled = code.start + at - code.offset;
-  if (at < 0 || at >= code.offset + code.bytesInFile) throw new Error("no " + filler.toString("hex"));
+  const bytes = file.subarray(code.offset, code.offset + code.bytesInFile);
+  let at = bytes.indexOf(filler);
+  while (at >= 0 && (code.start + at) % filler.length) at = bytes.indexOf(filler, at + 1);
+  if (at < 0) throw new Error("no " + filler.toString("hex"));
+  const filled = code.start + at;
 
   const [terabyte, size] = [2 ** 40, 2 ** 30];
   const hole = Math.ceil(segments.at(-1)!.end / terabyte) * terabyte;
@@ -170,6 +173,9 @@ describe.skipIf(!isLinux && !isMacOS)("a fault at an address inside a removed ra
     "read mapped data": { stdout: "started\nmapped true\n0\n", saysRemoved: false, exits70: false },
     "call filled": { stdout: "started\n", saysRemoved: true, exits70: true },
     "call filled, listening": { stdout: "started\n", saysRemoved: true, exits70: true },
+    "call, listening": { stdout: "started\n", saysRemoved: true, exits70: true },
+    "call filled, not listening": { stdout: "started\n", saysRemoved: true, exits70: true },
+    "call, not listening": { stdout: "started\n", saysRemoved: true, exits70: true },
   };
   // macOS maps no code that isn't signed.
   if (isLinux)
@@ -187,6 +193,9 @@ describe.skipIf(!isLinux && !isMacOS)("a fault at an address inside a removed ra
     "call mapped data": isMacOS,
     // Removed code is still filled with breakpoints.
     "call filled, listening": isMacOS && process.arch === "x64",
+    // After the last listener a fault has its default action there.
+    "call filled, not listening": isMacOS,
+    "call, not listening": isMacOS,
   };
   const failsToday = Object.keys(knownFailures).filter(how => knownFailures[how]);
   const withoutKnownFailures = (cases: Record<string, unknown>) =>
@@ -208,6 +217,8 @@ describe.skipIf(!isLinux && !isMacOS)("a fault at an address inside a removed ra
         },
         stdout: "pipe",
         stderr: "pipe",
+        timeout: 60_000,
+        killSignal: "SIGKILL",
       });
       const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
       return { stdout, stderr, exitCode, signalCode: child.signalCode };

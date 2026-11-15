@@ -221,6 +221,43 @@ pub(crate) fn is_at_trap_of_removed_code(pc: usize) -> bool {
     found == TRAP_OF_REMOVED_CODE
 }
 
+#[cfg(unix)]
+pub(crate) fn is_own_stop(
+    signal: core::ffi::c_int,
+    code: core::ffi::c_int,
+    address: usize,
+    pc: usize,
+) -> bool {
+    let is_raised = !cfg!(target_os = "macos") && code > 0;
+    if signal != libc::SIGTRAP && signal != libc::SIGILL {
+        return (pc == address || is_raised) && removed_feature_entered(pc).is_some();
+    }
+    let is_breakpoint = signal == libc::SIGTRAP;
+    let pc = pc.wrapping_sub(usize::from(cfg!(target_arch = "x86_64") && is_breakpoint));
+    if offset_in_code(pc).is_none() && !is_in_own_segment(pc) {
+        return false;
+    }
+    if !cfg!(target_os = "macos") {
+        return is_raised;
+    }
+    let instruction = core::ptr::with_exposed_provenance::<[u8; 4]>(pc);
+    // SAFETY: the processor has run or tried to run the instruction there.
+    let bytes = unsafe { instruction.read_unaligned() };
+    if cfg!(target_arch = "aarch64") {
+        let word = u32::from_le_bytes(bytes);
+        return if is_breakpoint {
+            word & 0xffe0_001f == 0xd420_0000
+        } else {
+            word < 1 << 16
+        };
+    }
+    if is_breakpoint {
+        bytes[0] == 0xcc
+    } else {
+        bytes[0] == 0xd6 || bytes[..2] == [0x0f, 0x0b]
+    }
+}
+
 #[cfg(all(unix, not(target_os = "macos")))]
 fn is_in_own_segment(address: usize) -> bool {
     let module_at =

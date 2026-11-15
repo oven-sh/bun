@@ -316,13 +316,10 @@ impl StrongCtx<QuicStream> {
 }
 
 /// # Safety
-/// `ctx` is null, or `StrongCtx::<T>::bind` set it and it is still bound.
+/// `ctx` is null, or `StrongCtx::<T>::bind` set it and it is still bound. `f` does not drop that `StrongCtx`.
 unsafe fn with_ctx<T: Unbind, R>(ctx: *mut c_void, f: impl FnOnce(&T) -> R) -> Option<R> {
     // SAFETY: not dropped yet, see `bind`.
-    let result = f(unsafe { ctx.cast::<T>().as_ref() }?);
-    // Keeps the wrapper visible to the GC's stack scan, as `f` can drop the `StrongCtx`.
-    core::hint::black_box(ctx);
-    Some(result)
+    unsafe { ctx.cast::<T>().as_ref() }.map(f)
 }
 
 /// # Safety

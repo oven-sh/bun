@@ -6,13 +6,28 @@
 // - Write test for import {foo} from "./foo"; export {foo}
 
 import { describe, expect, jest, mock, spyOn, test, vi } from "bun:test";
-import { bunEnv, bunExe, Heap, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, Heap, isASAN, isDebug, isWindows, tempDir as tempDirOfHarness } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
 const isolationFlags: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]]];
+
+// mock-module-two-files.test.ts runs this file once more. There each ES module `x.ts` of a fixture has a twin `x.mts`:
+// an import resolves "./x" to the twin and require() to `x.ts`. So mock.module, jest.mock and jest.doMock of "./x" mock
+// the twin, and require() of `x.ts` gets that mock too. vi.mock and vi.doMock mock the twin alone.
+const twoFiles = new URL(import.meta.url).search === "?two-files";
+function withTwins(files: Record<string, string>) {
+  const twins: Record<string, string> = {};
+  for (const [name, text] of Object.entries(files)) {
+    const isESModule = /\bexport\b/.test(text) && !/module\.exports|\bexports\./.test(text);
+    if (name.endsWith(".ts") && !/\.(test|d)\.ts$/.test(name) && isESModule) twins[name.slice(0, -3) + ".mts"] = text;
+  }
+  return { ...twins, ...files };
+}
+const tempDir = (prefix: string, files: Record<string, string>) =>
+  tempDirOfHarness(prefix, twoFiles ? withTwins(files) : files);
 
 test("mock.module async", async () => {
   mock.module("i-am-async-and-mocked", async () => {
@@ -207,6 +222,10 @@ test("a factory export getter that throws while patching an already-imported mod
   // `fn` was read successfully before `variable` threw; neither may have been applied.
   expect(fn).toBe(before.fn);
   expect(variable).toBe(before.variable);
+  // After "mocking a local file" its last mock still stands. Bun.plugin.clearAll() below would forget it and leave the
+  // module patched for the rest of the process, where mock-module-two-files.test.ts may run these tests once more.
+  vi.doUnmock("./mock-module-fixture");
+  expect(fn()).toBe(42);
 });
 
 test("onResolve plugin errors surface from mock.module; an unresolvable specifier is still mockable", () => {
@@ -581,7 +600,7 @@ test.concurrent("mock.module() of a module whose import() is still loading its d
         Bun.plugin({
           name: "hold the dependency's load open",
           setup(build) {
-            build.onLoad({ filter: /dependency\\.ts$/ }, async () => {
+            build.onLoad({ filter: /dependency\\.m?ts$/ }, async () => {
               dependencyRequested.resolve();
               await dependencyMayLoad.promise;
               return { contents: "export {}", loader: "ts" };
@@ -1037,7 +1056,7 @@ describe.concurrent("the original of a mocked module", () => {
             ${mockModule}("cjs-pkg", async () => ({ hello: () => "mocked" }));
             ${mockModule}("node:os", async () => ({ platform: () => "mocked" }));
             test("a file, a package and a builtin", () => {
-              expect([require("./mod").value, require("cjs-pkg").hello(), require("node:os").platform()]).toEqual(Array(3).fill("mocked"));
+              expect([require("./mod").value, require("cjs-pkg").hello(), require("node:os").platform()]).toEqual(["${twoFiles && mockModule === "vi.mock" ? "real" : "mocked"}", "mocked", "mocked"]);
             });
           `,
         },
@@ -1263,9 +1282,9 @@ describe.concurrent("a module mocked without a factory", () => {
             expect(mod.obj.n).toBe(1);
             expect(new mod.Klass().method()).toBeUndefined();
             expect(Object.keys(mod).sort()).toEqual(["Klass", "default", "fn", "obj", "usesDep", "value"]);
-            expect(require("./mod").fn).toBe(mod.fn);
+            expect(require("./mod").fn${twoFiles ? "()" : ""}).toBe(${twoFiles ? `"real-fn"` : "mod.fn"});
             expect((await vi.importActual("./mod")).fn()).toBe("real-fn");
-            expect(globalThis.loads).toBe(1);
+            expect(globalThis.loads).toBe(${twoFiles ? 2 : 1});
           });
 
           test("CommonJS module", async () => {
@@ -1331,7 +1350,7 @@ describe.concurrent("a module mocked without a factory", () => {
 
           test("next to a file", async () => {
             expect([thing.thing, thing.f(), vi.isMockFunction(thing.f)]).toEqual(["manual-thing", "manual-f", false]);
-            expect(require("./sub/thing").f).toBe(thing.f);
+            expect(require("./sub/thing").f${twoFiles ? "()" : ""}).toBe(${twoFiles ? `"real-f"` : "thing.f"});
             expect((await vi.importActual("./sub/thing")).thing).toBe("real-thing");
           });
 
@@ -4853,8 +4872,8 @@ describe.concurrent("unmock", () => {
             expect(mocked.value).toBe("mocked");
             const real = await import("./mod");
             expect(real.value).toBe("real");
-            expect(require("./mod")).toBe(real);
-            expect(globalThis.loads).toBe(1);
+            expect(require("./mod")${twoFiles ? ".value" : ""}).toBe(real${twoFiles ? ".value" : ""});
+            expect(globalThis.loads).toBe(${twoFiles ? 2 : 1});
           });
 
           test("jest.doMock, jest.dontMock, jest.unmock", () => {
@@ -5533,11 +5552,11 @@ describe.concurrent("resetModules", () => {
             expect(second).not.toBe(first);
             expect(second.fn).not.toBe(first.fn);
             expect(first.fn()).toBe("real-fn");
-            expect(require("./mod")).toBe(second);
+            expect(require("./mod")${twoFiles ? ".value" : ""}).toBe(second${twoFiles ? ".value" : ""});
 
             vi.resetModules();
             expect(require("./mod")).not.toBe(second);
-            expect(globalThis.loads).toBe(3);
+            expect(globalThis.loads).toBe(${twoFiles ? 4 : 3});
 
             const cjs = require("cjs-pkg");
             vi.resetModules();
@@ -6314,7 +6333,7 @@ describe.concurrent("an export the factory did not return", () => {
           });
 
           test("require() gives the object itself", () => {
-            expect(require("./user.cjs")).toEqual({ a: "mocked-a", b: undefined });
+            expect(require("./user.cjs")).toEqual(${twoFiles ? `{ a: "real-a", b: "real-b" }` : `{ a: "mocked-a", b: undefined }`});
           });
         `,
         "star-first.ts": `export * from "./dep"; export * from "./named";`,
@@ -6437,6 +6456,11 @@ describe.concurrent("import cycles through a mocked module", () => {
       for (const [kind, mock] of Object.entries(mocks)) {
         if (only && !only.includes(kind)) continue;
         const hasFactory = kind !== "automock" && kind !== "spy";
+        // With two files per module, jest.mock() mocks `m0.mts`, require() of `m0.ts` gets that mock, and
+        // jest.requireActual() loads `m0.ts`. What `m0.ts` alone has loaded gets `m0.mts` as it is on disk. Where the
+        // test file imports the mock first, that is the rest of the cycle: `m0.mts` runs ahead of it, and the module
+        // that imports "./m0" reads `m0.mts`, not the mock.
+        const readsTwin = twoFiles && kind === "requireActual" && entry === "m0";
         files[`${kind}-${entry}.test.ts`] = `
           import { expect, jest, test, vi } from "bun:test";
           import { order } from "./log";
@@ -6444,10 +6468,10 @@ describe.concurrent("import cycles through a mocked module", () => {
           ${mock}
           ${kind === "helper" ? `await import("./${entry}");` : `import "./${entry}";`}
           test("loads", async () => {
-            expect(order).toEqual(${JSON.stringify(order(hasFactory ? ["factory"] : []))});
+            expect(order).toEqual(${JSON.stringify([...(readsTwin ? ["m0"] : []), ...order(hasFactory ? ["factory"] : [])])});
             const mocked = await import("./m0");
             const importer = await import("./m${last}");
-            expect(importer.seesNext()).toEqual([mocked.name, mocked.fn()]);
+            expect(importer.seesNext()).toEqual(${readsTwin ? `["m0", "fn0"]` : "[mocked.name, mocked.fn()]"});
             expect([mocked.name, mocked.fn(), vi.isMockFunction(mocked.fn)]).toEqual(${
               hasFactory ? `["mock", "fn0", false]` : kind === "spy" ? `["m0", "fn0", true]` : `["m0", undefined, true]`
             });
@@ -6954,7 +6978,7 @@ describe.concurrent("a test file's module mocks are undone when it ends", () => 
     test("mocked", () => {
       expect([seen, callFn()]).toEqual(["mocked", "mocked-fn"]);
       expect(require("./cjs-transitive.cjs").seen).toBe("mocked");
-      expect(require("./cjs-importer.cjs").esm).toBe("mocked");
+      expect(require("./cjs-importer.cjs").esm).toBe("${twoFiles ? "real" : "mocked"}");
       expect(untouched).toBe(true);
       expect(globalThis.untouchedLoads).toBe(1);
     });
@@ -6972,7 +6996,7 @@ describe.concurrent("a test file's module mocks are undone when it ends", () => 
       expect(require("./cjs-importer.cjs").esm).toBe("real");
       expect(untouched).toBe(true);
       expect(globalThis.untouchedLoads).toBe(1);
-      expect(globalThis.modLoads).toBe(1);
+      expect(globalThis.modLoads).toBe(${twoFiles ? 2 : 1});
     });
   `;
 
@@ -7006,8 +7030,8 @@ describe.concurrent("a test file's module mocks are undone when it ends", () => 
         "2.test.ts": loads([1, 1, 1]),
         "3.test.ts": mocks,
         // importer.ts reloads once for the file with the mocks and once more after it.
-        "4.test.ts": loads([1, 3, 1]),
-        "5.test.ts": loads([1, 3, 1]),
+        "4.test.ts": loads([twoFiles ? 2 : 1, 3, 1]),
+        "5.test.ts": loads([twoFiles ? 2 : 1, 3, 1]),
       },
       5,
     );

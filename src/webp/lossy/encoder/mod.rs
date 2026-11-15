@@ -53,11 +53,10 @@ pub(crate) fn encode(
             tokens: Tokens::new(segments.map.len())?,
             modes: vec::with_room(segments.map.len())?,
             modes_cost: segments.map_cost,
-            has_subblock_modes: false,
             max_edges: [0; SEGMENTS],
         };
         pass.run(&picture, &segments.map, &codings, &mut costs)?;
-        let can_cut_down = pass.has_subblock_modes;
+        let can_cut_down = max_subblock_modes_cost > 0;
         if !can_cut_down || pass.modes_cost <= MAX_MODES_COST {
             let probabilities = pass.tokens.probabilities();
             match pass.write_modes(&mut segments, &probabilities, width, height) {
@@ -68,7 +67,6 @@ pub(crate) fn encode(
                 }
             }
         }
-        // Once it is below `16 * MIN_SUBBLOCK_MODE_COST`, there are no such modes.
         max_subblock_modes_cost /= 2;
     }
 }
@@ -78,7 +76,6 @@ struct Pass {
     tokens: Tokens,
     modes: Vec<Modes>,
     modes_cost: u64,
-    has_subblock_modes: bool,
     max_edges: [u16; SEGMENTS],
 }
 
@@ -158,7 +155,6 @@ impl Pass {
                     .record(BlockType::LumaWithoutDc, &luma.residuals)?;
             }
             luma::Mode::Subblocks(_) => {
-                self.has_subblock_modes = true;
                 self.tokens.record(BlockType::LumaWithDc, &luma.residuals)?;
             }
         }

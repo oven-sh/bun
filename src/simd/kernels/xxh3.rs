@@ -1,4 +1,5 @@
 //! Port of the long-input loop of xxhash3.cpp. The constants are those of xxHash.
+use core::slice;
 
 const PRIME32_1: u64 = 0x9E3779B1;
 const PRIME64_1: u64 = 0x9E3779B185EBCA87;
@@ -32,27 +33,30 @@ const UP_BY_32: [u8; 16] = [
     128, 128, 128, 128, 0, 1, 2, 3, 128, 128, 128, 128, 8, 9, 10, 11,
 ];
 
-#[inline(always)]
-fn key(secret: &[u8; 192], at: usize) -> &[u8; 64] {
-    secret[at..].first_chunk().unwrap()
-}
-
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
     use isa::{U8, U64};
 
+    /// For up to 16 stripes, `K` per iteration.
     #[inline(always)]
-    fn accumulate(acc: &mut [u64; 8], input: &[u8; 64], secret: &[u8; 64]) {
-        for ((acc, data), key) in acc
-            .as_chunks_mut()
-            .0
-            .iter_mut()
-            .zip(input.as_chunks().0)
-            .zip(secret.as_chunks().0)
-        {
-            let data: U64 = U8::load(data).cast();
-            let data_key = data ^ U8::load(key).cast();
-            (U64::load(acc) + data.swap_pairs() + data_key.mul_low32(data_key >> 32)).store(acc);
+    fn accumulate<const K: usize>(acc: &mut [u64; 8], stripes: &[[u8; 64]], secret: &[u8]) {
+        let mut sums = [0; 8];
+        for (i, group) in stripes.as_chunks::<K>().0.iter().enumerate() {
+            for (j, stripe) in group.iter().enumerate() {
+                let key = &secret[8 * (K * (i % (16 / K)) + j)..][..64];
+                let inputs = stripe.as_chunks().0.iter().zip(key.as_chunks().0);
+                let outputs = acc.as_chunks_mut().0.iter_mut().zip(sums.as_chunks_mut().0);
+                for ((data, key), (acc, sum)) in inputs.zip(outputs) {
+                    let data: U64 = U8::load(data).bitcast();
+                    let keyed = data ^ U8::load(key).bitcast::<U64>();
+                    (U64::load(acc) + keyed.mul_low32(keyed >> 32)).store(acc);
+                    (U64::load(sum) + data).store(sum);
+                }
+            }
+        }
+        // The sum of what is swapped is the sum, swapped.
+        for (acc, sum) in acc.as_chunks_mut().0.iter_mut().zip(sums.as_chunks().0) {
+            (U64::load(acc) + U64::load(sum).swap_pairs()).store(acc);
         }
     }
 
@@ -60,12 +64,12 @@ pub(crate) mod simd {
         let prime = U64::splat(PRIME32_1);
         for (acc, key) in acc.as_chunks_mut().0.iter_mut().zip(secret.as_chunks().0) {
             let a = U64::load(acc);
-            let a = a ^ a >> 47 ^ U8::load(key).cast();
+            let a = a ^ a >> 47 ^ U8::load(key).bitcast::<U64>();
             let high = (a >> 32)
                 .mul_low32(prime)
-                .cast::<u8>()
-                .lookup(U8::table(&UP_BY_32));
-            (a.mul_low32(prime) + high.cast()).store(acc);
+                .bitcast::<U8>()
+                .lookup(U8::repeat_16(UP_BY_32));
+            (a.mul_low32(prime) + high.bitcast::<U64>()).store(acc);
         }
     }
 
@@ -75,18 +79,11 @@ pub(crate) mod simd {
         let (mut acc, last) = (INIT, input.split_last_chunk()?.1);
         let (blocks, rest) = input[..input.len() - 1].as_chunks::<1024>();
         for block in blocks {
-            macro_rules! stripes {
-                ($($s:literal)*) => {
-                    $(accumulate(&mut acc, &block.as_chunks().0[$s], key(secret, 8 * $s));)*
-                };
-            }
-            stripes!(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15);
-            scramble(&mut acc, key(secret, 128));
+            accumulate::<{ U8::LEN / 8 }>(&mut acc, block.as_chunks().0, secret);
+            scramble(&mut acc, secret.last_chunk()?);
         }
-        for (s, stripe) in rest.as_chunks::<64>().0.iter().enumerate() {
-            accumulate(&mut acc, stripe, key(secret, 8 * (s & 15)));
-        }
-        accumulate(&mut acc, last, key(secret, 128 - 7));
+        accumulate::<1>(&mut acc, rest.as_chunks().0, secret);
+        accumulate::<1>(&mut acc, slice::from_ref(last), &secret[128 - 7..]);
 
         let mut h = (input.len() as u64).wrapping_mul(PRIME64_1);
         for (pair, key) in acc

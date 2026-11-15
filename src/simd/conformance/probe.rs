@@ -1,11 +1,12 @@
-//! What is detected has to run.
+//! Runs an instruction of each detected feature.
+use crate::write_line;
 use bun_simd::Target;
 use core::arch::asm;
 
 #[repr(align(64))]
 struct Memory([u8; 1024]);
 
-/// `= n` is what the first register holds afterwards, where older CPUs see another instruction.
+/// `= n` is the expected first register, for encodings that older CPUs run as another instruction.
 macro_rules! probes {
     ($($name:literal: $($line:literal),+ $(= $result:literal)?;)*) => {
         /// SAFETY: the CPU has the feature.
@@ -18,7 +19,7 @@ macro_rules! probes {
                     #[inline(never)]
                     unsafe fn instruction_of_feature(memory: &mut Memory) -> u64 {
                         let (mut first, memory) = (1, memory.0.as_mut_ptr());
-                        // SAFETY: changes no register that a call keeps, and no other memory.
+                        // SAFETY: changes no callee-saved register, and no memory but `memory`.
                         unsafe {
                             cfg_select! {
                                 target_arch = "x86_64" => asm!(
@@ -37,7 +38,7 @@ macro_rules! probes {
                         };
                         first
                     }
-                    // SAFETY: the caller's.
+                    // SAFETY: the caller's guarantee.
                     let _first = unsafe { instruction_of_feature(memory) };
                     true $(&& _first == $result)?
                 })*
@@ -151,14 +152,14 @@ probes! {
     "sve2-sm4": "sm4e z0.s, z0.s, z1.s";
 }
 
-/// If the process dies, the last line says of what.
+/// If the process dies, the last line names the feature.
 pub(crate) fn run() -> bool {
     for target in Target::ALL.iter().filter(|target| target.is_supported()) {
-        output_line!("target: {}", target.name());
+        write_line(format_args!("target: {}", target.name()));
     }
     bun_simd::detected().names().all(|feature| {
-        output_line!("feature: {feature}");
-        // SAFETY: what is tested.
+        write_line(format_args!("feature: {feature}"));
+        // SAFETY: the feature was detected, which is what this tests.
         unsafe { runs(feature) }
     })
 }

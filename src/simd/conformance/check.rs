@@ -1,34 +1,33 @@
-//! The same random input for both. What Rust gets is next to pages that cannot be touched.
+//! Gives both the same random input. The slices for Rust are next to inaccessible pages.
 use crate::room::Room;
-use crate::{Random, highway};
-use bun_simd_kernels::{self as rust, Columns, MappingsState};
+use crate::{PER_ROW, Random, columns, highway, write_line, zeroed};
+use bun_simd_kernels::{self as rust, MappingsState};
 use core::mem::MaybeUninit;
 use core::sync::atomic::AtomicU8;
 
 struct Round<'a> {
     random: &'a mut Random,
     rooms: &'a mut [Room; 6],
-    /// Of everything in its room.
+    /// Of each slice in its room.
     offset: usize,
     text: &'a [u8],
-    differing: Vec<&'static str>,
+    failures: Failures,
 }
 
-macro_rules! same {
-    ($round:ident, $name:expr, $highway:expr, $rust:expr) => {
-        if $highway != $rust {
-            $round.differing.push($name);
+#[derive(Default)]
+struct Failures(Vec<&'static str>);
+
+impl Failures {
+    fn unless(&mut self, is_ok: bool, kernel: &'static str) {
+        if !is_ok {
+            self.0.push(kernel);
         }
-    };
+    }
 }
 
 fn written<T>(out: &[MaybeUninit<T>], len: usize) -> &[T] {
-    // SAFETY: the kernel says so. All memory in here has been written to before, in any case.
+    // SAFETY: a `Room` and `zeroed` start out as zeros, and kernels write only initialized values.
     unsafe { out[..len].assume_init_ref() }
-}
-
-fn zeroed<T: Copy + Default>(len: usize) -> Vec<MaybeUninit<T>> {
-    vec![MaybeUninit::new(T::default()); len]
 }
 
 const HEX: &[u8] = b"0123456789abcdefABCDEF";
@@ -54,7 +53,7 @@ impl Round<'_> {
 
     fn mostly_ascii(&mut self) -> Vec<u16> {
         let unit = |&byte: &u8| match self.random.below(200) {
-            0 => u16::from(byte) | self.random.next() as u16 & 0xFF80,
+            0 => u16::from(byte) | 0x80 << self.random.below(9),
             _ => u16::from(byte & 0x7F),
         };
         self.text.iter().map(unit).collect()
@@ -64,77 +63,49 @@ impl Round<'_> {
         let (text, byte, wide) = (self.text, self.some_byte(), self.mostly_ascii());
         let (len, count) = (self.random.below(text.len() + 1), 2 + self.random.below(15));
         let chars = self.random.bytes(count, b"");
-        let [a, b, c, ..] = &mut *self.rooms;
+        let [a, b, c, d, ..] = &mut *self.rooms;
         let (fenced, fenced_chars) = (a.copy_of(text, self.offset), b.copy_of(&chars, self.offset));
-        macro_rules! searches {
-            ($($kernel:ident($($highway:expr, $rust:expr)?);)*) => {$(
-                let highway = highway::$kernel(text $(, $highway)?);
-                same!(self, stringify!($kernel), highway, rust::$kernel(fenced $(, $rust)?));
-            )*};
-        }
-        searches! {
-            index_of_char(byte, byte);
-            last_index_of_char(byte, byte);
-            count_char(byte, byte);
-            index_of_either([byte, b'b'], [byte, b'b']);
-            index_of_any_char(&chars, fenced_chars);
-            index_of_interesting_character_in_string_literal(b'"', b'"');
-            index_of_html_escape_char8();
-            last_index_of_slash();
-            line_starts();
-        }
-        if !text.is_empty() {
-            searches! { index_of_newline_or_non_ascii(); }
-        }
-        if text.len() > 240 {
-            searches! { xxhash3_64_long(); }
-        }
-        let within = highway::index_of_char(&text[..len], byte).unwrap_or(len);
-        same!(
-            self,
-            "index_of_char_within",
-            within,
-            rust::index_of_char_within(fenced, len, byte)
-        );
-
-        let shared = &*AtomicU8::from_mut_slice(fenced);
-        let first = highway::index_of_char(text, byte);
-        same!(
-            self,
-            "index_of_char_shared",
-            first,
-            rust::index_of_char_shared(shared, byte)
-        );
-        let last = highway::last_index_of_char(text, byte);
-        same!(
-            self,
-            "last_index_of_char_shared",
-            last,
-            rust::last_index_of_char_shared(shared, byte)
+        let fenced_wide = c.copy_of(&wide, self.offset);
+        let shared = &*AtomicU8::from_mut_slice(d.copy_of(text, self.offset));
+        let (first, last) = (
+            highway::index_of_char(text, byte),
+            highway::last_index_of_char(text, byte),
         );
         let count = highway::count_char(text, byte);
-        same!(
-            self,
-            "count_char_shared",
-            count,
-            rust::count_char_shared(shared, byte)
-        );
-
-        let (text, fenced) = (&wide[..], c.copy_of(&wide, self.offset));
-        let html = highway::index_of_html_escape_char16(text);
-        same!(
-            self,
-            "index_of_html_escape_char16",
-            html,
-            rust::index_of_html_escape_char16(fenced)
-        );
-        let first = highway::first_non_ascii16(text);
-        same!(
-            self,
-            "first_non_ascii16",
-            first,
-            rust::first_non_ascii16(fenced)
-        );
+        #[rustfmt::skip]
+        let results = [
+            ("index_of_char", first == rust::index_of_char(fenced, byte)),
+            ("index_of_char_shared", first == rust::index_of_char_shared(shared, byte)),
+            ("index_of_char_within", first.filter(|&at| at < len)
+                == rust::index_of_char_within(fenced, len, byte)),
+            ("last_index_of_char", last == rust::last_index_of_char(fenced, byte)),
+            ("last_index_of_char_shared", last == rust::last_index_of_char_shared(shared, byte)),
+            ("count_char", count == rust::count_char(fenced, byte)),
+            ("count_char_shared", count == rust::count_char_shared(shared, byte)),
+            ("index_of_either", highway::index_of_either(text, [byte, b'b'])
+                == rust::index_of_either(fenced, [byte, b'b'])),
+            ("index_of_any_char", highway::index_of_any_char(text, &chars)
+                == rust::index_of_any_char(fenced, fenced_chars)),
+            ("string_literal", highway::index_of_interesting_character_in_string_literal(text, b'"')
+                == rust::index_of_interesting_character_in_string_literal(fenced, b'"')),
+            ("index_of_newline_or_non_ascii", text.is_empty()
+                || highway::index_of_newline_or_non_ascii(text)
+                    == rust::index_of_newline_or_non_ascii(fenced)),
+            ("index_of_html_escape_char8", highway::index_of_html_escape_char8(text)
+                == rust::index_of_html_escape_char8(fenced)),
+            ("index_of_html_escape_char16", highway::index_of_html_escape_char16(&wide)
+                == rust::index_of_html_escape_char16(fenced_wide)),
+            ("first_non_ascii16", highway::first_non_ascii16(&wide)
+                == rust::first_non_ascii16(fenced_wide)),
+            ("last_index_of_slash", highway::last_index_of_slash(text)
+                == rust::last_index_of_slash(fenced)),
+            ("line_starts", highway::line_starts(text) == rust::line_starts(fenced)),
+            ("xxhash3_64_long", text.len() <= 240
+                || highway::xxhash3_64_long(text) == rust::xxhash3_64_long(fenced)),
+        ];
+        for (kernel, is_same) in results {
+            self.failures.unless(is_same, kernel);
+        }
     }
 
     fn memmem(&mut self) {
@@ -152,7 +123,8 @@ impl Round<'_> {
         let [a, b, ..] = &mut *self.rooms;
         for (text, needle) in [(self.text, &needle), (&uniform, &almost)] {
             let got = rust::memmem(a.copy_of(text, self.offset), b.copy_of(needle, self.offset));
-            same!(self, "memmem", highway::memmem(text, needle), got);
+            self.failures
+                .unless(highway::memmem(text, needle) == got, "memmem");
         }
     }
 
@@ -168,7 +140,7 @@ impl Round<'_> {
         for (stops, plane) in stops.into_iter().zip(planes) {
             let is_set = |at: usize| plane.as_flattened()[at / 8] >> (at % 8) & 1 != 0;
             let agree = (0..self.text.len()).all(|at| (stops.run(at) == 0) == is_set(at));
-            same!(self, "scanner_run_stops", true, agree);
+            self.failures.unless(agree, "scanner_run_stops");
         }
     }
 
@@ -183,7 +155,7 @@ impl Round<'_> {
         let got = b.copy_of(&want, self.offset);
         highway(from, &mut want);
         rust(a.copy_of(from, self.offset), got);
-        same!(self, name, want, got);
+        self.failures.unless(want == got, name);
     }
 
     fn in_place(
@@ -198,12 +170,8 @@ impl Round<'_> {
         highway(&mut want);
         rust(got);
         let mut pairs = want.as_flattened().iter().zip(got.as_flattened());
-        same!(
-            self,
-            name,
-            true,
-            pairs.all(|(a, b)| a.abs_diff(*b) <= tolerance)
-        );
+        self.failures
+            .unless(pairs.all(|(a, b)| a.abs_diff(*b) <= tolerance), name);
     }
 
     fn conversions(&mut self) {
@@ -270,7 +238,7 @@ impl Round<'_> {
             &rust::cmyk_to_rgba,
         );
         let [x, y] = [(); 2].map(|()| self.random.below(300) as f32 / 100.0);
-        // One of them may round once where the other rounds twice.
+        // One may fuse a multiplication and an addition that the other rounds separately.
         self.in_place(
             "modulate",
             1,
@@ -290,11 +258,9 @@ impl Round<'_> {
         );
         let size = highway::pack_words(&words, &mut controls, &mut data);
         let got_size = rust::pack_words(a.copy_of(&words, self.offset), got_controls, got);
-        same!(
-            self,
+        self.failures.unless(
+            (&controls[..], &data[..size]) == (got_controls, &got[..got_size]),
             "pack_words",
-            (&controls[..], &data[..size]),
-            (got_controls, &got[..got_size])
         );
 
         let (mut want, got) = (zeroed(4 * groups), a.uninit(4 * groups, self.offset));
@@ -302,7 +268,8 @@ impl Round<'_> {
         let data = c.copy_of(&data[..size], self.offset);
         let got_done = rust::unpack_words(got_controls, data, got.as_chunks_mut().0);
         let (want, got) = (written(&want, 4 * done.0), written(got, 4 * got_done.0));
-        same!(self, "unpack_words", (done, want), (got_done, got));
+        self.failures
+            .unless((done, want) == (got_done, got), "unpack_words");
     }
 
     fn json(&mut self) {
@@ -321,16 +288,15 @@ impl Round<'_> {
             highway::json_structural_index_chunk(&text, 4096, &mut index, &mut dirty, &mut state);
         let got_result =
             rust::json_structural_index_chunk(fenced, 4096, got, got_dirty, &mut got_state);
-        same!(
-            self,
+        self.failures.unless(
+            (result, written(&index, result.0), &dirty[..], state)
+                == (
+                    got_result,
+                    written(got, got_result.0),
+                    &*got_dirty,
+                    got_state,
+                ),
             "json_structural_index_chunk",
-            (result, written(&index, result.0), &dirty[..], state),
-            (
-                got_result,
-                written(got, got_result.0),
-                &*got_dirty,
-                got_state
-            )
         );
     }
 
@@ -351,15 +317,15 @@ impl Round<'_> {
             b.copy_of(&above, self.offset),
             got.each_mut().map(|row| &mut row[..]),
         );
-        same!(self, "png_filter_rgba", sums, got_sums);
-        same!(self, "png_filter_rgba", want, got);
+        self.failures.unless(sums == got_sums, "png_filter_rgba");
+        self.failures.unless(want == got, "png_filter_rgba");
 
         let (row, above) = (&row[..len & !3], &above[..len & !3]);
         for filter_type in 1..=4 {
             let (mut want, got) = (row.to_vec(), a.copy_of(row, self.offset));
             highway::png_unfilter4(filter_type, &mut want, above);
             rust::png_unfilter4(filter_type, got, b.copy_of(above, self.offset));
-            same!(self, "png_unfilter4", want, got);
+            self.failures.unless(want == got, "png_unfilter4");
         }
     }
 
@@ -406,18 +372,9 @@ impl Round<'_> {
             _ => text.len() + 1,
         };
         let has_names = self.random.below(2) == 0;
-        fn columns<'a>(of: &'a mut [&mut [MaybeUninit<i32>]; 4], has_names: bool) -> Columns<'a> {
-            let [generated, original, src_idx, name_idx] = of;
-            Columns {
-                generated: generated.as_chunks_mut().0,
-                original: original.as_chunks_mut().0,
-                src_idx,
-                name_idx: has_names.then_some(name_idx),
-            }
-        }
         let [a, b, c, d, e, _] = &mut *self.rooms;
         let by_highway = |text: &[u8], state: &MappingsState| {
-            let mut out = [2, 2, 1, 1].map(|per_row| zeroed(per_row * (text.len() + 1)));
+            let mut out = PER_ROW.map(|per_row| zeroed(per_row * (text.len() + 1)));
             let mut into = out.each_mut().map(|column| &mut column[..]);
             let rows = highway::parse_mappings(text, columns(&mut into, has_names), 3, state);
             (rows, out)
@@ -429,14 +386,15 @@ impl Round<'_> {
         let into = columns(&mut got, has_names);
         let (got_rows, resume_at) = rust::parse_mappings(fenced, into, 3, &mut state);
         let (more_rows, more) = by_highway(&text[resume_at..], &state);
-        // Each leaves what is too short for its vectors: up to 13 rows.
+        // Each leaves a tail shorter than its vectors to the scalar decoder: up to 13 rows.
         let is_complete = got_rows + 13 >= rows.min(cap) && got_rows + more_rows + 13 >= rows;
-        same!(self, "parse_mappings", true, is_complete);
+        self.failures.unless(is_complete, "parse_mappings");
         for (i, per_row) in [2, 2, 1, usize::from(has_names)].into_iter().enumerate() {
             let got = written(got[i], per_row * got_rows).iter();
             let got = got.chain(written(&more[i], per_row * more_rows));
             let mut pairs = got.zip(written(&want[i], per_row * rows));
-            same!(self, "parse_mappings", true, pairs.all(|(a, b)| a == b));
+            self.failures
+                .unless(pairs.all(|(a, b)| a == b), "parse_mappings");
         }
     }
 
@@ -466,7 +424,7 @@ pub(crate) fn run(seed: u64, rounds: u64) -> bool {
             rooms,
             offset,
             text,
-            differing: Vec::new(),
+            failures: Failures::default(),
         };
         round.searches();
         round.memmem();
@@ -479,11 +437,11 @@ pub(crate) fn run(seed: u64, rounds: u64) -> bool {
         if number % 20 == 0 {
             round.resize();
         }
-        for kernel in &round.differing {
-            output_line!("FAIL {kernel} in round {number}");
+        for kernel in &round.failures.0 {
+            write_line(format_args!("FAIL {kernel} in round {number}"));
         }
-        failures += round.differing.len();
+        failures += round.failures.0.len();
     }
-    output_line!("rounds: {rounds}");
+    write_line(format_args!("rounds: {rounds}"));
     failures == 0
 }

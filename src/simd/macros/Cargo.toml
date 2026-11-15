@@ -7,6 +7,9 @@ edition.workspace = true
 path = "lib.rs"
 proc-macro = true
 
+[features]
+test_support = []
+
 [lints]
 workspace = true
 

@@ -684,7 +684,7 @@ function hasWebKitChanges(options: PipelineOptions): boolean {
   return changedFiles.some(file => file.includes("SetupWebKit.cmake"));
 }
 
-/** The runner of the tests of src/simd is in canary builds only. */
+/** Only canary builds have the runner for the tests of src/simd. */
 function hasSimdChanges(options: PipelineOptions): boolean {
   const { canary, changedFiles = [] } = options;
   return !!canary && changedFiles.some(file => file.startsWith("src/simd/"));
@@ -880,12 +880,12 @@ function getCargoTestStep(buildId: string | undefined): CommandStep {
   };
 }
 
-/** The ops of src/simd differ by architecture, and `getCargoTestStep()` runs those of one. */
+/** The ops of src/simd differ by architecture, and `getCargoTestStep()` covers only one. */
 function getSimdCargoTestStep(platform: Platform): CommandStep {
   return {
     key: `${getPlatformKey(platform)}-simd-cargo-test`,
     label: `${getPlatformLabel(platform)} - simd-cargo-test`,
-    agents: getEc2Agent(platform, { instanceType: platform.arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge" }),
+    agents: getTestAgent(platform),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     timeout_in_minutes: 30,
@@ -893,7 +893,7 @@ function getSimdCargoTestStep(platform: Platform): CommandStep {
   };
 }
 
-/** Times the kernels of src/simd on a machine that does nothing else. The tables are in the log. */
+/** Times the kernels of src/simd on an otherwise idle machine. The tables are in the log. */
 function getSimdBenchmarkStep(platform: Platform, options: PipelineOptions, buildId: string | undefined): CommandStep {
   const step = getTestBunStep({ ...platform, tests: ["internal/simd.test.ts"] }, options, { buildId });
   return {

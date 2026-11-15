@@ -1,4 +1,5 @@
 //! Ports of image_resize.cpp.
+use bun_simd::Isa;
 
 /// The pixels that one of the result is made of.
 #[derive(Clone, Copy, Default)]
@@ -13,7 +14,7 @@ const ROUND: i32 = 1 << (SHIFT - 1);
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
-    use isa::{F32, I16, I32, U8, U16, U32, x128};
+    use isa::{F32, I16, I32, U8, U16, U32, Vector, x128};
 
     #[export]
     pub fn horizontal(
@@ -45,20 +46,14 @@ pub(crate) mod simd {
                         0,
                     ]);
                     let weights = U32::splat(u32::from(w0 as u16) | u32::from(w1 as u16) << 16);
-                    sum = sum
-                        + pair
-                            .cast::<u8>()
-                            .lookup(by_channel)
-                            .cast::<i16>()
-                            .mul_add_pairs(weights.cast());
+                    let channels = pair.bitcast::<U8>().lookup(by_channel);
+                    sum += I32::pairwise_dot(channels.bitcast::<I16>(), weights.bitcast());
                 }
                 if let ([pixel], &[w]) = (last, w_last) {
-                    sum = sum
-                        + I32::load_bytes(pixel)
-                            .cast::<i16>()
-                            .mul_add_pairs(I16::splat(w));
+                    let channels: I32 = Vector::load(pixel).cast();
+                    sum += I32::pairwise_dot(channels.bitcast(), I16::splat(w));
                 }
-                *out = (sum >> SHIFT).clamped_to_bytes();
+                *out = (sum >> SHIFT).saturating_cast_u8().to_array();
             }
         }
     }
@@ -83,14 +78,12 @@ pub(crate) mod simd {
             for out in chunks {
                 let mut sum = I32::splat(ROUND);
                 for (row, &w) in window.chunks_exact(row_bytes).zip(w) {
-                    let bytes = row[x..x + I32::LANES].as_array().unwrap();
-                    sum = sum
-                        + I32::load_bytes(bytes)
-                            .cast::<i16>()
-                            .mul_add_pairs(I16::splat(w));
+                    let bytes = row[x..x + I32::LEN].as_array().unwrap();
+                    let channels: I32 = Vector::load(bytes).cast();
+                    sum += I32::pairwise_dot(channels.bitcast(), I16::splat(w));
                 }
-                *out = (sum >> SHIFT).clamped_to_bytes();
-                x += I32::LANES;
+                *out = (sum >> SHIFT).saturating_cast_u8().to_array();
+                x += I32::LEN;
             }
             for out in rest {
                 let acc = window
@@ -107,14 +100,14 @@ pub(crate) mod simd {
 
     #[export]
     pub fn cmyk_to_rgba(mut pixels: &mut [[u8; 4]]) {
-        if !isa::IS_X86 {
+        if isa::Isa::HAS_INTERLEAVED_MEMORY {
             let blocks;
             (blocks, pixels) = pixels.as_chunks_mut();
             for block in blocks {
                 let [c, m, y, k] = U8::load_interleaved4(block);
-                let times_256_255ths = |t: U16| (t + 128 + ((t + 128) >> 8)).cast::<u8>();
+                let times_256_255ths = |t: U16| (t + 128 + ((t + 128) >> 8)).bitcast::<U8>();
                 let times_k = |v: U8| {
-                    let (low, high) = v.widening_mul(k);
+                    let (low, high) = U16::widening_mul(v, k);
                     times_256_255ths(low).deinterleave(times_256_255ths(high)).1
                 };
                 U8::store_interleaved4(
@@ -123,23 +116,23 @@ pub(crate) mod simd {
                 );
             }
         }
-        isa::map_in_place(pixels.as_flattened_mut(), |v| {
-            let k = v.cast::<u32>() >> 24;
-            let k: U16 = (k | k << 16).cast();
+        U8::map_in_place(pixels.as_flattened_mut(), |v| {
+            let k = v.bitcast::<U32>() >> 24;
+            let k: U16 = (k | k << 16).bitcast();
             let times_k = |v: U16| {
                 let t = v * k + 128;
                 (t + (t >> 8)) >> 8
             };
-            let v: U16 = v.cast();
-            ((times_k(v & 0xFF) | times_k(v >> 8) << 8).cast::<u32>() | 0xFF00_0000).cast()
+            let v: U16 = v.bitcast();
+            ((times_k(v & 0xFF) | times_k(v >> 8) << 8).bitcast::<U32>() | 0xFF00_0000).bitcast()
         });
     }
 
     #[export(long_running)]
     pub fn modulate(pixels: &mut [[u8; 4]], brightness: f32, saturation: f32) {
-        isa::map_in_place(pixels.as_flattened_mut(), |v| {
-            let v: U32 = v.cast();
-            let channel = |at: u32| F32::from_i32((v >> at & 0xFF).cast());
+        U8::map_in_place(pixels.as_flattened_mut(), |v| {
+            let v: U32 = v.bitcast();
+            let channel = |at: u32| (v >> at & 0xFF).bitcast::<I32>().cast::<f32>();
             let (r, g, b) = (channel(0), channel(8), channel(16));
             let y = r.mul_add(
                 F32::splat(0.299),
@@ -148,12 +141,12 @@ pub(crate) mod simd {
             let modulated = |c: F32, at: u32| {
                 let c = (c - y).mul_add(F32::splat(saturation), y) * F32::splat(brightness);
                 (c + F32::splat(0.5))
-                    .clamp(0.0, 255.0)
+                    .simd_clamp(0.0, 255.0)
                     .to_i32()
-                    .cast::<u32>()
+                    .bitcast::<U32>()
                     << at
             };
-            (modulated(r, 0) | modulated(g, 8) | (modulated(b, 16) | v & 0xFF00_0000)).cast()
+            (modulated(r, 0) | modulated(g, 8) | (modulated(b, 16) | v & 0xFF00_0000)).bitcast()
         });
     }
 }

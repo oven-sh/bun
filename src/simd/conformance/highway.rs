@@ -1,4 +1,4 @@
-//! The kernels on Highway, called as those of `bun_simd_kernels` are.
+//! The Highway kernels, with the signatures of `bun_simd_kernels`.
 pub(crate) use bun_highway::*;
 use bun_simd_kernels::{Columns, MappingsState};
 
@@ -31,21 +31,25 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-macro_rules! searches {
-    ($($name:ident = $kernel:ident($Unit:ty);)*) => {$(
-        #[inline(always)]
-        pub(crate) fn $name(text: &[$Unit]) -> Option<usize> {
-            // SAFETY: reads `text`.
-            let at = unsafe { $kernel(text.as_ptr(), text.len()) };
-            (at != text.len()).then_some(at)
-        }
-    )*};
+#[inline(always)]
+pub(crate) fn index_of_html_escape_char8(text: &[u8]) -> Option<usize> {
+    // SAFETY: reads `text`.
+    let at = unsafe { highway_index_of_html_escape_char8(text.as_ptr(), text.len()) };
+    (at != text.len()).then_some(at)
 }
 
-searches! {
-    index_of_html_escape_char8 = highway_index_of_html_escape_char8(u8);
-    index_of_html_escape_char16 = highway_index_of_html_escape_char16(u16);
-    first_non_ascii16 = highway_first_non_ascii16(u16);
+#[inline(always)]
+pub(crate) fn index_of_html_escape_char16(text: &[u16]) -> Option<usize> {
+    // SAFETY: reads `text`.
+    let at = unsafe { highway_index_of_html_escape_char16(text.as_ptr(), text.len()) };
+    (at != text.len()).then_some(at)
+}
+
+#[inline(always)]
+pub(crate) fn first_non_ascii16(text: &[u16]) -> Option<usize> {
+    // SAFETY: reads `text`.
+    let at = unsafe { highway_first_non_ascii16(text.as_ptr(), text.len()) };
+    (at != text.len()).then_some(at)
 }
 
 #[inline(always)]
@@ -70,30 +74,30 @@ pub(crate) fn png_unfilter4(filter_type: u8, row: &mut [u8], above: &[u8]) {
 
 #[inline(always)]
 pub(crate) fn lower_ascii16(from: &[u16], to: &mut [u16]) {
-    // SAFETY: both have that many units.
+    // SAFETY: both slices have at least that length.
     unsafe { highway_lower_ascii16(from.as_ptr(), from.len().min(to.len()), to.as_mut_ptr()) }
 }
 
 #[inline(always)]
 pub(crate) fn bswap32(words: &mut [[u8; 4]]) {
-    // SAFETY: changes `words`.
+    // SAFETY: reads and writes `words`.
     unsafe { highway_bswap32(words.as_mut_ptr().cast(), size_of_val(words)) }
 }
 
 #[inline(always)]
 pub(crate) fn cmyk_to_rgba(pixels: &mut [[u8; 4]]) {
-    // SAFETY: changes `pixels`.
+    // SAFETY: reads and writes `pixels`.
     unsafe { bun_image_cmyk_to_rgba8(pixels.as_mut_ptr().cast(), size_of_val(pixels)) }
 }
 
 #[inline(always)]
 pub(crate) fn modulate(pixels: &mut [[u8; 4]], brightness: f32, saturation: f32) {
     let (bytes, len) = (pixels.as_mut_ptr().cast(), size_of_val(pixels));
-    // SAFETY: changes `pixels`.
+    // SAFETY: reads and writes `pixels`.
     unsafe { bun_image_modulate_rgba8(bytes, len, brightness, saturation) }
 }
 
-/// The rows written.
+/// Returns the number of rows written.
 pub(crate) fn parse_mappings(
     bytes: &[u8],
     out: Columns<'_>,
@@ -149,7 +153,7 @@ impl Resizer {
         self.scratch.resize(size.div_ceil(4), 0);
         let (src, dst) = (src.as_ptr().cast(), dst.as_mut_ptr().cast());
         let scratch = self.scratch.as_mut_ptr().cast();
-        // SAFETY: the images have these sizes at least, and `scratch` the one that was asked for.
+        // SAFETY: the images have at least these sizes, and `scratch` has the requested size.
         unsafe { bun_image_resize_rgba8(src, src_w, src_h, dst, dst_w, dst_h, LANCZOS3, scratch) };
     }
 }

@@ -1,77 +1,90 @@
-//! From what the system says to features. Asks nothing itself.
+//! Decodes the answers of the operating system.
+use crate::features::{Arch, Feature, row};
 use core::ffi::CStr;
 
-/// All of a list have to be there. With an empty one, the system has no way to tell.
-struct Source {
-    /// Bits of `AT_HWCAP`, and from 64 on of `AT_HWCAP2`.
+/// Every entry of a list is required. An empty list means that the system cannot report it.
+pub struct Source {
+    /// Bits of `AT_HWCAP`, and from 64 on, of `AT_HWCAP2`.
     hwcap: &'static [u8],
     sysctl: &'static [&'static CStr],
     /// `PF_ARM_..` in winnt.h
     windows: &'static [u8],
 }
 
-const fn c_str(name: &str) -> &CStr {
-    match CStr::from_bytes_with_nul(name.as_bytes()) {
-        Ok(name) => name,
-        Err(_) => panic!(),
+const fn from(
+    hwcap: &'static [u8],
+    sysctl: &'static [&'static CStr],
+    windows: &'static [u8],
+) -> Source {
+    Source {
+        hwcap,
+        sysctl,
+        windows,
     }
 }
 
-macro_rules! from {
-    ([$($hwcap:expr),*] [$($sysctl:literal),*] [$($windows:literal),*]) => {
-        Source {
-            hwcap: &[$($hwcap),*],
-            sysctl: &[$(c_str(concat!("hw.optional.", $sysctl, "\0"))),*],
-            windows: &[$($windows),*],
-        }
-    };
+pub struct Aarch64;
+
+pub type Features = crate::features::Features<Aarch64>;
+
+impl Arch for Aarch64 {
+    type Source = Source;
+
+    #[rustfmt::skip]
+    const FEATURES: &'static [Feature<Source>] = &[
+        row!("neon", [], from(
+            &[0, 1], &[c"hw.optional.floatingpoint", c"hw.optional.neon"], &[19],
+        )),
+        row!("crc", [], from(&[7], &[c"hw.optional.armv8_crc32"], &[31])),
+        row!("lse", [], from(&[8], &[c"hw.optional.arm.FEAT_LSE"], &[34])),
+        row!("lse2", [], from(&[25], &[c"hw.optional.arm.FEAT_LSE2"], &[62])),
+        row!("lse128", ["lse"], from(&[64 + 47], &[], &[])),
+        row!("rcpc", [], from(&[15], &[c"hw.optional.arm.FEAT_LRCPC"], &[45])),
+        row!("rcpc2", ["rcpc"], from(&[26], &[c"hw.optional.arm.FEAT_LRCPC2"], &[])),
+        row!("rcpc3", ["rcpc2"], from(&[64 + 46], &[], &[])),
+        row!("flagm", [], from(&[27], &[c"hw.optional.arm.FEAT_FlagM"], &[])),
+        row!("flagm2", ["flagm"], from(&[64 + 7], &[c"hw.optional.arm.FEAT_FlagM2"], &[])),
+        row!("cssc", [], from(&[64 + 34], &[c"hw.optional.arm.FEAT_CSSC"], &[])),
+        row!("mops", [], from(&[64 + 43], &[], &[])),
+        row!("hbc", [], from(&[64 + 44], &[c"hw.optional.arm.FEAT_HBC"], &[])),
+        row!("aes", ["neon"], from(
+            &[3, 4], &[c"hw.optional.arm.FEAT_AES", c"hw.optional.arm.FEAT_PMULL"], &[30],
+        )),
+        row!("sha2", ["neon"], from(
+            &[5, 6], &[c"hw.optional.arm.FEAT_SHA1", c"hw.optional.arm.FEAT_SHA256"], &[30],
+        )),
+        row!("sha3", ["sha2"], from(
+            &[17, 21], &[c"hw.optional.arm.FEAT_SHA3", c"hw.optional.arm.FEAT_SHA512"], &[64, 65],
+        )),
+        row!("sm4", ["neon"], from(&[18, 19], &[], &[])),
+        row!("rdm", ["neon"], from(&[12], &[c"hw.optional.arm.FEAT_RDM"], &[43])),
+        row!("jsconv", ["neon"], from(&[13], &[c"hw.optional.arm.FEAT_JSCVT"], &[44])),
+        row!("fcma", ["neon"], from(&[14], &[c"hw.optional.arm.FEAT_FCMA"], &[])),
+        row!("dotprod", ["neon"], from(&[20], &[c"hw.optional.arm.FEAT_DotProd"], &[43])),
+        row!("fp16", ["neon"], from(&[9, 10], &[c"hw.optional.arm.FEAT_FP16"], &[67])),
+        row!("fhm", ["fp16"], from(&[23], &[c"hw.optional.arm.FEAT_FHM"], &[])),
+        row!("frintts", ["neon"], from(&[64 + 8], &[c"hw.optional.arm.FEAT_FRINTTS"], &[])),
+        row!("i8mm", ["neon"], from(&[64 + 13], &[c"hw.optional.arm.FEAT_I8MM"], &[66])),
+        row!("bf16", ["neon"], from(&[64 + 14], &[c"hw.optional.arm.FEAT_BF16"], &[68])),
+        row!("lut", ["neon"], from(&[64 + 49], &[], &[])),
+        row!("faminmax", ["neon"], from(&[64 + 50], &[], &[])),
+        row!("sve", ["fp16"], from(&[22], &[], &[46])),
+        row!("f32mm", ["sve"], from(&[64 + 10], &[], &[58])),
+        row!("f64mm", ["sve"], from(&[64 + 11], &[], &[59])),
+        row!("sve2", ["sve"], from(&[64 + 1], &[], &[47])),
+        row!("sve2p1", ["sve2"], from(&[64 + 36], &[], &[48])),
+        row!("sve2-aes", ["sve2", "aes"], from(&[64 + 2, 64 + 3], &[], &[49, 50])),
+        row!("sve2-bitperm", ["sve2"], from(&[64 + 4], &[], &[51])),
+        row!("sve2-sha3", ["sve2", "sha3"], from(&[64 + 5], &[], &[55])),
+        row!("sve2-sm4", ["sve2", "sm4"], from(&[64 + 6], &[], &[])),
+    ];
 }
 
-features! { "aarch64", Source;
-    "neon" = from!([0, 1] ["floatingpoint", "neon"] [19]);
-    "crc" = from!([7] ["armv8_crc32"] [31]);
-    "lse" = from!([8] ["arm.FEAT_LSE"] [34]);
-    "lse2" = from!([25] ["arm.FEAT_LSE2"] [62]);
-    "lse128" ("lse") = from!([64 + 47] [] []);
-    "rcpc" = from!([15] ["arm.FEAT_LRCPC"] [45]);
-    "rcpc2" ("rcpc") = from!([26] ["arm.FEAT_LRCPC2"] []);
-    "rcpc3" ("rcpc2") = from!([64 + 46] [] []);
-    "flagm" = from!([27] ["arm.FEAT_FlagM"] []);
-    "flagm2" ("flagm") = from!([64 + 7] ["arm.FEAT_FlagM2"] []);
-    "cssc" = from!([64 + 34] ["arm.FEAT_CSSC"] []);
-    "mops" = from!([64 + 43] [] []);
-    "hbc" = from!([64 + 44] ["arm.FEAT_HBC"] []);
-    "aes" ("neon") = from!([3, 4] ["arm.FEAT_AES", "arm.FEAT_PMULL"] [30]);
-    "sha2" ("neon") = from!([5, 6] ["arm.FEAT_SHA1", "arm.FEAT_SHA256"] [30]);
-    "sha3" ("sha2") = from!([17, 21] ["arm.FEAT_SHA3", "arm.FEAT_SHA512"] [64, 65]);
-    "sm4" ("neon") = from!([18, 19] [] []);
-    "rdm" ("neon") = from!([12] ["arm.FEAT_RDM"] [43]);
-    "jsconv" ("neon") = from!([13] ["arm.FEAT_JSCVT"] [44]);
-    "fcma" ("neon") = from!([14] ["arm.FEAT_FCMA"] []);
-    "dotprod" ("neon") = from!([20] ["arm.FEAT_DotProd"] [43]);
-    "fp16" ("neon") = from!([9, 10] ["arm.FEAT_FP16"] [67]);
-    "fhm" ("fp16") = from!([23] ["arm.FEAT_FHM"] []);
-    "frintts" ("neon") = from!([64 + 8] ["arm.FEAT_FRINTTS"] []);
-    "i8mm" ("neon") = from!([64 + 13] ["arm.FEAT_I8MM"] [66]);
-    "bf16" ("neon") = from!([64 + 14] ["arm.FEAT_BF16"] [68]);
-    "lut" ("neon") = from!([64 + 49] [] []);
-    "faminmax" ("neon") = from!([64 + 50] [] []);
-    "sve" ("fp16") = from!([22] [] [46]);
-    "f32mm" ("sve") = from!([64 + 10] [] [58]);
-    "f64mm" ("sve") = from!([64 + 11] [] [59]);
-    "sve2" ("sve") = from!([64 + 1] [] [47]);
-    "sve2p1" ("sve2") = from!([64 + 36] [] [48]);
-    "sve2-aes" ("sve2", "aes") = from!([64 + 2, 64 + 3] [] [49, 50]);
-    "sve2-bitperm" ("sve2") = from!([64 + 4] [] [51]);
-    "sve2-sha3" ("sve2", "sha3") = from!([64 + 5] [] [55]);
-    "sve2-sm4" ("sve2", "sm4") = from!([64 + 6] [] []);
-}
-
-/// Next to SVE, the compiler uses the SVE forms of these two, which are reported apart.
+/// With SVE, the compiler uses the SVE forms of these two, which are reported separately.
 fn with_sve_forms(features: Features, i8mm: bool, bf16: bool) -> Features {
-    let has_sve = features.0 >> index_of("sve") & 1 != 0;
-    let lacks = |name, has: bool| u64::from(has_sve && !has) << index_of(name);
-    Features(features.0 & !(lacks("i8mm", i8mm) | lacks("bf16", bf16)))
+    let has_sve = features.0 >> Features::index_of("sve") & 1 != 0;
+    let lacks = |name, has: bool| u64::from(has_sve && !has) << Features::index_of(name);
+    Features::from_bits(features.0 & !(lacks("i8mm", i8mm) | lacks("bf16", bf16)))
 }
 
 fn all<T>(list: &[T], has: impl Fn(&T) -> bool) -> bool {

@@ -1,8 +1,8 @@
 #![cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-use bun_simd_trusted::{AtomicFn, Features, detected, gate};
+use bun_simd_trusted::{AtomicFn, Features, Target, detected, if_supported};
 
 #[test]
-fn a_function_is_swapped_under_its_callers() {
+fn atomic_fn_with_a_concurrent_set() {
     static F: AtomicFn<fn(&[u8]) -> &u8> = AtomicFn::new(|bytes| &bytes[0]);
     std::thread::scope(|s| {
         s.spawn(|| F.set(|bytes| &bytes[1]));
@@ -12,21 +12,30 @@ fn a_function_is_swapped_under_its_callers() {
 }
 
 #[test]
-fn a_target_is_supported_if_its_features_are() {
-    let is_supported = cfg_select! {
-        target_arch = "x86_64" => [
-            gate::avx512_icl::is_supported(),
-            gate::avx512_skx::is_supported(),
-            gate::avx2::is_supported(),
-            gate::sse4::is_supported(),
-        ],
-        _ => [gate::neon::is_supported()],
-    };
-    let of_arch = gate::TARGETS
-        .iter()
-        .filter(|target| target.1 == std::env::consts::ARCH);
-    let has_features = of_arch.map(|target| detected().contains(Features::named(target.2)));
-    assert!(has_features.eq(is_supported));
+fn target_is_supported_if_its_features_are() {
+    for target in Target::ALL {
+        let is_for_this_arch = target.arch().is_none_or(|it| it == std::env::consts::ARCH);
+        let has_features = || detected().contains(Features::named(target.features()));
+        assert_eq!(target.is_supported(), is_for_this_arch && has_features());
+        assert!(target.is_supported() || !target.is_in_build());
+    }
+}
+
+#[test]
+fn gate_opens_if_the_features_are_detected() {
+    cfg_select! {
+        target_arch = "x86_64" => {
+            #[target_feature(enable = "avx512bw")]
+            fn kernel() {}
+            let (feature, gated) = ("avx512bw", if_supported!(["avx512bw"], fn(), kernel));
+        }
+        _ => {
+            #[target_feature(enable = "sve2")]
+            fn kernel() {}
+            let (feature, gated) = ("sve2", if_supported!(["sve2"], fn(), kernel));
+        }
+    }
+    assert_eq!(gated.is_some(), detected().names().any(|it| it == feature));
 }
 
 #[cfg(all(
@@ -36,11 +45,11 @@ fn a_target_is_supported_if_its_features_are() {
     not(target_feature = "sse3")
 ))]
 #[test]
-fn miri_has_what_the_program_is_compiled_for() {
+fn miri_has_the_features_in_the_build() {
     assert!(detected().names().eq(["fxsr", "sse", "sse2"]));
 }
 
-/// The names that Linux has for them. With none, it does not tell.
+/// The names in /proc/cpuinfo. None if Linux does not report the feature.
 #[cfg(all(target_os = "linux", not(miri)))]
 const IN_CPUINFO: &str = cfg_select! {
     target_arch = "x86_64" => {
@@ -62,7 +71,7 @@ const IN_CPUINFO: &str = cfg_select! {
 
 #[cfg(all(target_os = "linux", not(miri)))]
 #[test]
-fn linux_sees_the_same_features() {
+fn agrees_with_proc_cpuinfo() {
     let all = cfg_select! {
         target_arch = "x86_64" => bun_simd_trusted::x86_64::decode(
             |leaf, _| {

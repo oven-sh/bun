@@ -1,24 +1,17 @@
-//! What goes when a system leaves out one thing. Runs on any machine.
+//! Which features are lost when a system does not report one bit. Runs on any machine.
+#![cfg(not(miri))]
+use bun_simd_trusted::features::{Arch, Features};
 use bun_simd_trusted::{aarch64, x86_64};
 
-macro_rules! each_arch {
-    ($($arch:ident $without:ident $names:ident;)*) => {$(
-        fn $names(features: $arch::Features) -> Vec<&'static str> {
-            features.names().collect()
-        }
-
-        /// `all` without those in `gone` and those that need them.
-        fn $without(all: $arch::Features, gone: &[&str]) -> Vec<&'static str> {
-            let named = |name| $arch::Features::named(&[name]);
-            let needs = |name, other| named(name).contains(named(other));
-            all.names().filter(|name| !gone.iter().any(|other| needs(name, other))).collect()
-        }
-    )*};
+fn names<A: Arch>(features: Features<A>) -> Vec<&'static str> {
+    features.names().collect()
 }
 
-each_arch! {
-    x86_64 x86_64_without x86_64_names;
-    aarch64 aarch64_without aarch64_names;
+/// `all` without the features in `gone` and those that imply them.
+fn without<A: Arch>(all: Features<A>, gone: &[&str]) -> Vec<&'static str> {
+    let named = |name| Features::<A>::named(&[name]);
+    let is_gone = |name| gone.iter().any(|other| named(name).contains(named(other)));
+    all.names().filter(|name| !is_gone(name)).collect()
 }
 
 const EAX: usize = 0;
@@ -26,46 +19,69 @@ const EBX: usize = 1;
 const ECX: usize = 2;
 const EDX: usize = 3;
 
-macro_rules! cpuid {
-    ($($leaf:literal $subleaf:literal $register:ident: $($mask:literal $name:literal)*;)*) => {
-        &[$($(($leaf, $subleaf, $register, $mask, $name),)*)*]
-    };
-}
-
-/// As in clang's cpuid.h.
-const CPUID: &[(u32, u32, usize, u32, &str)] = cpuid! {
-    0x1 0 ECX:
-        0x0000_0001 "sse3" 0x0000_0002 "pclmulqdq" 0x0000_0200 "ssse3" 0x0000_1000 "fma"
-        0x0000_2000 "cmpxchg16b" 0x0008_0000 "sse4.1" 0x0010_0000 "sse4.2" 0x0040_0000 "movbe"
-        0x0080_0000 "popcnt" 0x0200_0000 "aes" 0x0400_0000 "xsave" 0x0800_0000 "xsave"
-        0x1000_0000 "avx" 0x2000_0000 "f16c";
-    0x1 0 EDX:
-        0x0100_0000 "fxsr" 0x0200_0000 "sse" 0x0400_0000 "sse2";
-    0x7 0 EBX:
-        0x0000_0008 "bmi1" 0x0000_0020 "avx2" 0x0000_0100 "bmi2" 0x0000_0200 "ermsb"
-        0x0001_0000 "avx512f" 0x0002_0000 "avx512dq" 0x0008_0000 "adx" 0x0020_0000 "avx512ifma"
-        0x0080_0000 "clflushopt" 0x1000_0000 "avx512cd" 0x2000_0000 "sha" 0x4000_0000 "avx512bw"
-        0x8000_0000 "avx512vl";
-    0x7 0 ECX:
-        0x0000_0002 "avx512vbmi" 0x0000_0040 "avx512vbmi2" 0x0000_0100 "gfni" 0x0000_0200 "vaes"
-        0x0000_0400 "vpclmulqdq" 0x0000_0800 "avx512vnni" 0x0000_1000 "avx512bitalg"
-        0x0000_4000 "avx512vpopcntdq";
-    0x7 0 EDX:
-        0x0000_0100 "avx512vp2intersect" 0x0080_0000 "avx512fp16";
-    0x7 1 EAX:
-        0x0000_0001 "sha512" 0x0000_0002 "sm3" 0x0000_0004 "sm4" 0x0000_0010 "avxvnni"
-        0x0000_0020 "avx512bf16" 0x0080_0000 "avxifma";
-    0x7 1 EDX:
-        0x0000_0010 "avxvnniint8" 0x0000_0020 "avxneconvert" 0x0000_0400 "avxvnniint16"
-        0x0008_0000 "avx10.1";
-    0xD 1 EAX:
-        0x0000_0001 "xsaveopt" 0x0000_0002 "xsavec";
-    0x24 0 EBX:
-        0x0004_0000 "avx10.1";
-    0x8000_0001 0 ECX:
-        0x0000_0001 "lahfsahf" 0x0000_0020 "lzcnt" 0x0000_0040 "sse4a" 0x0000_0100 "prfchw"
-        0x0000_0800 "xop" 0x0001_0000 "fma4" 0x0020_0000 "tbm";
-};
+/// Leaf, subleaf, register, mask and feature, as in clang's cpuid.h.
+const CPUID: &[(u32, u32, usize, u32, &str)] = &[
+    (0x1, 0, ECX, 0x0000_0001, "sse3"),
+    (0x1, 0, ECX, 0x0000_0002, "pclmulqdq"),
+    (0x1, 0, ECX, 0x0000_0200, "ssse3"),
+    (0x1, 0, ECX, 0x0000_1000, "fma"),
+    (0x1, 0, ECX, 0x0000_2000, "cmpxchg16b"),
+    (0x1, 0, ECX, 0x0008_0000, "sse4.1"),
+    (0x1, 0, ECX, 0x0010_0000, "sse4.2"),
+    (0x1, 0, ECX, 0x0040_0000, "movbe"),
+    (0x1, 0, ECX, 0x0080_0000, "popcnt"),
+    (0x1, 0, ECX, 0x0200_0000, "aes"),
+    (0x1, 0, ECX, 0x0400_0000, "xsave"),
+    (0x1, 0, ECX, 0x0800_0000, "xsave"),
+    (0x1, 0, ECX, 0x1000_0000, "avx"),
+    (0x1, 0, ECX, 0x2000_0000, "f16c"),
+    (0x1, 0, EDX, 0x0100_0000, "fxsr"),
+    (0x1, 0, EDX, 0x0200_0000, "sse"),
+    (0x1, 0, EDX, 0x0400_0000, "sse2"),
+    (0x7, 0, EBX, 0x0000_0008, "bmi1"),
+    (0x7, 0, EBX, 0x0000_0020, "avx2"),
+    (0x7, 0, EBX, 0x0000_0100, "bmi2"),
+    (0x7, 0, EBX, 0x0000_0200, "ermsb"),
+    (0x7, 0, EBX, 0x0001_0000, "avx512f"),
+    (0x7, 0, EBX, 0x0002_0000, "avx512dq"),
+    (0x7, 0, EBX, 0x0008_0000, "adx"),
+    (0x7, 0, EBX, 0x0020_0000, "avx512ifma"),
+    (0x7, 0, EBX, 0x0080_0000, "clflushopt"),
+    (0x7, 0, EBX, 0x1000_0000, "avx512cd"),
+    (0x7, 0, EBX, 0x2000_0000, "sha"),
+    (0x7, 0, EBX, 0x4000_0000, "avx512bw"),
+    (0x7, 0, EBX, 0x8000_0000, "avx512vl"),
+    (0x7, 0, ECX, 0x0000_0002, "avx512vbmi"),
+    (0x7, 0, ECX, 0x0000_0040, "avx512vbmi2"),
+    (0x7, 0, ECX, 0x0000_0100, "gfni"),
+    (0x7, 0, ECX, 0x0000_0200, "vaes"),
+    (0x7, 0, ECX, 0x0000_0400, "vpclmulqdq"),
+    (0x7, 0, ECX, 0x0000_0800, "avx512vnni"),
+    (0x7, 0, ECX, 0x0000_1000, "avx512bitalg"),
+    (0x7, 0, ECX, 0x0000_4000, "avx512vpopcntdq"),
+    (0x7, 0, EDX, 0x0000_0100, "avx512vp2intersect"),
+    (0x7, 0, EDX, 0x0080_0000, "avx512fp16"),
+    (0x7, 1, EAX, 0x0000_0001, "sha512"),
+    (0x7, 1, EAX, 0x0000_0002, "sm3"),
+    (0x7, 1, EAX, 0x0000_0004, "sm4"),
+    (0x7, 1, EAX, 0x0000_0010, "avxvnni"),
+    (0x7, 1, EAX, 0x0000_0020, "avx512bf16"),
+    (0x7, 1, EAX, 0x0080_0000, "avxifma"),
+    (0x7, 1, EDX, 0x0000_0010, "avxvnniint8"),
+    (0x7, 1, EDX, 0x0000_0020, "avxneconvert"),
+    (0x7, 1, EDX, 0x0000_0400, "avxvnniint16"),
+    (0x7, 1, EDX, 0x0008_0000, "avx10.1"),
+    (0xD, 1, EAX, 0x0000_0001, "xsaveopt"),
+    (0xD, 1, EAX, 0x0000_0002, "xsavec"),
+    (0x24, 0, EBX, 0x0004_0000, "avx10.1"),
+    (0x8000_0001, 0, ECX, 0x0000_0001, "lahfsahf"),
+    (0x8000_0001, 0, ECX, 0x0000_0020, "lzcnt"),
+    (0x8000_0001, 0, ECX, 0x0000_0040, "sse4a"),
+    (0x8000_0001, 0, ECX, 0x0000_0100, "prfchw"),
+    (0x8000_0001, 0, ECX, 0x0000_0800, "xop"),
+    (0x8000_0001, 0, ECX, 0x0001_0000, "fma4"),
+    (0x8000_0001, 0, ECX, 0x0020_0000, "tbm"),
+];
 
 const LEAVES: [(u32, u32); 6] = [
     (1, 0),
@@ -77,7 +93,7 @@ const LEAVES: [(u32, u32); 6] = [
 ];
 const INTEL: [u32; 4] = [0x24, 0x756E_6547, 0x6C65_746E, 0x4965_6E69];
 
-/// A CPU that has everything, but for what `change` does to the answers.
+/// A CPU that has everything, until `change` edits the answers.
 fn cpu(xcr0: u64, change: impl Fn((u32, u32), &mut [u32; 4])) -> x86_64::Features {
     let cpuid = |leaf, subleaf| {
         let mut answer = match (leaf, subleaf) {
@@ -93,7 +109,7 @@ fn cpu(xcr0: u64, change: impl Fn((u32, u32), &mut [u32; 4])) -> x86_64::Feature
 }
 
 fn all_but(gone: &[&str]) -> Vec<&'static str> {
-    x86_64_without(cpu(!0, |_, _| {}), gone)
+    without(cpu(!0, |_, _| {}), gone)
 }
 
 fn reported_in(is_in: impl Fn(u32, u32, usize, u32) -> bool) -> Vec<&'static str> {
@@ -102,7 +118,7 @@ fn reported_in(is_in: impl Fn(u32, u32, usize, u32) -> bool) -> Vec<&'static str
 }
 
 #[test]
-fn a_bit_of_cpuid() {
+fn each_cpuid_bit() {
     for leaf in LEAVES {
         for register in [EAX, EBX, ECX, EDX] {
             for mask in (0..32).map(|bit| 1 << bit) {
@@ -112,34 +128,26 @@ fn a_bit_of_cpuid() {
                     }
                 });
                 let gone = reported_in(|a, b, c, d| ((a, b), c, d) == (leaf, register, mask));
-                assert_eq!(
-                    x86_64_names(got),
-                    all_but(&gone),
-                    "{leaf:x?} {register} {mask:x}"
-                );
+                assert_eq!(names(got), all_but(&gone), "{leaf:x?} {register} {mask:x}");
             }
         }
     }
 }
 
 #[test]
-fn a_bit_of_xcr0() {
+fn each_xcr0_bit() {
     for bit in 0..64 {
         let gone: &[_] = match bit {
             1 | 2 => &["avx"],
             5..=7 => &["avx512f"],
             _ => &[],
         };
-        assert_eq!(
-            x86_64_names(cpu(!(1 << bit), |_, _| {})),
-            all_but(gone),
-            "{bit}"
-        );
+        assert_eq!(names(cpu(!(1 << bit), |_, _| {})), all_but(gone), "{bit}");
     }
 }
 
 #[test]
-fn the_last_leaves() {
+fn max_leaf() {
     for last in 0..=0x24 {
         let got = cpu(!0, |asked, answer| {
             if asked == (0, 0) {
@@ -147,23 +155,23 @@ fn the_last_leaves() {
             }
         });
         let gone = reported_in(|leaf, _, _, _| (last + 1..0x8000_0000).contains(&leaf));
-        assert_eq!(x86_64_names(got), all_but(&gone), "{last:x}");
+        assert_eq!(names(got), all_but(&gone), "{last:x}");
     }
 }
 
 #[test]
-fn the_subleaf_of_leaf_7() {
+fn max_subleaf_of_leaf_7() {
     let got = cpu(!0, |asked, answer| {
         if asked == (7, 0) {
             answer[EAX] = 0;
         }
     });
     let gone = reported_in(|leaf, subleaf, _, _| (leaf, subleaf) == (7, 1));
-    assert_eq!(x86_64_names(got), all_but(&gone));
+    assert_eq!(names(got), all_but(&gone));
 }
 
 #[test]
-fn the_extended_leaves() {
+fn max_extended_leaf() {
     for last in [0, 0x8000_0000, 0x9000_0000, !0] {
         let got = cpu(!0, |asked, answer| {
             if asked == (0x8000_0000, 0) {
@@ -171,24 +179,24 @@ fn the_extended_leaves() {
             }
         });
         let gone = reported_in(|leaf, _, _, _| leaf == 0x8000_0001);
-        assert_eq!(x86_64_names(got), all_but(&gone), "{last:x}");
+        assert_eq!(names(got), all_but(&gone), "{last:x}");
     }
 }
 
 #[test]
-fn versions_of_avx10() {
+fn avx10_versions() {
     for (version, gone) in [(0, &["avx10.1"][..]), (1, &["avx10.2"]), (2, &[]), (3, &[])] {
         let got = cpu(!0, |asked, answer| {
             if asked == (0x24, 0) {
                 answer[EBX] = 0x7_0000 | version;
             }
         });
-        assert_eq!(x86_64_names(got), all_but(gone), "{version}");
+        assert_eq!(names(got), all_but(gone), "{version}");
     }
 }
 
 #[test]
-fn what_intel_reports_and_lacks() {
+fn bits_to_ignore_on_intel() {
     let intel = |avx: u32| {
         cpu(!0, move |asked, answer| match asked {
             (0, 0) => *answer = INTEL,
@@ -196,15 +204,15 @@ fn what_intel_reports_and_lacks() {
             _ => {}
         })
     };
-    assert_eq!(x86_64_names(intel(1)), all_but(&["sse4a", "tbm"]));
+    assert_eq!(names(intel(1)), all_but(&["sse4a", "tbm"]));
     assert_eq!(
-        x86_64_names(intel(0)),
+        names(intel(0)),
         all_but(&["sse4a", "tbm", "avx", "bmi1", "bmi2"])
     );
 }
 
 #[test]
-fn avx_needs_the_system_to_use_xsave() {
+fn avx_needs_osxsave() {
     assert!(!all_but(&["xsave"]).contains(&"avx"));
 }
 
@@ -218,7 +226,7 @@ const HWCAP2: &str = "
     - rcpc3 lse128 - lut faminmax";
 
 #[test]
-fn a_bit_of_hwcap() {
+fn each_hwcap_bit() {
     let all = aarch64::from_hwcap(!0, !0);
     for bit in 0..64 {
         let gone = |names: &'static str| {
@@ -226,16 +234,12 @@ fn a_bit_of_hwcap() {
                 .split_whitespace()
                 .nth(bit)
                 .filter(|&name| name != "-");
-            aarch64_without(all, name.as_slice())
+            without(all, name.as_slice())
         };
         let but = !(1 << bit);
+        assert_eq!(names(aarch64::from_hwcap(but, !0)), gone(HWCAP), "{bit}");
         assert_eq!(
-            aarch64_names(aarch64::from_hwcap(but, !0)),
-            gone(HWCAP),
-            "{bit}"
-        );
-        assert_eq!(
-            aarch64_names(aarch64::from_hwcap(!0, but)),
+            names(aarch64::from_hwcap(!0, but)),
             gone(HWCAP2),
             "64 + {bit}"
         );
@@ -245,34 +249,34 @@ fn a_bit_of_hwcap() {
 #[test]
 fn neon() {
     assert_eq!(
-        aarch64_names(aarch64::from_hwcap(!0b10, !0)).join(" "),
+        names(aarch64::from_hwcap(!0b10, !0)).join(" "),
         "crc lse lse2 lse128 rcpc rcpc2 rcpc3 flagm flagm2 cssc mops hbc"
     );
 }
 
 #[test]
 fn flagm() {
-    assert!(!aarch64_names(aarch64::from_hwcap(!(1 << 27), !0)).contains(&"flagm2"));
+    assert!(!names(aarch64::from_hwcap(!(1 << 27), !0)).contains(&"flagm2"));
 }
 
 #[test]
-fn without_sve_nothing_needs_a_form_for_sve() {
-    let names = aarch64_names(aarch64::from_hwcap(0b11, 0b11 << 13));
-    assert_eq!(names, ["neon", "i8mm", "bf16"]);
-    let names = aarch64_names(aarch64::from_windows(|n| [19, 66, 68].contains(&n)));
-    assert_eq!(names, ["neon", "i8mm", "bf16"]);
+fn i8mm_and_bf16_without_sve() {
+    let features = aarch64::from_hwcap(0b11, 0b11 << 13);
+    assert_eq!(names(features), ["neon", "i8mm", "bf16"]);
+    let features = aarch64::from_windows(|n| [19, 66, 68].contains(&n));
+    assert_eq!(names(features), ["neon", "i8mm", "bf16"]);
 }
 
 #[test]
-fn with_sve_some_do() {
-    let names = aarch64_names(aarch64::from_hwcap(0b11 | 0b11 << 9 | 1 << 22, 0b11 << 13));
+fn i8mm_and_bf16_with_sve() {
+    let names = names(aarch64::from_hwcap(0b11 | 0b11 << 9 | 1 << 22, 0b11 << 13));
     assert_eq!(names, ["neon", "fp16", "sve"]);
 }
 
 #[test]
-fn a_number_of_windows() {
+fn each_windows_feature() {
     let all = aarch64::from_windows(|_| true);
-    assert_eq!(aarch64_names(all).len(), 22);
+    assert_eq!(names(all).len(), 22);
     for number in 0..100 {
         // As in winnt.h
         let gone: &[_] = match number {
@@ -299,7 +303,7 @@ fn a_number_of_windows() {
             _ => &[],
         };
         let got = aarch64::from_windows(|n| n != number);
-        assert_eq!(aarch64_names(got), aarch64_without(all, gone), "{number}");
+        assert_eq!(names(got), without(all, gone), "{number}");
     }
 }
 
@@ -312,28 +316,28 @@ const SYSCTL: &str = "
     arm.FEAT_SHA1=sha2 arm.FEAT_SHA256=sha2 arm.FEAT_SHA3=sha3 arm.FEAT_SHA512=sha3";
 
 #[test]
-fn a_name_of_sysctl() {
+fn each_sysctl_name() {
     let all = aarch64::from_sysctl(|_| true);
-    assert_eq!(aarch64_names(all).len(), 22);
+    assert_eq!(names(all).len(), 22);
     for (name, gone) in SYSCTL
         .split_whitespace()
         .filter_map(|it| it.split_once('='))
     {
         let name = format!("hw.optional.{name}");
         let got = aarch64::from_sysctl(|asked| asked.to_bytes() != name.as_bytes());
-        assert_eq!(aarch64_names(got), aarch64_without(all, &[gone]), "{name}");
+        assert_eq!(names(got), without(all, &[gone]), "{name}");
     }
 }
 
 #[test]
-fn the_large_cores_of_the_exynos_9810() {
-    let on = |chip: &[u8]| aarch64_names(aarch64::on_android(!0, !0, chip));
+fn exynos_9810() {
+    let on = |chip: &[u8]| names(aarch64::on_android(!0, !0, chip));
     assert_eq!(on(b"exynos9810\0\0"), ["neon", "crc", "aes", "sha2"]);
-    assert_eq!(on(b"\0\0"), aarch64_names(aarch64::from_hwcap(!0, !0)));
+    assert_eq!(on(b"\0\0"), names(aarch64::from_hwcap(!0, !0)));
 }
 
 #[test]
-fn darwin_saves_avx512_from_21_3_on() {
+fn avx512_needs_darwin_21_3() {
     let before = ["9.8.0", "19.6.0", "20.9.0", "21.2.0", "22", "x.y", ""];
     let since = ["21.3.0", "21.10.0", "22.0.0", "25.1.0"];
     for (releases, saved) in [(&before[..], 0x07), (&since, 0xE7)] {

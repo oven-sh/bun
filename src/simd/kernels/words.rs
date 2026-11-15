@@ -1,16 +1,31 @@
 //! Ports of highway_strings.cpp: words in as few bytes as they take.
 use core::mem::MaybeUninit;
 
+/// LLVM knows its range even when it comes out of a table, so bounds checks on it go away.
+#[derive(Clone, Copy)]
+#[repr(u8)]
+#[rustfmt::skip]
+enum Size { S0, S1, S2, S3, S4, S5, S6, S7, S8, S9, S10, S11, S12, S13, S14, S15, S16 }
+
+impl Size {
+    const fn new(size: u8) -> Self {
+        use Size::*;
+        [
+            S0, S1, S2, S3, S4, S5, S6, S7, S8, S9, S10, S11, S12, S13, S14, S15, S16,
+        ][size as usize]
+    }
+}
+
 struct PackedWordTables {
     packing: [[u8; 16]; 256],
     unpacking: [[u8; 16]; 256],
-    sizes: [bun_simd::UpTo16; 256],
+    sizes: [Size; 256],
 }
 static PACKED: PackedWordTables = {
     let mut t = PackedWordTables {
         packing: [[0x80; 16]; 256],
         unpacking: [[0x80; 16]; 256],
-        sizes: [bun_simd::UpTo16::new(0); 256],
+        sizes: [Size::S0; 256],
     };
     let mut control = 0;
     while control < 256 {
@@ -28,7 +43,7 @@ static PACKED: PackedWordTables = {
             }
             word += 1;
         }
-        t.sizes[control] = bun_simd::UpTo16::new(packed as usize);
+        t.sizes[control] = Size::new(packed);
         control += 1;
     }
     t
@@ -36,39 +51,39 @@ static PACKED: PackedWordTables = {
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
-    use isa::{U8, U32, x128};
+    use isa::{I32, U8, U32, x128};
 
     /// Returns the size. `data` gets 16 bytes for each group at most.
     #[inline(always)]
     fn pack_four(groups: &[[u32; 4]; 4], controls: &mut [u8; 4], data: &mut [u8; 64]) -> usize {
-        let lowest = U8::table(&[
+        let lowest = U8::repeat_16([
             0, 4, 8, 12, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
         ]);
         let (mut all_folded, mut all_codes) = ([[0; 16]; 4], [[0; 4]; 4]);
         for (i, words) in groups.as_flattened().as_chunks().0.iter().enumerate() {
             let word = U32::load(words);
-            let folded = word << 1 ^ (word.cast::<i32>() >> 31).cast();
-            let codes = folded.eq(0).to_vec()
-                + (folded >> 8).eq(0).to_vec()
-                + (folded >> 16).eq(0).to_vec()
+            let folded = word << 1 ^ (word.bitcast::<I32>() >> 31).bitcast::<U32>();
+            let codes = folded.simd_eq(0).to_vector()
+                + (folded >> 8).simd_eq(0).to_vector()
+                + (folded >> 16).simd_eq(0).to_vector()
                 + 3;
             folded
-                .cast::<u8>()
-                .store_to(&mut all_folded.as_flattened_mut()[i * U8::LANES..]);
+                .bitcast::<U8>()
+                .copy_to_slice(&mut all_folded.as_flattened_mut()[i * U8::LEN..]);
             codes
-                .cast::<u8>()
+                .bitcast::<U8>()
                 .lookup(lowest)
-                .cast::<u32>()
-                .store_to(&mut all_codes.as_flattened_mut()[i * U32::LANES..]);
+                .bitcast::<U32>()
+                .copy_to_slice(&mut all_codes.as_flattened_mut()[i * U32::LEN..]);
         }
         let mut at = 0;
         for i in 0..4 {
             let control = (all_codes[i][0].wrapping_mul(0x0104_1040) >> 24) as u8;
             x128::U8::load(&all_folded[i])
                 .lookup(x128::U8::load(&PACKED.packing[usize::from(control)]))
-                .store_to(&mut data[at..]);
+                .copy_to_slice(&mut data[at..]);
             controls[i] = control;
-            at += PACKED.sizes[usize::from(control)].get();
+            at += PACKED.sizes[usize::from(control)] as usize;
         }
         at
     }
@@ -107,11 +122,11 @@ pub(crate) mod simd {
     #[inline(always)]
     fn unpack_group(control: u8, data: &[u8], out: &mut [MaybeUninit<u32>; 4]) -> usize {
         use x128::{U8, U32};
-        let folded: U32 = U8::load_from(data)
+        let folded: U32 = U8::from_slice(data)
             .lookup(U8::load(&PACKED.unpacking[usize::from(control)]))
-            .cast();
-        ((folded >> 1) ^ (U32::zero() - (folded & 1))).write_to(out);
-        PACKED.sizes[usize::from(control)].get()
+            .bitcast();
+        ((folded >> 1) ^ (folded & 1).wrapping_neg()).write_to_slice(out);
+        PACKED.sizes[usize::from(control)] as usize
     }
 
     #[export]

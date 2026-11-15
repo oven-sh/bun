@@ -3,7 +3,7 @@ use core::mem::transmute_copy;
 use core::ops::FnPtr;
 use core::sync::atomic::{AtomicPtr, Ordering::Relaxed};
 
-/// Invariant in `F`, or a function that takes less could replace one that takes more.
+/// Invariant in `F`, so that `set` cannot store a function with shorter lifetime bounds.
 pub struct AtomicFn<F>(AtomicPtr<()>, PhantomData<fn(F) -> F>);
 
 impl<F: FnPtr> AtomicFn<F> {
@@ -19,7 +19,7 @@ impl<F: FnPtr> AtomicFn<F> {
 
     #[inline(always)]
     pub fn get(&self) -> F {
-        // SAFETY: nothing but an `F` is ever stored.
+        // SAFETY: only an `F` is ever stored.
         unsafe { transmute_copy(&self.0.load(Relaxed)) }
     }
 }

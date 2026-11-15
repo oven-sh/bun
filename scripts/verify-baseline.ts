@@ -110,7 +110,7 @@ interface RunTestOptions {
   /** Tee output live to the console while still capturing it for analysis */
   live?: boolean;
   executable?: string;
-  /** In the place of the baseline CPU. */
+  /** Overrides the baseline CPU. */
   cpu?: string;
 }
 
@@ -261,11 +261,12 @@ if (values["skip-emulation"]) {
 }
 
 if (values["simd-cpus"] && !values["skip-emulation"]) {
+  // +bmi1: QEMU 9.1 decodes `lzcnt` only with BMI1. The real CPU has both.
   const [oneForEachTarget, others] = isWindows
-    ? ["nhm hsw skx icx", "snb knl tnt cnl adl arl spr gnr dmr"]
+    ? ["nhm hsw skx icx", "snb tnt cnl adl arl spr gnr dmr"]
     : isAarch64
       ? ["cortex-a53", "cortex-a76 a64fx neoverse-v1 neoverse-n2 max"]
-      : ["Nehalem Haswell", "SandyBridge Opteron_G5 EPYC-Rome max"];
+      : ["Nehalem Haswell", "SandyBridge Opteron_G5,+bmi1 EPYC-Rome max"];
   const runner = ["test", "--run-simd-tests"];
   for (const cpu of `${oneForEachTarget} ${others}`.split(" ")) {
     await runTest(`bun_simd on ${cpu}: features`, [...runner, "probe"], { cpu });

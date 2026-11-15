@@ -1,12 +1,30 @@
-//! Every op of a target against what it means, and the drivers against plain loops.
+//! Every op of every target against plain code.
 #![cfg(not(miri))]
 #![forbid(unsafe_code)]
-use bun_simd::{Target, limit_to};
-use std::hint::black_box as bb;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering::Relaxed};
+mod common;
 
-pub struct Rng(u64);
-impl Rng {
+use bun_simd::{Int, Lane};
+use common::on_each_target;
+use std::array::from_fn;
+use std::fmt::Debug;
+use std::hint::black_box;
+
+trait Number: Lane + Ord + Debug + Into<i128> + TryFrom<i128> {
+    const BITS: u32 = 8 * size_of::<Self>() as u32;
+
+    /// `as`
+    fn wrapping_from(value: i128) -> Self {
+        let value = value.rem_euclid(1 << Self::BITS);
+        let negative = |_| Self::try_from(value - (1 << Self::BITS));
+        Self::try_from(value).or_else(negative).ok().unwrap()
+    }
+}
+
+impl<T: Lane + Ord + Debug + Into<i128> + TryFrom<i128>> Number for T {}
+
+struct Random(u64);
+
+impl Random {
     fn next(&mut self) -> u64 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
@@ -14,789 +32,358 @@ impl Rng {
         self.0
     }
 
-    /// Mostly values that are next to a power of two.
-    fn edgy(&mut self) -> u64 {
-        let r = self.next();
-        if r & 3 == 0 {
-            self.next()
-        } else {
-            ((1u64 << (r >> 8 & 63))
-                .wrapping_add(r >> 16 & 3)
-                .wrapping_sub(2))
-                ^ (r >> 20 & 1).wrapping_neg()
-        }
+    /// Mostly close to a power of two.
+    fn lanes<T: Number, const N: usize>(&mut self) -> [T; N] {
+        black_box(from_fn(|_| {
+            let bits = self.next();
+            let near = (1 << (bits >> 8 & 63)) + i128::from(bits >> 16 & 3) - 2;
+            T::wrapping_from(match bits & 7 {
+                0 | 1 => self.next().into(),
+                2..5 => near,
+                _ => !near,
+            })
+        }))
     }
 }
 
-const ROOM: usize = 4 * 4096;
+fn saturating_dot(a: [u8; 2], b: [i8; 2]) -> i16 {
+    let [first, second] = [0, 1].map(|i| i16::from(a[i]) * i16::from(b[i]));
+    first.saturating_add(second)
+}
 
 #[bun_simd::foreach_target]
 mod simd {
-    use bun_simd::Array;
-    use isa::{Lane, Lanes, Vec, spec};
+    use isa::{Mask, U8, Vector};
 
-    fn filled<T: Lane>(mut f: impl FnMut(usize) -> u64) -> Lanes<T> {
-        let mut lanes = Lanes::<T>::zeros();
-        lanes
-            .as_mut()
-            .iter_mut()
-            .enumerate()
-            .for_each(|(i, lane)| *lane = T::from_bits(f(i)));
-        lanes
+    fn lanewise<T: Number + Int<N>, const N: usize>(a: [T; N], b: [T; N]) {
+        let (x, y) = (Vector::from_array(a), Vector::from_array(b));
+        let is = |name: &str, got: Vector<T, N>, want: fn(i128, i128) -> i128| {
+            let want = from_fn(|i| T::wrapping_from(want(a[i].into(), b[i].into())));
+            assert_eq!(got.to_array(), want, "{name} {a:?} {b:?}");
+        };
+        is("add", x + y, |a, b| a + b);
+        is("sub", x - y, |a, b| a - b);
+        is("and", x & y, |a, b| a & b);
+        is("or", x | y, |a, b| a | b);
+        is("xor", x ^ y, |a, b| a ^ b);
+        is("not", !x, |a, _| !a);
+        is("neg", x.wrapping_neg(), |a, _| -a);
+        let mut assigned = x;
+        assigned += y;
+        assigned ^= x;
+        assigned -= y;
+        assigned |= x;
+        assigned &= y;
+        is("assign", assigned, |a, b| ((((a + b) ^ a) - b) | a) & b);
+        is("min", x.simd_min(y), i128::min);
+        is("max", x.simd_max(y), i128::max);
+
+        let holds = |name: &str, got: Mask<T, N>, want: fn(i128, i128) -> bool| {
+            let want: [bool; N] = from_fn(|i| want(a[i].into(), b[i].into()));
+            let bits = (0..N).map(|i| u64::from(want[i]) << i).sum();
+            let (first, last) = (
+                want.iter().position(|&it| it),
+                want.iter().rposition(|&it| it),
+            );
+            let (any, all) = (first.is_some(), !want.contains(&false));
+            let vector = want.map(|it| T::wrapping_from(-i128::from(it)));
+            let selected = from_fn(|i| if want[i] { a[i] } else { b[i] });
+            assert_eq!(got.to_bitmask(), bits, "{name} {a:?} {b:?}");
+            assert_eq!([got.first_set(), got.last_set()], [first, last], "{name}");
+            assert_eq!(
+                [got.any(), got.none(), got.all()],
+                [any, !any, all],
+                "{name}"
+            );
+            assert_eq!(got.to_vector().to_array(), vector, "{name}");
+            assert_eq!(got.select(x, y).to_array(), selected, "{name}");
+        };
+        holds("eq", x.simd_eq(y), |a, b| a == b);
+        holds("ne", x.simd_ne(y), |a, b| a != b);
+        holds("lt", x.simd_lt(y), |a, b| a < b);
+        holds("le", x.simd_le(y), |a, b| a <= b);
+        holds("gt", x.simd_gt(y), |a, b| a > b);
+        holds("ge", x.simd_ge(y), |a, b| a >= b);
+        let three = T::wrapping_from(3);
+        let (p, q) = (x.simd_gt(three), y.simd_gt(three));
+        holds("and", p & q, |a, b| a > 3 && b > 3);
+        holds("or", p | q, |a, b| a > 3 || b > 3);
+        holds("xor", p ^ q, |a, b| (a > 3) != (b > 3));
+        holds("not", !p, |a, _| a <= 3);
     }
 
-    /// An op on lanes against the same on numbers, for `a` in `firsts` and every `b`.
-    macro_rules! lane_ops {
-        ($name:ident $T:ty; $($op:literal |$a:ident, $b:ident| $vector:expr, $scalar:expr;)*) => {
-            fn $name(firsts: core::ops::Range<u64>) {
-                const N: usize = Vec::<$T>::LANES;
-                for first in firsts {
-                    for second in (0..1u64 << <$T>::BITS).step_by(N) {
-                        let xs = bb(filled::<$T>(|_| first));
-                        let ys = bb(filled::<$T>(|i| second + (i as u64 + first) % N as u64));
-                        $({
-                            let ($a, $b) = (Vec::<$T>::load(&xs), Vec::<$T>::load(&ys));
-                            let got = bb($vector.lanes());
-                            let want: Lanes<$T> = core::array::from_fn(|i| {
-                                let ($a, $b) = (xs[i], ys[i]);
-                                $scalar
-                            });
-                            assert!(got == want, "{} {xs:?} {ys:?}", $op);
-                        })*
-                    }
+    fn shifts<T: Number + Int<N>, const N: usize>(a: [T; N]) {
+        for bits in 0..T::BITS {
+            let (v, opaque) = (Vector::from_array(a), black_box(bits));
+            let left = a.map(|a| T::wrapping_from(a.into().wrapping_shl(bits)));
+            assert_eq!((v << opaque).to_array(), left);
+            let right = a.map(|a| T::wrapping_from(a.into() >> bits));
+            assert_eq!((v >> opaque).to_array(), right);
+        }
+    }
+
+    fn moves<T: Number + Int<N>, const N: usize>(a: [T; N], b: [T; N]) {
+        let (x, y, zero) = (Vector::load(&a), Vector::from_slice(&b), T::default());
+        let joined = |(first, second): (Vector<T, N>, Vector<T, N>)| {
+            [first.to_array(), second.to_array()].concat()
+        };
+        let in_turns: Vec<T> = a.iter().zip(&b).flat_map(|(&a, &b)| [a, b]).collect();
+        assert_eq!(joined(x.interleave(y)), in_turns);
+        let every_other = |first| a.iter().chain(&b).copied().skip(first).step_by(2);
+        let even_then_odd: Vec<T> = every_other(0).chain(every_other(1)).collect();
+        assert_eq!(joined(x.deinterleave(y)), even_then_odd);
+        let slid = |by| from_fn(|i: usize| i.checked_sub(by).map_or(zero, |i| a[i]));
+        assert_eq!(x.shift_elements_right::<1>(zero).to_array(), slid(1));
+        assert_eq!(x.shift_elements_right::<2>(zero).to_array(), slid(2));
+        assert_eq!(x.swap_pairs().to_array(), from_fn(|i| a[i ^ 1]));
+        assert_eq!(x.splat_last().to_array(), [a[N - 1]; N]);
+        assert_eq!(Vector::splat(a[0]).to_array(), [a[0]; N]);
+        assert_eq!(Vector::<T, N>::zero().to_array(), [zero; N]);
+        let first = from_fn::<T, N, _>(|i| if i == 0 { a[0] } else { zero });
+        assert_eq!(Vector::from_first(a[0]).to_array(), first);
+        let iota = from_fn::<T, N, _>(|i| T::wrapping_from(i as i128));
+        assert_eq!(Vector::<T, N>::iota().to_array(), iota);
+        assert_eq!(x[black_box(N - 1)], a[N - 1]);
+        let mut longer = vec![zero; N + 1];
+        y.copy_to_slice(&mut longer);
+        assert_eq!(longer, [&b[..], &[zero]].concat());
+    }
+
+    fn any_lanes<T: Number + Int<N>, const N: usize>(random: &mut Random) {
+        let (a, b) = (random.lanes::<T, N>(), random.lanes());
+        lanewise(a, b);
+        lanewise(a, a);
+        shifts(a);
+        moves(a, b);
+    }
+
+    #[bun_simd::foreach_width]
+    mod width {
+        use isa::{F32, I8, I16, I32, I64, U8, U16, U32, U64, Vector};
+        const N: usize = U8::LEN;
+
+        pub fn pairs_of_bytes() {
+            for (first, from) in (0..=255).flat_map(|a| (0..=255).step_by(N).map(move |b| (a, b))) {
+                let a: [u8; N] = black_box([first; N]);
+                let b: [u8; N] = black_box(from_fn(|i| from + i as u8));
+                lanewise(a, b);
+                lanewise(a.map(|a| a as i8), b.map(|b| b as i8));
+                let (x, y) = (U8::load(&a), U8::load(&b));
+                let each = |f: fn(u8, u8) -> u8| from_fn(|i| f(a[i], b[i]));
+                assert_eq!(x.saturating_add(y).to_array(), each(u8::saturating_add));
+                assert_eq!(x.saturating_sub(y).to_array(), each(u8::saturating_sub));
+                assert_eq!(x.abs_diff(y).to_array(), each(u8::abs_diff));
+                let average = each(|a, b| (u16::from(a) + u16::from(b)).div_ceil(2) as u8);
+                assert_eq!(x.average_round(y).to_array(), average);
+                let (low, high) = U16::widening_mul(x, y);
+                let products: [u16; N] = from_fn(|i| u16::from(a[i]) * u16::from(b[i]));
+                assert_eq!([low.to_array(), high.to_array()].concat(), products);
+                for last in first..=255 {
+                    let want = b.map(|b| if (first..=last).contains(&b) { 255 } else { 0 });
+                    let got = y.in_range(black_box(first..=last));
+                    assert_eq!(got.to_vector().to_array(), want);
                 }
             }
-        };
-    }
-
-    macro_rules! for_ints {
-        ($($name:ident $T:ty;)*) => {$(lane_ops! { $name $T;
-            "and" |a, b| a & b, a & b;
-            "or" |a, b| a | b, a | b;
-            "xor" |a, b| a ^ b, a ^ b;
-            "add" |a, b| a + b, a.wrapping_add(b);
-            "sub" |a, b| a - b, a.wrapping_sub(b);
-            "min" |a, b| a.min(b), a.min(b);
-            "max" |a, b| a.max(b), a.max(b);
-            "eq" |a, b| a.eq(b).to_vec(), if a == b { !0 } else { 0 };
-            "ne" |a, b| a.ne(b).to_vec(), if a != b { !0 } else { 0 };
-            "gt" |a, b| a.gt(b).to_vec(), if a > b { !0 } else { 0 };
-            "lt" |a, b| a.lt(b).to_vec(), if a < b { !0 } else { 0 };
-            "saturating_add" |a, b| a.saturating_add(b), a.saturating_add(b);
-            "saturating_sub" |a, b| a.saturating_sub(b), a.saturating_sub(b);
-            "and of masks" |a, b| (a.gt(b) & a.gt(3)).select(1, 0), (a > b && a > 3) as $T;
-            "or of masks" |a, b| (a.gt(b) | b.gt(3)).select(1, 0), (a > b || b > 3) as $T;
-            "xor, not" |a, b| (a.gt(3) ^ !b.gt(3)).select(1, 0), ((a > 3) != (b <= 3)) as $T;
-            "shifts" |a, b| ((a << 3) ^ (b >> 2)), (a << 3) ^ (b >> 2);
-            "select" |a, b| a.gt(b).select(a, b + 1), if a > b { a } else { b.wrapping_add(1) };
-        })*};
-    }
-
-    for_ints! { all_u8 u8; all_i8 i8; all_u16 u16; all_i16 i16; }
-
-    lane_ops! { more_u8 u8;
-        "widening_mul" |a, b| { let (x, y) = a.widening_mul(b); (x >> 4).truncate(y >> 4) },
-            ((u16::from(a) * u16::from(b)) >> 4) as u8;
-        "abs_diff" |a, b| a.abs_diff(b), a.abs_diff(b);
-        "average_round" |a, b| a.average_round(b), (u16::from(a) + u16::from(b)).div_ceil(2) as u8;
-    }
-
-    fn sum_of_products(a: i16, b: i16) -> i16 {
-        let ([a0, a1], [b0, b1]) = (a.to_le_bytes(), b.to_le_bytes().map(|b| b as i8));
-        let sum = i32::from(a0) * i32::from(b0) + i32::from(a1) * i32::from(b1);
-        sum.clamp(-32768, 32767) as i16
-    }
-
-    lane_ops! { more_i16 i16;
-        "mul" |a, b| (a.cast::<u16>() * b.cast()).cast::<i16>(), a.wrapping_mul(b);
-        "mul_add_pairs" |a, b| a.cast::<u8>().mul_add_pairs(b.cast()), sum_of_products(a, b);
-    }
-
-    #[export]
-    pub fn pairs_of_16_bits(from: u64, to: u64) {
-        all_u16(from..to);
-        all_i16(from..to);
-        more_i16(from..to);
-    }
-
-    /// The same text for the target and for the reference of its width.
-    macro_rules! same {
-        ($op:literal, |$m:ident| $e:expr) => {{
-            let got = {
-                use isa as $m;
-                $e
-            };
-            let want = {
-                use spec as $m;
-                $e
-            };
-            assert!(got == want, "{}: {got:?} {want:?}", $op);
-        }};
-    }
-
-    fn any_lanes<T: Lane + core::fmt::Debug>(r: &mut Rng) {
-        use core::ops::{Add, BitAnd, BitOr, BitXor, Sub};
-        let (a, b) = (bb(filled::<T>(|_| r.edgy())), bb(filled::<T>(|_| r.edgy())));
-        let list = |lanes: Lanes<T>| lanes.as_ref().to_vec();
-        macro_rules! both {
-            ($($op:ident)*) => {
-                $(same!("binary", |m| list(m::Vec::load(&a).$op(m::Vec::load(&b)).lanes()));)*
-            };
         }
-        both!(bitand bitor bitxor add sub min max saturating_add saturating_sub);
-        macro_rules! tests {
-            ($($op:ident)*) => {$(same!("test", |m| {
-                let (a, b) = (m::Vec::<T>::load(&a), m::Vec::<T>::load(&b));
-                let (mask, other) = (a.$op(b), (a + b).gt(b));
-                let combined = [mask & other, mask | other, mask ^ other, !mask];
-                (
-                    list(mask.to_vec().lanes()),
-                    [mask.any(), mask.all(), mask.none()],
-                    [mask.first_true(), mask.last_true()],
-                    combined.map(|mask| list(mask.select(a, b).lanes())),
-                )
-            });)*};
+
+        pub fn all_inputs() {
+            let distinct: [u8; N] = from_fn(|i| 100 + i as u8);
+            for index in (0..16).chain(128..=255) {
+                for lane in 0..N {
+                    let indices = from_fn(|i| if i == lane { index } else { 3 });
+                    let want = from_fn(|i| match usize::from(indices[i]) {
+                        index @ ..16 => distinct[i / 16 * 16 + index],
+                        _ => 0,
+                    });
+                    let got = U8::load(&distinct).lookup(U8::load(black_box(&indices)));
+                    assert_eq!(got.to_array(), want);
+                }
+            }
+            for bits in 0..1u64 << U32::LEN {
+                let want: Vec<u32> = (0..32).filter(|i| bits >> i & 1 != 0).collect();
+                let got = U32::iota().compress(black_box(bits | 0b101 << U32::LEN));
+                assert_eq!(got.to_array()[..want.len()], want);
+            }
+            for from in (0..=u16::MAX).step_by(N) {
+                let all: [u16; N] = black_box(from_fn(|i| from + i as u16));
+                let (a, b) = (U16::from_slice(&all), U16::from_slice(&all[N / 2..]));
+                assert_eq!(U8::narrow(a, b).to_array(), all.map(|it| it as u8));
+                let clamped = all.map(|it| (it as i16).clamp(0, 255) as u8);
+                let got = U8::saturating_narrow(a.bitcast::<I16>(), b.bitcast());
+                assert_eq!(got.to_array(), clamped);
+            }
+            for (bits, at) in
+                (0..1u64 << 16).flat_map(|it| (0..N).step_by(16).map(move |at| (it, at)))
+            {
+                let bits = bits << at;
+                let mask = U8::from_array(black_box(from_fn(|i| (bits >> i & 1) as u8))).simd_eq(1);
+                assert_eq!(mask.to_bitmask(), bits);
+                assert_eq!(mask.first_set(), bits.lowest_one().map(|it| it as usize));
+                assert_eq!(mask.last_set(), bits.highest_one().map(|it| it as usize));
+                assert_eq!(
+                    [mask.any(), mask.all()],
+                    [bits != 0, bits.count_ones() == N as u32]
+                );
+            }
         }
-        tests!(eq ne gt lt);
-        same!("interleave", |m| {
-            let (x, y) = m::Vec::<T>::load(&a).interleave(m::Vec::load(&b));
-            [list(x.lanes()), list(y.lanes())]
-        });
-        same!("splat, iota", |m| [
-            m::Vec::splat(a.as_ref()[0]),
-            m::Vec::iota()
-        ]
-        .map(|v| list(v.lanes())));
-        same!("cast", |m| (
-            m::Vec::<T>::load(&a).cast::<u8>().lanes(),
-            m::Vec::<T>::load(&a).cast::<u64>().lanes()
-        ));
-        for bits in 0..T::BITS {
-            same!("shifts", |m| {
-                let a = m::Vec::<T>::load(&a);
-                [a << bb(bits), a >> bb(bits)].map(|v| list(v.lanes()))
-            });
+
+        pub fn random_inputs(random: &mut Random) {
+            any_lanes::<u8, { U8::LEN }>(random);
+            any_lanes::<i8, { I8::LEN }>(random);
+            any_lanes::<u16, { U16::LEN }>(random);
+            any_lanes::<i16, { I16::LEN }>(random);
+            any_lanes::<u32, { U32::LEN }>(random);
+            any_lanes::<i32, { I32::LEN }>(random);
+            any_lanes::<u64, { U64::LEN }>(random);
+            any_lanes::<i64, { I64::LEN }>(random);
+
+            let (a, b) = (random.lanes::<u8, N>(), random.lanes::<i8, N>());
+            let (x, y) = (U8::load(&a), I8::load(&b));
+            let words = from_fn(|i| u64::from_le_bytes(a.as_chunks().0[i]));
+            assert_eq!(x.bitcast::<U64>().to_array(), words);
+            let sums = from_fn(|i| a[8 * i..][..8].iter().copied().map(u64::from).sum());
+            assert_eq!(U64::sums_of_8(x).to_array(), sums);
+            let dots = from_fn(|i| saturating_dot(a.as_chunks().0[i], b.as_chunks().0[i]));
+            assert_eq!(I16::saturating_pairwise_dot(x, y).to_array(), dots);
+            assert_eq!(U16::widen_lower(x).to_array(), from_fn(|i| a[i].into()));
+            let repeated = U8::repeat_16(*a.first_chunk().unwrap());
+            assert_eq!(repeated.to_array(), from_fn(|i| a[i % 16]));
+            let widened: I32 = Vector::from_slice(&a).cast();
+            assert_eq!(widened.to_array(), from_fn(|i| a[i].into()));
+            let is_negative = y.simd_lt(0).cast::<u8>().select(1, 0);
+            assert_eq!(is_negative.to_array(), b.map(|b| u8::from(b < 0)));
+
+            let (a, b) = (random.lanes::<i16, _>(), random.lanes::<i16, _>());
+            let (x, y) = (I16::load(&a), I16::load(&b));
+            assert_eq!((x * y).to_array(), from_fn(|i| a[i].wrapping_mul(b[i])));
+            let product = |i: usize| i32::from(a[i]) * i32::from(b[i]);
+            let dots = from_fn(|i| product(2 * i).wrapping_add(product(2 * i + 1)));
+            assert_eq!(I32::pairwise_dot(x, y).to_array(), dots);
+
+            let (a, [p, q]) = (random.lanes::<u16, _>(), random.lanes::<u16, 2>());
+            let range = p.min(q)..=p.max(q);
+            let want = a.map(|a| u16::from(range.contains(&a)));
+            assert_eq!(U16::load(&a).in_range(range).select(1, 0).to_array(), want);
+
+            let a = random.lanes();
+            let clamped = a.map(|a: i32| a.clamp(0, 255) as u8);
+            assert_eq!(I32::load(&a).saturating_cast_u8().to_array(), clamped);
+
+            let (a, b) = (a.map(|a| a >> 12), random.lanes().map(|b: i32| b >> 20));
+            let (x, y): (F32, F32) = (I32::load(&a).cast(), I32::load(&b).cast());
+            let each = |f: fn(f32, f32) -> f32| from_fn(|i| f(a[i] as f32, b[i] as f32));
+            assert_eq!((x + y).to_array(), each(|a, b| a + b));
+            assert_eq!((x - y).to_array(), each(|a, b| a - b));
+            assert_eq!((x * 0.333).to_array(), each(|a, _| a * 0.333));
+            let clamped = each(|a, _| a.clamp(-5.5, 300.25));
+            assert_eq!(x.simd_clamp(-5.5, 300.25).to_array(), clamped);
+            let got = x.mul_add(F32::splat(0.333), y).to_array();
+            let rounded = [each(|a, b| a.mul_add(0.333, b)), each(|a, b| a * 0.333 + b)];
+            assert!(rounded.contains(&got));
+            let truncated = a.map(|a| (a as f32 * 0.333) as i32);
+            assert_eq!((x * 0.333).to_i32().to_array(), truncated);
+
+            let (a, b) = (random.lanes::<u64, _>(), random.lanes::<u64, _>());
+            let (x, y) = (U64::load(&a), U64::load(&b));
+            let products = from_fn(|i| (a[i] & 0xFFFF_FFFF) * (b[i] & 0xFFFF_FFFF));
+            assert_eq!(x.mul_low32(y).to_array(), products);
+            assert_eq!(x.reduce_sum(), a.into_iter().fold(0, u64::wrapping_add));
+
+            let bits = random.next();
+            let parities = (0..64).fold(0, |parities, shift| parities ^ bits << shift);
+            assert_eq!(isa::prefix_xor(bits), parities);
+
+            let block = random.lanes();
+            let bits = |test: fn(u8) -> bool| (0..64).map(|i| u64::from(test(block[i])) << i).sum();
+            let got = U8::bitmasks(&block, |v| [v.simd_gt(100), (v & 3).simd_eq(0)]);
+            assert_eq!(got, [bits(|b| b > 100), bits(|b| b & 3 == 0)]);
         }
+    }
+
+    fn interleaved<const N: usize>(random: &mut Random)
+    where
+        u8: Int<N>,
+    {
+        let (quads, mut back) = (from_fn(|_| random.lanes()), [[0; 4]; N]);
+        let planes = Vector::<u8, N>::load_interleaved4(&quads);
+        for (i, plane) in planes.iter().enumerate() {
+            assert_eq!(plane.to_array(), quads.map(|quad| quad[i]));
+        }
+        Vector::store_interleaved4(planes, &mut back);
+        assert_eq!(back, quads);
+        let mut pairs = [[0; 2]; N];
+        Vector::store_interleaved2([planes[0], planes[3]], &mut pairs);
+        assert_eq!(pairs, quads.map(|[a, .., d]| [a, d]));
     }
 
     #[export]
     pub fn pairs_of_bytes() {
-        all_u8(0..256);
-        all_i8(0..256);
-        more_u8(0..256);
+        width::full::pairs_of_bytes();
+        width::x128::pairs_of_bytes();
     }
 
     #[export]
-    pub fn ops_on_all_inputs() {
-        const N: usize = isa::BYTES;
-        let distinct = filled::<u8>(|i| 100 + i as u64);
-
-        for first in 0..=255 {
-            for last in first..=255 {
-                if last - first < 255 {
-                    for from in (0..256).step_by(N) {
-                        same!("in_range", |m| (m::U8::iota() + (from as u8))
-                            .in_range(bb(first), bb(last))
-                            .bits());
-                    }
-                }
-            }
-        }
-        for index in (0..16).chain(128..=255) {
-            for lane in 0..N {
-                let indices = filled::<u8>(|i| if i == lane { index } else { 3 });
-                same!("lookup", |m| m::U8::load(&distinct)
-                    .lookup(m::U8::load(&indices))
-                    .lanes());
-            }
-        }
-        for bits in 0..1u64 << (N / 4) {
-            same!("compress", |m| (m::U32::iota() + 7)
-                .compress(bb(bits | 0b101 << (N / 4)))
-                .lanes()[..bits.count_ones() as usize]
-                .to_vec());
-        }
-        for lanes in 0..N / 4 {
-            same!("slide_up", |m| m::U8::load(&distinct)
-                .cast::<u32>()
-                .slide_up(bb(lanes))
-                .lanes());
-        }
-        for from in (0..1 << 16).step_by(N) {
-            let (a, b) = (
-                filled::<u16>(|i| (from + i) as u64),
-                filled::<u16>(|i| (from + N / 2 + i) as u64),
-            );
-            same!("narrowing", |m| {
-                let (a, b) = (m::U16::load(&a), m::U16::load(&b));
-                (
-                    a.truncate(b).lanes(),
-                    a.cast::<i16>().demote(b.cast()).lanes(),
-                )
-            });
-            for bits in 0..16 {
-                same!("shr", |m| (
-                    (m::U16::load(&a) >> bb(bits)).lanes(),
-                    (m::U16::load(&b).cast::<i16>() >> bb(bits)).lanes()
-                ));
-            }
-        }
-        // All masks of 16 lanes, in each place.
-        for bits in 0..1u64 << 16 {
-            for at in (0..N).step_by(16) {
-                let set = filled::<u8>(|i| bits << at >> i & 1);
-                same!("masks", |m| {
-                    let k = m::U8::load(&set).eq(1);
-                    (
-                        k.bits(),
-                        k.any(),
-                        k.all(),
-                        k.first_true(),
-                        k.last_true(),
-                        (!k).bits(),
-                    )
-                });
-            }
-        }
-        for len in 0..N {
-            let text = &distinct[..len];
-            same!("load_first", |m| m::U8::load_first(bb(text)).lanes());
-            same!("store_first", |m| {
-                let mut to = vec![0; len];
-                m::U8::load(&distinct).store_first(bb(&mut to));
-                to
-            });
-            same!("Short", |m| m::Short::load(bb(text)).map(|short| {
-                let mut to = vec![0; len];
-                m::Short::store(short.lanes + 1, &mut to);
-                let each: std::vec::Vec<_> = text
-                    .iter()
-                    .map(|&b| {
-                        let k = short.lanes.eq(b);
-                        (short.bits(k), short.first(k), short.last(k))
-                    })
-                    .collect();
-                (to, each, short.lanes.lanes())
-            }));
-        }
+    pub fn all_inputs() {
+        width::full::all_inputs();
+        width::x128::all_inputs();
     }
 
     #[export]
-    pub fn ops_on_random_inputs(rounds: u64) {
-        const N: usize = isa::BYTES;
-        let r = &mut Rng(88172645463325252);
+    pub fn random_inputs(rounds: usize) {
+        let random = &mut Random(88172645463325252);
         for _ in 0..rounds {
-            any_lanes::<u8>(r);
-            any_lanes::<i8>(r);
-            any_lanes::<u16>(r);
-            any_lanes::<i16>(r);
-            any_lanes::<u32>(r);
-            any_lanes::<i32>(r);
-            any_lanes::<u64>(r);
-            any_lanes::<i64>(r);
-            let (a, b) = (
-                bb(filled::<u64>(|_| r.edgy())),
-                bb(filled::<u64>(|_| r.edgy())),
-            );
-            same!("u64", |m| {
-                let (a, b) = (m::U64::load(&a), m::U64::load(&b));
-                (
-                    a.mul_low32(b).lanes(),
-                    a.swap_pairs().lanes(),
-                    a.reduce_sum(),
-                )
-            });
-            same!("u8", |m| {
-                let (a, b) = (m::U64::load(&a).cast::<u8>(), m::U64::load(&b).cast::<u8>());
-                let (x, y) = a.deinterleave(b);
-                (x.lanes(), y.lanes(), a.sums_of_8().lanes())
-            });
-            same!("i16", |m| m::U64::load(&a)
-                .cast::<i16>()
-                .mul_add_pairs(m::U64::load(&b).cast())
-                .lanes());
-            same!("32 bits", |m| {
-                let (a, b) = (
-                    m::U64::load(&a).cast::<i32>(),
-                    m::U64::load(&b).cast::<i32>(),
-                );
-                (
-                    a.min(b).lanes(),
-                    a.max(b).lanes(),
-                    a.cast::<u32>().min(b.cast()).lanes(),
-                    a.cast::<u32>().max(b.cast()).lanes(),
-                    (a >> 20).clamped_to_bytes(),
-                    a.clamped_to_bytes(),
-                )
-            });
-            let (first, last) = (r.edgy() as u16, r.edgy() as u16);
-            let (first, last) = (first.min(last).max(1), first.max(last).max(1));
-            same!("in_range", |m| m::U64::load(&a)
-                .cast::<u16>()
-                .in_range(first, last)
-                .to_vec()
-                .lanes());
-            same!("f32", |m| {
+            width::full::random_inputs(random);
+            width::x128::random_inputs(random);
+            any_lanes::<u8, 8>(random);
+            any_lanes::<u8, 64>(random);
+            any_lanes::<i32, 16>(random);
+            interleaved::<8>(random);
+            interleaved::<16>(random);
+            interleaved::<32>(random);
+            interleaved::<64>(random);
+        }
+    }
+
+    #[export]
+    pub fn all_dots() {
+        for a in (0..=u16::MAX).map(u16::to_le_bytes) {
+            for from in (0..=u16::MAX).step_by(U8::LEN / 2) {
                 let (x, y) = (
-                    m::F32::from_i32(m::U64::load(&a).cast::<i32>() >> 12),
-                    m::F32::from_i32(m::U64::load(&b).cast::<i32>() >> 20),
+                    isa::U16::splat(u16::from_le_bytes(a)),
+                    isa::U16::iota() + from,
                 );
-                let third = m::F32::splat(0.333);
-                [
-                    x + y,
-                    x - y,
-                    x * third,
-                    x.mul_add(third, y),
-                    x.clamp(-5.5, 300.25),
-                ]
-                .map(|v| (v * m::F32::splat(64.0)).to_i32().lanes())
-            });
-            same!("store_interleaved", |m| {
-                let mut to = [[0; 2]; N];
-                m::U64::load(&a)
-                    .cast::<u8>()
-                    .store_interleaved(m::U64::load(&b).cast(), &mut to);
-                to
-            });
-            let bits = (r.next() & 63) as u32;
-            same!("shr", |m| {
-                let a = m::U64::load(&a);
-                (
-                    (a >> bits).lanes(),
-                    (a.cast::<u32>() >> (bits & 31)).lanes(),
-                    (a.cast::<i32>() >> (bits & 31)).lanes(),
-                    (a.cast::<u8>() >> (bits & 7)).lanes(),
-                )
-            });
-            let block: [u8; 64] = core::array::from_fn(|_| r.next() as u8);
-            same!("bytes", |m| (
-                m::bits_of(&block, |v| [v.gt(100), (v & 3).eq(0)]),
-                m::U8::table(block.first_chunk().unwrap()).lanes(),
-                m::I32::load_bytes(block.first_chunk().unwrap()).lanes(),
-                m::prefix_xor(a[0])
-            ));
-            same!("whole", |m| {
-                let v = m::U8::load(block.first_chunk().unwrap());
-                (
-                    v.widen_lower().lanes(),
-                    v.cast::<u32>().first(),
-                    v.cast::<u32>().splat_last().lanes(),
-                    m::U32::from_first(a[0] as u32).lanes(),
-                )
-            });
-            same!("128 bits", |m| {
-                let v = m::x128::U8::load(block.first_chunk().unwrap());
-                (
-                    v.widen_lower().lanes(),
-                    v.cast::<u32>().first(),
-                    v.cast::<u32>().splat_last().lanes(),
-                    m::x128::U32::from_first(a[0] as u32).lanes(),
-                )
-            });
-        }
-    }
-
-    /// A page ends 128 bytes into it.
-    #[inline(never)]
-    fn around_end_of_page<T>(room: &mut [T]) -> &mut [T] {
-        let end = (4096 - room.as_ptr().addr() % 4096 + 4096) / size_of::<T>();
-        &mut room[end - 128 / size_of::<T>()..][..128 + 14 * isa::BYTES]
-    }
-
-    /// Far from the end of the page, and near it.
-    fn starts(alignments: usize) -> impl Iterator<Item = usize> {
-        let of_vector =
-            move |from: usize| (from..from + isa::BYTES).step_by(isa::BYTES / alignments);
-        of_vector(1).chain(of_vector(127 - isa::BYTES))
-    }
-
-    /// What the targets share with the reference, against plain code.
-    #[export]
-    pub fn shared_with_spec() {
-        use isa::{Short, U8};
-        const N: usize = isa::BYTES;
-        let distinct = filled::<u8>(|i| 100 + i as u64);
-        for len in 0..N {
-            let (text, mut to) = (&distinct[..len], vec![0; len]);
-            assert_eq!(
-                U8::load_first(bb(text)).lanes(),
-                filled::<u8>(|i| if i < len { 100 + i as u64 } else { 0 })
-            );
-            U8::load(&distinct).store_first(bb(&mut to));
-            assert_eq!(to, text);
-            let Some(short) = Short::load(bb(text)) else {
-                assert_eq!(len, 0);
-                continue;
-            };
-            Short::store(short.lanes + 1, &mut to);
-            assert!(to.iter().zip(text).all(|(&to, &from)| to == from + 1));
-            for i in 0..len {
-                let k = short.lanes.eq(text[i]);
-                assert_eq!(
-                    (short.bits(k), short.first(k), short.last(k)),
-                    (1 << i, Some(i), Some(i))
-                );
-            }
-            let (none, all) = (short.lanes.lt(100), short.lanes.lt(200));
-            assert_eq!(
-                (short.bits(none), short.first(none), short.last(none)),
-                (0, None, None)
-            );
-            assert_eq!(
-                (short.bits(all), short.first(all), short.last(all)),
-                ((1 << len) - 1, Some(0), Some(len - 1))
-            );
-            if len < N / 2 {
-                let wide: std::vec::Vec<u16> = text.iter().map(|&b| 0x700 | u16::from(b)).collect();
-                let lanes = Short::load(bb(&wide[..])).unwrap().lanes;
-                Short::store(lanes.truncate(lanes), &mut to);
-                assert_eq!(to, text);
+                let got = isa::I16::saturating_pairwise_dot(x.bitcast::<U8>(), y.bitcast());
+                let bytes = |b: u16| b.to_le_bytes().map(|b| b as i8);
+                let want = y.to_array().map(|b| saturating_dot(a, bytes(b)));
+                assert!(black_box(got.to_array()) == want, "{a:?} {from}");
             }
         }
-        assert_eq!(
-            (
-                isa::U32::iota().splat_last().lanes(),
-                (isa::U32::iota() + 5).first()
-            ),
-            ([N as u32 / 4 - 1; N / 4], 5)
-        );
-        let (x, y) = (isa::F32::splat(bb(7.0)), isa::F32::splat(bb(2.0)));
-        assert_eq!(
-            [x + y, x - y, x * y].map(|v| v.to_i32().lanes()[0]),
-            [9, 5, 14]
-        );
-        let mut pairs = [[0; 2]; N];
-        U8::load(&distinct).store_interleaved(U8::iota(), bb(&mut pairs));
-        assert_eq!(pairs, core::array::from_fn(|i| [distinct[i], i as u8]));
-        assert_eq!(
-            U8::load(&distinct).cast::<u64>().reduce_sum(),
-            distinct
-                .as_chunks()
-                .0
-                .iter()
-                .fold(0u64, |sum, &w| sum.wrapping_add(u64::from_le_bytes(w)))
-        );
-        let quads: [[u8; 4]; N] =
-            core::array::from_fn(|i| core::array::from_fn(|c| (c * N + i) as u8));
-        let (planes, mut back) = (U8::load_interleaved4(bb(&quads)), [[0; 4]; N]);
-        for c in 0..4 {
-            assert_eq!(planes[c].lanes(), filled::<u8>(|i| (c * N + i) as u64));
-        }
-        U8::store_interleaved4(planes, bb(&mut back));
-        assert_eq!(back, quads);
-        for bit in 0..64 {
-            let block = core::array::from_fn(|i| u8::from(i == bit));
-            assert_eq!(
-                isa::bits_of(bb(&block), |v| [v.eq(1), v.eq(0)]),
-                [1 << bit, !(1 << bit)]
-            );
-            assert_eq!(isa::prefix_xor(bb(1 << bit)), u64::MAX << bit);
-        }
     }
-
-    /// What surrounds the text matches too, so that looking at it shows.
-    #[export]
-    pub fn drivers(alignments: usize, step: usize) {
-        const N: usize = isa::BYTES;
-        let (mut buffer, mut out) = (vec![1u8; ROOM], vec![9u8; ROOM]);
-        let (buffer, out) = (
-            around_end_of_page(&mut buffer),
-            around_end_of_page(&mut out),
-        );
-        for start in starts(alignments) {
-            for len in (0..13 * N).step_by(step) {
-                buffer[start..start + len].fill(0);
-                for at in 0..=len {
-                    let other = at + (len - at) / 2;
-                    let hits = if at == len {
-                        0
-                    } else {
-                        (buffer[start + at], buffer[start + other]) = (1, 1);
-                        1 + usize::from(other != at)
-                    };
-                    let text = bb(&buffer[start..start + len]);
-                    assert_eq!(isa::find_first(text, |v| v.eq(1)), at);
-                    assert_eq!(isa::find_last(text, |v| v.eq(1)), other);
-                    assert_eq!(isa::count(text, |v| v.eq(1)), hits);
-                    assert_eq!(
-                        isa::find_first_within(&buffer[start..], len, |v| v.eq(1)),
-                        at
-                    );
-                    assert_eq!(isa::find_first_within(text, len + 3, |v| v.eq(1)), at);
-                    assert_eq!(
-                        isa::find_first_within(text, len / 2, |v| v.eq(1)),
-                        at.min(len / 2)
-                    );
-                    if at != len {
-                        (buffer[start + at], buffer[start + other]) = (0, 0);
-                    }
-                }
-                let from: std::vec::Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
-                for (from_len, to_len) in [(len, len), (len / 2, len), (len, len / 2)] {
-                    out.fill(255);
-                    isa::map(
-                        bb(&from[..from_len]),
-                        &mut out[start..start + to_len],
-                        |v| v + 1,
-                    );
-                    let done = from_len.min(to_len);
-                    assert!(out.iter().enumerate().all(|(i, &b)| b
-                        == if (start..start + done).contains(&i) {
-                            from[i - start] + 1
-                        } else {
-                            255
-                        }));
-                }
-                buffer[start..start + len].fill(1);
-            }
-        }
-        let mut wide = vec![1u16; ROOM];
-        let wide = around_end_of_page(&mut wide);
-        for start in starts(alignments).map(|start| start / 2) {
-            for len in (0..6 * N).step_by(step) {
-                wide[start..start + len].fill(0);
-                for at in 0..=len {
-                    if at != len {
-                        wide[start + at] = 1;
-                    }
-                    let text = bb(&wide[start..start + len]);
-                    assert_eq!(
-                        (
-                            isa::find_first(text, |v| v.eq(1)),
-                            isa::find_last(text, |v| v.eq(1))
-                        ),
-                        (at, at)
-                    );
-                    if at != len {
-                        wide[start + at] = 0;
-                    }
-                }
-                let from: std::vec::Vec<u16> = (0..len).map(|i| 300 + i as u16).collect();
-                isa::map(bb(&from), &mut wide[start..start + len], |v| v + 1);
-                isa::map_in_place(bb(&mut wide[start..start + len]), |v| v + 1);
-                assert!(wide.iter().enumerate().all(|(i, &w)| w
-                    == if (start..start + len).contains(&i) {
-                        from[i - start] + 2
-                    } else {
-                        1
-                    }));
-                wide[start..start + len].fill(1);
-            }
-        }
-        let long = vec![1u8; 600 * N + 5];
-        assert_eq!(isa::count(bb(&long), |v| v.eq(1)), long.len());
-    }
-
-    /// The same for memory that other threads may write to.
-    #[export]
-    pub fn drivers_on_shared_memory(alignments: usize, step: usize) {
-        const N: usize = isa::BYTES;
-        let (mut buffer, mut out) = (vec![1u8; ROOM], vec![9u8; ROOM]);
-        let buffer = &*AtomicU8::from_mut_slice(around_end_of_page(&mut buffer));
-        let out = &*AtomicU8::from_mut_slice(around_end_of_page(&mut out));
-        let fill =
-            |bytes: &[AtomicU8], byte: u8| bytes.iter().for_each(|to| to.store(byte, Relaxed));
-        for start in starts(alignments) {
-            for len in (0..13 * N).step_by(step) {
-                let text = bb(&buffer[start..start + len]);
-                fill(text, 0);
-                for at in 0..=len {
-                    let other = at + (len - at) / 2;
-                    let set = |byte| {
-                        if at != len {
-                            text[at].store(byte, Relaxed);
-                            text[other].store(byte, Relaxed);
-                        }
-                    };
-                    set(1);
-                    let hits = if at == len {
-                        0
-                    } else {
-                        1 + usize::from(other != at)
-                    };
-                    assert_eq!(
-                        (
-                            isa::find_first(text, |v| v.eq(1)),
-                            isa::find_last(text, |v| v.eq(1)),
-                            isa::count(text, |v| v.eq(1))
-                        ),
-                        (at, other, hits)
-                    );
-                    set(0);
-                }
-                let from: std::vec::Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
-                for (from_len, to_len) in [(len, len), (len / 2, len), (len, len / 2)] {
-                    fill(out, 255);
-                    let done = from_len.min(to_len);
-                    isa::map_to_shared(bb(&from[..from_len]), &out[start..start + to_len], |v| {
-                        v + 1
-                    });
-                    isa::map_to_shared(
-                        bb(&out[start..start + done]),
-                        &out[start..start + done],
-                        |v| v + 1,
-                    );
-                    assert!(out.iter().enumerate().all(|(i, b)| b.load(Relaxed)
-                        == if (start..start + done).contains(&i) {
-                            from[i - start] + 2
-                        } else {
-                            255
-                        }));
-                    let mut back = vec![255; len];
-                    isa::map(bb(&out[start..start + done]), &mut back, |v| v - 2);
-                    assert!(back[..done] == from[..done] && back[done..].iter().all(|&b| b == 255));
-                }
-                fill(text, 1);
-            }
-        }
-        let long: std::vec::Vec<_> = (0..600 * N + 5).map(|_| AtomicU8::new(1)).collect();
-        assert_eq!(isa::count(bb(&long[..]), |v| v.eq(1)), long.len());
-    }
-
-    /// One byte comes and goes, and one stays. The search comes from the side of the first.
-    #[export]
-    pub fn race(
-        text: &[AtomicU8],
-        flickers: usize,
-        rounds: usize,
-    ) -> std::vec::Vec<(usize, usize)> {
-        let is_before = text[flickers + 1..]
-            .iter()
-            .any(|byte| byte.load(Relaxed) == 1);
-        let mut found = std::vec::Vec::new();
-        for _ in 0..rounds {
-            let at = if is_before {
-                isa::find_first(text, |v| v.eq(1))
-            } else {
-                isa::find_last(text, |v| v.eq(1))
-            };
-            found.push((at, isa::count(text, |v| v.eq(1))));
-        }
-        found
-    }
-}
-
-/// Runs `test` on each target that this machine has.
-fn on_each_target(test: impl Fn(Target) + Sync) {
-    std::thread::scope(|s| {
-        for &target in Target::ALL.iter().filter(|target| target.is_supported()) {
-            let test = &test;
-            let thread = std::thread::Builder::new().name(target.name().into());
-            let run = move || {
-                limit_to(target);
-                test(target);
-            };
-            thread.spawn_scoped(s, run).unwrap();
-        }
-    });
 }
 
 #[test]
 fn pairs_of_bytes() {
-    on_each_target(|_| simd::pairs_of_bytes());
+    on_each_target(simd::pairs_of_bytes);
 }
 
 #[test]
-fn ops_on_all_inputs() {
-    on_each_target(|_| simd::ops_on_all_inputs());
+fn all_inputs() {
+    on_each_target(simd::all_inputs);
 }
 
 #[test]
-fn ops_on_random_inputs() {
-    on_each_target(|_| simd::ops_on_random_inputs(300));
+fn random_inputs() {
+    on_each_target(|| simd::random_inputs(300));
 }
 
 #[test]
-fn shared_with_spec() {
-    on_each_target(|_| simd::shared_with_spec());
+#[ignore = "slow"]
+fn more_random_inputs() {
+    on_each_target(|| simd::random_inputs(50_000));
 }
 
 #[test]
-fn some_pairs_of_16_bits() {
-    on_each_target(|_| {
-        for first in [0, 0x7F, 0xFF, 0x7FFE, 0xFF7F, 0xFFFC] {
-            simd::pairs_of_16_bits(first, first + 4);
-        }
-    });
-}
-
-#[test]
-#[ignore = "takes minutes"]
-fn all_pairs_of_16_bits() {
-    const PARTS: u64 = 16;
-    std::thread::scope(|s| {
-        for part in 0..PARTS {
-            let [from, to] = [part, part + 1].map(|part| (part << 16) / PARTS);
-            s.spawn(move || {
-                on_each_target(|target| {
-                    if !is_portable(target) {
-                        simd::pairs_of_16_bits(from, to);
-                    }
-                })
-            });
-        }
-    });
-}
-
-fn is_portable(target: Target) -> bool {
-    target.name().starts_with("portable")
-}
-
-/// From one length to the next. The portable targets are slow.
-fn step(target: Target) -> usize {
-    if is_portable(target) { 29 } else { 1 }
-}
-
-#[test]
-fn drivers() {
-    on_each_target(|target| simd::drivers(2, step(target)));
-}
-
-#[test]
-fn drivers_on_shared_memory() {
-    on_each_target(|target| simd::drivers_on_shared_memory(2, step(target)));
-}
-
-#[test]
-#[ignore = "takes minutes"]
-fn more_of_the_others() {
-    on_each_target(|target| {
-        simd::ops_on_random_inputs(100_000);
-        simd::drivers(16, step(target));
-        simd::drivers_on_shared_memory(16, step(target));
-    });
-}
-
-#[test]
-fn searches_next_to_a_writer() {
-    const CASES: [(usize, usize, usize); 6] = [
-        (3, 0, 2),
-        (7, 5, 1),
-        (13, 2, 9),
-        (40, 30, 3),
-        (1200, 500, 900),
-        (1200, 700, 300),
-    ];
-    on_each_target(|_| {
-        for (len, flickers, stays) in CASES {
-            let text: Vec<_> = (0..len)
-                .map(|i| AtomicU8::new(u8::from(i == stays)))
-                .collect();
-            let done = AtomicBool::new(false);
-            let found = std::thread::scope(|s| {
-                s.spawn(|| {
-                    while !done.load(Relaxed) {
-                        text[flickers].fetch_xor(1, Relaxed);
-                    }
-                });
-                let found = simd::race(&text, flickers, 2000);
-                done.store(true, Relaxed);
-                found
-            });
-            for (at, count) in found {
-                assert!(at == flickers || at == stays, "{at}");
-                assert!(count == 1 || count == 2, "{count}");
-            }
-        }
-    });
+#[ignore = "slow"]
+fn all_dots() {
+    on_each_target(simd::all_dots);
 }

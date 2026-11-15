@@ -1318,14 +1318,14 @@ bun::N_AVX3_ZEN4::OddBlocksImpl        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, 
 
 # ----------------------------------------------------------------------------
 # The copies of a `mod simd` with #[bun_simd::foreach_target]. Gate: if_supported! in
-# src/simd/trusted/gate.rs, which lists the features of each target.
+# src/simd/trusted/gate.rs. src/simd/trusted/target.rs lists the features of each target.
 # ----------------------------------------------------------------------------
-*bun_simd_*::simd::avx2::*        [AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ]
-*bun_simd_*::simd::avx512_skx::*  [AVX, AVX2, AVX512BW, AVX512CD, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ]
-*bun_simd_*::simd::avx512_icl::*  [AVX, AVX2, AVX512BW, AVX512CD, AVX512DQ, AVX512F, AVX512VL, AVX512_BITALG, AVX512_VBMI, AVX512_VBMI2, AVX512_VNNI, AVX512_VPOPCNTDQ, BMI1, BMI2, F16C, FMA, GFNI, LZCNT, PCLMULQDQ]
-_R*bun_simd_*4simd4avx2*          [AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ]
-_R*bun_simd_*4simd10avx512_skx*   [AVX, AVX2, AVX512BW, AVX512CD, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ]
-_R*bun_simd_*4simd10avx512_icl*   [AVX, AVX2, AVX512BW, AVX512CD, AVX512DQ, AVX512F, AVX512VL, AVX512_BITALG, AVX512_VBMI, AVX512_VBMI2, AVX512_VNNI, AVX512_VPOPCNTDQ, BMI1, BMI2, F16C, FMA, GFNI, LZCNT, PCLMULQDQ]
+*::simd::avx2::*        [AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ]
+*::simd::avx512_skx::*  [AVX, AVX2, AVX512BW, AVX512CD, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ]
+*::simd::avx512_icl::*  [AVX, AVX2, AVX512BW, AVX512CD, AVX512DQ, AVX512F, AVX512VL, AVX512_BITALG, AVX512_VBMI, AVX512_VBMI2, AVX512_VNNI, AVX512_VPOPCNTDQ, BMI1, BMI2, F16C, FMA, GFNI, LZCNT, PCLMULQDQ]
+_R*4simd4avx2*          [AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ]
+_R*4simd10avx512_skx*   [AVX, AVX2, AVX512BW, AVX512CD, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2, F16C, FMA, LZCNT, PCLMULQDQ]
+_R*4simd10avx512_icl*   [AVX, AVX2, AVX512BW, AVX512CD, AVX512DQ, AVX512F, AVX512VL, AVX512_BITALG, AVX512_VBMI, AVX512_VBMI2, AVX512_VNNI, AVX512_VPOPCNTDQ, BMI1, BMI2, F16C, FMA, GFNI, LZCNT, PCLMULQDQ]
 
 # ----------------------------------------------------------------------------
 # src/simd/conformance/probe.rs: one instruction of each feature. Gate: bun_simd::detected().

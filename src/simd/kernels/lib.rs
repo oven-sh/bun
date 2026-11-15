@@ -1,5 +1,9 @@
-//! Bun's kernels on `bun_simd`. They give what those on Highway give.
+//! Bun's kernels on `bun_simd`, with the same results as those on Highway.
 #![forbid(unsafe_code)]
+// For `#[inline(always)]` in the copies.
+#![recursion_limit = "512"]
+// The copies for the targets look alike.
+#![cfg_attr(mordant, allow(reimplemented_helper))]
 
 mod hex;
 mod image;
@@ -20,36 +24,13 @@ pub use sourcemap::simd::parse_mappings;
 pub use sourcemap::{Columns, MappingsState};
 pub use strings::simd::{
     bswap32, bswap32_shared, copy_u16_to_u8, count_char, count_char_shared, fill_shared_with_mask,
-    fill_with_mask, index_of_char_within, lower_ascii16, scanner_run_stops,
+    fill_with_mask, first_non_ascii16, index_of_any_char, index_of_char, index_of_char_shared,
+    index_of_char_within, index_of_either, index_of_html_escape_char8, index_of_html_escape_char16,
+    index_of_interesting_character_in_string_literal, index_of_newline_or_non_ascii,
+    last_index_of_char, last_index_of_char_shared, last_index_of_slash, lower_ascii16,
+    scanner_run_stops,
 };
 pub use words::simd::{pack_words, unpack_words};
-
-use core::sync::atomic::AtomicU8;
-
-macro_rules! searches {
-    ($($name:ident = $kernel:ident(text: &[$Unit:ty] $(, $arg:ident: $ty:ty)?);)*) => {$(
-        #[inline(always)]
-        pub fn $name(text: &[$Unit] $(, $arg: $ty)?) -> Option<usize> {
-            let at = strings::simd::$kernel(text $(, $arg)?);
-            (at != text.len()).then_some(at)
-        }
-    )*};
-}
-
-searches! {
-    index_of_char = index_of_char(text: &[u8], needle: u8);
-    index_of_char_shared = index_of_char_shared(text: &[AtomicU8], needle: u8);
-    last_index_of_char = last_index_of_char(text: &[u8], needle: u8);
-    last_index_of_char_shared = last_index_of_char_shared(text: &[AtomicU8], needle: u8);
-    index_of_either = index_of_either(text: &[u8], chars: [u8; 2]);
-    index_of_any_char = index_of_any_char(text: &[u8], chars: &[u8]);
-    index_of_interesting_character_in_string_literal = string_literal(text: &[u8], quote: u8);
-    index_of_newline_or_non_ascii = newline_or_non_ascii(text: &[u8]);
-    index_of_html_escape_char8 = index_of_html_escape_char8(text: &[u8]);
-    index_of_html_escape_char16 = index_of_html_escape_char16(text: &[u16]);
-    first_non_ascii16 = first_non_ascii16(text: &[u16]);
-    last_index_of_slash = last_index_of_slash(text: &[u8]);
-}
 
 #[inline(always)]
 pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {

@@ -21,28 +21,28 @@ async function run(...args: (string | number)[]) {
 
 const probe = hasRunner ? await run("probe") : undefined;
 const baseline = isArm64 ? "neon" : "sse4";
-// The portable targets are left out of a program that is compiled for a better one.
+// A program that is compiled for a better target has no portable copies.
 const targets = probe?.values("target").filter(target => !target.startsWith("portable")) ?? [];
 
 describe.skipIf(!hasRunner)("bun_simd", () => {
-  test("an instruction of each feature that is detected runs", () => {
+  test("an instruction of each detected feature runs", () => {
     expect(probe!.values("feature")).toContain(isArm64 ? "neon" : "sse4.2");
     expect(targets.at(-1)).toBe(baseline);
     expect({ last: probe!.lines.at(-1), exitCode: probe!.exitCode }).toMatchObject({ exitCode: 0 });
   });
 
-  test.skipIf(!isCI)("what every machine of CI has is detected", () => {
+  test.skipIf(!isCI)("detects what every CI machine has", () => {
     const features = isArm64 ? ["lse", "aes", "dotprod"] : ["avx2", "bmi2", "aes"];
     expect(probe!.values("feature")).toEqual(expect.arrayContaining(features));
   });
 
-  test.skipIf(!isMacOS)("macOS sees the same", () => {
+  test.skipIf(!isMacOS)("agrees with sysctl", () => {
     const [name, feature] = isArm64 ? ["hw.optional.arm.FEAT_I8MM", "i8mm"] : ["hw.optional.avx512f", "avx512f"];
     const { stdout } = Bun.spawnSync({ cmd: ["sysctl", "-n", name] });
     expect(probe!.values("feature").includes(feature)).toBe(stdout.toString().trim() === "1");
   });
 
-  test.concurrent.each(targets)("%s gives what Highway gives", async target => {
+  test.concurrent.each(targets)("%s matches Highway", async target => {
     const rounds = isDebug || isASAN ? 60 : 10_000;
     const { lines, exitCode } = await run("check", target, 1, rounds);
     const byDefault = target === "avx512_skx" ? "avx2" : target;
@@ -50,20 +50,20 @@ describe.skipIf(!hasRunner)("bun_simd", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("a limit above the CPU gives the best that it has", async () => {
+  test("a limit above the CPU picks its best target", async () => {
     const { values, exitCode } = await run("check", "avx512_icl", 2, 1);
     expect(values("chosen")).toEqual([`${targets.find(target => target !== "avx512_skx")} ${targets[0]}`]);
     expect(exitCode).toBe(0);
   });
 
-  test("a limit below the build gives the baseline", async () => {
+  test("a limit below the build picks the baseline", async () => {
     const { values, exitCode } = await run("check", "portable", 3, 1);
     expect(values("chosen")).toEqual([`${baseline} ${baseline}`]);
     expect(exitCode).toBe(0);
   });
 });
 
-// Prints tables and judges nothing. `getSimdBenchmarkStep()` in .buildkite/ci.ts runs it.
+// Prints tables and asserts nothing about them. `getSimdBenchmarkStep()` in .buildkite/ci.ts runs it.
 describe.skipIf(!hasRunner || !process.env.BUN_SIMD_BENCHMARK)("benchmark", () => {
   async function times(...args: string[]) {
     const { lines, exitCode } = await run(...args);
@@ -88,7 +88,7 @@ describe.skipIf(!hasRunner || !process.env.BUN_SIMD_BENCHMARK)("benchmark", () =
     console.log(`${availableParallelism()} x ${cpus()[0].model}\n${probe!.values("feature").join(" ")}\n`);
   });
 
-  // Next to no kernel has a copy for avx512_skx.
+  // Few kernels have a copy for avx512_skx.
   test.each(targets.filter(target => target !== "avx512_skx"))(
     "kernels on %s",
     async target => {

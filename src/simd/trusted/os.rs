@@ -1,9 +1,9 @@
-//! The questions to the CPU and to the system.
+//! Queries the CPU and the operating system.
 
 cfg_select! {
     any(miri, target_env = "sgx") => {
-        pub(crate) fn ask() -> crate::Features {
-            crate::Features::OF_BUILD
+        pub(crate) fn query() -> crate::Features {
+            crate::Features::IN_BUILD
         }
     }
     target_arch = "x86_64" => {
@@ -19,7 +19,7 @@ cfg_select! {
             unsafe { _xgetbv(0) }
         }
 
-        pub(crate) fn ask() -> crate::Features {
+        pub(crate) fn query() -> crate::Features {
             let saved = xcr0();
             #[cfg(target_vendor = "apple")]
             let saved = crate::x86_64::saved_by_darwin(
@@ -40,18 +40,18 @@ cfg_select! {
         const AT_HWCAP: c_ulong = 16;
         const AT_HWCAP2: c_ulong = 26;
 
-        // SAFETY: takes any number.
+        // SAFETY: accepts any number.
         unsafe extern "C" {
             safe fn getauxval(key: c_ulong) -> c_ulong;
         }
 
         #[cfg(target_os = "linux")]
-        pub(crate) fn ask() -> crate::Features {
+        pub(crate) fn query() -> crate::Features {
             crate::aarch64::from_hwcap(getauxval(AT_HWCAP), getauxval(AT_HWCAP2))
         }
 
         #[cfg(target_os = "android")]
-        pub(crate) fn ask() -> crate::Features {
+        pub(crate) fn query() -> crate::Features {
             use core::ffi::{c_char, c_int};
             const PROP_VALUE_MAX: usize = 92;
             unsafe extern "C" {
@@ -61,7 +61,7 @@ cfg_select! {
                 ) -> c_int;
             }
             let mut value = [0; PROP_VALUE_MAX];
-            // SAFETY: the name ends with a zero, and a value has up to `PROP_VALUE_MAX` bytes.
+            // SAFETY: the name is NUL-terminated, and a value has up to `PROP_VALUE_MAX` bytes.
             unsafe { __system_property_get(c"ro.arch".as_ptr(), &mut value) };
             crate::aarch64::on_android(getauxval(AT_HWCAP), getauxval(AT_HWCAP2), &value)
         }
@@ -77,34 +77,34 @@ cfg_select! {
                 fn elf_aux_info(key: c_int, value: &mut c_ulong, size: c_int) -> c_int;
             }
             let mut value = 0;
-            // SAFETY: that is the size of `value`.
+            // SAFETY: `size` is the size of `value`.
             let status = unsafe { elf_aux_info(key, &mut value, size_of::<c_ulong>() as c_int) };
             if status == 0 { value } else { 0 }
         }
 
-        pub(crate) fn ask() -> crate::Features {
+        pub(crate) fn query() -> crate::Features {
             crate::aarch64::from_hwcap(aux(AT_HWCAP), aux(AT_HWCAP2))
         }
     }
     target_vendor = "apple" => {
-        pub(crate) fn ask() -> crate::Features {
+        pub(crate) fn query() -> crate::Features {
             crate::aarch64::from_sysctl(darwin::is_set)
         }
     }
     target_os = "windows" => {
-        // SAFETY: takes any number.
+        // SAFETY: accepts any number.
         #[link(name = "kernel32")]
         unsafe extern "system" {
             safe fn IsProcessorFeaturePresent(feature: u32) -> i32;
         }
 
-        pub(crate) fn ask() -> crate::Features {
+        pub(crate) fn query() -> crate::Features {
             crate::aarch64::from_windows(|feature| IsProcessorFeaturePresent(feature) != 0)
         }
     }
     _ => {
-        pub(crate) fn ask() -> crate::Features {
-            crate::Features::OF_BUILD
+        pub(crate) fn query() -> crate::Features {
+            crate::Features::IN_BUILD
         }
     }
 }
@@ -113,7 +113,7 @@ cfg_select! {
 mod darwin {
     use core::ffi::{CStr, c_char, c_int, c_void};
 
-    /// Empty if there is no such name, or not enough room.
+    /// Empty if the name is unknown or `value` is too small.
     pub(super) fn sysctl<'a>(name: &CStr, value: &'a mut [u8]) -> &'a [u8] {
         unsafe extern "C" {
             fn sysctlbyname(
@@ -125,7 +125,7 @@ mod darwin {
             ) -> c_int;
         }
         let (old, mut len) = (value.as_mut_ptr().cast(), value.len());
-        // SAFETY: the name ends with a zero, `len` is the size of `value`, and nothing is set.
+        // SAFETY: the name is NUL-terminated, `len` is the size of `value`, and nothing is set.
         let status = unsafe { sysctlbyname(name.as_ptr(), old, &mut len, core::ptr::null(), 0) };
         let len = if status == 0 { len } else { 0 };
         value.get(..len).unwrap_or_default()

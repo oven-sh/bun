@@ -76,29 +76,29 @@ fn decode_vlq(sextets: &[u8; 80], cont: u64, p: &mut usize, end: usize) -> i32 {
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
-    use isa::{I32, U8, U32, x128};
+    use isa::{I8, I32, U8, U32, x128};
 
     fn shuffle_decode(sextets: &[u8; 80], at: usize, shuffle: &[u8; 16]) -> [i16; 8] {
-        use x128::{U8, U16};
-        let gathered: U16 = U8::load_from(&sextets[at..at + 16])
+        use x128::{I16, U8, U16};
+        let gathered: U16 = U8::from_slice(&sextets[at..at + 16])
             .lookup(U8::load(shuffle))
-            .cast();
+            .bitcast();
         let raw = gathered & 0x001F | (gathered & 0x1F00) >> 3;
-        let sign = U16::zero() - (raw & 1);
-        ((raw >> 1 ^ sign) - sign).cast::<i16>().lanes()
+        let sign = (raw & 1).wrapping_neg();
+        ((raw >> 1 ^ sign) - sign).bitcast::<I16>().to_array()
     }
 
     fn prefix_sum(v: I32) -> I32 {
-        let mut v: U32 = v.cast();
-        v = v + v.slide_up(1);
-        v = v + v.slide_up(2);
-        if U32::LANES > 4 {
-            v = v + v.slide_up(4);
+        let mut v: U32 = v.bitcast();
+        v += v.shift_elements_right::<1>(0);
+        v += v.shift_elements_right::<2>(0);
+        if U32::LEN > 4 {
+            v += v.shift_elements_right::<4>(0);
         }
-        if U32::LANES > 8 {
-            v = v + v.slide_up(8);
+        if U32::LEN > 8 {
+            v += v.shift_elements_right::<8>(0);
         }
-        v.cast()
+        v.bitcast()
     }
 
     /// Returns the rows written and the offset for the scalar decoder to resume at.
@@ -109,8 +109,8 @@ pub(crate) mod simd {
         sources_count: i32,
         state: &mut MappingsState,
     ) -> (usize, usize) {
-        let n = U8::LANES;
-        let k = I32::LANES;
+        let n = U8::LEN;
+        let k = I32::LEN;
         let cap = out.src_idx.len();
         let (generated, original, sources) = (
             &mut out.generated[..cap],
@@ -131,25 +131,28 @@ pub(crate) mod simd {
 
         let (mut pos, mut rows) = (0, 0);
         'blocks: while let Some(block) = bytes.get(pos..pos + n) {
-            let input = U8::load_from(block);
+            let input = U8::from_slice(block);
             let (hi, lo) = (input >> 4, input & 0x0F);
-            let not_b64 = (U8::table(&LUT_LO).lookup(lo) & U8::table(&LUT_HI).lookup(hi)).ne(0);
-            let roll = U8::table(&LUT_ROLL).lookup(hi + input.eq(b'/').to_vec());
+            let not_b64 =
+                (U8::repeat_16(LUT_LO).lookup(lo) & U8::repeat_16(LUT_HI).lookup(hi)).simd_ne(0);
+            let roll = U8::repeat_16(LUT_ROLL).lookup(hi + input.simd_eq(b'/').to_vector());
             let sx = not_b64.select(0xFF, input + roll);
-            let is_semi = input.eq(b';');
-            let is_delim = input.eq(b',') | is_semi;
+            let is_semi = input.simd_eq(b';');
+            let is_delim = input.simd_eq(b',') | is_semi;
             let is_invalid = not_b64 & !is_delim;
-            sx.store_to(&mut sextets);
-            let delim_bits = is_delim.bits();
-            let cont_bits = ((sx & 0x20).ne(0) & !not_b64).bits();
+            sx.copy_to_slice(&mut sextets);
+            let delim_bits = is_delim.to_bitmask();
+            let cont_bits = ((sx & 0x20).simd_ne(0) & !not_b64).to_bitmask();
             let (semi_bits, invalid_bits) = if (is_semi | is_invalid).none() {
                 (0, 0)
             } else {
-                (is_semi.bits(), is_invalid.bits())
+                (is_semi.to_bitmask(), is_invalid.to_bitmask())
             };
 
-            let sign = U8::zero() - (sx & 1);
-            ((sx >> 1 ^ sign) - sign).cast::<i8>().store_to(&mut deltas);
+            let sign = (sx & 1).wrapping_neg();
+            ((sx >> 1 ^ sign) - sign)
+                .bitcast::<I8>()
+                .copy_to_slice(&mut deltas);
 
             'fast: {
                 if (cont_bits | semi_bits | invalid_bits | (delim_bits ^ comma5)) & mask5 == 0
@@ -197,7 +200,7 @@ pub(crate) mod simd {
                 }
                 let (mut dm, mut cm, mut bp, mut m) = (delim_bits, cont_bits, 0usize, 0usize);
                 for column in &mut columns {
-                    I32::zero().store_to(column);
+                    I32::zero().copy_to_slice(column);
                 }
                 loop {
                     let len = dm.trailing_zeros();
@@ -230,18 +233,18 @@ pub(crate) mod simd {
                 if rows + m > cap {
                     break 'fast;
                 }
-                let column = |c: usize| I32::load_from(&columns[c]);
+                let column = |c: usize| I32::from_slice(&columns[c]);
                 let col = prefix_sum(column(0)) + s.gen_col;
                 let src = prefix_sum(column(1)) + s.src_idx;
                 let line = prefix_sum(column(2)) + s.orig_line;
                 let ocol = prefix_sum(column(3)) + s.orig_col;
                 if (col | src | (I32::splat(last_source) - src) | line | ocol)
-                    .lt(0)
+                    .simd_lt(0)
                     .any()
                 {
                     break 'fast;
                 }
-                s.needs_sort |= column(0).lt(0).any();
+                s.needs_sort |= column(0).simd_lt(0).any();
 
                 let (g_lo, g_hi) = I32::splat(s.gen_line).interleave(col);
                 let (o_lo, o_hi) = line.interleave(ocol);
@@ -252,33 +255,32 @@ pub(crate) mod simd {
                         generated[rows..rows + k].as_flattened_mut(),
                         original[rows..rows + k].as_flattened_mut(),
                     );
-                    g_lo.write_to(g);
-                    g_hi.write_to(&mut g[k..]);
-                    o_lo.write_to(o);
-                    o_hi.write_to(&mut o[k..]);
-                    src.write_to(&mut sources[rows..]);
+                    g_lo.write_to_slice(g);
+                    g_hi.write_to_slice(&mut g[k..]);
+                    o_lo.write_to_slice(o);
+                    o_hi.write_to_slice(&mut o[k..]);
+                    src.write_to_slice(&mut sources[rows..]);
                     if let Some(names) = &mut names {
-                        I32::splat(name).write_to(&mut names[rows..]);
+                        I32::splat(name).write_to_slice(&mut names[rows..]);
                     }
                 } else {
-                    let (g, o) = ([g_lo.lanes(), g_hi.lanes()], [o_lo.lanes(), o_hi.lanes()]);
+                    let (g, o) = (
+                        [g_lo.to_array(), g_hi.to_array()],
+                        [o_lo.to_array(), o_hi.to_array()],
+                    );
                     generated[rows..rows + m]
                         .as_flattened_mut()
                         .write_copy_of_slice(&g.as_flattened()[..2 * m]);
                     original[rows..rows + m]
                         .as_flattened_mut()
                         .write_copy_of_slice(&o.as_flattened()[..2 * m]);
-                    sources[rows..rows + m].write_copy_of_slice(&src.lanes()[..m]);
+                    sources[rows..rows + m].write_copy_of_slice(&src.to_array()[..m]);
                     if let Some(names) = &mut names {
                         names[rows..rows + m].fill(MaybeUninit::new(name));
                     }
                 }
-                (s.gen_col, s.src_idx, s.orig_line, s.orig_col) = (
-                    col.lanes()[m - 1],
-                    src.lanes()[m - 1],
-                    line.lanes()[m - 1],
-                    ocol.lanes()[m - 1],
-                );
+                (s.gen_col, s.src_idx, s.orig_line, s.orig_col) =
+                    (col[m - 1], src[m - 1], line[m - 1], ocol[m - 1]);
                 rows += m;
                 pos += bp;
                 s.fast_blocks += 1;

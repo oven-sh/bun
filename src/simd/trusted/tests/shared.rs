@@ -1,8 +1,8 @@
 //! Each access touches its bytes and no others.
 #![cfg(all(unix, not(miri), any(target_arch = "x86_64", target_arch = "aarch64")))]
 #![feature(portable_simd)]
-use bun_simd_trusted::{Features, detected};
-use core::simd::{Simd, ToBytes};
+use bun_simd_trusted::{Features, detected, shared::*};
+use core::simd::Simd;
 use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
 const ROOM: usize = 1 << 16;
@@ -41,59 +41,113 @@ fn changed(room: &[AtomicU8]) -> Vec<usize> {
         .collect()
 }
 
-macro_rules! whole {
-    ($($feature:literal $T:ty: $load:ident $store:ident;)*) => {$(
-        #[test]
-        #[allow(unused_unsafe)]
-        fn $load() {
-            use bun_simd_trusted::shared::{$load, $store};
-            const N: usize = size_of::<$T>();
-            if !detected().contains(Features::named(&[$feature])) {
-                return;
-            }
-            let room = fenced();
-            for start in [0, 1, 77, ROOM - 3 * N - 1, ROOM - 3 * N] {
-                let group: &[[AtomicU8; N]; 3] = room[start..].as_chunks().0.first_chunk().unwrap();
-                reset(room);
-                let ones = <$T>::from_ne_bytes([255; N].into());
-                // SAFETY: the CPU has the feature.
-                let loaded = unsafe {
-                    let loaded = [$load::<3, 0>(group), $load::<3, 1>(group), $load::<3, 2>(group)];
-                    $store::<3, 0>(ones, group);
-                    $store::<3, 2>(ones, group);
-                    loaded
-                };
-                let loaded = loaded.map(|v| <[u8; N]>::from(v.to_ne_bytes()));
-                let before: Vec<_> = (start..start + 3 * N).map(|i| (i % 251) as u8).collect();
-                assert_eq!(loaded.as_flattened(), before);
-                let stored = (start..start + N).chain(start + 2 * N..start + 3 * N);
-                assert_eq!(changed(room), stored.collect::<Vec<_>>());
-            }
+type Group<const N: usize> = [[AtomicU8; N]; 3];
+
+fn whole<T: AsBytes<N>, const N: usize>(
+    feature: &str,
+    loads: [unsafe fn(&Group<N>) -> T; 3],
+    stores: [unsafe fn(T, &Group<N>); 2],
+) {
+    if !detected().contains(Features::named(&[feature])) {
+        return;
+    }
+    let room = fenced();
+    for start in [0, 1, 77, ROOM - 3 * N - 1, ROOM - 3 * N] {
+        let group = room[start..].as_chunks().0.first_chunk().unwrap();
+        reset(room);
+        // SAFETY: the CPU has the feature.
+        let loaded = loads.map(|load| unsafe { load(group) }.to_bytes());
+        for store in stores {
+            // SAFETY: the CPU has the feature.
+            unsafe { store(T::from_bytes([255; N]), group) };
         }
-    )*};
+        let before: Vec<_> = (start..start + 3 * N).map(|i| (i % 251) as u8).collect();
+        assert_eq!(loaded.as_flattened(), before);
+        let stored = (start..start + N).chain(start + 2 * N..start + 3 * N);
+        assert_eq!(changed(room), stored.collect::<Vec<_>>());
+    }
+}
+
+trait AsBytes<const N: usize> {
+    fn from_bytes(bytes: [u8; N]) -> Self;
+    fn to_bytes(self) -> [u8; N];
+}
+
+impl AsBytes<4> for u32 {
+    fn from_bytes(bytes: [u8; 4]) -> Self {
+        Self::from_ne_bytes(bytes)
+    }
+    fn to_bytes(self) -> [u8; 4] {
+        self.to_ne_bytes()
+    }
+}
+
+impl AsBytes<8> for u64 {
+    fn from_bytes(bytes: [u8; 8]) -> Self {
+        Self::from_ne_bytes(bytes)
+    }
+    fn to_bytes(self) -> [u8; 8] {
+        self.to_ne_bytes()
+    }
+}
+
+impl<const N: usize> AsBytes<N> for Simd<u8, N> {
+    fn from_bytes(bytes: [u8; N]) -> Self {
+        bytes.into()
+    }
+    fn to_bytes(self) -> [u8; N] {
+        self.into()
+    }
+}
+
+const BASELINE: &str = if cfg!(target_arch = "x86_64") {
+    "sse2"
+} else {
+    "neon"
+};
+
+#[test]
+fn bytes_4() {
+    let loads = [load4::<3, 0>, load4::<3, 1>, load4::<3, 2>];
+    whole(BASELINE, loads, [store4::<3, 0>, store4::<3, 2>]);
+}
+
+#[test]
+fn bytes_8() {
+    let loads = [load8::<3, 0>, load8::<3, 1>, load8::<3, 2>];
+    whole(BASELINE, loads, [store8::<3, 0>, store8::<3, 2>]);
+}
+
+#[test]
+fn bytes_16() {
+    let loads = [load16::<3, 0>, load16::<3, 1>, load16::<3, 2>];
+    whole(BASELINE, loads, [store16::<3, 0>, store16::<3, 2>]);
 }
 
 #[cfg(target_arch = "x86_64")]
-whole! {
-    "sse2" u32: load4 store4;
-    "sse2" u64: load8 store8;
-    "sse2" Simd<u8, 16>: load16 store16;
-    "avx" Simd<u8, 16>: load16_vex store16_vex;
-    "avx" Simd<u8, 32>: load32 store32;
-    "avx512f" Simd<u8, 64>: load64 store64;
+#[test]
+fn bytes_16_vex() {
+    let loads = [load16_vex::<3, 0>, load16_vex::<3, 1>, load16_vex::<3, 2>];
+    whole("avx", loads, [store16_vex::<3, 0>, store16_vex::<3, 2>]);
 }
 
-#[cfg(target_arch = "aarch64")]
-whole! {
-    "neon" u32: load4 store4;
-    "neon" u64: load8 store8;
-    "neon" Simd<u8, 16>: load16 store16;
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn bytes_32() {
+    let loads = [load32::<3, 0>, load32::<3, 1>, load32::<3, 2>];
+    whole("avx", loads, [store32::<3, 0>, store32::<3, 2>]);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn bytes_64() {
+    let loads = [load64::<3, 0>, load64::<3, 1>, load64::<3, 2>];
+    whole("avx512f", loads, [store64::<3, 0>, store64::<3, 2>]);
 }
 
 #[cfg(target_arch = "x86_64")]
 #[test]
 fn masked() {
-    use bun_simd_trusted::shared::{load_fitting, store_fitting};
     if !detected().contains(Features::named(&["avx512bw"])) {
         return;
     }
@@ -111,11 +165,11 @@ fn masked() {
             });
             // SAFETY: the CPU has the feature.
             unsafe {
-                assert_eq!(load_fitting(text).to_array(), want);
-                store_fitting(Simd::splat(255), text);
+                assert_eq!(load64_masked(text).to_array(), want);
+                store64_masked(Simd::splat(255), text);
                 // With what was stored still in a register.
                 assert!(
-                    load_fitting(text)[len.min(64)..]
+                    load64_masked(text)[len.min(64)..]
                         .iter()
                         .all(|&lane| lane == 0)
                 );

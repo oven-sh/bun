@@ -1,15 +1,15 @@
 use core::mem::MaybeUninit;
 
-/// A multiple of the size of a page.
+/// A multiple of the page size.
 const SIZE: usize = 1 << 18;
 
-/// Memory between pages that cannot be touched.
+/// Memory between inaccessible pages.
 pub(crate) struct Room(&'static mut [MaybeUninit<u8>; SIZE]);
 
 #[cfg(unix)]
 fn map() -> *mut u8 {
     use libc::{MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE, PROT_READ, PROT_WRITE};
-    // SAFETY: maps new addresses, and opens part of them.
+    // SAFETY: maps new addresses, and makes a part of them accessible.
     unsafe {
         let anywhere = core::ptr::null_mut();
         let all = libc::mmap(anywhere, 3 * SIZE, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
@@ -48,7 +48,7 @@ impl Room {
         Self(unsafe { &mut *map().cast() })
     }
 
-    /// `offset` bytes into the room, or at its end if that comes first.
+    /// At `offset` bytes, or as far in as it fits.
     pub(crate) fn uninit<T>(&mut self, len: usize, offset: usize) -> &mut [MaybeUninit<T>] {
         let size = len * size_of::<T>();
         let bytes = &mut self.0[offset.min(SIZE - size) & !(align_of::<T>() - 1)..][..size];

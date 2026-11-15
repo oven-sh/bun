@@ -26,7 +26,7 @@ pub(crate) mod simd {
         dirty_out: &mut [u64],
         state: &mut [u64; 3],
     ) -> (usize, u32) {
-        let (lut_lo, lut_hi) = (U8::table(&LUT_LO), U8::table(&LUT_HI));
+        let (lut_lo, lut_hi) = (U8::repeat_16(LUT_LO), U8::repeat_16(LUT_HI));
         let [mut prev_escaped, mut prev_in_string, mut prev_scalar] = *state;
         let (mut bs_in_str, mut ctrl_in_str, mut dirty_acc) = (0u64, 0u64, 0u64);
         let mut n_out = 0;
@@ -40,12 +40,12 @@ pub(crate) mod simd {
                     (&tail, (1 << bytes.len()) - 1)
                 }
             };
-            let [bs, quote, op, opws, odd, ctrl] = isa::bits_of(bytes, |v| {
+            let [bs, quote, op, opws, odd, ctrl] = U8::bitmasks(bytes, |v| {
                 let class = lut_lo.lookup(v & 0x0F) & lut_hi.lookup(v >> 4);
-                let lacks = |bits: u8| (class & bits).eq(0);
+                let lacks = |bits: u8| (class & bits).simd_eq(0);
                 [
-                    v.eq(b'\\'),
-                    v.eq(b'"'),
+                    v.simd_eq(b'\\'),
+                    v.simd_eq(b'"'),
                     lacks(STRUCTURAL),
                     lacks(STRUCTURAL | WHITESPACE),
                     lacks(ODDITY),
@@ -95,11 +95,11 @@ pub(crate) mod simd {
                 return (0, GIVES_UP);
             };
             let base = (base_offset + 64 * block) as u32;
-            for k in (0..64).step_by(U32::LANES) {
+            for k in (0..64).step_by(U32::LEN) {
                 let before = (emit & ((1 << k) - 1)).count_ones() as usize;
                 (U32::iota() + (base + k as u32))
                     .compress(emit >> k)
-                    .write_to(&mut window[before..]);
+                    .write_to_slice(&mut window[before..]);
             }
             n_out += emit.count_ones() as usize;
         }

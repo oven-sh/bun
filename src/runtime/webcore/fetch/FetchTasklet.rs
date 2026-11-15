@@ -145,7 +145,7 @@ pub struct FetchTasklet {
     http_ref: Option<HttpThreadRef>,
     /// Held until the last progress update.
     js_ref: Option<RefPtr<FetchTasklet>>,
-    pub global_this: GlobalRef,
+    pub global_this: jsc::StrongGlobal,
     pub(crate) request_body: HTTPRequestBody,
     /// This side's ref; the HTTP thread holds the other of the two initial refs.
     pub(crate) request_body_streaming_buffer: Option<RefPtr<ThreadSafeStreamBuffer>>,
@@ -508,7 +508,7 @@ impl FetchTasklet {
             return stream.abort(&self.global_this);
         }
 
-        let global_this = self.global_this;
+        let global_this = self.global_this.get();
         if stream.is_locked(&global_this) || stream.is_disturbed(&global_this) {
             let err = jsc::SystemError {
                 code: BunString::static_(<&'static str>::from(
@@ -620,7 +620,7 @@ impl FetchTasklet {
     /// Clears `buffer_reset` where `scheduled_response_buffer` must keep its bytes.
     fn deliver_body(&mut self, buffer_reset: &mut bool) -> JsResult<()> {
         let success = self.result.is_success();
-        let global_this = self.global_this;
+        let global_this = self.global_this.get();
         bun_output::scoped_log!(
             FetchTasklet,
             "onBodyReceived success={} has_more={}",
@@ -841,7 +841,7 @@ impl FetchTasklet {
     }
 
     fn deliver_progress(&mut self, vm: &VirtualMachine) -> JsResult<()> {
-        let global_this = self.global_this;
+        let global_this = self.global_this.get();
         // if we already respond the metadata and still need to process the body
         if self.is_waiting_body {
             // `scheduled_response_buffer` has two readers that both drain-and-reset:
@@ -1036,7 +1036,7 @@ impl FetchTasklet {
             return Err(None);
         }
         let mut x509 = OwnedX509::from_der(&certificate_info.cert).ok_or(None)?;
-        let global_object = self.global_this;
+        let global_object = self.global_this.get();
         let js_cert = X509::to_js(&mut x509, &global_object)
             .map_err(|e| Some(global_object.take_exception(e)))?;
         let js_hostname: JSValue =
@@ -1082,7 +1082,7 @@ impl FetchTasklet {
         match verdict {
             Ok(()) => true,
             Err(Some(reason)) => {
-                let global_object = self.global_this;
+                let global_object = self.global_this.get();
                 // mark to wait until deinit
                 self.is_waiting_abort = self.result.has_more;
                 self.abort_reason.set(&global_object, reason);
@@ -1163,7 +1163,7 @@ impl FetchTasklet {
 
         if fail == http::Error::ProxyConnectFailed {
             if let Some(metadata) = &self.result.proxy_connect_response {
-                let global_this = self.global_this;
+                let global_this = self.global_this.get();
                 let error = Self::proxy_connect_error(&global_this, &metadata.response)
                     .unwrap_or_else(|e| global_this.take_exception(e));
                 return BodyValueError::JSValue(StrongOptional::create(error, &global_this));
@@ -1754,7 +1754,7 @@ impl FetchTasklet {
         if self.is_waiting_body {
             self.poll_ref.unref(bun_io::js_vm_ctx());
         }
-        let global_this = self.global_this;
+        let global_this = self.global_this.get();
         let response_js = Response::to_js(response.clone(), &global_this);
         response_js.ensure_still_alive();
         self.response = jsc::Weak::<FetchTasklet>::create(
@@ -1788,7 +1788,7 @@ impl FetchTasklet {
             metadata: None,
             http_ref: None,
             js_ref: None,
-            global_this: GlobalRef::from(cx.global()),
+            global_this: jsc::StrongGlobal::new(cx.global()),
             request_body: fetch_options.body,
             request_body_streaming_buffer: None,
             scheduled_response_buffer: MutableString::default(),
@@ -2016,7 +2016,7 @@ impl FetchTasklet {
         let this_ref = Self::from_raw_mut(this.as_ptr());
         bun_output::scoped_log!(FetchTasklet, "resumeRequestDataStream");
         if !this_ref.signal_aborted() {
-            let global_this = this_ref.global_this;
+            let global_this = this_ref.global_this.get();
             if let Some(sink) = this_ref.sink_mut() {
                 sink.on_drain(&global_this);
             }
@@ -2206,7 +2206,7 @@ impl FetchTasklet {
             SourceHandle::ByteStream(_) | SourceHandle::FileReader(_)
         );
         if !reason.is_empty_or_undefined_or_null() && !self.abort_reason.has() {
-            let global_this = self.global_this;
+            let global_this = self.global_this.get();
             self.abort_reason.set(&global_this, reason);
         }
         self.abort_task();
@@ -2225,7 +2225,7 @@ impl FetchTasklet {
     /// update without running it and destroys the source without ending its sink. A sink fed by
     /// a JS pump is finalized by its controller cell instead.
     fn detach_native_request_body_sink(&mut self) -> Option<RefPtr<Self>> {
-        let global_this = self.global_this;
+        let global_this = self.global_this.get();
         let sink = self.sink_mut()?;
         if sink.ended
             || !matches!(

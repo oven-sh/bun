@@ -1408,7 +1408,7 @@ impl Stream {
     }
 
     pub(crate) fn flush_queue(&self, client: &H2FrameParser, written: &mut usize) -> FlushState {
-        if client.foreign_cork_runs_js() && self.has_queued_data() {
+        if client.foreign_cork_runs_js() && self.has_sendable_frame(client) {
             // The JS of the handover can flush this queue, so it runs before a frame is taken out.
             client.cork();
         }
@@ -1610,6 +1610,15 @@ impl Stream {
 
     fn has_queued_data(&self) -> bool {
         self.data_frame_queue.with_taken(|queue| !queue.is_empty())
+    }
+
+    fn has_sendable_frame(&self, client: &H2FrameParser) -> bool {
+        let has_window = self.remote_window_left() > 0 && client.remote_window_left() > 0;
+        self.can_send_data()
+            && self.data_frame_queue.with_taken(|queue| {
+                let front = queue.peek_front();
+                front.is_some_and(|front| has_window || front.slice().is_empty())
+            })
     }
 
     fn remote_window_left(&self) -> usize {
@@ -5575,10 +5584,8 @@ impl H2FrameParser {
     }
 
     pub(crate) fn get_next_stream(&self, _: &mut JsScope<'_>) -> i32 {
-        self.cork_ahead();
         let id = self.get_next_stream_id();
-        // No encoder: the JS of the handover destroyed the session.
-        if id > MAX_STREAM_ID || self.hpack.with_taken(|hpack| hpack.is_none()) {
+        if id > MAX_STREAM_ID {
             return -1;
         }
         let streams = self.streams.borrow();
@@ -5627,7 +5634,6 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));
         };
 
-        self.cork_ahead();
         let mut name_buffer = [0u8; 4096];
         let mut encoded_headers: Vec<u8> = Vec::new();
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
@@ -6011,7 +6017,11 @@ impl H2FrameParser {
                 global_object.throw(format_args!("Expected sensitiveHeaders to be an object"))
             );
         }
-        self.cork_ahead();
+        let streams = self.streams.borrow();
+        if self.is_server.get() {
+            // Not for a client: a GOAWAY or destroy() would not find its stream's context yet.
+            self.cork_ahead();
+        }
         let mut encoded_headers: Vec<u8> = Vec::new();
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
@@ -6145,7 +6155,6 @@ impl H2FrameParser {
                             return Err(global_object
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
-                        let streams = self.streams.borrow();
                         let Some(stream) = self.handle_received_stream_id(&streams, stream_id)
                         else {
                             return Ok(JSValue::js_number(-1.0));
@@ -6315,7 +6324,6 @@ impl H2FrameParser {
                                 return Err(global_object
                                     .throw(format_args!("Failed to allocate header buffer")));
                             }
-                            let streams = self.streams.borrow();
                             let Some(stream) = self.handle_received_stream_id(&streams, stream_id)
                             else {
                                 return Ok(JSValue::js_number(-1.0));
@@ -6383,7 +6391,6 @@ impl H2FrameParser {
                             return Err(global_object
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
-                        let streams = self.streams.borrow();
                         let Some(stream) = self.handle_received_stream_id(&streams, stream_id)
                         else {
                             return Ok(JSValue::js_number(-1.0));
@@ -6399,7 +6406,6 @@ impl H2FrameParser {
         }
         let encoded_size = encoded_headers.len();
 
-        let streams = self.streams.borrow();
         let Some(stream) = self.handle_received_stream_id(&streams, stream_id) else {
             return Ok(JSValue::js_number(-1.0));
         };
@@ -6414,6 +6420,7 @@ impl H2FrameParser {
         let mut silent: bool = false;
         let mut wait_for_trailers: bool = false;
         let mut end_stream: bool = false;
+        let mut signal: Option<AbortSignalRef> = None;
         if !options.is_undefined_or_null() {
             if !options.is_object() {
                 stream.state.set(StreamState::CLOSED);
@@ -6557,7 +6564,7 @@ impl H2FrameParser {
                         self.abort_stream(stream, wrapped);
                         return Ok(JSValue::js_number(stream_id as f64));
                     }
-                    stream.attach_signal(self, signal_);
+                    signal = Some(signal_);
                 } else {
                     return Err(global_object.throw_invalid_argument_type_value(
                         b"options.signal",
@@ -6773,6 +6780,18 @@ impl H2FrameParser {
 
                 offset += chunk_size;
             }
+        }
+
+        // After the HEADERS: RST_STREAM for a stream the peer has not seen is a connection error.
+        if let Some(signal) = signal
+            && stream.state.get() != StreamState::CLOSED
+        {
+            if signal.aborted() {
+                let wrapped = Bun__wrapAbortError(global_object, signal.js_reason(global_object));
+                self.abort_stream(stream, wrapped);
+                return Ok(JSValue::js_number(stream_id as f64));
+            }
+            stream.attach_signal(self, signal);
         }
 
         if end_stream {

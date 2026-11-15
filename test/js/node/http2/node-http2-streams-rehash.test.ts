@@ -282,9 +282,9 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       const found = [];
       for (let rest = bytes; rest.length; rest = rest.subarray(9 + rest.readUIntBE(0, 3))) {
         const body = rest.subarray(9, 9 + rest.readUIntBE(0, 3));
-        if (rest[3] === type) found.push({ flags: rest[4], id: rest.readUInt32BE(5), body });
+        found.push({ type: rest[3], flags: rest[4], id: rest.readUInt32BE(5), body });
       }
-      return found;
+      return type === undefined ? found : found.filter(frame => frame.type === type);
     }
     async function handshake(options, greeting, open) {
       const written = [];
@@ -681,16 +681,7 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
     // The block that adds the field to the dynamic table has to go out before the one that indexes it.
     test.each([
       [
-        "request()",
-        "1,3",
-        /* js */ `
-      const a = await connect();
-      const nested = () => a.session.request({ ...field }).on("error", () => {});
-      const write = nested;`,
-      ],
-      [
         "sendTrailers()",
-        "3,1",
         /* js */ `
       const a = await connect();
       const req = a.session.request(post, { waitForTrailers: true }).on("error", () => {});
@@ -703,7 +694,6 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       ],
       [
         "respond()",
-        "3,1",
         /* js */ `
       const a = await accept();
       const streams = [];
@@ -716,7 +706,7 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       ],
     ])(
       "does not overtake the header block of %s",
-      async (_, ids, setup) => {
+      async (_, setup) => {
         const result = await run(/* js */ `
       const field = { "x-field": Buffer.alloc(200, "a").toString() };
       ${setup}
@@ -731,24 +721,115 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       a.session.destroy();
       b.session.destroy();
     `);
-        expect(result).toEqual({ stdout: ids + " true false", stderr: "", exitCode: 0 });
+        expect(result).toEqual({ stdout: "3,1 true false", stderr: "", exitCode: 0 });
       },
       10_000 * ASAN_MULTIPLIER,
     );
 
     test(
-      "can destroy the session that is making a request",
+      "does not run when a has no window to flush into",
       async () => {
         const result = await run(/* js */ `
       const a = await connect();
       const b = await connect();
-      b.duplex.inNextWrite = () => a.session.destroy();
+      a.session.request(post).on("error", () => {}).write(Buffer.alloc(70000));
+      await until(() => a.session.state.outboundQueueSize > 0);
       b.session.ping(() => {});
-      const [error] = await once(a.session.request(post), "error");
-      console.log(error.code);
+      a.duplex.push(windowUpdate(0));
+      console.log(b.frames(6).length);
+      a.session.destroy();
       b.session.destroy();
     `);
-        expect(result).toEqual({ stdout: "ERR_HTTP2_OUT_OF_STREAMS", stderr: "", exitCode: 0 });
+        expect(result).toEqual({ stdout: "0", stderr: "", exitCode: 0 });
+      },
+      10_000 * ASAN_MULTIPLIER,
+    );
+
+    test(
+      "can reset the stream that is responding",
+      async () => {
+        const result = await run(/* js */ `
+      const a = await accept();
+      const b = await connect();
+      const opened = once(a.session, "stream");
+      a.duplex.push(frame(1, 5, 1, Buffer.from([0x82, 0x86, 0x84, 0x41, 0x01, 0x61])));
+      const [stream] = await opened;
+      b.duplex.inNextWrite = () => {
+        a.duplex.push(frame(3, 0, 1, u32(http2.constants.NGHTTP2_CANCEL)));
+        a.duplex.push(ping());
+      };
+      b.session.ping(() => {});
+      stream.respond();
+      await once(stream, "close");
+      a.duplex.push(ping());
+      console.log(isAllocated(a.session, 1));
+      a.session.destroy();
+      b.session.destroy();
+    `);
+        expect(result).toEqual({ stdout: "false", stderr: "", exitCode: 0 });
+      },
+      10_000 * ASAN_MULTIPLIER,
+    );
+
+    test.each(["GET", "POST"])(
+      "can abort the %s request that is being made",
+      async method => {
+        const result = await run(/* js */ `
+      const a = await connect();
+      const b = await connect();
+      const controller = new AbortController();
+      b.duplex.inNextWrite = () => controller.abort();
+      b.session.ping(() => {});
+      const req = a.session.request({ ":method": "${method}", ":path": "/" }, { signal: controller.signal });
+      const [error] = await once(req, "error");
+      await until(() => a.frames(3).length > 0);
+      console.log(error.code, req.aborted, a.frames().map(frame => frame.type).join());
+      a.session.destroy();
+      b.session.destroy();
+    `);
+        expect(result).toEqual({ stdout: "ABORT_ERR true 1,3", stderr: "", exitCode: 0 });
+      },
+      10_000 * ASAN_MULTIPLIER,
+    );
+
+    test.each([
+      ["destroy()", "ERR_HTTP2_STREAM_CANCEL 8"],
+      ["destroy(Object.assign(new Error(), { code: 'MINE' }))", "MINE 2"],
+    ])(
+      "can %s the session that is making a request",
+      async (destroy, expected) => {
+        const result = await run(/* js */ `
+      const a = await connect();
+      const b = await connect();
+      a.session.on("error", () => {});
+      b.duplex.inNextWrite = () => a.session.${destroy};
+      b.session.ping(() => {});
+      const req = a.session.request(post);
+      const [error] = await once(req, "error");
+      console.log(error.code, req.rstCode);
+      b.session.destroy();
+    `);
+        expect(result).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+      },
+      10_000 * ASAN_MULTIPLIER,
+    );
+
+    test.each([0, 2])(
+      "can deliver GOAWAY(%d) to the session that is making a request",
+      async code => {
+        const result = await run(/* js */ `
+      const a = await connect();
+      const b = await accept();
+      a.session.on("error", () => {});
+      b.duplex.inNextWrite = () => a.duplex.push(frame(7, 0, 0, b.frames(7)[0].body));
+      b.session.goaway(${code});
+      const req = a.session.request(post);
+      const [error] = await once(req, "error");
+      console.log(error.code, req.rstCode);
+      a.session.destroy();
+      b.session.destroy();
+    `);
+        expect(result).toEqual({ stdout: "ERR_HTTP2_GOAWAY_SESSION 7", stderr: "", exitCode: 0 });
       },
       10_000 * ASAN_MULTIPLIER,
     );

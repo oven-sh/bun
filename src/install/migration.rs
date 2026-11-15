@@ -16,8 +16,8 @@ use crate::lockfile::{
     Format as LockfileFormat, LoadResult, LoadResultErr, LoadResultOk, LoadStep, Lockfile,
     Migrated, Package,
 };
-use crate::lockfile_real::package::PackageColumns as _;
 use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
+use crate::lockfile_real::package::{PackageColumns as _, ParseFields};
 use crate::npm::{self as Npm};
 use crate::pnpm;
 use crate::pnpm::MigratePnpmLockfileError;
@@ -139,11 +139,13 @@ pub(crate) fn parse_manifest_bin(
     Ok(())
 }
 
-pub fn detect_and_load_other_lockfile(
+/// `swap_into_manager`: `this` stands in for `manager.lockfile` while yarn.lock and pnpm-lock.yaml fetch manifests.
+pub(crate) fn detect_and_load_other_lockfile(
     this: &mut Lockfile,
     dir: Fd,
     manager: &mut PackageManager,
     log: &bun_ast::Log,
+    swap_into_manager: bool,
 ) -> LoadResult {
     // check for npm-shrinkwrap.json, package-lock.json, yarn.lock, etc...
     // if it exists, do an in-memory migration
@@ -171,8 +173,8 @@ pub fn detect_and_load_other_lockfile(
         let next = found.get(i + 1).map(|next| next.0);
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let migrate_result = match name {
-            "yarn.lock" => yarn::migrate_yarn_lockfile(this, manager, log, data),
-            "pnpm-lock.yaml" => migrate_pnpm_lockfile(this, manager, log, data),
+            "yarn.lock" => yarn::migrate_yarn_lockfile(this, manager, log, data, swap_into_manager),
+            "pnpm-lock.yaml" => migrate_pnpm_lockfile(this, manager, log, data, swap_into_manager),
             _ => {
                 let Ok(path) = bun_sys::get_fd_path(file.handle(), &mut path_buf) else {
                     continue;
@@ -207,8 +209,9 @@ fn migrate_pnpm_lockfile(
     manager: &mut PackageManager,
     log: &bun_ast::Log,
     data: &[u8],
+    swap_into_manager: bool,
 ) -> Result<LoadResult, Error> {
-    match pnpm::migrate_pnpm_lockfile(this, manager, log, data) {
+    match pnpm::migrate_pnpm_lockfile(this, manager, log, data, swap_into_manager) {
         Ok(r) => Ok(r),
         Err(MigratePnpmLockfileError::PnpmLockfileTooOld) => {
             report_unsupported_lockfile_version(
@@ -307,11 +310,12 @@ pub(crate) fn parse_root_overrides(
     }
     let root_package = *this.packages.get(0);
     let (mut builder, lf) = this.string_builder_split();
+    let fields = &mut ParseFields::new(manager);
     lf.overrides
-        .parse_count(manager, log, source, workspace_names, json, &mut builder);
+        .parse_count(fields, log, source, workspace_names, json, &mut builder);
     builder.allocate()?;
     lf.overrides.parse_append(
-        manager,
+        fields,
         lf.dependencies.as_slice(),
         &root_package,
         log,

@@ -926,7 +926,7 @@ impl BunxCommand {
         } else if update_request.name == b"@anthropic-ai/claude-code" {
             b"claude"
         } else if let dependency::Value::Github(github) = &update_request.version.value {
-            github.repo.slice(update_request.version_buf())
+            github.repo.slice(update_request.input)
         } else if let Some(index) = strings::last_index_of_char(update_request.name, b'/') {
             initial_bin_name_is_a_guess = true;
             &update_request.name[index + 1..]
@@ -988,10 +988,7 @@ impl BunxCommand {
         let display_version: &[u8] = if update_request.version.literal.is_empty() {
             b"latest"
         } else {
-            update_request
-                .version
-                .literal
-                .slice(update_request.version_buf())
+            update_request.input_literal()
         };
 
         // Includes the delimiters because we use this as a part of $PATH

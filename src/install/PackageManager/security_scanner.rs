@@ -31,7 +31,6 @@ use bun_sys::{self, Fd, File};
 
 use crate::hoisted_install as HoistedInstall;
 use crate::isolated_install as IsolatedInstall;
-use crate::package_manager_real::package_manager_options::Do;
 
 #[inline]
 fn signal_name(raw: u8) -> &'static str {
@@ -82,7 +81,7 @@ fn do_partial_install_of_security_scanner(
     log_level: crate::package_manager::Options::LogLevel,
     security_scanner_pkg_id: PackageID,
 ) -> Result<(), Error> {
-    if !manager.options.do_.contains(Do::INSTALL_PACKAGES) {
+    if !manager.effective_do().install_packages() {
         return Ok(());
     }
 
@@ -202,7 +201,7 @@ pub(crate) fn perform_security_scan_after_resolution(
     };
 
     // No command skips a configured scanner unless the run installs nothing into `node_modules`.
-    if manager.options.dry_run || !manager.options.do_.contains(Do::INSTALL_PACKAGES) {
+    if manager.options.dry_run || !manager.effective_do().install_packages() {
         return Ok(None);
     }
 
@@ -604,7 +603,10 @@ fn build_package_json(
                         append_without_url_credentials(
                             &mut tarball,
                             &crate::package_manager_real::run_tasks::alloc_github_url_for_ref(
-                                manager, repository, commit,
+                                manager.env(),
+                                &manager.lockfile,
+                                repository,
+                                commit,
                             ),
                         );
                     }
@@ -702,7 +704,6 @@ fn attempt_security_scan(
 
     collector.process_queue()?;
 
-    // Releases the collector's `&PackageManager` before `SecurityScanSubprocess` takes `&mut`.
     let PackageCollector { package_paths, .. } = collector;
     let json_data = build_package_json(manager, &package_paths)?;
     let packages_scanned = package_paths.count();
@@ -722,9 +723,8 @@ fn attempt_security_scan(
     )?;
     let code = replace_first(&code, b"__SCANNER_MODULE__", &quoted);
 
-    let event_loop_handle = EventLoopHandle::from_any(&manager.event_loop);
+    let event_loop_handle = EventLoopHandle::from_any(manager.state.event_loop);
     let mut scanner = Box::new(SecurityScanSubprocess {
-        manager,
         event_loop_handle,
         code: code.into_boxed_slice(),
         json_data,
@@ -738,14 +738,15 @@ fn attempt_security_scan(
         _pin: core::marker::PhantomPinned,
     });
 
-    scanner.spawn()?;
+    scanner.spawn(manager)?;
 
     Output::flush();
     while !scanner.is_done() {
-        scanner.manager.event_loop.tick(core::ptr::null_mut());
+        manager.install_fields().tick();
     }
 
     scanner.handle_results(
+        manager,
         &package_paths,
         start_time,
         packages_scanned,
@@ -755,8 +756,7 @@ fn attempt_security_scan(
     )
 }
 
-pub struct SecurityScanSubprocess<'a> {
-    manager: &'a mut PackageManager,
+pub struct SecurityScanSubprocess {
     event_loop_handle: EventLoopHandle,
     code: Box<[u8]>,
     json_data: Box<[u8]>,
@@ -772,13 +772,13 @@ pub struct SecurityScanSubprocess<'a> {
 }
 
 bun_spawn::link_impl_ProcessExit! {
-    SecurityScan for SecurityScanSubprocess<'static> => |this| {
+    SecurityScan for SecurityScanSubprocess => |this| {
         on_process_exit(status, rusage) => (*this).on_process_exit(status, rusage),
     }
 }
 
-impl<'a> SecurityScanSubprocess<'a> {
-    pub(crate) fn spawn(&mut self) -> Result<(), Error> {
+impl SecurityScanSubprocess {
+    pub(crate) fn spawn(&mut self, manager: &mut PackageManager) -> Result<(), Error> {
         self.ipc_data = Vec::new();
         let owner = Owner::new(
             PollTag::SecurityScanReader,
@@ -810,7 +810,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         let mut argv = vec![exec_path.as_cstr(), c"--no-install", c"--no-env-file"];
         argv.extend(bun_core::Global::ca_store_flag().map(bun_core::ZStr::as_cstr));
         argv.extend([c"-e", code.as_c_str()]);
-        let env = self.manager.env_mut();
+        let env = manager.env_mut();
         // Set in the process environment after the loader copied it.
         if bun_io::parent_death_watchdog::is_enabled() {
             env.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1")?;
@@ -1072,6 +1072,7 @@ impl<'a> SecurityScanSubprocess<'a> {
 
     pub(crate) fn handle_results(
         &mut self,
+        manager: &PackageManager,
         package_paths: &ArrayHashMap<PackageID, PackagePath>,
         start_time: i64,
         packages_scanned: usize,
@@ -1212,7 +1213,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         // if we got here then we got a result message so we can continue like normal
         let duration = bun_core::time::milli_timestamp() - start_time;
 
-        if self.manager.options.log_level == crate::package_manager::Options::LogLevel::Verbose {
+        if manager.options.log_level == crate::package_manager::Options::LogLevel::Verbose {
             match &status {
                 Status::Exited(Exited { code, .. }) => {
                     bun_core::pretty_errorln!(
@@ -1236,8 +1237,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                     );
                 }
             }
-        } else if self.manager.options.log_level
-            != crate::package_manager::Options::LogLevel::Silent
+        } else if manager.options.log_level != crate::package_manager::Options::LogLevel::Silent
             && duration >= 1000
         {
             let maybe_hourglass = if Output::enable_ansi_colors_stderr() {
@@ -1261,7 +1261,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         };
 
         let advisories =
-            parse_security_advisories_from_json(self.manager, advisories_expr, package_paths)?;
+            parse_security_advisories_from_json(manager, advisories_expr, package_paths)?;
 
         if !status.is_ok() {
             match &status {

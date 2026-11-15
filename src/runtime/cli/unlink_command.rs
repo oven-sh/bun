@@ -4,7 +4,7 @@ use bun_core::Global;
 use bun_paths::{platform, resolve_path};
 use bun_sys::{self as sys, Dir};
 
-use bun_install::package_manager_real::{Subcommand, global_link_dir_path, options::LogLevel};
+use bun_install::package_manager_real::{Subcommand, global_link_dir, options::LogLevel};
 
 use super::link_command;
 use crate::command::ContextData;
@@ -24,7 +24,7 @@ impl UnlinkCommand {
         let name = lockfile.str(&package.name);
 
         let link_path = resolve_path::join_abs_string_z::<platform::Auto>(
-            global_link_dir_path(manager),
+            global_link_dir(&manager.options).path,
             &[name],
         );
         if !sys::lstat(link_path).is_ok_and(|stat| sys::S::ISLNK(stat.st_mode as _)) {

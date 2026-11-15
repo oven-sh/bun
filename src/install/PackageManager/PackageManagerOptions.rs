@@ -96,9 +96,6 @@ pub struct Options {
     /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
     pub node_linker: NodeLinker,
 
-    pub(crate) public_hoist_pattern: Option<Api::PnpmMatcher>,
-    pub(crate) hoist_pattern: Option<Api::PnpmMatcher>,
-
     /// Isolated linker: `false` skips the `node_modules/.bun/node_modules`
     /// fallback (pnpm's `hoist=false`); takes precedence over `hoist_pattern`.
     pub(crate) hoist: bool,
@@ -181,8 +178,6 @@ impl Default for Options {
             top_only: false,
             depth: None,
             node_linker: NodeLinker::Auto,
-            public_hoist_pattern: None,
-            hoist_pattern: None,
             hoist: true,
             offline: OfflineMode::Online,
             security_scanner: None,

@@ -19,17 +19,10 @@ pub struct UpdateRequest {
     pub name: &'static [u8],
     pub(crate) name_hash: PackageNameHash,
     pub version: dependency::Version,
-    /// Backing buffer for `version.literal` (and friends) — either a leaked
-    /// CLI positional (truly process-lifetime) or the active lockfile's
-    /// `buffers.string_bytes`. Stored as a raw fat pointer because the
-    /// lockfile buffer's lifetime cannot be expressed as `'static` without UB
-    /// lifetime extension (PORTING.md §Forbidden patterns), and threading a
-    /// real `<'a>` through every `&mut [UpdateRequest]` in the install
-    /// pipeline is a larger reshape. ARENA-class field per the PORTING.md
-    /// type map: `[]const u8` struct-field, never freed, points into a buffer
-    /// owned elsewhere → `RawSlice<u8>` (centralises the outlives-holder
-    /// invariant; see `version_buf()`).
-    pub(crate) version_buf: bun_ptr::RawSlice<u8>,
+    /// The command-line argument. `version` points into it until `is_bound`.
+    pub input: &'static [u8],
+    /// Set by `bind_update_requests`: `version` points into `buffers.string_bytes` of the manager's lockfile.
+    pub(crate) is_bound: bool,
     pub(crate) package_id: PackageID,
     pub(crate) is_aliased: bool,
     pub failed: bool,
@@ -43,7 +36,8 @@ impl Default for UpdateRequest {
             name: b"",
             name_hash: 0,
             version: dependency::Version::default(),
-            version_buf: bun_ptr::RawSlice::EMPTY,
+            input: b"",
+            is_bound: false,
             package_id: INVALID_PACKAGE_ID,
             is_aliased: false,
             failed: false,
@@ -65,33 +59,28 @@ pub struct UpdateRequestIndex(
 );
 
 /// Park CLI-lifetime bytes in a process-lifetime static so LSan sees them as
-/// reachable. `UpdateRequest::name`/`version_buf` store raw `&'static`/
-/// `RawSlice` views because they may later be repointed at lockfile buffers.
+/// reachable.
 fn anchor_cli_bytes(b: Box<[u8]>) -> &'static [u8] {
-    static ANCHOR: bun_threading::Guarded<Vec<Box<[u8]>>> = bun_threading::Guarded::new(Vec::new());
-    let ptr: *const [u8] = &raw const *b;
-    ANCHOR.lock().push(b);
-    // SAFETY: `b`'s heap allocation is owned by `ANCHOR` for the rest of the
-    // process. `Box<[u8]>` is a fat pointer; pushing it into the Vec moves
-    // only the pointer, not the heap data.
-    unsafe { &*ptr }
+    static ANCHOR: bun_threading::Guarded<Vec<&'static [u8]>> =
+        bun_threading::Guarded::new(Vec::new());
+    let bytes: &'static [u8] = Box::leak(b);
+    ANCHOR.lock().push(bytes);
+    bytes
 }
 
 impl UpdateRequest {
-    /// Borrow the backing string buffer.
-    ///
-    /// SAFETY for callers: the buffer this points into (leaked CLI input, or
-    /// `lockfile.buffers.string_bytes` after `clean_with_logger`) must outlive
-    /// the returned slice and must not be reallocated while the borrow is
-    /// live. Both invariants hold on every call path today — `string_bytes`
-    /// is finalized before assignment in `clean_with_logger`, and the lockfile
-    /// is threaded alongside `updates` everywhere they are read.
-    #[inline]
-    pub fn version_buf(&self) -> &[u8] {
-        // See fn doc. `RawSlice` encapsulates the deref under the
-        // outlives-holder invariant; `Default` seeds it as `EMPTY` and every
-        // assignment is `RawSlice::new(&[u8])`.
-        self.version_buf.slice()
+    /// `version.literal` before `is_bound`.
+    pub fn input_literal(&self) -> &[u8] {
+        debug_assert!(!self.is_bound);
+        self.version.literal.slice(self.input)
+    }
+
+    pub(crate) fn version_literal<'a>(&'a self, lockfile: &'a Lockfile) -> &'a [u8] {
+        if self.is_bound {
+            lockfile.str(&self.version.literal)
+        } else {
+            self.input_literal()
+        }
     }
 
     #[inline]
@@ -109,27 +98,26 @@ impl UpdateRequest {
     pub(crate) fn matches_exactly(&self, dependency: &Dependency, string_buf: &[u8]) -> bool {
         self.matches(dependency, string_buf)
             && if self.name.is_empty() {
-                self.version.literal.slice(self.version_buf())
-                    == dependency.version.literal.slice(string_buf)
+                self.input_literal() == dependency.version.literal.slice(string_buf)
             } else {
                 self.name == dependency.name.slice(string_buf)
             }
     }
 
-    pub(crate) fn get_name(&self) -> &[u8] {
+    pub(crate) fn get_name<'a>(&'a self, lockfile: &'a Lockfile) -> &'a [u8] {
         if self.is_aliased {
             self.name
         } else {
-            self.version.literal.slice(self.version_buf())
+            self.version_literal(lockfile)
         }
     }
 
     /// If `self.package_id` is not `invalid_package_id`, it must be less than `lockfile.packages.len`.
-    pub(crate) fn get_name_in_lockfile<'a>(&'a self, lockfile: &'a Lockfile) -> Option<&'a [u8]> {
+    pub(crate) fn get_name_in_lockfile<'a>(&self, lockfile: &'a Lockfile) -> Option<&'a [u8]> {
         if self.package_id == INVALID_PACKAGE_ID {
             None
         } else {
-            Some(lockfile.packages.items_name()[self.package_id as usize].slice(self.version_buf()))
+            Some(lockfile.str(&lockfile.packages.items_name()[self.package_id as usize]))
         }
     }
 
@@ -144,7 +132,7 @@ impl UpdateRequest {
         } else if let Some(name) = self.get_name_in_lockfile(lockfile) {
             name
         } else {
-            self.version.literal.slice(self.version_buf())
+            self.version_literal(lockfile)
         }
     }
 
@@ -161,13 +149,14 @@ impl UpdateRequest {
             .unwrap_or_else(|_| Global::crash())
     }
     pub fn parse_with_error<'a>(
-        mut pm: Option<&mut PackageManager>,
+        pm: Option<&mut PackageManager>,
         log: &Log,
         positionals: &[&[u8]],
         update_requests: &'a mut Array,
         subcommand: Subcommand,
         fatal: bool,
     ) -> crate::Result<&'a mut [UpdateRequest]> {
+        let mut aliases = pm.map(|pm| &mut pm.project.known_npm_aliases);
         // first one is always either:
         // add
         // remove
@@ -198,10 +187,6 @@ impl UpdateRequest {
                 _ => {}
             }
 
-            // CLI-lifetime allocation: `version_buf` is later reassigned to
-            // point at lockfile buffers, so the field is a raw `*const [u8]`
-            // rather than `Box<[u8]>`. Park the bytes in a process-lifetime
-            // static so LSan sees them as reachable instead of `Vec::leak`.
             let input: &'static [u8] = anchor_cli_bytes(input.into_boxed_slice());
 
             let mut value: &'static [u8] = input;
@@ -231,7 +216,7 @@ impl UpdateRequest {
                 None,
                 &SlicedString::init(input, value),
                 Some(log),
-                pm.as_deref_mut(),
+                aliases.as_deref_mut(),
             )
             .filter(|_| dependency::nameless_npm_alias(value).is_none()) else {
                 return Err(unrecognised_format(log, positional, fatal));
@@ -247,7 +232,7 @@ impl UpdateRequest {
                     None,
                     &SlicedString::init(input, input),
                     Some(log),
-                    pm.as_deref_mut(),
+                    aliases.as_deref_mut(),
                 )
                 .filter(|ver| {
                     matches!(
@@ -271,7 +256,7 @@ impl UpdateRequest {
 
             let mut request = UpdateRequest {
                 version,
-                version_buf: bun_ptr::RawSlice::new(input),
+                input,
                 ..UpdateRequest::default()
             };
             if let Some(name) = alias {
@@ -348,24 +333,22 @@ impl PackageManager {
     pub(crate) fn is_update_request(&self, name_hash: PackageNameHash, name: &[u8]) -> bool {
         self.index_of_update_request(name_hash, name).is_some()
     }
+}
 
-    /// Named on the command line, or a direct dependency of the global package.json just installed.
-    pub(crate) fn links_bins_globally(&self, package_id: PackageID, installed: bool) -> bool {
-        self.options.global
-            && (self
-                .update_requests
-                .iter()
-                .any(|request| request.package_id == package_id)
-                || (installed
-                    && self
-                        .lockfile
-                        .packages
-                        .items_resolutions()
-                        .first()
-                        .is_some_and(|root| {
-                            root.get(self.lockfile.buffers.resolutions.as_slice())
-                                .contains(&package_id)
-                        })))
+impl Lockfile {
+    /// For `--global`: named on the command line, or a direct dependency of the global package.json just installed.
+    pub(crate) fn links_bins_globally(
+        &self,
+        mut requested: impl Iterator<Item = PackageID>,
+        package_id: PackageID,
+        installed: bool,
+    ) -> bool {
+        requested.any(|id| id == package_id)
+            || (installed
+                && (self.packages.items_resolutions().first()).is_some_and(|root| {
+                    root.get(self.buffers.resolutions.as_slice())
+                        .contains(&package_id)
+                }))
     }
 }
 

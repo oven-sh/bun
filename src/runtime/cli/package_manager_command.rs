@@ -8,13 +8,13 @@ use bun_core::{Global, Output, env_var, fmt as bun_fmt};
 use bun_install::lockfile::{LoadResult, Lockfile, package::PackageColumns as _, reachable, tree};
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
-    CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
-    package_json_write_back, package_manager_options::LogLevel, setup_global_dir,
+    CommandLineArguments, Subcommand, fetch_cache_directory_path, package_json_write_back,
+    package_manager_options::LogLevel, setup_global_dir,
 };
 use bun_install::{DependencyID, PackageID, PackageManager, ResolutionTag, migration};
 use bun_paths::{self as Path, AutoAbsPath};
 use bun_resolver::fs as Fs;
-use bun_sys::{self, Dir, Fd, File};
+use bun_sys::{self, Dir, File};
 
 use crate::cli::Command;
 use crate::cli::pm_cache_prune_command::{DEFAULT_MAX_AGE_DAYS, PmCachePruneCommand};
@@ -427,7 +427,7 @@ impl PackageManagerCommand {
                         .and_then(|install| install.cache_directory),
                 };
                 let configured = cli.cache_dir.or(user_cache_dir.as_deref());
-                let cache_dir = match fetch_cache_directory_path(&mut process_env, configured) {
+                let cache_dir = match fetch_cache_directory_path(&process_env, configured) {
                     Ok(cache_dir) => cache_dir,
                     Err(err) => Self::crash_getting_cache_directory(err),
                 };
@@ -576,7 +576,7 @@ impl PackageManagerCommand {
             }
 
             let mut dir = bun_paths::path_buffer_pool::get();
-            let fd = get_cache_directory(pm).handle.fd();
+            let fd = pm.get_cache_directory().handle.fd();
             let outpath = match bun_sys::get_fd_path(fd, &mut dir) {
                 Ok(p) => &p[..],
                 Err(err) => Self::crash_getting_cache_directory(err),
@@ -780,18 +780,7 @@ impl PackageManagerCommand {
                 }
             }
             let log_level = pm.options.log_level;
-            let log = pm.log();
-            let pm_raw: *mut PackageManager = pm;
-            // SAFETY: same split as `PackageManager::load_lockfile_from_cwd`, with the same FIXME.
-            let load_lockfile = unsafe {
-                let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
-                migration::detect_and_load_other_lockfile(
-                    &mut *lockfile,
-                    Fd::cwd(),
-                    &mut *pm_raw,
-                    log,
-                )
-            };
+            let load_lockfile = pm.migrate_lockfile_from_cwd();
             if matches!(load_lockfile, LoadResult::NotFound) {
                 bun_core::pretty_errorln!("<r><red>error<r>: could not find any other lockfile");
                 Global::exit(1);

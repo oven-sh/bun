@@ -1,7 +1,5 @@
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::ptr::NonNull;
-use core::sync::SyncView;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use std::collections::VecDeque;
 use std::sync::LazyLock;
@@ -11,10 +9,8 @@ use crate::bun_fs as fs;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{NodeId as ProgressNodeId, Progress};
 use crate::bun_schema::api as Api;
-use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
-use bun_collections::{
-    ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap, index_sort,
-};
+use bun_collections::linear_fifo::DynamicBuffer;
+use bun_collections::{ArrayHashMap, HashMap, HiveBox, LinearFifo, StringArrayHashMap, index_sort};
 use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
@@ -24,10 +20,10 @@ use bun_http as http;
 use bun_ini as ini;
 use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
 use bun_paths::string_paths::without_trailing_slash_windows_path;
-use bun_paths::{DELIMITER, PathBuffer, SEP};
+use bun_paths::{DELIMITER, SEP};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
-use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
+use bun_threading::{OwnedQueue, ThreadPool, thread_pool};
 use bun_url::URL;
 
 // `bun.spawn.process.WaiterThread` — the force-waiter-thread flag was moved
@@ -38,6 +34,9 @@ use bun_url::URL;
 use bun_spawn::process::WaiterThread;
 
 use crate::RunCommand;
+use crate::buffered_subprocess::BufferedSubprocess;
+use crate::git_runner::GitRunner;
+use crate::lifecycle_script_runner::{LifecycleScriptRunner, ScriptCaller};
 
 /// `Command::Context` shim — the option-carrying `ContextData` shape was lifted
 /// into `bun_options_types::context` so install can reference it without the CLI
@@ -198,16 +197,17 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.
     }
 }
 
-use crate::lockfile_real::package as Package;
+use crate::lockfile_real::package::{self as Package, PackageColumns as _};
+use crate::package_manager_real::package_manager_lifecycle::PreinstallStates;
 use crate::package_manager_task as Task;
 use crate::resolvers::folder_resolver::{
     Entry as FolderResolutionEntry, FolderResolution, Key as FolderResolutionKey,
     Kind as FolderResolutionKind,
 };
-use bun_install::lockfile::{self, Lockfile};
+use bun_install::lockfile::{self, Lockfile, TrustedDependenciesSet};
 use bun_install::{
-    DependencyID, NetworkTask, PackageID, PackageManifestMap, PackageNameAndVersionHash,
-    PackageNameHash, PatchTask, PreinstallState, TaskCallbackContext,
+    DependencyID, Integrity, NetworkTask, PackageID, PackageManifestMap, PackageNameAndVersionHash,
+    PackageNameHash, PatchTask, Resolution, TaskCallbackContext, TruncatedPackageNameHash,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -215,6 +215,7 @@ use bun_install::{
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use self::command_line_arguments::CommandLineArguments;
+use self::package_manager_options::Do;
 pub use self::package_manager_options::Options;
 // `PackageJSONEditor` is a module-level namespace (no struct) — re-export
 // the module itself so `PackageJSONEditor::edit(...)` resolves to the free fns.
@@ -230,29 +231,26 @@ pub use directories::{
     attempt_to_create_package_json, cached_git_folder_name, cached_git_folder_name_print,
     cached_git_folder_name_print_auto, cached_github_folder_name, cached_github_folder_name_print,
     cached_github_folder_name_print_auto, cached_npm_package_folder_name,
-    cached_npm_package_folder_print_basename, cached_tarball_folder_name,
-    cached_tarball_folder_name_print, compute_cache_dir_and_subpath, fetch_cache_directory_path,
-    get_cache_directory, get_temporary_directory, global_link_dir, global_link_dir_path,
-    is_folder_in_cache, path_for_cached_npm_path, path_for_resolution, save_lockfile,
-    setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
+    cached_npm_package_folder_print_basename, cached_tarball_folder_name_print,
+    fetch_cache_directory_path, global_link_dir, path_for_cached_npm_path, path_for_resolution,
+    save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
+};
+pub(crate) use directories::{
+    compute_cache_dir_and_subpath, get_cache_directory, get_temporary_directory, is_folder_in_cache,
 };
 
 pub use self::package_manager_enqueue as enqueue;
-pub(crate) use enqueue::enqueue_install_task;
 pub use enqueue::{
     enqueue_dependency_list, enqueue_dependency_to_root, enqueue_dependency_with_main,
-    enqueue_extract_npm_package, enqueue_git_checkout, enqueue_network_task,
-    enqueue_parse_npm_package, enqueue_patch_task, enqueue_patch_task_pre,
+    enqueue_patch_task_pre,
 };
+pub(crate) use enqueue::{enqueue_install_task, enqueue_network_task, enqueue_patch_task};
 
 pub use self::progress_strings::ProgressStrings;
 
 pub use self::patch_package::PatchCommitResult;
 
-pub use self::run_tasks::{
-    flush_dependency_queue, flush_network_queue, generate_network_task_for_tarball,
-    get_network_task, schedule_tasks,
-};
+pub(crate) use self::run_tasks::generate_network_task_for_tarball;
 
 pub use self::update_package_json_and_install::{
     update_package_json_and_install_and_cli, update_package_json_and_install_with_manager,
@@ -268,10 +266,6 @@ pub(crate) type TaskCallbackList = Vec<TaskCallbackContext>;
 pub(crate) type TaskDependencyQueue =
     HashMap<Task::Id, TaskCallbackList /* , IdentityContext<Task::Id>, 80 */>;
 
-type PreallocatedTaskStore = HiveArrayFallback<Task::Task, 64>;
-type PreallocatedNetworkTasks = HiveArrayFallback<NetworkTask, 128>;
-type ResolveTaskQueue = UnboundedQueue<Task::Task /* , .next */>;
-
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
 /// Git-commit task id -> the SHA it resolved, for the waiters that re-enter.
 type GitCommitMap = HashMap<Task::Id, Vec<u8> /* , IdentityContext<Task::Id>, 80 */>;
@@ -285,11 +279,6 @@ type AppendedTaskPackageMap =
 pub(crate) type FolderResolutionMap = HashMap<FolderResolutionKey, FolderResolutionEntry>;
 pub(crate) type NpmAliasMap =
     HashMap<PackageNameHash, Box<[u8]> /* , IdentityContext<u64>, 80 */>;
-
-type NetworkQueue = LinearFifo<*mut NetworkTask, StaticBuffer<*mut NetworkTask, 32>>;
-
-pub type PatchTaskQueue = UnboundedQueue<PatchTask /* , .next */>;
-pub type AsyncNetworkTaskQueue = UnboundedQueue<NetworkTask /* , .next */>;
 
 pub(crate) type SuccessFn = fn(&mut PackageManager, DependencyID, PackageID);
 
@@ -453,9 +442,9 @@ bun_output::declare_scope!(PackageManager, hidden);
 
 /// What other threads hand to the install thread.
 pub(crate) struct Inbox {
-    pub(crate) resolve_tasks: ResolveTaskQueue,
-    pub(crate) network_tasks: AsyncNetworkTaskQueue,
-    pub(crate) patch_tasks: PatchTaskQueue,
+    pub(crate) resolve_tasks: OwnedQueue<HiveBox<Task::Task>>,
+    pub(crate) network_tasks: OwnedQueue<HiveBox<NetworkTask>>,
+    pub(crate) patch_tasks: OwnedQueue<Box<PatchTask>>,
     pub(crate) pending_tasks: AtomicU32,
     /// Null unless the install thread is the main thread, whose loop is never freed.
     uws_loop: AtomicPtr<bun_uws::Loop>,
@@ -463,9 +452,9 @@ pub(crate) struct Inbox {
 }
 
 pub(crate) static INBOX: Inbox = Inbox {
-    resolve_tasks: ResolveTaskQueue::new(),
-    network_tasks: AsyncNetworkTaskQueue::new(),
-    patch_tasks: PatchTaskQueue::new(),
+    resolve_tasks: OwnedQueue::new(),
+    network_tasks: OwnedQueue::new(),
+    patch_tasks: OwnedQueue::new(),
     pending_tasks: AtomicU32::new(0),
     uws_loop: AtomicPtr::new(core::ptr::null_mut()),
     runtime_auto_install: AtomicBool::new(false),
@@ -473,7 +462,8 @@ pub(crate) static INBOX: Inbox = Inbox {
 
 impl Inbox {
     pub(crate) fn decrement_pending_tasks(&self) {
-        self.pending_tasks.fetch_sub(1, Ordering::Release);
+        let pending = self.pending_tasks.fetch_sub(1, Ordering::Release);
+        debug_assert!(pending > 0);
     }
 
     pub(crate) fn wake(&self) {
@@ -499,19 +489,8 @@ pub struct PackageManager {
     pub root_dir: &'static fs::DirEntry,
     /// Holds the nodes that edits add to a package.json. Never reset: the manager is a leaked singleton.
     pub(crate) ast_arena: bun_ast::AstArena,
-    /// `SyncView`: other threads share `&Self`, and `Log` is not `Sync`.
-    log: SyncView<&'static bun_ast::Log>,
     pub(crate) timestamp_for_manifest_cache_control: u32,
-    pub(crate) extracted_count: u32,
     pub(crate) summary: Package::DiffSummary,
-    // Set once in `init()`/`init_with_runtime()` to the process-singleton
-    // `DotEnv.Loader` (leaked allocation; outlives the manager). `BackRef`
-    // encapsulates the liveness invariant so `env()` is a safe accessor.
-    pub env: Option<bun_ptr::BackRef<dot_env::Loader, bun_ptr::Mut>>,
-    /// Install thread only.
-    pub progress: Progress,
-    pub(crate) downloads_node: Option<ProgressNodeId>,
-    pub scripts_node: Option<ProgressNodeId>,
 
     pub(crate) track_installed_bin: TrackInstalledBin,
 
@@ -529,64 +508,28 @@ pub struct PackageManager {
     /// could be any of the workspaces.
     pub root_package_id: RootPackageId,
 
-    /// The hash of the `name` in the root package.json. `workspace_paths` only has the workspaces,
-    /// not the root.
-    pub(crate) workspace_root_name_hash: PackageNameHash,
-    /// The `version` in the root package.json, as written. The lockfile records none for the root.
-    pub(crate) workspace_root_version: Box<[u8]>,
-
-    pub(crate) task_batch: thread_pool::Batch,
-    pub(crate) task_queue: TaskDependencyQueue,
+    pub(crate) project: ProjectInfo,
 
     pub manifests: PackageManifestMap,
     pub(crate) folders: FolderResolutionMap,
-    pub(crate) git_repositories: RepositoryMap,
     pub(crate) git_commits: GitCommitMap,
-    /// Git tasks queued by `enqueue_git_task` and not yet started.
-    pub(crate) git_tasks: VecDeque<NonNull<Task::Task>>,
-    /// Git tasks whose `git_runner::GitSubprocess` is alive.
-    pub(crate) running_git_tasks: AtomicU32,
-    /// Set by the first git task.
-    pub(crate) git_env: bun_ptr::JsCell<Option<crate::repository::GitEnv>>,
     pub(crate) appended_task_packages: AppendedTaskPackageMap,
 
-    pub(crate) network_dedupe_map: crate::network_task::DedupeMap,
-    // The HTTP thread takes the requests of both batches in their boxes.
-    #[expect(clippy::vec_box)]
-    pub(crate) network_tarball_batch: Vec<Box<http::AsyncHTTP<'static>>>,
-    #[expect(clippy::vec_box)]
-    pub(crate) network_resolve_batch: Vec<Box<http::AsyncHTTP<'static>>>,
-    pub(crate) network_task_fifo: NetworkQueue,
-    pub(crate) retry_queue: crate::retry_timer::RetryQueue,
-    /// Joins `task_batch` in `flush_dependency_queue`.
-    pub(crate) patch_batch: thread_pool::Batch,
     /// We actually need to calculate the patch file hashes
     /// every single time, because someone could edit the patchfile at anytime
     ///
     /// TODO: Does this need to be atomic? It seems to be accessed only from the main thread.
     pub(crate) pending_pre_calc_hashes: AtomicU32,
-    pub(crate) total_tasks: Cell<u32>,
-    pub(crate) preallocated_network_tasks: PreallocatedNetworkTasks,
-    pub(crate) preallocated_resolve_tasks: PreallocatedTaskStore,
-
-    pub pending_lifecycle_script_tasks: AtomicU32,
-    pub(crate) finished_installing: AtomicBool,
-    pub(crate) total_scripts: usize,
-    has_configured_env_for_scripts: bool,
 
     pub(crate) root_lifecycle_scripts: Option<Package::scripts::List>,
-
-    pub(crate) node_gyp_tempdir_name: Box<[u8]>,
 
     pub lockfile: Box<Lockfile>, // OWNED
 
     pub options: Options,
-    pub(crate) preinstall_state: Vec<PreinstallState>,
-    pub(crate) postinstall_optimizer: crate::postinstall_optimizer::List,
-
-    pub(crate) global_link_dir: Option<bun_sys::Dir>,
-    pub global_dir: Option<bun_sys::Dir>,
-    pub(crate) global_link_dir_path: &'static [u8],
+    // Not in `options`, because `PnpmMatcher` is not `Sync`.
+    pub(crate) public_hoist_pattern: Option<Api::PnpmMatcher>,
+    pub(crate) hoist_pattern: Option<Api::PnpmMatcher>,
+    pub state: InstallState,
 
     pub(crate) peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
 
@@ -601,18 +544,6 @@ pub struct PackageManager {
     // The packages that the keys of `patchedDependencies` name. See
     // `enqueue::index_patched_versions`.
     pub(crate) patched_versions: Option<Vec<(PackageNameHash, Semver::Version)>>,
-
-    // Maps the name hash of an alias to the text of its `npm:` specifier. It only has the aliases
-    // that the project's own package.json files declare.
-    pub(crate) known_npm_aliases: NpmAliasMap,
-
-    pub(crate) event_loop: AnyEventLoop,
-
-    // During `installPackages` we learn exactly what dependencies from --trust
-    // actually have scripts to run, and we add them to this list
-    pub(crate) trusted_deps_to_add_to_package_json: Vec<Box<[u8]>>,
-
-    pub any_failed_to_install: bool,
 
     // When adding a `file:` dependency in a workspace package, we want to install it
     // relative to the workspace root, but the path provided is relative to the
@@ -680,14 +611,222 @@ pub struct PackageManager {
 
     pub(crate) patched_dependencies_to_remove:
         ArrayHashMap<PackageNameAndVersionHash, () /* , ArrayIdentityContext::U64, false */>,
-
     // For `bun patch --commit`: the files that `install_with_manager` writes and removes once its
     // checks have passed.
     pub(crate) pending_patch_commit: patch_package::PendingCommit,
+}
 
-    pub(crate) active_lifecycle_scripts: crate::lifecycle_script_runner::List<'static>,
+/// The fields of `PackageManager` that downloading, extracting and linking use, besides the options and the lockfile.
+pub struct InstallState {
+    log: &'static bun_ast::Log,
+    // Set once in `init()`/`init_with_runtime()` to the process-singleton
+    // `DotEnv.Loader` (leaked allocation; outlives the manager). `BackRef`
+    // encapsulates the liveness invariant so `env()` is a safe accessor.
+    env: Option<bun_ptr::BackRef<dot_env::Loader, bun_ptr::Mut>>,
+    pub(crate) event_loop: &'static AnyEventLoop,
+
+    /// Install thread only.
+    pub progress: Progress,
+    pub(crate) downloads_node: Option<ProgressNodeId>,
+    pub scripts_node: Option<ProgressNodeId>,
+    pub(crate) extracted_count: u32,
+
+    pub(crate) task_batch: thread_pool::Batch,
+    pub(crate) task_queue: TaskDependencyQueue,
+
+    pub(crate) git_repositories: RepositoryMap,
+    /// Git tasks queued by `enqueue_git_task` and not yet started.
+    pub(crate) git_tasks: VecDeque<HiveBox<Task::Task>>,
+    pub(crate) running_git_tasks: Vec<(BufferedSubprocess, GitRunner)>,
+    /// Set by the first git task.
+    pub(crate) git_env: Option<crate::repository::GitEnv>,
+
+    pub(crate) network_dedupe_map: crate::network_task::DedupeMap,
+    pub(crate) network_tarball_batch: Vec<http::OwnedRequest>,
+    pub(crate) network_resolve_batch: Vec<http::OwnedRequest>,
+    pub(crate) retry_queue: crate::retry_timer::RetryQueue,
+    /// Joins `task_batch` in `flush_dependency_queue`.
+    pub(crate) patch_batch: thread_pool::Batch,
+    pub(crate) total_tasks: Cell<u32>,
+    pub(crate) preinstall_state: PreinstallStates,
+    /// Set by `fail_update_requests`.
+    pub(crate) update_request_failed: bool,
+    pending_lockfile_changes: PendingLockfileChanges,
+
+    pub(crate) finished_installing: bool,
+    pub(crate) total_scripts: usize,
+    has_configured_env_for_scripts: bool,
+    pub(crate) node_gyp_tempdir_name: Box<[u8]>,
+
+    // During `installPackages` we learn exactly what dependencies from --trust
+    // actually have scripts to run, and we add them to this list
+    pub(crate) trusted_deps_to_add_to_package_json: Vec<Box<[u8]>>,
+
+    pub any_failed_to_install: bool,
+
+    /// In the order in which they started.
+    pub(crate) active_lifecycle_scripts: Vec<(BufferedSubprocess, LifecycleScriptRunner)>,
+    /// The packages that the hoisted linker placed and whose scripts haven't all run yet.
+    pub(crate) unfinished_scripts: Vec<(lockfile::tree::Id, Box<[u8]>)>,
     pub(crate) last_reported_slow_lifecycle_script_at: u64,
     pub(crate) cached_tick_for_slow_lifecycle_script_logging: u64,
+}
+
+/// Collected while a linker borrows the lockfile, and applied by `finish_linking`.
+#[derive(Default)]
+struct PendingLockfileChanges {
+    /// For packages that have none in the lockfile.
+    integrities: ArrayHashMap<PackageID, Integrity>,
+    /// Replaces `lockfile.trusted_dependencies`.
+    trusted_dependencies: Option<TrustedDependenciesSet>,
+}
+
+/// The fields of `PackageManager` for code that only reads the lockfile and the options.
+pub struct InstallFields<'a> {
+    pub(crate) options: &'a Options,
+    pub(crate) lockfile: &'a Lockfile,
+    pub(crate) state: &'a mut InstallState,
+    pub(crate) subcommand: Subcommand,
+    pub(crate) update_requests: &'a mut [UpdateRequest],
+    pub(crate) pending_filtered_write: Option<&'a add_remove_with_filter::PendingWrite>,
+    pub(crate) workspace_name_hash: Option<PackageNameHash>,
+}
+
+/// `PackageManager::install_fields` that does not borrow the other fields.
+macro_rules! install_fields {
+    ($manager:expr) => {
+        $crate::package_manager_real::InstallFields {
+            options: &$manager.options,
+            lockfile: &$manager.lockfile,
+            state: &mut $manager.state,
+            subcommand: $manager.subcommand,
+            update_requests: &mut $manager.update_requests,
+            pending_filtered_write: $manager.pending_filtered_write.as_deref(),
+            workspace_name_hash: $manager.workspace_name_hash,
+        }
+    };
+}
+pub(crate) use install_fields;
+
+impl PackageManager {
+    pub fn install_fields(&mut self) -> InstallFields<'_> {
+        install_fields!(self)
+    }
+
+    pub(crate) fn effective_do(&self) -> Do {
+        self.state.effective_do(&self.options)
+    }
+
+    /// Call when a linker is done.
+    pub(crate) fn finish_linking(&mut self) {
+        if self.options.log_level.show_progress() {
+            self.state.progress.end();
+            self.state.progress = Progress::default();
+        }
+        self.state.scripts_node = None;
+        self.state.downloads_node = None;
+
+        let changes = core::mem::take(&mut self.state.pending_lockfile_changes);
+        if !changes.integrities.is_empty() {
+            (self.options.enable).set(options::Enable::FORCE_SAVE_LOCKFILE, true);
+        }
+        for (&package_id, integrity) in changes.integrities.iter() {
+            self.lockfile.packages.items_meta_mut()[package_id as usize].integrity = *integrity;
+        }
+        if changes.trusted_dependencies.is_some() {
+            self.lockfile.trusted_dependencies = changes.trusted_dependencies;
+        }
+    }
+}
+
+impl InstallFields<'_> {
+    pub(crate) fn reborrow(&mut self) -> InstallFields<'_> {
+        InstallFields {
+            state: self.state,
+            update_requests: self.update_requests,
+            ..*self
+        }
+    }
+
+    pub(crate) fn effective_do(&self) -> Do {
+        self.state.effective_do(self.options)
+    }
+
+    pub(crate) fn integrity(&self, package_id: PackageID) -> &Integrity {
+        let locked = &self.lockfile.packages.items_meta()[package_id as usize].integrity;
+        let pending = &self.state.pending_lockfile_changes.integrities;
+        if pending.is_empty() || locked.tag.is_supported() {
+            return locked;
+        }
+        pending.get(&package_id).unwrap_or(locked)
+    }
+
+    /// Does nothing if the package already has an integrity.
+    pub(crate) fn record_extracted_integrity(
+        &mut self,
+        package_id: PackageID,
+        integrity: &Integrity,
+    ) {
+        if integrity.tag.is_supported() && !self.integrity(package_id).tag.is_supported() {
+            (self.state.pending_lockfile_changes.integrities).insert(package_id, *integrity);
+        }
+    }
+
+    pub(crate) fn trusted_dependencies(&self) -> Option<&TrustedDependenciesSet> {
+        let pending = &self.state.pending_lockfile_changes;
+        (pending.trusted_dependencies.as_ref()).or(self.lockfile.trusted_dependencies.as_ref())
+    }
+
+    pub(crate) fn in_trusted_dependencies(&self, name: &[u8]) -> bool {
+        let hash = Semver::string::Builder::string_hash(name) as u32;
+        (self.trusted_dependencies()).is_some_and(|trusted| trusted.contains(&hash))
+    }
+
+    pub(crate) fn has_trusted_dependency(
+        &self,
+        alias: &[u8],
+        pkg_name: &[u8],
+        resolution: &Resolution,
+    ) -> bool {
+        let (trusted, options) = (self.trusted_dependencies(), self.options);
+        (self.lockfile).has_trusted_dependency_in(trusted, options, alias, pkg_name, resolution)
+    }
+
+    /// For a package with scripts that was named with `--trust`.
+    pub(crate) fn add_trusted_dependency(
+        &mut self,
+        name_hash: TruncatedPackageNameHash,
+        name: &[u8],
+    ) {
+        let locked = self.lockfile.trusted_dependencies.as_ref();
+        (self.state.pending_lockfile_changes.trusted_dependencies)
+            .get_or_insert_with(|| {
+                locked.map_or_else(Default::default, |set| bun_core::handle_oom(set.clone()))
+            })
+            .insert(name_hash, Box::from(name));
+        (self.state.trusted_deps_to_add_to_package_json).push(Box::from(name));
+    }
+
+    pub(crate) fn crash(&self) -> ! {
+        if self.options.log_level != package_manager_options::LogLevel::Silent {
+            let _ = self.state.log().print(Output::error_writer());
+        }
+        Global::crash();
+    }
+}
+
+/// Read from the project's package.json files and not recorded in the lockfile.
+#[derive(Default)]
+pub(crate) struct ProjectInfo {
+    /// The hash of the `name` in the root package.json. `workspace_paths` only has the workspaces,
+    /// not the root.
+    pub(crate) workspace_root_name_hash: PackageNameHash,
+    /// The `version` in the root package.json, as written. The lockfile records none for the root.
+    pub(crate) workspace_root_version: Box<[u8]>,
+    pub(crate) postinstall_optimizer: crate::postinstall_optimizer::List,
+    // Maps the name hash of an alias to the text of its `npm:` specifier. It only has the aliases
+    // that the project's own package.json files declare.
+    pub(crate) known_npm_aliases: NpmAliasMap,
 }
 
 #[derive(Default)]
@@ -903,8 +1042,8 @@ impl PackageManager {
     }
 
     #[inline]
-    pub fn log(&mut self) -> &'static bun_ast::Log {
-        self.log.as_mut()
+    pub fn log(&self) -> &'static bun_ast::Log {
+        self.state.log()
     }
 
     /// Associated-fn spelling that forwards to the free [`init`] so callers
@@ -924,16 +1063,7 @@ impl PackageManager {
 static TIME_PASSER_LAST_TIME: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 mod holder {
-    use super::PackageManager;
     use bun_dotenv as dot_env;
-    // OWNED — global singleton, leaked.
-    // OnceLock<Box<PackageManager>> can't express allocate-then-fill
-    // (no `&mut` after set), so a raw ptr is used instead.
-    pub(super) static RAW_PTR: core::sync::atomic::AtomicPtr<PackageManager> =
-        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-
-    pub(super) static INITIALIZED: core::sync::atomic::AtomicBool =
-        core::sync::atomic::AtomicBool::new(false);
 
     // Process-lifetime env storage for `init()`. Owned by the singleton, never
     // freed. Avoids `Box::leak` per PORTING.md §Forbidden. Write-once during
@@ -954,13 +1084,6 @@ mod holder {
     pub(super) static CA: std::sync::OnceLock<Vec<bun_core::ZBox>> = std::sync::OnceLock::new();
 }
 
-// PORTING.md §Global mutable state: single-thread (main) scratch buffers →
-// RacyCell. `PackageManager::root_package_json_path` is a slice into
-// `ROOT_PACKAGE_JSON_PATH_BUF`, which `init()` writes once.
-static CWD_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
-static ROOT_PACKAGE_JSON_PATH_BUF: bun_core::RacyCell<PathBuffer> =
-    bun_core::RacyCell::new(PathBuffer::ZEROED);
-
 // ──────────────────────────────────────────────────────────────────────────
 // impl PackageManager
 // ──────────────────────────────────────────────────────────────────────────
@@ -970,25 +1093,30 @@ impl PackageManager {
         self.root_package_id.id = None;
     }
 
-    /// Reshaped for borrowck — `Lockfile::load_from_cwd` takes the manager as
-    /// a separate argument while the receiver borrows `self.lockfile`, which
-    /// is a self-referential split borrow. Encapsulated here so callers stay
-    /// in safe code.
     pub fn load_lockfile_from_cwd<const ATTEMPT_OTHER: bool>(&mut self) -> lockfile::LoadResult {
         self.clear_cached_items_depending_on_lockfile_buffer();
         let log = self.log();
-        let pm: *mut PackageManager = self;
-        // SAFETY: `self.lockfile` is `Box<Lockfile>` — its pointee lives in a
-        // separate heap allocation, so `&mut Lockfile` and `&mut PackageManager`
-        // never alias overlapping bytes. Both raw pointers below are derived
-        // from `self`, so the caller's borrow stays on the Stacked-Borrows stack.
-        // FIXME: a migration still reaches `manager.lockfile` while `*lf` is borrowed.
-        // `Package::parse_with_json` (yarn v1) reads it, and `populate_manifest_cache`
-        // (npm, pnpm, yarn) reads it and stores to `scratch.dependency_list_queue`.
-        unsafe {
-            let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
-            (*lf).load_from_cwd::<ATTEMPT_OTHER>(Some(&mut *pm), log)
+        match (self.lockfile).load_from_dir(Fd::cwd(), Some(&self.options), log) {
+            lockfile::LoadResult::NotFound if ATTEMPT_OTHER => {
+                let migrated = self.migrate_lockfile_from_cwd();
+                self.lockfile.finish_load(migrated)
+            }
+            result => result,
         }
+    }
+
+    pub fn migrate_lockfile_from_cwd(&mut self) -> lockfile::LoadResult {
+        let log = self.log();
+        let mut lockfile = core::mem::take(&mut *self.lockfile);
+        let result = crate::migration::detect_and_load_other_lockfile(
+            &mut lockfile,
+            Fd::cwd(),
+            self,
+            log,
+            true,
+        );
+        *self.lockfile = lockfile;
+        result
     }
 
     /// `nothing` is the end of the error message for a missing lockfile, e.g. "nothing to update".
@@ -1007,27 +1135,7 @@ impl PackageManager {
     }
 
     pub(crate) fn crash(&mut self) -> ! {
-        if self.options.log_level != package_manager_options::LogLevel::Silent {
-            let _ = self.log().print(Output::error_writer());
-        }
-        Global::crash();
-    }
-
-    pub fn has_enough_time_passed_between_waiting_messages(&self) -> bool {
-        let iter = self.event_loop.iteration_number();
-        if TIME_PASSER_LAST_TIME.load(core::sync::atomic::Ordering::Relaxed) < iter {
-            TIME_PASSER_LAST_TIME.store(iter, core::sync::atomic::Ordering::Relaxed);
-            return true;
-        }
-        false
-    }
-
-    pub(crate) fn configure_env_for_scripts(&mut self) -> Result<(), Error> {
-        if !self.has_configured_env_for_scripts {
-            configure_env_for_scripts_run(self)?;
-            self.has_configured_env_for_scripts = true;
-        }
-        Ok(())
+        self.install_fields().crash()
     }
 
     pub fn http_proxy(&self, url: &URL<'_>) -> Option<URL<'static>> {
@@ -1036,22 +1144,8 @@ impl PackageManager {
         self.env_mut().get_http_proxy_for(url)
     }
 
-    /// The proxy settings in the environment. They are passed along with `http_proxy` so that a
-    /// redirect uses the proxy that applies to its own URL.
-    pub(crate) fn proxy_settings(&self) -> Option<Box<http::ProxySettings>> {
-        http::ProxySettings::from_env(self.env())
-    }
-
     pub fn tls_reject_unauthorized(&self) -> bool {
         self.env().get_tls_reject_unauthorized()
-    }
-
-    /// Auto-install blocks the JS thread while it waits for a response, so it gives up after 30
-    /// seconds of silence instead of the default five minutes.
-    pub(crate) fn idle_timeout_seconds(&self) -> Option<core::ffi::c_uint> {
-        (self.options.runtime_auto_install
-            && self.env().get(b"BUN_CONFIG_HTTP_IDLE_TIMEOUT").is_none())
-        .then_some(30)
     }
 
     /// A blocking request, with the proxy and the certificate check the environment asks for.
@@ -1072,7 +1166,7 @@ impl PackageManager {
             headers_buf,
             body,
             http_proxy,
-            self.proxy_settings(),
+            self.state.proxy_settings(),
             http::FetchRedirect::Follow,
         );
         req.client.flags.reject_unauthorized = self.tls_reject_unauthorized();
@@ -1084,10 +1178,96 @@ impl PackageManager {
     pub(crate) fn sleep_until(&mut self, mut is_done: impl FnMut(&mut Self) -> bool) {
         Output::flush();
         while !is_done(self) {
-            // No task reads it. It lets `self` escape, because exit handlers write to the manager.
-            let ctx = core::ptr::from_mut(self).cast::<c_void>();
-            self.event_loop.tick(ctx);
+            self.install_fields().tick();
         }
+    }
+
+    pub(crate) fn env(&self) -> &dot_env::Loader {
+        self.state.env()
+    }
+
+    pub fn env_mut<'a>(&self) -> &'a mut dot_env::Loader {
+        self.state.env_mut()
+    }
+}
+
+impl InstallState {
+    /// `options.do_` without the steps that a failed update request cancels.
+    fn effective_do(&self, options: &Options) -> Do {
+        if self.update_request_failed {
+            options.do_ - (Do::SAVE_LOCKFILE | Do::SAVE_YARN_LOCK | Do::INSTALL_PACKAGES)
+        } else {
+            options.do_
+        }
+    }
+
+    pub(crate) fn log(&self) -> &'static bun_ast::Log {
+        self.log
+    }
+
+    pub fn has_enough_time_passed_between_waiting_messages(&self) -> bool {
+        let iter = self.event_loop.iteration_number();
+        if TIME_PASSER_LAST_TIME.load(core::sync::atomic::Ordering::Relaxed) < iter {
+            TIME_PASSER_LAST_TIME.store(iter, core::sync::atomic::Ordering::Relaxed);
+            return true;
+        }
+        false
+    }
+
+    pub(crate) fn configure_env_for_scripts(&mut self) -> Result<(), Error> {
+        if !self.has_configured_env_for_scripts {
+            configure_env_for_scripts_run(self)?;
+            self.has_configured_env_for_scripts = true;
+        }
+        Ok(())
+    }
+
+    /// The proxy settings in the environment. They are passed along with `http_proxy` so that a
+    /// redirect uses the proxy that applies to its own URL.
+    pub(crate) fn proxy_settings(&self) -> Option<Box<http::ProxySettings>> {
+        http::ProxySettings::from_env(self.env())
+    }
+
+    // Helper: deref env (set-once BackRef to process-singleton loader)
+    #[inline]
+    pub(crate) fn env(&self) -> &dot_env::Loader {
+        // `env` is set during init() and never None afterward; `BackRef::get`
+        // encapsulates the deref under the back-reference invariant.
+        self.env.as_ref().expect("env initialised").get()
+    }
+
+    /// Reborrow the process-global env loader.
+    ///
+    /// Lifetime is decoupled from `&self`: the loader is a leaked allocation
+    /// outside the manager (set once in `init()`), and callers interleave env
+    /// mutation with disjoint `&mut self.X` field writes.
+    #[inline]
+    fn env_mut<'a>(&self) -> &'a mut dot_env::Loader {
+        // SAFETY: `env` is set during `init()` and never None afterward; the
+        // pointee is a process-lifetime singleton (leaked `DotEnv.Loader`)
+        // that lives outside `self`.
+        // `BackRef` guarantees liveness; exclusivity is the caller's contract.
+        unsafe { &mut *self.env.expect("env initialised").as_ptr() }
+    }
+}
+
+impl InstallFields<'_> {
+    /// Auto-install blocks the JS thread while it waits for a response, so it gives up after 30
+    /// seconds of silence instead of the default five minutes.
+    pub(crate) fn idle_timeout_seconds(&self) -> Option<core::ffi::c_uint> {
+        (self.options.runtime_auto_install
+            && self
+                .state
+                .env()
+                .get(b"BUN_CONFIG_HTTP_IDLE_TIMEOUT")
+                .is_none())
+        .then_some(30)
+    }
+
+    /// One turn of the event loop, which waits if there is nothing to run.
+    pub(crate) fn tick(&mut self) {
+        self.state.event_loop.tick(core::ptr::null_mut());
+        ScriptCaller::Manager(self.reborrow()).finish_exited_subprocesses();
     }
 
     pub(crate) fn ensure_temp_node_gyp_script(&mut self) -> Result<(), Error> {
@@ -1101,40 +1281,13 @@ impl PackageManager {
         }
         ensure_temp_node_gyp_script_run(self)
     }
-
-    // Helper: deref env (set-once BackRef to process-singleton loader)
-    #[inline]
-    pub(crate) fn env(&self) -> &dot_env::Loader {
-        // `env` is set during init() and never None afterward; `BackRef::get`
-        // encapsulates the deref under the back-reference invariant.
-        self.env.as_ref().expect("env initialised").get()
-    }
-    #[cfg(bun_asan)]
-    pub fn deinit_caches(&mut self) {
-        self.workspace_package_json_cache = WorkspacePackageJSONCache::default();
-        self.update_requests = Box::default();
-    }
-
-    /// Reborrow the process-global env loader.
-    ///
-    /// Lifetime is decoupled from `&self`: the loader is a leaked allocation
-    /// outside the manager (set once in `init()`), and callers interleave env
-    /// mutation with disjoint `&mut self.X` field writes.
-    #[inline]
-    pub fn env_mut<'a>(&self) -> &'a mut dot_env::Loader {
-        // SAFETY: `env` is set during `init()` and never None afterward; the
-        // pointee is a process-lifetime singleton (leaked `DotEnv.Loader`)
-        // that lives outside `self`.
-        // `BackRef` guarantees liveness; exclusivity is the caller's contract.
-        unsafe { &mut *self.env.expect("env initialised").as_ptr() }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // run-once wrappers
 // ──────────────────────────────────────────────────────────────────────────
 
-fn configure_env_for_scripts_run(this: &mut PackageManager) -> Result<(), Error> {
+fn configure_env_for_scripts_run(this: &mut InstallState) -> Result<(), Error> {
     RunCommand::seed_script_env(this.env_mut());
 
     // Overwritten like npm does: an outer `bun run` in another project may have left a stale value.
@@ -1211,22 +1364,23 @@ extern "C" fn remove_node_gyp_tempdir() {
     }
 }
 
-fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), Error> {
-    if !manager.node_gyp_tempdir_name.is_empty() {
+fn ensure_temp_node_gyp_script_run(manager: &mut InstallFields<'_>) -> Result<(), Error> {
+    if !manager.state.node_gyp_tempdir_name.is_empty() {
         return Ok(());
     }
 
     let tempdir = get_temporary_directory(manager);
+    let state = &mut *manager.state;
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let node_gyp_tempdir_name =
         fs::FileSystem::tmpname(b"node-gyp", &mut path_buf.0, bun_core::fast_random())?;
 
     // used later for adding to path for scripts
-    manager.node_gyp_tempdir_name = Box::<[u8]>::from(node_gyp_tempdir_name.as_ref());
+    state.node_gyp_tempdir_name = Box::<[u8]>::from(node_gyp_tempdir_name.as_ref());
 
     let node_gyp_tempdir = match tempdir
         .handle
-        .make_open_path(&manager.node_gyp_tempdir_name, Default::default())
+        .make_open_path(&state.node_gyp_tempdir_name, Default::default())
     {
         Ok(d) => d,
         Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
@@ -1243,7 +1397,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         }
     };
     if NODE_GYP_TEMPDIR
-        .set((tempdir.handle.fd, manager.node_gyp_tempdir_name.clone()))
+        .set((tempdir.handle.fd, state.node_gyp_tempdir_name.clone()))
         .is_ok()
     {
         Global::add_exit_callback(remove_node_gyp_tempdir);
@@ -1311,12 +1465,12 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     let parts: [&[u8]; 3] = [
         strings::without_trailing_slash(tempdir.name),
         &[SEP],
-        &manager.node_gyp_tempdir_name,
+        &state.node_gyp_tempdir_name,
     ];
     let node_gyp_abs_dir = parts.concat();
 
     // Add our node-gyp tempdir to the path
-    let existing_path = manager.env().get(b"PATH").unwrap_or(b"");
+    let existing_path = state.env().get(b"PATH").unwrap_or(b"");
     let mut path_var: Vec<u8> =
         Vec::with_capacity(existing_path.len() + 1 + node_gyp_abs_dir.len());
     path_var.extend_from_slice(existing_path);
@@ -1324,9 +1478,9 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         path_var.push(DELIMITER);
     }
     path_var.extend_from_slice(&node_gyp_abs_dir);
-    manager.env_mut().map.put(b"PATH", &path_var)?;
+    state.env_mut().map.put(b"PATH", &path_var)?;
 
-    manager
+    state
         .env_mut()
         .map
         .put_alloc_key_and_value(b"BUN_WHICH_IGNORE_CWD", &node_gyp_abs_dir)?;
@@ -1375,7 +1529,7 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// allocate / get singleton
+// allocate
 // ──────────────────────────────────────────────────────────────────────────
 
 fn allocate_package_manager(
@@ -1390,175 +1544,109 @@ fn allocate_package_manager(
     workspace_name_hash: Option<PackageNameHash>,
     subcommand: Subcommand,
     root_package_json_name_at_time_of_init: Box<[u8]>,
-) -> *mut PackageManager {
-    // Uninitialized memory, abort-on-OOM.
-    let p = bun_core::heap::into_raw(Box::<PackageManager>::new_uninit()).cast::<PackageManager>();
-    holder::RAW_PTR.store(p, core::sync::atomic::Ordering::Release);
-    #[cfg(bun_asan)]
-    bun_core::add_exit_callback(deinit_caches_at_exit);
-
+) -> &'static mut PackageManager {
     let runtime_auto_install = options.runtime_auto_install;
     (INBOX.runtime_auto_install).store(runtime_auto_install, Ordering::Release);
     if bun_crash_handler::cli_state::is_main_thread() {
         let uws_loop: &bun_uws::Loop = bun_uws::Loop::get();
         (INBOX.uws_loop).store(core::ptr::from_ref(uws_loop).cast_mut(), Ordering::Release);
     }
-    // SAFETY: `p` points to uninitialized memory, fully initialized here field-by-field via
-    // `addr_of_mut!((*p).field).write(..)`. No reference to it is formed before that: an uninit
-    // bit pattern is invalid for its niche-bearing fields (`Box`, `Vec`, `Option<NonNull<_>>`).
-    //
-    // PERF NOTE — do NOT build `PackageManager` by value and `ptr::write` it.
-    // Rust has no result-location semantics, so a struct literal first
-    // materializes on the stack, and `PackageManager` embeds two
-    // `HiveArrayFallback` pools inline (`NetworkTask` × 128 ≈ 395 KB,
-    // `Task` × 64 ≈ 39 KB). The by-value form was measured at a 911 KB stack
-    // frame (objdump: `subq $0xde000,%r11` probe loop, ≈220 page faults) plus
-    // a ≈443 KB memcpy into the singleton. Per-field placement writes fields
-    // directly to the heap and keeps the frame under 16 KB.
-    unsafe {
-        macro_rules! wr {
-            ($field:ident, $val:expr) => {
-                core::ptr::addr_of_mut!((*p).$field).write($val)
-            };
-        }
-        // In place: zeros only the 256 B occupancy bitset; no stack temporary, no memcpy.
-        PreallocatedNetworkTasks::init_in_place(core::ptr::addr_of_mut!(
-            (*p).preallocated_network_tasks
-        ));
-        PreallocatedTaskStore::init_in_place(core::ptr::addr_of_mut!(
-            (*p).preallocated_resolve_tasks
-        ));
-
-        wr!(options, options);
-        wr!(active_lifecycle_scripts, Default::default());
-        wr!(network_task_fifo, NetworkQueue::init());
-        wr!(retry_queue, Default::default());
-        wr!(log, SyncView::new(log));
-        wr!(root_dir, root_dir);
-        wr!(ast_arena, bun_ast::AstArena::new());
-        wr!(env, Some(bun_ptr::BackRef::new_mut(env)));
-        wr!(lockfile, Box::new(Lockfile::default()));
-        wr!(
-            event_loop,
-            if runtime_auto_install {
+    let manager = Box::leak(Box::new(PackageManager {
+        options,
+        public_hoist_pattern: None,
+        hoist_pattern: None,
+        state: InstallState {
+            event_loop: Box::leak(Box::new(if runtime_auto_install {
                 AnyEventLoop::js_current()
             } else {
                 AnyEventLoop::init()
-            }
-        );
-        wr!(
-            original_package_json_path,
-            ZBox::from_vec_with_nul(original_package_json_path)
-        );
-        wr!(root_package_json_path, root_package_json_path);
-        wr!(workspace_package_json_cache, workspace_package_json_cache);
-        wr!(workspace_name_hash, workspace_name_hash);
-        wr!(subcommand, subcommand);
-        wr!(
-            root_package_json_name_at_time_of_init,
-            root_package_json_name_at_time_of_init
-        );
+            })),
+            active_lifecycle_scripts: Vec::new(),
+            unfinished_scripts: Vec::new(),
+            retry_queue: Default::default(),
+            log,
+            env: Some(bun_ptr::BackRef::new_mut(env)),
+            extracted_count: 0,
+            progress: Progress::default(),
+            downloads_node: None,
+            scripts_node: None,
+            task_batch: thread_pool::Batch::default(),
+            task_queue: TaskDependencyQueue::default(),
+            git_repositories: RepositoryMap::default(),
+            git_tasks: VecDeque::new(),
+            running_git_tasks: Vec::new(),
+            git_env: None,
+            network_dedupe_map: Default::default(),
+            network_tarball_batch: Vec::new(),
+            network_resolve_batch: Vec::new(),
+            patch_batch: thread_pool::Batch::default(),
+            total_tasks: Cell::new(0),
+            finished_installing: false,
+            total_scripts: 0,
+            has_configured_env_for_scripts: false,
+            node_gyp_tempdir_name: Box::default(),
+            preinstall_state: PreinstallStates::default(),
+            trusted_deps_to_add_to_package_json: Vec::new(),
+            any_failed_to_install: false,
+            last_reported_slow_lifecycle_script_at: 0,
+            cached_tick_for_slow_lifecycle_script_logging: 0,
+            update_request_failed: false,
+            pending_lockfile_changes: PendingLockfileChanges::default(),
+        },
+        root_dir,
+        ast_arena: bun_ast::AstArena::new(),
+        lockfile: Box::new(Lockfile::default()),
+        original_package_json_path: ZBox::from_vec_with_nul(original_package_json_path),
+        root_package_json_path,
+        workspace_package_json_cache,
+        workspace_name_hash,
+        subcommand,
+        root_package_json_name_at_time_of_init,
 
         // remaining defaults:
-        wr!(timestamp_for_manifest_cache_control, 0);
-        wr!(extracted_count, 0);
-        wr!(summary, Default::default());
-        wr!(progress, Progress::default());
-        wr!(downloads_node, None);
-        wr!(scripts_node, None);
-        wr!(track_installed_bin, TrackInstalledBin::None);
-        wr!(to_update, false);
-        wr!(update_requests, Box::default());
-        wr!(update_request_index, Default::default());
-        wr!(audit_fix_pins, Box::default());
-        wr!(root_package_id, RootPackageId::default());
-        wr!(workspace_root_name_hash, 0);
-        wr!(workspace_root_version, Box::default());
-        wr!(task_batch, thread_pool::Batch::default());
-        wr!(task_queue, TaskDependencyQueue::default());
-        wr!(manifests, PackageManifestMap::default());
-        wr!(folders, Default::default());
-        wr!(git_repositories, RepositoryMap::default());
-        wr!(git_commits, GitCommitMap::default());
-        wr!(git_tasks, VecDeque::new());
-        wr!(running_git_tasks, AtomicU32::new(0));
-        wr!(git_env, bun_ptr::JsCell::new(None));
-        wr!(appended_task_packages, AppendedTaskPackageMap::default());
-        wr!(network_dedupe_map, Default::default());
-        wr!(network_tarball_batch, Vec::new());
-        wr!(network_resolve_batch, Vec::new());
-        wr!(patch_batch, thread_pool::Batch::default());
-        wr!(pending_pre_calc_hashes, AtomicU32::new(0));
-        wr!(total_tasks, Cell::new(0));
-        wr!(pending_lifecycle_script_tasks, AtomicU32::new(0));
-        wr!(finished_installing, AtomicBool::new(false));
-        wr!(total_scripts, 0);
-        wr!(has_configured_env_for_scripts, false);
-        wr!(root_lifecycle_scripts, None);
-        wr!(node_gyp_tempdir_name, Box::default());
-        wr!(preinstall_state, Vec::new());
-        wr!(postinstall_optimizer, Default::default());
-        wr!(global_link_dir, None);
-        wr!(global_dir, None);
-        wr!(global_link_dir_path, b"");
-        wr!(
-            peer_dependencies,
-            LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
-        );
-        wr!(peer_askers, None);
-        wr!(local_in_root, Vec::new());
-        wr!(alias_rows, Vec::new());
-        wr!(patched_versions, None);
-        wr!(known_npm_aliases, NpmAliasMap::default());
-        wr!(trusted_deps_to_add_to_package_json, Vec::new());
-        wr!(any_failed_to_install, false);
-        wr!(updating_packages, StringArrayHashMap::default());
-        wr!(updating_catalogs, Vec::new());
-        wr!(update_target_workspaces, None);
-        wr!(named_update_reachable, None);
-        wr!(kept_patched, Vec::new());
-        wr!(kept_patched_text, Vec::new());
-        wr!(held_messages, None);
-        wr!(manifest_failures, HashMap::default());
-        wr!(look_ahead, LookAhead::default());
-        wr!(remote_packages, RemotePackages::default());
-        wr!(dedupe_report, None);
-        wr!(filtered_link_targets, None);
-        wr!(pending_filtered_write, None);
-        wr!(edited_package_jsons, Vec::new());
-        wr!(wrote_package_json, false);
-        wr!(migrated_package_json_moves, Vec::new());
-        wr!(catalog_add, add_catalog::State::default());
-        wr!(patched_dependencies_to_remove, ArrayHashMap::default());
-        wr!(pending_patch_commit, Default::default());
-        wr!(last_reported_slow_lifecycle_script_at, 0);
-        wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
-    }
-    holder::INITIALIZED.store(true, core::sync::atomic::Ordering::Release);
+        timestamp_for_manifest_cache_control: 0,
+        summary: Default::default(),
+        track_installed_bin: TrackInstalledBin::None,
+        to_update: false,
+        update_requests: Box::default(),
+        update_request_index: Default::default(),
+        audit_fix_pins: Box::default(),
+        root_package_id: RootPackageId::default(),
+        project: ProjectInfo::default(),
+        manifests: PackageManifestMap::default(),
+        folders: Default::default(),
+        git_commits: GitCommitMap::default(),
+        appended_task_packages: AppendedTaskPackageMap::default(),
+        pending_pre_calc_hashes: AtomicU32::new(0),
+        root_lifecycle_scripts: None,
+        peer_dependencies: LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init(),
+        peer_askers: None,
+        local_in_root: Vec::new(),
+        alias_rows: Vec::new(),
+        patched_versions: None,
+        updating_packages: StringArrayHashMap::default(),
+        updating_catalogs: Vec::new(),
+        update_target_workspaces: None,
+        named_update_reachable: None,
+        kept_patched: Vec::new(),
+        kept_patched_text: Vec::new(),
+        held_messages: None,
+        manifest_failures: HashMap::default(),
+        look_ahead: LookAhead::default(),
+        remote_packages: RemotePackages::default(),
+        dedupe_report: None,
+        filtered_link_targets: None,
+        pending_filtered_write: None,
+        edited_package_jsons: Vec::new(),
+        wrote_package_json: false,
+        migrated_package_json_moves: Vec::new(),
+        catalog_add: add_catalog::State::default(),
+        patched_dependencies_to_remove: ArrayHashMap::default(),
+        pending_patch_commit: Default::default(),
+    }));
+    bun_core::asan::ignore_object(core::ptr::from_mut(manager).cast());
     bun_core::add_exit_callback(crate::npm::package_manifest::Serializer::finish_saves_at_exit);
-    p
-}
-
-#[cfg(bun_asan)]
-extern "C" fn deinit_caches_at_exit() {
-    if !bun_crash_handler::cli_state::is_main_thread() {
-        return;
-    }
-    if !holder::INITIALIZED.load(core::sync::atomic::Ordering::Acquire) {
-        return;
-    }
-    let ptr = get();
-    if ptr.is_null() {
-        return;
-    }
-    // SAFETY: `deinit_caches()` only touches main-thread-owned fields.
-    unsafe { (*ptr).deinit_caches() };
-}
-
-fn get() -> *mut PackageManager {
-    // `allocate_package_manager()` is the sole writer and runs on the main
-    // thread before any caller of `get()`; Acquire pairs with its Release.
-    holder::RAW_PTR.load(core::sync::atomic::Ordering::Acquire)
+    manager
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2117,12 +2205,7 @@ pub fn project_directory(cwd: &[u8]) -> Option<&[u8]> {
     .map(|(project, _)| project)
 }
 
-/// Returns `&'static mut PackageManager` — the process-singleton (held in
-/// `holder::RAW_PTR`) is leaked for the process lifetime and `init()` is called
-/// exactly once on the single CLI dispatch thread. Every
-/// CLI command immediately reborrows the result as `&mut` for the command's
-/// duration; centralising the deref here removes a dozen identical
-/// `unsafe { &mut *ptr }` blocks at call sites.
+/// The manager is leaked.
 pub fn init(
     ctx: Command::Context,
     cli: &CommandLineArguments,
@@ -2133,8 +2216,7 @@ pub fn init(
         bun_ast::DEFAULT_LOG_LEVEL.store(bun_ast::Level::Err);
     }
     // SAFETY: `init()` runs on the main thread before any other access to the
-    // loader. Allocate into a process-lifetime static (same pattern as
-    // `holder::RAW_PTR`) instead of `Box::leak`.
+    // loader.
     let env: &mut dot_env::Loader = unsafe {
         let mut loader_ptr = holder::ENV_LOADER.load();
         // A second `init()` runs with a different cwd, so it keeps what the first one read from the
@@ -2360,27 +2442,17 @@ pub fn init(
     if !(cli.global && cli.config.is_some()) {
         bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
     }
-    // SAFETY: main-thread global
-    let root_package_json_path: &'static ZStr = unsafe {
-        let tld = fs.top_level_dir();
-        let cwd = &mut *CWD_BUF.get();
-        cwd[..tld.len()].copy_from_slice(tld);
-        cwd[tld.len()] = 0;
-        // Route through the FsVTable setter so the resolver's cached cwd is
-        // rebound to the process-lifetime CWD_BUF (it was a transient slice
-        // until now). The slice excludes the NUL — `top_level_dir` is `[]u8`.
-        // PathBuffer is repr(transparent) over [u8; N], so the raw cast is sound.
-        fs.set_top_level_dir(bun_core::ffi::slice(CWD_BUF.get().cast::<u8>(), tld.len()));
-        // Build it from `top_level_dir`, not from the fd's real path, so that relative paths never
-        // cross drives.
-        let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
-        let tld_no_slash = strings::without_trailing_slash(tld);
-        let plen = tld_no_slash.len() + SEP_PACKAGE_JSON.len();
-        root_buf[..tld_no_slash.len()].copy_from_slice(tld_no_slash);
-        root_buf[tld_no_slash.len()..plen].copy_from_slice(SEP_PACKAGE_JSON);
-        root_buf[plen] = 0;
-        ZStr::from_raw(root_buf.as_ptr(), plen)
-    };
+    let with_nul = fs
+        .dirname_store()
+        .append(top_level_dir_z.as_bytes_with_nul())?;
+    fs.set_top_level_dir(&with_nul[..top_level_dir_z.len()]);
+    // Build it from `top_level_dir`, not from the fd's real path, so that relative paths never
+    // cross drives.
+    let root_package_json_path = ZStr::from_slice_with_nul(fs.dirname_store().append_parts(&[
+        strings::without_trailing_slash(fs.top_level_dir()),
+        SEP_PACKAGE_JSON,
+        b"\0",
+    ])?);
     // From here on, package.json is read by path, and written by path by the commands that write
     // it.
     drop(root_package_json_file);
@@ -2476,7 +2548,7 @@ pub fn init(
 
     drop(workspace_names); // workspace_names.map.deinit()
 
-    let manager_ptr = allocate_package_manager(
+    let manager = allocate_package_manager(
         options,
         ctx.log(),
         entries_option,
@@ -2488,16 +2560,12 @@ pub fn init(
         subcommand,
         root_package_json_name_at_time_of_init,
     );
-    // The per-field placement above fully initialized the singleton; the
-    // `&mut PackageManager` validity invariant now holds.
     {
-        // SAFETY: singleton fully initialized; main thread, no workers yet.
-        let manager = unsafe { &mut *manager_ptr };
         // Build the handle from `manager.event_loop` and write it back as the loop's
         // parent so uSockets timers / lifecycle subprocess waiters can find the
         // mini event loop on tick.
-        let uws_loop = manager.event_loop.r#loop();
-        EventLoopHandle::from_any(&manager.event_loop).set_as_parent_of(uws_loop);
+        let uws_loop = manager.state.event_loop.r#loop();
+        EventLoopHandle::from_any(manager.state.event_loop).set_as_parent_of(uws_loop);
     }
     {
         // make sure folder packages can find the root package without creating a new one
@@ -2510,8 +2578,7 @@ pub fn init(
         buf[..raw.len()].copy_from_slice(raw);
         let normalized = &mut buf[..raw.len()];
         resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(normalized);
-        // SAFETY: singleton fully initialized; main thread, no workers yet.
-        unsafe { &mut *manager_ptr }.folders.put(
+        manager.folders.put(
             FolderResolutionKey::new(FolderResolutionKind::Folder, normalized),
             FolderResolutionEntry {
                 abs_path: Box::<[u8]>::from(&*normalized),
@@ -2522,8 +2589,6 @@ pub fn init(
     }
 
     {
-        // SAFETY: as above; scoped reborrow for the options/manifest-cache block.
-        let manager = unsafe { &mut *manager_ptr };
         // `options.load` applies BUN_CONFIG_MAX_HTTP_REQUESTS on top of this default.
         http::async_http::MAX_SIMULTANEOUS_REQUESTS.store(
             if env.has_http_proxy() {
@@ -2566,24 +2631,17 @@ pub fn init(
 
         if let Some(config) = ctx.install.as_deref_mut() {
             if let Some(p) = config.public_hoist_pattern.take() {
-                manager.options.public_hoist_pattern = Some(p);
+                manager.public_hoist_pattern = Some(p);
             }
             if let Some(p) = config.hoist_pattern.take() {
-                manager.options.hoist_pattern = Some(p);
+                manager.hoist_pattern = Some(p);
             }
         }
     }
 
-    // Singleton fully initialized; main thread, no workers yet. Wrapped once as
-    // `ParentRef` so the two read-only `options` projections below go through
-    // safe `Deref` instead of per-site raw deref. Safe `From<NonNull>`
-    // construction — `manager_ptr` is the live singleton address.
-    let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
-        NonNull::new(manager_ptr).expect("manager singleton non-null"),
-    );
     let mut ca: Vec<ZBox> = Vec::new();
     {
-        let options = &mgr_ref.options;
+        let options = &manager.options;
         if !options.ca.is_empty() {
             ca = Vec::with_capacity(options.ca.len());
             debug_assert_eq!(ca.capacity(), options.ca.len());
@@ -2593,7 +2651,7 @@ pub fn init(
         }
     }
 
-    let abs_ca_file_name = ZBox::from_bytes(mgr_ref.options.ca_file_name);
+    let abs_ca_file_name = ZBox::from_bytes(manager.options.ca_file_name);
     // The path is still relative if joining it to its directory did not fit in a path buffer.
     if !abs_ca_file_name.is_empty() && !bun_paths::is_absolute(abs_ca_file_name.as_bytes()) {
         Output::err(
@@ -2647,13 +2705,11 @@ pub fn init(
         (u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast")) as u32 // @truncate
     };
 
-    // SAFETY: fully initialized and never freed. `init()` gets here once per process, so this is
-    // the only `&'static mut`.
-    let manager = unsafe { &mut *manager_ptr };
     manager.timestamp_for_manifest_cache_control = timestamp_for_manifest_cache_control;
     Ok((manager, original_cwd_clone))
 }
 
+/// Only the first call on the main thread can succeed. The later ones repeat its error, or fail with `PackageManagerTaken`.
 pub(crate) fn init_with_runtime(
     log: &bun_ast::Log,
     // Used read-only (`Options::load` only ever reads `config.*`).
@@ -2663,25 +2719,24 @@ pub(crate) fn init_with_runtime(
     bun_install: Option<&Api::BunInstall>,
     cli: &CommandLineArguments,
     env: &mut dot_env::Loader,
-    // The directory of the file whose import needs a package. Only the first call's value is used.
+    // The directory of the file whose import needs a package.
     importer_dir: &[u8],
-) -> crate::Result<*mut PackageManager> {
-    // NB: not `bun_core::run_once!` — the body is fallible (reading the root
-    // directory hits ENOENT/EACCES at runtime when the cwd was deleted or is
-    // unreadable), and the failure must be sticky: `holder::RAW_PTR` stays
-    // null on failure, so later callers have to see the error instead of a
-    // null singleton.
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    static INIT_ERROR: bun_core::Mutex<Option<crate::Error>> = bun_core::Mutex::new(None);
-    ONCE.call_once(|| {
-        if let Err(err) = init_with_runtime_once(log, bun_install, cli, env, importer_dir) {
-            *INIT_ERROR.lock() = Some(err);
-        }
-    });
-    match *INIT_ERROR.lock() {
-        None => Ok(get()),
-        Some(code) => Err(code),
+) -> crate::Result<&'static mut PackageManager> {
+    // The manager keeps the event loop of this thread until the process exits.
+    if !bun_crash_handler::cli_state::is_main_thread() {
+        return Err(bun_resolver::Error::NotMainThread.into());
     }
+    static LATER_CALL_ERROR: bun_core::Mutex<Option<crate::Error>> = bun_core::Mutex::new(None);
+    let mut later_call_error = LATER_CALL_ERROR.lock();
+    if let Some(err) = *later_call_error {
+        return Err(err);
+    }
+    let result = init_with_runtime_once(log, bun_install, cli, env, importer_dir);
+    *later_call_error = Some(match result {
+        Ok(_) => bun_resolver::Error::PackageManagerTaken.into(),
+        Err(err) => err,
+    });
+    result
 }
 
 fn init_with_runtime_once(
@@ -2690,16 +2745,15 @@ fn init_with_runtime_once(
     cli: &CommandLineArguments,
     env: &mut dot_env::Loader,
     importer_dir: &[u8],
-) -> crate::Result<()> {
+) -> crate::Result<&'static mut PackageManager> {
     if env.get(b"BUN_INSTALL_VERBOSE").is_some() {
         PackageManager::set_verbose_install(true);
     }
 
     // Read the root directory BEFORE allocating the singleton. This is
     // user-reachable failure (the cwd may have been deleted out from under the
-    // process, or be unreadable: ENOENT/EACCES/ENOTDIR), and bailing out here
-    // leaves `holder::RAW_PTR` null rather than pointing at an uninitialized
-    // manager. Returns the resolver's BSSMap-owned `*EntriesOption` slot.
+    // process, or be unreadable: ENOENT/EACCES/ENOTDIR).
+    // Returns the resolver's BSSMap-owned `*EntriesOption` slot.
     let top_level_dir = FileSystem::get().top_level_dir();
     let root_dir = FileSystem::instance()
         .read_directory(top_level_dir, 0, true)?
@@ -2815,7 +2869,7 @@ fn init_with_runtime_once(
     let mut original_package_json_path =
         strings::without_trailing_slash(FileSystem::get().top_level_dir()).to_vec();
     original_package_json_path.extend_from_slice(b"/package.json\0");
-    let manager_ptr = allocate_package_manager(
+    let manager = allocate_package_manager(
         Options {
             runtime_auto_install: true,
             ..Default::default()
@@ -2831,16 +2885,12 @@ fn init_with_runtime_once(
         Subcommand::Install,
         Box::default(),
     );
-    // SAFETY: per-field placement above fully initialized the PackageManager;
-    // the `&mut PackageManager` validity invariant now holds for the post-init
-    // body.
-    let manager = unsafe { &mut *manager_ptr };
     let _drain = manager.drain_log_on_drop(Some(log));
 
     if Output::enable_ansi_colors_stderr() {
-        manager.progress = Progress::default();
-        manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        manager.progress.start(b"", 0);
+        manager.state.progress = Progress::default();
+        manager.state.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
+        manager.state.progress.start(b"", 0);
     } else {
         manager.options.log_level = package_manager_options::LogLevel::DefaultNoProgress;
     }
@@ -2865,10 +2915,6 @@ fn init_with_runtime_once(
     // path doesn't open()/read() a lockfile that isn't there.
     // `load_from_dir` fills the lockfile in place, so `Ok` keeps the loaded
     // value as-is.
-    // `Lockfile::load_from_dir(manager, …)` is a
-    // self-aliasing receiver+argument pair Rust forbids. Split-borrow by
-    // temporarily moving the boxed lockfile out so the `&mut PackageManager`
-    // passed in does not alias the `&mut Lockfile` receiver.
     manager.lockfile.init_empty();
     if let Ok(fs::EntriesOption::Entries(entries)) =
         FileSystem::instance().read_directory(project_dir, 0, false)
@@ -2879,19 +2925,16 @@ fn init_with_runtime_once(
         }
         && let Ok(dir) = bun_sys::Dir::open(project_dir)
     {
-        let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));
-        match lockfile.load_from_dir::<false>(dir.fd(), Some(&mut *manager), log) {
+        match (manager.lockfile).load_from_dir(dir.fd(), Some(&manager.options), log) {
             lockfile::LoadResult::Ok(_) => {}
-            _ => lockfile.init_empty(),
+            _ => manager.lockfile.init_empty(),
         }
-        manager.lockfile = lockfile;
         // Workspace paths are relative to `root_dir`. A lockfile records them relative to its own
         // directory, and `parse_with_json` makes them relative to the working directory.
         if manager.lockfile.packages.len() > 0 {
             manager.root_dir = entries;
             // Auto-install ignores an override that points away from the registry, so it also drops
             // what such an override resolved to in the lockfile.
-            use crate::lockfile_real::package::PackageColumns as _;
             let lockfile = &mut *manager.lockfile;
             let resolved_as = lockfile.packages.items_resolution();
             for (row, package_id) in
@@ -2907,18 +2950,18 @@ fn init_with_runtime_once(
                     *package_id = bun_install::INVALID_PACKAGE_ID;
                 }
             }
-            return Ok(());
+            return Ok(manager);
         }
     }
     if project.is_some_and(|(root, _)| parse_runtime_root(manager, log, root).is_ok()) {
-        return Ok(());
+        return Ok(manager);
     }
     manager.lockfile.init_empty();
     manager.lockfile.append_package(&lockfile::Package {
         resolution: crate::resolution::Resolution::init(crate::resolution::TaggedValue::Root),
         ..Default::default()
     })?;
-    Ok(())
+    Ok(manager)
 }
 
 /// Without a lockfile, auto-install reads the project's package.json the way `bun install` does,
@@ -2942,11 +2985,11 @@ fn parse_runtime_root(
         (entry.source.clone(), entry.root)
     };
     let mut root = lockfile::Package::default();
-    let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));
+    let (lockfile, mut fields) = Package::ParseFields::split_lockfile(manager);
     let result = root
         .parse_with_json(
-            &mut lockfile,
-            manager,
+            lockfile,
+            &mut fields,
             &parse_log,
             &source,
             bun_ast::JsonView::from(&json),
@@ -2963,7 +3006,6 @@ fn parse_runtime_root(
             lockfile.append_package(&root)?;
             Ok(())
         });
-    manager.lockfile = lockfile;
     if parse_log.has_errors() {
         parse_log.append_to(log);
     }

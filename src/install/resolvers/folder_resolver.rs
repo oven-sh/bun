@@ -7,12 +7,12 @@ use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, String as SemverString};
 use bun_sys::{self, Fd, File, O};
 
-use crate::bun_json::{Expr, JsonView};
+use crate::bun_json::JsonView;
 use crate::dependency::{self};
-use crate::install::{Features, Lockfile, PackageID};
+use crate::install::{Features, PackageID};
 use crate::lockfile::Package as LockfilePackage;
 use crate::lockfile_real::StringBuilder;
-use crate::lockfile_real::package::ResolverContext;
+use crate::lockfile_real::package::{ParseFields, ResolverContext};
 use crate::npm;
 use crate::package_manager_real::PackageManager;
 use crate::package_manager_real::process_dependency_list::{ListedDependencies, OnlyDependencies};
@@ -231,44 +231,26 @@ fn read_package_json_from_disk(
 
     let mut package: LockfilePackage = Default::default();
 
-    // Borrow splitting: `manager.lockfile` and `manager` are
-    // needed simultaneously; borrowck rejects the overlap on `&mut self`,
-    // so split via raw pointer once here. `parse{,_with_json}` reaches `manager` through `pm`,
-    // and it derefs `lockfile` only under `Features::workspaces`, which none
-    // of the `features` that `get_or_put` passes has.
     let log: &bun_ast::Log = manager.log();
-    let manager_ptr: *mut PackageManager = manager;
+    let mut fields = ParseFields::for_package(&manager.options, &mut manager.project);
 
     if resolver.tag == ResolutionTag::Workspace {
         let _tracer =
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace);
 
-        // SAFETY: `manager_ptr` was just derived from the live `&mut PackageManager`
-        // argument; `log` is a separate allocation, so this `&mut` reborrow aliases no
-        // other live reference.
-        let json = unsafe { &mut *manager_ptr }
+        let json = manager
             .workspace_package_json_cache
             .get_with_path(log, abs.as_bytes(), Default::default())
             .unwrap()?;
-        // `Expr` is `Copy`; take a raw pointer to `source` so the borrow on
-        // `workspace_package_json_cache` ends before `&mut *manager_ptr` is
-        // formed for `parse_with_json`.
-        let root: Expr = json.root;
-        let source: *const bun_ast::Source = &raw const json.source;
-
-        // SAFETY: see the borrow-splitting comment above.
-        unsafe {
-            let lockfile: *mut Lockfile = &raw mut *(*manager_ptr).lockfile;
-            package.parse_with_json(
-                &mut *lockfile,
-                &mut *manager_ptr,
-                log,
-                &*source,
-                JsonView::from(&root),
-                resolver,
-                features,
-            )?;
-        }
+        package.parse_with_json(
+            &mut manager.lockfile,
+            &mut fields,
+            log,
+            &json.source,
+            JsonView::from(&json.root),
+            resolver,
+            features,
+        )?;
     } else {
         let _tracer =
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskFolder);
@@ -300,18 +282,14 @@ fn read_package_json_from_disk(
             bun_ast::Source::init_path_string(abs.as_bytes(), body.list.as_slice())
         };
 
-        // SAFETY: see the borrow-splitting comment above.
-        unsafe {
-            let lockfile: *mut Lockfile = &raw mut *(*manager_ptr).lockfile;
-            package.parse(
-                &mut *lockfile,
-                &mut *manager_ptr,
-                log,
-                &source,
-                resolver,
-                features,
-            )?;
-        }
+        package.parse(
+            &mut manager.lockfile,
+            &mut fields,
+            log,
+            &source,
+            resolver,
+            features,
+        )?;
     }
 
     if let Some(existing_id) =
@@ -350,15 +328,14 @@ pub(crate) fn listed_dependencies(
         .get_with_path(&log, paths.abs.as_bytes(), Default::default())
         .unwrap()
         .ok()?;
-    let (source, json) = (entry.source.clone(), entry.root);
     let mut listed = ListedDependencies::default();
     // These features register no `npm:` alias, which would change how other rows are resolved.
     let parsed = listed.package.parse_with_json(
         &mut listed.lockfile,
-        manager,
+        &mut ParseFields::for_package(&manager.options, &mut manager.project),
         &log,
-        &source,
-        JsonView::from(&json),
+        &entry.source,
+        JsonView::from(&entry.root),
         &mut OnlyDependencies,
         Features::FOLDER,
     );

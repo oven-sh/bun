@@ -422,7 +422,7 @@ impl CompressionStreamCoder {
                         });
                     }
                     let ((consumed, ok), has_room) =
-                        append_step(out, cap, |spare| p.step(remaining, spare, op))?;
+                        append_step(out, cap, |spare| p.step((remaining, spare), op))?;
                     remaining = &remaining[consumed..];
                     if !ok {
                         return Err(CodecError::Message("brotli encode failed"));
@@ -448,7 +448,7 @@ impl CompressionStreamCoder {
                         });
                     }
                     let ((consumed, result), _) =
-                        append_step(out, cap, |spare| p.step(remaining, spare))?;
+                        append_step(out, cap, |spare| p.step((remaining, spare)))?;
                     remaining = &remaining[consumed..];
                     match result {
                         brotli::BrotliDecoderResult::success => {
@@ -492,7 +492,7 @@ impl CompressionStreamCoder {
                         });
                     }
                     let ((consumed, remaining), _) =
-                        append_step(out, cap, |spare| p.step(rest, spare, end))?;
+                        append_step(out, cap, |spare| p.step((rest, spare), end))?;
                     rest = &rest[consumed..];
                     let remaining =
                         remaining.map_err(|code| zstd_error(code, "zstd encode failed"))?;
@@ -531,7 +531,7 @@ impl CompressionStreamCoder {
                         });
                     }
                     let ((consumed, remaining), has_room) =
-                        append_step(out, cap, |spare| p.step(rest, spare))?;
+                        append_step(out, cap, |spare| p.step((rest, spare)))?;
                     rest = &rest[consumed..];
                     if remaining.map_err(|code| zstd_error(code, "zstd decode failed"))? == 0 {
                         self.ended = true;

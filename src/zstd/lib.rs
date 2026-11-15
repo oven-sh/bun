@@ -4,7 +4,8 @@ use core::ffi::{CStr, c_int, c_ulonglong, c_void};
 use core::ptr::NonNull;
 
 use bun_core::ZStr;
-use bun_core::vec::{BorrowedCursor, append_with};
+use bun_core::compress::Buffers;
+use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
 
 // ─── FFI bindings ─────────────────────────────────────────────────────────
 // Externs stay in this crate per PORTING.md §FFI: "If your file has externs
@@ -107,7 +108,6 @@ pub mod c {
         ) -> usize;
         // Pure scalar fns — no preconditions.
         pub(crate) safe fn ZSTD_isError(code: usize) -> c_uint;
-        pub(crate) safe fn ZSTD_getErrorName(code: usize) -> *const c_char;
         pub(crate) safe fn ZSTD_defaultCLevel() -> c_int;
 
         pub(crate) fn ZSTD_decompressStream(
@@ -222,27 +222,38 @@ impl ErrorCode {
 pub type Step = (usize, core::result::Result<usize, ErrorCode>);
 
 fn step(
-    input: &[u8],
-    mut out: BorrowedCursor<'_, u8>,
+    mut buffers: impl Buffers,
     call: impl FnOnce(*mut c::ZSTD_outBuffer, *mut c::ZSTD_inBuffer) -> usize,
 ) -> Step {
+    let (input, out) = buffers.parts();
     let mut in_buf = c::ZSTD_inBuffer {
-        src: input.as_ptr().cast::<c_void>(),
+        src: input.cast::<c_void>(),
         size: input.len(),
         pos: 0,
     };
-    // SAFETY: only zstd raises `pos`, by as many bytes as it wrote at the start of `out`.
-    let rc = unsafe {
-        let mut out_buf = c::ZSTD_outBuffer {
-            size: out.capacity(),
-            dst: out.as_mut().as_mut_ptr().cast::<c_void>(),
-            pos: 0,
-        };
-        let rc = call(&raw mut out_buf, &raw mut in_buf);
-        out.advance(out_buf.pos);
-        rc
+    let mut out_buf = c::ZSTD_outBuffer {
+        dst: out.cast::<c_void>(),
+        size: out.len(),
+        pos: 0,
     };
+    let rc = call(&raw mut out_buf, &raw mut in_buf);
+    // SAFETY: only zstd raises a `pos`, the output's by as many bytes as it wrote at the start of `out`.
+    unsafe { buffers.advance(in_buf.pos, out_buf.pos) };
     (in_buf.pos, ErrorCode::check(rc))
+}
+
+/// Runs `call(dst, dst_capacity)`, which returns an error code or how many bytes zstd wrote.
+fn fill(
+    mut out: BorrowedCursor<'_, u8>,
+    call: impl FnOnce(*mut c_void, usize) -> usize,
+) -> core::result::Result<usize, ErrorCode> {
+    let capacity = out.capacity();
+    // SAFETY: zstd only writes initialized bytes, on success `written` of them at the start of `out`.
+    unsafe {
+        let written = ErrorCode::check(call(out.as_mut().as_mut_ptr().cast::<c_void>(), capacity))?;
+        out.advance(written);
+        Ok(written)
+    }
 }
 
 pub struct OwnedCCtx {
@@ -293,18 +304,13 @@ impl OwnedCCtx {
     }
 
     /// One `ZSTD_compressStream2()` call. After an error, every call returns that error.
-    pub fn step(
-        &mut self,
-        input: &[u8],
-        out: BorrowedCursor<'_, u8>,
-        end_op: c::ZSTD_EndDirective,
-    ) -> Step {
+    pub fn step(&mut self, buffers: impl Buffers, end_op: c::ZSTD_EndDirective) -> Step {
         let cctx = match self.usable() {
             Ok(cctx) => cctx,
             Err(err) => return (0, Err(err)),
         };
         // SAFETY: `cctx` is usable, the buffers are `step`'s, and zstd checks `end_op`.
-        let (consumed, result) = step(input, out, |out, input| unsafe {
+        let (consumed, result) = step(buffers, |out, input| unsafe {
             c::ZSTD_compressStream2(cctx, out, input, end_op)
         });
         (consumed, result.inspect_err(|&err| self.failed = Some(err)))
@@ -367,13 +373,13 @@ impl OwnedDCtx {
     }
 
     /// One `ZSTD_decompressStream()` call. After an error, every call returns that error until [`reset`](Self::reset).
-    pub fn step(&mut self, input: &[u8], out: BorrowedCursor<'_, u8>) -> Step {
+    pub fn step(&mut self, buffers: impl Buffers) -> Step {
         let dctx = match self.usable() {
             Ok(dctx) => dctx,
             Err(err) => return (0, Err(err)),
         };
         // SAFETY: `dctx` is usable, and the buffers are `step`'s.
-        let (consumed, result) = step(input, out, |out, input| unsafe {
+        let (consumed, result) = step(buffers, |out, input| unsafe {
             c::ZSTD_decompressStream(dctx, out, input)
         });
         (consumed, result.inspect_err(|&err| self.failed = Some(err)))
@@ -389,7 +395,6 @@ impl Drop for OwnedDCtx {
 
 pub enum Result {
     Success(usize),
-    // Always assigned from ZSTD_getErrorName (static C string).
     Err(&'static ZStr),
 }
 
@@ -427,23 +432,26 @@ impl ZstdError {
 //                             const void* src, size_t srcSize,
 //                                   int compressionLevel);
 pub fn compress(dest: &mut [u8], src: &[u8], level: Option<i32>) -> Result {
-    // SAFETY: dest/src are valid for their lengths; ZSTD_compress reads src and writes dest.
-    let result = unsafe {
+    compress_into(BorrowedBuf::from(dest).unfilled(), src, level)
+}
+
+fn compress_into(dest: BorrowedCursor<'_, u8>, src: &[u8], level: Option<i32>) -> Result {
+    // SAFETY: dst/src are valid for their lengths; ZSTD_compress reads src and writes dst.
+    let result = fill(dest, |dst, dst_capacity| unsafe {
         c::ZSTD_compress(
-            dest.as_mut_ptr().cast::<c_void>(),
-            dest.len(),
+            dst,
+            dst_capacity,
             src.as_ptr().cast::<c_void>(),
             src.len(),
             // Not redundant_closure: extern "C" fn items don't implement FnOnce
             // (Fn* traits are only blanket-impl'd for the Rust ABI).
             level.unwrap_or_else(|| c::ZSTD_defaultCLevel()),
         )
-    };
-    if c::ZSTD_isError(result) != 0 {
-        // SAFETY: ZSTD_getErrorName returns a static NUL-terminated string.
-        return Result::Err(unsafe { ZStr::from_c_ptr(c::ZSTD_getErrorName(result)) });
+    });
+    match result {
+        Ok(written) => Result::Success(written),
+        Err(code) => Result::Err(ZStr::from_cstr(code.message())),
     }
-    Result::Success(result)
 }
 
 pub fn compress_bound(src_size: usize) -> usize {
@@ -455,25 +463,7 @@ pub fn compress_bound(src_size: usize) -> usize {
 /// `out.spare_capacity_mut().len() >= compress_bound(src.len())` to
 /// guarantee success.
 pub fn compress_append(out: &mut Vec<u8>, src: &[u8], level: Option<i32>) -> Result {
-    let spare = out.spare_capacity_mut();
-    // SAFETY: spare/src are valid for their lengths; ZSTD_compress reads src
-    // and writes into spare.
-    let rc = unsafe {
-        c::ZSTD_compress(
-            spare.as_mut_ptr().cast::<c_void>(),
-            spare.len(),
-            src.as_ptr().cast::<c_void>(),
-            src.len(),
-            level.unwrap_or_else(|| c::ZSTD_defaultCLevel()),
-        )
-    };
-    if c::ZSTD_isError(rc) != 0 {
-        // SAFETY: ZSTD_getErrorName returns a static NUL-terminated string.
-        return Result::Err(unsafe { ZStr::from_c_ptr(c::ZSTD_getErrorName(rc)) });
-    }
-    // SAFETY: zstd has initialized `rc` bytes at the start of spare.
-    unsafe { bun_core::vec::commit_spare(out, rc) };
-    Result::Success(rc)
+    append_with(out, usize::MAX, |dest| compress_into(dest, src, level))
 }
 
 /// `ZSTD_isError` — true when a `size_t` return value (including from
@@ -487,22 +477,14 @@ pub fn is_error(code: usize) -> bool {
 
 /// `ZSTD_decompress` into `out`'s spare capacity, which is the output bound; commits the bytes written.
 fn decompress_append(out: &mut Vec<u8>, src: &[u8]) -> core::result::Result<(), ZstdError> {
-    let spare = out.spare_capacity_mut();
-    // SAFETY: spare/src are valid for their lengths; ZSTD_decompress reads src
-    // and writes at most `spare.len()` bytes into spare.
-    let rc = unsafe {
-        c::ZSTD_decompress(
-            spare.as_mut_ptr().cast::<c_void>(),
-            spare.len(),
-            src.as_ptr().cast::<c_void>(),
-            src.len(),
-        )
-    };
-    let written = ErrorCode::check(rc)
-        .map_err(|code| ZstdError::for_decompression(code, ZstdError::DecompressionFailed))?;
-    // SAFETY: zstd has initialized `written` bytes at the start of spare.
-    unsafe { bun_core::vec::commit_spare(out, written) };
-    Ok(())
+    append_with(out, usize::MAX, |out| {
+        // SAFETY: dst/src are valid for their lengths; ZSTD_decompress reads src and writes dst.
+        fill(out, |dst, dst_capacity| unsafe {
+            c::ZSTD_decompress(dst, dst_capacity, src.as_ptr().cast::<c_void>(), src.len())
+        })
+    })
+    .map(drop)
+    .map_err(|code| ZstdError::for_decompression(code, ZstdError::DecompressionFailed))
 }
 
 /// Decompress data, automatically allocating the output buffer.
@@ -566,31 +548,27 @@ pub fn decompress_alloc_with_prefix(
         .try_reserve_exact(size)
         .map_err(|_| ZstdError::OutOfMemory)?;
     let dctx = OwnedDCtx::new().ok_or(ZstdError::OutOfMemory)?;
-    let spare = output.spare_capacity_mut();
-    // SAFETY: `prefix`, `src` and `spare` are valid for their lengths and outlive the calls, and
-    // at most `spare.len()` bytes are written to `spare`.
-    let rc = unsafe {
-        let rc = c::ZSTD_DCtx_refPrefix(
-            dctx.ptr.as_ptr(),
-            prefix.as_ptr().cast::<c_void>(),
-            prefix.len(),
-        );
-        if c::ZSTD_isError(rc) != 0 {
-            rc
-        } else {
+    append_with(&mut output, usize::MAX, |out| {
+        // SAFETY: `prefix`, `src` and `dst` are valid for their lengths, and `dctx` is not used after this.
+        fill(out, |dst, dst_capacity| unsafe {
+            let rc = c::ZSTD_DCtx_refPrefix(
+                dctx.ptr.as_ptr(),
+                prefix.as_ptr().cast::<c_void>(),
+                prefix.len(),
+            );
+            if is_error(rc) {
+                return rc;
+            }
             c::ZSTD_decompressDCtx(
                 dctx.ptr.as_ptr(),
-                spare.as_mut_ptr().cast::<c_void>(),
-                spare.len(),
+                dst,
+                dst_capacity,
                 src.as_ptr().cast::<c_void>(),
                 src.len(),
             )
-        }
-    };
-    let written = ErrorCode::check(rc)
-        .map_err(|code| ZstdError::for_decompression(code, ZstdError::DecompressionFailed))?;
-    // SAFETY: zstd has initialized `written` bytes at the start of spare.
-    unsafe { bun_core::vec::commit_spare(&mut output, written) };
+        })
+    })
+    .map_err(|code| ZstdError::for_decompression(code, ZstdError::DecompressionFailed))?;
     Ok(output)
 }
 
@@ -683,7 +661,7 @@ impl StreamingDecoder {
             }
             let budget = remaining_output.min(max_output - out.len());
             let (bytes_read, rc) = append_with(out, budget, |mut out| {
-                let step = self.stream.step(next_in, out.reborrow());
+                let step = self.stream.step((next_in, out.reborrow()));
                 self.output_full = out.capacity() == 0;
                 step
             });

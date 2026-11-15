@@ -153,6 +153,12 @@ export const lsquic: Dependency = {
     // and failed for a larger one. Such a block gets a heap buffer, sized from
     // the header list.
     "patches/lsquic/large-header-block.patch",
+    // The server-side mini connection stashed at most 10 out-of-order CRYPTO
+    // frames and aborted the handshake (CONNECTION_CLOSE, INTERNAL_ERROR) at
+    // the 11th. Chromium's chaos protection splits the ClientHello into more.
+    // Upstream lsquic 4.10.0 made the limit the es_max_crypto_stash setting
+    // (https://github.com/litespeedtech/lsquic/issues/680). quic.c sets it.
+    "patches/lsquic/crypto-stash-limit.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

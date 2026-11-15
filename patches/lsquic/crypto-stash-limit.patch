@@ -1,0 +1,75 @@
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -385,6 +385,8 @@ typedef struct ssl_ctx_st * (*lsquic_lookup_cert_f)(
+ #define LSQUIC_DF_STTL               86400
+ #define LSQUIC_DF_MAX_INCHOATE     (1 * 1000 * 1000)
+ 
++#define LSQUIC_DF_MAX_CRYPTO_STASH    20
++
+ #define LSQUIC_DF_SUPPORT_SREJ_SERVER  1
+ #define LSQUIC_DF_SUPPORT_SREJ_CLIENT  0
+ 
+@@ -662,6 +664,18 @@ struct lsquic_engine_settings {
+      */
+     int             es_support_srej;
+ 
++    /**
++     * The maximum number of out-of-order CRYPTO frames the mini connection
++     * stashes while waiting for the missing predecessor frames.  When the
++     * limit is hit, the connection is aborted.  Client implementations such
++     * as ngtcp2 (since its "chaos protection") shuffle the ClientHello into
++     * ~20 out-of-order frames; the historical limit of 10 fails such
++     * handshakes.
++     *
++     * The default value is @ref LSQUIC_DF_MAX_CRYPTO_STASH.
++     */
++    unsigned char   es_max_crypto_stash;
++
+     /**
+      * Server push is not supported.  lsquic_conn_is_push_enabled() returns
+      * false and lsquic_conn_push_stream() returns 1.
+--- a/src/liblsquic/lsquic_engine.c
++++ b/src/liblsquic/lsquic_engine.c
+@@ -315,6 +315,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
+     {
+         settings->es_cfcw        = LSQUIC_DF_CFCW_SERVER;
+         settings->es_sfcw        = LSQUIC_DF_SFCW_SERVER;
++        settings->es_max_crypto_stash = LSQUIC_DF_MAX_CRYPTO_STASH;
+         settings->es_support_srej= LSQUIC_DF_SUPPORT_SREJ_SERVER;
+         settings->es_init_max_data
+                                  = LSQUIC_DF_INIT_MAX_DATA_SERVER;
+@@ -339,6 +340,7 @@ lsquic_engine_init_settings (struct lsquic_engine_settings *settings,
+     {
+         settings->es_cfcw        = LSQUIC_DF_CFCW_CLIENT;
+         settings->es_sfcw        = LSQUIC_DF_SFCW_CLIENT;
++        settings->es_max_crypto_stash = LSQUIC_DF_MAX_CRYPTO_STASH;
+         settings->es_support_srej= LSQUIC_DF_SUPPORT_SREJ_CLIENT;
+         settings->es_init_max_data
+                                  = LSQUIC_DF_INIT_MAX_DATA_CLIENT;
+--- a/src/liblsquic/lsquic_mini_conn_ietf.c
++++ b/src/liblsquic/lsquic_mini_conn_ietf.c
+@@ -1072,10 +1072,12 @@ imico_stash_stream_frame (struct ietf_mini_conn *conn,
+ {
+     struct stream_frame *copy;
+ 
+-    if (conn->imc_n_crypto_frames >= IMICO_MAX_STASHED_FRAMES)
++    if (conn->imc_n_crypto_frames >=
++                              conn->imc_enpub->enp_settings.es_max_crypto_stash)
+     {
+         LSQ_INFO("cannot stash more CRYPTO frames, at %hhu already, while max "
+-            "is %u", conn->imc_n_crypto_frames, IMICO_MAX_STASHED_FRAMES);
++            "is %hhu", conn->imc_n_crypto_frames,
++            conn->imc_enpub->enp_settings.es_max_crypto_stash);
+         return -1;
+     }
+ 
+--- a/src/liblsquic/lsquic_mini_conn_ietf.h
++++ b/src/liblsquic/lsquic_mini_conn_ietf.h
+@@ -117,7 +117,6 @@ struct ietf_mini_conn
+ #define IMICO_MAX_DELAYED_PACKETS_UNVALIDATED 1u
+ #define IMICO_MAX_DELAYED_PACKETS_VALIDATED 2u
+     unsigned char                   imc_delayed_packets_count;
+-#define IMICO_MAX_STASHED_FRAMES 10u
+     unsigned char                   imc_n_crypto_frames;
+     unsigned short                  imc_hello_pkt_remain;
+     unsigned char                   imc_long_header_sz;

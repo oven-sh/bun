@@ -472,7 +472,10 @@ pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult
         return Ok(());
     }
     // The completion continues the script that scheduled the job.
-    let context = vm.context_of(context);
+    let context = match context {
+        crate::ContextId::NONE => vm.root_context(),
+        context => vm.context_of(context),
+    };
     // SAFETY: as above.
     unsafe { ((*header).complete)(header, &global.js_thread(context)) }
 }

@@ -1401,6 +1401,7 @@ JSGlobalObject* GlobalObject::deriveShadowRealmGlobalObject(JSGlobalObject* glob
         ScriptExecutionContext::generateIdentifier(),
         methodTable);
     shadow->setConsole(shadow);
+    shadow->scriptExecutionContext()->globalObjectCanBeCollected();
     defaultGlobalObject(vm)->addDerivedRealm(shadow);
 
     return shadow;

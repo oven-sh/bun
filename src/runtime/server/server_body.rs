@@ -1547,7 +1547,7 @@ where
             .as_ref()
             .map(SSLConfig::as_usockets)
             .unwrap_or_default();
-        let Some(app) = self.app.get() else {
+        let Some(app) = self.app() else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot set a TLS context after the server has stopped",
             )));

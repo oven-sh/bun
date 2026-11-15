@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ff5fd0cf3ffd5e9a3fb246c83dbbefe854e635a64472500199657149d7819c82.
+// Written against that file with the SHA-256 ec3bfaec60a418fe816884584d3a93fcb0cf031f4a77407d1861891a501dff5e.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -105,6 +105,7 @@ const enum NodeHTTPHeaderState {
 // A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
 const kInternalSocketData: typeof http.kInternalSocketData = http.kInternalSocketData;
 const serverSymbol: typeof http.serverSymbol = http.serverSymbol;
+const setSecureContextSymbol: typeof http.setSecureContextSymbol = http.setSecureContextSymbol;
 const kHandle: typeof http.kHandle = http.kHandle;
 const kMadeOverHandle: typeof http.kMadeOverHandle = http.kMadeOverHandle;
 // Opens the birth of a response over a handle. ServerResponse alone is handed it: the mark above is shown to a request class of the program's, as the other text shows it one.
@@ -464,6 +465,12 @@ function normalizeServerTls(tls: $Node.HttpServerTLSOptions) {
   return tls;
 }
 
+function getAdditionalCAOptions(tls: $Node.HttpServerTLSOptions | null) {
+  const pfxExtraCAs = tls?._pfxExtraCACerts;
+  if (!pfxExtraCAs?.length || tls!.ca != null) return undefined;
+  return { __proto__: null, ca: pfxExtraCAs };
+}
+
 // Node registers connectionListener on every http.Server so `server.emit("connection", socket)`
 // works for foreign Duplex sockets. The native listener handles its own sockets end to end;
 // this picks up the rest. https://github.com/nodejs/node/blob/main/lib/_http_server.js
@@ -547,6 +554,7 @@ declare global {
       requestCert?: boolean;
       rejectUnauthorized?: boolean;
       _pfxExtraCACerts?: unknown[];
+      ALPNProtocols?: Uint8Array;
     }
 
     /** `tls` of `Bun.serve()`. */
@@ -555,6 +563,7 @@ declare global {
       serverName?: string;
       requestCert?: boolean;
       rejectUnauthorized?: boolean;
+      _pfxExtraCACerts?: unknown[];
       [option: string]: unknown;
     }
 
@@ -568,6 +577,7 @@ declare global {
       maxConnections?: number;
       noDelay: boolean;
       serverName?: string;
+      ALPNProtocols?: Uint8Array;
       maxHeaderSize: number | undefined;
       insecureHTTPParser: boolean | undefined;
       httpValidation?: "strict" | "relaxed" | "insecure";
@@ -785,12 +795,9 @@ function Server(
     }
 
     let ca = tlsOptions.ca;
-    // PKCS#12-embedded CAs extend the trust set; the server path hands raw
-    // {key, cert, ca} to the native config and has no addCACert hook, so fold
-    // them into `ca` (mirrors tls.Server.setSecureContext).
     const pfxExtraCAs = tlsOptions._pfxExtraCACerts;
-    if (pfxExtraCAs?.length) {
-      ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
+    if (pfxExtraCAs?.length && ca != null) {
+      ca = $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
     }
     if (ca) {
       tlsHelpers!.throwOnInvalidTLSArray("options.ca", ca);
@@ -861,8 +868,10 @@ function Server(
         minVersion,
         maxVersion,
         ciphers: ciphers?.cipherList || undefined,
+        ALPNProtocols: options.ALPNProtocols,
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
+        _pfxExtraCACerts: pfxExtraCAs,
       });
     }
   }
@@ -1054,6 +1063,37 @@ Server.prototype[Symbol.asyncDispose] = function (this: $Node.HttpServer) {
 Server.prototype.address = function (this: $Node.HttpServer) {
   if (!this[serverSymbol]) return null;
   return this[serverSymbol].address;
+};
+
+Server.prototype[setSecureContextSymbol] = function (this: $Node.HttpServer, options: Record<string, any>) {
+  validateObject(options, "options");
+  const current = this[tlsSymbol];
+  if (!current) {
+    throw $ERR_INVALID_ARG_VALUE("options", options, "server is not configured for TLS");
+  }
+
+  const { processPfxOptions, secureProtocolToVersionRange, tlsStringToProtocolVersion } = require("internal/tls");
+  // Match Node's synchronous option validation before publishing a replacement.
+  require("node:tls").createSecureContext(options);
+  const tlsOptions = processPfxOptions(options);
+  let ca = tlsOptions.ca;
+  const pfxExtraCAs = tlsOptions._pfxExtraCACerts;
+  if (pfxExtraCAs?.length && ca != null) {
+    ca = $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
+  }
+  const range = secureProtocolToVersionRange(tlsOptions.secureProtocol);
+  const next: $Node.HttpServerTLSOptions = {
+    ...tlsOptions,
+    ca,
+    minVersion: range ? range[0] : tlsStringToProtocolVersion(tlsOptions.minVersion),
+    maxVersion: range ? range[1] : tlsStringToProtocolVersion(tlsOptions.maxVersion),
+    serverName: tlsOptions.servername,
+    requestCert: current.requestCert,
+    rejectUnauthorized: current.rejectUnauthorized,
+    ALPNProtocols: this.ALPNProtocols,
+  };
+  (this[serverSymbol] as any)?._setNodeHTTPSSecureContext(next, getAdditionalCAOptions(next));
+  this[tlsSymbol] = normalizeServerTls(next);
 };
 
 Server.prototype.listen = function (this: $Node.HttpServer) {
@@ -1615,7 +1655,7 @@ Server.prototype[kRealListen] = function (
       http_res.$exchange.dispatchPromise = pendingPromise;
       return pendingPromise;
     };
-    this[serverSymbol] = Bun.serve<any>({
+    const bunServer = Bun.serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls: tls as any,
       port,
@@ -1688,6 +1728,17 @@ Server.prototype[kRealListen] = function (
         );
       },
     });
+
+    const additionalCAOptions = getAdditionalCAOptions(tls);
+    if (additionalCAOptions) {
+      try {
+        bunServer._setNodeHTTPSSecureContext(tls, additionalCAOptions);
+      } catch (error) {
+        bunServer.stop(true);
+        throw error;
+      }
+    }
+    this[serverSymbol] = bunServer;
 
     const handle = this[serverSymbol]!;
     listenerGeneration = {

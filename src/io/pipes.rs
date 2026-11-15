@@ -91,8 +91,8 @@ impl PollOrFd {
     }
 
     /// Asks for one event. Does nothing without a poll.
-    pub(crate) fn register(&self, flag: FilePollFlag, fd: Fd) -> sys::Result<()> {
-        self.with_poll(|poll| poll.register_with_fd(flag, OneShotFlag::Dispatch, fd))
+    pub(crate) fn register(&self, flag: FilePollFlag) -> sys::Result<()> {
+        self.with_poll(|poll| poll.register_with(flag, OneShotFlag::Dispatch))
             .unwrap_or(Ok(()))
     }
 
@@ -143,7 +143,7 @@ pub enum ReadState {
 
 /// One delivery from a `BufferedReader`. The variant says who owns the bytes, so a consumer never has to work that out from the pointer.
 pub enum Chunk<'a> {
-    /// The loop's shared scratch: gone once `on_read_chunk` returns. Copy what you keep.
+    /// The loop's shared scratch: gone once the closure returns. Copy what you keep.
     Scratch(&'a [u8]),
     /// The reader's own buffer, which it clears and reuses after the call. Copy what you keep, or `take()` it when moving beats copying.
     Buffer(&'a mut Vec<u8>),

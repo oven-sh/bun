@@ -397,10 +397,6 @@ impl FilePoll {
     }
 
     pub fn enable_keeping_process_alive(&self) {
-        if self.has_flag(Flags::Closed) {
-            return;
-        }
-
         self.event_loop
             .loop_add_active((!self.has_flag(Flags::HasIncrementedActiveCount)) as u32);
 
@@ -429,8 +425,6 @@ impl FilePoll {
 
     /// Only intended to be used from EventLoop.Pollable
     fn activate(&self, loop_: &Loop) {
-        self.remove_flags(Flags::Closed);
-
         if !self.has_flag(Flags::HasIncrementedPollCount) {
             loop_.inc();
         }
@@ -443,30 +437,24 @@ impl FilePoll {
     }
 
     pub fn register(&self, flag: Flags, one_shot: bool) -> sys::Result<()> {
-        self.register_with_fd(
+        self.register_with(
             flag,
             if one_shot {
                 OneShotFlag::OneShot
             } else {
                 OneShotFlag::None
             },
-            self.fd,
         )
     }
 
-    pub(crate) fn register_with_fd(
-        &self,
-        flag: Flags,
-        one_shot: OneShotFlag,
-        fd: Fd,
-    ) -> sys::Result<()> {
+    pub(crate) fn register_with(&self, flag: Flags, one_shot: OneShotFlag) -> sys::Result<()> {
         #[cfg(any(
             target_os = "linux",
             target_os = "android",
             target_os = "macos",
             target_os = "freebsd"
         ))]
-        return self.register_with_fd_impl(self.event_loop.loop_(), flag, one_shot, fd);
+        return self.register_with_fd_impl(self.event_loop.loop_(), flag, one_shot, self.fd);
         #[cfg(not(any(
             target_os = "linux",
             target_os = "android",
@@ -474,7 +462,7 @@ impl FilePoll {
             target_os = "freebsd"
         )))]
         {
-            let _ = (flag, one_shot, fd);
+            let _ = (flag, one_shot);
             sys::Result::Ok(())
         }
     }
@@ -1093,7 +1081,6 @@ pub enum Flags {
 
     HasIncrementedPollCount,
     HasIncrementedActiveCount,
-    Closed,
 
     KeepsEventLoopAlive,
 
@@ -1300,8 +1287,7 @@ pub struct OwnedFilePoll<const FORCE_UNREGISTER: bool = false>(ptr::NonNull<File
 impl<const FORCE_UNREGISTER: bool> OwnedFilePoll<FORCE_UNREGISTER> {
     /// SAFETY: `owner` is what `__bun_run_io` takes its tag for, until the poll is dropped or has another owner.
     pub unsafe fn new(event_loop: EventLoopCtx, fd: Fd, owner: Owner) -> Self {
-        let this = Self(
-            event_loop.file_polls().hive.get_init(FilePoll {
+        let poll = FilePoll {
             fd,
             flags: Cell::new(FlagsSet::empty()),
             owner: Cell::new(owner),
@@ -1314,8 +1300,8 @@ impl<const FORCE_UNREGISTER: bool> OwnedFilePoll<FORCE_UNREGISTER> {
                 .wrapping_add(1),
             #[cfg(not(all(target_os = "macos", debug_assertions)))]
             generation_number: 0,
-        }),
-        );
+        };
+        let this = Self(event_loop.file_polls().hive.get_init(poll));
         syslog!(
             "FilePoll.init(0x{:x}, generation_number={}, fd={})",
             this.0.addr(),
@@ -1409,7 +1395,7 @@ impl Pollable {
 #[unsafe(no_mangle)]
 /// # Safety
 /// uWS C callback: `loop_` is the live per-thread `us_loop_t`; `tagged_pointer`
-/// was registered via `Pollable::init` in `register_with_fd`.
+/// was registered via `Pollable::init` in `register_with_fd_impl`.
 unsafe extern "C" fn Bun__internal_dispatch_ready_poll(loop_: &Loop, tagged_pointer: *mut c_void) {
     let tag = Pollable::from(tagged_pointer);
 
@@ -1417,7 +1403,7 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(loop_: &Loop, tagged_poin
         return;
     }
 
-    // SAFETY: tag matched FilePoll; pointer was set via Pollable::init in register_with_fd.
+    // SAFETY: tag matched FilePoll; pointer was set via Pollable::init in register_with_fd_impl.
     // Not used once the owner runs, which may free the slot.
     let file_poll = unsafe { &*tag.as_file_poll() };
     if file_poll.has_flag(Flags::IgnoreUpdates) {

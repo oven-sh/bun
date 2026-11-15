@@ -4,7 +4,7 @@ mod _impl {
     use core::cell::Cell;
     use core::ffi::{c_int, c_uint};
 
-    use bun_core::compress::Ranges;
+    use bun_core::compress::RawBuffers;
     use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
     use bun_jsc::{self as jsc, JsResult};
     use bun_zstd::{OwnedCCtx, OwnedDCtx, c};
@@ -137,7 +137,7 @@ mod _impl {
             };
 
             let result = self
-                .take_idle_stream(global)?
+                .borrow_idle_stream(global)?
                 .context
                 .init(pledged_src_size, dictionary);
             if let Err(err) = result {
@@ -159,7 +159,7 @@ mod _impl {
                     init_params_array_value,
                 ));
             }
-            let mut stream = self.take_idle_stream(global)?;
+            let mut stream = self.borrow_idle_stream(global)?;
             for (i, x) in params_.as_u32().iter().map(|x| x.get()).enumerate() {
                 if x == u32::MAX {
                     continue;
@@ -271,16 +271,16 @@ mod _impl {
         const ZSTD_MAGICNUMBER: [u8; 4] = 0xFD2FB528u32.to_le_bytes();
         const ZSTD_MAGIC_SKIPPABLE: [u8; 4] = 0x184D2A50u32.to_le_bytes();
 
-        /// True when the input begins a zstd/skippable frame magic (or a prefix of one).
-        fn starts_with_frame(ranges: &Ranges<'_>) -> bool {
-            let n = ranges.input_len().min(4);
+        /// True when the unconsumed input begins a zstd/skippable frame magic (or a prefix of one).
+        fn next_input_is_frame(buffers: &RawBuffers<'_>) -> bool {
+            let n = buffers.avail_in().min(4);
             if n == 0 {
                 return false;
             }
-            let input: [u8; 4] = core::array::from_fn(|i| ranges.input_byte(i).unwrap_or(0));
-            input[..n] == Self::ZSTD_MAGICNUMBER[..n]
-                || (input[0] & 0xF0 == Self::ZSTD_MAGIC_SKIPPABLE[0]
-                    && input[1..n] == Self::ZSTD_MAGIC_SKIPPABLE[1..n])
+            let head: [u8; 4] = core::array::from_fn(|i| buffers.input_byte(i).unwrap_or(0));
+            head[..n] == Self::ZSTD_MAGICNUMBER[..n]
+                || (head[0] & 0xF0 == Self::ZSTD_MAGIC_SKIPPABLE[0]
+                    && head[1..n] == Self::ZSTD_MAGIC_SKIPPABLE[1..n])
         }
     }
 
@@ -300,25 +300,27 @@ mod _impl {
             self.flush = flush;
         }
 
-        fn do_work(&mut self, mut ranges: Ranges<'_>) {
+        fn do_work(&mut self, mut buffers: RawBuffers<'_>) {
             match &mut self.state {
                 // Driven before `init()`.
                 None => {}
                 Some(State::Compress(cctx)) => {
-                    self.error = cctx.step(&mut ranges, self.flush as c_uint).1.err();
+                    self.error = cctx.step(&mut buffers, self.flush as c_uint).1.err();
                 }
                 Some(State::Decompress(dctx)) => loop {
-                    let (_, result) = dctx.step(&mut ranges);
+                    let (_, result) = dctx.step(&mut buffers);
                     // 0 is frame-complete; mirrors the GUNZIP loop in NativeZlib.
-                    if result != Ok(0) || ranges.out_len() == 0 || !Self::starts_with_frame(&ranges)
+                    if result != Ok(0)
+                        || buffers.avail_out() == 0
+                        || !Self::next_input_is_frame(&buffers)
                     {
                         self.error = result.err();
                         break;
                     }
                 },
             }
-            self.avail_in = ranges.input_len();
-            self.avail_out = ranges.out_len();
+            self.avail_in = buffers.avail_in();
+            self.avail_out = buffers.avail_out();
         }
 
         fn write_result(&mut self) -> Result<[u32; 2], Error> {

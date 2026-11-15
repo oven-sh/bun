@@ -96,7 +96,7 @@ impl OwnedCompressor {
         mut output: BorrowedCursor<'_, u8>,
         encoding: Encoding,
     ) -> Result {
-        let this = self.0.as_ptr();
+        let compressor = self.0.as_ptr();
         let in_ptr = input.as_ptr().cast::<c_void>();
         let in_len = input.len();
         let out_len = output.capacity();
@@ -105,10 +105,14 @@ impl OwnedCompressor {
             let out_ptr = output.as_mut().as_mut_ptr().cast::<c_void>();
             let written = match encoding {
                 Encoding::Deflate => {
-                    libdeflate_deflate_compress(this, in_ptr, in_len, out_ptr, out_len)
+                    libdeflate_deflate_compress(compressor, in_ptr, in_len, out_ptr, out_len)
                 }
-                Encoding::Zlib => libdeflate_zlib_compress(this, in_ptr, in_len, out_ptr, out_len),
-                Encoding::Gzip => libdeflate_gzip_compress(this, in_ptr, in_len, out_ptr, out_len),
+                Encoding::Zlib => {
+                    libdeflate_zlib_compress(compressor, in_ptr, in_len, out_ptr, out_len)
+                }
+                Encoding::Gzip => {
+                    libdeflate_gzip_compress(compressor, in_ptr, in_len, out_ptr, out_len)
+                }
             };
             output.advance(written);
             written
@@ -171,7 +175,7 @@ impl OwnedDecompressor {
         mut output: BorrowedCursor<'_, u8>,
         encoding: Encoding,
     ) -> Result {
-        let this = self.0.as_ptr();
+        let decompressor = self.0.as_ptr();
         let in_ptr = input.as_ptr().cast::<c_void>();
         let in_len = input.len();
         let out_len = output.capacity();
@@ -184,7 +188,7 @@ impl OwnedDecompressor {
             let out_ptr = output.as_mut().as_mut_ptr().cast::<c_void>();
             let status = match encoding {
                 Encoding::Deflate => libdeflate_deflate_decompress_ex(
-                    this,
+                    decompressor,
                     in_ptr,
                     in_len,
                     out_ptr,
@@ -193,7 +197,7 @@ impl OwnedDecompressor {
                     &raw mut written,
                 ),
                 Encoding::Zlib => libdeflate_zlib_decompress_ex(
-                    this,
+                    decompressor,
                     in_ptr,
                     in_len,
                     out_ptr,
@@ -202,7 +206,7 @@ impl OwnedDecompressor {
                     &raw mut written,
                 ),
                 Encoding::Gzip => libdeflate_gzip_decompress_ex(
-                    this,
+                    decompressor,
                     in_ptr,
                     in_len,
                     out_ptr,

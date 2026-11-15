@@ -219,13 +219,13 @@ impl ErrorCode {
 }
 
 /// The input bytes a step consumed, and zstd's hint of what is left: 0 once a frame or a flush is complete.
-pub type Step = (usize, core::result::Result<usize, ErrorCode>);
+type StepResult = (usize, core::result::Result<usize, ErrorCode>);
 
-fn step(
+fn with_buffers(
     mut buffers: impl Buffers,
     call: impl FnOnce(*mut c::ZSTD_outBuffer, *mut c::ZSTD_inBuffer) -> usize,
-) -> Step {
-    let (input, out) = buffers.parts();
+) -> StepResult {
+    let (input, out) = buffers.as_raw();
     let mut in_buf = c::ZSTD_inBuffer {
         src: input.cast::<c_void>(),
         size: input.len(),
@@ -259,7 +259,7 @@ fn fill(
 pub struct OwnedCCtx {
     ptr: NonNull<c::ZSTD_CCtx>,
     /// A failed step leaves the context undefined: it can still point at that step's input.
-    failed: Option<ErrorCode>,
+    error: Option<ErrorCode>,
 }
 
 // SAFETY: heap state that only `self` reaches, and the workers it starts and joins itself.
@@ -267,16 +267,16 @@ unsafe impl Send for OwnedCCtx {}
 
 impl OwnedCCtx {
     pub fn new() -> Option<Self> {
-        NonNull::new(c::ZSTD_createCCtx()).map(|ptr| Self { ptr, failed: None })
+        NonNull::new(c::ZSTD_createCCtx()).map(|ptr| Self { ptr, error: None })
     }
 
-    fn usable(&mut self) -> core::result::Result<*mut c::ZSTD_CCtx, ErrorCode> {
-        self.failed.map_or(Ok(self.ptr.as_ptr()), Err)
+    fn try_as_ptr(&self) -> core::result::Result<*mut c::ZSTD_CCtx, ErrorCode> {
+        self.error.map_or(Ok(self.ptr.as_ptr()), Err)
     }
 
     pub fn load_dictionary(&mut self, dictionary: &[u8]) -> core::result::Result<(), ErrorCode> {
-        let cctx = self.usable()?;
-        // SAFETY: `cctx` is usable; zstd copies `dictionary`.
+        let cctx = self.try_as_ptr()?;
+        // SAFETY: `cctx` is live and has not failed; zstd copies `dictionary`.
         ErrorCode::check(unsafe {
             c::ZSTD_CCtx_loadDictionary(cctx, dictionary.as_ptr().cast(), dictionary.len())
         })
@@ -284,8 +284,8 @@ impl OwnedCCtx {
     }
 
     pub fn set_pledged_src_size(&mut self, size: u64) -> core::result::Result<(), ErrorCode> {
-        let cctx = self.usable()?;
-        // SAFETY: `cctx` is usable.
+        let cctx = self.try_as_ptr()?;
+        // SAFETY: `cctx` is live and has not failed.
         ErrorCode::check(unsafe { c::ZSTD_CCtx_setPledgedSrcSize(cctx, size) }).map(drop)
     }
 
@@ -297,23 +297,23 @@ impl OwnedCCtx {
         if param == c::ZSTD_c_stableInBuffer && value != 0 {
             return Err(ErrorCode(c::ZSTD_error_parameter_unsupported));
         }
-        let cctx = self.usable()?;
-        // SAFETY: `cctx` is usable. zstd checks both values, and no other parameter makes it
-        // read a step's buffers after the step.
+        let cctx = self.try_as_ptr()?;
+        // SAFETY: `cctx` is live and has not failed. zstd checks both values, and no other
+        // parameter makes it read a step's buffers after the step.
         ErrorCode::check(unsafe { c::ZSTD_CCtx_setParameter(cctx, param, value) }).map(drop)
     }
 
     /// One `ZSTD_compressStream2()` call. After an error, every call returns that error.
-    pub fn step(&mut self, buffers: impl Buffers, end_op: c::ZSTD_EndDirective) -> Step {
-        let cctx = match self.usable() {
+    pub fn step(&mut self, buffers: impl Buffers, end_op: c::ZSTD_EndDirective) -> StepResult {
+        let cctx = match self.try_as_ptr() {
             Ok(cctx) => cctx,
             Err(err) => return (0, Err(err)),
         };
-        // SAFETY: `cctx` is usable, the buffers are `step`'s, and zstd checks `end_op`.
-        let (consumed, result) = step(buffers, |out, input| unsafe {
+        // SAFETY: `cctx` is live and has not failed, `with_buffers` passes valid pointers, and zstd checks `end_op`.
+        let (consumed, result) = with_buffers(buffers, |out, input| unsafe {
             c::ZSTD_compressStream2(cctx, out, input, end_op)
         });
-        (consumed, result.inspect_err(|&err| self.failed = Some(err)))
+        (consumed, result.inspect_err(|&err| self.error = Some(err)))
     }
 }
 
@@ -327,7 +327,7 @@ impl Drop for OwnedCCtx {
 pub struct OwnedDCtx {
     ptr: NonNull<c::ZSTD_DCtx>,
     /// A failed step leaves the context undefined until it is reset.
-    failed: Option<ErrorCode>,
+    error: Option<ErrorCode>,
 }
 
 // SAFETY: heap state that only `self` reaches.
@@ -335,16 +335,16 @@ unsafe impl Send for OwnedDCtx {}
 
 impl OwnedDCtx {
     pub fn new() -> Option<Self> {
-        NonNull::new(c::ZSTD_createDCtx()).map(|ptr| Self { ptr, failed: None })
+        NonNull::new(c::ZSTD_createDCtx()).map(|ptr| Self { ptr, error: None })
     }
 
-    fn usable(&mut self) -> core::result::Result<*mut c::ZSTD_DCtx, ErrorCode> {
-        self.failed.map_or(Ok(self.ptr.as_ptr()), Err)
+    fn try_as_ptr(&self) -> core::result::Result<*mut c::ZSTD_DCtx, ErrorCode> {
+        self.error.map_or(Ok(self.ptr.as_ptr()), Err)
     }
 
     pub fn load_dictionary(&mut self, dictionary: &[u8]) -> core::result::Result<(), ErrorCode> {
-        let dctx = self.usable()?;
-        // SAFETY: `dctx` is usable; zstd copies `dictionary`.
+        let dctx = self.try_as_ptr()?;
+        // SAFETY: `dctx` is live and has not failed; zstd copies `dictionary`.
         ErrorCode::check(unsafe {
             c::ZSTD_DCtx_loadDictionary(dctx, dictionary.as_ptr().cast(), dictionary.len())
         })
@@ -359,9 +359,9 @@ impl OwnedDCtx {
         if param == c::ZSTD_d_stableOutBuffer && value != 0 {
             return Err(ErrorCode(c::ZSTD_error_parameter_unsupported));
         }
-        let dctx = self.usable()?;
-        // SAFETY: `dctx` is usable. zstd checks both values, and no other parameter makes it
-        // read a step's buffers after the step.
+        let dctx = self.try_as_ptr()?;
+        // SAFETY: `dctx` is live and has not failed. zstd checks both values, and no other
+        // parameter makes it read a step's buffers after the step.
         ErrorCode::check(unsafe { c::ZSTD_DCtx_setParameter(dctx, param, value) }).map(drop)
     }
 
@@ -369,20 +369,20 @@ impl OwnedDCtx {
     pub fn reset(&mut self) {
         // SAFETY: created in `new`; a reset is defined in every state.
         unsafe { c::ZSTD_DCtx_reset(self.ptr.as_ptr(), c::ZSTD_reset_session_and_parameters) };
-        self.failed = None;
+        self.error = None;
     }
 
     /// One `ZSTD_decompressStream()` call. After an error, every call returns that error until [`reset`](Self::reset).
-    pub fn step(&mut self, buffers: impl Buffers) -> Step {
-        let dctx = match self.usable() {
+    pub fn step(&mut self, buffers: impl Buffers) -> StepResult {
+        let dctx = match self.try_as_ptr() {
             Ok(dctx) => dctx,
             Err(err) => return (0, Err(err)),
         };
-        // SAFETY: `dctx` is usable, and the buffers are `step`'s.
-        let (consumed, result) = step(buffers, |out, input| unsafe {
+        // SAFETY: `dctx` is live and has not failed, and `with_buffers` passes valid pointers.
+        let (consumed, result) = with_buffers(buffers, |out, input| unsafe {
             c::ZSTD_decompressStream(dctx, out, input)
         });
-        (consumed, result.inspect_err(|&err| self.failed = Some(err)))
+        (consumed, result.inspect_err(|&err| self.error = Some(err)))
     }
 }
 

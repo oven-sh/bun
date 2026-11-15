@@ -2,7 +2,7 @@
 
 use core::ffi::{CStr, c_char, c_int, c_uint};
 
-use bun_core::compress::{Buffers, Ranges};
+use bun_core::compress::{Buffers, RawBuffers};
 use bun_core::vec::append_with;
 
 // Externs stay in this crate per PORTING.md §FFI: "If your file has externs
@@ -652,11 +652,13 @@ impl DeflateEncoder {
     }
 
     /// `deflateParams()` with no room for output: `BufError` if a block has to be flushed first.
-    pub fn params(&mut self, level: c_int, strategy: c_int) -> ReturnCode {
-        let (_, rc) = self.strm.step(&mut Ranges::new(&[], &mut []), |strm| {
-            // SAFETY: strm was initialized via deflateInit2_, and `step` set its buffers.
-            unsafe { deflateParams(strm, level, strategy) }
-        });
+    pub fn set_params(&mut self, level: c_int, strategy: c_int) -> ReturnCode {
+        let (_, rc) = self
+            .strm
+            .with_buffers(&mut RawBuffers::new(&[], &mut []), |strm| {
+                // SAFETY: strm was initialized via deflateInit2_, and `with_buffers` set its buffers.
+                unsafe { deflateParams(strm, level, strategy) }
+            });
         rc
     }
 
@@ -710,14 +712,18 @@ impl DeflateEncoder {
         if out.try_reserve(reserve).is_err() {
             return (0, ReturnCode::MemError);
         }
-        append_with(out, limit, |out| self.step_with((input, out), flush))
+        append_with(out, limit, |out| self.step_buffers((input, out), flush))
     }
 
     /// Like [`step`](Self::step), but over `buffers`.
-    pub fn step_with(&mut self, buffers: impl Buffers, flush: FlushValue) -> (usize, ReturnCode) {
-        // SAFETY: strm was initialized via deflateInit2_, and `step` set its buffers.
+    pub fn step_buffers(
+        &mut self,
+        buffers: impl Buffers,
+        flush: FlushValue,
+    ) -> (usize, ReturnCode) {
+        // SAFETY: strm was initialized via deflateInit2_, and `with_buffers` set its buffers.
         self.strm
-            .step(buffers, |strm| unsafe { deflate(strm, flush) })
+            .with_buffers(buffers, |strm| unsafe { deflate(strm, flush) })
     }
 }
 
@@ -835,14 +841,18 @@ impl InflateDecoder {
         if out.try_reserve(reserve).is_err() {
             return (0, ReturnCode::MemError);
         }
-        append_with(out, limit, |out| self.step_with((input, out), flush))
+        append_with(out, limit, |out| self.step_buffers((input, out), flush))
     }
 
     /// Like [`step`](Self::step), but over `buffers`.
-    pub fn step_with(&mut self, buffers: impl Buffers, flush: FlushValue) -> (usize, ReturnCode) {
-        // SAFETY: strm was initialized via inflateInit2_, and `step` set its buffers.
+    pub fn step_buffers(
+        &mut self,
+        buffers: impl Buffers,
+        flush: FlushValue,
+    ) -> (usize, ReturnCode) {
+        // SAFETY: strm was initialized via inflateInit2_, and `with_buffers` set its buffers.
         self.strm
-            .step(buffers, |strm| unsafe { inflate(strm, flush) })
+            .with_buffers(buffers, |strm| unsafe { inflate(strm, flush) })
     }
 
     /// Append decompressed output to `out` (growing by 4096-byte steps, capped at

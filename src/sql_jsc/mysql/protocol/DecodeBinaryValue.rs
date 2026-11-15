@@ -4,7 +4,7 @@ use crate::shared::sql_data_cell::SQLDataCell;
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::ColumnDefinition41;
 use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
-use bun_sql::mysql::protocol::new_reader::PacketReader;
+use bun_sql::mysql::protocol::packet_reader::PacketReader;
 
 bun_core::declare_scope!(MySQLDecodeBinaryValue, visible);
 

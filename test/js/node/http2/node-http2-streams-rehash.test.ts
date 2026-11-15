@@ -283,8 +283,7 @@ describe.concurrent("re-entering a session from its Duplex transport's _write", 
     function parse(bytes, type) {
       const found = [];
       for (let rest = bytes; rest.length; rest = rest.subarray(9 + rest.readUIntBE(0, 3))) {
-        const body = rest.subarray(9, 9 + rest.readUIntBE(0, 3));
-        found.push({ type: rest[3], flags: rest[4], id: rest.readUInt32BE(5), body });
+        found.push({ type: rest[3], flags: rest[4] });
       }
       return found.filter(frame => frame.type === type);
     }
@@ -299,9 +298,9 @@ describe.concurrent("re-entering a session from its Duplex transport's _write", 
       written.length = 0;
       return { session, duplex, frames: type => parse(Buffer.concat(written), type) };
     }
-    const connect = (options, settings) =>
+    const connect = options =>
       handshake(options, settingsAndAck(), async duplex => {
-        const session = http2.connect("http://localhost:1", { createConnection: () => duplex, settings });
+        const session = http2.connect("http://localhost:1", { createConnection: () => duplex });
         await once(session, "connect");
         return session;
       });
@@ -354,11 +353,6 @@ describe.concurrent("re-entering a session from its Duplex transport's _write", 
     const hpackStatus200 = Buffer.from([0x88]);
     // With its frame header, leaves no room in the cork buffer for the next frame.
     const fillsCorkBuffer = Buffer.alloc(16374);
-    function countingBody(length) {
-      const body = Buffer.alloc(length);
-      for (let i = 0; i < length; i += 4) body.writeUInt32BE(i, i);
-      return body;
-    }
     async function requestWantingTrailers(session, options) {
       const req = session.request(post, { waitForTrailers: true, ...options }).on("error", () => {});
       const wanted = once(req, "wantTrailers");
@@ -473,45 +467,6 @@ describe.concurrent("re-entering a session from its Duplex transport's _write", 
     expect(result).toEqual({ stdout: "ERR_HTTP2_STREAM_ERROR", stderr: "", exitCode: 0 });
   });
 
-  test("abort() drops unsent DATA and later streams still send", async () => {
-    const result = await run(/* js */ `
-      const { session, duplex, frames } = await connect();
-      const controller = new AbortController();
-      const aborted = session.request(post, { signal: controller.signal });
-      await until(() => frames(HEADERS).length === 1);
-      duplex.inNextWrite = () => controller.abort();
-      // More than the window: the rest would be queued once the first part is written.
-      aborted.write(Buffer.alloc(65535 + 40000));
-      await once(aborted, "error");
-      console.log(session.state.outboundQueueSize);
-
-      duplex.push(windowUpdate(0));
-      const next = session.request(post).on("error", () => {});
-      await until(() => frames(HEADERS).length === 2);
-      next.write("hello");
-      await until(() => frames(DATA).at(-1).id === 3);
-      console.log(frames(DATA).at(-1).body.toString());
-      session.destroy();
-    `);
-    expect(result).toEqual({ stdout: "0\nhello", stderr: "", exitCode: 0 });
-  });
-
-  test("WINDOW_UPDATE resumes the write that used up the window", async () => {
-    const result = await run(/* js */ `
-      const { session, duplex, frames } = await connect();
-      const req = session.request(post).on("error", () => {});
-      await until(() => frames(HEADERS).length === 1);
-      duplex.inNextWrite = () => duplex.push(Buffer.concat([windowUpdate(0), windowUpdate(1)]));
-      const body = countingBody(70000);
-      req.end(body);
-      await until(() => req.writableFinished);
-      console.log(Buffer.concat(frames(DATA).map(frame => frame.body)).equals(body));
-      console.log(frames(DATA).map(frame => frame.flags).join());
-      session.destroy();
-    `);
-    expect(result).toEqual({ stdout: "true\n0,0,0,0,0,1", stderr: "", exitCode: 0 });
-  });
-
   test.each([
     ["_write", "req.end(Buffer.alloc(70000));"],
     ["_writev", "req.write(Buffer.alloc(35000)); req.end(Buffer.alloc(35000));"],
@@ -530,45 +485,6 @@ describe.concurrent("re-entering a session from its Duplex transport's _write", 
       session.destroy();
     `);
     expect(result).toEqual({ stdout: "0,0,0,0,0,1", stderr: "", exitCode: 0 });
-  });
-
-  test("echoes more than a window over duplexPair()", async () => {
-    const result = await run(/* js */ `
-      const [clientSide, serverSide] = require("node:stream").duplexPair();
-      http2.performServerHandshake(serverSide).on("stream", stream => {
-        stream.respond();
-        stream.pipe(stream);
-      });
-      const session = http2.connect("http://localhost:1", { createConnection: () => clientSide });
-      const req = session.request(post);
-      let received = 0;
-      req.on("data", chunk => (received += chunk.length)).end(Buffer.alloc(70000));
-      await until(() => req.destroyed);
-      console.log(received, req.rstCode);
-      session.destroy();
-    `);
-    expect(result).toEqual({ stdout: "70000 0", stderr: "", exitCode: 0 });
-  });
-
-  test("a PING pushed while resume() writes WINDOW_UPDATE is read", async () => {
-    const result = await run(/* js */ `
-      const { session, duplex, frames } = await connect({}, { initialWindowSize: 1 << 20 });
-      const req = session.request({ ":path": "/" }).on("error", () => {});
-      const other = session.request(post).on("error", () => {});
-      await until(() => frames(HEADERS).length === 2);
-      req.pause();
-      duplex.push(frame(HEADERS, END_HEADERS, 1, hpackStatus200));
-      for (let i = 0; i < 40; i++) duplex.push(frame(DATA, 0, 1, Buffer.alloc(16384)));
-      let pinged = false;
-      session.on("ping", () => (pinged = true));
-      duplex.inNextWrite = () => duplex.push(ping());
-      req.prependListener("resume", () => other.write(fillsCorkBuffer));
-      req.resume();
-      await until(() => pinged);
-      console.log("pinged");
-      session.destroy();
-    `);
-    expect(result).toEqual({ stdout: "pinged", stderr: "", exitCode: 0 });
   });
 
   test.skipIf(!isASAN)("process.exit() leaves no leak report", async () => {

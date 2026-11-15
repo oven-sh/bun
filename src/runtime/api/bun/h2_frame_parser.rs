@@ -1514,11 +1514,6 @@ impl Stream {
             bytes.len(),
             end_stream
         );
-        if self.state.get() == StreamState::CLOSED {
-            // The queue of a closed stream is never flushed.
-            client.dispatch_write_callback(callback);
-            return;
-        }
         let global_this = client.global_this;
         let callback = if callback.is_callable() {
             StrongOptional::create(callback, &global_this)
@@ -4730,14 +4725,6 @@ impl H2FrameParser {
                     .min(self.remote_window_available())
                     .min(stream.remote_window_available());
                 if self.has_backpressure() || self.outbound_queue_size.get() > 0 || max_size == 0 {
-                    // Preserve wire order: anything already batched goes out before the
-                    // queued remainder is flushed later by the drain path.
-                    let had_batch = BATCH_BUFFER.with_borrow(|batch| !batch.is_empty());
-                    self.flush_batch_buffer();
-                    if had_batch && stream.can_send_data() {
-                        // That write can run JS that delivers a WINDOW_UPDATE.
-                        continue;
-                    }
                     break;
                 }
                 let size = rest.len().min(max_size);
@@ -4848,9 +4835,10 @@ impl H2FrameParser {
                     });
                 }
             }
-            if rest.is_empty() {
-                self.flush_batch_buffer();
-            } else {
+            // Preserve wire order: anything already batched goes out before the
+            // queued remainder is flushed later by the drain path.
+            self.flush_batch_buffer();
+            if !rest.is_empty() {
                 enqueued = true;
                 // the callback will only be called after the last frame is sended
                 stream.queue_data(self, rest, callback, close);
@@ -4965,13 +4953,10 @@ impl H2FrameParser {
             // Resumed: send the deferred WINDOW_UPDATE now. try_borrow: a resume issued from
             // inside a dispatch (the engine borrow is held by rewrite_read) is covered by the
             // batch-end replenish instead.
-            let increment = match self.engine.try_borrow_mut().as_deref_mut() {
-                Ok(Some(engine)) => engine.take_stream_window_update(stream_id),
-                _ => 0,
-            };
-            // Sent after the engine borrow ends: the write can run JS that calls read().
-            if increment > 0 {
-                self.send_window_update(stream_id, UInt31WithReserved::init(increment, false));
+            if let Ok(mut guard) = self.engine.try_borrow_mut() {
+                if let Some(engine) = guard.as_mut() {
+                    engine.replenish_stream(self, stream_id);
+                }
             }
             let _ = self.flush();
         }

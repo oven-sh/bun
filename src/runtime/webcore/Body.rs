@@ -513,14 +513,6 @@ pub enum ValueError {
 }
 
 impl ValueError {
-    // Not a clean Drop — resets self to safe-empty in place. Renamed from `deinit`
-    // per PORTING.md (never expose `pub fn deinit(&mut self)`).
-    pub fn reset(&mut self) {
-        *self = ValueError::JSValue(jsc::strong::Optional::empty());
-    }
-}
-
-impl ValueError {
     pub(crate) fn to_stream_error(
         &mut self,
         global_object: &JSGlobalObject,

@@ -966,22 +966,23 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             WindowsNamedPipe,
             |this, _, event| this.on_writer_io(event)
         ),
+        // `bun run` and `bun exec` run the interpreter too.
         PollTag::ShellIoReader => {
-            io_arm!([Shell], clone_rc, ShellIoReader, |this, _, event| {
+            io_arm!([Shell, Tools], clone_rc, ShellIoReader, |this, _, event| {
                 this.on_io(event)
             })
         }
-        // `bun run` and `bun exec` print through it too.
         PollTag::ShellIoWriter => {
             io_arm!([Shell, Tools], clone_rc, ShellIoWriter, |this, _, event| {
                 this.on_io(event)
             })
         }
-        PollTag::ShellPipeReader => {
-            io_arm!([Shell], clone_rc, ShellPipeReader, |this, _, event| {
-                this.read(Some(event))
-            })
-        }
+        PollTag::ShellPipeReader => io_arm!(
+            [Shell, Tools],
+            clone_rc,
+            ShellPipeReader,
+            |this, _, event| this.read(Some(event))
+        ),
 
         // Neither JS nor a nested tick runs under these.
         PollTag::FilterRunHandle => io_arm!(
@@ -1021,7 +1022,7 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             |this, _, event| this.on_stdin_io(event)
         ),
 
-        // `this` is not used once `on_stdin_writer_close` runs, which may free it.
+        // Only `Bun.$` redirects stdin from a buffer. `this` is not used once `on_stdin_writer_close` runs, which may free it.
         PollTag::ShellStdinWriter => io_arm!(
             [Shell],
             <*mut _>::as_mut_unchecked,

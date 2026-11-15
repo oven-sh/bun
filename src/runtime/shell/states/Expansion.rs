@@ -280,12 +280,7 @@ impl Expansion {
             }
             escaped.push(b);
         }
-        let brace_str = &escaped[..];
-        let mut lexer_output = if bun_core::is_all_ascii(brace_str) {
-            braces::Lexer::tokenize(brace_str)
-        } else {
-            braces::NewLexer::<{ braces::StringEncoding::Wtf8 }>::tokenize(brace_str)
-        };
+        let mut lexer_output = braces::tokenize(&escaped);
         let count = braces::calculate_expanded_amount(&lexer_output.tokens[..]);
         // Hard cap before preallocation: `calculate_expanded_amount` saturates
         // to `u32::MAX`, so a tiny nested input can otherwise request a huge `Vec`.
@@ -316,7 +311,6 @@ impl Expansion {
                     braces::ParserError::UnexpectedToken => {
                         "unexpected token while expanding braces"
                     }
-                    braces::ParserError::OutOfMemory => bun_core::out_of_memory(),
                 };
                 me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.as_bytes().into())));
                 return;

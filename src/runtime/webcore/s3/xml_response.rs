@@ -100,7 +100,7 @@ pub(crate) fn parse<R>(body: &[u8], read: impl FnOnce(Node<'_>) -> R) -> Option<
     let arena = bun_alloc::Arena::default();
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
     let _ast_scope = ast_memory_allocator.enter();
-    let mut log = bun_ast::Log::init();
+    let log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string(b"response.xml", body);
     let options = xml::Options {
         compact: false,
@@ -109,7 +109,7 @@ pub(crate) fn parse<R>(body: &[u8], read: impl FnOnce(Node<'_>) -> R) -> Option<
     let Ok(bun_ast::Expr {
         data: Data::EObjectJSON(root),
         ..
-    }) = XML::parse(&source, &mut log, &arena, options)
+    }) = XML::parse(&source, &log, &arena, options)
     else {
         return None;
     };

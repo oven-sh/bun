@@ -54,7 +54,7 @@ impl ScratchManifests {
         self.root.parse_with_json(
             &mut self.lockfile,
             manager,
-            &mut self.log,
+            &self.log,
             &root_source,
             root_json,
             &mut resolver,
@@ -103,7 +103,7 @@ impl ScratchManifests {
         manager
             .workspace_package_json_cache
             .get_with_path(
-                &mut bun_ast::Log::init(),
+                &bun_ast::Log::init(),
                 &target.package_json_path,
                 GetJSONOptions {
                     init_reset_store: false,
@@ -149,7 +149,7 @@ impl ScratchManifests {
         pkg.parse_with_json(
             &mut self.lockfile,
             manager,
-            &mut self.log,
+            &self.log,
             source.get(),
             json,
             &mut resolver,
@@ -216,7 +216,7 @@ impl DeclaredDependencies {
         };
         if let Err(err) = root {
             crash(
-                &mut scratch.log,
+                &scratch.log,
                 err,
                 format_args!("failed to read package.json"),
             );
@@ -235,7 +235,7 @@ impl DeclaredDependencies {
                     BrokenMember::Fatal => match scratch.parse_member(manager, &target) {
                         Ok(pkg) => pkg,
                         Err(err) => crash(
-                            &mut scratch.log,
+                            &scratch.log,
                             err,
                             format_args!(
                                 "failed to read package.json for workspace '{}'",
@@ -372,9 +372,9 @@ pub struct WorkspaceManifests {
 impl WorkspaceManifests {
     /// Exits with `bun install`'s errors when the root package.json or a workspace does not parse.
     pub fn load(manager: &mut PackageManager) -> WorkspaceManifests {
-        Self::try_load(manager).unwrap_or_else(|(mut log, err)| {
+        Self::try_load(manager).unwrap_or_else(|(log, err)| {
             crash(
-                &mut log,
+                &log,
                 err,
                 format_args!("failed to read workspace package.json files"),
             )
@@ -496,7 +496,7 @@ pub(crate) fn relation_graph(
 ) -> WorkspaceGraph {
     let mut scratch = ScratchManifests::new();
     if let Err(err) = scratch.parse_root(manager, Features::main()) {
-        crash_for_filter(&mut scratch.log, pattern, err);
+        crash_for_filter(&scratch.log, pattern, err);
     }
 
     let mut parsed: Vec<(u32, Package)> = Vec::with_capacity(targets.len());
@@ -507,7 +507,7 @@ pub(crate) fn relation_graph(
         }
         match scratch.parse_member(manager, target) {
             Ok(pkg) => parsed.push((i as u32, pkg)),
-            Err(err) => crash_for_filter(&mut scratch.log, pattern, err),
+            Err(err) => crash_for_filter(&scratch.log, pattern, err),
         }
     }
 
@@ -587,7 +587,7 @@ pub fn selected_in_dependency_order(
         .collect()
 }
 
-fn crash_for_filter(log: &mut bun_ast::Log, pattern: &[u8], err: crate::Error) -> ! {
+fn crash_for_filter(log: &bun_ast::Log, pattern: &[u8], err: crate::Error) -> ! {
     crash(
         log,
         err,
@@ -599,7 +599,7 @@ fn crash_for_filter(log: &mut bun_ast::Log, pattern: &[u8], err: crate::Error) -
 }
 
 /// If there are parse errors, they explain the failure. `what` and `err` are the fallback.
-fn crash(log: &mut bun_ast::Log, err: crate::Error, what: fmt::Arguments<'_>) -> ! {
+fn crash(log: &bun_ast::Log, err: crate::Error, what: fmt::Arguments<'_>) -> ! {
     if log.has_errors() {
         let _ = log.print(Output::error_writer());
     } else {

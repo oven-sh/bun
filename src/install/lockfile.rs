@@ -594,7 +594,7 @@ impl Lockfile {
     pub fn load_from_cwd<const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
         &mut self,
         manager: Option<&mut PackageManager>,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
     ) -> LoadResult {
         self.load_from_dir::<ATTEMPT_LOADING_FROM_OTHER_LOCKFILE>(Fd::cwd(), manager, log)
     }
@@ -603,7 +603,7 @@ impl Lockfile {
         &mut self,
         dir: Fd,
         manager: Option<&mut PackageManager>,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
     ) -> LoadResult {
         let result = self.read_from_dir(ATTEMPT_LOADING_FROM_OTHER_LOCKFILE, dir, manager, log);
         if matches!(result, LoadResult::Ok(_)) {
@@ -619,7 +619,7 @@ impl Lockfile {
         attempt_loading_from_other_lockfile: bool,
         dir: Fd,
         manager: Option<&mut PackageManager>,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
     ) -> LoadResult {
         debug_assert!(Fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
 
@@ -685,7 +685,7 @@ impl Lockfile {
         &mut self,
         pm: Option<&PackageManager>,
         buf: Vec<u8>,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
     ) -> LoadResult {
         let mut stream = Stream::new(buf);
 
@@ -1250,7 +1250,7 @@ impl Lockfile {
         &mut self,
         manager: &mut PackageManager,
         updates: &mut [UpdateRequest],
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         log_level: LogLevel,
     ) -> Result<Box<Lockfile>, BunError> {
         let old: &mut Lockfile = self;
@@ -1306,7 +1306,7 @@ impl Lockfile {
             mapping: &mut package_id_mapping,
             clone_queue: PendingResolutions::new(),
             weak_peers: PendingResolutions::new(),
-            log: &mut *log,
+            log,
             old_preinstall_state,
             manager: &mut *manager,
         };
@@ -1510,7 +1510,7 @@ pub struct Cloner<'a> {
     pub lockfile: &'a mut Lockfile,
     pub(crate) old: &'a mut Lockfile,
     pub(crate) mapping: &'a mut [PackageID],
-    pub(crate) log: &'a mut bun_ast::Log,
+    pub(crate) log: &'a bun_ast::Log,
     pub(crate) old_preinstall_state: Vec<Install::PreinstallState>,
     pub(crate) manager: &'a mut PackageManager,
 }
@@ -1594,7 +1594,7 @@ impl<'a> Cloner<'a> {
 impl Lockfile {
     /// Hoists again for as long as a pass binds or rebinds a peer. The result is then the same as
     /// after a reload of the lockfile, where those peers are bound before the first pass.
-    pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
+    pub(crate) fn resolve(&mut self, log: &bun_ast::Log) -> Result<(), tree::SubtreeError> {
         const METHOD: tree::BuilderMethod = tree::BuilderMethod::Resolvable;
         while (self.hoist::<METHOD>(log, None, true, &[], None, tree::Layout::Locked)?)
             .late_bound_peer
@@ -1605,7 +1605,7 @@ impl Lockfile {
 
     pub(crate) fn filter(
         &mut self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         manager: &mut PackageManager,
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
@@ -1626,7 +1626,7 @@ impl Lockfile {
     /// platform.
     pub(crate) fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         manager: Option<&PackageManager>,
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
@@ -1903,7 +1903,7 @@ impl Lockfile {
                 pkg_meta.integrity = pkg.package.integrity;
             }
         }
-        self.record_migrated_package_extensions(manager.log_mut(), &added_by_extensions)
+        self.record_migrated_package_extensions(manager.log(), &added_by_extensions)
     }
 }
 
@@ -1925,7 +1925,7 @@ pub mod printer {
 
 impl<'a> Printer<'a> {
     #[cold]
-    pub fn print(log: &mut bun_ast::Log, input_lockfile_path: &[u8]) -> Result<(), BunError> {
+    pub fn print(log: &bun_ast::Log, input_lockfile_path: &[u8]) -> Result<(), BunError> {
         // We truncate longer than allowed paths. We should probably throw an error instead.
         let path = &input_lockfile_path[..input_lockfile_path.len().min(MAX_PATH_BYTES)];
 
@@ -3665,7 +3665,7 @@ impl Lockfile {
     pub fn read_trusted_dependencies_from_manifests(
         &mut self,
         manifests: &mut crate::package_manager::WorkspacePackageJSONCache,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
     ) -> Result<Option<TrustedDependenciesSet>, BunError> {
         let bump = bun_alloc::Arena::new();
         let mut trusted: Option<TrustedDependenciesSet> = None;

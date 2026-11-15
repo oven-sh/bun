@@ -124,7 +124,7 @@ pub(crate) fn filter<'a>(
     // log, and we want the runtime transpiler left untouched for actually
     // executing tests afterward.
     let arena: &'static Arena = crate::cli::cli_arena();
-    let log: &'static mut bun_ast::Log = arena.alloc(bun_ast::Log::new());
+    let log: &'static bun_ast::Log = arena.alloc(bun_ast::Log::new());
 
     let mut scan_transpiler =
         match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.get().env)) {
@@ -146,7 +146,7 @@ pub(crate) fn filter<'a>(
     scan_transpiler.options.ignore_module_resolution_errors = true;
     scan_transpiler.options.output_dir = Box::default();
     scan_transpiler.options.tree_shaking = false;
-    scan_transpiler.configure_linker();
+    scan_transpiler.configure_from_tsconfig();
     let _ = scan_transpiler.configure_defines();
     // `Transpiler::init` already projected resolver.opts, so sync only the
     // fields we changed above.

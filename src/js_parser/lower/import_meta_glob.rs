@@ -472,7 +472,7 @@ fn find_files(
 
 /// Kept out of `P` so this code isn't monomorphized for every parser configuration.
 struct Arguments<'a, 'log> {
-    log: &'log mut bun_ast::Log,
+    log: &'log bun_ast::Log,
     source: &'a bun_ast::Source<'a>,
     arena: &'a Arena,
 }
@@ -1007,7 +1007,7 @@ fn then_export(arena: &Arena, import: Expr, parameter: js_ast::Ref, name: &[u8])
     )
 }
 
-impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
+impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
     pub(crate) fn depends_on_more_than_source(&self) -> bool {
         self.macro_call_count != 0
             || matches!(

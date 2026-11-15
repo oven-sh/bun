@@ -789,7 +789,7 @@ pub fn dedupe_before_install(
         }
         LoadResult::Err(cause) => {
             if !quiet {
-                cause.report(manager.log_mut());
+                cause.report(manager.log());
             }
             Global::exit(1);
         }
@@ -817,7 +817,7 @@ pub fn dedupe_before_install(
 
 fn package_json_declares_dependencies(manager: &mut PackageManager) -> crate::Result<bool> {
     let quiet = manager.options.log_level == LogLevel::Silent;
-    let log = manager.log_mut();
+    let log = manager.log();
     let path: &[u8] = manager.root_package_json_path.as_bytes();
     let (source, json) =
         match manager

@@ -197,7 +197,7 @@ impl JSBundleCompletionTask {
         bundle_thread::enqueue(task, vm.ticket());
     }
 
-    fn fail_to_start(mut self: Box<Self>, err: &std::io::Error, ticket: &jsc::Ticket) {
+    fn fail_to_start(self: Box<Self>, err: &std::io::Error, ticket: &jsc::Ticket) {
         self.log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
@@ -247,7 +247,7 @@ fn executable_entry_point_name(executable_path: &[u8]) -> &[u8] {
 }
 
 /// `BundleOptions::type_check`. `Config::from_js` has thrown where the type checker is removed.
-fn check_types(checked: options::TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> bool {
+fn check_types(checked: options::TypeChecked<'_, '_>, log: &bun_ast::Log) -> bool {
     bun_removable_features::removable_body!(Check, Abort, {
         crate::cli::check_command::check_for_bun_build(checked, log)
     })
@@ -255,7 +255,7 @@ fn check_types(checked: options::TypeChecked<'_, '_>, log: &mut bun_ast::Log) ->
 
 fn check_types_and_emit_declarations(
     checked: options::TypeChecked<'_, '_>,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) -> bool {
     bun_removable_features::removable_body!(Check, Abort, {
         crate::cli::check_command::check_and_emit_declarations(checked, log)
@@ -302,7 +302,7 @@ impl JSBundleCompletionTask {
                 return;
             }
             if let Some(option) = declarations.typed_files_skipped_for {
-                check_command::warn_about_skipped_typed_files(option, &mut self.log);
+                check_command::warn_about_skipped_typed_files(option, &self.log);
             }
             let working_directory = bun_resolver::fs::FileSystem::get().top_level_dir();
             let outdir = join_abs_string::<platform::Auto>(
@@ -321,7 +321,7 @@ impl JSBundleCompletionTask {
                     drops_source_maps: declarations.drops_source_maps,
                     writes_package_json: false,
                 };
-                compile_command::add_typed_files(&request, &mut self.log, output_files);
+                compile_command::add_typed_files(&request, &self.log, output_files);
             } else {
                 drop(check_command::take_module_types());
             }
@@ -415,7 +415,7 @@ impl JSBundleCompletionTask {
     fn do_compilation(
         config: &JSBundlerConfig,
         env: &mut bun_dotenv::Loader,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         output_files: &mut Vec<OutputFile>,
     ) -> CompileResult {
         let compile_options = config
@@ -688,7 +688,7 @@ impl JSBundleCompletionTask {
                 ..
             } => {
                 if deliver {
-                    route.on_complete(self.result, self.log, *started_at_ns);
+                    route.on_complete(self.result, &self.log, *started_at_ns);
                 } else {
                     route.on_build_abandoned();
                 }
@@ -712,7 +712,7 @@ impl JSBundleCompletionTask {
             let compile_result = Self::do_compilation(
                 &self.config,
                 &mut self.env,
-                &mut self.log,
+                &self.log,
                 &mut build.output_files,
             );
             // `defer compile_result.deinit()` — `CompileResult` is a Rust enum
@@ -1087,7 +1087,7 @@ impl JSBundleCompletionTask {
             transpiler.options.emit_dce_annotations = false;
         }
 
-        transpiler.configure_linker();
+        transpiler.configure_from_tsconfig();
         transpiler.configure_defines()?;
 
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
@@ -1105,7 +1105,7 @@ impl JSBundleCompletionTask {
                     Ok(Some(section)) => options::CompileTargetBuiltins::Target(section),
                     Ok(None) => options::CompileTargetBuiltins::None,
                     Err(err) => {
-                        transpiler.log_mut().add_error_fmt(
+                        transpiler.log().add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!("{}", bstr::BStr::new(err.slice())),
@@ -1142,7 +1142,7 @@ impl JSBundleCompletionTask {
         self.result = self.build(&mut transpiler, &heap, &ticket, generation);
 
         // It knows a source by its address, and the log outlives the sources.
-        self.log.line_column_tracker = None;
+        self.log.line_column_tracker.set(None);
         if let Some(declarations) = self.declarations.take() {
             self.add_declarations(&declarations);
         }
@@ -1204,10 +1204,10 @@ impl JSBundleCompletionTask {
         ticket: &'a jsc::Ticket,
         generation: bun_core::Generation,
     ) -> bun_bundler::Result<BuildResult> {
-        let log = &mut self.log;
+        let log = &self.log;
         let opts = Self::transform_options(&self.config);
         let env = Some(&raw mut self.env);
-        let transpiler = transpiler.insert(Transpiler::init(heap, &raw mut *log, opts, env)?);
+        let transpiler = transpiler.insert(Transpiler::init(heap, log, opts, env)?);
         let config = Self::configure_bundler(&mut self.config, &mut self.declarations, transpiler)?;
         transpiler.resolver.generation = generation;
 

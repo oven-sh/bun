@@ -35,7 +35,7 @@ macro_rules! bail {
 
 #[cold]
 #[inline(never)]
-fn invalid(log: &mut bun_ast::Log, args: core::fmt::Arguments<'_>) -> MigratePnpmLockfileError {
+fn invalid(log: &bun_ast::Log, args: core::fmt::Arguments<'_>) -> MigratePnpmLockfileError {
     log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
     InvalidPnpmLockfile
 }
@@ -116,7 +116,7 @@ fn resolve_peer_like_bun_lock(lockfile: &Lockfile, dep: &Dependency) -> Option<P
 }
 
 fn missing_package_entry(
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     dep_path: &[u8],
     dep_name: &[u8],
     parent: core::fmt::Arguments<'_>,
@@ -148,7 +148,7 @@ fn collect_strings(obj: &Expr, out: &mut StringMap) -> Result<(), AllocError> {
 
 /// `collect_strings` of the mapping `field` of pnpm-workspace.yaml.
 fn collect_workspace_yaml_strings(
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     field: &[u8],
     out: &mut StringMap,
 ) -> Result<(), AllocError> {
@@ -171,7 +171,7 @@ fn collect_workspace_yaml_strings(
 
 fn root_package_json<'a>(
     manager: &'a mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) -> Option<&'a mut crate::WorkspacePackageJsonCacheEntry> {
     let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
     let _ = pkg_json_path.append(b"package.json"); // OOM/capacity error is non-actionable here
@@ -189,7 +189,7 @@ fn root_package_json<'a>(
 /// Current pnpm records only the patch hash in the lockfile; the patch file path lives in the config.
 fn read_config_patch_paths(
     manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) -> Result<StringMap, AllocError> {
     let mut paths = StringMap::new();
     if let Some(patched) = root_package_json(manager, log)
@@ -208,7 +208,7 @@ const BUILTIN_NAMED_REGISTRIES: [(&[u8], &[u8]); 2] = [
     (b"npmjs", b"https://registry.npmjs.org/"),
 ];
 
-fn read_named_registries(log: &mut bun_ast::Log) -> Result<StringMap, AllocError> {
+fn read_named_registries(log: &bun_ast::Log) -> Result<StringMap, AllocError> {
     let mut declared = StringMap::new();
     collect_workspace_yaml_strings(log, b"namedRegistries", &mut declared)?;
     let mut registries = StringMap::new();
@@ -377,7 +377,7 @@ pub(crate) fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
 /// The package.json of the importer at `path`, relative to the project.
 fn importer_package_json(
     manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     path: &[u8],
 ) -> Result<Expr, MigratePnpmLockfileError> {
     let json_path = join_top_level_dir(&[path, b"package.json"]).ok_or(InvalidPnpmLockfile)?;
@@ -391,7 +391,7 @@ fn importer_package_json(
 pub(crate) fn migrate_pnpm_lockfile(
     lockfile: &mut Lockfile,
     manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     data: &[u8],
 ) -> Result<LoadResult, MigratePnpmLockfileError> {
     lockfile.init_empty();
@@ -1209,7 +1209,7 @@ pub(crate) fn migrate_pnpm_lockfile(
     // here because the install that follows reports them.
     if let Some(root) = root_package_json(manager, log) {
         let extensions = &mut lockfile.package_extensions;
-        extensions.parse(&mut bun_ast::Log::init(), &root.source, &root.root);
+        extensions.parse(&bun_ast::Log::init(), &root.source, &root.root);
     }
     lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
         manager, false, // update_os_cpu
@@ -1376,7 +1376,7 @@ fn declare_folder_dependencies_relative_to_their_package(
 /// Appends the dependency `name@spec`. Returns false if `spec` doesn't parse.
 fn append_dependency(
     lockfile: &mut Lockfile,
-    log: Option<&mut bun_ast::Log>,
+    log: Option<&bun_ast::Log>,
     name_str: &[u8],
     spec: &[u8],
     behavior: Behavior,
@@ -1403,7 +1403,7 @@ fn parse_append_package_dependencies(
     pkg: &mut lockfile::Package,
     package_obj: &Expr,
     snapshot_obj: &Expr,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     snapshot_dep_paths: &mut SnapshotDepPaths,
 ) -> Result<bool, MigratePnpmLockfileError> {
     let mut references_by_name = StringMap::new();
@@ -1452,7 +1452,7 @@ fn parse_append_package_dependencies(
                 alias.hash,
                 version_sliced.slice,
                 &version_sliced,
-                Some(&mut *log),
+                Some(log),
                 None,
             )
             .ok_or(InvalidPnpmLockfile)?;
@@ -1546,7 +1546,7 @@ fn parse_append_importer_dependencies(
     manifest: &Expr,
     importer_path: &[u8],
     exclude_links_from_lockfile: bool,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     importer_versions: &mut StringMap,
 ) -> Result<(), MigratePnpmLockfileError> {
     let manifest_peers = declared_peers(manifest, false)?;
@@ -1628,8 +1628,7 @@ fn parse_append_importer_dependencies(
                 }
             }
 
-            let log = Some(&mut *log);
-            if !append_dependency(lockfile, log, name_str, specifier_str, group_behavior)? {
+            if !append_dependency(lockfile, Some(log), name_str, specifier_str, group_behavior)? {
                 return Err(InvalidPnpmLockfile);
             }
         }
@@ -1644,8 +1643,7 @@ fn parse_append_importer_dependencies(
                 ImporterName(importer_path)
             );
         }
-        let log = Some(&mut *log);
-        if !append_dependency(lockfile, log, peer_name, decl.range, decl.behavior())? {
+        if !append_dependency(lockfile, Some(log), peer_name, decl.range, decl.behavior())? {
             return Err(InvalidPnpmLockfile);
         }
     }
@@ -1750,7 +1748,7 @@ pub(crate) fn migrate_pnpm_workspace_config(
     if !sys::exists_z(bun_core::zstr!("pnpm-workspace.yaml")) {
         return Ok(());
     }
-    let log = manager.log_mut();
+    let log = manager.log();
     let Some(root_pkg_json) = root_package_json(manager, log) else {
         return Ok(());
     };
@@ -1764,7 +1762,7 @@ pub(crate) fn migrate_pnpm_workspace_config(
 fn update_package_json_after_migration(
     lockfile: Option<&mut Lockfile>,
     manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     patches: &FoundPatches,
 ) -> Result<(), AllocError> {
     let bump = bun_alloc::Arena::new();

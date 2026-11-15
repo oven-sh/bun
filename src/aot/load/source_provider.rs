@@ -131,7 +131,7 @@ pub trait SourceProvider: Sync {
         &self,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> FoldOptions<'s>;
 
     fn define(&self) -> Option<&Define> {
@@ -142,7 +142,7 @@ pub trait SourceProvider: Sync {
         None
     }
 
-    fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed>;
+    fn resolve(&self, request: &ResolveRequest<'_>, log: &Log) -> Result<Resolution, Failed>;
 
     fn find_file(&self, host: &dyn Host, search: &FileSearch<'_>) -> FoundCode {
         find_file_plainly(host, search)
@@ -152,13 +152,13 @@ pub trait SourceProvider: Sync {
         true
     }
 
-    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed>;
+    fn load(&self, request: &LoadRequest<'_>, log: &Log) -> Result<Loaded, Failed>;
 
     fn has_load_plugin(&self, _module: ModuleName<'_>) -> bool {
         true
     }
 
-    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad>;
+    fn finish_deferred_loads(&self, log: &Log) -> Vec<DeferredLoad>;
 
     /// The loader of a `data:` URL that is written where it is loaded, or `None` if a bundle leaves it to the run time.
     fn data_url_loader(&self, _url: &[u8]) -> Option<Loader> {
@@ -181,7 +181,7 @@ pub trait SourceProvider: Sync {
         false
     }
 
-    fn set_embedded_contents(&self, _file: &SourceFile<'_>, _log: &mut Log) -> Result<(), Failed> {
+    fn set_embedded_contents(&self, _file: &SourceFile<'_>, _log: &Log) -> Result<(), Failed> {
         Ok(())
     }
 
@@ -315,10 +315,10 @@ pub trait SourceProvider: Sync {
         file: &SourceFile<'_>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<DataModule<'s>, DataFailure>;
 
-    fn bundle_pages(&self, pages: &[&[u8]], log: &mut Log) -> Result<Vec<Vec<u8>>, Failed> {
+    fn bundle_pages(&self, pages: &[&[u8]], log: &Log) -> Result<Vec<Vec<u8>>, Failed> {
         match pages.is_empty() {
             true => Ok(Vec::new()),
             false => Err(report_unsupported(
@@ -336,7 +336,7 @@ pub trait SourceProvider: Sync {
         expand_globs_without_bundler(file, self.define())
     }
 
-    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed>;
+    fn check_embedded_files(&self, log: &Log) -> Result<(), Failed>;
 }
 
 /// `bun run` makes an empty module of such a text and asks no parser (`Transpiler::parse` in bundler/transpiler.rs).
@@ -424,15 +424,15 @@ fn parse_without_bundler(
             &*default_define
         }
     };
-    let mut log = Log::init();
+    let log = Log::init();
     let parsed =
-        Parser::init(options, &mut log, &source, define, &arena).and_then(|parser| parser.parse());
+        Parser::init(options, &log, &source, define, &arena).and_then(|parser| parser.parse());
     parsed.is_ok() && !log.has_errors()
 }
 
 pub struct WithoutServices;
 
-fn report_unsupported(log: &mut Log, feature: &[u8]) -> Failed {
+fn report_unsupported(log: &Log, feature: &[u8]) -> Failed {
     log_diagnostic(log, Code::UnsupportedOption, &[feature]);
     Failed
 }
@@ -442,12 +442,12 @@ impl SourceProvider for WithoutServices {
         &self,
         _arena: &'s Arena,
         _atoms: &Interner<'s>,
-        _log: &mut Log,
+        _log: &Log,
     ) -> FoldOptions<'s> {
         FoldOptions::default()
     }
 
-    fn resolve(&self, _request: &ResolveRequest<'_>, _log: &mut Log) -> Result<Resolution, Failed> {
+    fn resolve(&self, _request: &ResolveRequest<'_>, _log: &Log) -> Result<Resolution, Failed> {
         Ok(Resolution::NotHandled)
     }
 
@@ -455,7 +455,7 @@ impl SourceProvider for WithoutServices {
         false
     }
 
-    fn load(&self, request: &LoadRequest<'_>, _log: &mut Log) -> Result<Loaded, Failed> {
+    fn load(&self, request: &LoadRequest<'_>, _log: &Log) -> Result<Loaded, Failed> {
         let file = (request.read_file)();
         Ok(Loaded::from_file(file, request.default_loader))
     }
@@ -464,7 +464,7 @@ impl SourceProvider for WithoutServices {
         false
     }
 
-    fn finish_deferred_loads(&self, _log: &mut Log) -> Vec<DeferredLoad> {
+    fn finish_deferred_loads(&self, _log: &Log) -> Vec<DeferredLoad> {
         Vec::new()
     }
 
@@ -473,7 +473,7 @@ impl SourceProvider for WithoutServices {
         file: &SourceFile<'_>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<DataModule<'s>, DataFailure> {
         match file.loader {
             Loader::Json | Loader::Jsonc if file.contents.iter().all(u8::is_ascii_whitespace) => {
@@ -513,7 +513,7 @@ impl SourceProvider for WithoutServices {
         }
     }
 
-    fn check_embedded_files(&self, _log: &mut Log) -> Result<(), Failed> {
+    fn check_embedded_files(&self, _log: &Log) -> Result<(), Failed> {
         Ok(())
     }
 }

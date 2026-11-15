@@ -139,7 +139,7 @@ impl Framework {
         fw
     }
 
-    pub(crate) fn add_react_install_command_note(log: &mut bun_ast::Log) {
+    pub(crate) fn add_react_install_command_note(log: &bun_ast::Log) {
         log.add_msg(bun_ast::Msg {
             kind: bun_ast::Kind::Note,
             data: bun_ast::range_data(
@@ -161,7 +161,9 @@ fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<Utf8By
     match resolve_path(r, path) {
         Ok(resolved) => Some(resolved),
         Err(_) => {
-            r.log_mut().reset();
+            if let Some(log) = r.log() {
+                log.reset();
+            }
             None
         }
     }

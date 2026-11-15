@@ -113,7 +113,7 @@ pub mod Macro {
             arena: &bun_alloc::Arena,
             import_record_path: &[u8],
             source_dir: &[u8],
-            log: &mut bun_ast::Log,
+            log: &bun_ast::Log,
             source: &bun_ast::Source,
             import_range: bun_ast::Range,
             caller: bun_ast::Expr,
@@ -159,7 +159,7 @@ pub mod Macro {
             arena: &'a bun_alloc::Arena,
             import_record_path: &[u8],
             source_dir: &[u8],
-            log: &mut bun_ast::Log,
+            log: &bun_ast::Log,
             source: &bun_ast::Source,
             import_range: bun_ast::Range,
             caller: bun_ast::Expr,
@@ -211,7 +211,7 @@ pub enum AlreadyBundled {
 
 /// `impl EqlParser for P` — moved out of `bun_ast::expr` (next to `P`).
 impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser
-    for crate::p::P<'a, IS_TS, SCAN>
+    for crate::p::P<'a, '_, IS_TS, SCAN>
 {
     #[inline]
     fn arena(&self) -> &bun_alloc::Arena {

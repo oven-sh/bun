@@ -11,7 +11,7 @@ impl Framework {
     pub(crate) fn init_transpiler<'a>(
         &self,
         arena: &'a Arena,
-        log: &mut bun_ast::Log,
+        log: &'a bun_ast::Log,
         mode: Mode,
         renderer: Graph,
         bundler_view: &Arc<bun_bundler::bake_types::Framework>,
@@ -40,7 +40,6 @@ impl Framework {
             Graph::Server | Graph::Ssr => Box::default(),
         };
         out.options.entry_points = Box::default();
-        out.options.log = log;
         out.options.output_format = mode.output_format();
         out.options.out_extensions = bun_collections::StringHashMap::new();
         out.options.hot_module_reloading = mode == Mode::Development;
@@ -101,7 +100,7 @@ impl Framework {
         // `Clone`.
         out.sync_resolver_opts();
 
-        out.configure_linker();
+        out.configure_from_tsconfig();
         out.configure_defines()?;
 
         out.options.jsx.development = mode == Mode::Development;

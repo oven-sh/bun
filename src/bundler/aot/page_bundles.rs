@@ -31,7 +31,7 @@ pub(crate) fn bundle_pages(
     context: &BuildContext,
     embedded: &EmbeddedFiles,
     pages: &[&[u8]],
-    log: &mut Log,
+    log: &Log,
 ) -> Result<Vec<Vec<u8>>, Failed> {
     if pages.is_empty() {
         return Ok(Vec::new());
@@ -47,11 +47,11 @@ pub(crate) fn bundle_pages(
 fn create_page_outputs(
     context: &BuildContext,
     pages: &[&[u8]],
-    log: &mut Log,
+    log: &Log,
 ) -> Result<PageOutputs, Failed> {
     with_ast_scope(|heap| {
-        let mut page_log = Log::init();
-        let mut transpiler = create_page_transpiler(context, heap, &raw mut page_log);
+        let page_log = Log::init();
+        let mut transpiler = create_page_transpiler(context, heap, &page_log);
         let any_loop = AnyEventLoop::default();
         let carrier = context.bundle();
 
@@ -71,7 +71,7 @@ fn create_page_outputs(
         let result = run(&mut bundle, pages, heap);
         drop(bundle);
 
-        let has_page_errors = page_log.errors > 0;
+        let has_page_errors = page_log.has_errors();
         page_log.append_to(log);
 
         result.map_err(|error| {
@@ -90,7 +90,7 @@ fn create_page_outputs(
 fn create_page_transpiler<'h>(
     context: &BuildContext,
     heap: &'h Arena,
-    log: *mut Log,
+    log: &'h Log,
 ) -> Transpiler<'h> {
     let mut transpiler = Transpiler::for_worker(context.bundle().transpiler(), heap, log);
 
@@ -151,7 +151,8 @@ fn run<'h>(
     bundle.graph.entry_points.push(Index::init(index));
 
     bundle.wait_for_parse();
-    if bundle.transpiler.log().errors > 0 {
+    let log = bundle.transpiler.log();
+    if log.has_errors() {
         return Err(crate::Error::BuildFailed);
     }
     bundle.fail_if_no_entry_points()?;
@@ -165,18 +166,19 @@ fn run<'h>(
     bundle.add_server_component_boundaries_as_extra_entry_points()?;
 
     let mut linker = LinkerContext::load(bundle, linker_graph, &reachable_files)?;
-    let mut chunks = linker.link(bundle.transpiler.log_mut())?;
-    if bundle.transpiler.log().errors > 0 {
+    let mut chunks = linker.link(log)?;
+    if log.has_errors() {
         return Err(crate::Error::BuildFailed);
     }
 
     let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
         &mut linker,
-        bundle.transpiler.log_mut(),
+        log,
         &mut chunks,
     )?;
 
-    let manifests = write_page_manifests(bundle, &linker.graph, &chunks, &output_files, pages)?;
+    let manifests =
+        write_page_manifests(bundle, &linker.graph, &chunks, &output_files, pages, log)?;
     Ok(PageOutputs {
         manifests,
         output_files,
@@ -189,11 +191,12 @@ fn write_page_manifests(
     chunks: &[Chunk<'_>],
     output_files: &[OutputFile],
     pages: &[&[u8]],
+    log: &Log,
 ) -> Result<Vec<Vec<u8>>, crate::Error> {
     let server_source_indices = &bundle.graph.html_imports;
     if server_source_indices.len() != pages.len() {
         return Err(report_page_count(
-            bundle,
+            log,
             server_source_indices.len(),
             pages.len(),
         ));
@@ -227,17 +230,13 @@ fn write_page_manifests(
 
     let bundled_count = manifests.iter().flatten().count();
     if bundled_count != pages.len() {
-        return Err(report_page_count(bundle, bundled_count, pages.len()));
+        return Err(report_page_count(log, bundled_count, pages.len()));
     }
     Ok(manifests.into_iter().flatten().collect())
 }
 
-fn report_page_count(
-    bundle: &BundleV2<'_>,
-    bundled_count: usize,
-    requested_count: usize,
-) -> crate::Error {
-    bundle.transpiler().log_mut().add_error_fmt(
+fn report_page_count(log: &Log, bundled_count: usize, requested_count: usize) -> crate::Error {
+    log.add_error_fmt(
         None,
         Loc::EMPTY,
         format_args!("{bundled_count} pages were bundled, {requested_count} were asked for"),
@@ -389,8 +388,8 @@ mod tests {
 
             let options = bun_js_parser::ParserOptions::init(Default::default(), Loader::Js);
             let define = bun_js_parser::Define::default();
-            let mut log = Log::init();
-            let parser = bun_js_parser::Parser::init(options, &mut log, &source, &define, heap)
+            let log = Log::init();
+            let parser = bun_js_parser::Parser::init(options, &log, &source, &define, heap)
                 .expect("the parser starts");
             let bun_js_parser::Result::Ast(ast) = parser.parse().expect("the entry parses") else {
                 panic!("the entry is an ordinary module");
@@ -437,12 +436,12 @@ mod tests {
             |_| {},
             |context| {
                 let embedded = EmbeddedFiles::default();
-                let mut log = Log::init();
+                let log = Log::init();
 
-                let manifests = bundle_pages(context, &embedded, &[], &mut log);
+                let manifests = bundle_pages(context, &embedded, &[], &log);
 
                 assert!(manifests.unwrap().is_empty());
-                assert!(log.msgs.is_empty());
+                assert_eq!(log.msgs_len(), 0);
                 assert!(embedded.into_output_files().is_empty());
             },
         );

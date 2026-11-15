@@ -46,12 +46,12 @@ impl SourceProvider for TestPlugins {
         &self,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> FoldOptions<'s> {
         WithoutServices.fold_options(arena, atoms, log)
     }
 
-    fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
+    fn resolve(&self, request: &ResolveRequest<'_>, log: &Log) -> Result<Resolution, Failed> {
         if request.specifier != b"virtual:config" {
             return WithoutServices.resolve(request, log);
         }
@@ -61,7 +61,7 @@ impl SourceProvider for TestPlugins {
         })
     }
 
-    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+    fn load(&self, request: &LoadRequest<'_>, log: &Log) -> Result<Loaded, Failed> {
         if request.module.namespace != b"v" {
             return WithoutServices.load(request, log);
         }
@@ -72,7 +72,7 @@ impl SourceProvider for TestPlugins {
         })
     }
 
-    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+    fn finish_deferred_loads(&self, log: &Log) -> Vec<DeferredLoad> {
         WithoutServices.finish_deferred_loads(log)
     }
 
@@ -81,7 +81,7 @@ impl SourceProvider for TestPlugins {
         file: &SourceFile<'_>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<DataModule<'s>, DataFailure> {
         match file.loader {
             Loader::Wasm => Ok(DataModule::RuntimeRequire {
@@ -93,7 +93,7 @@ impl SourceProvider for TestPlugins {
         }
     }
 
-    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+    fn check_embedded_files(&self, log: &Log) -> Result<(), Failed> {
         WithoutServices.check_embedded_files(log)
     }
 }

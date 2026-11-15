@@ -154,7 +154,7 @@ impl UpdateRequest {
 
     pub fn parse<'a>(
         pm: Option<&mut PackageManager>,
-        log: &mut Log,
+        log: &Log,
         positionals: &[&[u8]],
         update_requests: &'a mut Array,
         subcommand: Subcommand,
@@ -164,7 +164,7 @@ impl UpdateRequest {
     }
     pub fn parse_with_error<'a>(
         mut pm: Option<&mut PackageManager>,
-        log: &mut Log,
+        log: &Log,
         positionals: &[&[u8]],
         update_requests: &'a mut Array,
         subcommand: Subcommand,
@@ -232,7 +232,7 @@ impl UpdateRequest {
                 value,
                 None,
                 &SlicedString::init(input, value),
-                Some(&mut *log),
+                Some(log),
                 pm.as_deref_mut(),
             )
             .filter(|_| dependency::nameless_npm_alias(value).is_none()) else {
@@ -248,7 +248,7 @@ impl UpdateRequest {
                     input,
                     None,
                     &SlicedString::init(input, input),
-                    Some(&mut *log),
+                    Some(log),
                     pm.as_deref_mut(),
                 )
                 .filter(|ver| {
@@ -298,7 +298,7 @@ impl UpdateRequest {
 }
 
 #[cold]
-fn unrecognised_format(log: &mut Log, positional: &[u8], fatal: bool) -> crate::Error {
+fn unrecognised_format(log: &Log, positional: &[u8], fatal: bool) -> crate::Error {
     let positional = bun_core::fmt::for_terminal(bstr::BStr::new(positional));
     if fatal {
         Output::err_generic(

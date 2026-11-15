@@ -18,7 +18,7 @@ type DupMap = bun_collections::HashMap<u64, (), bun_collections::IdentityContext
 pub(crate) struct Parser<'a, 's, 'i> {
     contents: &'s [u8],
     source: &'s Source<'s>,
-    log: &'a mut Log,
+    log: &'a Log,
     idx: &'i mut StructuralIndex<'s>,
     pub cursor: usize,
     opts: JSONOptions,
@@ -37,14 +37,14 @@ pub(crate) struct Parser<'a, 's, 'i> {
     spill_depth: usize,
 }
 
-impl<'s> LexerLog<'s> for Parser<'_, 's, '_> {
+impl LexerLog for Parser<'_, '_, '_> {
     type Err = crate::Error;
     #[inline]
-    fn log_mut(&mut self) -> &mut Log {
+    fn log(&self) -> &Log {
         self.log
     }
     #[inline]
-    fn source(&self) -> &'s Source<'s> {
+    fn source(&self) -> &Source<'_> {
         self.source
     }
     #[inline]
@@ -88,7 +88,7 @@ pub(crate) fn is_exotic_whitespace(cp: CodePoint) -> bool {
 impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     pub(crate) fn new(
         source: &'s Source<'s>,
-        log: &'a mut Log,
+        log: &'a Log,
         idx: &'i mut StructuralIndex<'s>,
         opts: JSONOptions,
         tape_alloc: E::TapeAlloc,
@@ -1315,7 +1315,7 @@ fn read_trail_surrogate_escape(
     Some(value as u16)
 }
 
-fn decode_string_escapes<'s, const ALLOW_RAW_CONTROL: bool, L: LexerLog<'s, Err = crate::Error>>(
+fn decode_string_escapes<const ALLOW_RAW_CONTROL: bool, L: LexerLog<Err = crate::Error>>(
     l: &mut L,
     body: &[u8],
     buf: &mut Vec<u8>,
@@ -1387,17 +1387,17 @@ fn decode_string_escapes<'s, const ALLOW_RAW_CONTROL: bool, L: LexerLog<'s, Err 
 }
 
 struct MiniLog<'a, 's> {
-    log: &'a mut Log,
+    log: &'a Log,
     source: &'s Source<'s>,
     prev_error_loc: Loc,
 }
 
-impl<'s> LexerLog<'s> for MiniLog<'_, 's> {
+impl LexerLog for MiniLog<'_, '_> {
     type Err = crate::Error;
-    fn log_mut(&mut self) -> &mut Log {
+    fn log(&self) -> &Log {
         self.log
     }
-    fn source(&self) -> &'s Source<'s> {
+    fn source(&self) -> &Source<'_> {
         self.source
     }
     fn prev_error_loc_mut(&mut self) -> &mut Loc {
@@ -1413,7 +1413,7 @@ impl<'s> LexerLog<'s> for MiniLog<'_, 's> {
 
 pub(crate) fn decode_auto_quoted(
     source: &Source,
-    log: &mut Log,
+    log: &Log,
     bump: &Bump,
     body: &[u8],
     opts: JSONOptions,

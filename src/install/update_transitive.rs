@@ -470,8 +470,8 @@ pub(crate) fn enqueue_peer_rows(
 }
 
 /// Pending log lines go to stderr; `--silent` drops everything but errors. An error among them fails the install here, because the reset below hides it from `install_with_manager`.
-fn print_log(manager: &PackageManager) -> crate::Result<()> {
-    let log = manager.log_mut();
+fn print_log(manager: &mut PackageManager) -> crate::Result<()> {
+    let log = manager.log();
     let failed = log.has_errors();
     if manager.options.log_level != LogLevel::Silent || failed {
         log.print(Output::error_writer())?;
@@ -704,9 +704,10 @@ pub(crate) fn print_kept_patched(manager: &mut PackageManager) {
 }
 
 /// `bun update`, once everything is resolved: a dependency whose source could not be read kept the package of bun.lock (`Scratch::refreshing`), which the warning about the failed read does not say. Each such package gets the line that `warn_unchecked` prints for a package whose manifest could not be fetched. A command that has failed by now saves nothing, and gets no such line.
-pub(crate) fn warn_unchecked_sources(manager: &PackageManager) {
+pub(crate) fn warn_unchecked_sources(manager: &mut PackageManager) {
+    let log = manager.log();
     if manager.subcommand != crate::Subcommand::Update
-        || manager.log_mut().has_errors()
+        || log.has_errors()
         || manager.update_requests.iter().any(|request| request.failed)
     {
         return;
@@ -723,7 +724,6 @@ pub(crate) fn warn_unchecked_sources(manager: &PackageManager) {
         })
         .collect();
     index_sort::sort_vec_unstable_by(&mut kept, |a, b| a.cmp(b));
-    let log = manager.log_mut();
     for (name, resolution) in kept {
         log.add_warning_fmt(
             None,
@@ -740,7 +740,7 @@ pub(crate) fn warn_unchecked_sources(manager: &PackageManager) {
 /// Returns the source of the root package.json and its `patchedDependencies` object.
 fn root_patched_dependencies<'a>(
     cache: &'a mut WorkspacePackageJSONCache,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     root_package_json_path: &[u8],
     root_dir: &[u8],
 ) -> Option<(&'a bun_ast::Source<'a>, bun_ast::Expr)> {
@@ -769,7 +769,7 @@ fn root_patched_dependencies<'a>(
 /// The `patchedDependencies` keys, read from the root package.json because the lockfile only stores
 /// their hashes.
 pub(crate) fn patched_dependency_keys(manager: &mut PackageManager) -> Vec<Box<[u8]>> {
-    let log = manager.log_mut();
+    let log = manager.log();
     let path = manager.root_package_json_path.as_bytes();
     let root_dir = manager.root_dir.dir;
     let Some((_, patched)) = root_patched_dependencies(
@@ -788,7 +788,7 @@ pub(crate) fn patched_dependency_keys(manager: &mut PackageManager) -> Vec<Box<[
 /// A `patchedDependencies` key without a version matches no package, so its patch is never applied.
 #[cold]
 fn warn_patch_key_without_version(
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     source: &bun_ast::Source,
     key_loc: bun_ast::Loc,
     name: &[u8],
@@ -831,7 +831,7 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
     {
         return;
     }
-    let log = manager.log_mut();
+    let log = manager.log();
     let path = manager.root_package_json_path.as_bytes();
     let root_dir = manager.root_dir.dir;
     let Some((source, patched)) = root_patched_dependencies(
@@ -968,54 +968,51 @@ fn newest_allowed(manager: &mut PackageManager, pkg_id: PackageID) -> Option<Box
 
 /// Pairs each unchecked `(name, version)` with the fetch failure the manifest task logged for it and reports both as one warning; nothing under `--silent`.
 fn warn_unchecked(
-    manager: &PackageManager,
+    manager: &mut PackageManager,
     msgs_before: usize,
     unchecked: &[(Box<[u8]>, Box<[u8]>)],
 ) {
     if unchecked.is_empty() {
         return;
     }
-    let log = manager.log_mut();
+    let log = manager.log();
     let silent = manager.options.log_level == LogLevel::Silent;
-    let mut used = DynamicBitSet::init_empty(log.msgs.len()).unwrap_or_oom();
-    for (name, version) in unchecked {
-        let reason = log
-            .msgs
-            .iter()
-            .enumerate()
-            .skip(msgs_before)
-            .find(|(_, msg)| msg.kind == bun_ast::Kind::Warn && mentions(&msg.data.text, name));
-        if let Some((i, _)) = reason {
-            used.set(i);
+    let consumed = log.with_msgs(|msgs| {
+        let mut used = DynamicBitSet::init_empty(msgs.len()).unwrap_or_oom();
+        for (name, version) in unchecked {
+            let reason =
+                msgs.iter().enumerate().skip(msgs_before).find(|(_, msg)| {
+                    msg.kind == bun_ast::Kind::Warn && mentions(&msg.data.text, name)
+                });
+            if let Some((i, _)) = reason {
+                used.set(i);
+            }
+            if silent {
+                continue;
+            }
+            match reason {
+                Some((_, msg)) => bun_core::warn!(
+                    "{}@{} was not checked for updates: {}",
+                    BStr::new(name),
+                    BStr::new(version),
+                    BStr::new(&msg.data.text)
+                ),
+                None => bun_core::warn!(
+                    "{}@{} was not checked for updates",
+                    BStr::new(name),
+                    BStr::new(version)
+                ),
+            }
         }
-        if silent {
-            continue;
-        }
-        match reason {
-            Some((_, msg)) => bun_core::warn!(
-                "{}@{} was not checked for updates: {}",
-                BStr::new(name),
-                BStr::new(version),
-                BStr::new(&msg.data.text)
-            ),
-            None => bun_core::warn!(
-                "{}@{} was not checked for updates",
-                BStr::new(name),
-                BStr::new(version)
-            ),
-        }
-    }
-    let consumed = used.count();
-    if consumed == 0 {
-        return;
-    }
-    let mut i = 0usize;
-    log.msgs.retain(|_| {
-        let keep = !used.is_set(i);
-        i += 1;
-        keep
+        let mut i = 0usize;
+        msgs.retain(|_| {
+            let keep = !used.is_set(i);
+            i += 1;
+            keep
+        });
+        used.count()
     });
-    log.warnings = log.warnings.saturating_sub(consumed as u32);
+    log.warnings.update(|n| n.saturating_sub(consumed as u32));
 }
 
 /// The fetch failures name the package as a URL segment (`/` + name, `/` encoded as `%2f`) or after `manifest `, followed by a space, an escape, or the end.
@@ -1241,7 +1238,7 @@ fn plan_edges(
     }
 
     let ids: Vec<PackageID> = instances.iter().map(|inst| inst.pkg_id).collect();
-    let msgs_before = manager.log_mut().msgs.len();
+    let msgs_before = manager.log().msgs_len();
     populate_manifest_cache::populate_manifest_cache(manager, Packages::Exact(&ids))?;
 
     let cache_ctx = manager.manifest_disk_cache_ctx();

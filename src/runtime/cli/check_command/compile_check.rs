@@ -53,13 +53,12 @@ pub(super) fn check_arguments(command_line: &CommandLine) {
     }
 }
 
-pub(super) fn exec(options: &Options) -> ! {
-    let ctx = crate::cli::command::get();
+pub(super) fn exec(ctx: &mut ContextData, options: &Options) -> ! {
     let cwd = working_directory();
     set_compile_context(ctx, options, &cwd);
     match compile_command::compile_from_context(ctx, CompileProduct::ReportsOnly) {
         Err(error) => {
-            compile_command::print_log(ctx.log_ref());
+            compile_command::print_log(ctx.log());
             Output::err_generic("{}", (error.name(),));
             Global::exit(1);
         }
@@ -135,17 +134,17 @@ fn report_compile_check(
         Err(files_checked) => *files_checked,
     };
     let outcome = outcome.ok();
-    let log = ctx.log_ref();
+    let log = ctx.log();
     let mut out = Vec::new();
     match style_for(cwd, options.pretty, Destination::stdout(), false).layout {
-        Layout::Plain => {
-            for message in &log.msgs {
+        Layout::Plain => log.with_msgs(|msgs| {
+            for message in msgs {
                 write_plain_message(&mut out, message.kind, &message.data, cwd, b"");
                 for note in message.notes.iter() {
                     write_plain_message(&mut out, bun_ast::Kind::Note, note, cwd, b"  ");
                 }
             }
-        }
+        }),
         Layout::Pretty | Layout::Agent => {
             let stdout = Output::writer();
             let _ = log.print(stdout);
@@ -155,7 +154,7 @@ fn report_compile_check(
         report::write_lines(&outcome.report_messages, true, &mut out);
     }
     let _ = Output::writer().write_all(&out);
-    if log.errors > 0 {
+    if log.has_errors() {
         bun_core::pretty_errorln!("{}", BStr::new(&errors_line(log, files_checked)));
     } else if let Some(outcome) = &outcome {
         let clean_files =
@@ -180,8 +179,8 @@ fn report_compile_check(
     if let Some(outcome) = outcome {
         let mut lines = Vec::new();
         report::write_lines(&outcome.report_messages, false, &mut lines);
-        let mut report_log = bun_ast::Log::init();
-        report::add_messages_to_log(outcome.report_messages, &mut report_log);
+        let report_log = bun_ast::Log::init();
+        report::add_messages_to_log(outcome.report_messages, &report_log);
         compile_command::print_report_log(report_log);
         lines.extend_from_slice(&outcome.summary);
         let _ = Output::error_writer().write_all(&lines);
@@ -192,22 +191,26 @@ fn report_compile_check(
 
 /// The last line of plain `bun check`: sema/driver/format.rs.
 fn errors_line(log: &bun_ast::Log, files_checked: u32) -> Vec<u8> {
-    let errors = log
-        .msgs
-        .iter()
-        .filter(|message| message.kind == bun_ast::Kind::Err);
-    let mut files: Vec<&[u8]> = errors
-        .filter_map(|message| message.data.location.as_ref())
-        .map(|location| &location.file[..])
-        .collect();
-    files.shared_sort_unstable();
-    files.dedup();
+    let file_count = log.with_msgs(|msgs| {
+        let errors = (msgs.iter()).filter(|message| message.kind == bun_ast::Kind::Err);
+        let mut files: Vec<&[u8]> = errors
+            .filter_map(|message| message.data.location.as_ref())
+            .map(|location| &location.file[..])
+            .collect();
+        files.shared_sort_unstable();
+        files.dedup();
+        files.len()
+    });
 
     let mut line = b"Found ".to_vec();
-    line.extend_from_slice(&format::plural(log.errors as usize, b"error", b"errors"));
-    if !files.is_empty() {
+    line.extend_from_slice(&format::plural(
+        log.errors.get() as usize,
+        b"error",
+        b"errors",
+    ));
+    if file_count > 0 {
         line.extend_from_slice(b" in ");
-        line.extend_from_slice(&format::plural(files.len(), b"file", b"files"));
+        line.extend_from_slice(&format::plural(file_count, b"file", b"files"));
     }
     if files_checked > 0 {
         line.extend_from_slice(b", checked ");

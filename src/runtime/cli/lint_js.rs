@@ -217,8 +217,8 @@ fn start_program(vm: &VirtualMachine) -> Result<LintVm, Vec<u8>> {
     }
 }
 
-/// Creates a VM for this thread. `log` outlives it.
-fn start_vm(log: *mut bun_ast::Log) -> Result<(), Vec<u8>> {
+/// Creates a VM for this thread.
+fn start_vm(log: &'static bun_ast::Log) -> Result<(), Vec<u8>> {
     bun_core::scoped_log!(lint_js, "a VM begins");
     let failed = |what: &str| {
         [
@@ -424,7 +424,7 @@ impl Start {
     }
 
     /// As [`start_vm`].
-    fn start_vm(&self, log: *mut bun_ast::Log) -> Result<(), Vec<u8>> {
+    fn start_vm(&self, log: &'static bun_ast::Log) -> Result<(), Vec<u8>> {
         let mut first = None;
         self.initialize.call_once(|| {
             // A no-op if a regular expression in a config has already started JSC (`bun_yarr`).
@@ -816,8 +816,10 @@ impl Crew {
     fn run_member(crew: &Arc<Crew>, at: usize) -> ! {
         name_this_thread(at);
         bun_sema_driver::run_regions_inline_on_this_thread();
-        let mut log = bun_ast::Log::default();
-        let failure = crew.start.start_vm(&raw mut log).err();
+        let log = bun_ast::Log::default();
+        // SAFETY: this frame never returns.
+        let log = unsafe { bun_ptr::detach_lifetime_ref(&log) };
+        let failure = crew.start.start_vm(log).err();
         {
             let mut state = crew.state.lock();
             state.all[at].thread = Some(std::thread::current().id());
@@ -853,10 +855,7 @@ impl Crew {
                 }
             }
         }
-        // This frame never returns, and a VM that `end_vm` kept still points at `log`.
-        if !VirtualMachine::is_loaded() {
-            drop(log);
-        }
+        log.clear_and_free();
         let (nothing, never) = (Guarded::new(()), Condition::new());
         let mut nothing = nothing.lock();
         loop {

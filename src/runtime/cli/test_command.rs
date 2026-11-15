@@ -402,13 +402,7 @@ fn find_all_that_is_reached_from(
         b".ts", b".tsx", b".js", b".jsx", b".mjs", b".cjs", b".mts", b".cts",
     ];
     let mut unread_log = bun_ast::Log::init();
-    // SAFETY: the resolver and `unread_log` outlive the guard.
-    let _log_scope = unsafe {
-        bun_resolver::Resolver::scoped_log(
-            &raw mut (*vm.transpiler.as_ptr()).resolver,
-            core::ptr::NonNull::from(&mut unread_log),
-        )
-    };
+    let _redirect = vm.log.redirect(&mut unread_log);
     let mut position_of = bun_collections::StringHashMap::<u32>::default();
     let mut paths = roots;
     for (position, path) in paths.iter().enumerate() {
@@ -593,13 +587,7 @@ fn select_shard_by_reach(
 // A preload is named as it was written: "./test/preload.ts", "dotenv/config". Whoever looks for what it imports needs its file.
 fn find_files_of_preloads(vm: &VirtualMachine, preloads: &[Box<[u8]>]) -> Vec<Box<[u8]>> {
     let mut unread_log = bun_ast::Log::init();
-    // SAFETY: the resolver and `unread_log` outlive the guard.
-    let _log_scope = unsafe {
-        bun_resolver::Resolver::scoped_log(
-            &raw mut (*vm.transpiler.as_ptr()).resolver,
-            core::ptr::NonNull::from(&mut unread_log),
-        )
-    };
+    let _redirect = vm.log.redirect(&mut unread_log);
     let top = FileSystem::get().top_level_dir();
     let file_of = |name: &[u8]| -> Box<[u8]> {
         let kind = bun_ast::ImportKind::Stmt;
@@ -2818,7 +2806,7 @@ impl TestCommand {
             graph: run_compiled::graph(),
             ..Default::default()
         };
-        let vm = VirtualMachine::init(ctx.log, options)?;
+        let vm = VirtualMachine::init(ctx.log(), options)?;
         crate::jsc_hooks::runtime_state_of(vm)
             .test_runner
             .set(Some(&reporter.jest));
@@ -3221,7 +3209,7 @@ impl TestCommand {
         let has_type_errors = ctx.runtime_options.check && {
             use crate::cli::check_command::{EntryPoint, check_before, watching};
             let paths = test_files.iter().map(|path| EntryPoint::file(path));
-            !check_before(&paths.collect::<Vec<_>>(), watching(vm))
+            !check_before(&ctx.args, &paths.collect::<Vec<_>>(), watching(vm))
         };
         if has_type_errors {
             // No test is run.
@@ -3894,7 +3882,7 @@ impl TestCommand {
         file_name: &[u8],
         first_last: bun_test::FirstLast,
     ) -> crate::Result<()> {
-        let _print_log = PrintLogAfterFile(vm.log.get());
+        let _print_log = PrintLogAfterFile(vm.log);
 
         let file_path = Self::resolve_test_file(vm, file_name)?;
         vm.clear_entry_point()?;
@@ -4166,21 +4154,18 @@ impl TestCommand {
     }
 }
 
-struct PrintLogAfterFile(Option<core::ptr::NonNull<bun_ast::Log>>);
+struct PrintLogAfterFile(&'static bun_ast::Log);
 
 impl Drop for PrintLogAfterFile {
     fn drop(&mut self) {
         bun_ast::Expr::data_store_reset();
         bun_ast::Stmt::data_store_reset();
 
-        if let Some(log) = self.0 {
-            // SAFETY: the VM owns the Log and outlives `TestCommand::run`.
-            let log = unsafe { &mut *log.as_ptr() };
-            if log.errors > 0 {
-                let _ = log.print(Output::error_writer());
-                log.msgs.clear();
-                log.errors = 0;
-            }
+        let log = self.0;
+        if log.has_errors() {
+            let _ = log.print(Output::error_writer());
+            log.with_msgs(Vec::clear);
+            log.errors.set(0);
         }
 
         Output::flush();

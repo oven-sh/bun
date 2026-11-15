@@ -21,7 +21,7 @@ pub(crate) fn fold_options<'s>(
     user_defined_names: &[Box<[u8]>],
     arena: &'s Arena,
     atoms: &Interner<'s>,
-    log: &mut Log,
+    log: &Log,
 ) -> FoldOptions<'s> {
     let table = &*options.define;
     let defines = with_ast_scope(|scratch| convert_defines(table, scratch, arena, atoms, log));
@@ -62,7 +62,7 @@ fn convert_defines<'s>(
     scratch: &Arena,
     arena: &'s Arena,
     atoms: &Interner<'s>,
-    log: &mut Log,
+    log: &Log,
 ) -> Vec<Define<'s>> {
     let mut defines = Vec::new();
     for entry in collect_define_entries(table) {
@@ -213,7 +213,7 @@ mod tests {
                 .collect(),
         };
         defines_from_transform_options(
-            &mut Log::default(),
+            &Log::default(),
             Some(&input),
             Target::Bun,
             None,
@@ -235,8 +235,8 @@ mod tests {
             with_test_context(
                 |options| configure(options, scratch),
                 |context| {
-                    let mut log = Log::default();
-                    let options = fold_options(context.options(), &[], arena, atoms, &mut log);
+                    let log = Log::default();
+                    let options = fold_options(context.options(), &[], arena, atoms, &log);
                     (options, log)
                 },
             )
@@ -257,7 +257,7 @@ mod tests {
             arena,
             atoms,
         );
-        assert_eq!(log.errors, 0);
+        assert_eq!(log.errors.get(), 0);
         options
     }
 
@@ -407,9 +407,9 @@ mod tests {
             session.arena(),
             &atoms,
         );
-        assert_eq!(log.errors, 1);
+        assert_eq!(log.errors.get(), 1);
         assert_eq!(
-            &*log.msgs[0].data.text,
+            &*log.msgs.take()[0].data.text,
             b"the --define value of \"config.BAD\" is not a plain value"
         );
         let config = DefineRoot::Global(atoms.intern(b"config"));

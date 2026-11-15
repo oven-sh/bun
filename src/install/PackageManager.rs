@@ -1,6 +1,7 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
+use core::sync::SyncView;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use std::collections::VecDeque;
 use std::sync::LazyLock;
@@ -502,10 +503,8 @@ pub struct PackageManager {
     // iterations — use `ast_arena` instead. The manager is a leaked singleton, so
     // this arena has process lifetime.
     pub(crate) ast_arena: bun_alloc::Arena,
-    // Raw ptr rather than `&'a mut bun_ast::Log`: PackageManager is a leaked singleton
-    // stored in a `static`, which cannot carry a lifetime parameter. Invariant: the
-    // pointed-to Log must outlive every use of the singleton.
-    pub log: *mut bun_ast::Log,
+    /// `SyncView`: other threads share `&Self`, and `Log` is not `Sync`.
+    log: SyncView<&'static bun_ast::Log>,
     pub(crate) timestamp_for_manifest_cache_control: u32,
     pub(crate) extracted_count: u32,
     pub(crate) summary: Package::DiffSummary,
@@ -907,27 +906,9 @@ impl PackageManager {
         VERBOSE_INSTALL.store(v, core::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Reborrow the externally-owned [`bun_ast::Log`].
-    ///
-    /// `log` is `*mut Log` (not `&'a mut Log`) only because `PackageManager` is
-    /// a leaked `'static` singleton stored in a global; threading the borrow
-    /// lifetime through `static INSTANCE` is deferred (see field comment). The
-    /// `Log` itself outlives the manager — it's the CLI-scope log allocated in
-    /// `Command::init` before the manager exists.
-    ///
-    /// The returned lifetime is **decoupled** from `&self`: callers routinely
-    /// hold a borrow into `self.lockfile`/`self.options` while appending an
-    /// error, and the `Log` is a disjoint allocation. It is the caller's
-    /// responsibility not to alias the returned `&mut Log` (single-threaded by
-    /// construction — only the main install loop touches `log`).
     #[inline]
-    pub fn log_mut<'a>(&self) -> &'a mut bun_ast::Log {
-        let p = self.log;
-        // SAFETY: `self.log` is non-null for the manager's lifetime (set in
-        // `init`, never cleared) and the pointee is the CLI-scope `Log`, which
-        // outlives every `'a` a caller can name. Exclusive access is upheld by
-        // single-threaded use; see doc comment.
-        unsafe { &mut *p }
+    pub fn log(&mut self) -> &'static bun_ast::Log {
+        self.log.as_mut()
     }
 
     /// Associated-fn spelling that forwards to the free [`init`] so callers
@@ -999,6 +980,7 @@ impl PackageManager {
     /// in safe code.
     pub fn load_lockfile_from_cwd<const ATTEMPT_OTHER: bool>(&mut self) -> lockfile::LoadResult {
         self.clear_cached_items_depending_on_lockfile_buffer();
+        let log = self.log();
         let pm: *mut PackageManager = self;
         // SAFETY: `self.lockfile` is `Box<Lockfile>` — its pointee lives in a
         // separate heap allocation, so `&mut Lockfile` and `&mut PackageManager`
@@ -1009,8 +991,7 @@ impl PackageManager {
         // (npm, pnpm, yarn) reads it and stores to `scratch.dependency_list_queue`.
         unsafe {
             let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
-            let log: *mut bun_ast::Log = (*pm).log;
-            (*lf).load_from_cwd::<ATTEMPT_OTHER>(Some(&mut *pm), &mut *log)
+            (*lf).load_from_cwd::<ATTEMPT_OTHER>(Some(&mut *pm), log)
         }
     }
 
@@ -1023,7 +1004,7 @@ impl PackageManager {
                 Output::err_generic("missing lockfile, {s}", (nothing,));
                 bun_core::note!("run 'bun install' first");
             }
-            lockfile::LoadResult::Err(cause) if !silent => cause.report(self.log_mut()),
+            lockfile::LoadResult::Err(cause) if !silent => cause.report(self.log()),
             _ => {}
         }
         Global::exit(1);
@@ -1031,7 +1012,7 @@ impl PackageManager {
 
     pub(crate) fn crash(&mut self) -> ! {
         if self.options.log_level != package_manager_options::LogLevel::Silent {
-            let _ = self.log_mut().print(Output::error_writer());
+            let _ = self.log().print(Output::error_writer());
         }
         Global::crash();
     }
@@ -1140,15 +1121,14 @@ impl PackageManager {
 
     /// Reborrow the process-global env loader.
     ///
-    /// Lifetime is decoupled from `&self` as in [`log_mut`]: the loader is a leaked allocation
+    /// Lifetime is decoupled from `&self`: the loader is a leaked allocation
     /// outside the manager (set once in `init()`), and callers interleave env
     /// mutation with disjoint `&mut self.X` field writes.
     #[inline]
     pub fn env_mut<'a>(&self) -> &'a mut dot_env::Loader {
         // SAFETY: `env` is set during `init()` and never None afterward; the
         // pointee is a process-lifetime singleton (leaked `DotEnv.Loader`)
-        // that lives outside `self`, so the unbounded `'a` is sound under the
-        // same single-threaded contract as `log_mut`.
+        // that lives outside `self`.
         // `BackRef` guarantees liveness; exclusivity is the caller's contract.
         unsafe { &mut *self.env.expect("env initialised").as_ptr() }
     }
@@ -1404,7 +1384,7 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
 
 fn allocate_package_manager(
     options: Options,
-    log: *mut bun_ast::Log,
+    log: &'static bun_ast::Log,
     root_dir: &'static fs::DirEntry,
     env: &mut dot_env::Loader,
     // NUL-terminated
@@ -1457,7 +1437,7 @@ fn allocate_package_manager(
         wr!(active_lifecycle_scripts, Default::default());
         wr!(network_task_fifo, NetworkQueue::init());
         wr!(retry_queue, Default::default());
-        wr!(log, log);
+        wr!(log, SyncView::new(log));
         wr!(root_dir, root_dir);
         wr!(ast_arena, bun_alloc::Arena::new());
         wr!(env, Some(bun_ptr::BackRef::new_mut(env)));
@@ -1862,7 +1842,7 @@ impl<'a> PackageJsonWalk<'a> {
 fn find_workspace_root<'a>(
     walk: &mut PackageJsonWalk<'a>,
     child_cwd: &[u8],
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     mut members: Option<(
         &mut Package::WorkspaceMap::WorkspaceMap,
         &mut WorkspacePackageJSONCache,
@@ -1923,7 +1903,7 @@ fn path_as_typed(_: &[u8]) -> Option<&'static [u8]> {
 fn find_workspace_root_above<'a>(
     walk: &mut PackageJsonWalk<'a>,
     child_cwd: &[u8],
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     members: Option<(
         &mut Package::WorkspaceMap::WorkspaceMap,
         &mut WorkspacePackageJSONCache,
@@ -1995,12 +1975,12 @@ fn find_workspace_root_above<'a>(
                 }
                 break;
             };
-            let mut log = bun_ast::Log::init();
+            let log = bun_ast::Log::init();
             // An error here is about some other workspace. A command that needs that workspace
             // reports it later.
             let _ = workspace_names.process_names_array(
                 workspace_package_json_cache,
-                &mut log,
+                &log,
                 names,
                 &json_source,
                 prop.loc,
@@ -2098,7 +2078,7 @@ fn find_project<'a>(
             continue;
         }
         match workspace_package_json_cache
-            .get_with_path(&mut bun_ast::Log::init(), &walk.path, Default::default())
+            .get_with_path(&bun_ast::Log::init(), &walk.path, Default::default())
             .unwrap()
         {
             Ok(json) if OF_A_PROJECT.iter().any(|key| json.root.get(key).is_some()) => {
@@ -2121,7 +2101,7 @@ fn find_project<'a>(
         match find_workspace_root(
             &mut walk,
             without_trailing_slash_windows_path(above_dir),
-            &mut bun_ast::Log::init(),
+            &bun_ast::Log::init(),
             None,
             None,
         ) {
@@ -2310,7 +2290,7 @@ pub fn init(
                 // The package.json that `bun add <package>` would create here is only kept in
                 // memory.
                 workspace_package_json_cache.insert_unwritten(
-                    &mut bun_ast::Log::init(),
+                    &bun_ast::Log::init(),
                     original_package_json_path.as_bytes(),
                     directories::NEW_PACKAGE_JSON,
                 )?;
@@ -2362,10 +2342,7 @@ pub fn init(
                 && let Some((parent, json_file, name_hash)) = find_workspace_root(
                     &mut walk,
                     child_cwd,
-                    // SAFETY: `ctx.log` is a borrow of the CLI's `Log`; valid for the
-                    // duration of `init()` (set by `Command::create()` before any install
-                    // entry point runs).
-                    unsafe { &mut *ctx.log },
+                    ctx.log(),
                     Some((&mut workspace_names, &mut workspace_package_json_cache)),
                     (subcommand == Subcommand::Pm)
                         .then_some(&mut root_package_json_name_at_time_of_init),
@@ -2518,7 +2495,7 @@ pub fn init(
 
     let manager_ptr = allocate_package_manager(
         options,
-        ctx.log,
+        ctx.log(),
         entries_option,
         env,
         original_package_json_path_buf,
@@ -2575,9 +2552,7 @@ pub fn init(
         );
 
         manager.options.load(
-            // SAFETY: ctx.log is the process-lifetime CLI log set by
-            // create_context_data(); single-threaded init region.
-            unsafe { &mut *ctx.log },
+            ctx.log(),
             env,
             cli,
             ctx.install.as_deref(),
@@ -2697,7 +2672,7 @@ pub fn init(
 }
 
 pub(crate) fn init_with_runtime(
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     // Used read-only (`Options::load` only ever reads `config.*`).
     // Upstream storage is `Option<NonNull<api::BunInstall>>` (bundler + resolver
     // opts); taking `&mut` here would force a const→mut provenance launder at
@@ -2727,7 +2702,7 @@ pub(crate) fn init_with_runtime(
 }
 
 fn init_with_runtime_once(
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     bun_install: Option<&Api::BunInstall>,
     cli: &CommandLineArguments,
     env: &mut dot_env::Loader,
@@ -2862,7 +2837,8 @@ fn init_with_runtime_once(
             runtime_auto_install: true,
             ..Default::default()
         },
-        std::ptr::from_mut(log),
+        // Outlives every caller's log, and is drained into it.
+        Box::leak(Box::default()),
         root_dir,
         env,
         original_package_json_path,
@@ -2876,6 +2852,7 @@ fn init_with_runtime_once(
     // the `&mut PackageManager` validity invariant now holds for the post-init
     // body.
     let manager = unsafe { &mut *manager_ptr };
+    let _drain = manager.drain_log_on_drop(Some(log));
 
     if Output::enable_ansi_colors_stderr() {
         manager.progress = Progress::default();
@@ -2966,18 +2943,18 @@ fn init_with_runtime_once(
 /// imported.
 fn parse_runtime_root(
     manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     root_dir: &[u8],
 ) -> crate::Result<()> {
     let mut path = root_dir.to_vec();
     push_package_json(&mut path);
     // The messages in this log point into `source`.
-    let mut parse_log = bun_ast::Log::init();
+    let parse_log = bun_ast::Log::init();
     // Cloned because the `workspaces` walk below may grow the cache holding this entry.
     let (source, json) = {
         let entry = manager
             .workspace_package_json_cache
-            .get_with_path(&mut parse_log, &path[..path.len() - 1], Default::default())
+            .get_with_path(&parse_log, &path[..path.len() - 1], Default::default())
             .unwrap()?;
         (entry.source.clone(), entry.root)
     };
@@ -2987,7 +2964,7 @@ fn parse_runtime_root(
         .parse_with_json(
             &mut lockfile,
             manager,
-            &mut parse_log,
+            &parse_log,
             &source,
             json,
             &mut (),
@@ -3004,7 +2981,7 @@ fn parse_runtime_root(
             Ok(())
         });
     manager.lockfile = lockfile;
-    if parse_log.errors > 0 {
+    if parse_log.has_errors() {
         parse_log.append_to(log);
     }
     result

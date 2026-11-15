@@ -72,12 +72,12 @@ impl SourceProvider for ScriptedProvider {
         &self,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> FoldOptions<'s> {
         WithoutServices.fold_options(arena, atoms, log)
     }
 
-    fn resolve(&self, request: &ResolveRequest<'_>, _log: &mut Log) -> Result<Resolution, Failed> {
+    fn resolve(&self, request: &ResolveRequest<'_>, _log: &Log) -> Result<Resolution, Failed> {
         self.record_call("resolve", request.specifier);
         let module = |namespace: &[u8], path: &[u8]| Resolution::Module {
             namespace: namespace.to_vec(),
@@ -99,7 +99,7 @@ impl SourceProvider for ScriptedProvider {
         find_file_plainly(host, search)
     }
 
-    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+    fn load(&self, request: &LoadRequest<'_>, log: &Log) -> Result<Loaded, Failed> {
         self.record_call("load", request.module.path);
         let (text, loader): (&'static [u8], Loader) = match request.module.path {
             TEMPLATE | VIRTUAL_CONFIG => (TYPESCRIPT_TEXT, Loader::Ts),
@@ -127,7 +127,7 @@ impl SourceProvider for ScriptedProvider {
         ![WITHOUT_PLUGIN, PROSE_WITHOUT_PLUGIN, PROGRAM_WITHOUT_PLUGIN].contains(&module.path)
     }
 
-    fn finish_deferred_loads(&self, _log: &mut Log) -> Vec<DeferredLoad> {
+    fn finish_deferred_loads(&self, _log: &Log) -> Vec<DeferredLoad> {
         let from_plugin = |text: &'static [u8], loader: Loader| Loaded::Source {
             contents: Cow::Borrowed(text),
             loader,
@@ -154,7 +154,7 @@ impl SourceProvider for ScriptedProvider {
             .collect()
     }
 
-    fn set_embedded_contents(&self, file: &SourceFile<'_>, _log: &mut Log) -> Result<(), Failed> {
+    fn set_embedded_contents(&self, file: &SourceFile<'_>, _log: &Log) -> Result<(), Failed> {
         let embedded = [file.path, b" = ", file.contents].concat();
         self.record_call("set_embedded_contents", &embedded);
         Ok(())
@@ -165,7 +165,7 @@ impl SourceProvider for ScriptedProvider {
         file: &SourceFile<'_>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<DataModule<'s>, DataFailure> {
         self.record_call("parse_data", file.path);
         match file.loader {
@@ -174,7 +174,7 @@ impl SourceProvider for ScriptedProvider {
         }
     }
 
-    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+    fn check_embedded_files(&self, log: &Log) -> Result<(), Failed> {
         self.name_checks.fetch_add(1, Ordering::Relaxed);
         WithoutServices.check_embedded_files(log)
     }
@@ -277,9 +277,9 @@ impl<'s> Fixture<'_, 's> {
 pub(crate) fn take_messages(messages: &LoadMessages) -> Vec<Vec<u8>> {
     let mut diagnostics = Diagnostics::new();
     diagnostics.add_load_messages(messages);
-    let mut log = Log::init();
-    diagnostics.write_to(&mut log);
-    let messages = log.msgs.iter();
+    let log = Log::init();
+    diagnostics.write_to(&log);
+    let messages = log.msgs.take().into_iter();
     messages.map(|message| message.data.text.to_vec()).collect()
 }
 

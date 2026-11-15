@@ -727,6 +727,7 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
     };
 
     // Nothing writes `vm.preload` meanwhile: `reload()` defers while `is_in_preload`.
+    let ran_a_preload = !vm.preload.get().is_empty();
     for preload_slice in vm.preload.get() {
         // Strip "file://".
         let normalized: &[u8] = preload_slice
@@ -858,6 +859,9 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
             (*transpiler).options.own_test_globals =
                 crate::test_runner::jest::Jest::own_globals(global)
                     .map_err(|_| bun_jsc::CrateError::JSError)?;
+            // A preload and the Vitest globals give the global names that a new one lacks.
+            let has_names_of_its_own = ran_a_preload || (*transpiler).options.vitest_globals;
+            crate::test_runner::environment::will_load_test_file(vm, has_names_of_its_own);
         }
     }
 

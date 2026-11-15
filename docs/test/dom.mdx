@@ -55,7 +55,14 @@ If a comment names a package that isn't installed or an environment that isn't s
 
 ### Windows and test files
 
-By default, test files share one global object and one module registry. Files with the same environment and options also share one window, so a module that read `document.body` when it was imported still has the right element in the next file. Bun restores the globals after each file, so a file that runs in `node` doesn't see `document`.
+By default, test files share one global object and one module registry. Files with the same environment and options also share one window, so a module that read `document.body` when it was imported still has the right element in the next file. Bun takes a window's names off `globalThis` again before a file runs in another environment, so a file that runs in `node` doesn't see `document`.
+
+As in Vitest, a window gives `globalThis` a fixed list of names (`document`, `HTMLElement`, `matchMedia`, ...) and each of its other names (`customElements`, `ResizeObserver`, ...) that `globalThis` doesn't have. Because test files share `globalThis`, Bun looks at where such a name comes from:
+
+- Bun's own globals stay. So does a global that a preload script has defined by the time it finishes loading: define a mock or a polyfill of such a name there.
+- A global that a test file without a window assigns and leaves behind doesn't hide the window's name. A later file with a window gets the window's `customElements`, and a file that runs in `node` gets the leftover back. A leftover that isn't configurable stays.
+- A global that a preload script assigns after it has loaded, for example in a `beforeAll` hook, is like a test file's.
+- What a preload script assigns to a name of the project's window goes to that window. Files with another window, or with none, don't get it.
 
 With [`--isolate` or `--parallel`](/test/parallel), every file gets its own window and its own copy of every module. Use them when files in different environments import the same DOM library, because a shared module stays bound to the first window it saw.
 
@@ -286,7 +293,7 @@ preload = ["./test-setup.ts"]
 
 **TypeScript errors for DOM APIs**: Include the `/// <reference lib="dom" />` directive at the top of your test files.
 
-**Missing globals**: Check that the file runs in a [test environment](#test-environments), or that your preload file imports and registers `@happy-dom/global-registrator`.
+**Missing globals**: Check that the file runs in a [test environment](#test-environments), or that your preload file imports and registers `@happy-dom/global-registrator`. A file also gets no window if an earlier test file left a `document` on `globalThis`.
 
 **React component rendering issues**: Check that `@testing-library/react` is installed and happy-dom is set up.
 

@@ -175,6 +175,119 @@ describe("maxBuffer infinity does not limit the number of bytes", () => {
   });
 });
 
+describe("timeout kills the process", () => {
+  test("Bun.spawn", async () => {
+    const timeStart = Date.now();
+    const proc = Bun.spawn([bunExe(), "exec", "sleep 5"], {
+      timeout: 100,
+      killSignal: isWindows ? "SIGKILL" : "SIGHUP",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    await proc.exited;
+    expect(proc.exitCode).toBe(null);
+    expect(proc.signalCode).toBe(isWindows ? "SIGKILL" : "SIGHUP");
+    const timeEnd = Date.now();
+    expect(timeEnd - timeStart).toBeLessThan(200); // make sure it's terminating early
+    const result = await toUtf8(proc.stdout);
+    expect(result).toBe("");
+    const stderr = await toUtf8(proc.stderr);
+    expect(stderr).toBe("");
+  });
+
+  // A grandchild that inherited the pipe may still hold the write end after
+  // Bun kills the child. Reading stdout/stderr after `proc.exited` must
+  // deliver what was buffered instead of waiting for that grandchild to exit.
+  describe.each([
+    ["timeout", () => ({ timeout: 200 })],
+    ["AbortSignal", () => ({ signal: AbortSignal.timeout(200) })],
+  ] as const)("via %s", (_, opt) => {
+    test.skipIf(isWindows)("Bun.spawn stdout does not hang when a grandchild outlives the kill", async () => {
+      // `sh` spawns `sleep` before the stdout marker so the assertion proves a
+      // grandchild holds the pipe's write end when the kill signal reaches `sh`.
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", "sleep 60 & echo $! >&2; echo from-child; read _"],
+        env: bunEnv,
+        ...opt(),
+        killSignal: "SIGTERM",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      await proc.exited;
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+      const grandchild = parseInt(stderr.trim(), 10);
+      if (Number.isInteger(grandchild))
+        try {
+          process.kill(grandchild);
+        } catch {}
+      expect({ stdout, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: "from-child\n",
+        exitCode: null,
+        signalCode: "SIGTERM",
+      });
+      expect(stderr).toMatch(/^\d+\n$/);
+    });
+  });
+
+  test("Bun.spawnSync", () => {
+    const timeStart = Date.now();
+    const proc = Bun.spawnSync([bunExe(), "exec", "sleep 5"], {
+      timeout: 100,
+      killSignal: isWindows ? "SIGKILL" : "SIGHUP",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    expect(proc.exitedDueToTimeout).toBe(true);
+    expect(proc.exitCode as number | null).toBe(null);
+    expect(proc.signalCode).toBe(isWindows ? "SIGKILL" : "SIGHUP");
+    const timeEnd = Date.now();
+    // The timeout deadline is CLOCK_MONOTONIC at nanosecond precision, so by the
+    // time spawnSync returns at least 100ms have elapsed. Date.now() truncates to
+    // whole milliseconds, so floor(end) - floor(start) can equal exactly 100.
+    expect(timeEnd - timeStart).toBeGreaterThanOrEqual(100); // make sure it actually waits
+    expect(timeEnd - timeStart).toBeLessThan(200); // make sure it's terminating early
+    const result = proc.stdout.toString("utf-8");
+    expect(result).toBe("");
+    const stderr = proc.stderr.toString("utf-8");
+    expect(stderr).toBe("");
+  });
+});
+
+describe("timeout Infinity does not kill the process", () => {
+  test("Bun.spawn", async () => {
+    const timeStart = Date.now();
+    const proc = Bun.spawn([bunExe(), "exec", "sleep 1"], {
+      timeout: Infinity,
+      killSignal: isWindows ? "SIGKILL" : "SIGHUP",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    await proc.exited;
+    expect(proc.exitCode).toBe(0);
+    const timeEnd = Date.now();
+    expect(timeEnd - timeStart).toBeGreaterThan(1000); // make sure it actually waits
+    expect(timeEnd - timeStart).toBeLessThan(1500); // make sure it's terminating early
+    const result = await toUtf8(proc.stdout);
+    expect(result).toBe("");
+    const stderr = await toUtf8(proc.stderr);
+    expect(stderr).toBe("");
+  });
+
+  test("Bun.spawnSync", () => {
+    const timeStart = Date.now();
+    const proc = Bun.spawnSync([bunExe(), "exec", "sleep 1"], {
+      timeout: Infinity,
+      killSignal: isWindows ? "SIGKILL" : "SIGHUP",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    expect(proc.exitCode).toBe(0);
+    const timeEnd = Date.now();
+    expect(timeEnd - timeStart).toBeGreaterThan(1000); // make sure it actually waits
+    expect(timeEnd - timeStart).toBeLessThan(1500);
+    const result = proc.stdout.toString("utf-8");
+    expect(result).toBe("");
+    const stderr = proc.stderr.toString("utf-8");
+    expect(stderr).toBe("");
+  });
+});
+
+// The two blocks below start many processes at once. They come last, after the rows above that have a time bound.
 // Bun.spawn and Bun.spawnSync count each stream. The sync calls of node:child_process do not: see the next block.
 describe("maxBuffer is a limit for each of stdout and stderr", () => {
   const maxBuffer = 1000;
@@ -351,117 +464,5 @@ describe("maxBuffer of a node:child_process sync spawn is one limit for stdout a
   const node = nodeExeAtLeast("18.0.0");
   test.concurrent.skipIf(!node)("Node.js gives the same results", async () => {
     expect(await run(node!)).toEqual({ results: expected, exitCode: 0 });
-  });
-});
-
-describe("timeout kills the process", () => {
-  test("Bun.spawn", async () => {
-    const timeStart = Date.now();
-    const proc = Bun.spawn([bunExe(), "exec", "sleep 5"], {
-      timeout: 100,
-      killSignal: isWindows ? "SIGKILL" : "SIGHUP",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    await proc.exited;
-    expect(proc.exitCode).toBe(null);
-    expect(proc.signalCode).toBe(isWindows ? "SIGKILL" : "SIGHUP");
-    const timeEnd = Date.now();
-    expect(timeEnd - timeStart).toBeLessThan(200); // make sure it's terminating early
-    const result = await toUtf8(proc.stdout);
-    expect(result).toBe("");
-    const stderr = await toUtf8(proc.stderr);
-    expect(stderr).toBe("");
-  });
-
-  // A grandchild that inherited the pipe may still hold the write end after
-  // Bun kills the child. Reading stdout/stderr after `proc.exited` must
-  // deliver what was buffered instead of waiting for that grandchild to exit.
-  describe.each([
-    ["timeout", () => ({ timeout: 200 })],
-    ["AbortSignal", () => ({ signal: AbortSignal.timeout(200) })],
-  ] as const)("via %s", (_, opt) => {
-    test.skipIf(isWindows)("Bun.spawn stdout does not hang when a grandchild outlives the kill", async () => {
-      // `sh` spawns `sleep` before the stdout marker so the assertion proves a
-      // grandchild holds the pipe's write end when the kill signal reaches `sh`.
-      await using proc = Bun.spawn({
-        cmd: ["sh", "-c", "sleep 60 & echo $! >&2; echo from-child; read _"],
-        env: bunEnv,
-        ...opt(),
-        killSignal: "SIGTERM",
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-      await proc.exited;
-      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
-      const grandchild = parseInt(stderr.trim(), 10);
-      if (Number.isInteger(grandchild))
-        try {
-          process.kill(grandchild);
-        } catch {}
-      expect({ stdout, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
-        stdout: "from-child\n",
-        exitCode: null,
-        signalCode: "SIGTERM",
-      });
-      expect(stderr).toMatch(/^\d+\n$/);
-    });
-  });
-
-  test("Bun.spawnSync", () => {
-    const timeStart = Date.now();
-    const proc = Bun.spawnSync([bunExe(), "exec", "sleep 5"], {
-      timeout: 100,
-      killSignal: isWindows ? "SIGKILL" : "SIGHUP",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    expect(proc.exitedDueToTimeout).toBe(true);
-    expect(proc.exitCode as number | null).toBe(null);
-    expect(proc.signalCode).toBe(isWindows ? "SIGKILL" : "SIGHUP");
-    const timeEnd = Date.now();
-    // The timeout deadline is CLOCK_MONOTONIC at nanosecond precision, so by the
-    // time spawnSync returns at least 100ms have elapsed. Date.now() truncates to
-    // whole milliseconds, so floor(end) - floor(start) can equal exactly 100.
-    expect(timeEnd - timeStart).toBeGreaterThanOrEqual(100); // make sure it actually waits
-    expect(timeEnd - timeStart).toBeLessThan(200); // make sure it's terminating early
-    const result = proc.stdout.toString("utf-8");
-    expect(result).toBe("");
-    const stderr = proc.stderr.toString("utf-8");
-    expect(stderr).toBe("");
-  });
-});
-
-describe("timeout Infinity does not kill the process", () => {
-  test("Bun.spawn", async () => {
-    const timeStart = Date.now();
-    const proc = Bun.spawn([bunExe(), "exec", "sleep 1"], {
-      timeout: Infinity,
-      killSignal: isWindows ? "SIGKILL" : "SIGHUP",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    await proc.exited;
-    expect(proc.exitCode).toBe(0);
-    const timeEnd = Date.now();
-    expect(timeEnd - timeStart).toBeGreaterThan(1000); // make sure it actually waits
-    expect(timeEnd - timeStart).toBeLessThan(1500); // make sure it's terminating early
-    const result = await toUtf8(proc.stdout);
-    expect(result).toBe("");
-    const stderr = await toUtf8(proc.stderr);
-    expect(stderr).toBe("");
-  });
-
-  test("Bun.spawnSync", () => {
-    const timeStart = Date.now();
-    const proc = Bun.spawnSync([bunExe(), "exec", "sleep 1"], {
-      timeout: Infinity,
-      killSignal: isWindows ? "SIGKILL" : "SIGHUP",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    expect(proc.exitCode).toBe(0);
-    const timeEnd = Date.now();
-    expect(timeEnd - timeStart).toBeGreaterThan(1000); // make sure it actually waits
-    expect(timeEnd - timeStart).toBeLessThan(1500);
-    const result = proc.stdout.toString("utf-8");
-    expect(result).toBe("");
-    const stderr = proc.stderr.toString("utf-8");
-    expect(stderr).toBe("");
   });
 });

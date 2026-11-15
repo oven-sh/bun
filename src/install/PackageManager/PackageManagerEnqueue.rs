@@ -2939,7 +2939,7 @@ fn enqueue_local_tarball(
             url: stored_string(path),
             skip_verify: false,
             in_trusted_dependencies: false,
-            github_resolved: StringOrTinyString::init(b""),
+            github_resolved: StringOrTinyString::EMPTY,
         },
         source: Task::TarballSource::Local {
             path: tarball_path,

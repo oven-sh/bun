@@ -272,7 +272,7 @@ impl readable_stream::SourceContext for ByteStream {
             if self.buffered.is_empty() {
                 return streams::Start::Empty;
             }
-            return streams::Start::OwnedAndDone(Vec::<u8>::move_from_list(self.buffered.take()));
+            return streams::Start::OwnedAndDone(self.buffered.take());
         }
 
         if self.high_water_mark == 0 {
@@ -548,7 +548,7 @@ impl ByteStream {
 
     /// Take the untaken bytes. The caller calls [`Self::signal_drained`] after it writes them.
     pub(crate) fn take_buffer(&self) -> Vec<u8> {
-        Vec::<u8>::move_from_list(self.buffered.take())
+        self.buffered.take()
     }
 
     /// Called by native fast-paths after wiring `self.sink`: a consumer now
@@ -660,7 +660,7 @@ impl ByteStream {
                     return;
                 }
                 if self.buffered.capacity() == 0 {
-                    if let streams::Result::OwnedAndDone(mut owned) = stream {
+                    if let streams::Result::OwnedAndDone(owned) = stream {
                         bun_output::scoped_log!(
                             ByteStream,
                             "ByteStream.onData owned_and_done and action.fulfill()"
@@ -669,7 +669,7 @@ impl ByteStream {
                         // Move the owned Vec<u8> into the buffer
                         // directly instead of round-tripping through `chunk` (which would borrow
                         // `stream`).
-                        self.buffered.adopt(owned.move_to_list_managed(), 0);
+                        self.buffered.adopt(owned, 0);
                         let mut blob = self.to_any_blob().unwrap();
                         action.fulfill(self.parent_const().global_this(), &mut blob);
                         return;
@@ -788,9 +788,8 @@ impl ByteStream {
     fn append(&self, stream: streams::Result, offset: usize) -> Result<(), bun_alloc::AllocError> {
         if self.buffered.capacity() == 0 {
             match stream {
-                streams::Result::Owned(mut owned) | streams::Result::OwnedAndDone(mut owned) => {
-                    // `move_to_list_managed` moves the buffer, no copy.
-                    self.buffered.adopt(owned.move_to_list_managed(), offset);
+                streams::Result::Owned(owned) | streams::Result::OwnedAndDone(owned) => {
+                    self.buffered.adopt(owned, offset);
                 }
                 streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
                     let chunk = &temp.slice()[offset..];

@@ -428,9 +428,10 @@ impl Round<'_> {
         let (rows, want) = by_highway(&text, &state);
         let into = columns(&mut got, has_names);
         let (got_rows, resume_at) = rust::parse_mappings(fenced, into, 3, &mut state);
-        // Each leaves what is too short for its vectors: up to 13 rows.
-        same!(self, "parse_mappings", true, got_rows + 13 >= rows.min(cap));
         let (more_rows, more) = by_highway(&text[resume_at..], &state);
+        // Each leaves what is too short for its vectors: up to 13 rows.
+        let is_complete = got_rows + 13 >= rows.min(cap) && got_rows + more_rows + 13 >= rows;
+        same!(self, "parse_mappings", true, is_complete);
         for (i, per_row) in [2, 2, 1, usize::from(has_names)].into_iter().enumerate() {
             let got = written(got[i], per_row * got_rows).iter();
             let got = got.chain(written(&more[i], per_row * more_rows));

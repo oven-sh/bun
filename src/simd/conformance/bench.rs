@@ -178,7 +178,7 @@ fn whole_files(js: &[u8], json: &[u8], map: &[u8]) {
         {
             opaque(buffer.find(opaque(text)));
         },
-        { rust::scanner_run_stops(opaque(text), planes.each_mut().map(|plane| &mut plane[..])) }
+        rust::scanner_run_stops(opaque(text), planes.each_mut().map(|plane| &mut plane[..]))
     );
 
     let (index, dirty) = (&mut vec![MaybeUninit::uninit(); 8192 + 66], &mut [0; 2]);
@@ -313,7 +313,7 @@ fn images() {
     compare!(
         ["lanczos3 1024x768 to 400x300"],
         a.lanczos3(opaque(image), WIDTH, out, 400),
-        { b.lanczos3(opaque(image), WIDTH, out, 400) }
+        b.lanczos3(opaque(image), WIDTH, out, 400)
     );
 }
 
@@ -325,32 +325,32 @@ fn shared() {
         compare!(
             ["shared: index_of_char miss {n}"],
             highway::index_of_char(opaque(t), b'x'),
-            { rust::index_of_char_shared(shared(opaque(t)), b'x') }
+            rust::index_of_char_shared(shared(opaque(t)), b'x')
         );
         compare!(
             ["shared: last_index_of_char miss {n}"],
-            { highway::last_index_of_char(opaque(t), b'x') },
-            { rust::last_index_of_char_shared(shared(opaque(t)), b'x') }
+            highway::last_index_of_char(opaque(t), b'x'),
+            rust::last_index_of_char_shared(shared(opaque(t)), b'x')
         );
         compare!(
             ["shared: count_char {n}"],
             highway::count_char(opaque(t), b'a'),
-            { rust::count_char_shared(shared(opaque(t)), b'a') }
+            rust::count_char_shared(shared(opaque(t)), b'a')
         );
         compare!(
             ["shared: encode_hex_lower {n}"],
             highway::encode_hex_lower(opaque(t), out),
-            { rust::encode_hex_lower_shared(shared(opaque(t)), out) }
+            rust::encode_hex_lower_shared(shared(opaque(t)), out)
         );
         compare!(
             ["shared: fill_with_mask {n}"],
             highway::fill_with_mask([1; 4], out, opaque(t)),
-            { rust::fill_shared_with_mask([1; 4], shared(out), opaque(t)) }
+            rust::fill_shared_with_mask([1; 4], shared(out), opaque(t))
         );
         compare!(
             ["shared: bswap32 {n}"],
             highway::bswap32(opaque(&mut *t).as_chunks_mut().0),
-            { rust::bswap32_shared(shared(opaque(t))) }
+            rust::bswap32_shared(shared(opaque(t)))
         );
     }
 }

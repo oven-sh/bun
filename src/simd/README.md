@@ -97,14 +97,14 @@ LLVM can still pick such an instruction for plain code in a kernel. Read the dis
 
 ## Tests
 
-| Command                                                  | What it checks                                                                         |
-| -------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `bun run rust:test -p bun_simd`                          | Ops against `spec.rs`, drivers against loops, programs that rustc has to reject        |
-| `bun run rust:test -p bun_simd -- --include-ignored`     | The same for all pairs of 16 bits and all alignments                                   |
-| `bun run rust:test -p bun_simd_kernels`                  | Kernels against loops, on every target of the machine and the portable ones            |
-| `bun run rust:test -p bun_simd_trusted`                  | Detection against what rustc knows of features and CPUs, `asm!` next to missing pages  |
-| `bun bd test test/internal/simd.test.ts`                 | Kernels against Highway next to missing pages, an instruction of each detected feature |
-| The same with `BUN_SIMD_BENCHMARK=1`, on a release build | Prints times                                                                           |
-| `bun scripts/verify-baseline.ts --simd-cpus`             | The same on emulated CPUs, and the instructions of each copy against its target        |
+| Command                                                  | What it checks                                                                           |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `bun run rust:test -p bun_simd`                          | Ops against `spec.rs`, drivers against loops, programs that rustc has to reject          |
+| `bun run rust:test -p bun_simd -- --include-ignored`     | The same for all pairs of 16 bits and all alignments                                     |
+| `bun run rust:test -p bun_simd_kernels`                  | Kernels against loops, on every target of the machine and the portable ones              |
+| `bun run rust:test -p bun_simd_trusted`                  | Detection against what rustc knows of features and CPUs, `asm!` next to missing pages    |
+| `bun bd test test/internal/simd.test.ts`                 | Kernels, next to missing pages, against Highway. An instruction of each detected feature |
+| The same with `BUN_SIMD_BENCHMARK=1`, on a release build | Prints times                                                                             |
+| `bun scripts/verify-baseline.ts --simd-cpus`             | The same on emulated CPUs, and the instructions of each copy against its target          |
 
 With the feature `test_support`, `limit_to` picks a target for the thread, nothing is cached, and `portable32` and `portable64` run a kernel at those widths on any machine and under Miri.

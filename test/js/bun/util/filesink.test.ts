@@ -623,6 +623,54 @@ it.skipIf(!isPosix)("close() in a worker's exit listener leaves the sink to the 
   expect(exitCode).toBe(0);
 });
 
+// A "beforeExit" listener is not inside the event loop, so the reaction runs before the write() that settles it returns.
+it.concurrent.skipIf(!isLinux).each([
+  ["bytes", `Buffer.from("x")`, 1],
+  ["a latin1 string", `"x"`, 1],
+  ["a UTF-16 string", `"\\u{1F600}"`, 4],
+])("a write() of %s survives a close() by the reaction to an earlier write()", async (_, chunk, length) => {
+  using dir = tempDir("filesink-close-inside-write", {});
+  mkfifo(join(String(dir), "fifo"), 0o666);
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { openSync, readSync, writeSync, constants } = require("node:fs");
+        const untilItWouldBlock = io => {
+          let total = 0;
+          try {
+            for (let n; (n = io()) > 0; ) total += n;
+          } catch (e) {
+            if (e.code !== "EAGAIN") throw e;
+          }
+          return total;
+        };
+        const page = Buffer.alloc(4096);
+        const reader = openSync("fifo", constants.O_RDONLY | constants.O_NONBLOCK);
+        const filler = openSync("fifo", constants.O_WRONLY | constants.O_NONBLOCK);
+        process.once("beforeExit", () => {
+          const sink = Bun.file("fifo").writer();
+          untilItWouldBlock(() => writeSync(filler, page));
+          sink.write(page).then(() => {
+            sink.close();
+            console.log("closed");
+          });
+          untilItWouldBlock(() => readSync(reader, page));
+          console.log("wrote", sink.write(${chunk}));
+          console.log("read", untilItWouldBlock(() => readSync(reader, page)));
+        });
+      `,
+    ],
+    cwd: String(dir),
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe(`closed\nwrote ${4096 + length}\nread ${4096 + length}\n`);
+  expect(exitCode).toBe(0);
+});
+
 it("start() without path/fd on an already-open writer does not crash", async () => {
   const path = join(tmpdirSync(), "filesink-restart.txt");
   const writer = Bun.file(path).writer();

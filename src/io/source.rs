@@ -117,6 +117,21 @@ impl OpenFile {
         })
     }
 
+    /// SAFETY: the bytes of `iov` stay until `callback` runs or they are moved to `buffer`.
+    pub(crate) unsafe fn submit_write(
+        &self,
+        iov: uv::uv_buf_t,
+        callback: unsafe extern "C" fn(*mut uv::fs_t),
+    ) -> bun_sys::Result<()> {
+        assert!(self.can_start());
+        self.prepare();
+        let (loop_, fs, file) = (self.loop_.uv_loop(), self.as_ptr().cast(), self.file);
+        // SAFETY: fn contract, and as in `submit_read`.
+        let rc = unsafe { uv::uv_fs_write(loop_, fs, file, &raw const iov, 1, -1, Some(callback)) };
+        // SAFETY: refused.
+        (rc.to_result(bun_sys::Tag::write)).inspect_err(|_| unsafe { self.complete(false) })
+    }
+
     /// The callback fires with UV_ECANCELED, or as usual if it is too late to cancel.
     pub(crate) fn stop(&self) {
         if self.state.get() != FileState::Operating {

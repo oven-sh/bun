@@ -283,7 +283,7 @@ pub(crate) fn list_objects(
 
     drop(search_params);
 
-    let headers = bun_http::Headers::from_pico_http_headers(result.headers());
+    let headers = bun_http::Headers::from_pico_http_headers(&result.headers());
     let proxy_url = s3_simple_request::resolve_proxy(None, &result.url);
 
     let task_ptr = bun_core::heap::into_raw(Box::new(S3HttpSimpleTask {
@@ -883,18 +883,12 @@ fn download_stream(
         }
     };
 
-    let mut header_buffer =
-        [bun_picohttp::Header::ZERO; bun_s3_signing::credentials::SignResult::MAX_HEADERS + 1];
-    let headers = 'brk: {
+    let headers = {
+        let mut headers = result.headers();
         if let Some(range_) = &range {
-            let _headers = result.mix_with_header(
-                &mut header_buffer,
-                bun_picohttp::Header::new(b"range", range_),
-            );
-            break 'brk bun_http::Headers::from_pico_http_headers(_headers);
-        } else {
-            break 'brk bun_http::Headers::from_pico_http_headers(result.headers());
+            headers.append_assume_capacity(bun_picohttp::Header::new(b"range", range_));
         }
+        bun_http::Headers::from_pico_http_headers(&headers)
     };
     let owned_proxy = s3_simple_request::resolve_proxy(None, &result.url);
     let task_ptr = bun_core::heap::into_raw(S3HttpDownloadStreamingTask::new(

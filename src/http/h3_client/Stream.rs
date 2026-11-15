@@ -7,7 +7,6 @@
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use bun_picohttp as picohttp;
 use bun_uws::quic;
 
 use crate::InFlightRequest;
@@ -18,17 +17,11 @@ pub struct Stream {
     /// Its ext slot holds the [`StreamSlot`] of `self`.
     qstream: Option<NonNull<quic::Stream>>,
 
-    /// Slices into the lsquic-owned hset buffer; valid only for the duration
-    /// of the `onStreamHeaders` callback that populated it. `cloneMetadata`
-    /// deep-copies synchronously inside that callback, so nothing reads these
-    /// after they go stale.
-    pub(crate) decoded_headers: Vec<picohttp::Header>,
     pub(crate) body_buffer: Vec<u8>,
     pub(crate) status_code: u16,
 
-    // BACKREF: borrows the request body owned by `client`; not freed here.
-    // `RawSlice` carries the outlives-holder invariant.
-    pub(crate) pending_body: bun_ptr::RawSlice<u8>,
+    /// How much of `client.request_body()` lsquic has taken.
+    pub(crate) body_sent: usize,
     pub(crate) headers_sent: bool,
     pub(crate) request_body_done: bool,
     pub(crate) is_streaming_body: bool,
@@ -44,10 +37,9 @@ impl Stream {
         Stream {
             client: Some(client),
             qstream: None,
-            decoded_headers: Vec::new(),
             body_buffer: Vec::new(),
             status_code: 0,
-            pending_body: bun_ptr::RawSlice::EMPTY,
+            body_sent: 0,
             headers_sent: false,
             request_body_done: false,
             is_streaming_body: false,

@@ -568,9 +568,7 @@ impl ScopeFunctions {
         base.test_id_for_debugger = test_id_for_debugger;
         // Use the file's default concurrent setting (determined once when entering the file)
         // or the global concurrent flag from the runner
-        if bun_test.default_concurrent
-            || jest::Jest::runner().is_some_and(|r| r.concurrent)
-        {
+        if bun_test.default_concurrent || bun_test.reporter.jest.concurrent {
             // Only set to concurrent if still inheriting
             if base.self_concurrent == SelfConcurrent::Inherit {
                 base.self_concurrent = SelfConcurrent::Yes;
@@ -590,31 +588,27 @@ impl ScopeFunctions {
             Mode::Test => {
                 // check for filter match
                 let mut matches_filter = true;
-                if let Some(reporter) = bun_test.reporter {
-                    // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
-                    let reporter = unsafe { reporter.as_ref() };
-                    if let Some(filter_regex) = reporter.jest.filter_regex {
-                        group_log::log(format_args!("matches_filter begin"));
-                        let mut filter_buffer = bun_test.collection.filter_buffer.take();
-                        debug_assert!(filter_buffer.is_empty());
+                if let Some(filter_regex) = bun_test.reporter.jest.filter_regex {
+                    group_log::log(format_args!("matches_filter begin"));
+                    let mut filter_buffer = bun_test.collection.filter_buffer.take();
+                    debug_assert!(filter_buffer.is_empty());
 
-                        let mut len = Measure { len: 0 };
-                        filter_names(&mut len, description, bun_test);
-                        filter_buffer.resize(len.len, 0);
-                        let mut rem = Write { buf: &mut filter_buffer };
-                        filter_names(&mut rem, description, bun_test);
-                        debug_assert!(rem.buf.is_empty());
+                    let mut len = Measure { len: 0 };
+                    filter_names(&mut len, description, bun_test);
+                    filter_buffer.resize(len.len, 0);
+                    let mut rem = Write { buf: &mut filter_buffer };
+                    filter_names(&mut rem, description, bun_test);
+                    debug_assert!(rem.buf.is_empty());
 
-                        let str = StringView::from_bytes(filter_buffer.as_slice());
-                        group_log::log(format_args!(
-                            "matches_filter \"{}\"",
-                            bstr::BStr::new(filter_buffer.as_slice())
-                        ));
-                        matches_filter = filter_regex.matches(&str);
+                    let str = StringView::from_bytes(filter_buffer.as_slice());
+                    group_log::log(format_args!(
+                        "matches_filter \"{}\"",
+                        bstr::BStr::new(filter_buffer.as_slice())
+                    ));
+                    matches_filter = filter_regex.matches(&str);
 
-                        filter_buffer.clear();
-                        bun_test.collection.filter_buffer.set(filter_buffer);
-                    }
+                    filter_buffer.clear();
+                    bun_test.collection.filter_buffer.set(filter_buffer);
                 }
 
                 if !matches_filter {
@@ -1008,7 +1002,7 @@ pub(crate) fn parse_arguments<'a>(
 
     if result.options.retry.is_none() {
         if let Some(runner) = jest::Jest::runner() {
-            result.options.retry = Some(runner.test_options.retry);
+            result.options.retry = Some(runner.retry);
         }
     }
     if !is_vitest && result.options.retry.unwrap_or(0) != 0 && result.options.repeats != 0 {
@@ -1022,11 +1016,11 @@ pub(crate) fn parse_arguments<'a>(
         (ms, _) => Some(ms),
     });
     let override_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| {
-        if runner.default_timeout_override != u32::MAX { Some(runner.default_timeout_override) } else { None }
+        Some(runner.default_timeout_override.get()).filter(|&ms| ms != u32::MAX)
     });
     let vi_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| match cfg.kind {
-        FunctionKind::TestOrDescribe => runner.vi_config.test_timeout,
-        FunctionKind::Hook | FunctionKind::VitestHook => runner.vi_config.hook_timeout,
+        FunctionKind::TestOrDescribe => runner.vi_config.get().test_timeout,
+        FunctionKind::Hook | FunctionKind::VitestHook => runner.vi_config.get().hook_timeout,
     });
     result.options.timeout =
         result.options.inherited.timeout.or(vi_timeout_ms).or(override_timeout_ms).or(default_timeout_ms).unwrap_or(0);

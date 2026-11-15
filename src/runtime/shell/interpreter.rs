@@ -1025,7 +1025,11 @@ impl ShellInterpreter {
         &self,
         f: impl for<'a> FnOnce(&mut Interpreter<'a>) -> R,
     ) -> Option<R> {
-        (self.args).with_taken(|args| {
+        self.args.with_taken(|args| {
+            debug_assert!(
+                args.is_some() || self.exit_code.get().is_some(),
+                "with_interp called inside with_interp"
+            );
             args.as_mut()?
                 .with_mut(|_, _, interp| interp.as_mut().map(f))
         })
@@ -1048,7 +1052,7 @@ impl ShellInterpreter {
         }
     }
 
-    fn run_yield(&self, mut y: Yield, mut stack: DeferredStack) {
+    pub(crate) fn run_yield(&self, mut y: Yield, mut stack: DeferredStack) {
         let _keep = self.ensure_still_alive();
         let mut rejection = None;
         while let Some(action) = (self.with_interp(|interp| y.run(interp, &mut stack))).flatten() {
@@ -1089,8 +1093,12 @@ impl ShellInterpreter {
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
-        (self.args).with_taken(|args| args.as_ref().map_or(0, ShellArgs::memory_cost))
-            + self.with_interp(|interp| interp.memory_cost()).unwrap_or(0)
+        self.args.with_taken(|args| {
+            args.as_mut().map_or(0, |args| {
+                args.memory_cost()
+                    + args.with_mut(|_, _, interp| interp.as_ref().map_or(0, |i| i.memory_cost()))
+            })
+        })
     }
 
     pub(crate) fn estimated_size(&self) -> usize {
@@ -1475,10 +1483,16 @@ impl Drop for ShellInterpreter {
             std::ptr::from_ref(self) as usize
         );
         // `this_value` is strong while the script runs, so only VM shutdown finds a `Cmd` here.
-        self.with_interp(|interp| {
-            for node in &mut interp.nodes {
+        let Some(args) = self.args.get_mut() else {
+            return;
+        };
+        args.with_mut(|_, _, interp| {
+            for node in interp.iter_mut().flat_map(|interp| &mut interp.nodes) {
                 if let Node::Cmd(cmd) = node {
                     cmd.defuse_array_buf_pins();
+                    // On Windows a child outlives the VM that spawned it.
+                    #[cfg(not(windows))]
+                    cmd.kill_subprocess();
                 }
             }
         });

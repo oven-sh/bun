@@ -129,8 +129,9 @@ impl Yes {
         if let EventLoopHandle::Mini(mini) = shell_interp.event_loop {
             mini.loop_.tick();
         }
-        (shell_interp.with_interp(|interp| Self::enqueue_task(interp, cmd)))
-            .unwrap_or(Yield::suspended())
+        shell_interp
+            .with_interp(|interp| Self::enqueue_task(interp, cmd))
+            .expect("the script waits for this Cmd")
     }
 
     fn enqueue_task(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {

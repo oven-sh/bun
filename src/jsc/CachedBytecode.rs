@@ -1,5 +1,6 @@
 use core::ptr::NonNull;
 
+use bun_bundler::bundle_v2::dispatch::{BytecodeLinkEncoder, EncoderStringTable};
 use bun_bundler::bytecode_order::CodeNamesRef;
 use bun_core::String as BunString;
 use bun_options_types::Format;
@@ -9,63 +10,9 @@ bun_opaque::opaque_ffi! {
     pub struct CachedBytecode;
 }
 
-bun_opaque::opaque_ffi! {
-    /// One `JSC::EncoderStringTable` shared by every `encodeCodeBlock` in a `--compile --bytecode` build so ≥4-char strings become 4-byte ordinals in each chunk's payload and their characters are written once by `serialize()`.
-    pub struct EncoderStringTable;
-}
-
-impl EncoderStringTable {
-    pub fn new() -> NonNull<EncoderStringTable> {
-        Bun__EncoderStringTable__create()
-    }
-    /// `hot_strings`: `bytecodeOrderStringHash` values from a payload order file, hottest first; their records go first.
-    pub fn serialize(this: NonNull<EncoderStringTable>, hot_strings: &[u64]) -> Vec<u8> {
-        let mut out = Vec::<u8>::new();
-        unsafe extern "C" fn append(ctx: *mut core::ffi::c_void, bytes: *const u8, len: usize) {
-            // SAFETY: `ctx` is `&mut Vec<u8>`; `bytes` valid for `len`.
-            unsafe {
-                (*ctx.cast::<Vec<u8>>()).extend_from_slice(core::slice::from_raw_parts(bytes, len))
-            };
-        }
-        // SAFETY: `this` is a valid table; callback receives our `&mut out`.
-        unsafe {
-            Bun__EncoderStringTable__serialize(
-                this.as_ptr(),
-                hot_strings.as_ptr(),
-                hot_strings.len(),
-                (&raw mut out).cast(),
-                append,
-            )
-        };
-        out
-    }
-    pub fn destroy(this: NonNull<EncoderStringTable>) {
-        // SAFETY: `this` was produced by `new`.
-        unsafe { Bun__EncoderStringTable__destroy(this.as_ptr()) };
-    }
-    /// The 4-byte cache slot for a module-info name (`EncoderStringTable::slotFor`).
-    pub fn slot_for_wtf8(this: NonNull<EncoderStringTable>, wtf8: &[u8]) -> u32 {
-        match bun_core::strings::wtf8_to_utf16_alloc(wtf8) {
-            // SAFETY: `this` is a live table; the slice is valid for the call.
-            None => unsafe {
-                Bun__EncoderStringTable__slotForLatin1(this.as_ptr(), wtf8.as_ptr(), wtf8.len())
-            },
-            // SAFETY: as above.
-            Some(units) => unsafe {
-                Bun__EncoderStringTable__slotForUTF16(this.as_ptr(), units.as_ptr(), units.len())
-            },
-        }
-    }
-}
-
-bun_opaque::opaque_ffi! {
-    /// One `JSC::BytecodeLinkEncoder`: every chunk of a `--compile --bytecode` link encoded into one payload, laid out by a payload order file.
-    pub struct BytecodeLinkEncoder;
-}
-
 unsafe extern "C" {
     fn Bun__BytecodeLinkEncoder__create(
-        external_strings: *mut EncoderStringTable,
+        external_strings: &EncoderStringTable,
         hot_functions: *const u64,
         hot_function_count: usize,
         known_functions: *const u64,
@@ -75,9 +22,8 @@ unsafe extern "C" {
         not_evaluated_modules: *const u64,
         not_evaluated_module_count: usize,
     ) -> *mut BytecodeLinkEncoder;
-    fn Bun__BytecodeLinkEncoder__destroy(this: *mut BytecodeLinkEncoder);
-    fn Bun__BytecodeLinkEncoder__addModule(
-        this: *mut BytecodeLinkEncoder,
+    safe fn Bun__BytecodeLinkEncoder__addModule(
+        this: &BytecodeLinkEncoder,
         source_provider_url: &BunString,
         input_code: &BunString,
         is_module: bool,
@@ -86,14 +32,14 @@ unsafe extern "C" {
         names: &CodeNamesRef<'_>,
     ) -> bool;
     /// InternalModuleRegistry.cpp: what `Bun__generateInternalModuleBytecode[FromSource]` encodes, as a module of the link.
-    fn Bun__BytecodeLinkEncoder__addInternalModule(
-        this: *mut BytecodeLinkEncoder,
+    safe fn Bun__BytecodeLinkEncoder__addInternalModule(
+        this: &BytecodeLinkEncoder,
         id: u32,
         depth: u32,
         names: &CodeNamesRef<'_>,
     ) -> bool;
     fn Bun__BytecodeLinkEncoder__addInternalModuleFromSource(
-        this: *mut BytecodeLinkEncoder,
+        this: &BytecodeLinkEncoder,
         text: *const u8,
         text_len: usize,
         name: *const u8,
@@ -105,7 +51,7 @@ unsafe extern "C" {
         names: &CodeNamesRef<'_>,
     ) -> bool;
     fn Bun__BytecodeLinkEncoder__finish(
-        this: *mut BytecodeLinkEncoder,
+        this: &BytecodeLinkEncoder,
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
@@ -121,21 +67,20 @@ unsafe extern "C" {
 unsafe extern "C" {
     // safe: no arguments; C++ never returns null from `new`.
     safe fn Bun__EncoderStringTable__create() -> NonNull<EncoderStringTable>;
-    fn Bun__EncoderStringTable__destroy(this: *mut EncoderStringTable);
     fn Bun__EncoderStringTable__serialize(
-        this: *mut EncoderStringTable,
+        this: &EncoderStringTable,
         hot_string_hashes: *const u64,
         hot_string_hash_count: usize,
         ctx: *mut core::ffi::c_void,
         append: unsafe extern "C" fn(*mut core::ffi::c_void, *const u8, usize),
     );
     fn Bun__EncoderStringTable__slotForLatin1(
-        this: *mut EncoderStringTable,
+        this: &EncoderStringTable,
         chars: *const u8,
         len: usize,
     ) -> u32;
     fn Bun__EncoderStringTable__slotForUTF16(
-        this: *mut EncoderStringTable,
+        this: &EncoderStringTable,
         chars: *const u16,
         len: usize,
     ) -> u32;
@@ -148,7 +93,7 @@ unsafe extern "C" {
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
-        external_strings: Option<NonNull<EncoderStringTable>>,
+        external_strings: Option<&EncoderStringTable>,
     ) -> bool;
 
     fn generateCachedCommonJSProgramByteCodeFromSourceCode(
@@ -159,7 +104,7 @@ unsafe extern "C" {
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
-        external_strings: Option<NonNull<EncoderStringTable>>,
+        external_strings: Option<&EncoderStringTable>,
     ) -> bool;
 
     // safe: `CachedBytecode` is an `opaque_ffi!` ZST handle (`!Freeze` via
@@ -174,7 +119,7 @@ unsafe extern "C" {
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
-        external_strings: Option<NonNull<EncoderStringTable>>,
+        external_strings: Option<&EncoderStringTable>,
     ) -> bool;
     fn Bun__generateInternalModuleBytecodeFromSource(
         text: *const u8,
@@ -188,7 +133,7 @@ unsafe extern "C" {
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
-        external_strings: Option<NonNull<EncoderStringTable>>,
+        external_strings: Option<&EncoderStringTable>,
     ) -> bool;
 
     /// InternalModuleRegistry.cpp: this executable's builtins section (`bun_exe_format::builtins` layout).
@@ -260,7 +205,7 @@ impl Generated {
         source_provider_url: &BunString,
         depth: u32,
         optimize: bool,
-        external_strings: Option<NonNull<EncoderStringTable>>,
+        external_strings: Option<&EncoderStringTable>,
     ) -> Option<Self> {
         let f = match format {
             Format::Esm => generateCachedModuleByteCodeFromSourceCode,
@@ -306,7 +251,7 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
     source_provider_url: &BunString,
     depth: u32,
     optimize: bool,
-    external_strings: Option<NonNull<EncoderStringTable>>,
+    external_strings: Option<&EncoderStringTable>,
 ) -> Option<Box<[u8]>> {
     crate::initialize(crate::InitializeOptions::default());
     let bytecode = Generated::from_source(
@@ -321,19 +266,22 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
 }
 
 /// A `JSC::BytecodeLinkEncoder` on the calling thread's bytecode VM; every later call must come from the same thread.
+///
+/// # Safety
+/// `external_strings` outlives the encoder.
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_jsc_bytecode_link_encoder_new(
-    external_strings: NonNull<EncoderStringTable>,
+pub(crate) unsafe fn __bun_jsc_bytecode_link_encoder_new(
+    external_strings: &EncoderStringTable,
     hot_functions: &[u64],
     known_functions: &[u64],
     evaluated_modules: &[u64],
     not_evaluated_modules: &[u64],
 ) -> NonNull<BytecodeLinkEncoder> {
     crate::initialize(crate::InitializeOptions::default());
-    // SAFETY: the slices are valid for the call (C++ copies them); `external_strings` is a live table. `new` never returns null.
+    // SAFETY: the slices are valid for the call (C++ copies them), and the table is the caller's contract. `new` never returns null.
     unsafe {
         NonNull::new_unchecked(Bun__BytecodeLinkEncoder__create(
-            external_strings.as_ptr(),
+            external_strings,
             hot_functions.as_ptr(),
             hot_functions.len(),
             known_functions.as_ptr(),
@@ -346,17 +294,11 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_new(
     }
 }
 
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_jsc_bytecode_link_encoder_destroy(encoder: NonNull<BytecodeLinkEncoder>) {
-    // SAFETY: `encoder` came from `__bun_jsc_bytecode_link_encoder_new` and is not used again.
-    unsafe { Bun__BytecodeLinkEncoder__destroy(encoder.as_ptr()) }
-}
-
 /// Parses `source` and adds it to the link's payload; false on a parse error. The source text is what `from_source` would
 /// encode; `names` is what an order file calls its code.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_bytecode_link_encoder_add_module(
-    encoder: NonNull<BytecodeLinkEncoder>,
+    encoder: &BytecodeLinkEncoder,
     format: Format,
     source: &[u8],
     source_provider_url: &BunString,
@@ -373,37 +315,33 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_add_module(
         Some(first_non_ascii) => utf16_source(source, first_non_ascii as usize),
         None => BunString::clone_latin1(source),
     };
-    // SAFETY: `encoder` is live; the strings and the names are live for the call, and C++ reads the names during it only.
-    unsafe {
-        Bun__BytecodeLinkEncoder__addModule(
-            encoder.as_ptr(),
-            source_provider_url,
-            &source,
-            is_module,
-            depth,
-            optimize,
-            names,
-        )
-    }
+    Bun__BytecodeLinkEncoder__addModule(
+        encoder,
+        source_provider_url,
+        &source,
+        is_module,
+        depth,
+        optimize,
+        names,
+    )
 }
 
 /// This executable's internal module `id` as a module of the link; false if it does not parse.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_bytecode_link_encoder_add_internal_module(
-    encoder: NonNull<BytecodeLinkEncoder>,
+    encoder: &BytecodeLinkEncoder,
     id: u32,
     depth: u32,
     names: &CodeNamesRef<'_>,
 ) -> bool {
-    // SAFETY: `encoder` is live; the names are live for the call, and C++ reads them during it only.
-    unsafe { Bun__BytecodeLinkEncoder__addInternalModule(encoder.as_ptr(), id, depth, names) }
+    Bun__BytecodeLinkEncoder__addInternalModule(encoder, id, depth, names)
 }
 
 /// Same, for an internal module of another bun executable (cross-compiling), as
 /// `__bun_jsc_generate_internal_module_bytecode_from_source` takes it.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
-    encoder: NonNull<BytecodeLinkEncoder>,
+    encoder: &BytecodeLinkEncoder,
     source: &[u8],
     name: &[u8],
     url: &[u8],
@@ -411,10 +349,10 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
     depth: u32,
     names: &CodeNamesRef<'_>,
 ) -> bool {
-    // SAFETY: `encoder` is live; the slices and the names are valid for the duration of the call.
+    // SAFETY: the slices are valid for the duration of the call.
     unsafe {
         Bun__BytecodeLinkEncoder__addInternalModuleFromSource(
-            encoder.as_ptr(),
+            encoder,
             source.as_ptr(),
             source.len(),
             name.as_ptr(),
@@ -431,9 +369,12 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
 /// The payload, each module's cache-entry offset in it (in the order of the successful `add_*` calls), where each of the
 /// payload's regions ends (`JSC::BytecodeLinkEncoder`), how many of the order files' hot functions are functions
 /// of this link, and for each module how many functions with code its names did not cover.
+///
+/// # Safety
+/// `encoder` has not been finished.
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
-    encoder: NonNull<BytecodeLinkEncoder>,
+pub(crate) unsafe fn __bun_jsc_bytecode_link_encoder_finish(
+    encoder: &BytecodeLinkEncoder,
     module_count: usize,
 ) -> Option<bun_bundler::bytecode_order::LinkedPayload> {
     let mut entry_offsets = vec![0u32; module_count];
@@ -441,10 +382,10 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
     let mut named_hot_functions = 0u32;
     let mut placed_hot_functions = 0u32;
     let mut functions_without_name = 0u32;
-    // SAFETY: out-params are initialized locals of the sizes C++ expects.
+    // SAFETY: the caller's contract; out-params are initialized locals of the sizes C++ expects.
     let bytecode = Generated::new(|bytes, size, handle| unsafe {
         Bun__BytecodeLinkEncoder__finish(
-            encoder.as_ptr(),
+            encoder,
             bytes,
             size,
             handle,
@@ -478,23 +419,43 @@ pub fn destroy_bytecode_cache_vm() {
     Bun__destroyBytecodeCacheVM()
 }
 
-/// Serialize the shared string table into an owned buffer for the standalone graph, then free the table.
+/// Serialize the shared string table into an owned buffer for the standalone graph.
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_jsc_encoder_string_table_take(
-    table: NonNull<EncoderStringTable>,
+pub(crate) fn __bun_jsc_encoder_string_table_serialize(
+    table: &EncoderStringTable,
     hot_strings: &[u64],
 ) -> Box<[u8]> {
-    let bytes = EncoderStringTable::serialize(table, hot_strings).into_boxed_slice();
-    EncoderStringTable::destroy(table);
-    bytes
+    let mut out = Vec::<u8>::new();
+    unsafe extern "C" fn append(ctx: *mut core::ffi::c_void, bytes: *const u8, len: usize) {
+        // SAFETY: `ctx` is `&mut Vec<u8>`; `bytes` valid for `len`.
+        unsafe {
+            (*ctx.cast::<Vec<u8>>()).extend_from_slice(core::slice::from_raw_parts(bytes, len))
+        };
+    }
+    // SAFETY: the slice is valid for the call; callback receives our `&mut out`.
+    unsafe {
+        Bun__EncoderStringTable__serialize(
+            table,
+            hot_strings.as_ptr(),
+            hot_strings.len(),
+            (&raw mut out).cast(),
+            append,
+        )
+    };
+    out.into_boxed_slice()
 }
 
+/// The 4-byte cache slot for a module-info name (`EncoderStringTable::slotFor`).
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_jsc_encoder_string_table_slot(
-    table: NonNull<EncoderStringTable>,
-    wtf8: &[u8],
-) -> u32 {
-    EncoderStringTable::slot_for_wtf8(table, wtf8)
+pub(crate) fn __bun_jsc_encoder_string_table_slot(table: &EncoderStringTable, wtf8: &[u8]) -> u32 {
+    match bun_core::strings::wtf8_to_utf16_alloc(wtf8) {
+        // SAFETY: the slice is valid for the call.
+        None => unsafe { Bun__EncoderStringTable__slotForLatin1(table, wtf8.as_ptr(), wtf8.len()) },
+        // SAFETY: as above.
+        Some(units) => unsafe {
+            Bun__EncoderStringTable__slotForUTF16(table, units.as_ptr(), units.len())
+        },
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -514,7 +475,7 @@ pub(crate) fn __bun_jsc_wtf_string_hash(wtf8: &[u8]) -> u32 {
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_encoder_string_table_new() -> NonNull<EncoderStringTable> {
     crate::initialize(crate::InitializeOptions::default());
-    EncoderStringTable::new()
+    Bun__EncoderStringTable__create()
 }
 
 /// `bun build --compile --bytecode`: this executable's builtins section — header, module index and sources
@@ -536,10 +497,10 @@ pub(crate) fn __bun_jsc_host_builtins() -> &'static [u8] {
 pub(crate) fn __bun_jsc_generate_internal_module_bytecode(
     id: u32,
     depth: u32,
-    external_strings: Option<NonNull<EncoderStringTable>>,
+    external_strings: Option<&EncoderStringTable>,
 ) -> Option<Box<[u8]>> {
     crate::initialize(crate::InitializeOptions::default());
-    // SAFETY: `external_strings` is a live table, if any.
+    // SAFETY: the out-params are the locals of `Generated::new`.
     let bytecode = Generated::new(|bytes, size, handle| unsafe {
         Bun__generateInternalModuleBytecode(id, depth, bytes, size, handle, external_strings)
     })?;
@@ -555,7 +516,7 @@ pub(crate) fn __bun_jsc_generate_internal_module_bytecode_from_source(
     url: &[u8],
     source_stamp: u32,
     depth: u32,
-    external_strings: Option<NonNull<EncoderStringTable>>,
+    external_strings: Option<&EncoderStringTable>,
 ) -> Option<Box<[u8]>> {
     crate::initialize(crate::InitializeOptions::default());
     // SAFETY: the three slices are valid for their lengths for the duration of the call.

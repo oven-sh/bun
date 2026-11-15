@@ -1,10 +1,9 @@
 use core::cell::Cell;
-use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
-use bun_jsc::{AbortSignal, GlobalRef};
-use bun_ptr::RefPtr;
+use bun_jsc::{AbortSignal, GlobalRef, HeadersRef};
+use bun_ptr::{CellExt as _, RefPtr};
 
 use crate::webcore::jsc::{
     BuiltinName, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef, JsResult,
@@ -19,97 +18,6 @@ use super::{FetchHeaders, ReadableStream, Request};
 
 use super::blob::Blob;
 use bun_ptr::weak_ptr::WeakPtrData;
-
-/// RAII handle to a C++-owned `WebCore::FetchHeaders`.
-///
-/// Holds exactly one ref on the C++ intrusive refcount; `Drop` releases it via
-/// `WebCore__FetchHeaders__deref`. NOT a `std::rc::Rc` (the payload lives on
-/// the C++ heap and is opaque here).
-///
-/// Intentionally not `Clone`: the only "share" operation the surface
-/// exposes is `clone_this()`, which deep-copies a fresh `FetchHeaders` on the
-/// C++ side. Transferring ownership is by-move.
-#[repr(transparent)]
-pub(crate) struct HeadersRef(NonNull<FetchHeaders>);
-
-impl HeadersRef {
-    /// Adopt a freshly-created `FetchHeaders*` (refcount already 1).
-    ///
-    /// # Safety
-    /// `ptr` must be a valid `WebCore::FetchHeaders*` and the caller must
-    /// transfer ownership of one ref.
-    #[inline]
-    pub(crate) unsafe fn adopt(ptr: NonNull<FetchHeaders>) -> Self {
-        Self(ptr)
-    }
-
-    #[inline]
-    pub(crate) fn as_ptr(&self) -> *mut FetchHeaders {
-        self.0.as_ptr()
-    }
-
-    /// `FetchHeaders.createEmpty()` — fresh C++ allocation, refcount 1.
-    #[inline]
-    pub(crate) fn create_empty() -> Self {
-        // SAFETY: C++ allocates a new FetchHeaders with refcount 1; never null.
-        unsafe { Self::adopt(FetchHeaders::create_empty()) }
-    }
-
-    /// `FetchHeaders.createFromUWS(req)` — fresh C++ allocation, refcount 1.
-    #[inline]
-    pub(crate) fn create_from_uws(uws_request: *mut core::ffi::c_void) -> Self {
-        // SAFETY: C++ allocates a new FetchHeaders with refcount 1; never null.
-        unsafe { Self::adopt(FetchHeaders::create_from_uws(uws_request)) }
-    }
-
-    /// `FetchHeaders.createFromJS(global, value)` — may throw, may return null.
-    #[inline]
-    pub(crate) fn create_from_js(
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<Option<Self>> {
-        // SAFETY: C++ returns a +1 ref or null.
-        Ok(FetchHeaders::create_from_js(global, value)?.map(|p| unsafe { Self::adopt(p) }))
-    }
-
-    /// `FetchHeaders.cloneThis(global)` — deep copy on the C++ side.
-    #[inline]
-    pub(crate) fn clone_this(&self, global: &JSGlobalObject) -> JsResult<Option<Self>> {
-        // SAFETY: C++ returns a +1 ref or null.
-        Ok(bun_opaque::opaque_deref_mut(self.0.as_ptr())
-            .clone_this(global)?
-            .map(|p| unsafe { Self::adopt(p) }))
-    }
-}
-
-impl core::ops::Deref for HeadersRef {
-    type Target = FetchHeaders;
-    #[inline]
-    fn deref(&self) -> &FetchHeaders {
-        // `FetchHeaders` is an opaque ZST FFI handle (S008); `self.0` is live
-        // for the lifetime of `self` — safe `*const → &` via `opaque_deref`.
-        bun_opaque::opaque_deref(self.0.as_ptr())
-    }
-}
-
-impl core::ops::DerefMut for HeadersRef {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut FetchHeaders {
-        // `FetchHeaders` is an opaque ZST FFI handle (S008); `self.0` is live
-        // for the lifetime of `self` — safe `*mut → &mut` via `opaque_deref_mut`.
-        bun_opaque::opaque_deref_mut(self.0.as_ptr())
-    }
-}
-
-impl Drop for HeadersRef {
-    #[inline]
-    fn drop(&mut self) {
-        // `self.0` is live; releasing our +1 ref via WebCore__FetchHeaders__deref.
-        // Explicit UFCS to avoid `core::ops::Deref::deref` resolution ambiguity.
-        // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-        FetchHeaders::deref(bun_opaque::opaque_deref_mut(self.0.as_ptr()));
-    }
-}
 
 /// Errors the owning fetch `Response`'s body on abort (Fetch spec "abort a fetch" step 4).
 pub(crate) struct BodyAbortListener {
@@ -277,15 +185,8 @@ impl BodyMixin for Response {
         Response::get_body_value(self)
     }
     #[inline]
-    fn get_fetch_headers(&self) -> Option<core::ptr::NonNull<FetchHeaders>> {
-        // Opaque C++ handle. Return the raw `*mut`
-        // directly (via `HeadersRef::as_ptr`) so the provenance is mutable;
-        // going through `as_deref()` would derive it from a `&FetchHeaders`
-        // and make the later `as_mut()` UB under Stacked Borrows.
-        self.init.get().headers.as_ref().map(|h| {
-            core::ptr::NonNull::new(h.as_ptr())
-                .expect("HeadersRef wraps a non-null *mut FetchHeaders")
-        })
+    fn get_content_type_header(&self) -> Option<BunString> {
+        self.header(HTTPHeaderName::ContentType)
     }
     #[inline]
     fn get_form_data_encoding(
@@ -323,7 +224,7 @@ impl Response {
     #[inline]
     pub(crate) fn set_init_headers(&self, headers: Option<HeadersRef>) {
         // old headers dropped (HeadersRef::Drop derefs the C++ handle)
-        self.init.with_mut(|init| init.headers = headers);
+        self.init.get().headers.set(headers);
     }
 
     #[inline]
@@ -348,50 +249,36 @@ impl Response {
         self.url.get()
     }
 
-    #[inline]
-    pub(crate) fn get_init_headers(&self) -> Option<&FetchHeaders> {
-        self.init.get().headers.as_deref()
+    /// The response has no headers while `f` runs.
+    pub(crate) fn with_init_headers<R>(&self, f: impl FnOnce(Option<&FetchHeaders>) -> R) -> R {
+        // Not `with_taken`, whose `&Init` would span `f`, which can call `set_init`.
+        let headers = self.swap_init_headers();
+        let result = f(headers.as_deref());
+        self.set_init_headers(headers);
+        result
     }
 
-    /// R-2 `JsCell` escape hatch — single-JS-thread invariant. Centralises the
-    /// `unsafe { self.init.get_mut() }` deref so the four call sites
-    /// ([`get_init_headers_mut`], [`header`], [`get_or_create_headers`],
-    /// [`get_content_type`]) read it as a plain `&mut Init`.
-    ///
-    /// # Safety (encapsulated)
-    /// `Response` is JS-thread-affine (`!Sync`) and `init` is never reborrowed
-    /// across re-entrant JS; the returned `&mut Init` is held only for FFI
-    /// out-param writes (`FetchHeaders::fast_get`/`put`) that do not call back
-    /// into Response host-fns, so no overlapping `&mut Init` is live.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    fn init_mut(&self) -> &mut Init {
-        // SAFETY: see fn doc — single-JS-thread, no overlapping `&mut Init`.
-        unsafe { self.init.get_mut() }
+    pub(crate) fn header(&self, name: HTTPHeaderName) -> Option<BunString> {
+        self.with_init_headers(|headers| headers?.fast_get(name))
     }
 
-    #[inline]
-    pub(crate) fn get_init_headers_mut(&self) -> Option<&mut FetchHeaders> {
-        self.init_mut().headers.as_deref_mut()
+    pub(crate) fn has_header(&self, name: HTTPHeaderName) -> bool {
+        self.with_init_headers(|headers| headers.is_some_and(|headers| headers.fast_has(name)))
     }
 
     /// Deep-copy this response's init headers (if any) into a fresh
-    /// `HeadersRef`. Centralises the `FetchHeaders::clone_this` +
-    /// `HeadersRef::adopt` pair so callers stay `unsafe`-free.
+    /// `HeadersRef`.
     #[inline]
     pub(crate) fn clone_init_headers(
         &self,
         global: &JSGlobalObject,
     ) -> JsResult<Option<HeadersRef>> {
-        match self.init_mut().headers.as_ref() {
-            Some(headers) => headers.clone_this(global),
-            None => Ok(None),
-        }
+        self.init.get().clone_headers(global)
     }
 
     #[inline]
     pub(crate) fn swap_init_headers(&self) -> Option<HeadersRef> {
-        self.init.with_mut(|init| init.headers.take())
+        self.init.get().headers.take()
     }
 
     #[inline]
@@ -503,10 +390,6 @@ impl Response {
 }
 
 impl Response {
-    pub(crate) fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
-        self.init.get().headers.as_deref()
-    }
-
     #[inline]
     pub(crate) fn status_code(&self) -> u16 {
         self.init.get().status_code
@@ -553,44 +436,59 @@ impl Response {
         self.status_code()
     }
 
-    pub(crate) fn get_or_create_headers(
+    /// [`with_init_headers`](Self::with_init_headers), after creating them if there are none.
+    fn with_init_headers_or_create<R>(
         &self,
         global_this: &JSGlobalObject,
-    ) -> JsResult<&mut HeadersRef> {
-        // R-2 escape hatch via `init_mut()` — the returned `&mut HeadersRef`
-        // borrows `self.init`; callers (`get_headers`, `construct_*`) do not
-        // hold the borrow across calls that re-enter Response host-fns.
-        let init = self.init_mut();
-        if init.headers.is_none() {
-            init.headers = Some(HeadersRef::create_empty());
-
+        f: impl FnOnce(&FetchHeaders) -> JsResult<R>,
+    ) -> JsResult<R> {
+        self.init.get().headers.with_taken(|headers| {
+            if let Some(headers) = headers {
+                return f(headers);
+            }
+            let headers = headers.insert(HeadersRef::create_empty());
             if let BodyValue::Blob(blob) = self.body.get().value.get() {
                 let content_type = blob.content_type_slice();
                 if !content_type.is_empty() {
-                    init.headers.as_mut().unwrap().put(
+                    headers.put(
                         HTTPHeaderName::ContentType,
                         &StringView::ascii(content_type),
                         global_this,
                     )?;
                 }
             }
-        }
+            f(headers)
+        })
+    }
 
-        Ok(init.headers.as_mut().unwrap())
+    fn headers_to_js(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        self.with_init_headers_or_create(global_this, |headers| Ok(headers.to_js(global_this)))
+    }
+
+    pub(crate) fn put_default_content_type(
+        &self,
+        global_this: &JSGlobalObject,
+        mime: &bun_http_types::MimeType::MimeType,
+    ) -> JsResult<()> {
+        let value = StringView::ascii(mime.value.as_ref());
+        self.with_init_headers_or_create(global_this, |headers| {
+            headers.put_default(HTTPHeaderName::ContentType, &value, global_this)
+        })
+    }
+
+    fn put_location(&self, global_this: &JSGlobalObject, location: &BunString) -> JsResult<()> {
+        self.with_init_headers_or_create(global_this, |headers| {
+            headers.put(HTTPHeaderName::Location, location, global_this)
+        })
     }
 
     pub(crate) fn get_headers(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let global_this = cx.global();
-        Ok(self.get_or_create_headers(global_this)?.to_js(global_this))
+        self.headers_to_js(cx.global())
     }
 
     pub(crate) fn get_content_type(&self) -> JsResult<Option<Utf8Bytes<'_>>> {
-        // R-2 escape hatch via `init_mut()` — `fast_get` (FFI out-param write)
-        // does not re-enter JS.
-        if let Some(headers) = self.init_mut().headers.as_mut() {
-            if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
-                return Ok(Some(value.to_utf8()));
-            }
+        if let Some(value) = self.get_content_type_header() {
+            return Ok(Some(value.into_utf8()));
         }
 
         if let BodyValue::Blob(blob) = self.body.get().value.get() {
@@ -699,9 +597,8 @@ impl Response {
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>headers<d>:<r> ")
             )?;
             let headers_js = self
-                .get_or_create_headers(formatter.global_this())
-                .map_err(js_err)?
-                .to_js(formatter.global_this());
+                .headers_to_js(formatter.global_this())
+                .map_err(js_err)?;
             formatter
                 .print_as::<_, ENABLE_ANSI_COLORS>(
                     bun_jsc::FormatAs::Private,
@@ -816,13 +713,7 @@ impl Response {
             }
         }
 
-        let headers_ref = response.get_or_create_headers(global_this)?;
-        let json_mime = bun_http_types::MimeType::JSON;
-        headers_ref.put_default(
-            HTTPHeaderName::ContentType,
-            &StringView::ascii(json_mime.value.as_ref()),
-            global_this,
-        )?;
+        response.put_default_content_type(global_this, &bun_http_types::MimeType::JSON)?;
         Ok(Response::to_js(RefPtr::new(response), global_this))
     }
 
@@ -843,12 +734,7 @@ impl Response {
             value.with_mut(|v| v.to_blob_if_possible());
         }
         response.init.set(Init::from_parts(global_this, parts)?);
-        let headers_ref = response.get_or_create_headers(global_this)?;
-        headers_ref.put_default(
-            HTTPHeaderName::ContentType,
-            &StringView::ascii(bun_http_types::MimeType::JSON.value.as_ref()),
-            global_this,
-        )?;
+        response.put_default_content_type(global_this, &bun_http_types::MimeType::JSON)?;
         Ok(Response::to_js(RefPtr::new(response), global_this))
     }
 
@@ -930,15 +816,13 @@ impl Response {
             }
         }
 
-        // `get_or_create_headers` already populated init.headers.
-        let headers = response.get_or_create_headers(global_this)?;
         // https://fetch.spec.whatwg.org/#dom-response-redirect steps 1 & 6: `Location`
         // gets the serialization of the parsed url, not the raw input. Non-absolute
         // input keeps the raw string: relative redirects are documented Bun behavior.
         let href = bun_url::href_from_string(&url_string);
         // The JS string's own WTF string (no re-encode), same as `Headers.prototype.set`.
         let location = if href.is_empty() { &url_string } else { &href };
-        headers.put(HTTPHeaderName::Location, location, global_this)?;
+        response.put_location(global_this, location)?;
         Ok(Response::to_js(RefPtr::new(response), global_this))
     }
 
@@ -1024,12 +908,7 @@ impl Response {
                     };
                     // `defer result.deinit()` — SignResult: Drop frees owned buffers at scope exit.
                     response.redirected.set(true);
-                    let headers = response.get_or_create_headers(global_this)?;
-                    headers.put(
-                        HTTPHeaderName::Location,
-                        &StringView::ascii(&result.url),
-                        global_this,
-                    )?;
+                    response.put_location(global_this, &StringView::ascii(&result.url))?;
                     return Ok(response);
                 }
             }
@@ -1038,7 +917,6 @@ impl Response {
             if init.is_undefined_or_null() {
                 break 'brk Init {
                     status_code: 200,
-                    headers: None,
                     ..Default::default()
                 };
             }
@@ -1073,7 +951,7 @@ impl Response {
         }
 
         if let BodyValue::Blob(blob) = body.value.get() {
-            if let Some(headers) = init.headers.as_deref_mut() {
+            if let Some(headers) = init.headers.get_mut() {
                 let content_type = blob.content_type_slice();
                 if !content_type.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {
                     headers.put(
@@ -1162,7 +1040,7 @@ fn Response__jsonFromParts(
 // (e.g. Request::construct_into reading `response_init.headers`) keep working;
 // the fields' own drop glue releases `headers` and `status_text`.
 pub(crate) struct Init {
-    pub(crate) headers: Option<HeadersRef>,
+    pub(crate) headers: Cell<Option<HeadersRef>>,
     pub(crate) status_code: u16,
     pub(crate) status_text: BunString,
     pub method: Method,
@@ -1171,7 +1049,7 @@ pub(crate) struct Init {
 impl Default for Init {
     fn default() -> Self {
         Self {
-            headers: None,
+            headers: Cell::new(None),
             status_code: 0,
             status_text: BunString::EMPTY,
             method: Method::GET,
@@ -1180,16 +1058,19 @@ impl Default for Init {
 }
 
 impl Init {
-    pub(crate) fn clone(&self, ctx: &JSGlobalObject) -> JsResult<Init> {
-        let headers = match &self.headers {
+    fn clone_headers(&self, ctx: &JSGlobalObject) -> JsResult<Option<HeadersRef>> {
+        self.headers.with_taken(|headers| match headers {
             // `clone_this` does a deep copy on the C++ side and may return
             // null on OOM/throw. Flatten the
             // `Option<HeadersRef>` so a null clone leaves `headers` empty.
-            Some(head) => head.clone_this(ctx)?,
-            None => None,
-        };
+            Some(head) => head.clone_this(ctx),
+            None => Ok(None),
+        })
+    }
+
+    pub(crate) fn clone(&self, ctx: &JSGlobalObject) -> JsResult<Init> {
         Ok(Init {
-            headers,
+            headers: Cell::new(self.clone_headers(ctx)?),
             status_code: self.status_code,
             status_text: self.status_text.clone(),
             method: self.method,
@@ -1218,19 +1099,14 @@ impl Init {
     }
 
     fn set_headers(&mut self, global_this: &JSGlobalObject, headers: JSValue) -> JsResult<()> {
-        // `JSValue::as_::<FetchHeaders>()` requires `JsClass`; FetchHeaders is a hand-bound opaque, so use its dedicated `cast()` (wraps `WebCore__FetchHeaders__cast_`).
-        if let Some(orig) = FetchHeaders::cast(headers) {
-            // `orig` is a live `WebCore::FetchHeaders*` borrowed from JS; `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-            let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
+        // `JSValue::as_::<FetchHeaders>()` requires `JsClass`; FetchHeaders is a hand-bound opaque, so use its dedicated `cast_()`.
+        if let Some(orig) = FetchHeaders::cast_(headers, global_this.vm()) {
             if !orig.is_empty() {
-                self.headers = orig.clone_this(global_this)?.map(|p| {
-                    // SAFETY: `clone_this` returns a fresh +1-ref'd `FetchHeaders*`;
-                    // ownership of that ref is transferred into the `HeadersRef`.
-                    unsafe { HeadersRef::adopt(p) }
-                });
+                self.headers.set(orig.clone_this(global_this)?);
             }
         } else {
-            self.headers = HeadersRef::create_from_js(global_this, headers)?;
+            self.headers
+                .set(HeadersRef::create_from_js(global_this, headers)?);
         }
         Ok(())
     }
@@ -1278,7 +1154,7 @@ impl Init {
                 // Everything touched is `&self`.
                 let req = unsafe { &*req };
                 if let Some(headers) = req.get_fetch_headers_unless_empty() {
-                    result.headers = headers.clone_this(global_this)?;
+                    result.headers.set(headers.clone_this(global_this)?);
                 }
 
                 result.method = req.method;

@@ -4589,11 +4589,11 @@ const _: () = assert!(
 );
 
 #[inline]
-pub fn platform_iovec_create(buf: &mut [u8]) -> PlatformIoVec {
+pub fn platform_iovec_create(buf: *mut [u8]) -> PlatformIoVec {
     #[cfg(unix)]
     {
         PlatformIoVec {
-            iov_base: buf.as_mut_ptr().cast(),
+            iov_base: buf.cast(),
             iov_len: buf.len(),
         }
     }
@@ -4603,7 +4603,7 @@ pub fn platform_iovec_create(buf: &mut [u8]) -> PlatformIoVec {
         // POSIX iovec.
         PlatformIoVec {
             len: buf.len() as bun_libuv_sys::ULONG,
-            base: buf.as_mut_ptr(),
+            base: buf.cast(),
         }
     }
 }

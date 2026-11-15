@@ -1,12 +1,11 @@
 //! https://developer.mozilla.org/en-US/docs/Web/API/Request
 
-use core::cell::Cell;
+use core::cell::{Cell, OnceCell};
 use std::borrow::Cow;
 
 use bun_jsc::JsCell;
 use enumset::EnumSet;
 
-use super::response::HeadersRef;
 use crate::api::AnyRequestContext;
 use crate::generated_bindgen::response::js_Request as js;
 use crate::webcore::BlobExt as _;
@@ -14,6 +13,7 @@ use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
 use crate::webcore::jsc::{HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult};
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_alloc::AllocError;
+use bun_core::form_data::Encoding;
 use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{String as BunString, StringView, strings};
 use bun_http_jsc::fetch_enums_jsc::{
@@ -25,7 +25,7 @@ use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::FetchRequestMode::FetchRequestMode;
 use bun_http_types::Method::Method;
 use bun_jsc::AbortSignalRef;
-use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::HeadersRef;
 use bun_jsc::StringJsc as _;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_ptr::weak_ptr::WeakPtrData;
@@ -65,7 +65,8 @@ impl bun_jsc::JsClass for Request {
 pub(crate) struct Request {
     pub(crate) url: JsCell<BunString>,
 
-    headers: JsCell<Option<HeadersRef>>,
+    /// Set once.
+    headers: OnceCell<HeadersRef>,
     // AbortSignal is an opaque C++ handle with intrusive WebCore refcounting —
     // `Arc` of an opaque ZST is meaningless (its payload address is not the
     // C++ object). `AbortSignalRef` wraps `NonNull<AbortSignal>` and routes
@@ -144,15 +145,8 @@ impl BodyMixin for Request {
         Request::get_body_value(self)
     }
     #[inline]
-    fn get_fetch_headers(&self) -> Option<core::ptr::NonNull<FetchHeaders>> {
-        // Opaque C++ handle. Return the raw `*mut`
-        // directly (via `HeadersRef::as_ptr`) so the provenance is mutable;
-        // going through `as_deref()` would derive it from a `&FetchHeaders`
-        // and make the later `as_mut()` UB under Stacked Borrows.
-        self.headers.get().as_ref().map(|h| {
-            core::ptr::NonNull::new(h.as_ptr())
-                .expect("HeadersRef wraps a non-null *mut FetchHeaders")
-        })
+    fn get_content_type_header(&self) -> Option<BunString> {
+        self.headers.get()?.fast_get(HTTPHeaderName::ContentType)
     }
     #[inline]
     fn get_form_data_encoding(
@@ -186,96 +180,75 @@ impl Request {
         unsafe { &mut (*self.body.as_ptr()).value }
     }
 
-    /// R-2: short-hand for `unsafe { self.headers.get_mut() }`. The
-    /// single-JS-thread invariant means no other
-    /// `&mut Option<HeadersRef>` is live for the duration of the borrow.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    fn headers_mut(&self) -> &mut Option<HeadersRef> {
-        // SAFETY: single-JS-thread; callers below keep the borrow short and do
-        // not re-enter a path that touches `self.headers`.
-        unsafe { self.headers.get_mut() }
-    }
-
     // Returns if the request has headers already cached/set.
     pub(crate) fn has_fetch_headers(&self) -> bool {
         self.headers.get().is_some()
     }
 
-    /// Sets the headers of the request. This will take ownership of the headers.
-    /// it will deref the previous headers if they exist.
-    pub(crate) fn set_fetch_headers(&self, headers: Option<HeadersRef>) {
-        // old_headers.deref() → handled by HeadersRef::Drop on assignment
-        self.headers.set(headers);
+    pub(crate) fn set_fetch_headers_if_absent(&self, headers: HeadersRef) {
+        let _ = self.headers.set(headers);
+    }
+
+    /// The cached headers, or else those of the request context.
+    fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
+        if let Some(headers) = self.headers.get() {
+            return Some(headers);
+        }
+        let req = self.request_context.get().get_request()?;
+        // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
+        let req = bun_opaque::opaque_deref(req);
+        Some(
+            self.headers
+                .get_or_init(|| HeadersRef::create_from_uws(req)),
+        )
     }
 
     /// Returns the headers of the request. If the headers are not already cached, it will create a new FetchHeaders object.
     /// If the headers are empty, it will look at request_context to get the headers.
     /// If the headers are empty and request_context is null, it will create an empty FetchHeaders object.
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn ensure_fetch_headers(
         &self,
         global_this: &JSGlobalObject,
-    ) -> JsResult<&mut HeadersRef> {
-        if self.headers.get().is_some() {
-            // headers is already set
-            return Ok(self.headers_mut().as_mut().unwrap());
+    ) -> JsResult<&FetchHeaders> {
+        if let Some(headers) = self.get_fetch_headers() {
+            return Ok(headers);
         }
 
-        if let Some(req) = self.request_context.get().get_request() {
-            // we have a request context, so we can get the headers from it
-            self.headers.set(Some(HeadersRef::create_from_uws(
-                req.cast::<core::ffi::c_void>(),
-            )));
-        } else {
-            // we don't have a request context, so we need to create an empty headers object
-            self.headers.set(Some(HeadersRef::create_empty()));
-            let content_type: Option<&[u8]> = match self.body_value() {
-                BodyValue::Blob(blob) => Some(blob.content_type_slice()),
-                BodyValue::Locked(locked) => match locked.readable.get() {
-                    Some(readable) => match readable.ptr {
-                        crate::webcore::readable_stream::Source::Blob(blob) => {
-                            // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`
-                            // for as long as the readable stream exists; we only read
-                            // its `content_type` slice and immediately copy below.
-                            Some(unsafe { (*blob).content_type.get().as_slice() })
-                        }
-                        _ => None,
-                    },
-                    None => None,
+        // we don't have a request context, so we need to create an empty headers object
+        let headers = self.headers.get_or_init(HeadersRef::create_empty);
+        let content_type: Option<&[u8]> = match self.body_value() {
+            BodyValue::Blob(blob) => Some(blob.content_type_slice()),
+            BodyValue::Locked(locked) => match locked.readable.get() {
+                Some(readable) => match readable.ptr {
+                    crate::webcore::readable_stream::Source::Blob(blob) => {
+                        // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`
+                        // for as long as the readable stream exists; we only read
+                        // its `content_type` slice and immediately copy below.
+                        Some(unsafe { (*blob).content_type.get().as_slice() })
+                    }
+                    _ => None,
                 },
-                _ => None,
-            };
+                None => None,
+            },
+            _ => None,
+        };
 
-            if let Some(content_type_) = content_type {
-                if !content_type_.is_empty() {
-                    self.headers_mut().as_mut().unwrap().put(
-                        HTTPHeaderName::ContentType,
-                        &StringView::ascii(content_type_),
-                        global_this,
-                    )?;
-                }
+        if let Some(content_type_) = content_type {
+            if !content_type_.is_empty() {
+                headers.put(
+                    HTTPHeaderName::ContentType,
+                    &StringView::ascii(content_type_),
+                    global_this,
+                )?;
             }
         }
 
-        Ok(self.headers_mut().as_mut().unwrap())
+        Ok(headers)
     }
 
-    pub(crate) fn get_fetch_headers_unless_empty(&self) -> Option<&mut HeadersRef> {
-        if self.headers.get().is_none() {
-            if let Some(req) = self.request_context.get().get_request() {
-                // we have a request context, so we can get the headers from it
-                self.headers.set(Some(HeadersRef::create_from_uws(
-                    req.cast::<core::ffi::c_void>(),
-                )));
-            }
-        }
-
-        let headers = self.headers_mut().as_mut()?;
-        if headers.is_empty() {
-            return None;
-        }
-        Some(headers)
+    pub(crate) fn get_fetch_headers_unless_empty(&self) -> Option<&FetchHeaders> {
+        self.get_fetch_headers()
+            .filter(|headers| !headers.is_empty())
     }
 
     /// This should only be called by the JS code. use getFetchHeaders to get the current headers or ensureFetchHeaders to get the headers and create them if they don't exist.
@@ -288,48 +261,30 @@ impl Request {
         &self,
         global_this: &JSGlobalObject,
     ) -> JsResult<Option<HeadersRef>> {
-        if self.headers.get().is_none() {
-            if let Some(uws_req) = self.request_context.get().get_request() {
-                self.headers.set(Some(HeadersRef::create_from_uws(
-                    uws_req.cast::<core::ffi::c_void>(),
-                )));
-            }
+        match self.get_fetch_headers_unless_empty() {
+            Some(headers) => headers.clone_this(global_this),
+            None => Ok(None),
         }
-
-        if let Some(head) = self.headers_mut().as_mut() {
-            if head.is_empty() {
-                return Ok(None);
-            }
-
-            return head.clone_this(global_this);
-        }
-
-        Ok(None)
     }
 
-    pub(crate) fn get_content_type(&self) -> JsResult<Option<bun_core::Utf8Bytes<'_>>> {
+    fn form_data_encoding(&self) -> Option<Encoding> {
         if let Some(req) = self.request_context.get().get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
             if let Some(value) = req.header(b"content-type") {
-                return Ok(Some(bun_core::Utf8Bytes::Borrowed(value)));
+                return Encoding::get(value);
             }
         }
 
-        if let Some(headers) = self.headers_mut().as_mut() {
-            if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
-                return Ok(Some(value.to_utf8()));
-            }
+        if let Some(value) = self.get_content_type_header() {
+            return Encoding::get(value.into_utf8().slice());
         }
 
         if let BodyValue::Blob(blob) = self.body_value() {
-            let ct = blob.content_type_slice();
-            if !ct.is_empty() {
-                return Ok(Some(bun_core::Utf8Bytes::Borrowed(ct)));
-            }
+            return Encoding::get(blob.content_type_slice());
         }
 
-        Ok(None)
+        None
     }
 }
 
@@ -342,9 +297,7 @@ impl Request {
 
     #[bun_uws::uws_callback(export = "Request__setCookiesOnRequestContext")]
     pub(crate) fn ffi_set_cookies_on_request_context(&self, cookie_map: Option<&CookieMap>) {
-        self.request_context
-            .get()
-            .set_cookies(cookie_map.map(|c| std::ptr::from_ref::<CookieMap>(c).cast_mut()));
+        self.request_context.get().set_cookies(cookie_map);
     }
 
     /// `BunRequest.prototype.clone` (the `Bun.serve` `routes:` subclass) goes
@@ -390,7 +343,7 @@ impl Request {
     ) -> Request {
         Request {
             url: JsCell::new(url),
-            headers: JsCell::new(headers),
+            headers: headers.map(OnceCell::from).unwrap_or_default(),
             signal: JsCell::new(None),
             body,
             js_ref: JsCell::new(JsRef::empty()),
@@ -406,16 +359,9 @@ impl Request {
     pub(crate) fn get_form_data_encoding(
         &self,
     ) -> JsResult<Option<Box<crate::webcore::form_data::AsyncFormData>>> {
-        let Some(content_type_slice) = self.get_content_type()? else {
-            return Ok(None);
-        };
-        let Some(encoding) = crate::webcore::form_data::Encoding::get(content_type_slice.slice())
-        else {
-            return Ok(None);
-        };
-        Ok(Some(crate::webcore::form_data::AsyncFormData::init(
-            encoding,
-        )))
+        Ok(self
+            .form_data_encoding()
+            .map(crate::webcore::form_data::AsyncFormData::init))
     }
 
     pub(crate) fn estimated_size(&self) -> usize {
@@ -451,11 +397,9 @@ impl Request {
 bun_jsc::jsc_abi_extern! {
     #[allow(improper_ctypes)]
     #[link_name = "Bun__JSRequest__createForBake"]
-    // `&JSGlobalObject` discharges the only deref'd-param precondition;
-    // `request_ptr` is stored opaquely as `void*`.
     safe fn Bun__JSRequest__createForBake(
         global_object: &JSGlobalObject,
-        request_ptr: *mut Request,
+        request: RefPtr<Request>,
     ) -> JSValue;
 }
 
@@ -466,7 +410,7 @@ impl Request {
         global_object: &JSGlobalObject,
     ) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_object, || {
-            Bun__JSRequest__createForBake(global_object, this.into_raw())
+            Bun__JSRequest__createForBake(global_object, this)
         })
     }
 }
@@ -675,15 +619,15 @@ impl Request {
         fetch_redirect_to_js(self.flags.redirect, cx.global())
     }
 
-    pub(crate) fn get_referrer(&self, cx: &mut JsScope<'_>) -> JSValue {
+    pub(crate) fn get_referrer(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global_object = cx.global();
-        if let Some(headers_ref) = self.headers_mut().as_mut() {
-            if let Some(referrer) = headers_ref.get(b"referrer", global_object) {
-                return referrer.to_js(global_object);
+        if let Some(headers_ref) = self.headers.get() {
+            if let Some(referrer) = headers_ref.get(b"referrer", global_object)? {
+                return referrer.into_js(global_object);
             }
         }
 
-        JSValue::js_empty_string(global_object)
+        Ok(JSValue::js_empty_string(global_object))
     }
 
     pub(crate) fn get_referrer_policy(&self, cx: &mut JsScope<'_>) -> JSValue {
@@ -911,7 +855,7 @@ impl Request {
         let body = body::hive_alloc(BodyValue::Null);
         let mut req = Request {
             url: JsCell::new(BunString::EMPTY),
-            headers: JsCell::new(None),
+            headers: OnceCell::new(),
             signal: JsCell::new(None),
             body,
             js_ref: JsCell::new(JsRef::empty()),
@@ -1007,7 +951,7 @@ impl Request {
 
                     if !fields.contains(Fields::Headers) {
                         if let Some(headers) = request.clone_headers(cx.global())? {
-                            req.headers.set(Some(headers));
+                            req.set_fetch_headers_if_absent(headers);
                             fields.insert(Fields::Headers);
                         }
                     }
@@ -1033,13 +977,8 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Headers) {
-                        if let Some(headers) = response.get_init_headers_mut() {
-                            // The flag is set unconditionally once `getInitHeaders()` yielded a
-                            // value, even if `cloneThis` returns null — so a later arg can't
-                            // repopulate headers from a different source.
-                            let h = headers.clone_this(cx.global())?;
-                            // SAFETY: clone_this returns a +1 ref FetchHeaders.
-                            req.headers.set(h.map(|p| unsafe { HeadersRef::adopt(p) }));
+                        if let Some(headers) = response.clone_init_headers(cx.global())? {
+                            req.set_fetch_headers_if_absent(headers);
                             fields.insert(Fields::Headers);
                         }
                     }
@@ -1146,9 +1085,9 @@ impl Request {
                                 .fast_get(cx.global(), bun_jsc::BuiltinName::Headers)?
                                 .is_some());
                     if header_check {
-                        if let Some(headers) = response_init.headers {
+                        if let Some(headers) = response_init.headers.into_inner() {
                             if !fields.contains(Fields::Headers) {
-                                req.headers.set(Some(headers));
+                                req.set_fetch_headers_if_absent(headers);
                                 fields.insert(Fields::Headers);
                             } else {
                                 drop(headers); // headers.deref()
@@ -1226,22 +1165,14 @@ impl Request {
 
         req.url.set(href);
 
-        if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
-            if let BodyValue::Blob(blob) = req.body_value() {
-                let ct: &[u8] = blob.content_type_slice();
-                if !ct.is_empty()
-                    && !req
-                        .headers_mut()
-                        .as_mut()
-                        .unwrap()
-                        .fast_has(HTTPHeaderName::ContentType)
-                {
-                    req.headers_mut().as_mut().unwrap().put(
-                        HTTPHeaderName::ContentType,
-                        &StringView::ascii(ct),
-                        cx.global(),
-                    )?;
-                }
+        if let (BodyValue::Blob(blob), Some(headers)) = (req.body_value(), req.headers.get()) {
+            let ct: &[u8] = blob.content_type_slice();
+            if !ct.is_empty() {
+                headers.put_default(
+                    HTTPHeaderName::ContentType,
+                    &StringView::ascii(ct),
+                    cx.global(),
+                )?;
             }
         }
 
@@ -1291,7 +1222,7 @@ impl Request {
         let headers = self.clone_headers(cx.global())?;
         Ok(Request {
             url: JsCell::new(url.unwrap_or_else(|| self.url.get().clone())),
-            headers: JsCell::new(headers),
+            headers: headers.map(OnceCell::from).unwrap_or_default(),
             signal: JsCell::new(self.signal.get().clone()),
             body,
             js_ref: JsCell::new(JsRef::empty()),
@@ -1315,7 +1246,7 @@ impl Request {
     ) -> Request {
         Request {
             url: JsCell::new(BunString::EMPTY),
-            headers: JsCell::new(None),
+            headers: OnceCell::new(),
             signal: JsCell::new(signal),
             body,
             js_ref: JsCell::new(JsRef::empty()),

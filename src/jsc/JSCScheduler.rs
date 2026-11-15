@@ -23,10 +23,7 @@ impl Taskable for JSCDeferredWorkTask {
 }
 
 unsafe extern "C" {
-    // safe: `JSCDeferredWorkTask` is an `opaque_ffi!` ZST handle (`!Freeze`
-    // via `UnsafeCell`); `&mut` is ABI-identical to a non-null `*mut` and the
-    // C++ side consuming it is interior to the opaque cell.
-    safe fn Bun__runDeferredWork(task: &mut JSCDeferredWorkTask);
+    fn Bun__runDeferredWork(task: *mut JSCDeferredWorkTask);
     fn Bun__deleteDeferredWorkTask(task: *mut JSCDeferredWorkTask);
 }
 
@@ -43,8 +40,12 @@ impl JSCDeferredWorkTask {
 
     /// The C++ side reports what a job throws at its own boundary; what can
     /// still be pending here is the VM's termination.
-    pub fn run(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        crate::call_check_slow(global, || Bun__runDeferredWork(self))
+    ///
+    /// # Safety
+    /// As [`destroy`](Self::destroy): C++ deletes the job.
+    pub unsafe fn run(this: *mut Self, global: &JSGlobalObject) -> JsResult<()> {
+        // SAFETY: fn contract.
+        crate::call_check_slow(global, || unsafe { Bun__runDeferredWork(this) })
     }
 }
 

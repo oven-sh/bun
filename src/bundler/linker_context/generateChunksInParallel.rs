@@ -993,7 +993,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                                 &source_provider_url,
                                 c.options.bytecode_depth,
                                 c.options.optimize_bytecode,
-                                external_string_table.as_ref().and_then(|table| table.get()),
+                                external_string_table.as_deref(),
                             )
                         };
                         if let Some(bytecode) = bytecode {
@@ -1240,11 +1240,10 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
     .then(|| builtins_of(c.options.target_builtins))
     .flatten()
     .map(|builtins| (wanted_internal_modules(c, &builtins), builtins));
-    let mut linked_bytecode: Option<LinkedBytecode> = None;
+    let mut linked_bytecode: Option<LinkedBytecode<'_>> = None;
     if let Some(order) = bytecode_order {
         let table = external_string_table
-            .as_ref()
-            .and_then(|table| table.get())
+            .as_deref()
             .expect("an order file is only loaded for --compile --bytecode");
         let encoder = crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle::new(table, order);
         linked_bytecode_chunks
@@ -1357,13 +1356,13 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             c,
             log,
             &mut result,
-            external_string_table.as_ref().and_then(|t| t.get()),
+            external_string_table.as_deref(),
             linked_bytecode.as_mut(),
             internal_modules,
         );
     }
     let mut linked_bytecode_payload: Option<Box<[u8]>> = None;
-    if let Some(mut linked) = linked_bytecode {
+    if let Some(linked) = { linked_bytecode } {
         if let Some((path, names_out)) = &linked.names_out {
             let path = bun_core::ZBox::from_bytes(path);
             if let Err(err) = bun_sys::File::write_file(bun_core::Fd::cwd(), &path, names_out) {
@@ -1546,8 +1545,8 @@ fn debug_assert_no_placeholder_left(c: &LinkerContext, files: &[options::OutputF
 
 /// The link's one bytecode payload (`--bytecode-order`), and for each module added to it its `Bytecode` or
 /// `BuiltinBytecode` output file.
-struct LinkedBytecode {
-    encoder: crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle,
+struct LinkedBytecode<'a> {
+    encoder: crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle<'a>,
     output_files: Vec<u32>,
     /// What the code of the internal modules that will join the link is called, in their order.
     internal_names: Vec<Option<crate::bytecode_order::CodeNames>>,
@@ -1639,10 +1638,10 @@ fn append_internal_module_bytecode(
     c: &LinkerContext,
     log: &bun_ast::Log,
     output_files: &mut Vec<options::OutputFile>,
-    external_strings: Option<core::ptr::NonNull<crate::bundle_v2::dispatch::EncoderStringTable>>,
+    external_strings: Option<&crate::bundle_v2::dispatch::EncoderStringTable>,
     // With an order file the internal modules are more modules of the link's one payload, and their output files say
     // where in it, like the chunks'.
-    mut linked_bytecode: Option<&mut LinkedBytecode>,
+    mut linked_bytecode: Option<&mut LinkedBytecode<'_>>,
     (wanted, builtins): (Vec<u32>, bun_exe_format::builtins::Builtins<'_>),
 ) {
     use crate::bundle_v2::dispatch;

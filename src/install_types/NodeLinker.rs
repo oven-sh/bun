@@ -68,7 +68,7 @@ pub mod npm {
 // `hoist-pattern`. Moved down from `bun_install` so the npmrc loader does not
 // depend on the full package manager.
 //
-// Calling `bun_jsc::RegularExpression` (tier-6) directly would invert the
+// Calling `bun_jsc::OwnedRegularExpression` (tier-6) directly would invert the
 // layering; that edge is broken with link-time `extern "Rust"`
 // (`__bun_regex_*`) defined `#[no_mangle]` in `bun_jsc::regular_expression`.
 // ══════════════════════════════════════════════════════════════════════════
@@ -81,7 +81,7 @@ use bun_ast as ast;
 use bun_core::escape_reg_exp::escape_reg_exp_for_package_name_matching;
 use bun_core::{String as BunString, StringView, strings};
 
-// LAYERING: `bun_jsc::RegularExpression` (Yarr FFI) lives in a higher tier.
+// LAYERING: `bun_jsc::OwnedRegularExpression` (Yarr FFI) lives in a higher tier.
 // The bodies are defined `#[no_mangle]` in
 // `bun_jsc::regular_expression`; declared here as `extern "Rust"` and
 // resolved at link time.
@@ -95,7 +95,7 @@ unsafe extern "Rust" {
 }
 
 /// Owned, type-erased compiled JSC regex; drops through the vtable.
-// FORWARD_DECL(b0): bun_jsc::RegularExpression — stored as raw NonNull<()>
+// FORWARD_DECL(b0): bun_jsc::OwnedRegularExpression — stored as raw NonNull<()>
 // (NOT Box<ZST>: a zero-sized opaque Box is a dangling sentinel that would
 // leak the real JSC allocation and skip its destructor).
 struct CompiledRegularExpression(NonNull<()>);

@@ -18,11 +18,8 @@
 
 namespace Bun {
 
-// Node's external memory: the bytes that heap objects own outside the heap, as of now. One number behind
+// Node's external memory, as of now: the bytes that heap objects own outside the heap. The one number behind
 // process.memoryUsage().external, v8.getHeapStatistics().external_memory and worker.getHeapStatistics().external_memory.
-// The reporting accessor counts the vector of a typed array that has no ArrayBuffer yet (a Buffer.alloc(n) or
-// new Uint8Array(n) with more than 1000 elements) from the moment it is allocated. Heap::extraMemorySize(), which paces
-// collections, counts it only once a collection has visited it or .buffer has been read.
 inline size_t externalMemorySize(JSC::Heap& heap)
 {
     return heap.extraMemorySizeForReporting() + heap.externalMemorySize();

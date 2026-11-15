@@ -1206,13 +1206,21 @@ describe("Resolver with a nameserver that nothing is listening on", () => {
   // port unreachable, which the kernel reports on the next recv() of the query
   // socket. c-ares has to see that error to give up on the server; until it
   // does, the query sits there for the full `timeout`.
-  async function closedUdpPort() {
+  //
+  // The socket stays open for the test, bound to the port but connected to
+  // itself: that keeps the port reserved (c-ares cannot autobind onto it and a
+  // second call cannot get the same port) while a datagram from any other peer
+  // matches no socket and still draws the ICMP port unreachable.
+  async function deadServer() {
     const socket = dgram.createSocket("udp4");
     socket.bind(0, "127.0.0.1");
     await once(socket, "listening");
     const { port } = socket.address();
-    await new Promise(resolve => socket.close(resolve));
-    return `127.0.0.1:${port}`;
+    await new Promise((resolve, reject) => socket.connect(port, "127.0.0.1", err => (err ? reject(err) : resolve())));
+    return {
+      address: `127.0.0.1:${port}`,
+      [Symbol.dispose]: () => socket.close(),
+    };
   }
 
   // Answers every query with a single A record, 10.20.0.1.
@@ -1236,8 +1244,9 @@ describe("Resolver with a nameserver that nothing is listening on", () => {
   }
 
   it("dns.promises.Resolver rejects with ECONNREFUSED instead of ETIMEOUT", async () => {
+    using dead = await deadServer();
     const resolver = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
-    resolver.setServers([await closedUdpPort()]);
+    resolver.setServers([dead.address]);
     const err = await resolver.resolve4("refused.example.test").then(
       () => {
         throw new Error("expected resolve4 to reject");
@@ -1252,24 +1261,28 @@ describe("Resolver with a nameserver that nothing is listening on", () => {
   });
 
   it("dns.Resolver (callback API) errors with ECONNREFUSED instead of ETIMEOUT", async () => {
+    using dead = await deadServer();
     const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
-    resolver.setServers([await closedUdpPort()]);
+    resolver.setServers([dead.address]);
     const { promise, resolve } = Promise.withResolvers();
     resolver.resolve4("refused.example.test", (err, addresses) => resolve({ code: err?.code, addresses }));
     expect(await promise).toEqual({ code: "ECONNREFUSED", addresses: undefined });
   });
 
   it("falls over to the next server without waiting out the timeout", async () => {
+    using dead1 = await deadServer();
+    using dead2 = await deadServer();
     using live = await liveServer();
-    const timeout = 3000;
+    // Large on purpose: the three loopback hops take well under a second even
+    // on a debug+ASAN build, and without the fix each dead server is only
+    // abandoned once its `timeout` expires, so that path takes 2 * timeout.
+    const timeout = 20_000;
     const resolver = new dns_promises.Resolver({ timeout, tries: 1 });
-    resolver.setServers([await closedUdpPort(), await closedUdpPort(), live.address]);
+    resolver.setServers([dead1.address, dead2.address, live.address]);
     const start = performance.now();
     const addresses = await resolver.resolve4("failover.example.test");
     const elapsed = performance.now() - start;
     expect(addresses).toEqual(["10.20.0.1"]);
-    // Without the fix each dead server is only abandoned once its `timeout`
-    // expires, so this takes at least 2 * timeout.
     expect(elapsed).toBeLessThan(timeout);
   });
 });

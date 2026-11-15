@@ -754,7 +754,7 @@ impl ProxySettings {
 // Many of these fields can be moved to a packed struct and use less space
 //
 // Lifetime `'a` ties every borrowed input — `url`, `http_proxy`, `header_buf`,
-// `if_modified_since`, `unix_socket_path`, and the borrowed
+// `if_modified_since`, `unix_socket_path`, `progress`, and the borrowed
 // `HTTPRequestBody::Bytes` payload — to the caller's storage. The original port erased these to `'static`
 // and lifetime-erased at every call site; threading the lifetime removes that hazard.
 // Intrusive raw-pointer backrefs (socket ext, h2/h3 streams) store the
@@ -780,9 +780,8 @@ pub struct HTTPClient<'a> {
     /// until `do_redirect` has released the socket, so it is freed there rather
     /// than at the assignment site. Also freed in `Drop` for error paths.
     pub(crate) prev_redirect: Vec<u8>,
-    // Non-owning back-reference to a `Progress::Node` owned by the caller;
-    // raw to avoid threading another lifetime param.
-    pub progress_node: Option<NonNull<bun_core::Progress::Node>>,
+    /// Exclusive: the HTTP thread updates it.
+    pub progress: Option<&'a mut bun_core::Progress::Progress>,
 
     pub flags: Flags,
 
@@ -1678,24 +1677,10 @@ impl<'a> HTTPClient<'a> {
         }
         callback.run(self.parent_async_http(), result);
     }
-    #[inline]
-    fn progress_node_mut(&mut self) -> Option<&mut bun_core::Progress::Node> {
-        // SAFETY: progress_node is owned by the caller (e.g. `bun install`'s
-        // Progress) and outlives this client.
-        self.progress_node.map(|mut p| unsafe { p.as_mut() })
-    }
-    /// Common `progress.activate(); set_completed_items(n); maybe_refresh()`
-    /// triple used at every body-chunk boundary. Centralises the raw deref of
-    /// `progress.context` (a backref into the owning `Progress` whose `&mut`
-    /// would alias the embedded `Node` — see `Progress::Node::context_ptr`).
-    fn report_progress(&mut self, completed: usize) {
-        if let Some(progress) = self.progress_node_mut() {
-            progress.activate();
-            progress.set_completed_items(completed);
-            // SAFETY: `context` is a non-null backref to the owning Progress.
-            // `&mut Progress` would alias the node tree (the Progress embeds
-            // `root: Node`), so this stays a narrowly-scoped raw deref.
-            unsafe { (*progress.context_ptr()).maybe_refresh() };
+    fn report_progress(&self, completed: usize) {
+        if let Some(progress) = &self.progress {
+            progress.root().completed_items.set(completed);
+            progress.maybe_refresh();
         }
     }
 }

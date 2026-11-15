@@ -1,7 +1,7 @@
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 
-use crate::{AnyRefCounted, RefPtr};
+use crate::{AliasableBox, RefCounted, RefPtr};
 
 /// Bit layout:
 ///   bits 0..=30 → reference_count
@@ -67,11 +67,9 @@ pub unsafe trait HasWeakPtrData {
 }
 
 /// `#[ref_count(destroy = …)]` of a type `WeakPtr`s point to: the last of them frees the allocation.
-///
-/// # Safety
-/// `this` is a `Box` allocation, and its last strong reference is gone.
-pub unsafe fn destroy<T: HasWeakPtrData>(this: *mut T) {
-    // SAFETY: fn contract. `WeakPtrData` has no drop glue, so it outlives `drop_in_place`.
+pub fn destroy<T: HasWeakPtrData>(last: AliasableBox<T>) {
+    let this = last.into_raw();
+    // SAFETY: `last` was the only owner. `WeakPtrData` has no drop glue, so it is valid after `drop_in_place`.
     unsafe {
         core::ptr::drop_in_place(this);
         if (*T::weak_ptr_data(this)).on_finalize() {
@@ -105,7 +103,7 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
 
     pub fn new(strong: &RefPtr<T>) -> Self
     where
-        T: AnyRefCounted,
+        T: RefCounted,
     {
         // SAFETY: a strong reference, with the allocation's provenance.
         unsafe { Self::init_ref(strong.as_ptr()) }
@@ -225,12 +223,12 @@ mod tests {
         }
     }
 
-    fn new_owner(payload: u32) -> *mut Owner {
-        bun_core::heap::into_raw(Box::new(Owner {
+    fn new_owner(payload: u32) -> AliasableBox<Owner> {
+        AliasableBox::new(Owner {
             weak: WeakPtrData::EMPTY,
             payload,
             _heap: Box::new(payload),
-        }))
+        })
     }
 
     fn payload(weak: &mut WeakPtr<Owner>) -> Option<u32> {
@@ -276,13 +274,13 @@ mod tests {
     fn weak_ptr_outlives_finalize_then_frees() {
         let _serial = serial();
         let before = drops();
-        let raw = new_owner(4);
-        // SAFETY: `raw` is a freshly leaked Box; live and not finalized.
+        let owner = new_owner(4);
+        let raw = owner.as_ptr();
+        // SAFETY: `raw` is the pointer of a new box; live and not finalized.
         let mut weak = unsafe { WeakPtr::init_ref(raw) };
         assert_eq!(payload(&mut weak), Some(4));
 
-        // SAFETY: `raw` is live, and its owner is done with it.
-        unsafe { destroy(raw) };
+        destroy(owner);
         assert_eq!(drops(), before + 1);
 
         // `get` on a finalized owner releases the ref and reports `None`, which
@@ -299,13 +297,13 @@ mod tests {
     fn weak_ptr_drop_before_finalize_leaves_owner_in_charge() {
         let _serial = serial();
         let before = drops();
-        let raw = new_owner(6);
-        // SAFETY: `raw` is a freshly leaked Box; live and not finalized.
+        let owner = new_owner(6);
+        let raw = owner.as_ptr();
+        // SAFETY: `raw` is the pointer of a new box; live and not finalized.
         let weak = unsafe { WeakPtr::init_ref(raw) };
         drop(weak);
         assert_eq!(drops(), before);
-        // SAFETY: `raw` is live, and its owner is done with it.
-        unsafe { destroy(raw) };
+        destroy(owner);
         assert_eq!(drops(), before + 1);
     }
 
@@ -317,8 +315,9 @@ mod tests {
     fn weak_ptr_survives_owner_writes_through_its_own_pointer() {
         let _serial = serial();
         let before = drops();
-        let raw = new_owner(1);
-        // SAFETY: `raw` is a freshly leaked Box; live and not finalized.
+        let owner = new_owner(1);
+        let raw = owner.as_ptr();
+        // SAFETY: `raw` is the pointer of a new box; live and not finalized.
         let mut weak = unsafe { WeakPtr::init_ref(raw) };
 
         for i in 2..5u32 {
@@ -329,8 +328,7 @@ mod tests {
         }
 
         drop(weak);
-        // SAFETY: `raw` is live, and its owner is done with it.
-        unsafe { destroy(raw) };
+        destroy(owner);
         assert_eq!(drops(), before + 1);
     }
 
@@ -341,8 +339,9 @@ mod tests {
     fn weak_ptr_many_refs_last_one_frees() {
         let _serial = serial();
         let before = drops();
-        let raw = new_owner(2);
-        // SAFETY: `raw` is a freshly leaked Box; live and not finalized.
+        let owner = new_owner(2);
+        let raw = owner.as_ptr();
+        // SAFETY: `raw` is the pointer of a new box; live and not finalized.
         let mut a = unsafe { WeakPtr::init_ref(raw) };
         // SAFETY: see above.
         let mut b = unsafe { WeakPtr::init_ref(raw) };
@@ -351,8 +350,7 @@ mod tests {
         assert_eq!(payload(&mut a), Some(2));
         assert_eq!(payload(&mut b), Some(2));
 
-        // SAFETY: `raw` is live, and its owner is done with it.
-        unsafe { destroy(raw) };
+        destroy(owner);
         assert_eq!(drops(), before + 1);
         drop(a);
         assert!(b.get().is_none());

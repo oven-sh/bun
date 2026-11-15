@@ -31,9 +31,9 @@ bun_core::declare_scope!(FileSink, visible);
 // ───────────────────────────────────────────────────────────────────────────
 
 // Shared borrows only. A method may release every ref but the one its caller borrows from.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct FileSink {
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     pub(crate) writer: StreamingWriter,
     /// Held while a write is in flight.
     #[cfg(windows)]
@@ -83,7 +83,7 @@ pub(crate) struct FileSink {
 }
 
 // `bun.ptr.RefCount(FileSink, "ref_count", deinit, .{})` — intrusive single-thread
-// refcount derived via #[derive(CellRefCounted)] above. `*FileSink` crosses FFI
+// refcount derived via #[derive(RefCounted)] above. `*FileSink` crosses FFI
 // (JSSink wrapper, `@fieldParentPtr`, `b.promisePtr`), so this stays intrusive
 // rather than `Rc<T>`.
 
@@ -1322,7 +1322,7 @@ impl FileSink {
     fn new(event_loop_handle: EventLoopHandle, fd: Fd) -> FileSink {
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
         FileSink {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             writer: StreamingWriter::default(),
             #[cfg(windows)]
             inflight_write_ref: Cell::new(None),

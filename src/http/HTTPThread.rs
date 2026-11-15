@@ -7,7 +7,7 @@ use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, Output};
 use bun_errno::SystemErrno;
-use bun_ptr::RefPtr;
+use bun_ptr::{AliasableBox, RefPtr};
 use bun_threading::{Guarded, UnboundedQueue};
 use bun_uws as uws;
 
@@ -124,9 +124,8 @@ pub struct HttpThread {
     /// Refs released on the next loop tick rather than inside the socket
     /// callback that gave them up.
     pub(crate) queued_threadlocal_proxy_derefs: Vec<RefPtr<ProxyTunnel>>,
-    /// Custom TLS contexts with no ref left, see
-    /// `HTTPContext::destroy_between_ticks`.
-    pub(crate) dead_ssl_contexts: Vec<NonNull<NewHttpContext<true>>>,
+    /// Custom TLS contexts with no ref left, see `HTTPContext::destroy`.
+    pub(crate) dead_ssl_contexts: Vec<AliasableBox<NewHttpContext<true>>>,
 
     pub(crate) timer: Instant,
     pub(crate) lazy_libdeflater: Option<Box<LibdeflateState>>,
@@ -139,7 +138,7 @@ impl HttpThread {
     fn new() -> Self {
         Self {
             http_context: NewHttpContext::<false> {
-                ref_count: Cell::new(1),
+                ref_count: bun_ptr::RefCount::init(),
                 pending_sockets: crate::http_context::LazyPool::new(),
                 pending_unix_sockets: crate::http_context::LazyPool::new(),
                 park_seq: 0,
@@ -150,7 +149,7 @@ impl HttpThread {
                 session_cache: crate::session_cache::SessionCache::new(),
             },
             https_context: NewHttpContext::<true> {
-                ref_count: Cell::new(1),
+                ref_count: bun_ptr::RefCount::init(),
                 pending_sockets: crate::http_context::LazyPool::new(),
                 pending_unix_sockets: crate::http_context::LazyPool::new(),
                 park_seq: 0,
@@ -395,7 +394,7 @@ impl HttpThread {
 
                 // Cache miss - create new SSL context
                 let ctx = RefPtr::new(NewHttpContext::<true> {
-                    ref_count: Cell::new(1),
+                    ref_count: bun_ptr::RefCount::init(),
                     pending_sockets: crate::http_context::LazyPool::new(),
                     pending_unix_sockets: crate::http_context::LazyPool::new(),
                     park_seq: 0,
@@ -888,10 +887,7 @@ impl HttpThread {
         // One at a time: a context's `Drop` closes its sockets, and a close
         // handler is free to drop the last ref of another context.
         while let Some(ctx) = self.dead_ssl_contexts.pop() {
-            // SAFETY: `HTTPContext::destroy_between_ticks` pushed it at
-            // refcount zero, so this is the sole owner of the `RefPtr::new`
-            // allocation.
-            unsafe { bun_core::heap::destroy(ctx.as_ptr()) };
+            drop(ctx);
         }
     }
 
@@ -1000,8 +996,6 @@ fn assert_abort_tracker_sockets_alive() {
         }
     }
 }
-
-use core::cell::Cell;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // init / on_start / process_events — uses `bun_event_loop::MiniEventLoop`

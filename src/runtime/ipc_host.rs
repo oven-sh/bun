@@ -335,7 +335,7 @@ pub(crate) fn emit_handle_ipc_message<'a>(
                 Process__emitMessageEvent(global_this, message, handle);
                 return Ok(());
             }
-            IPCInstance::handle_ipc_message(&DecodedIPCMessage::Data(message), handle)?;
+            IPCInstance::handle_ipc_message(&DecodedIPCMessage::Data(message), handle);
         }
     }
     Ok(())
@@ -402,7 +402,7 @@ impl IPCInstance {
     }
 
     /// Dispatches a decoded IPC message (and optional handle) to the JS `process` listeners.
-    pub(crate) fn handle_ipc_message(message: &DecodedIPCMessage, handle: JSValue) -> JsResult<()> {
+    pub(crate) fn handle_ipc_message(message: &DecodedIPCMessage, handle: JSValue) {
         let vm = bun_jsc::virtual_machine::VirtualMachine::get();
         let global_this = vm.global();
 
@@ -424,7 +424,6 @@ impl IPCInstance {
                 }
             }
         }
-        Ok(())
     }
 
     /// Tears down the IPC channel and emits the disconnect events on `process`.

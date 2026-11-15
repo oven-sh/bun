@@ -51,6 +51,7 @@ pub(crate) struct InternalMsgHolder {
     messages: Cell<Vec<Strong>>,
 }
 
+// TODO: we should not create two jsc.Strong here. If absolutely necessary, a single Array. should be all we use.
 struct ClusterListener {
     worker: Strong,
     cb: Strong,
@@ -64,7 +65,7 @@ impl InternalMsgHolder {
         }));
     }
 
-    pub(crate) fn worker_and_cb(&self) -> Option<(JSValue, JSValue)> {
+    pub(crate) fn listener(&self) -> Option<(JSValue, JSValue)> {
         self.listener.with_taken(|listener| {
             let listener = listener.as_ref()?;
             Some((listener.worker.get(), listener.cb.get()))
@@ -87,7 +88,7 @@ impl InternalMsgHolder {
     }
 
     pub(crate) fn dispatch(&self, message: JSValue, handle: JSValue, global: &JSGlobalObject) {
-        let Some((worker, cb)) = self.worker_and_cb() else {
+        let Some((worker, cb)) = self.listener() else {
             // Queued messages drop their handle; the cluster listener is
             // installed before any handle-bearing reply can arrive.
             let message = Strong::create(message, global);
@@ -914,7 +915,8 @@ impl SendQueueOwner {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_message(msg, handle),
             SendQueueOwner::Instance => {
-                crate::ipc_host::IPCInstance::handle_ipc_message(msg, handle)
+                crate::ipc_host::IPCInstance::handle_ipc_message(msg, handle);
+                Ok(())
             }
         }
     }

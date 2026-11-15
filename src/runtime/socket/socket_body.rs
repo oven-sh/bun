@@ -1048,7 +1048,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             errno,
             this.ref_count.get()
         );
-        this.buffered_data_for_node_net.clear();
+        this.buffered_data_for_node_net.clear_and_free();
 
         this.socket.set(SocketHandler::<SSL>::DETACHED);
 
@@ -1247,7 +1247,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     pub(crate) fn close_and_detach(&self, code: uws::CloseCode) {
         let socket = self.socket.get();
-        self.buffered_data_for_node_net.clear();
+        self.buffered_data_for_node_net.clear_and_free();
 
         self.socket.set(SocketHandler::<SSL>::DETACHED);
         self.detach_native_callback();
@@ -1285,7 +1285,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let _native_ref = slot.and_then(|slot| unsafe { slot.take() });
         self.update_flags(|f| f.remove(Flags::BYPASS_TLS));
         self.socket.set(SocketHandler::<SSL>::DETACHED);
-        self.buffered_data_for_node_net.clear();
+        self.buffered_data_for_node_net.clear_and_free();
         self.detach_native_callback();
         self.poll_ref.unref(js_loop_ctx());
         if self.flags.get().contains(Flags::IS_ACTIVE) {
@@ -2559,7 +2559,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<JSValue> {
         let global = cx.global();
         if self.socket.get().is_detached() {
-            self.buffered_data_for_node_net.clear();
+            self.buffered_data_for_node_net.clear_and_free();
             return Ok(JSValue::FALSE);
         }
 
@@ -2590,7 +2590,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<JSValue> {
         let global = cx.global();
         if self.socket.get().is_detached() {
-            self.buffered_data_for_node_net.clear();
+            self.buffered_data_for_node_net.clear_and_free();
             return Ok(JSValue::FALSE);
         }
 
@@ -2728,7 +2728,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 buffered.needs_flush.set(true);
                 break 'brk 0;
             }
-            let rc = self.write_buffered_data(|bytes| self.write_maybe_corked(bytes));
+            let rc = self.flush_buffered_with(|bytes| self.write_maybe_corked(bytes));
             if buffered.needs_flush.take() {
                 break 'brk self.flush_after_write(rc, total_to_write);
             }
@@ -2743,7 +2743,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     /// Drops the bytes passed to `write` if it returns a negative number or JS replaces the socket.
-    fn write_buffered_data(&self, write: impl FnOnce(&[u8]) -> i32) -> i32 {
+    fn flush_buffered_with(&self, write: impl FnOnce(&[u8]) -> i32) -> i32 {
         let socket = self.socket.get();
         let buffered = &self.buffered_data_for_node_net;
         let mut bytes = buffered.bytes.take();
@@ -3030,7 +3030,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return 0;
         }
         while self.buffered_len() > 0 {
-            let res = self.write_buffered_data(|buffered| {
+            let res = self.flush_buffered_with(|buffered| {
                 // The drain-driven retry must detect a fatal send error the same way
                 // the initial write does: once the peer is gone the kernel rejects
                 // every retry (EPIPE/ECONNRESET), and treating that as would-block
@@ -3711,7 +3711,7 @@ pub(crate) struct BufferedData {
 }
 
 impl BufferedData {
-    fn clear(&self) {
+    fn clear_and_free(&self) {
         self.bytes.set(Vec::new());
         self.in_flight_len.set(0);
         self.needs_flush.set(false);

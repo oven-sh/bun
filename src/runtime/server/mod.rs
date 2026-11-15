@@ -1345,7 +1345,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
                         nhr.promise
                             .set(Some((core::mem::take(&mut strong_promise), nhr.clone())));
-                        result.then2(
+                        result.then_with_value(
                             global,
                             strong_self,
                             crate::generated_bindgen::node_http_response::Bun__NodeHTTPRequest__onResolve,
@@ -3811,7 +3811,7 @@ pub(crate) mod http_server_agent {
 
     use bun_core::StringView;
     use bun_jsc::debugger::DebuggerId;
-    use bun_jsc::http_server_agent::{HTTPServerAgent, InspectorHTTPServerAgent, Route, RouteType};
+    use bun_jsc::http_server_agent::{HTTPServerAgent, Route, RouteType};
 
     /// Assign the server a fresh inspector id and tell the C++ inspector
     /// agent (if attached) that it started, passing its URL and start time.
@@ -3824,18 +3824,13 @@ pub(crate) mod http_server_agent {
         instance.set_inspector_server_id(this.next_server_id.get());
         let url = bun_core::handle_oom(instance.get_url_as_string());
 
-        // SAFETY: `agent` is a non-null C++ InspectorHTTPServerAgent handle
-        // (set via `Bun__HTTPServerAgent__setEnabled`).
-        unsafe {
-            InspectorHTTPServerAgent::notify_server_started(
-                agent.as_ptr(),
-                this.next_server_id.get(),
-                instance.vm().hot_reload_counter.get() as i32,
-                &url,
-                bun_core::time::milli_timestamp() as f64,
-                instance.ptr.cast(),
-            );
-        }
+        agent.notify_server_started(
+            this.next_server_id.get(),
+            instance.vm().hot_reload_counter.get() as i32,
+            &url,
+            bun_core::time::milli_timestamp() as f64,
+            instance.ptr.addr(),
+        );
     }
 
     /// Tell the C++ inspector agent (if attached) that the server stopped,
@@ -3844,8 +3839,7 @@ pub(crate) mod http_server_agent {
         let Some(agent) = this.agent.get() else {
             return;
         };
-        InspectorHTTPServerAgent::notify_server_stopped(
-            agent.as_ptr(),
+        agent.notify_server_stopped(
             server.inspector_server_id(),
             bun_core::time::milli_timestamp() as f64,
         );
@@ -3899,11 +3893,10 @@ pub(crate) mod http_server_agent {
             });
         }
 
-        InspectorHTTPServerAgent::notify_server_routes_updated(
-            agent.as_ptr(),
+        agent.notify_server_routes_updated(
             server.inspector_server_id(),
             server.vm().hot_reload_counter.get() as i32,
-            &mut routes,
+            &routes,
         );
         Ok(())
     }

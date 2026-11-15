@@ -1,33 +1,26 @@
 use crate::{JSGlobalObject, JSValue, JsResult, Strong};
 
 // Opaque pointer to C++ SecretsJobOptions struct
-bun_opaque::opaque_ffi! { pub struct SecretsJobOptions; }
+bun_opaque::sealed_handle! { pub struct SecretsJobOptions; }
 
-// safe fn: `SecretsJobOptions` and `JSGlobalObject` are `opaque_ffi!` ZST
-// handles (`!Freeze` via `UnsafeCell`); `&mut`/`&` are ABI-identical to
-// non-null `*mut`/`*const` and C++ mutating job state through them is interior
-// to the cell. `deinit` consumes/frees the C++ allocation and so stays
-// `unsafe fn` (double-free precondition).
+// safe fn: `&` is ABI-identical to a non-null pointer, and what C++ mutates is behind the cell. `deinit` frees the job.
 unsafe extern "C" {
-    safe fn Bun__SecretsJobOptions__runTask(ctx: &mut SecretsJobOptions);
+    safe fn Bun__SecretsJobOptions__runTask(ctx: &SecretsJobOptions);
     safe fn Bun__SecretsJobOptions__runFromJS(
-        ctx: &mut SecretsJobOptions,
+        ctx: &SecretsJobOptions,
         global: &JSGlobalObject,
         promise: JSValue,
     );
     fn Bun__SecretsJobOptions__deinit(ctx: *mut SecretsJobOptions);
 }
 
-/// The C++ `SecretsJobOptions` a job owns; plain data, freed wherever the job ends.
-struct SecretsOptions(*mut SecretsJobOptions);
+// SAFETY: only C++ makes one, as the argument of `Bun__Secrets__scheduleJob`.
+bun_opaque::owned_handle! {
+    /// The C++ `SecretsJobOptions` a job owns; plain data, freed wherever the job ends.
+    struct SecretsOptions(SecretsJobOptions) => unsafe Bun__SecretsJobOptions__deinit;
+}
 // SAFETY: an owned C++ heap object with no thread affinity.
 unsafe impl Send for SecretsOptions {}
-impl Drop for SecretsOptions {
-    fn drop(&mut self) {
-        // SAFETY: the pointer C++ handed to `Bun__Secrets__scheduleJob`; freed once, here.
-        unsafe { Bun__SecretsJobOptions__deinit(self.0) };
-    }
-}
 
 /// `Bun.secrets.{get,set,delete}` off the JS thread.
 pub(crate) struct SecretsJob {
@@ -39,7 +32,7 @@ impl crate::JobContext for SecretsJob {
     type Js = Strong;
 
     fn run(this: &mut Self, done: crate::Completion<Self>) -> Option<crate::Completion<Self>> {
-        Bun__SecretsJobOptions__runTask(SecretsJobOptions::opaque_mut(this.options.0));
+        Bun__SecretsJobOptions__runTask(&this.options);
         Some(done)
     }
 
@@ -51,11 +44,7 @@ impl crate::JobContext for SecretsJob {
         // scope here, `drainMicrotasks`'s `TopExceptionScope` ctor asserts on the
         // unchecked simulated throw — same shape as `JSCDeferredWorkTask::run`.
         crate::validation_scope!(scope, global);
-        Bun__SecretsJobOptions__runFromJS(
-            SecretsJobOptions::opaque_mut(this.options.0),
-            global,
-            promise.get(),
-        );
+        Bun__SecretsJobOptions__runFromJS(&this.options, global, promise.get());
         scope.assert_no_exception_except_termination()
     }
 }
@@ -64,15 +53,13 @@ impl crate::JobContext for SecretsJob {
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Secrets__scheduleJob(
     global: &JSGlobalObject,
-    options: *mut SecretsJobOptions,
+    options: SecretsOptions,
     promise: JSValue,
 ) {
     let cx = global.js_thread_of_caller();
     crate::Job::<SecretsJob>::schedule(
         &cx,
-        SecretsJob {
-            options: SecretsOptions(options),
-        },
+        SecretsJob { options },
         Strong::create(promise, global),
     );
 }

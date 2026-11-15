@@ -1,5 +1,3 @@
-use core::ffi::c_void;
-
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
@@ -77,14 +75,11 @@ impl Expect {
             };
 
             extern "C" fn strict_equal_iterator(
-                _: *mut VM,
+                _: &VM,
                 _: &JSGlobalObject,
-                entry_: *mut c_void,
+                entry: &mut ExpectedEntry<'_>,
                 item: JSValue,
             ) {
-                // SAFETY: entry_ is &mut ExpectedEntry on the caller's stack, threaded through
-                // for_each as opaque userdata.
-                let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry<'_>>(entry_) };
                 let Ok(same) = item.is_strict_equal(entry.expected, entry.global) else {
                     return;
                 };
@@ -96,7 +91,7 @@ impl Expect {
 
             value.for_each(
                 global,
-                (&raw mut expected_entry).cast::<c_void>(),
+                &mut expected_entry,
                 strict_equal_iterator,
             )?;
         } else {

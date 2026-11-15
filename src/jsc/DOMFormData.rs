@@ -1,9 +1,10 @@
 use core::ffi::c_void;
 
-use crate::{JSGlobalObject, JSValue, JsResult};
+use crate::webcore_types::Blob;
+use crate::{DOMWrapped, JSGlobalObject, JSValue, JsResult};
 use bun_core::EncodedSlice;
 
-bun_opaque::opaque_ffi! {
+bun_opaque::sealed_handle! {
     /// Opaque FFI handle to WebCore::DOMFormData (C++ side).
     pub struct DOMFormData;
 }
@@ -16,27 +17,76 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn WebCore__DOMFormData__fromJS(js_value0: JSValue) -> *mut DOMFormData;
     safe fn WebCore__DOMFormData__append(
-        arg0: &mut DOMFormData,
+        arg0: &DOMFormData,
         arg1: &JSGlobalObject,
         arg2: &EncodedSlice,
         arg3: &EncodedSlice,
     ) -> bool;
-    // safe: `DOMFormData`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST
-    // handles; `&EncodedSlice` is ABI-identical to non-null `*const EncodedSlice` and
-    // C++ only reads the named struct via `toStringCopy`. `arg3` is an opaque
-    // `*Blob` C++ owns (never dereferenced as Rust data) — same round-trip
-    // contract as `Zig__GlobalObject__resetModuleRegistryMap`'s `map` param.
-    safe fn WebCore__DOMFormData__appendBlob(
-        arg0: &mut DOMFormData,
+    fn WebCore__DOMFormData__appendBlob(
+        arg0: &DOMFormData,
         arg1: &JSGlobalObject,
         arg2: &EncodedSlice,
-        arg3: *mut c_void,
+        arg3: *const c_void,
         arg4: &EncodedSlice,
     ) -> bool;
-    safe fn WebCore__DOMFormData__count(arg0: &mut DOMFormData) -> usize;
+    safe fn WebCore__DOMFormData__count(arg0: &DOMFormData) -> usize;
+    fn DOMFormData__forEach(
+        this: &DOMFormData,
+        ctx: *mut c_void,
+        cb: unsafe extern "C" fn(
+            *mut c_void,
+            &EncodedSlice,
+            *const c_void,
+            Option<&EncodedSlice>,
+            u8,
+        ),
+    );
+}
+
+#[derive(Clone, Copy)]
+pub enum FormDataEntry<'a> {
+    String(EncodedSlice<'a>),
+    File {
+        blob: &'a Blob,
+        filename: EncodedSlice<'a>,
+    },
 }
 
 impl DOMFormData {
+    /// # Safety
+    /// The form does not change during this call, or while a name or an entry is in use.
+    pub unsafe fn for_each<'a, F: FnMut(EncodedSlice<'a>, FormDataEntry<'a>)>(&'a self, mut f: F) {
+        unsafe extern "C" fn call<'a, F: FnMut(EncodedSlice<'a>, FormDataEntry<'a>)>(
+            f: &mut F,
+            name: &EncodedSlice<'a>,
+            value: *const c_void,
+            filename: Option<&EncodedSlice<'a>>,
+            is_blob: u8,
+        ) {
+            // SAFETY: `value` is the `Blob` that the entry holds a ref on, or else an `EncodedSlice`.
+            let entry = unsafe {
+                match is_blob {
+                    0 => FormDataEntry::String(*value.cast()),
+                    _ => FormDataEntry::File {
+                        blob: &*value.cast(),
+                        filename: filename.copied().unwrap_or(EncodedSlice::EMPTY),
+                    },
+                }
+            };
+            f(*name, entry);
+        }
+        type Call<'a, F> = unsafe extern "C" fn(
+            &mut F,
+            &EncodedSlice<'a>,
+            *const c_void,
+            Option<&EncodedSlice<'a>>,
+            u8,
+        );
+        let call: Call<'a, F> = call::<F>;
+        // SAFETY: the caller's contract. C++ only hands `f` back to `call`, one entry at a time, until it returns.
+        unsafe { DOMFormData__forEach(self, (&raw mut f).cast(), bun_ptr::cast_fn_ptr(call)) };
+    }
+
     pub fn create(global: &JSGlobalObject) -> JSValue {
         WebCore__DOMFormData__create(global)
     }
@@ -54,20 +104,15 @@ impl DOMFormData {
         })
     }
 
-    pub fn from_js<'a>(value: JSValue) -> Option<&'a mut DOMFormData> {
-        // Returned pointer is valid while `value` is kept alive on the stack
-        // (conservative GC scan). Null → None. `DOMFormData` is an opaque ZST
-        // handle, so `opaque_mut` is the centralised zero-byte deref proof.
-        // The unbounded `'a` cannot be expressed more tightly: the cell is
-        // GC-owned, so the caller must keep `value` stack-rooted for the
-        // lifetime of the returned reference.
-        let p = WebCore__DOMFormData__fromJS(value);
-        (!p.is_null()).then(|| DOMFormData::opaque_mut(p))
+    /// `None` if `value` is not a `FormData`.
+    pub fn with_wrapped<R>(value: JSValue, f: impl FnOnce(&Self) -> R) -> Option<R> {
+        // SAFETY: a `JSDOMFormData` holds a ref on what it wraps.
+        unsafe { DOMWrapped::new(value, WebCore__DOMFormData__fromJS(value)) }.map(|form| f(&form))
     }
 
     #[track_caller]
     pub fn append(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         name_: &EncodedSlice,
         value_: &EncodedSlice,
@@ -79,18 +124,20 @@ impl DOMFormData {
 
     #[track_caller]
     pub fn append_blob(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         name_: &EncodedSlice,
-        blob: *mut c_void,
+        blob: &Blob,
         filename_: &EncodedSlice,
     ) -> JsResult<()> {
-        crate::call_false_is_throw(global, || {
+        let blob = core::ptr::from_ref(blob).cast();
+        // SAFETY: C++ only hands `blob` to `Blob__dupe`, during the call.
+        crate::call_false_is_throw(global, || unsafe {
             WebCore__DOMFormData__appendBlob(self, global, name_, blob, filename_)
         })
     }
 
-    pub fn count(&mut self) -> usize {
+    pub fn count(&self) -> usize {
         WebCore__DOMFormData__count(self)
     }
 }

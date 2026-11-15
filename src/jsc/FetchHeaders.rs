@@ -1,13 +1,13 @@
 use core::ffi::c_void;
-use core::ptr::NonNull;
 
-use crate::virtual_machine::VirtualMachine;
-use crate::{JSGlobalObject, JSValue, JsResult, VM, host_fn};
+use crate::{DOMWrapped, JSGlobalObject, JSValue, JsResult, VM, host_fn};
+use bun_core::ffi::FfiSlice;
 use bun_core::{EncodedSlice, String as BunString, StringPointer};
-use bun_uws::ResponseKind;
+use bun_http::picohttp;
+use bun_uws::{AnyResponse, ResponseKind};
 
-bun_opaque::opaque_ffi! {
-    /// Opaque C++ `WebCore::FetchHeaders` handle (ref-counted on the C++ side; see `deref`).
+bun_opaque::sealed_handle! {
+    /// Opaque C++ `WebCore::FetchHeaders` handle (ref-counted on the C++ side; see [`HeadersRef`]).
     pub struct FetchHeaders;
 }
 
@@ -25,7 +25,7 @@ unsafe extern "C" {
     safe fn WebCore__FetchHeaders__cloneThis(
         arg0: &FetchHeaders,
         arg1: &JSGlobalObject,
-    ) -> *mut FetchHeaders;
+    ) -> Option<HeadersRef>;
     fn WebCore__FetchHeaders__copyTo(
         arg0: &FetchHeaders,
         arg1: *mut StringPointer,
@@ -39,46 +39,39 @@ unsafe extern "C" {
         arg1: &mut u32,
         arg2: &mut u32,
     ) -> bool;
-    safe fn WebCore__FetchHeaders__createEmpty() -> *mut FetchHeaders;
-    // safe: `arg0`/`arg1` are opaque handles to C++-owned request structs
-    // (PicoHeaders / uWS HttpRequest); never dereferenced as Rust data — same
-    // round-trip contract as `Zig__GlobalObject__resetModuleRegistryMap`.
-    safe fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: *const c_void)
-    -> *mut FetchHeaders;
-    safe fn WebCore__FetchHeaders__createFromUWS(arg1: *mut c_void) -> *mut FetchHeaders;
-    // safe: `FetchHeaders` is an `opaque_ffi!` ZST handle; `&mut` is ABI-identical
-    // to a non-null `*mut` and the C++ refcount decrement is interior to the cell.
-    safe fn WebCore__FetchHeaders__deref(arg0: &mut FetchHeaders);
-    safe fn WebCore__FetchHeaders__fastGet_(arg0: &FetchHeaders, arg1: u8, arg2: &mut EncodedSlice);
-    safe fn WebCore__FetchHeaders__fastHas_(arg0: &FetchHeaders, arg1: u8) -> bool;
-    safe fn WebCore__FetchHeaders__fastRemove_(arg0: &FetchHeaders, arg1: u8);
+    safe fn WebCore__FetchHeaders__createEmpty() -> HeadersRef;
+    safe fn WebCore__FetchHeaders__createFromPicoHeaders_(
+        arg0: &FfiSlice<'_, picohttp::Header>,
+    ) -> HeadersRef;
+    safe fn WebCore__FetchHeaders__createFromUWS(arg1: &bun_uws::Request) -> HeadersRef;
+    fn WebCore__FetchHeaders__deref(arg0: *mut FetchHeaders);
+    safe fn WebCore__FetchHeaders__fastGet_(arg0: &FetchHeaders, arg1: HTTPHeaderName)
+    -> BunString;
+    safe fn WebCore__FetchHeaders__fastHas_(arg0: &FetchHeaders, arg1: HTTPHeaderName) -> bool;
+    safe fn WebCore__FetchHeaders__fastRemove_(arg0: &FetchHeaders, arg1: HTTPHeaderName);
     safe fn WebCore__FetchHeaders__get_(
         arg0: &FetchHeaders,
         arg1: &EncodedSlice,
-        arg2: &mut EncodedSlice,
-        arg3: &JSGlobalObject,
-    );
+        arg2: &JSGlobalObject,
+    ) -> BunString;
     safe fn WebCore__FetchHeaders__isEmpty(arg0: &FetchHeaders) -> bool;
     safe fn WebCore__FetchHeaders__toJS(arg0: &FetchHeaders, arg1: &JSGlobalObject) -> JSValue;
-    // safe: `FetchHeaders` is an opaque ZST handle (`&mut` ≡ non-null `*mut`);
-    // `arg2` is an opaque handle to a C++-owned uWS response (never dereferenced
-    // as Rust data).
-    safe fn WebCore__FetchHeaders__toUWSResponse(
-        arg0: &mut FetchHeaders,
+    fn WebCore__FetchHeaders__toUWSResponse(
+        arg0: &FetchHeaders,
         kind: ResponseKind,
         arg2: *mut c_void,
     );
-    safe fn WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(
-        arg0: &mut FetchHeaders,
+    fn WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(
+        arg0: &FetchHeaders,
         ssl: bool,
         arg1: *mut c_void,
     );
-    safe fn WebCore__FetchHeaders__createFromH3(arg0: *mut c_void) -> *mut FetchHeaders;
+    safe fn WebCore__FetchHeaders__createFromH3(arg0: &bun_uws::H3::Request) -> HeadersRef;
 
     safe fn WebCore__FetchHeaders__createFromJS(
         arg0: &JSGlobalObject,
         arg1: JSValue,
-    ) -> *mut FetchHeaders;
+    ) -> Option<HeadersRef>;
 
     safe fn WebCore__FetchHeaders__put(
         this: &FetchHeaders,
@@ -88,17 +81,13 @@ unsafe extern "C" {
     );
 }
 
-#[repr(C)]
-struct PicoHeaders {
-    ptr: *const c_void,
-    len: usize,
+// SAFETY: only the imports that return a new ref make one.
+bun_opaque::owned_handle! {
+    /// One ref on a `WebCore::FetchHeaders`. `clone_this` makes a deep copy.
+    pub struct HeadersRef(FetchHeaders) => unsafe WebCore__FetchHeaders__deref;
 }
 
-// The 4 forwarding wrappers below pass *mut StringPointer/*mut u8 straight to
-// C++ without dereferencing; clippy::not_unsafe_ptr_arg_deref is a false
-// positive on opaque-token forwarding through an unsafe extern call.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-impl FetchHeaders {
+impl HeadersRef {
     /// Construct a `Headers` object from a JSValue.
     ///
     /// This can be:
@@ -108,17 +97,58 @@ impl FetchHeaders {
     /// Throws an exception if invalid.
     ///
     /// If empty, returns null.
-    pub fn create_from_js(
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<Option<NonNull<FetchHeaders>>> {
+    pub fn create_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
         host_fn::from_js_host_call_generic(global, || {
-            NonNull::new(WebCore__FetchHeaders__createFromJS(global, value))
+            WebCore__FetchHeaders__createFromJS(global, value)
         })
     }
 
+    pub fn create_from_uws(uws_request: &bun_uws::Request) -> Self {
+        WebCore__FetchHeaders__createFromUWS(uws_request)
+    }
+
+    pub fn create_from_h3(h3_request: &bun_uws::H3::Request) -> Self {
+        WebCore__FetchHeaders__createFromH3(h3_request)
+    }
+
+    pub fn create_empty() -> Self {
+        WebCore__FetchHeaders__createEmpty()
+    }
+
+    pub fn create_from_pico_headers(pico_headers_list: &[picohttp::Header]) -> Self {
+        WebCore__FetchHeaders__createFromPicoHeaders_(&FfiSlice::new(pico_headers_list))
+    }
+}
+
+/// A `headers` option: the caller's `Headers` object, or what another value was converted to.
+pub enum HeadersInit {
+    Object(DOMWrapped<FetchHeaders>),
+    Created(HeadersRef),
+}
+
+impl HeadersInit {
+    /// `None` if `value` is not a `Headers` object and converts to no header.
+    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
+        match FetchHeaders::cast_(value, global.vm()) {
+            Some(headers) => Ok(Some(Self::Object(headers))),
+            None => Ok(HeadersRef::create_from_js(global, value)?.map(Self::Created)),
+        }
+    }
+}
+
+impl core::ops::Deref for HeadersInit {
+    type Target = FetchHeaders;
+    fn deref(&self) -> &FetchHeaders {
+        match self {
+            Self::Object(headers) => headers,
+            Self::Created(headers) => headers,
+        }
+    }
+}
+
+impl FetchHeaders {
     pub fn put_default(
-        &mut self,
+        &self,
         name_: HTTPHeaderName,
         value: &BunString,
         global: &JSGlobalObject,
@@ -130,50 +160,28 @@ impl FetchHeaders {
         self.put(name_, value, global)
     }
 
-    pub fn is_empty(&mut self) -> bool {
+    pub fn is_empty(&self) -> bool {
         WebCore__FetchHeaders__isEmpty(self)
     }
 
-    pub fn create_from_uws(uws_request: *mut c_void) -> NonNull<FetchHeaders> {
-        NonNull::new(WebCore__FetchHeaders__createFromUWS(uws_request))
-            .expect("WebCore__FetchHeaders__createFromUWS returned null")
-    }
-
-    pub fn create_from_h3(h3_request: *mut c_void) -> NonNull<FetchHeaders> {
-        NonNull::new(WebCore__FetchHeaders__createFromH3(h3_request))
-            .expect("WebCore__FetchHeaders__createFromH3 returned null")
-    }
-
-    pub fn to_uws_response(&mut self, kind: ResponseKind, uws_response: *mut c_void) {
-        WebCore__FetchHeaders__toUWSResponse(self, kind, uws_response)
+    pub fn to_uws_response(&self, response: AnyResponse) {
+        let kind = ResponseKind::of(response);
+        // SAFETY: `kind` and the pointer come from the same response.
+        unsafe { WebCore__FetchHeaders__toUWSResponse(self, kind, response.as_ptr()) }
     }
 
     /// For the 101 response of an HTTP/1 WebSocket upgrade. Skips headers that `upgrade()` writes.
-    pub fn to_uws_response_for_websocket_upgrade(&mut self, ssl: bool, uws_response: *mut c_void) {
-        WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(self, ssl, uws_response)
-    }
-
-    pub fn create_empty() -> NonNull<FetchHeaders> {
-        NonNull::new(WebCore__FetchHeaders__createEmpty())
-            .expect("WebCore__FetchHeaders__createEmpty returned null")
-    }
-
-    pub fn create_from_pico_headers<T>(pico_headers_list: &[T]) -> NonNull<FetchHeaders> {
-        let out = PicoHeaders {
-            ptr: pico_headers_list.as_ptr().cast::<c_void>(),
-            len: pico_headers_list.len(),
-        };
-        // `out` lives across the call; C++ copies the headers synchronously.
-        NonNull::new(WebCore__FetchHeaders__createFromPicoHeaders_(
-            std::ptr::from_ref(&out).cast::<c_void>(),
-        ))
-        .expect("WebCore__FetchHeaders__createFromPicoHeaders_ returned null")
+    pub fn to_uws_response_for_websocket_upgrade(&self, response: AnyResponse) {
+        let ssl = matches!(response, AnyResponse::SSL(_));
+        let response = response.socket().cast();
+        // SAFETY: `socket` panics unless `response` is a `uWS::HttpResponse<ssl>`.
+        unsafe { WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(self, ssl, response) }
     }
 
     /// `value`'s tag carries its encoding, and a `WTFStringImpl`-tagged value
     /// is ref'd by the C++ side instead of copied character-by-character.
     pub fn put(
-        &mut self,
+        &self,
         name_: HTTPHeaderName,
         value: &BunString,
         global: &JSGlobalObject,
@@ -183,70 +191,32 @@ impl FetchHeaders {
         })
     }
 
-    pub(crate) fn get_(
-        &mut self,
-        name_: &EncodedSlice,
-        out: &mut EncodedSlice,
-        global: &JSGlobalObject,
-    ) {
-        WebCore__FetchHeaders__get_(self, name_, out, global)
+    pub fn get(&self, name_: &[u8], global: &JSGlobalObject) -> JsResult<Option<BunString>> {
+        let value = host_fn::from_js_host_call_generic(global, || {
+            WebCore__FetchHeaders__get_(self, &EncodedSlice::latin1(name_), global)
+        })?;
+        Ok((!value.is_empty()).then_some(value))
     }
 
-    pub fn get(&mut self, name_: &[u8], global: &JSGlobalObject) -> Option<EncodedSlice<'_>> {
-        let mut out = EncodedSlice::EMPTY;
-        self.get_(&EncodedSlice::latin1(name_), &mut out, global);
-        if !out.is_empty() {
-            // Returns the EncodedSlice view (borrows C++-owned header
-            // storage); caller may `.slice()` it. Returning `&[u8]` directly
-            // would borrow the local `out`, not the underlying buffer.
-            return Some(out);
-        }
-
-        None
-    }
-
-    pub fn fast_has(&mut self, name_: HTTPHeaderName) -> bool {
-        self.fast_has_(name_ as u8)
-    }
-
-    pub fn fast_get(&mut self, name_: HTTPHeaderName) -> Option<EncodedSlice<'_>> {
-        let mut str = EncodedSlice::EMPTY;
-        self.fast_get_(name_ as u8, &mut str);
-        if str.is_empty() {
-            return None;
-        }
-
-        Some(str)
-    }
-
-    pub fn fast_has_(&self, name_: u8) -> bool {
+    pub fn fast_has(&self, name_: HTTPHeaderName) -> bool {
         WebCore__FetchHeaders__fastHas_(self, name_)
     }
 
-    pub(crate) fn fast_get_(&mut self, name_: u8, str: &mut EncodedSlice) {
-        WebCore__FetchHeaders__fastGet_(self, name_, str)
+    pub fn fast_get(&self, name_: HTTPHeaderName) -> Option<BunString> {
+        let value = WebCore__FetchHeaders__fastGet_(self, name_);
+        (!value.is_empty()).then_some(value)
     }
 
-    pub fn fast_remove(&mut self, header: HTTPHeaderName) {
-        self.fast_remove_(header as u8)
-    }
-
-    pub(crate) fn fast_remove_(&mut self, header: u8) {
+    pub fn fast_remove(&self, header: HTTPHeaderName) {
         WebCore__FetchHeaders__fastRemove_(self, header)
     }
 
-    pub fn cast_(value: JSValue, vm: &VM) -> Option<NonNull<FetchHeaders>> {
-        NonNull::new(WebCore__FetchHeaders__cast_(value, vm))
+    pub fn cast_(value: JSValue, vm: &VM) -> Option<DOMWrapped<FetchHeaders>> {
+        // SAFETY: a `JSFetchHeaders` holds a ref on what it wraps.
+        unsafe { DOMWrapped::new(value, WebCore__FetchHeaders__cast_(value, vm)) }
     }
 
-    pub fn cast(value: JSValue) -> Option<NonNull<FetchHeaders>> {
-        // SAFETY: `VirtualMachine::get()` is only called from the JS thread, where
-        // `global` is a live non-null JSGlobalObject for the VM's lifetime.
-        let global = VirtualMachine::get().global();
-        Self::cast_(value, global.vm())
-    }
-
-    pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
+    pub fn to_js(&self, global_this: &JSGlobalObject) -> JSValue {
         WebCore__FetchHeaders__toJS(self, global_this)
     }
 
@@ -257,17 +227,10 @@ impl FetchHeaders {
         WebCore__FetchHeaders__count(self, &mut names, &mut buf_len).then_some((names, buf_len))
     }
 
-    pub fn clone_this(
-        &mut self,
-        global: &JSGlobalObject,
-    ) -> JsResult<Option<NonNull<FetchHeaders>>> {
+    pub fn clone_this(&self, global: &JSGlobalObject) -> JsResult<Option<HeadersRef>> {
         host_fn::from_js_host_call_generic(global, || {
-            NonNull::new(WebCore__FetchHeaders__cloneThis(self, global))
+            WebCore__FetchHeaders__cloneThis(self, global)
         })
-    }
-
-    pub fn deref(&mut self) {
-        WebCore__FetchHeaders__deref(self)
     }
 
     /// Aborts if `names`, `values` or `buf` is smaller than what `count()` reported.

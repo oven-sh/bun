@@ -726,11 +726,7 @@ impl<'a> Run<'a> {
                 if rejected
                     || promise_result.is_error()
                     || promise_result.is_aggregate_error(self.global)
-                    // `JSGlobalObject::vm()` returns `&VM`;
-                    // `is_exception` takes `*mut VM` (FFI passthrough). The
-                    // C++ side never writes through it.
-                    || promise_result
-                        .is_exception(std::ptr::from_ref::<jsc::VM>(self.global.vm()).cast_mut())
+                    || promise_result.is_exception(self.global.vm())
                 {
                     vm.unhandled_rejection(self.global, promise_result, promise.as_value());
                     return Err(MacroError::MacroFailed);
@@ -779,33 +775,18 @@ impl Runner {
         // exception-reporting path); a thread-local sentinel suffices.
         EXCEPTION_HOLDER.with(|h| h.set(true));
 
-        /// Unprotects every argument on drop.
-        struct JsArgs(Vec<JSValue>);
-        impl JsArgs {
-            fn push(&mut self, value: JSValue) {
-                value.protect();
-                self.0.push(value);
-            }
-        }
-        impl Drop for JsArgs {
-            fn drop(&mut self) {
-                for arg in &self.0 {
-                    arg.unprotect();
-                }
-            }
-        }
-        let mut js_args = JsArgs(Vec::new());
+        let mut js_args = Vec::new();
 
         let global_object = vm.global();
 
         match &caller.data {
             ExprData::ECall(call) => {
                 let call_args: &[Expr] = call.args.slice();
-                js_args.0.reserve_exact(
+                js_args.reserve_exact(
                     call_args.len() + usize::from(javascript_object != JSValue::ZERO),
                 );
                 for in_ in call_args {
-                    js_args.push(in_.to_js(global_object)?);
+                    js_args.push(in_.to_js(global_object)?.protected());
                 }
             }
             ExprData::ETemplate(_) => {
@@ -822,7 +803,7 @@ impl Runner {
         }
 
         if javascript_object != JSValue::ZERO {
-            js_args.push(javascript_object);
+            js_args.push(javascript_object.protected());
         }
 
         // The `extern "C" fn()` trampoline (no userdata) reaches the call args +
@@ -864,7 +845,7 @@ impl Runner {
             log,
             bump,
             caller,
-            js_args: &js_args.0,
+            js_args: jsc::ProtectedJSValue::as_values(&js_args),
             source,
             id,
             result: Err(MacroError::MacroFailed),

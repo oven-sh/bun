@@ -8,13 +8,12 @@ use crate::webcore::jsc::{
     JSPromise, JSValue, JsResult, SystemError, URLSearchParams, VirtualMachine,
 };
 use crate::webcore::{
-    self, AnyBlob, Blob, BlobExt as _, ByteStream, DrainResult, FetchHeaders, Lifetime,
-    ReadableStream, blob, streams,
+    self, AnyBlob, Blob, BlobExt as _, ByteStream, DrainResult, Lifetime, ReadableStream, blob,
+    streams,
 };
 use bun_core::Output;
 use bun_http_types::MimeType::MimeType;
 // Re-export so callers can write `body::InternalBlob`.
-use crate::jsc::HTTPHeaderName;
 pub(crate) use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
 use bun_core::String as BunString;
@@ -836,18 +835,16 @@ impl Value {
             }
         }
 
-        if let Some(form_data) = DOMFormData::from_js(value) {
-            return Ok(Value::Blob(Blob::from_dom_form_data(
-                global_this,
-                form_data,
-            )));
+        if let Some(blob) =
+            DOMFormData::with_wrapped(value, |form| Blob::from_dom_form_data(global_this, form))
+        {
+            return Ok(Value::Blob(blob));
         }
 
-        if let Some(search_params) = URLSearchParams::from_js(value) {
-            return Ok(Value::Blob(Blob::from_url_search_params(
-                global_this,
-                search_params,
-            )));
+        if let Some(blob) = URLSearchParams::with_wrapped(value, |params| {
+            Blob::from_url_search_params(global_this, params)
+        }) {
+            return Ok(Value::Blob(blob));
         }
 
         if js_type == jsc::JSType::DOMWrapper {
@@ -913,9 +910,8 @@ impl Value {
         &mut self,
         new: &mut Value,
         cx: &bun_jsc::JsThread<'_>,
-        // Opaque C++ handle, mutated via FFI. Taking
-        // `NonNull` (not `&`/`&mut`) avoids manufacturing aliased Rust borrows.
-        headers: Option<NonNull<FetchHeaders>>,
+        // For the content type of a waiting `.blob()`.
+        response: Option<&webcore::Response>,
     ) -> jsc::JsResult<()> {
         bun_core::scoped_log!(BodyValue, "resolve");
         if let Value::Locked(locked) = self {
@@ -991,18 +987,12 @@ impl Value {
                     }
                     Action::None | Action::GetBlob => {
                         let blob = new.use_();
-                        if let Some(fetch_headers) = headers {
-                            // `headers` is a live C++ FetchHeaders handle;
-                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                            let fetch_headers =
-                                bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
-                            if let Some(content_type) =
-                                fetch_headers.fast_get(HTTPHeaderName::ContentType)
-                            {
-                                let content_slice = content_type.to_utf8();
-                                let mime_type = MimeType::init(content_slice.slice());
-                                set_blob_content_type(&blob, mime_type);
-                            }
+                        if let Some(content_type) =
+                            response.and_then(|r| r.get_content_type_header())
+                        {
+                            let content_slice = content_type.to_utf8();
+                            let mime_type = MimeType::init(content_slice.slice());
+                            set_blob_content_type(&blob, mime_type);
                         }
                         if !blob.content_type_was_set.get() && blob.store.get().is_some() {
                             set_blob_content_type(&blob, bun_http_types::MimeType::TEXT);
@@ -1300,7 +1290,7 @@ pub(crate) fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<
 // ────────────────────────────────────────────────────────────────────────────
 
 /// Mixin trait with provided methods.
-/// Implementers supply `get_body_value`, `get_fetch_headers`, `get_form_data_encoding`,
+/// Implementers supply `get_body_value`, `get_content_type_header`, `get_form_data_encoding`,
 /// and optionally override `get_body_readable_stream`.
 pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// R-2 interior-mutability boundary: implementors project `&mut Value`
@@ -1309,11 +1299,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// short and do not hold it across a call that re-enters JS.
     #[allow(clippy::mut_from_ref)]
     fn get_body_value(&self) -> &mut Value;
-    /// `FetchHeaders` is an
-    /// opaque, intrusively-refcounted C++ handle whose accessors take `&mut self`
-    /// (FFI signature is `*mut`). Returning `NonNull` instead of `&FetchHeaders`
-    /// avoids deriving `&mut T` from `&T` at the call sites (UB).
-    fn get_fetch_headers(&self) -> Option<NonNull<FetchHeaders>>;
+    fn get_content_type_header(&self) -> Option<bun_core::String>;
     fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
 
     // ────────────────────────────────────────────────────────────────────
@@ -1896,15 +1882,10 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         let value = self.get_body_value();
         let blob = value.use_();
         if blob.content_type().is_empty() {
-            if let Some(fetch_headers) = BodyMixin::get_fetch_headers(self) {
-                // `fetch_headers` is a live C++ FetchHeaders handle;
-                // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
-                if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
-                    let content_slice = content_type.to_utf8();
-                    let mime_type = MimeType::init(content_slice.slice());
-                    set_blob_content_type(&blob, mime_type);
-                }
+            if let Some(content_type) = self.get_content_type_header() {
+                let content_slice = content_type.to_utf8();
+                let mime_type = MimeType::init(content_slice.slice());
+                set_blob_content_type(&blob, mime_type);
             }
             if !blob.content_type_was_set.get() && blob.store.get().is_some() {
                 set_blob_content_type(&blob, bun_http_types::MimeType::TEXT);

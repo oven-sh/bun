@@ -8,8 +8,8 @@
 // Method: a small set of deterministic 32×24 source patterns, each resized
 // through every (filter × target-size) pair, decoded back to RGBA, and diffed
 // against a pre-baked Sharp/libvips reference. Edge mode intentionally differs
-// (we clamp+renormalise; libvips embeds with VIPS_EXTEND_COPY — see
-// image_resize.cpp header), so the outer 2-pixel border is excluded.
+// (we clamp+renormalise; libvips embeds with VIPS_EXTEND_COPY), so the outer
+// 2-pixel border is excluded.
 //
 // Thresholds:
 //   interior MAE   < 1.0   — i16 fixed-point on both sides; sub-1 noise is

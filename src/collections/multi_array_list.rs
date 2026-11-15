@@ -1207,7 +1207,7 @@ impl<T, A: Allocator> Drop for MultiArrayList<T, A> {
         // **intentionally preserved**:
         // [`clone`] is a bitwise SoA memcpy, so two live lists
         // can alias the same column heap pointers — see `bundle_v2.rs`
-        // `clone_ast` / `deinit_without_freeing_arena`, which drains exactly
+        // `clone_ast` / `BundleV2::drop`, which drains exactly
         // one alias and relies on the other dropping slab-only. Running
         // element destructors here would double-free that side.
         //

@@ -113,7 +113,7 @@ private:
         struct ssl_ctx_st *ctx;
     };
     std::vector<PendingServerName> pendingServerNames;
-    /* No raw us_listen_socket_t* cache here. src/runtime/server/mod.rs's non-abrupt stop calls
+    /* No raw us_listen_socket_t* cache here. src/runtime/server/mod.rs's stop calls
      * us_listen_socket_close(ls) directly; the listener is queued for free in
      * loop_post, so any vector we kept would dangle by the time the deferred
      * App::close() task runs. The group's intrusive head_listen_sockets list is

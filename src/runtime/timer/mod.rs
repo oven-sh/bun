@@ -15,11 +15,11 @@ use std::rc::Rc;
 // Low-tier timer node + tag (per §Dispatch hot-path list, the `match tag`
 // dispatch lives in this crate; `bun_event_loop` only stores `(tag, ptr)`).
 pub(crate) use bun_event_loop::EventLoopTimer::{
-    EventLoopTimer, InHeap, State as EventLoopTimerState, Tag as EventLoopTimerTag,
+    EventLoopTimer, InHeap, OwnedTimer, State as EventLoopTimerState, Tag as EventLoopTimerTag,
 };
 // bun_event_loop carries a local `Timespec` stub instead of
 // `bun_core::Timespec`. Same `{sec: i64, nsec: i64}` shape; alias it here so
-// `fire()`/`next` accesses type-check without a transmute.
+// `fire_timer()`/`next` accesses type-check without a transmute.
 // TODO: remove this alias once the lower tier switches to `bun_core::Timespec`.
 pub(crate) use bun_event_loop::EventLoopTimer::Timespec as ElTimespec;
 
@@ -35,11 +35,7 @@ pub(crate) mod timer;
 // `Timer.bind.ts` class over `{ref_count, event_loop_timer, internals}` whose
 // JS-facing host-fns are pure forwarders to `TimerObjectInternals`. The macro
 // emits the parts shared by both types so each `*.rs` file holds only its
-// type-specific surface (`init`, `refresh`, the `_idleStart` accessors,
-// `run_immediate_task`).
-//
-// Type-specific items (`init`, `refresh`, `close`, `_idleStart` get/set,
-// `run_immediate_task`) go in a *second* `impl $T` block in the caller's file.
+// type-specific surface (`init`, `refresh`, `close`, the `_idleStart` accessors).
 //
 // Paths in the body are written `super::…` / `::crate_name::…` because the
 // macro is invoked *from the child module* (`super::impl_timer_object!(…)`),
@@ -49,28 +45,21 @@ macro_rules! impl_timer_object {
         #[derive(::bun_ptr::RefCounted)]
         pub(crate) struct $T {
             pub ref_count: ::bun_ptr::RefCount<Self>,
-            pub event_loop_timer: super::EventLoopTimer,
+            pub event_loop_timer: super::OwnedTimer,
             pub internals: super::TimerObjectInternals,
         }
 
         ::bun_event_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer);
-
-        impl ::core::ops::Drop for $T {
-            fn drop(&mut self) {
-                // SAFETY: last ref gone; JS thread with RuntimeState installed.
-                unsafe { self.internals.deinit() }
-            }
-        }
 
         impl ::core::default::Default for $T {
             fn default() -> Self {
                 Self {
                     ref_count: ::bun_ptr::RefCount::init(),
                     // `init_paused`: next=EPOCH, state=PENDING, heap zeroed.
-                    event_loop_timer: super::EventLoopTimer::init_paused(
+                    event_loop_timer: super::OwnedTimer::init_paused(
                         super::EventLoopTimerTag::$T,
                     ),
-                    // Default-constructed here, then overwritten in `init()`.
+                    // Default-constructed here, then filled in by `init()`.
                     internals: super::TimerObjectInternals::default(),
                 }
             }
@@ -117,7 +106,7 @@ macro_rules! impl_timer_object {
                 // Heap-allocate; `*mut Self` is the
                 // pointer the JS wrapper holds. Ownership
                 // transfers to the wrapper via `to_js_ptr`; freed by
-                // `deref → deinit → heap::take`.
+                // `deref`.
                 let payload: *mut Self =
                     ::bun_core::heap::into_raw(::std::boxed::Box::new(Self::default()));
                 // SAFETY: `payload` is a fresh heap allocation whose ownership
@@ -125,7 +114,7 @@ macro_rules! impl_timer_object {
                 let js_value = unsafe { Self::to_js_ptr(payload, cx.global()) };
                 let _keep = ::bun_jsc::EnsureStillAlive(js_value);
                 // SAFETY: `payload` was just allocated above and is exclusively
-                // owned here; `internals.init()` writes every field.
+                // owned here.
                 unsafe {
                     (*payload).internals.init(
                         js_value, cx, id, kind, interval, callback, arguments, clock,
@@ -443,8 +432,8 @@ impl EventLoopDelayMonitor {
         let next = enabled.iter().map(|enabled| enabled.next);
         if let Some(next) = next.min_by(Timespec::order) {
             timer_all().update(&raw const self.event_loop_timer, &next);
-        } else if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-            timer_all().remove(&self.event_loop_timer);
+        } else {
+            self.event_loop_timer.disarm();
         }
     }
 }
@@ -452,7 +441,7 @@ impl EventLoopDelayMonitor {
 // ─── TimerObjectInternals / TimeoutObject / ImmediateObject ─────────────────
 
 pub(crate) mod timer_object_internals;
-pub(crate) use timer_object_internals::{Flags as TimerFlags, TimerObjectInternals};
+pub(crate) use timer_object_internals::{Flags as TimerFlags, Popped, TimerObjectInternals};
 
 /// `jsc.WebCore.AbortSignal.Timeout` — real struct lives in `bun_jsc` (which
 /// this crate depends on). Re-exported here so `All::update`'s

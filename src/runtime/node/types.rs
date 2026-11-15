@@ -105,19 +105,6 @@ pub(crate) enum BlobOrStringOrBuffer {
     StringOrBuffer(StringOrBuffer<'static>),
 }
 
-impl Drop for BlobOrStringOrBuffer {
-    fn drop(&mut self) {
-        match self {
-            Self::Blob(blob) => {
-                let _ = blob.store.with_mut(|s| s.take());
-            }
-            Self::StringOrBuffer(_) => {
-                // StringOrBuffer's own Drop handles cleanup.
-            }
-        }
-    }
-}
-
 impl BlobOrStringOrBuffer {
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
@@ -177,9 +164,7 @@ impl BlobOrStringOrBuffer {
                         body_value.to_blob_if_possible();
 
                         if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
-                            let blob = any_blob.to_blob(global);
-                            any_blob.detach();
-                            return Ok(Some(Self::Blob(Box::new(blob))));
+                            return Ok(Some(Self::Blob(Box::new(any_blob.to_blob(global)))));
                         }
 
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -192,9 +177,7 @@ impl BlobOrStringOrBuffer {
                         body_value.to_blob_if_possible();
 
                         if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
-                            let blob = any_blob.to_blob(global);
-                            any_blob.detach();
-                            return Ok(Some(Self::Blob(Box::new(blob))));
+                            return Ok(Some(Self::Blob(Box::new(any_blob.to_blob(global)))));
                         }
 
                         return Err(global.throw_invalid_arguments(format_args!(

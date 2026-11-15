@@ -8,7 +8,7 @@ use bun_core::String as BunString;
 use bun_jsc::bindgen::{self, BufferSource, Callable, JsHeap, JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::{
     self as jsc, ArrayBuffer, ErrorCode, JSGlobalObject, JSType, JSValue, Job, JobContext, JsPtr,
-    JsResult, JsThread, Protected, Strong, UUID, UUID7,
+    JsResult, JsThread, ProtectedJSValue, Strong, UUID, UUID7,
 };
 
 use crate::crypto::pbkdf2::{self, PBKDF2};
@@ -212,9 +212,9 @@ enum RandomFillJob {
 #[derive(bun_jsc::JsAffine)]
 struct RandomFillJs {
     callback: Strong,
-    value: Protected,
+    value: ProtectedJSValue,
     /// The `WebAssembly.Memory` that `value` is a view of. `grow()` detaches `value`.
-    memory: Option<Protected>,
+    memory: Option<ProtectedJSValue>,
 }
 
 const MAX_POSSIBLE_LENGTH: usize = {
@@ -289,8 +289,8 @@ fn schedule(
         job,
         RandomFillJs {
             callback: Strong::create(callback.with_async_context_if_needed(global), global),
-            value: Protected::new(value),
-            memory: memory.map(Protected::new),
+            value: value.protected(),
+            memory: memory.map(JSValue::protected),
         },
     );
 }

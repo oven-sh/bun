@@ -142,9 +142,14 @@ impl<T: HeapNode, Context: HeapContext<T>> Intrusive<T, Context> {
     /// Delete the minimum value from the heap and return it.
     pub unsafe fn delete_min(&self) -> *mut T {
         let root = self.root.get();
-        if root.is_null() {
-            return ptr::null_mut();
+        if !root.is_null() {
+            self.unlink_root(root);
         }
+        root
+    }
+
+    /// SAFETY: `root` is the heap's root.
+    unsafe fn unlink_root(&self, root: *mut T) {
         // SAFETY: `root` is non-null and valid.
         let child = (*root).heap().child.get();
         self.root.set(if !child.is_null() {
@@ -156,8 +161,6 @@ impl<T: HeapNode, Context: HeapContext<T>> Intrusive<T, Context> {
         // Clear pointers with runtime safety so we can verify on
         // insert that values aren't incorrectly being set multiple times.
         (*root).heap().clear();
-
-        root
     }
 
     /// Remove the value v from the heap.
@@ -169,7 +172,8 @@ impl<T: HeapNode, Context: HeapContext<T>> Intrusive<T, Context> {
         let prev = (*v).heap().prev.get();
         if prev.is_null() {
             debug_assert!(self.root.get() == v);
-            let _ = self.delete_min();
+            // Through `v`: its owner may be dropping it, which the stored pointer must not alias.
+            self.unlink_root(v);
             return;
         }
 
@@ -301,10 +305,6 @@ pub struct IntrusiveField<T> {
 impl<T> IntrusiveField<T> {
     pub fn child(&self) -> *mut T {
         self.child.get()
-    }
-
-    pub fn prev(&self) -> *mut T {
-        self.prev.get()
     }
 
     pub fn next(&self) -> *mut T {

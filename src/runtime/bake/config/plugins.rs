@@ -16,7 +16,7 @@ pub(crate) fn set_config_plugins<'a>(
     let vm = global.bun_vm();
     // With none, the server sets up no plugins, unless bunfig.toml has some.
     if names.is_empty() {
-        vm.bake_config_plugins.with_mut(|strong| strong.deinit());
+        vm.bake_config_plugins.set(Default::default());
     } else {
         vm.bake_config_plugins
             .with_mut(|strong| strong.set(global, plugins.to_js()));
@@ -76,7 +76,7 @@ pub(crate) fn set_pages<'a>(cx: &mut JsScope<'a>, framework: JsLocal<'a>) {
     let framework = framework.to_js();
     let vm = global.bun_vm();
     if framework.is_undefined_or_null() {
-        vm.bake_framework.with_mut(|strong| strong.deinit());
+        vm.bake_framework.set(Default::default());
     } else {
         vm.bake_framework
             .with_mut(|strong| strong.set(global, framework));
@@ -88,9 +88,6 @@ pub(crate) fn set_pages<'a>(cx: &mut JsScope<'a>, framework: JsLocal<'a>) {
 /// object of a plugin, so that `bun bake` reports it as an error of `bake.config.ts`.
 pub(crate) fn check_framework<'a>(cx: &mut JsScope<'a>, framework: JsLocal<'a>) -> JsResult<()> {
     let mut bundler_options = crate::bake::SplitBundlerOptions::default();
-    let result =
-        crate::bake::Framework::from_js(framework.to_js(), cx.global(), &mut bundler_options);
-    bundler_options.destroy_plugin();
-    result?;
+    crate::bake::Framework::from_js(framework.to_js(), cx.global(), &mut bundler_options)?;
     Ok(())
 }

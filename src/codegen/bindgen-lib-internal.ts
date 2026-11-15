@@ -1845,10 +1845,10 @@ export class NativePromiseContextType extends PromisePtrType {
     out.add("Bindgen/IDLConvertNativePromiseContext.h");
   }
   rustType(): string {
-    return `Option<core::ptr::NonNull<${this.pointee}>>`;
+    return `Option<bun_ptr::RefPtr<${this.pointee}>>`;
   }
   rustFromExtern(expr: string): string {
-    return `core::ptr::NonNull::new(${super.rustFromExtern(expr)})`;
+    return `core::ptr::NonNull::new(${super.rustFromExtern(expr)}).map(|context| bun_ptr::RefPtr::from_raw(context.as_ptr()))`;
   }
 }
 

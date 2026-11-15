@@ -54,6 +54,7 @@ use std::thread::JoinHandle;
 use bun_core::{EncodedSlice, String as BunString, Timespec, TimespecMockMode, WTFStringImpl};
 use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_io::KeepAlive;
+use bun_ptr::AliasableBox;
 
 use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
 use crate::{self as jsc, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, LogJsc};
@@ -117,8 +118,8 @@ pub struct WebWorker {
     parent_poll_ref: KeepAlive,
     /// Taken by the parent to join the OS thread.
     join_handle: JsCell<Option<JoinHandle<()>>>,
-    /// What the thread is handed, until one has started; then null.
-    thread_start: Cell<*mut ThreadStart>,
+    /// What the thread is handed, until one has started.
+    thread_start: JsCell<Option<Box<ThreadStart>>>,
     /// On the parent's loop while the worker waits for room.
     pub room_timer: EventLoopTimer,
     /// How many times `room_timer` has found the thread of a sibling returning and no room yet.
@@ -131,8 +132,8 @@ pub struct WebWorker {
     /// `shutdown()`.
     vm: Cell<*mut VirtualMachine>,
     status: Cell<Status>,
-    /// Cloned env for the worker VM. Reclaimed in `shutdown()`.
-    worker_env_loader: Cell<*mut bun_dotenv::Loader>,
+    /// Cloned env for the worker VM, which points to it.
+    worker_env_loader: JsCell<Option<AliasableBox<bun_dotenv::Loader>>>,
     /// `process.exit(code)` ran; later error paths must not overwrite its code.
     exit_called: AtomicBool,
     /// The parent asked this thread to stop (`worker.terminate()` or an exiting
@@ -154,12 +155,14 @@ struct WorkerVmInit {
 struct ThreadStart {
     worker: bun_ptr::RefPtr<WebWorker>,
     init: WorkerVmInit,
-    table_pages: *mut c_void,
     _parent_ticket: crate::Ticket,
 }
 
-/// Outlives a `spawn` that fails, which drops its closure.
-struct OwnedByThread(*mut ThreadStart);
+/// Raw, so that `start` outlives a `spawn` that fails, which drops its closure.
+struct OwnedByThread {
+    start: *mut ThreadStart,
+    table_pages: *mut c_void,
+}
 // SAFETY: whoever holds it last takes the box. Of what is in the box,
 // `WebWorker` is shared across threads by design (atomics,
 // `Guarded`, thread-confined cells — see the struct doc) and holds no
@@ -293,7 +296,7 @@ impl Drop for WebWorker {
             self.join_handle.with_mut(|h| h.is_none()),
             "worker thread was never joined"
         );
-        debug_assert!(self.thread_start.get().is_null());
+        debug_assert!(self.thread_start.get().is_none());
     }
 }
 
@@ -538,11 +541,11 @@ impl WebWorker {
             vm: Cell::new(core::ptr::null_mut()),
             parent_poll_ref: KeepAlive::init(),
             join_handle: JsCell::new(None),
-            thread_start: Cell::new(core::ptr::null_mut()),
+            thread_start: JsCell::new(None),
             room_timer: EventLoopTimer::init_paused(TimerTag::WorkerWaitsForRoom),
             room_timer_rounds: Cell::new(0),
             status: Cell::new(Status::Start),
-            worker_env_loader: Cell::new(core::ptr::null_mut()),
+            worker_env_loader: JsCell::new(None),
             exit_called: AtomicBool::new(false),
             terminated_by_parent: AtomicBool::new(false),
         });
@@ -561,13 +564,12 @@ impl WebWorker {
         // it runs: the parent joins it before its own teardown's wait, which
         // this ticket would otherwise hold.
         let parent_ticket = parent.ticket();
-        let start = bun_core::heap::alloc(ThreadStart {
+        let start = Box::new(ThreadStart {
             worker: thread_ref,
             init,
-            table_pages: core::ptr::null_mut(),
             _parent_ticket: parent_ticket,
         });
-        worker_ref.thread_start.set(start);
+        worker_ref.thread_start.set(Some(start));
         let mut outcome = worker_ref.try_start(Self::has_room_to_wait_for(parent));
         if matches!(outcome, StartOutcome::NoRoom) {
             if Self::join_returning_children(parent) {
@@ -583,7 +585,7 @@ impl WebWorker {
             }
             StartOutcome::NoRoom | StartOutcome::Failed => {
                 // The thread's ref goes down with this; ours drops on return.
-                worker_ref.drop_thread_start();
+                worker_ref.thread_start.set(None);
                 worker_ref.parent_poll_ref.unref(bun_io::js_vm_ctx());
                 *error_message = BunString::static_("Failed to spawn worker thread");
                 return core::ptr::null_mut();
@@ -599,45 +601,37 @@ impl WebWorker {
     /// Spawn the thread and hand it `thread_start`, which stays where it is unless that succeeds. Parent thread.
     /// A worker that `can_wait` for the room of workers that are ending does not take the last of the room.
     fn try_start(&self, can_wait: bool) -> StartOutcome {
-        let start = self.thread_start.get();
         let mut table_pages: *mut c_void = core::ptr::null_mut();
         // SAFETY: `table_pages` is a live local the callee writes once.
         if !unsafe { Bun__AOT__tryReservePagesForNewThread(&raw mut table_pages, can_wait) } {
             return StartOutcome::NoRoom;
         }
-        // SAFETY: `heap::alloc`'d in `create()`; no thread has it yet.
-        unsafe { (*start).table_pages = table_pages };
-        let owned = OwnedByThread(start);
+        let start = bun_core::heap::into_raw(self.thread_start.take().expect("not started"));
+        let owned = OwnedByThread { start, table_pages };
         let spawn = std::thread::Builder::new()
             .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
             .spawn(move || {
                 let owned = owned;
-                // SAFETY: `heap::alloc`'d in `create()`; the thread that runs is its only owner.
-                let start = *unsafe { bun_core::heap::take(owned.0) };
-                Bun__AOT__adoptPagesForNewThread(start.table_pages);
+                // SAFETY: the box given up above; the parent takes it back only if no thread runs.
+                let start = *unsafe { bun_core::heap::take(owned.start) };
+                Bun__AOT__adoptPagesForNewThread(owned.table_pages);
                 start.worker.thread_main(start.init);
                 Bun__AOT__releaseUnusedPagesOfThread();
                 Bun__AOT__didStartThread();
                 // The thread's ref (and the parent ticket) drop here.
             });
-        match spawn {
-            Ok(handle) => {
-                self.thread_start.set(core::ptr::null_mut());
-                self.join_handle.set(Some(handle));
-                StartOutcome::Started
-            }
-            Err(_) if table_pages.is_null() => StartOutcome::Failed,
-            Err(_) => {
-                Bun__AOT__releasePagesForNewThread(table_pages);
-                StartOutcome::NoRoom
-            }
+        if let Ok(handle) = spawn {
+            self.join_handle.set(Some(handle));
+            return StartOutcome::Started;
         }
-    }
-
-    fn drop_thread_start(&self) {
-        let start = self.thread_start.replace(core::ptr::null_mut());
-        // SAFETY: `heap::alloc`'d in `create()`; no thread took it.
-        drop(unsafe { bun_core::heap::take(start) });
+        // SAFETY: the box given up above, which no thread took.
+        self.thread_start
+            .set(Some(unsafe { bun_core::heap::take(start) }));
+        if table_pages.is_null() {
+            return StartOutcome::Failed;
+        }
+        Bun__AOT__releasePagesForNewThread(table_pages);
+        StartOutcome::NoRoom
     }
 
     /// Whether the thread was asked to terminate, or is shutting down on its own: the
@@ -668,7 +662,7 @@ impl WebWorker {
         for &child in parent.child_workers.get().iter() {
             let worker = bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"));
             ending += usize::from(worker.is_ending());
-            waiting += usize::from(!worker.thread_start.get().is_null());
+            waiting += usize::from(worker.thread_start.get().is_some());
         }
         waiting < ending
     }
@@ -703,13 +697,13 @@ impl WebWorker {
                 .map(|&child| {
                     bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"))
                 })
-                .filter(|worker| !worker.thread_start.get().is_null())
+                .filter(|worker| worker.thread_start.get().is_some())
                 .min_by_key(|worker| worker.execution_context_id);
             let Some(worker) = oldest else { return };
             match worker.try_start(Self::has_ending_child(parent)) {
                 StartOutcome::Started => {
                     WORKERS_WAITING_FOR_ROOM.fetch_sub(1, Ordering::Relaxed);
-                    worker.disarm_room_timer();
+                    worker.room_timer.disarm();
                 }
                 StartOutcome::NoRoom if Self::has_ending_child(parent) => return,
                 StartOutcome::NoRoom | StartOutcome::Failed => {
@@ -726,11 +720,6 @@ impl WebWorker {
             .set(Timespec::now(TimespecMockMode::ForceRealTime).add_ms(ROOM_TIMER_MS));
         // SAFETY: parent thread; the node is unlinked, and the parent's list of children keeps `self` while it is linked.
         unsafe { (*self.parent).timer_insert(&raw const self.room_timer) };
-    }
-
-    fn disarm_room_timer(&self) {
-        // SAFETY: parent thread; `parent` outlives its children (it joins them).
-        unsafe { &*self.parent }.timer_remove(&self.room_timer);
     }
 
     /// `Tag::WorkerWaitsForRoom` fire body. The worker takes what room there is, or gets 'error'.
@@ -764,8 +753,8 @@ impl WebWorker {
     fn end_without_thread(&self, exit_code: i32) {
         log!("[{}] ends without a thread", self.execution_context_id);
         WORKERS_WAITING_FOR_ROOM.fetch_sub(1, Ordering::Relaxed);
-        self.disarm_room_timer();
-        self.drop_thread_start();
+        self.room_timer.disarm();
+        self.thread_start.set(None);
         WebWorker__workerGlobalScopeDestroyed(self.messaging_proxy, exit_code, false);
     }
 
@@ -845,7 +834,7 @@ impl WebWorker {
             handle.request_termination();
         }
         drop(handle);
-        if !this.thread_start.get().is_null() {
+        if this.thread_start.get().is_some() {
             this.end_without_thread(0);
         }
     }
@@ -952,11 +941,9 @@ impl WebWorker {
             proxy_env_slots,
         } = init;
 
-        // `heap::alloc`'d and stashed on `self` so `shutdown()` step 5 reclaims
-        // it on every path — including the early-terminate checkpoint below,
-        // which calls `shutdown()` before the VM exists.
-        let loader_ptr: *mut bun_dotenv::Loader = bun_core::heap::into_raw(Box::new(env_loader));
-        self.worker_env_loader.set(loader_ptr);
+        let env_loader = AliasableBox::new(env_loader);
+        let loader_ptr = env_loader.as_non_null();
+        self.worker_env_loader.set(Some(env_loader));
 
         // Checkpoint before the expensive part: initWorker builds a full JSC
         // VM. If a parent's request_termination() fired while we were cloning the env
@@ -974,7 +961,7 @@ impl WebWorker {
             self,
             virtual_machine::Options {
                 args: transform_options,
-                env_loader: NonNull::new(loader_ptr),
+                env_loader: Some(loader_ptr),
                 graph: crate::virtual_machine::standalone_module_graph(),
                 ..Default::default()
             },
@@ -1268,8 +1255,6 @@ impl WebWorker {
         bun_analytics::features::workers_terminated.fetch_add(1, Ordering::Relaxed);
         log!("[{}] shutdown", self.execution_context_id);
 
-        let env_loader = self.worker_env_loader.replace(core::ptr::null_mut());
-
         // ---- 1. Unpublish vm ------------------------------------------------
         drop(self.vm_handle.lock().take());
         let vm_ptr = self.vm.replace(core::ptr::null_mut());
@@ -1286,12 +1271,7 @@ impl WebWorker {
             "[{}] shutdown: VirtualMachine destroyed",
             self.execution_context_id
         );
-        // Reclaim the cloned env (`heap::alloc`'d in `start_vm()`; see field doc).
-        if !env_loader.is_null() {
-            // SAFETY: `heap::alloc`'d in `start_vm`; sole owner; the VM is
-            // gone so its raw `transpiler.env` borrow is dead.
-            drop(unsafe { bun_core::heap::take(env_loader) });
-        }
+        self.worker_env_loader.set(None);
         // This thread's C++ thread_local destructors are not guaranteed to run
         // before the process exits, so free the HPACK scratch buffer that any
         // http2 session on this thread allocated.

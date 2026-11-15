@@ -691,19 +691,9 @@ impl TransformTask {
 
         let arena = Arena::new();
 
-        // `self.transpiler` is a `ManuallyDrop` bytewise copy of the
-        // `JSTranspiler`'s long-lived transpiler (`ptr::read` in `create()`),
-        // so its `macro_context` may alias a box the `JSTranspiler` still owns
-        // — and that box's `resolver`/`remap` raw pointers point at the
-        // *original* transpiler, not this copy. Null it so `parse()` lazily
-        // creates a fresh one whose self-refs target this copy, then reclaim
-        // the fresh box on every return path (mirrors `RuntimeTranspilerStore`).
-        self.transpiler.macro_context = None;
-        let mut transpiler = scopeguard::guard(&mut *self.transpiler, |transpiler| {
-            if let Some(ctx) = transpiler.macro_context.take() {
-                ctx.deinit();
-            }
-        });
+        let transpiler = &mut *self.transpiler;
+        // The one in the copy is the wrapper's.
+        let mut macro_context = None;
 
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
@@ -736,7 +726,8 @@ impl TransformTask {
                 .and_then(|ts| ts.use_define_for_class_fields)
                 .unwrap_or(true),
             macro_js_ctx: MacroJSCtx::ZERO,
-            file_fd_ptr: None,
+            macro_context: Some(&mut macro_context),
+            opened_file: None,
             inject_jest_globals: false,
             is_test_entry_point: false,
             set_breakpoint_on_first_line: false,
@@ -951,7 +942,6 @@ impl JSTranspiler {
             buffer_writer: JsCell::new(None),
             ref_count: bun_ptr::RefCount::init(),
         });
-        // errdefer past this point → `this: Box<_>` drops and runs Drop for JSTranspiler.
 
         // NOTE: `config` was built on the stack and moved into the Box, so
         // `transpiler.log` (a `*mut Log`) still points at the moved-from
@@ -1008,23 +998,6 @@ impl JSTranspiler {
     }
 }
 
-impl Drop for JSTranspiler {
-    fn drop(&mut self) {
-        // `scan()` / `scanImports()` lazily create a `MacroContext` on
-        // `self.transpiler` and (unlike `transformSync`) leave it in place
-        // for reuse across calls. The boxed `bun_js_parser_jsc::MacroContext`
-        // behind `.data` has no `Drop` glue — release it explicitly.
-        if let Some(ctx) = self.transpiler.as_mut().macro_context.take() {
-            ctx.deinit();
-        }
-        // transpiler.log.clearAndFree() → it is `config.log`: field Drop
-        // scan_pass_result.{named_imports,import_records,used_symbols}.deinit() → field Drop
-        // buffer_writer.?.buffer.deinit() → Option<BufferWriter>: Drop
-        // config.tsconfig.deinit() → Option<Box<TSConfigJSON>>: Drop
-        // arena.deinit() → Arena: Drop
-    }
-}
-
 /// `scan` / `transform_sync` / `scan_imports` temporarily point the long-lived
 /// `Transpiler` at a stack-local `Log`; on EVERY exit (including `?`
 /// and early `return Err`) it must be restored before the local drops, or
@@ -1050,14 +1023,6 @@ impl Drop for TranspilerStateGuard<'_> {
         self.transpiler.with_mut(|transpiler| {
             transpiler.set_log(restore_log);
             if let Some(prev) = prev_macro_context {
-                // `transformSync` created a fresh MacroContext for this parse and
-                // stored it in `transpiler.macro_context`; the box behind its
-                // `data` pointer is heap-owned and `MacroContext` has no `Drop`,
-                // so overwriting it with `prev` would strand the box. Free it
-                // explicitly before restoring the outer state.
-                if let Some(new_ctx) = transpiler.macro_context.take() {
-                    new_ctx.deinit();
-                }
                 transpiler.macro_context = prev;
             }
         });
@@ -1143,6 +1108,7 @@ impl JSTranspiler {
             virtual_source: Some(source),
             replace_exports: config.runtime.replace_exports.entries.clone().expect("OOM"),
             macro_js_ctx,
+            macro_context: None,
             experimental_decorators: config
                 .tsconfig
                 .as_deref()
@@ -1156,7 +1122,7 @@ impl JSTranspiler {
                 .as_deref()
                 .and_then(|ts| ts.use_define_for_class_fields)
                 .unwrap_or(true),
-            file_fd_ptr: None,
+            opened_file: None,
             inject_jest_globals: false,
             is_test_entry_point: false,
             set_breakpoint_on_first_line: false,

@@ -290,16 +290,18 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
 
         // INSTANCE is a 'static ZST singleton; `RacyCell::get()` yields a stable `*mut`.
         let instance_ptr: *mut ParentDeathWatchdog = INSTANCE.get();
-        let poll = FilePoll::init(
+        let mut poll = FilePoll::init(
             handle,
             Fd::from_native(original_ppid),
-            Default::default(),
             Owner::new(poll_tag::PARENT_DEATH_WATCHDOG, instance_ptr.cast()),
         );
         // SAFETY: `poll` was just allocated by `FilePoll::init`; sole `&mut`
         // borrow; `register` does not re-derive the loop.
-        match unsafe { &mut *poll }.register(handle.loop_(), crate::file_poll::Flags::Process, true)
-        {
+        match unsafe { poll.as_mut() }.register(
+            handle.loop_(),
+            crate::file_poll::Flags::Process,
+            true,
+        ) {
             bun_sys::Result::Ok(()) => {
                 // Do not keep the event loop alive on this poll's behalf — the
                 // watchdog must never prevent Bun from exiting when there is no

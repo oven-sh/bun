@@ -2,15 +2,13 @@ use core::mem;
 use core::ptr::NonNull;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, event_loop::EventLoop};
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_sys::FdExt as _;
 use bun_sys::{self, Fd};
 
 use crate::node::types::FdJsc as _;
 
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::webcore::ReadableStream;
-use bun_io::max_buf::MaxBuf;
+use bun_io::max_buf;
 use bun_ptr::RefPtr;
 use bun_ptr::cow_slice::CowSlice;
 
@@ -23,8 +21,6 @@ pub(crate) type CowString = CowSlice<u8>;
 
 pub(crate) enum Readable {
     Fd(Fd),
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    Memfd(Fd),
     Pipe(RefPtr<PipeReader>),
     Inherit,
     Ignore,
@@ -88,43 +84,26 @@ impl Readable {
     }
 
     pub(crate) fn init(
-        stdio: Stdio,
+        stdio: &Stdio,
         event_loop: &EventLoop,
         process: NonNull<Subprocess<'static>>,
         result: StdioResult,
-        max_size: Option<NonNull<MaxBuf>>,
+        max_size: Option<&max_buf::OwnerRef>,
         _is_sync: bool,
     ) -> Readable {
-        super::assert_stdio_result!(result);
-
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        let mut stdio = stdio;
         #[cfg(unix)]
         {
             if matches!(stdio, Stdio::Pipe) {
-                let _ = bun_sys::set_nonblocking(result.unwrap());
+                let _ = bun_sys::set_nonblocking(result.as_ref().unwrap().fd());
             }
         }
 
-        match &stdio {
+        match stdio {
             Stdio::Inherit => Readable::Inherit,
             Stdio::Ignore | Stdio::Ipc | Stdio::Path(..) => Readable::Ignore,
-            Stdio::Fd(fd) => {
-                #[cfg(unix)]
-                {
-                    let _ = fd;
-                    Readable::Fd(result.unwrap())
-                }
-                #[cfg(not(unix))]
-                {
-                    Readable::Fd(*fd)
-                }
-            }
+            Stdio::Fd(fd) => Readable::Fd(*fd),
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            Stdio::Memfd(_) => {
-                // Ownership of the fd moves into the Readable; `Stdio`'s Drop would close it.
-                Readable::Memfd(stdio.take_memfd().unwrap())
-            }
+            Stdio::Memfd(_) => unreachable!("Memfd at stdout/stderr"),
             Stdio::Dup2(dup2) => {
                 #[cfg(unix)]
                 {
@@ -141,8 +120,16 @@ impl Readable {
             }
             Stdio::Blob(..) => panic!("TODO: implement Blob support in Stdio readable"),
             Stdio::Capture(..) => panic!("TODO: implement capture support in Stdio readable"),
-            // ReadableStream is handled separately
-            Stdio::ReadableStream(..) => Readable::Ignore,
+            Stdio::ReadableStream(..) => {
+                // Nothing reads it, but closing it would fail the child's writes.
+                #[cfg(unix)]
+                let _ = result.map(bun_sys::File::into_raw);
+                #[cfg(windows)]
+                if let StdioResult::Buffer(pipe) = result {
+                    let _ = pipe.into_raw();
+                }
+                Readable::Ignore
+            }
             // Rejected at i < 3 in Stdio::extract(); stdout/stderr never see this.
             Stdio::SocketFd => unreachable!("SocketFd at stdout/stderr"),
         }
@@ -150,12 +137,6 @@ impl Readable {
 
     pub(crate) fn close(&mut self) {
         match self {
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            Readable::Memfd(fd) => {
-                let fd = *fd;
-                *self = Readable::Closed;
-                fd.close();
-            }
             Readable::Fd(_) => {
                 *self = Readable::Closed;
             }
@@ -168,12 +149,6 @@ impl Readable {
 
     pub(crate) fn finalize(&mut self) {
         match self {
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            Readable::Memfd(fd) => {
-                let fd = *fd;
-                *self = Readable::Closed;
-                fd.close();
-            }
             Readable::Fd(_) => {
                 *self = Readable::Closed;
             }
@@ -181,26 +156,12 @@ impl Readable {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
+                let reader = Self::pipe_reader_mut(&pipe);
+                reader.process = None;
                 #[cfg(unix)]
-                {
-                    let release_start_ref = {
-                        let reader = Self::pipe_reader_mut(&pipe);
-                        if reader.process.is_some()
-                            && matches!(reader.state, super::subprocess_pipe_reader::State::Pending)
-                            && reader.ref_count.get() > 1
-                        {
-                            reader.reader.deinit();
-                            true
-                        } else {
-                            false
-                        }
-                    };
-                    if release_start_ref {
-                        // SAFETY: guard above proved a second ref exists; this deref cannot reach zero.
-                        unsafe { PipeReader::deref(pipe.as_ptr()) };
-                    }
+                if let Some(_start_ref) = reader.start_ref.take() {
+                    reader.reader.deinit();
                 }
-                Self::pipe_reader_mut(&pipe).process = None;
             }
             Readable::Buffer(_) | Readable::Errored(..) => {
                 // Dropping the CowString (via the overwrite) frees the buffer;
@@ -213,17 +174,15 @@ impl Readable {
 
     pub(crate) fn to_js(&mut self, cx: &bun_jsc::JsThread<'_>, _exited: bool) -> JsResult<JSValue> {
         match self {
-            // should only be reachable when the entire output is buffered.
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            Readable::Memfd(_) => self.to_buffered_value(cx.global()),
-
             Readable::Fd(fd) => Ok(fd.to_js(cx.global())),
             Readable::Pipe(_) => {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                let result = Self::pipe_reader_mut(&pipe).to_js(cx);
-                Self::pipe_reader_mut(&pipe).process = None;
+                let reader = Self::pipe_reader_mut(&pipe);
+                let result = reader.to_js(cx);
+                reader.process = None;
+                drop(reader.start_ref.take());
                 result
             }
             Readable::Buffer(_) => {
@@ -253,12 +212,6 @@ impl Readable {
     pub(crate) fn to_buffered_value(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             Readable::Fd(fd) => Ok(fd.to_js(global)),
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            Readable::Memfd(fd) => {
-                let fd = *fd;
-                *self = Readable::Closed;
-                bun_jsc::ArrayBuffer::to_js_buffer_from_memfd(fd, global)
-            }
             Readable::Pipe(_) => {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()

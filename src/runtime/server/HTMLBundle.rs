@@ -23,7 +23,10 @@ use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::bake::dev_server::route_bundle;
 use crate::server::jsc::{JSGlobalObject, JSValue};
 use crate::server::server_config::MethodOptional;
-use crate::server::{AnyRoute, AnyServer, GetOrStartLoadResult, ServePluginsCallback, StaticRoute};
+use crate::server::{
+    AnyRoute, AnyServer, GetOrStartLoadResult, PendingRequest, ServePluginsCallback, Served,
+    StaticRoute,
+};
 use crate::webcore::AnyBlob;
 
 // Scoped debug logger — wrapped in a sub-module so the
@@ -109,12 +112,18 @@ pub(crate) struct Route {
     pending_responses: JsCell<Vec<PendingResponse>>,
 }
 
+impl Served for RefPtr<Route> {
+    fn served_by(&self) -> Option<AnyServer> {
+        self.server.get()
+    }
+}
+
+/// Keeps the route and its server alive until the route is told the outcome.
+pub(crate) type PendingBuild = PendingRequest<RefPtr<Route>>;
+
 pub(crate) enum State {
     Pending,
-    /// The server's plugins are loading, or the `JSBundleCompletionTask` (which
-    /// holds a ref on this route until it delivers the result) is running. In
-    /// either case the route holds a pending request on `Route::server`
-    /// (`schedule_bundle`).
+    /// The plugin load or the `JSBundleCompletionTask` holds a [`PendingBuild`].
     Building,
     Err(Log),
     Html(RefPtr<StaticRoute>),
@@ -270,14 +279,6 @@ impl Route {
     }
 
     /// Schedule a bundle to be built.
-    ///
-    /// Entering `State::Building` counts as a pending request on the server:
-    /// the plugin load and the build finish on later event-loop turns and call
-    /// back into it (`on_plugins_resolved`, `on_complete`), so its
-    /// `deinit_if_we_can` must not free it before then. Nothing else holds it
-    /// on the route's behalf; the clients waiting in `pending_responses` only
-    /// count as connections and can disconnect at any time. `finish_building`
-    /// releases the pending request when the route leaves `State::Building`.
     fn schedule_bundle(this: ThisPtr<Self>, server: AnyServer) -> Result<(), crate::Error> {
         match server.get_or_load_plugins(ServePluginsCallback::HtmlBundleRoute(this)) {
             GetOrStartLoadResult::Err => {
@@ -285,33 +286,20 @@ impl Route {
             }
             GetOrStartLoadResult::Ready(plugins) => {
                 let plugins = plugins.map(NonNull::from);
-                server.on_pending_request();
-                Self::on_plugins_resolved(this, plugins)?;
+                Self::on_plugins_resolved(PendingBuild::new(RefPtr::from_this(this)), plugins)?;
             }
             GetOrStartLoadResult::Pending => {
-                server.on_pending_request();
                 this.state.set(State::Building);
             }
         }
         Ok(())
     }
 
-    /// Leaves `State::Building`: answers the requests that arrived while the
-    /// route was building, then releases the pending request `schedule_bundle`
-    /// took on the server. The release comes last because it runs the server's
-    /// idle pass (`deinit_if_we_can`), which schedules the server's deinit when
-    /// this build was the only thing still keeping a stopped server alive.
     /// The build task will not deliver (the context that started it stopped, or the VM is going):
-    /// what waits for the page is answered as for a failed build, and the server is released.
+    /// what waits for the page is answered as for a failed build.
     pub(crate) fn on_build_abandoned(&self) {
         self.state.set(State::Err(Log::init()));
-        self.finish_building();
-    }
-
-    fn finish_building(&self) {
-        debug_assert!(matches!(self.state.get(), State::Err(_) | State::Html(_)));
         self.resume_pending_responses();
-        self.server.get().expect("server set").on_request_complete();
     }
 
     /// Production keeps the reason to itself, see `resume_pending_responses`.
@@ -326,7 +314,7 @@ impl Route {
     }
 
     pub(crate) fn on_plugins_resolved(
-        this: ThisPtr<Self>,
+        this: PendingBuild,
         plugins: Option<NonNull<JSBundler::Plugin>>,
     ) -> Result<(), crate::Error> {
         let global = this.bundle.global.get();
@@ -436,9 +424,8 @@ impl Route {
         let mut completion_task =
             JSBundleCompletionTask::new(config, plugins, global, server.context_id());
         completion_task.started_at_ns = bun_core::util::Timespec::now_allow_mocked_time().ns();
-        // While we're building, ensure this doesn't get freed.
-        completion_task.html_build_task = Some(RefPtr::from_this(this));
         this.state.set(State::Building);
+        completion_task.html_build_task = Some(this);
         completion_task.schedule();
         Ok(())
     }
@@ -450,15 +437,12 @@ impl Route {
             std::ptr::from_ref(self) as usize
         );
         self.state.set(State::Err(Log::init()));
-        self.finish_building();
+        self.resume_pending_responses();
         Ok(())
     }
 
-    /// Called by the build task, which holds a ref on this route across the call.
+    /// Called by the build task, which holds the [`PendingBuild`] across the call.
     pub(crate) fn on_complete(&self, completion_task: &mut JSBundleCompletionTask) {
-        // Still allocated, even if it has been stopped and its JS wrapper
-        // collected since: the route holds a pending request on it until
-        // `finish_building` (see `schedule_bundle`).
         let server = self.server.get().expect("server set");
 
         match &mut completion_task.result {
@@ -608,7 +592,7 @@ impl Route {
             BundleV2Result::Pending => unreachable!(),
         }
 
-        self.finish_building();
+        self.resume_pending_responses();
     }
 
     fn resume_pending_responses(&self) {

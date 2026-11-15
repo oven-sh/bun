@@ -1045,7 +1045,7 @@ impl Run<'_> {
             .collect();
         let atoms = bun_sema::atom::InternerPerThread::new_in(&names);
         let memory = bun_sema::session::Session::new();
-        let (skipped_in_comments, out_of_stack) =
+        let (skipped_in_comments, not_type_checked) =
             (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
         let without_include = Guarded::new(Vec::new());
         let broken_fixes = Guarded::new(Vec::new());
@@ -1069,7 +1069,7 @@ impl Run<'_> {
         let invalid_tsconfigs = Guarded::new(Default::default());
         let context = Context {
             skipped_in_comments: &skipped_in_comments,
-            out_of_stack: &out_of_stack,
+            not_type_checked: &not_type_checked,
             without_include: &without_include,
             broken_fixes: &broken_fixes,
             handed_back: &handed_back,
@@ -1208,23 +1208,9 @@ impl Run<'_> {
                 .concat(),
             );
         }
-        let mut incomplete: Vec<Vec<u8>> = std::mem::take(&mut *out_of_stack.lock());
-        if !incomplete.is_empty() {
-            bun_lint::utils::sort::sort_by(&mut incomplete, |a, b| a.cmp(b));
-            incomplete.dedup();
-            let examples: Vec<Vec<u8>> = (incomplete.iter().take(3))
-                .map(|it| paths::relative_escaped(&environment.cwd, &paths::from_native(it)))
-                .collect();
-            let more: &[u8] = if incomplete.len() > 3 { b", .." } else { b"" };
-            self.warn(
-                &[
-                    b"The type checker ran out of stack in ",
-                    &examples.join(&b", "[..])[..],
-                    more,
-                    b"\n  Rules that need type information may have missed problems there. This is a bug in Bun.",
-                ]
-                .concat(),
-            );
+        let results = linted.as_ref().map_or(&[][..], |it| &it.results);
+        for warning in typed::warnings_about_not_type_checked(&context, results) {
+            self.warn(&warning);
         }
         // With `--staged`, `--changed` or standard input, the user already knows that only a few files are linted.
         let mut without_include = std::mem::take(&mut *without_include.lock());
@@ -1404,6 +1390,7 @@ impl Run<'_> {
             results.extend(picked.iter_mut().filter_map(|it| it.get_mut().take()));
         }
         phases.linting += started.elapsed().as_secs_f64();
+        typed::report_not_type_checked(&context, &mut results);
         // ESLint lints files one at a time, so it stops at the first path that throws. Threads race here, so pick the
         // first path to get the same error every time.
         let thrown = results.iter().filter(|it| it.thrown.is_some());

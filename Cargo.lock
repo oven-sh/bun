@@ -470,6 +470,7 @@ dependencies = [
  "hashbrown 0.15.5",
  "paste",
  "rustc-hash",
+ "scopeguard",
  "smallvec",
 ]
 
@@ -643,7 +644,6 @@ dependencies = [
  "bun_dotenv",
  "bun_io",
  "bun_ptr",
- "bun_sys",
  "bun_threading",
  "bun_uws",
  "strum",
@@ -935,7 +935,6 @@ dependencies = [
  "bun_uws_sys",
  "enumset",
  "libc",
- "scopeguard",
  "strum",
  "thiserror",
 ]
@@ -1317,7 +1316,6 @@ dependencies = [
  "bun_paths",
  "bun_sys",
  "bun_url",
- "scopeguard",
  "strum",
 ]
 
@@ -1958,7 +1956,6 @@ dependencies = [
  "bun_boringssl",
  "bun_collections",
  "bun_core",
- "bun_ptr",
  "bun_sha_hmac",
  "bun_sys",
  "strum",
@@ -1979,6 +1976,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_event_loop",
+ "bun_http",
  "bun_io",
  "bun_jsc",
  "bun_ptr",
@@ -2079,7 +2077,6 @@ dependencies = [
  "bun_core",
  "bun_opaque",
  "bun_ptr",
- "scopeguard",
  "strum",
  "thiserror",
 ]

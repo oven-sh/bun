@@ -369,13 +369,10 @@ impl DirEntry {
     pub(crate) fn add_entry_with_store(
         &mut self,
         prev_map: Option<&mut dir_entry::EntryMap>,
-        entry: &bun_sys::dir_iterator::IteratorResult,
+        entry: &bun_sys::dir_iterator::IteratorResult<'_>,
         filename_store: &mut FilenameStoreAppender,
     ) -> crate::CrateResult<Option<&Entry>> {
         use bun_sys::FileKind as DK;
-        // `entry.name.slice()` is OS-native (`&[u16]` on Windows); the
-        // entry-store / hashmap key in `data` is UTF-8, so use the eagerly-
-        // transcoded `slice_u8()`.
         let name_slice = entry.name.slice_u8();
         let found_kind: Option<EntryKind> = match entry.kind {
             DK::Directory => Some(EntryKind::Dir),

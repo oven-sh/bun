@@ -24,6 +24,8 @@ pub struct RuntimeUses {
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct AsksOfText {
     pub members_read: Vec<BuiltinName>,
+    pub members_named: Vec<BuiltinId>,
+    pub escaped_objects: Vec<BuiltinId>,
     pub reads_by_unknown_key: bool,
     pub syntax: SyntaxWithHelpers,
     pub may_hand_values_to_natives: bool,
@@ -39,10 +41,48 @@ impl AsksOfText {
 
     pub fn add(&mut self, other: &AsksOfText) {
         self.members_read.extend_from_slice(&other.members_read);
+        self.members_named.extend_from_slice(&other.members_named);
+        self.escaped_objects
+            .extend_from_slice(&other.escaped_objects);
         self.reads_by_unknown_key |= other.reads_by_unknown_key;
         self.syntax |= other.syntax;
         self.may_hand_values_to_natives |= other.may_hand_values_to_natives;
     }
+
+    fn names_read_off_escaped_objects(&self) -> Vec<BuiltinName> {
+        let mut escaped = self.escaped_objects.clone();
+        escaped.sort_unstable();
+        escaped.dedup();
+        let is_escaped =
+            |object: BuiltinId| escaped.binary_search(&table::canonical_id(object)).is_ok();
+        let members = self.members_named.iter().copied();
+        members
+            .filter(|&member| holders_of(member).any(is_escaped))
+            .map(|member| table::entry(member).name)
+            .collect()
+    }
+}
+
+fn holders_of(member: BuiltinId) -> impl Iterator<Item = BuiltinId> {
+    std::iter::successors(table::entry(member).holder, |&object| {
+        table::entry(object).holder
+    })
+}
+
+pub(super) fn holds_name_of_member_with_code(object: BuiltinId) -> bool {
+    static HOLDERS: OnceLock<Box<[bool]>> = OnceLock::new();
+    let holders = HOLDERS.get_or_init(|| {
+        let mut holders = vec![false; BuiltinId::COUNT as usize];
+        for member in BuiltinId::ALL {
+            if is_name_of_language_member_with_code(table::entry(member).name) {
+                for object in holders_of(member) {
+                    holders[table::canonical_id(object).to_wire() as usize] = true;
+                }
+            }
+        }
+        holders.into_boxed_slice()
+    });
+    holders[table::canonical_id(object).to_wire() as usize]
 }
 
 struct Collected {
@@ -771,6 +811,7 @@ pub struct Mentions<'a> {
     pub exposed: &'a [BuiltinId],
     pub linked_functions: &'a [RuntimeFunction],
     pub members_read: &'a [BuiltinName],
+    pub escaped_objects: &'a [BuiltinId],
     pub reads_by_unknown_key: bool,
     pub may_call_evaluator: bool,
     pub global_object_may_be_looked_through: bool,
@@ -789,7 +830,9 @@ impl RuntimeUses {
     }
 
     pub fn of_asks(asks: &AsksOfText, platform: Platforms) -> RuntimeUses {
-        let mut members_read = asks.members_read.clone();
+        let mut members_read = asks.names_read_off_escaped_objects();
+        let asks_operands = asks.asks_operands() || !members_read.is_empty();
+        members_read.extend_from_slice(&asks.members_read);
         members_read.sort_unstable();
         members_read.dedup();
         let mentions = Mentions {
@@ -800,7 +843,7 @@ impl RuntimeUses {
         };
         let mut collector =
             Collector::of_mentions(&mentions, platform).unwrap_or_else(|| Collector::new(platform));
-        if asks.asks_operands() {
+        if asks_operands {
             collector.add_functions(table::FUNCTIONS_FOUND_ON_ANY_OPERAND);
         }
         collector.finish()
@@ -838,6 +881,7 @@ impl Collector {
             exposed,
             linked_functions,
             members_read,
+            escaped_objects,
             reads_by_unknown_key,
             may_call_evaluator,
             global_object_may_be_looked_through,
@@ -917,11 +961,16 @@ impl Collector {
             return Some(collector);
         }
         if is_of_program {
+            let has_code =
+                |id: &BuiltinId| is_name_of_language_member_with_code(table::entry(*id).name);
+            let members = mentioned.iter().map(|&id| table::canonical_id(id));
             collector.asks = AsksOfText {
                 members_read: match reads_by_unknown_key {
                     true => Vec::new(),
                     false => members_read.to_vec(),
                 },
+                members_named: members.filter(has_code).collect(),
+                escaped_objects: escaped_objects.to_vec(),
                 reads_by_unknown_key,
                 syntax,
                 may_hand_values_to_natives: may_hand_values_to_natives

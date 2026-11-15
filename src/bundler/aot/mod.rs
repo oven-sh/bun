@@ -24,7 +24,7 @@ use bun_aot::engine::{EngineResult, ExecutableIdentity, TargetImageForm};
 use bun_aot::module_list::ModuleList;
 use bun_aot::report::SourceTexts;
 use bun_aot::statistics::{Stage, Statistics};
-use bun_ast::{Loc, Log};
+use bun_ast::Log;
 use bun_options_types::aot_options::AotOptions;
 use bun_paths::string_paths::without_trailing_slash_windows_path;
 use bun_resolver::package_names::{
@@ -155,7 +155,11 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     };
     // SAFETY: the log outlives the build, and nothing below this call reaches the transpiler.
     let Some(options) = options_from_bundler(&input, unsafe { &mut *log }) else {
-        return Err(failure_before_pipeline(false));
+        return Err(AotBuildFailure {
+            stage: None,
+            is_internal_error: false,
+            statistics: Statistics::default(),
+        });
     };
     transpiler.options.root_dir = Box::from(&options.paths.root_directory[..]);
     transpiler
@@ -164,7 +168,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         .root_dir
         .clone_from(&transpiler.options.root_dir);
 
-    let started = BundleV2::init_without_starting_threads(
+    let mut bundle = BundleV2::init_without_starting_threads(
         transpiler,
         None,
         arena,
@@ -173,18 +177,6 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         worker_pool,
         arena,
     );
-    let mut bundle = match started {
-        Ok(bundle) => bundle,
-        Err(error) => {
-            // SAFETY: the log outlives the build, and the reference ends with the statement.
-            unsafe { &mut *log }.add_error_fmt(
-                None,
-                Loc::EMPTY,
-                format_args!("{} while starting the build", error.name()),
-            );
-            return Err(failure_before_pipeline(true));
-        }
-    };
     bundle.file_map = file_map;
     if let Some(setup) = plugins {
         bundle.plugins = Some(setup.plugins);
@@ -292,9 +284,8 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         }));
         further_package_names.sort_by(|a, b| a.path.cmp(&b.path));
     }
-    bundle.deinit_without_freeing_arena();
-    bun_sema_driver::wake_idle_region_threads();
     drop(bundle);
+    bun_sema_driver::wake_idle_region_threads();
 
     match result {
         Ok(compilation) => {
@@ -330,13 +321,5 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             is_internal_error,
             statistics,
         }),
-    }
-}
-
-fn failure_before_pipeline(is_internal_error: bool) -> AotBuildFailure {
-    AotBuildFailure {
-        stage: None,
-        is_internal_error,
-        statistics: Statistics::default(),
     }
 }

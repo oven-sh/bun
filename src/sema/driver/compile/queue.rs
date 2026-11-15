@@ -23,6 +23,7 @@ pub(super) fn run_queue<'s>(
         report: Report::default(),
         config_path: files.options.config_path.clone(),
         to_check,
+        with_include_problems: Vec::new(),
         threads: request.threads.get(),
         in_room: None,
         is_reached: None,

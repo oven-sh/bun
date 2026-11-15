@@ -6,39 +6,38 @@ use crate::mysql::capabilities::MariaDBCapabilities;
 use crate::mysql::protocol::CharacterSet;
 use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::auth::{NONCE_LENGTH, Nonce};
-use crate::mysql::protocol::stack_reader::PacketReader;
-use crate::shared::Data;
+use crate::mysql::protocol::new_reader::PacketReader;
 
-pub struct HandshakeV10 {
+pub struct HandshakeV10<'a> {
     pub(crate) protocol_version: u8,
-    pub server_version: Data,
+    pub server_version: &'a [u8],
     pub connection_id: u32,
     pub auth_plugin_data: Nonce,
     pub capability_flags: Capabilities,
     pub mariadb_capability_flags: MariaDBCapabilities,
     pub(crate) character_set: CharacterSet,
     pub status_flags: StatusFlags,
-    pub auth_plugin_name: Data,
+    pub auth_plugin_name: &'a [u8],
 }
 
-impl Default for HandshakeV10 {
+impl Default for HandshakeV10<'_> {
     fn default() -> Self {
         Self {
             protocol_version: 10,
-            server_version: Data::empty(),
+            server_version: b"",
             connection_id: 0,
             auth_plugin_data: [0u8; NONCE_LENGTH],
             capability_flags: Capabilities::default(),
             mariadb_capability_flags: MariaDBCapabilities::default(),
             character_set: CharacterSet::default(),
             status_flags: StatusFlags::default(),
-            auth_plugin_name: Data::empty(),
+            auth_plugin_name: b"",
         }
     }
 }
 
-impl HandshakeV10 {
-    pub fn decode_internal(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
+impl<'a> HandshakeV10<'a> {
+    pub fn decode_internal(&mut self, reader: PacketReader<'a>) -> Result<(), AnyMySQLError> {
         // Protocol version
         self.protocol_version = reader.int::<u8>()?;
         if self.protocol_version != 10 {
@@ -53,7 +52,7 @@ impl HandshakeV10 {
 
         // Auth plugin data part 1 (8 bytes)
         let auth_data = reader.read(8)?;
-        self.auth_plugin_data[..8].copy_from_slice(auth_data.slice());
+        self.auth_plugin_data[..8].copy_from_slice(auth_data);
 
         // Skip filler byte
         let _ = reader.int::<u8>()?;
@@ -91,7 +90,7 @@ impl HandshakeV10 {
         // Auth plugin data part 2: the rest of the nonce, then its terminating NUL
         let remaining_auth_len = auth_plugin_data_len - 8;
         let auth_data_2 = reader.read(remaining_auth_len as usize)?;
-        self.auth_plugin_data[8..].copy_from_slice(&auth_data_2.slice()[..NONCE_LENGTH - 8]);
+        self.auth_plugin_data[8..].copy_from_slice(&auth_data_2[..NONCE_LENGTH - 8]);
 
         // Auth plugin name
         if self.capability_flags.CLIENT_PLUGIN_AUTH {

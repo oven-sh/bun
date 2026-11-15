@@ -1546,14 +1546,13 @@ impl Stream {
         }
     }
 
-    /// Returns the write callback that has nothing left to wait for.
     pub(crate) fn queue_data(
         &self,
         client: &H2FrameParser,
         bytes: &[u8],
         callback: JSValue,
         end_stream: bool,
-    ) -> StrongOptional {
+    ) {
         bun_output::scoped_log!(
             H2FrameParser,
             "{} queued {} {}",
@@ -1565,16 +1564,17 @@ impl Stream {
             bytes.len(),
             end_stream
         );
+        if self.state.get() == StreamState::CLOSED {
+            // The queue of a closed stream is never flushed.
+            client.dispatch_write_callback(callback);
+            return;
+        }
         let global_this = client.global_this;
         let callback = if callback.is_callable() {
             StrongOptional::create(callback, &global_this)
         } else {
             StrongOptional::empty()
         };
-        if self.state.get() == StreamState::CLOSED {
-            // The queue of a closed stream is never flushed.
-            return callback;
-        }
 
         let mut queue = self.data_frame_queue.take();
         let queued_frames = queue.len;
@@ -1605,7 +1605,9 @@ impl Stream {
                 .vm()
                 .deprecated_report_extra_memory(more_data.len());
         }
-        old_callback
+        if let Some(old_callback_value) = old_callback.get() {
+            client.dispatch_write_callback(old_callback_value);
+        }
     }
 
     fn has_queued_data(&self) -> bool {
@@ -2775,16 +2777,17 @@ impl H2FrameParser {
         CORK_BUFFER.with_borrow(|buf| out.extend_from_slice(&buf[0..off]));
     }
 
-    /// Send the accumulated multi-frame batch in one socket write. No-op when empty.
-    fn flush_batch_buffer(&self) {
+    /// Send the accumulated multi-frame batch in one socket write. Returns false when it is empty.
+    fn flush_batch_buffer(&self) -> bool {
         // Take the Vecs out of the thread-locals before writing: _write can re-enter JS
         // (JS-stream-backed sockets), and a re-entrant send_data must not hit a borrowed
         // RefCell. The re-entrant call sees an empty batch and flushes independently.
         let mut data = BATCH_BUFFER.with_borrow_mut(core::mem::take);
         let mut segments = BATCH_SEGMENTS.with_borrow_mut(core::mem::take);
+        let has_batch = !data.is_empty();
         if !segments.is_empty() {
             self.flush_batch_vectored(&data, &segments);
-        } else if !data.is_empty() {
+        } else if has_batch {
             let _ = self._write(&data);
         }
         segments.clear();
@@ -2805,6 +2808,7 @@ impl H2FrameParser {
                 *b = data;
             }
         });
+        has_batch
     }
 
     /// Vectored flush for plain-TCP batches: frame headers from the batch scratch and
@@ -4766,7 +4770,6 @@ impl H2FrameParser {
 
         let stream_id = stream.id;
         let mut enqueued = false;
-        let mut concluded = StrongOptional::empty();
 
         let can_close = close && !stream.wait_for_trailers.get();
         if payload.is_empty() {
@@ -4783,7 +4786,7 @@ impl H2FrameParser {
             };
             if self.has_backpressure() || self.outbound_queue_size.get() > 0 {
                 enqueued = true;
-                concluded = stream.queue_data(self, b"", callback, close);
+                stream.queue_data(self, b"", callback, close);
             } else {
                 let mut writer = self.to_writer();
                 let _ = data_header.write(&mut writer, &self.frames_sent_legacy);
@@ -4797,6 +4800,12 @@ impl H2FrameParser {
                     .min(self.remote_window_left())
                     .min(stream.remote_window_left());
                 if self.has_backpressure() || self.outbound_queue_size.get() > 0 || max_size == 0 {
+                    // Preserve wire order: anything already batched goes out before the
+                    // queued remainder is flushed later by the drain path.
+                    if self.flush_batch_buffer() && stream.can_send_data() {
+                        // The peer can have reopened the window under that write.
+                        continue;
+                    }
                     break;
                 }
                 let size = rest.len().min(max_size);
@@ -4911,16 +4920,13 @@ impl H2FrameParser {
                     });
                 }
             }
-            if !rest.is_empty() {
+            if rest.is_empty() {
+                self.flush_batch_buffer();
+            } else {
                 enqueued = true;
                 // the callback will only be called after the last frame is sended
-                concluded = stream.queue_data(self, rest, callback, close);
+                stream.queue_data(self, rest, callback, close);
             }
-            // After queueing: a WINDOW_UPDATE that is read under this write flushes the queue.
-            self.flush_batch_buffer();
-        }
-        if let Some(concluded) = concluded.get() {
-            self.dispatch_write_callback(concluded);
         }
 
         let mut settled_state: u8 = 0;

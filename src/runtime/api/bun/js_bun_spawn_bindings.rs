@@ -1790,10 +1790,7 @@ fn spawn_maybe_sync(
                             .active_file
                             .clone()
                         {
-                            active_file
-                                .get()
-                                .execution
-                                .kill_dangling_processes_on_timeout(cx.global());
+                            active_file.kill_dangling_processes_on_timeout(cx.global());
                         }
                         let _ = subprocess.try_kill(subprocess.kill_signal);
                     }

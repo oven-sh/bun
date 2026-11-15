@@ -218,11 +218,10 @@ impl Expect {
     #[optimize(size)]
     fn add_to_expect_call_counter(&self, count: i32) {
         let Some(parent) = self.parent.as_ref() else { return }; // not in bun:test
-        let Some(buntest_strong) = parent.bun_test() else { return }; // the test file this expect() call was for is no longer
-        let buntest = buntest_strong.get();
-        if let Some(sequence) = parent.phase.sequence(buntest) {
+        let Some(buntest) = parent.bun_test() else { return }; // the test file this expect() call was for is no longer
+        if let Some(sequence) = parent.phase.sequence(&buntest) {
             // found active sequence
-            sequence.expect_call_count = sequence.expect_call_count.saturating_add_signed(count);
+            sequence.expect_call_count.update(|calls| calls.saturating_add_signed(count));
         } else {
             // in concurrent group or otherwise failed to get the sequence; increment the expect call count in the reporter directly
             if let Some(reporter) = buntest.reporter {
@@ -672,17 +671,16 @@ impl Expect {
         }
     }
 
-    pub(crate) fn is_in_vitest_test(&self, buntest: &mut bun_test::BunTest) -> bool {
+    pub(crate) fn is_in_vitest_test(&self, buntest: &bun_test::BunTest) -> bool {
         let Some(parent) = self.parent.as_ref() else { return false };
         let test = parent.phase.sequence(buntest).and_then(|sequence| sequence.test_entry);
-        let entry = test.or_else(|| parent.phase.entry(buntest).map(core::ptr::NonNull::from));
-        // SAFETY: `buntest` owns the entries of its sequences.
-        entry.is_some_and(|entry| unsafe { entry.as_ref() }.calling.is_vitest())
+        let entry = test.or_else(|| parent.phase.entry(buntest));
+        entry.is_some_and(|entry| buntest.entry_of(entry).calling.is_vitest())
     }
 
     /// Whether to side with Vitest where it and Jest disagree: the running test was registered through `"vitest"`.
     pub(crate) fn is_vitest(&self) -> bool {
-        self.bun_test().is_some_and(|buntest| self.is_in_vitest_test(buntest.get()))
+        self.bun_test().is_some_and(|buntest| self.is_in_vitest_test(&buntest))
     }
 
     pub(crate) fn call(cx: &mut JsScope<'_>, value: JsLocal<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
@@ -704,7 +702,7 @@ impl Expect {
 
         let active_execution_entry_ref = if let Some(buntest_strong_) = bun_test::clone_active_strong() {
             let buntest_strong = buntest_strong_;
-            let state = state.unwrap_or_else(|| buntest_strong.get().get_current_state_data());
+            let state = state.unwrap_or_else(|| buntest_strong.get_current_state_data());
             Some(bun_test::BunTest::ref_(&buntest_strong, state))
         } else {
             None
@@ -1213,11 +1211,10 @@ impl Expect {
                     );
                 }
             }
-            let Some(buntest_strong) = this.bun_test() else {
+            let Some(buntest) = this.bun_test() else {
                 let signature = Self::get_signature(fn_name, "", false);
                 return throw!(this, global_this, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n");
             };
-            let buntest = buntest_strong.get();
 
             // 1. find the src loc of the snapshot
             let srcloc = ExpectDeferred::call_site(global_this, this_value)
@@ -1377,10 +1374,9 @@ impl Expect {
     #[optimize(size)]
     pub(crate) fn throw_snapshot_error(&self, global_this: &JSGlobalObject, err: &crate::Error, pretty_value: &[u8]) -> JsError {
         let runner = Jest::runner().expect("unreachable");
-        let Some(buntest_strong) = self.bun_test() else {
+        let Some(buntest) = self.bun_test() else {
             return global_this.throw(format_args!("Snapshot matchers cannot be used outside of a test"));
         };
-        let buntest = buntest_strong.get();
         // MultiArrayList::get requires MultiArrayElement (derive pending); use column accessor.
         let test_file_path = runner.files.items_source()[buntest.file_id as usize].path.text;
         let test_file_path = bstr::BStr::new(test_file_path);
@@ -1824,16 +1820,15 @@ impl Expect {
     pub(crate) fn has_assertions_in(global_this: &JSGlobalObject, state: Option<bun_test::RefDataValue>) -> JsResult<()> {
         let _gc = global_this.bun_vm().auto_gc_on_drop();
 
-        let Some(buntest_strong) = bun_test::clone_active_strong() else {
+        let Some(buntest) = bun_test::clone_active_strong() else {
             return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
         };
-        let buntest = buntest_strong.get();
         let state_data = state.unwrap_or_else(|| buntest.get_current_state_data());
-        let Some(execution) = state_data.sequence(buntest) else {
+        let Some(execution) = state_data.sequence(&buntest) else {
             return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
         };
-        if !matches!(execution.expect_assertions, ExpectAssertions::Exact(_)) {
-            execution.expect_assertions = ExpectAssertions::AtLeastOne;
+        if !matches!(execution.expect_assertions.get(), ExpectAssertions::Exact(_)) {
+            execution.expect_assertions.set(ExpectAssertions::AtLeastOne);
         }
 
         Ok(())
@@ -1875,15 +1870,14 @@ impl Expect {
 
         let unsigned_expected_assertions: u32 = expected_assertions as u32;
 
-        let Some(buntest_strong) = bun_test::clone_active_strong() else {
+        let Some(buntest) = bun_test::clone_active_strong() else {
             return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
         };
-        let buntest = buntest_strong.get();
         let state_data = state.unwrap_or_else(|| buntest.get_current_state_data());
-        let Some(execution) = state_data.sequence(buntest) else {
+        let Some(execution) = state_data.sequence(&buntest) else {
             return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
         };
-        execution.expect_assertions = ExpectAssertions::Exact(unsigned_expected_assertions);
+        execution.expect_assertions.set(ExpectAssertions::Exact(unsigned_expected_assertions));
 
         Ok(())
     }

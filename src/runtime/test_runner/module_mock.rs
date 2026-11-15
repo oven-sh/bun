@@ -12,17 +12,16 @@ extern "C" fn JSMock__isInPreload(global: &JSGlobalObject) -> bool {
     if !vm.is_main_thread.get() {
         return false;
     }
-    let Some(buntest_strong) = bun_test::clone_active_strong() else {
+    let Some(buntest) = bun_test::clone_active_strong() else {
         return false;
     };
-    let buntest = buntest_strong.get();
     if buntest.phase != bun_test::Phase::Execution
-        || buntest.execution.active_group_ref().is_none()
+        || buntest.execution.active_group().is_none()
     {
         return false;
     }
     buntest
         .get_current_state_data()
-        .entry(buntest)
-        .is_some_and(|entry| entry.added_in_phase == AddedInPhase::Preload)
+        .entry(&buntest)
+        .is_some_and(|entry| buntest.entry_of(entry).added_in_phase == AddedInPhase::Preload)
 }

@@ -10,7 +10,8 @@ use bun_lint::utils::text::natural_compare;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::{self};
 
-use super::bun_test::{BunTest, DescribeScope, ExecutionEntry, TestScheduleEntry};
+use super::bun_test::{BunTest, EntryId, ScopeId, TestScheduleEntry};
+use super::cells::CellExt as _;
 use super::diff_format::DiffFormatter;
 use super::execution::Result as TestResult;
 use super::expect::Expect;
@@ -293,10 +294,10 @@ impl Snapshots {
         let count = *gop.value_ptr;
         if let Some(parent) = expect.parent.as_ref()
             && let Some(buntest) = parent.bun_test()
-            && let Some(sequence) = parent.phase.sequence(buntest.get())
-            && (sequence.remaining_retry_count > 0 || sequence.remaining_repeat_count > 0)
+            && let Some(sequence) = parent.phase.sequence(&buntest)
+            && (sequence.remaining_retry_count.get() > 0 || sequence.remaining_repeat_count.get() > 0)
         {
-            sequence.counted_snapshots.push(snapshot_name.as_slice().into());
+            sequence.counted_snapshots.with_taken(|names| names.push(snapshot_name.as_slice().into()));
         }
         Ok((snapshot_name, count))
     }
@@ -304,13 +305,11 @@ impl Snapshots {
     #[optimize(size)]
     fn name_of(expect: &Expect, format: Format, hint: &[u8]) -> Result<Vec<u8>, Error> {
         let parent = expect.parent.as_ref().ok_or(Error::NoTest)?;
-        let buntest_strong = parent.bun_test().ok_or(Error::TestNotActive)?;
-        let buntest = buntest_strong.get();
-        let active = core::ptr::NonNull::from(parent.phase.entry(buntest).ok_or(Error::SnapshotInConcurrentGroup)?);
-        let test = parent.phase.sequence(buntest).and_then(|sequence| sequence.test_entry);
-        // SAFETY: `buntest_strong` owns the entries of its sequences.
-        let entry: &ExecutionEntry = unsafe { test.filter(|_| format != Format::Bun).unwrap_or(active).as_ref() };
-        let mut name = full_test_name(entry, format.name_separator(), format == Format::Jest);
+        let buntest = parent.bun_test().ok_or(Error::TestNotActive)?;
+        let active = parent.phase.entry(&buntest).ok_or(Error::SnapshotInConcurrentGroup)?;
+        let test = parent.phase.sequence(&buntest).and_then(|sequence| sequence.test_entry);
+        let entry = buntest.entry_of(test.filter(|_| format != Format::Bun).unwrap_or(active));
+        let mut name = full_test_name(&buntest, entry, format.name_separator(), format == Format::Jest);
         // Jest: `name && hint ? name + ": " + hint : name`
         if !hint.is_empty() && !(format == Format::Jest && name.is_empty()) {
             name.extend_from_slice(format.hint_separator());
@@ -337,8 +336,7 @@ impl Snapshots {
     /// Loads the running test's snapshot file if it isn't the current one. Never creates it.
     #[optimize(size)]
     pub(crate) fn format_of(&mut self, files: &FileList, expect: &Expect) -> Result<Format, Error> {
-        let buntest_strong = expect.bun_test().ok_or(Error::SnapshotFailed)?;
-        let buntest = buntest_strong.get();
+        let buntest = expect.bun_test().ok_or(Error::SnapshotFailed)?;
         let file_id = buntest.file_id;
         if let Some(file) = self._current_file.as_ref().filter(|file| file.id == file_id) {
             return Ok(file.format);
@@ -356,7 +354,7 @@ impl Snapshots {
         };
         let format = if !contents.is_empty() {
             Format::of_file(&contents)
-        } else if expect.is_in_vitest_test(buntest) {
+        } else if expect.is_in_vitest_test(&buntest) {
             Format::Vitest
         } else {
             Format::Bun
@@ -553,41 +551,43 @@ impl Snapshots {
         if !self.update_snapshots || file.format == Format::Bun || self.values.values().iter().all(|entry| entry.checked) {
             return;
         }
-        let done: Vec<*const ExecutionEntry> = buntest
+        let done: Vec<EntryId> = buntest
             .execution
-            .sequences
+            .sequences()
             .iter()
-            .filter(|sequence| matches!(sequence.result, TestResult::Pass | TestResult::Todo))
-            .filter_map(|sequence| sequence.test_entry.map(|entry| entry.as_ptr().cast_const()))
+            .filter(|sequence| matches!(sequence.result.get(), TestResult::Pass | TestResult::Todo))
+            .filter_map(|sequence| sequence.test_entry.map(|entry| buntest.step(entry).entry))
             .collect();
-        Self::keep_entries_of_tests(&mut self.values, file.format, &buntest.collection.root_scope, &done);
+        Self::keep_entries_of_tests(&mut self.values, file.format, buntest, done);
         file.dirty = true;
         self.values.retain(|_, entry| entry.checked || entry.stays);
     }
 
-    /// Sets `stays` on the entries of every test under `root` that isn't in `except`.
+    /// Sets `stays` on the entries of every test of `buntest` that isn't in `except`.
     fn keep_entries_of_tests(
         values: &mut StringArrayHashMap<Entry>,
         format: Format,
-        root: &DescribeScope,
-        except: &[*const ExecutionEntry],
+        buntest: &BunTest,
+        mut except: Vec<EntryId>,
     ) {
-        let mut except = except.to_vec();
         index_sort::sort_slice_unstable_by(&mut except, |a, b| a.cmp(b));
         let mut names: StringArrayHashMap<()> = StringArrayHashMap::new();
-        let mut scopes = vec![root];
+        let mut scopes = vec![ScopeId::ROOT];
         while let Some(scope) = scopes.pop() {
-            for entry in &scope.entries {
-                match entry {
-                    TestScheduleEntry::Describe(describe) => scopes.push(describe),
-                    TestScheduleEntry::TestCallback(test) => {
-                        if except.binary_search(&core::ptr::from_ref::<ExecutionEntry>(test)).is_err() {
-                            let name = full_test_name(test, format.name_separator(), format == Format::Jest);
-                            names.insert(&Self::escape_line_breaks(format, name), ());
+            buntest.scope(scope).entries.with_taken(|entries| {
+                for &entry in entries.iter() {
+                    match entry {
+                        TestScheduleEntry::Describe(describe) => scopes.push(describe),
+                        TestScheduleEntry::TestCallback(test) => {
+                            if except.binary_search(&test).is_err() {
+                                let name =
+                                    full_test_name(buntest, buntest.entry(test), format.name_separator(), format == Format::Jest);
+                                names.insert(&Self::escape_line_breaks(format, name), ());
+                            }
                         }
                     }
                 }
-            }
+            });
         }
 
         let separator = format.hint_separator();

@@ -12,7 +12,7 @@ use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
 use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult};
 use bun_collections::HashMap;
-use bun_core::io::WriterWithBuffer;
+use bun_core::io::WriterStorage;
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_core::{Output, StackCheck};
 
@@ -90,8 +90,8 @@ const DEFAULT_CONSOLE_LOG_DEPTH: u16 = 2;
 type Counter = HashMap<u64, u32>;
 
 pub struct ConsoleObject {
-    error_writer: WriterWithBuffer<4096>,
-    writer: WriterWithBuffer<4096>,
+    error_writer: WriterStorage<4096>,
+    writer: WriterStorage<4096>,
 
     default_indent: Cell<u16>,
 
@@ -110,8 +110,8 @@ impl ConsoleObject {
         Box::write(
             Box::new_uninit(),
             ConsoleObject {
-                error_writer: WriterWithBuffer::new(error_writer.0),
-                writer: WriterWithBuffer::new(writer.0),
+                error_writer: WriterStorage::new(error_writer.0),
+                writer: WriterStorage::new(writer.0),
                 default_indent: Cell::new(0),
                 counts: JsCell::default(),
             },

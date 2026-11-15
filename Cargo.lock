@@ -1696,7 +1696,6 @@ dependencies = [
  "bun_core",
  "bun_http_types",
  "bun_picohttp",
- "bun_ptr",
  "bun_sha_hmac",
  "strum",
  "thiserror",

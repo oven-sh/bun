@@ -4,38 +4,11 @@
 //! on the file or route it came from so the bundler can dismiss/update stale
 //! failures by index instead of resending the whole payload.
 
+pub(crate) use bun_bundler::bake_types::OwnerPacked;
 use bun_io::Write as _;
 
 use super::incremental_graph::{ClientFileIndex, ServerFileIndex};
 use super::route_bundle;
-use crate::bake::Side;
-
-/// `SerializedFailure.Owner` — `packed struct(u32)` (1-bit side + 31-bit idx).
-///
-/// Distinct from `Packed` (2-bit kind + 30-bit data) below: this encoding only
-/// covers `Client`/`Server` owners and is used as the `bundling_failures` map
-/// key directly.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
-pub(crate) struct OwnerPacked(pub(crate) u32);
-impl OwnerPacked {
-    #[inline]
-    pub(crate) fn new(side: Side, file: u32) -> Self {
-        Self(file | ((side as u32) << 31))
-    }
-    #[inline]
-    pub(crate) fn side(self) -> Side {
-        if self.0 >> 31 == 0 {
-            Side::Client
-        } else {
-            Side::Server
-        }
-    }
-    #[inline]
-    pub(crate) fn file(self) -> u32 {
-        self.0 & 0x7FFF_FFFF
-    }
-}
 
 /// The metaphorical owner of an incremental file error. The packed variant is
 /// given to the HMR runtime as an opaque handle.

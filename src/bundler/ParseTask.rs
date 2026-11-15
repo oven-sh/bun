@@ -1231,6 +1231,7 @@ pub mod parse_worker {
                 let mut import_records = Vec::<ImportRecord>::default();
                 let source_code = &source.contents;
                 let temp_log = Log::init();
+                scopeguard::defer! { temp_log.append_to(log) }
 
                 const CSS_MODULE_SUFFIX: &[u8] = b".module.css";
                 let enable_css_modules = source.path.pretty.len() > CSS_MODULE_SUFFIX.len()
@@ -1256,7 +1257,6 @@ pub mod parse_worker {
                     Err(e) => {
                         // Surface the actual CSS parse diagnostic.
                         let _ = e.add_to_logger(&temp_log, source);
-                        temp_log.append_to(log);
                         return Err(crate::Error::SyntaxError);
                     }
                 };
@@ -1277,7 +1277,6 @@ pub mod parse_worker {
                 ) {
                     // Surface the actual minify diagnostic.
                     let _ = e.add_to_logger(&temp_log, source);
-                    temp_log.append_to(log);
                     return Err(crate::Error::MinifyError);
                 }
                 if css_ast.local_scope.count() > 0 {
@@ -1290,9 +1289,6 @@ pub mod parse_worker {
                 // `Vec<bun_ast::Symbol>`. Convert field-by-field so CSS-module local refs
                 // index a populated symbol table.
                 let symbols = css_symbols_to_parser_symbols(&extra.symbols, bump);
-                // `temp_log` flushes into `log` on EVERY exit; match explicitly
-                // so accumulated CSS-module diagnostics are
-                // not dropped on the error path.
                 let lazy = js_parser::new_lazy_export_ast_impl(
                     bump,
                     &mut topts.define,
@@ -1303,7 +1299,6 @@ pub mod parse_worker {
                     b"",
                     symbols,
                 );
-                temp_log.append_to(log);
                 let mut ast = JSAst::init(lazy?.ok_or(AnyError::ParserError)?);
                 *stylesheet = Some(Box::new(css_ast));
                 ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
@@ -1724,12 +1719,7 @@ pub mod parse_worker {
                 bun_ast::Level::Debug => msg.kind = bun_ast::Kind::Debug,
                 _ => {}
             }
-            if msg.kind == bun_ast::Kind::Err {
-                log.errors.update(|n| n + 1);
-            } else if msg.kind == bun_ast::Kind::Warn {
-                log.warnings.update(|n| n + 1);
-            }
-            let _ = log.add_msg(msg);
+            log.add_counted_msg(msg);
         }
 
         /// # Safety
@@ -1817,7 +1807,7 @@ pub mod parse_worker {
         // SAFETY: `args.context` points to the `OnBeforeParsePlugin` that owns
         // this callback invocation; disjoint from `*args` (see above).
         let this = unsafe { &mut *args.context };
-        if this.log.errors.get() > 0
+        if this.log.has_errors()
             || this.deferred_error.is_some()
             || this.should_continue_running.get() != 1
         {
@@ -2030,12 +2020,11 @@ pub mod parse_worker {
                     // `args.context == self` — use `self` directly; materializing
                     // a second `&mut` via `&mut *args.context` while `&mut self`
                     // is live would be aliased-`&mut` UB.
-                    self.log.errors.update(|n| n + 1);
-                    let _ = self.log.add_msg(msg); // logger OOM-only
+                    self.log.add_counted_msg(msg);
                     return Err(crate::Error::InvalidNativePlugin);
                 }
 
-                if self.log.errors.get() > 0 {
+                if self.log.has_errors() {
                     return Err(crate::Error::SyntaxError);
                 }
 

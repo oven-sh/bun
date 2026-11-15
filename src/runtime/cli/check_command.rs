@@ -779,11 +779,7 @@ fn check_for_build(checked: TypeChecked, log: &bun_ast::Log, shows_progress: boo
             Category::Warning => bun_ast::Kind::Warn,
             Category::Suggestion | Category::Message => continue,
         };
-        match kind {
-            bun_ast::Kind::Err => log.errors.update(|n| n + 1),
-            _ => log.warnings.update(|n| n + 1),
-        }
-        log.add_msg(bun_ast::Msg {
+        log.add_counted_msg(bun_ast::Msg {
             kind,
             data: log_data_of(reported),
             metadata: format::metadata_of(reported),

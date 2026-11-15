@@ -155,7 +155,7 @@ pub(crate) fn view(
             Global::crash();
         }
     };
-    if log.errors.get() > 0 {
+    if log.has_errors() {
         log.print(Output::error_writer())?;
         Global::crash();
     }

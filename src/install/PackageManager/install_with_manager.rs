@@ -1601,7 +1601,7 @@ fn report_lockfile_load_error(
     if log_level != Options::LogLevel::Silent
         && !crate::migration::reported_unsupported_lockfile_version(cause)
     {
-        if manager.log().errors.get() > 0 {
+        if manager.log().has_errors() {
             manager.log().print(Output::error_writer())?;
         }
 
@@ -2045,7 +2045,7 @@ fn root_package_json_source(
         WorkspacePackageJsonCacheResult::ReadErr(err) => ("read", err),
         WorkspacePackageJsonCacheResult::ParseErr(err) => ("parse", err),
     };
-    if log.errors.get() > 0 {
+    if log.has_errors() {
         log.print(Output::error_writer())?;
     }
     Output::err(

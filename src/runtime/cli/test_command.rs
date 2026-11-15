@@ -4162,7 +4162,7 @@ impl Drop for PrintLogAfterFile {
         bun_ast::Stmt::data_store_reset();
 
         let log = self.0;
-        if log.errors.get() > 0 {
+        if log.has_errors() {
             let _ = log.print(Output::error_writer());
             log.with_msgs(Vec::clear);
             log.errors.set(0);

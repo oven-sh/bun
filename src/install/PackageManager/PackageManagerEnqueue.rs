@@ -1177,7 +1177,7 @@ fn prefetch_manifest(
         Ok(()) => ManifestState::Requested(task_id),
         // The dependency that needs the manifest makes the request again and reports the error.
         Err(_) => {
-            drop(this.take_log_since(log_mark));
+            drop(this.log().take_msgs_since(log_mark));
             let _ = this.manifest_failures.remove(&task_id);
             let _ = this.network_dedupe_map.remove(&task_id);
             ManifestState::Unavailable
@@ -4466,22 +4466,6 @@ impl PackageManager {
         })
     }
 
-    /// Removes the messages that were logged since `mark` from the log and returns them.
-    #[cold]
-    pub(crate) fn take_log_since(&mut self, mark: usize) -> Vec<bun_ast::Msg> {
-        let log = self.log();
-        let msgs: Vec<bun_ast::Msg> =
-            log.with_msgs(|msgs| msgs.drain(mark.min(msgs.len())..).collect());
-        for msg in &msgs {
-            match msg.kind {
-                bun_ast::Kind::Err => log.errors.update(|n| n - 1),
-                bun_ast::Kind::Warn => log.warnings.update(|n| n - 1),
-                _ => {}
-            }
-        }
-        msgs
-    }
-
     /// Turns the copies of `msgs` that `log_copies` logged as warnings into errors, so that the
     /// failure is printed once. Returns false if the log no longer has them.
     #[cold]
@@ -4508,14 +4492,9 @@ impl PackageManager {
     fn log_copies(&mut self, msgs: &[bun_ast::Msg], kind: bun_ast::Kind) {
         let log = self.log();
         for msg in msgs {
-            match kind {
-                bun_ast::Kind::Err => log.errors.update(|n| n + 1),
-                bun_ast::Kind::Warn => log.warnings.update(|n| n + 1),
-                _ => {}
-            }
             let mut msg = msg.clone();
             msg.kind = kind;
-            log.add_msg(msg);
+            log.add_counted_msg(msg);
         }
     }
 
@@ -4527,7 +4506,7 @@ impl PackageManager {
         if self.held_messages.is_none() || self.lockfile.is_workspace_dependency(row) {
             return;
         }
-        let msgs = self.take_log_since(mark);
+        let msgs = self.log().take_msgs_since(mark);
         if let Some(held) = &mut self.held_messages
             && !msgs.is_empty()
         {
@@ -4544,7 +4523,7 @@ impl PackageManager {
         mark: usize,
         mut failure: package_manager_real::ManifestFailure,
     ) {
-        failure.msgs = self.take_log_since(mark);
+        failure.msgs = self.log().take_msgs_since(mark);
         let _ = self.manifest_failures.insert(task_id, failure);
         let _ = self.look_ahead.waiting.remove(&task_id);
     }
@@ -4599,12 +4578,7 @@ impl PackageManager {
                 if msg.kind == Kind::Err && !is_needed {
                     msg.kind = Kind::Warn;
                 }
-                match msg.kind {
-                    Kind::Err => log.errors.update(|n| n + 1),
-                    Kind::Warn => log.warnings.update(|n| n + 1),
-                    _ => {}
-                }
-                log.add_msg(msg);
+                log.add_counted_msg(msg);
             }
         }
     }

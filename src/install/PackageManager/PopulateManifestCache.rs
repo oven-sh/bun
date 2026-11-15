@@ -332,7 +332,7 @@ pub fn populate_manifest_cache(
 pub fn print_fetch_failures(manager: &mut PackageManager) -> crate::Result<bool> {
     let log = manager.log();
     let failed_required = log.has_errors();
-    if log.msgs_len() > 0 {
+    if log.has_msgs() {
         Output::flush();
         log.print(Output::error_writer())?;
         log.reset();

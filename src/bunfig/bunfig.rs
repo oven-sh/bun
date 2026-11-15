@@ -955,7 +955,7 @@ impl<'a> Parser<'a, '_> {
             if let Some(run_expr) = json.get(b"run") {
                 if let Some(silent) = run_expr.get(b"silent") {
                     if let Some(value) = silent.as_bool() {
-                        IS_SILENT.store(value, Ordering::Relaxed);
+                        IS_SILENT.store(value);
                     } else {
                         self.add_error(silent.loc, b"Expected boolean")?;
                     }
@@ -1011,14 +1011,11 @@ impl<'a> Parser<'a, '_> {
                     if let Some(n) = depth.as_number() {
                         let depth_value = n as u16;
                         // Treat depth=0 as maxInt(u16) for infinite depth
-                        CONSOLE_DEPTH.store(
-                            if depth_value == 0 {
-                                u16::MAX
-                            } else {
-                                depth_value
-                            },
-                            Ordering::Relaxed,
-                        );
+                        CONSOLE_DEPTH.store(if depth_value == 0 {
+                            u16::MAX
+                        } else {
+                            depth_value
+                        });
                     } else {
                         self.add_error(depth.loc, b"Expected number")?;
                     }

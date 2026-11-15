@@ -188,7 +188,7 @@ impl Diagnostics {
         self.entries
             .dedup_by(|next, previous| next.key == previous.key);
         for entry in self.entries {
-            write_message(log, entry.message);
+            log.add_counted_msg(entry.message);
         }
         write_internal_errors(log, self.internal_errors);
     }
@@ -235,16 +235,7 @@ impl DiagnosticBuffer {
 
 pub fn log_diagnostic(log: &Log, code: Code, arguments: &[&[u8]]) {
     let diagnostic = Diagnostic::new(code, None, arguments);
-    write_message(log, to_message(None, &diagnostic));
-}
-
-pub(super) fn write_message(log: &Log, message: Msg) {
-    match message.kind {
-        Kind::Err => log.errors.update(|n| n + 1),
-        Kind::Warn => log.warnings.update(|n| n + 1),
-        Kind::Note | Kind::Debug | Kind::Verbose => {}
-    }
-    log.add_msg(message);
+    log.add_counted_msg(to_message(None, &diagnostic));
 }
 
 fn write_internal_errors(log: &Log, mut errors: Vec<InternalError>) {
@@ -267,15 +258,12 @@ fn write_internal_errors(log: &Log, mut errors: Vec<InternalError>) {
         } else {
             Box::new([])
         };
-        write_message(
-            log,
-            Msg {
-                kind: Kind::Err,
-                data: data_without_location(Cow::Owned(text)),
-                notes,
-                ..Default::default()
-            },
-        );
+        log.add_counted_msg(Msg {
+            kind: Kind::Err,
+            data: data_without_location(Cow::Owned(text)),
+            notes,
+            ..Default::default()
+        });
     }
 }
 

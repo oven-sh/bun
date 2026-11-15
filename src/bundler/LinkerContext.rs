@@ -46,7 +46,7 @@ use crate::{
 /// lower-tier crate, so the bundler can name the real enum (the `Js` arm
 /// holds an erased `*mut jsc::EventLoop` driven through a vtable). Stored as
 /// a pointer because the bundle borrows the loop owned by the
-/// `BundleThread` / runtime.
+/// runtime.
 pub type EventLoop = Option<core::ptr::NonNull<bun_event_loop::AnyEventLoop>>;
 
 bun_core::declare_scope!(LinkerCtx, visible);

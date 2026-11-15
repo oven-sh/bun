@@ -14,6 +14,9 @@ use bun_ast::{Loc, Location, Log, Msg, Source};
 use bun_collections::VecExt;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, declare_scope, scoped_log};
+use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
+use bun_event_loop::{BoxedTask, Posted};
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPoolLib;
 
@@ -41,11 +44,6 @@ use bun_resolver::fs::{ByteOrderMark, PathResolverExt as _};
 use bun_resolver::{self as _resolver, Resolver};
 
 declare_scope!(ParseTask, hidden);
-
-#[allow(non_snake_case)]
-mod EventLoop {
-    pub(super) type Task = bun_event_loop::ConcurrentTask::ConcurrentTask;
-}
 
 // the per-file parse arena is held as `bump: &'static Bump` (the
 // worker arena is pinned for the entire bundle pass — see `Worker::arena`),
@@ -118,7 +116,7 @@ pub enum ParseTaskStage<'a> {
 
 /// The information returned to the Bundler thread when a parse finishes.
 pub struct Result<'a> {
-    pub(crate) task: EventLoop::Task,
+    pub(crate) task: AnyTaskWithExtraContext,
     pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
     pub(crate) value: ResultValue<'a>,
     pub(crate) watcher_data: WatcherData,
@@ -127,16 +125,12 @@ pub struct Result<'a> {
     /// returned source code by the plugin. After `value`, which may borrow it.
     pub(crate) external: ExternalFreeFunction,
 }
-impl bun_event_loop::Taskable for Result<'static> {
+impl BoxedTask for Result<'static> {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BundleV2ParseTaskResult;
     /// The VM that runs the bundle is going: the result goes to nobody.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box `run_from_thread_pool` (or
-        // `ServerComponentParseTask`) leaked.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// A step of the bundle.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -2210,7 +2204,6 @@ pub mod parse_worker {
             path: *file_path,
             index: bun_ast::Index(task.source_index.get()),
             contents: std::borrow::Cow::Borrowed(contents),
-            contents_is_recycled: false,
             ..Default::default()
         });
 
@@ -2632,7 +2625,7 @@ pub mod parse_worker {
 
         let result = Box::new(Result {
             ctx,
-            task: EventLoop::Task::default(),
+            task: Default::default(),
             value,
             // `ExternalFreeFunction`
             // doesn't derive `Copy`, so move it out (task is consumed here).
@@ -2641,34 +2634,29 @@ pub mod parse_worker {
         });
         // Before the post: the bundle can then finish and free what the task borrows.
         drop(this);
-        let result = bun_core::heap::into_raw(result);
+        post_result(result);
+    }
 
-        // Running `on_complete` inline on the worker thread would violate
-        // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
-        // bundler graph, which is owned by the main/bundler thread).
-        match worker.ctx.any_loop() {
+    /// Hands `result` to the bundle's thread, the only one that changes the graph.
+    pub(crate) fn post_result(result: Box<Result<'static>>) {
+        let ctx = result.ctx;
+        match ctx.any_loop() {
             bun_event_loop::AnyEventLoop::Js { .. } => {
-                let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(result);
-                let poster = worker
-                    .ctx
+                let ct = ConcurrentTask::create_boxed(result);
+                let poster = ctx
                     .js_poster
                     .as_ref()
                     .expect("JS-owned bundle has a poster");
-                if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                    // Owning JS VM torn down mid-bundle: free the hop and the result.
-                    // SAFETY: refused ⇒ we own the task box and the leaked result.
-                    unsafe {
-                        bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
-                        <Result as bun_event_loop::Taskable>::release_unrun(result);
-                    }
+                if let Posted::Refused(ct) = poster.post(ct) {
+                    // SAFETY: the task made above.
+                    unsafe { ct.task.into_boxed::<Result>() }.release_unrun();
                 }
             }
             bun_event_loop::AnyEventLoop::Mini(mini) => {
-                // SAFETY: `result` is a valid heap pointer with `task` at the given offset;
-                // ownership transfers to the mini event loop which frees it after `on_complete_mini`.
+                // SAFETY: `task` is the field at that offset; `on_complete_mini` takes the box back.
                 unsafe {
                     mini.enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
-                        result,
+                        bun_core::heap::into_raw(result),
                         on_complete_mini,
                         offset_of!(Result, task),
                     );
@@ -2678,14 +2666,17 @@ pub mod parse_worker {
     }
 
     fn on_complete_mini(result: *mut Result<'static>, ctx: *mut BundleV2<'static>) {
-        // SAFETY: callback contract — `result` is the box queued above, `ctx` the bundle that ticks the loop.
-        let (result, ctx) = unsafe { (bun_core::heap::take(result), &mut *ctx) };
-        BundleV2::on_parse_task_complete(result, ctx);
+        // SAFETY: the box that `post_result` queued, and the bundle that is running the loop.
+        let (bundle, result) = unsafe { (&mut *ctx, bun_core::heap::take(result)) };
+        BundleV2::on_parse_task_complete(result, bundle);
     }
 
-    pub fn on_complete(result: Box<Result<'static>>) {
+    /// # Safety
+    /// On the bundle's thread, which uses no other borrow of the bundle during the call.
+    pub unsafe fn on_complete(result: Box<Result<'static>>) {
         let ctx = result.ctx;
-        // SAFETY: the bundle's loop runs this, with no other borrow of the bundle; `ctx` has write provenance (`ParseTask::init`).
+        // SAFETY: `ctx` has write provenance (`from_ref_mut` in `ParseTask::init`) and outlives
+        // the pass. Exclusive by the fn contract.
         BundleV2::on_parse_task_complete(result, unsafe { ctx.assume_mut() });
     }
 } // end mod parse_worker

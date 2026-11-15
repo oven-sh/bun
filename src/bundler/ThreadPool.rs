@@ -2,7 +2,7 @@
 //! wraps `bun_threading::thread_pool::ThreadPool` and owns the per-thread
 //! [`Worker`] state (mimalloc arena, per-thread `Transpiler` clone, AST store).
 //!
-//! `Worker::new` / `initialize_transpiler` build the per-worker
+//! `Worker::new` builds the per-worker
 //! `Transpiler` via `Transpiler::for_worker` (per-field deep clone — no
 //! bitwise struct copy); the self-referential `macro_context` is wired by
 //! `Transpiler::wire_after_move` once the value is at its final address.
@@ -363,10 +363,12 @@ impl Worker {
         // SAFETY: `heap` is the last field to drop.
         let arena: &'static ThreadLocalArena = unsafe { &*heap.as_ptr() };
         let log: *mut bun_ast::Log = arena.alloc(bun_ast::Log::init());
+        // `'static` stands for the bundle's lifetime, here and in the transpilers made from `ctx`.
+        let ctx = bun_ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>());
 
         let mut worker = Box::new(Worker {
-            ctx: bun_ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>()),
-            transpiler: Self::initialize_transpiler(log, ctx.transpiler(), arena),
+            ctx,
+            transpiler: Transpiler::for_worker(ctx.transpiler(), arena, log),
             other_transpiler: None,
             temporary_arena: bun_alloc::Arena::new(),
             stmt_list: StmtList::init(),
@@ -385,28 +387,12 @@ impl Worker {
         worker.into()
     }
 
-    /// Build a per-worker `Transpiler` from `from`.
-    ///
-    /// The returned value is a
-    /// fully-owned `Transpiler` whose `Drop` is sound; `wire_after_move` must
-    /// be called once it is at its final address.
-    fn initialize_transpiler(
-        log: *mut bun_ast::Log,
-        from: &Transpiler<'_>,
-        arena: &'static ThreadLocalArena,
-    ) -> Transpiler<'static> {
-        // SAFETY: `from` is the `BundleV2`-owned transpiler (or its
-        // client transpiler), which outlives every worker; the
-        // `&'a`-carrying fields inside reference process-lifetime data.
-        unsafe { Transpiler::<'static>::for_worker(from, arena, log) }
-    }
-
     pub(crate) fn transpiler_for_target(&mut self, target: Target) -> &mut Transpiler<'static> {
         if target == Target::Browser && self.transpiler.options.target != target {
             let (arena, log) = (self.arena(), self.transpiler.log);
             let other = self.other_transpiler.get_or_insert_with(|| {
                 let client = self.ctx.client_transpiler_ref().unwrap();
-                let mut boxed = Box::new(Self::initialize_transpiler(log, client, arena));
+                let mut boxed = Box::new(Transpiler::for_worker(client, arena, log));
                 // Wire self-refs after the value reached its final (heap) address.
                 boxed.wire_after_move();
                 boxed

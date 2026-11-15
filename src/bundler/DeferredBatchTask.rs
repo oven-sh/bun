@@ -8,7 +8,7 @@ use crate::BundleV2;
 // Task is `(tag: u8, ptr: *mut ())` owned by bun_event_loop;
 // runtime owns the match-loop. See PORTING.md §Dispatch.
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
-use bun_event_loop::{Posted, Task, task_tag};
+use bun_event_loop::{Task, task_tag};
 
 #[derive(Default)]
 pub struct DeferredBatchTask {
@@ -48,10 +48,8 @@ impl DeferredBatchTask {
     /// Bundle thread. The caller has counted the hop as a pending item (`BundleV2::drain_deferred_tasks`).
     pub(crate) fn schedule(&mut self) {
         let task = ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(self)));
-        if let Posted::Refused(task) = self.get_bundle_v2().enqueue_on_js_loop_for_plugins(task) {
-            // SAFETY: refused ⇒ still ours.
-            unsafe { ConcurrentTask::release_refused(task) };
-        }
+        // Refused: the VM was torn down mid-bundle, the hop never runs.
+        let _ = self.get_bundle_v2().enqueue_on_js_loop_for_plugins(task);
     }
 
     /// Plugins' (JS) thread.

@@ -787,9 +787,16 @@ pub fn free_sensitive(mut slice: Box<[u8]>) {
 // Bits 0..=30 = index, bit 31 = is_overflow.
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Outside this crate, a sentinel or the index of a slot that `BSSMapInner::put` initialized.
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct IndexType(u32);
+
+impl Default for IndexType {
+    fn default() -> Self {
+        UNASSIGNED
+    }
+}
 
 impl IndexType {
     #[inline]
@@ -803,14 +810,6 @@ impl IndexType {
     #[inline]
     const fn is_overflow(self) -> bool {
         (self.0 >> 31) != 0
-    }
-    #[inline]
-    pub(crate) fn set_index(&mut self, index: u32) {
-        self.0 = (self.0 & 0x8000_0000) | (index & 0x7FFF_FFFF);
-    }
-    #[inline]
-    pub(crate) fn set_is_overflow(&mut self, v: bool) {
-        self.0 = (self.0 & 0x7FFF_FFFF) | ((v as u32) << 31);
     }
 }
 
@@ -1084,6 +1083,9 @@ fn bss_overflow_slice<T>(
 }
 
 /// Declare a `BSSMapInner<T, COUNT, RM_SLASH>` singleton accessor.
+///
+/// # Safety
+/// Whoever dereferences the pointer never gives the map an `IndexType` or a `Result` of another map.
 #[macro_export]
 macro_rules! bss_map_inner {
     ($(#[$m:meta])* $vis:vis $name:ident : $value_ty:ty, $count:expr, $rm_slash:expr) => {
@@ -1583,34 +1585,32 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     ) -> core::result::Result<&mut ValueType, AllocError> {
         let _guard = self.mutex.lock();
 
-        if result.index.index() == NOT_FOUND.index() || result.index.index() == UNASSIGNED.index() {
-            result
-                .index
-                .set_is_overflow(self.backing_buf_used as usize > Self::MAX_INDEX);
-            if result.index.is_overflow() {
-                result.index.set_index(self.overflow_list.len());
+        let mut index = result.index;
+        if index.index() == NOT_FOUND.index() || index.index() == UNASSIGNED.index() {
+            if self.backing_buf_used as usize > Self::MAX_INDEX {
+                index = IndexType::new(self.overflow_list.len(), true);
             } else {
-                result.index.set_index(self.backing_buf_used as u32);
+                index = IndexType::new(self.backing_buf_used as u32, false);
                 self.backing_buf_used += 1;
             }
         }
 
-        // Insert into `index` only after the slot is materialized below, so a
-        // failed (fallible) `append` can't leave a dangling hash -> index entry.
-        let ret = if result.index.is_overflow() {
-            if self.overflow_list.len() == result.index.index() {
+        // Publish `index` only after the slot is materialized below, so a
+        // failed (fallible) `append` can't leave a dangling index behind.
+        let ret = if index.is_overflow() {
+            if self.overflow_list.len() == index.index() {
                 self.overflow_list.append(value)?
             } else {
-                let ptr = self.overflow_list.at_index_mut(result.index);
+                let ptr = self.overflow_list.at_index_mut(index);
                 *ptr = value;
                 ptr
             }
         } else {
-            let idx = result.index.index() as usize;
             // Raw write — fresh slots are uninit; no drop glue runs.
-            self.backing_buf[idx].write(value)
+            self.backing_buf[index.index() as usize].write(value)
         };
-        self.index.insert(result.hash, result.index);
+        result.index = index;
+        self.index.insert(result.hash, index);
         Ok(ret)
     }
 

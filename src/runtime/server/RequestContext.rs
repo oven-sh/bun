@@ -1360,60 +1360,61 @@ where
     }
 
     /// # Safety
-    /// `slot` was just claimed from the pool that `server.release_request_context` returns it to.
+    /// `pool` is the one that `server.release_request_context` returns the context to.
     pub(crate) unsafe fn create(
-        slot: *mut Self,
+        pool: &RequestContextStackAllocator<ThisServer, SSL_ENABLED, DEBUG_MODE, MUX>,
         server: &ThisServer,
         req: *mut Req<SSL_ENABLED, MUX>,
         resp: uws::AnyResponse,
         method: Option<Method>,
-    ) {
+    ) -> Dispatch<ThisServer, SSL_ENABLED, DEBUG_MODE, MUX> {
         let resolved_method = method
             .or_else(|| Method::which(Self::req_method(req)))
             .unwrap_or(Method::GET);
         let any_req = Self::any_request(req);
         let range = RangeRequest::raw_from_request(&any_req);
         let if_range = RangeRequest::if_range_from_request(&any_req, range);
-        // SAFETY: fn contract. `resp` adopts the first ref.
-        unsafe {
-            slot.write(Self {
-                root: Cell::new(slot),
-                resp: AttachedResponse(JsCell::new(None)),
-                req: Cell::new(NonNull::new(req)),
-                method: resolved_method,
-                server: JsCell::new(Some(PendingRequest::new(bun_ptr::BackRef::new(server)))),
-                range,
-                if_range,
-                request_weakref: JsCell::new(request::WeakRef::EMPTY),
-                signal: JsCell::new(None),
-                cookies: JsCell::new(None),
-                flags: Flags::<DEBUG_MODE>::default(),
-                upgrade_context: Cell::new(UpgradeState::None),
-                response_root: ResponseRoot::default(),
-                ref_count: RefCount::init(),
-                pin_count: Cell::new(0),
-                dispatch_count: Cell::new(0),
-                dispatch_ref: Cell::new(None),
-                response_weakref: JsCell::new(response::WeakRef::EMPTY),
-                blob: JsCell::new(AnyBlob::Blob(Blob::default())),
-                sendfile: Cell::new(SendfileContext::default()),
-                request_body_readable_stream_ref: bun_jsc::StrongCell::default(),
-                request_body: JsCell::new(None),
-                request_body_buf: JsCell::new(Vec::new()),
-                request_body_content_len: Cell::new(0),
-                request_body_streamed_len: Cell::new(0),
-                sink: JsCell::new(None),
-                byte_stream: Cell::new(None),
-                response_body_readable_stream_ref: Cell::default(),
-                pathname: JsCell::new(BunString::EMPTY),
-                response_buf_owned: JsCell::new(Vec::new()),
-                deferred_request: Cell::new(None),
-                promise_cell: Cell::new(JSValue::ZERO),
-            });
-            (*slot).resp.0.set(Some((resp, RefPtr::from_raw(slot))));
-        }
+        let slot = pool.get_init_with(|slot| Self {
+            root: Cell::new(slot.as_ptr()),
+            resp: AttachedResponse(JsCell::new(None)),
+            req: Cell::new(NonNull::new(req)),
+            method: resolved_method,
+            server: JsCell::new(Some(PendingRequest::new(bun_ptr::BackRef::new(server)))),
+            range,
+            if_range,
+            request_weakref: JsCell::new(request::WeakRef::EMPTY),
+            signal: JsCell::new(None),
+            cookies: JsCell::new(None),
+            flags: Flags::<DEBUG_MODE>::default(),
+            upgrade_context: Cell::new(UpgradeState::None),
+            response_root: ResponseRoot::default(),
+            ref_count: RefCount::init(),
+            pin_count: Cell::new(0),
+            dispatch_count: Cell::new(0),
+            dispatch_ref: Cell::new(None),
+            response_weakref: JsCell::new(response::WeakRef::EMPTY),
+            blob: JsCell::new(AnyBlob::Blob(Blob::default())),
+            sendfile: Cell::new(SendfileContext::default()),
+            request_body_readable_stream_ref: bun_jsc::StrongCell::default(),
+            request_body: JsCell::new(None),
+            request_body_buf: JsCell::new(Vec::new()),
+            request_body_content_len: Cell::new(0),
+            request_body_streamed_len: Cell::new(0),
+            sink: JsCell::new(None),
+            byte_stream: Cell::new(None),
+            response_body_readable_stream_ref: Cell::default(),
+            pathname: JsCell::new(BunString::EMPTY),
+            response_buf_owned: JsCell::new(Vec::new()),
+            deferred_request: Cell::new(None),
+            promise_cell: Cell::new(JSValue::ZERO),
+        });
+        // SAFETY: `get_init_with` initialized the slot, in the pool of the fn contract. `resp`
+        // adopts the first ref.
+        let (this, first_ref) = unsafe { (slot.as_ref(), RefPtr::from_raw(slot.as_ptr())) };
+        this.resp.0.set(Some((resp, first_ref)));
 
         ctx_log!("create<d> ({:p})<r>", slot);
+        Dispatch::new(this)
     }
 
     fn on_abort(this: *mut Self, resp: uws::AnyResponse) {

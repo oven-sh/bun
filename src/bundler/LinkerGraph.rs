@@ -260,8 +260,8 @@ impl Drop for LinkerGraph<'_> {
 }
 
 // SAFETY: workers share `&LinkerGraph`. What is not `Sync` on its own:
-// - The `MultiArrayList`s. Workers write their columns through `split_raw()` and
-//   `ast.get()`, and each task writes only the rows of its own file or chunk. The gap:
+// - The `MultiArrayList`s. Workers write their columns through `split_raw()` and a copy of
+//   `import_records`, and each task writes only the rows of its own file or chunk. The gap:
 //   a file in two `internal_bake_dev` chunks has its import records written by both.
 //   Nothing writes `Part.scopes` or the `symbols` column of `ast` while workers run.
 // - `Symbol.link`, a `Cell` that `follow()` writes only to shorten a chain.

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { once } from "node:events";
 import { performance } from "node:perf_hooks";
 import { Worker, isMainThread, parentPort } from "node:worker_threads";
 const payloadToken = value =>
@@ -69,46 +68,74 @@ if (!isMainThread) {
   const expectedToken = payloadToken(payload);
   const shape = { operations: 250000, warmupOperations: 25000, batchSize: 1000 };
   let worker;
-  let workerExit;
+  let workerExitCode;
   let workerError;
   let sentNs = 0;
   let observedChecksum = 0;
   worker = new Worker(new URL(import.meta.url));
+  // Record terminal events so an exit or error between waits cannot be missed.
   worker.on("error", error => {
     workerError = error;
   });
-  workerExit = once(worker, "exit");
-  const unexpectedExit = workerExit.then(([code]) => {
-    throw new Error(`Worker exited before an acknowledgment: ${code}`);
+  worker.on("exit", code => {
+    workerExitCode = code;
   });
-  void unexpectedExit.catch(() => {});
-  const nextMessage = () => Promise.race([once(worker, "message"), unexpectedExit]);
-  const [ready] = await nextMessage();
-  assert.equal(ready.ready, true);
+  function waitFor(event, send) {
+    return new Promise((resolve, reject) => {
+      let timer;
+      const finish = (settle, value) => {
+        clearTimeout(timer);
+        worker.off(event, onEvent);
+        worker.off("error", onError);
+        worker.off("exit", onExit);
+        settle(value);
+      };
+      const onEvent = (...args) => finish(resolve, args);
+      const onError = error => finish(reject, error);
+      const onExit = code => onError(new Error(`Worker exited before an acknowledgment: ${code}`));
+      if (workerError) return onError(workerError);
+      if (workerExitCode !== undefined) {
+        return event === "exit" ? onEvent(workerExitCode) : onExit(workerExitCode);
+      }
+      worker.once(event, onEvent);
+      worker.once("error", onError);
+      if (event !== "exit") worker.once("exit", onExit);
+      const timeoutMs = 60_000;
+      timer = setTimeout(() => {
+        onError(new Error(`Timed out waiting for worker ${event} after ${timeoutMs} ms`));
+      }, timeoutMs);
+      try {
+        send?.();
+      } catch (error) {
+        onError(error);
+      }
+    });
+  }
   async function phase(operations) {
     let ns = 0;
     let checksum = 0;
     const elapsedStart = performance.now();
     for (let offset = 0; offset < operations; offset += shape.batchSize) {
       const count = Math.min(shape.batchSize, operations - offset);
-      const ack = nextMessage();
-      const started = performance.now();
-      for (let index = 0; index < count; index++) worker.postMessage(payload);
-      ns += (performance.now() - started) * 1e6;
-      worker.postMessage({ __benchmark: "barrier" });
-      const [receipt] = await ack;
+      const [receipt] = await waitFor("message", () => {
+        const started = performance.now();
+        for (let index = 0; index < count; index++) worker.postMessage(payload);
+        ns += (performance.now() - started) * 1e6;
+        worker.postMessage({ __benchmark: "barrier" });
+      });
       assert.equal(receipt.count, count, "Worker did not consume every message");
       assert.equal(receipt.checksum, count * expectedToken, "Worker clone checksum differs");
       checksum += receipt.checksum;
-      if (workerError) throw workerError;
     }
     assert.equal(checksum, operations * expectedToken);
     return { synchronousNs: ns, elapsedMs: performance.now() - elapsedStart, checksum };
   }
   try {
-    const validation = nextMessage();
-    worker.postMessage({ __benchmark: "validate", payload });
-    const [copy] = await validation;
+    const [ready] = await waitFor("message");
+    assert.equal(ready.ready, true);
+    const [copy] = await waitFor("message", () => {
+      worker.postMessage({ __benchmark: "validate", payload });
+    });
     assert.deepEqual(copy, payload, "Worker did not preserve the complete payload");
     await phase(shape.warmupOperations);
     const cpuBefore = process.cpuUsage();
@@ -120,8 +147,9 @@ if (!isMainThread) {
     const memoryAfter = process.memoryUsage();
     const maxRssKiB = process.resourceUsage().maxRSS;
     if (worker) {
-      worker.postMessage({ __benchmark: "close" });
-      const [code] = await workerExit;
+      const [code] = await waitFor("exit", () => {
+        worker.postMessage({ __benchmark: "close" });
+      });
       assert.equal(code, 0, "Worker failed clean exit");
       worker = undefined;
     }

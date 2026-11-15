@@ -327,8 +327,8 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
 
         #[derive(Copy, Clone)]
         #vis struct #name {
-            pub kind: #kind,
-            pub owner: *mut (),
+            kind: #kind,
+            owner: *mut (),
         }
 
         /// Implemented by `link_impl_*!` for the type each variant dispatches
@@ -363,6 +363,8 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
             }
             #[inline]
             pub fn is(&self, kind: #kind) -> bool { self.kind == kind }
+            #[inline]
+            pub fn owner(&self) -> *mut () { self.owner }
         }
 
         #(#sig_aliases)*

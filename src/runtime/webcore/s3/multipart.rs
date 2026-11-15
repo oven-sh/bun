@@ -91,6 +91,7 @@
 
 use core::cell::{Cell, OnceCell};
 use std::io::Write as _;
+use std::sync::Arc;
 
 use bstr::BStr;
 
@@ -137,7 +138,7 @@ pub(crate) struct MultiPartUpload {
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
-    pub(crate) credentials: RefPtr<S3Credentials>,
+    pub(crate) credentials: Arc<S3Credentials>,
     pub poll_ref: JsKeepAlive,
     /// An upload waits for its script to write more, which the script of a `Bun.ModuleGraph` that
     /// was disposed never does: the graph's context fails it.

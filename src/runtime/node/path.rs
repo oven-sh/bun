@@ -1,9 +1,10 @@
 //! The bodies of node_path.bind.ts.
 
+use core::cell::Cell;
+
 use crate::generated_bindgen::node_path::ParsedPath;
 use crate::jsc::JSString;
 use crate::jsc::bindgen::{self, JsHeap, JsLatin1, JsLocal, JsScope};
-use crate::jsc::rare_data::PathBuf as RarePathBuf;
 use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
 use bun_core::Utf8Bytes;
@@ -19,37 +20,40 @@ use bun_node_path::{
     resolve_absolute_posix_latin1, resolve_buf_len, resolve_posix_t, resolve_windows_t,
     to_namespaced_path_buf_len, to_namespaced_path_windows_t,
 };
-use bun_paths::MAX_PATH_BYTES;
 
 type Text<'a> = JsLocal<'a, JSString>;
 type TextResult<'a> = bindgen::Result<'a, Text<'a>>;
 
-/// Path scratch carved from the per-VM [`RarePathBuf`], which is allocated once.
-enum PathScratch<'a> {
-    Pooled(&'a mut [u8]),
-    Spill(Box<[u8]>),
+/// Path scratch taken from the VM's `path_buf` until it drops.
+struct PathScratch {
+    buf: Box<[u8]>,
+    len: usize,
+    tier: Option<&'static Cell<Box<[u8]>>>,
 }
 
-impl PathScratch<'_> {
-    const POOL_MAX: usize = 32 * MAX_PATH_BYTES;
-
+impl PathScratch {
     #[inline]
     fn new(heap: &JsHeap<'_>, len: usize) -> Self {
-        if len > Self::POOL_MAX {
-            return Self::Spill(vec![0; len].into_boxed_slice());
-        }
         // SAFETY: the global object is only asked for its VM.
         let vm = unsafe { heap.global() }.bun_vm();
-        // SAFETY: a path function makes one scratch and runs no script while it has it.
-        let pool: &mut RarePathBuf = unsafe { vm.rare_data().path_buf.get_mut() };
-        Self::Pooled(&mut pool.get(len)[..len])
+        let (tier, size) = vm.rare_data().path_buf.tier(len).unzip();
+        let mut buf = tier.map(Cell::take).unwrap_or_default();
+        if buf.len() < len {
+            buf = vec![0; size.unwrap_or(len)].into_boxed_slice();
+        }
+        Self { buf, len, tier }
     }
 
     #[inline]
     fn slice(&mut self) -> &mut [u8] {
-        match self {
-            Self::Pooled(slice) => slice,
-            Self::Spill(slab) => slab,
+        &mut self.buf[..self.len]
+    }
+}
+
+impl Drop for PathScratch {
+    fn drop(&mut self) {
+        if let Some(tier) = self.tier {
+            tier.set(core::mem::take(&mut self.buf));
         }
     }
 }

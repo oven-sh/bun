@@ -1726,6 +1726,106 @@ it("reload() cannot turn a Bun.serve server into a node:http server", async () =
   );
 });
 
+describe.concurrent("a node:http server reloaded to Bun.serve handlers", () => {
+  const run = (script: string) =>
+    bunRun([
+      "-e",
+      `const server = Bun.serve({ port: 0, hostname: "127.0.0.1", onNodeHTTPRequest() {} });
+       const closed = Promise.withResolvers();
+       let received = "", onData = () => {};
+       const client = await Bun.connect({
+         hostname: "127.0.0.1",
+         port: server.port,
+         socket: { data(_, chunk) { received += chunk; onData(); }, close() { closed.resolve(); } },
+       });
+       const until = text =>
+         new Promise((resolve, reject) => {
+           closed.promise.then(() => reject(new Error("closed before " + text)));
+           (onData = () => received.includes(text) && resolve())();
+         });
+       const get = path => "GET " + path + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n";
+       const pending = req => {
+         console.log("handler", new URL(req.url).pathname);
+         return new Promise(resolve => (req.signal.onabort = () => (console.log("aborted"), resolve())));
+       };
+       const node = (_, url) => console.log("node", url);
+       ${script}
+       await server.stop(true);`,
+    ]);
+
+  it.each([
+    ["{ fetch: pending }", "handler /a\naborted"],
+    [`{ routes: { "/:any": pending } }`, "handler /a\naborted"],
+    [`{ routes: { "/a": pending }, onNodeHTTPRequest: node }`, "handler /a\naborted"],
+    [`{ routes: { "/b": pending }, onNodeHTTPRequest: node }`, "node /a"],
+    [`{ fetch: req => (server.reload({ onNodeHTTPRequest: node }), pending(req)) }`, "handler /a\naborted"],
+  ])("closes a connection that pipelines behind a pending response: %s", async (options, stdout) => {
+    expect(
+      await run(`
+        server.reload(${options});
+        client.write(get("/a") + get("/b"));
+        client.shutdown();
+        await closed.promise;
+      `),
+    ).toSpawn(stdout);
+  });
+
+  it("ignores the rest of a request body once a streamed response has ended", async () => {
+    expect(
+      await run(`
+        server.reload({
+          fetch: req =>
+            req.method === "GET"
+              ? new Response("second")
+              : new Response(
+                  new ReadableStream({
+                    async pull(controller) {
+                      await new Promise(setImmediate);
+                      controller.enqueue("first");
+                      controller.close();
+                    },
+                  }),
+                ),
+        });
+        client.write("POST / HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 2\\r\\n\\r\\n1");
+        await until("first");
+        for (let i = 0; i < 1000 && server.pendingRequests; i++) await new Promise(setImmediate);
+        console.log(server.pendingRequests);
+        client.write("2" + get("/"));
+        await until("second");
+      `),
+    ).toSpawn("0");
+  });
+
+  // The handler empties the socket's buffer itself, so /b arrives before the writable event, as it can with kqueue.
+  it.skipIf(!isPosix)("keeps a connection whose node:http response has been sent completely", async () => {
+    expect(
+      await run(`
+        server.reload({
+          routes: { "/b": () => (console.log("handler /b"), new Response("second")) },
+          onNodeHTTPRequest(_, url, method, bits, res, hasBody, socket) {
+            res.writeHead(200, "OK", []);
+            res.end(Buffer.alloc(16 << 20, "a"));
+            console.log("buffered", res.bufferedAmount > 0);
+            res.onwritable = () => console.log("finished");
+            const sink = Buffer.alloc(1 << 20);
+            for (let i = 0; i < 100_000 && res.bufferedAmount; i++) {
+              try {
+                while (require("node:fs").readSync(client.fd, sink));
+              } catch {}
+              socket.write(".");
+            }
+            console.log("buffered", res.bufferedAmount > 0);
+          },
+        });
+        client.write(get("/a") + get("/b"));
+        await until("second");
+        console.log(server.pendingRequests);
+      `),
+    ).toSpawn("buffered true\nbuffered false\nfinished\nhandler /b\n0");
+  });
+});
+
 it("reload() that drops the node:http handler keeps the server's node:http stop() semantics", async () => {
   // The other direction of the kind invariant: a server created as a node:http
   // one stays one. stop(false) of a node:http server does not sweep idle

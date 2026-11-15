@@ -141,14 +141,14 @@ pub(crate) unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
 /// safe Rust cannot fabricate an `ExtSlot<T>` containing a dangling pointer;
 /// every `&mut ExtSlot<T>` reachable from safe code was materialised by the
 /// `vtable::Trampolines` layer from C-allocated socket ext memory (via
-/// `(*s).ext::<ExtSlot<T>>()`), and `calloc`-zero is `None`. That makes
+/// `(*s).ext::<ExtSlot<T>>()`), and `us_internal_socket_clear_ext` stores `None`. That makes
 /// [`Self::owner_ref`] sound as a *safe* fn — the one `unsafe`
 /// inside discharges the invariant for every call site.
 #[repr(transparent)]
 pub struct ExtSlot<T>(Option<NonNull<T>>);
 
 impl<T> ExtSlot<T> {
-    /// Recover `&T` from the slot, or `None` for the calloc'd-but-not-yet-
+    /// Recover `&T` from the slot, or `None` for the cleared-but-not-yet-
     /// stamped window during connect/accept. Safe: see type-level docs for the
     /// invariant that discharges the `unsafe` inside.
     #[inline(always)]

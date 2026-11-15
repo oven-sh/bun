@@ -802,7 +802,8 @@ public:
     }
 
     /* Switch this app into node:http compat mode (see HttpContext::enableNodeHttpCompat). */
-    void enableNodeHttpCompat() {
+    void enableNodeHttpCompat(bool queuesPipelinedResponses) {
+        httpContext->getSocketContextData()->flags.queuesPipelinedResponses = queuesPipelinedResponses;
         httpContext->enableNodeHttpCompat();
     }
 

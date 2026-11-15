@@ -13,6 +13,7 @@ use core::cell::{Cell, OnceCell, UnsafeCell};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU64, Ordering};
 
+use bun_event_loop::EventLoopTimer::ImmediateTask;
 use bun_io as Async;
 use bun_ptr::VecCellExt as _;
 use bun_uws as uws;
@@ -64,13 +65,8 @@ pub struct EventLoop {
     ///   - immediate_tasks: tasks that will run on the current tick
     ///
     /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
-    ///
-    /// Note (§Dispatch): payload is `*mut ()` — the real
-    /// `bun_runtime::timer::ImmediateObject` lives in the higher-tier crate
-    /// (cycle). Low tier stores the erased pointer; the high-tier hook
-    /// (link-time `__bun_run_immediate_task`) casts it back.
-    immediate_tasks: Cell<Vec<*mut ()>>,
-    next_immediate_tasks: Cell<Vec<*mut ()>>,
+    immediate_tasks: Cell<Vec<ImmediateTask>>,
+    next_immediate_tasks: Cell<Vec<ImmediateTask>>,
     /// Tasks that asked to run on the *next* loop iteration — after I/O and
     /// timers have had a turn — rather than in the current drain, which runs
     /// until the queue is empty (a task that re-posts itself there never lets
@@ -246,16 +242,15 @@ unsafe extern "Rust" {
         vm: &VirtualMachine,
         counter: &mut u32,
     ) -> Result<(), Stopped>;
-    /// `ImmediateObject::runImmediateTask` — `task` is an erased
-    /// `*mut bun_runtime::timer::ImmediateObject`; returns whether the callback
+    /// `ImmediateObject::run_immediate_task`; returns whether the callback
     /// threw. Defined in `bun_runtime::dispatch`. Link-time resolved.
-    fn __bun_run_immediate_task(task: *mut (), vm: &VirtualMachine) -> bool;
+    safe fn __bun_run_immediate_task(task: ImmediateTask, vm: &VirtualMachine) -> bool;
     /// Release the event loop's `+1` ref on a still-queued `ImmediateObject`
     /// without running it. Defined in `bun_runtime::dispatch`.
-    fn __bun_cancel_pending_immediate(task: *mut (), vm: &VirtualMachine);
+    safe fn __bun_cancel_pending_immediate(task: ImmediateTask, vm: &VirtualMachine);
     /// `WTFTimer::run` — `timer` is an erased `*mut bun_runtime::timer::WTFTimer`.
     /// Defined in `bun_runtime::dispatch`. Link-time resolved.
-    fn __bun_run_wtf_timer(timer: *mut (), vm: &VirtualMachine);
+    fn __bun_run_wtf_timer(timer: *mut ());
     /// Free a queued task that will never run, through its type's
     /// `release_unrun` (one arm per tag in `bun_runtime::dispatch`).
     /// JS thread, JSC heap alive. Link-time resolved.
@@ -604,8 +599,8 @@ impl EventLoop {
             .swap(core::ptr::null_mut(), Ordering::SeqCst);
         if !ptr.is_null() {
             // SAFETY: `ptr` was published by `WTFTimer::update` and remains
-            // valid until `run` removes it; `vm()` is the live owning VM.
-            unsafe { __bun_run_wtf_timer(ptr, self.vm_ref()) };
+            // valid until it fires.
+            unsafe { __bun_run_wtf_timer(ptr) };
         }
     }
 
@@ -963,8 +958,7 @@ impl EventLoop {
     fn release_pending_immediates(&self) {
         drop(self.next_immediate_tasks.take());
         for task in self.immediate_tasks.take() {
-            // SAFETY: `task` came from `enqueue_immediate_task`.
-            unsafe { __bun_cancel_pending_immediate(task, self.vm_ref()) };
+            __bun_cancel_pending_immediate(task, self.vm_ref());
         }
     }
 
@@ -972,9 +966,7 @@ impl EventLoop {
         !self.has_pending_tasks() && self.immediate_task_count() == 0
     }
 
-    /// Note (§Dispatch): `task` is an erased
-    /// `*mut bun_runtime::timer::ImmediateObject` — see [`RunImmediateFn`].
-    pub fn enqueue_immediate_task(&self, task: *mut ()) {
+    pub fn enqueue_immediate_task(&self, task: ImmediateTask) {
         self.immediate_tasks.push(task);
     }
 
@@ -1026,9 +1018,8 @@ impl EventLoop {
             .replace(self.next_immediate_tasks.take());
 
         let mut exception_thrown = false;
-        for task in to_run_now.iter() {
-            // SAFETY: the queue holds a ref on each, which `__bun_run_immediate_task` consumes.
-            exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
+        for task in to_run_now.drain(..) {
+            exception_thrown = __bun_run_immediate_task(task, virtual_machine);
         }
 
         // make sure microtasks are drained if the last task had an exception
@@ -1039,8 +1030,6 @@ impl EventLoop {
         if to_run_now.capacity() > 1024 * 128 {
             // once in a while, deinit the array to free up memory
             to_run_now = Vec::new();
-        } else {
-            to_run_now.clear();
         }
 
         // Frees the buffer that a nested call left here.

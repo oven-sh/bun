@@ -59,7 +59,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         .transpose()?;
 
     let mut slot = Box::<DevServer>::new_uninit();
-    let pending_reload_event = PendingReloadEvent::new(slot.as_mut_ptr());
+    let p: *mut DevServer = slot.as_mut_ptr();
+    let pending_reload_event = PendingReloadEvent::new(p);
     let watch_context = Box::new(watch::WatchContext {
         pending_reload_event: Arc::clone(&pending_reload_event),
         vm_handle: options.vm.handle(),
@@ -134,9 +135,11 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             active_websocket_connections: Default::default(),
             emit_incremental_visualizer_events: 0,
             emit_memory_visualizer_events: 0,
-            memory_visualizer_timer: OwnedTimer::init_paused(
-                EventLoopTimerTag::DevServerMemoryVisualizerTick,
-            ),
+            timers: bun_ptr::AliasableBox::new(DevServerTimers {
+                dev: p,
+                memory_visualizer_timer: OwnedTimer::init_paused(),
+                weak_ref_sweep_timer: OwnedTimer::init_paused(),
+            }),
             assume_perfect_incremental_bundling:
                 bun_core::env_var::feature_flag::BUN_ASSUME_PERFECT_INCREMENTAL
                     .get()
@@ -438,7 +441,7 @@ impl Drop for DevServer {
                 active_websocket_connections: _,
                 emit_incremental_visualizer_events: _,
                 emit_memory_visualizer_events: _,
-                memory_visualizer_timer: _,
+                timers: _,
                 assume_perfect_incremental_bundling: _,
                 broadcast_console_log_from_browser_to_server: _,
             } = &*self;

@@ -7278,7 +7278,7 @@ impl<'s> Files<'s> {
                 |(), (), _| {
                     load(LoadSteps::Read, false);
                 },
-                &mut vec![(); io.max_threads()],
+                &vec![(); io.max_threads()],
                 || on_all_threads(LoadSteps::Process),
             ),
             // Any one of these finishes the load by itself.

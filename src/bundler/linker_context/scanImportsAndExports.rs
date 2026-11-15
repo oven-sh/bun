@@ -49,7 +49,7 @@ pub(crate) fn scan_imports_and_exports(
 
     // `reachable_files` is borrowed out of `this.graph` while the
     // body also calls `&mut this.graph` methods. Snapshot the indices.
-    let mut reachable: Vec<Index> = this.graph.reachable_files.slice().to_vec();
+    let reachable: Vec<Index> = this.graph.reachable_files.slice().to_vec();
 
     let input_files: &[Source] = this.parse_graph().input_files.items_source();
     let loaders: &[Loader] = this.parse_graph().input_files.items_loader();
@@ -576,16 +576,13 @@ pub(crate) fn scan_imports_and_exports(
         {
             let ctx: &LinkerContext<'_, '_> = this;
             let worker_pool = this.worker_pool();
-            // `each` requires `&mut [V]`; `reachable` is a private snapshot Vec
-            // so reborrow it mutably (not actually mutated by the by-value
-            // variant). Step 6 reuses it afterwards.
             worker_pool.each(
                 ctx,
                 |ctx: &&LinkerContext<'_, '_>, source_index: Index, i: usize| {
                     // SAFETY: `reachable` names each file once, so each call has its own rows.
                     unsafe { ctx.do_step5(source_index, i) };
                 },
-                &mut reachable[..],
+                &reachable,
             );
         }
 

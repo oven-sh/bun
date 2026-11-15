@@ -775,7 +775,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                     io.each_while(
                         (),
                         |(), (), _| self.work(LoadSteps::Read, start),
-                        &mut vec![(); io.max_threads()],
+                        &vec![(); io.max_threads()],
                         || process(LoadSteps::Process),
                     );
                 }

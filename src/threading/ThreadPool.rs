@@ -526,7 +526,7 @@ impl ThreadPool {
     /// `&mut V`) to an arbitrary worker thread; the raw-pointer round-trip
     /// through the intrusive `Task` callback would otherwise smuggle `!Send`
     /// data across threads with no compiler check.
-    pub fn each<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
+    pub fn each<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &[V])
     where
         F: Fn(&Ctx, V, usize) + core::marker::Sync,
         Ctx: core::marker::Sync,
@@ -541,7 +541,7 @@ impl ThreadPool {
         &self,
         ctx: Ctx,
         run_fn: F,
-        values: &mut [V],
+        values: &[V],
         on_calling_thread: impl FnOnce(),
     ) where
         F: Fn(&Ctx, V, usize) + core::marker::Sync,
@@ -585,7 +585,7 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: core::marker::Sync + core::marker::Send,
     {
-        self.each_owned(
+        self.each_iter(
             ctx,
             move |ctx, (i, value)| run_fn(ctx, value, *i),
             values.len(),
@@ -593,26 +593,26 @@ impl ThreadPool {
         );
     }
 
-    /// Like `each_ptr`, for values that exist only for the call. `len` is how many to make room for.
-    pub fn each_owned<Ctx, V, F>(
+    /// Like `each_ptr`, for values that exist only for the call. `capacity` is how many to make room for.
+    pub fn each_iter<Ctx, V, F>(
         &self,
         ctx: Ctx,
         run_fn: F,
-        len: usize,
+        capacity: usize,
         values: impl Iterator<Item = V>,
     ) where
         F: Fn(&Ctx, &mut V) + core::marker::Sync,
         Ctx: core::marker::Sync,
         V: core::marker::Send,
     {
-        self.each_impl(ctx, run_fn, len, values, || {});
+        self.each_impl(ctx, run_fn, capacity, values, || {});
     }
 
     fn each_impl<Ctx, V, F>(
         &self,
         ctx: Ctx,
         run_fn: F,
-        len: usize,
+        capacity: usize,
         values: impl Iterator<Item = V>,
         on_calling_thread: impl FnOnce(),
     ) where
@@ -637,7 +637,7 @@ impl ThreadPool {
 
         let shared = (ctx, run_fn);
         let group = WaitGroup::init();
-        let mut tasks = Vec::with_capacity(len);
+        let mut tasks = Vec::with_capacity(capacity);
         tasks.extend(values.map(|value| RunnerTask {
             task: CountedTask::new(call::<Ctx, V, F>, &group),
             shared: &shared,

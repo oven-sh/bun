@@ -489,7 +489,7 @@ mod tests {
                 };
                 visit.fetch_add(1, Ordering::Relaxed);
             },
-            &mut vec![(); 8],
+            &[(); 8],
         );
         assert!(
             visits

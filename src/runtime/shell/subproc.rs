@@ -12,13 +12,11 @@ use crate::api::bun::subprocess as JscSubprocess;
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::{self as sh, Yield};
-use crate::webcore::{self, FileSink};
 use bun_alloc::Arena;
 use bun_collections::VecExt;
 use bun_core::{CStrList, CStrRef};
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult, ReadState};
 use bun_jsc::{self as jsc, EventLoopHandle};
-use bun_ptr::RefPtr;
 use bun_spawn::subprocess::PipeState;
 use bun_sys::{self, SystemError};
 use enumset::EnumSet;
@@ -529,15 +527,7 @@ impl ShellSubprocess {
         unsafe { *out_subproc = subprocess };
 
         // SAFETY: written to `subprocess` below.
-        let stdin = unsafe {
-            Writable::init(
-                stdio0,
-                #[cfg(windows)]
-                event_loop,
-                subprocess,
-                spawn_stdin,
-            )
-        };
+        let stdin = unsafe { Writable::init(stdio0, subprocess, spawn_stdin) };
         let stdout = Readable::init(
             OutKind::Stdout,
             &spawn_args.stdio[1],
@@ -593,37 +583,6 @@ impl ShellSubprocess {
             if let Some(context) = jsc::virtual_machine::VirtualMachine::get().graph_context(id) {
                 // SAFETY: `subprocess` is the live heap allocation; its handle is disarmed on drop.
                 unsafe { jsc::AbortHandle::arm_owner(subprocess, context) };
-            }
-        }
-
-        // Wire the FileSink's close-signal back to the enclosing `Writable` so
-        // `Writable::on_close` (drops the `RefPtr<FileSink>`) runs when the sink
-        // finishes. `stdin` lives inside the Box-allocated `Subprocess` at a
-        // stable address, so the self-referential raw pointer is sound for the
-        // life of the subprocess. Only reachable on Windows (POSIX
-        // `Writable::init` never returns `Pipe` for shell stdio).
-        {
-            // Derive `stdin_ptr` from the raw heap pointer (`subprocess`), not
-            // the local `subproc: &mut` reborrow — the pointer is stored
-            // long-term in `FileSink::source` and dereferenced from
-            // `Writable::on_close` after this frame returns. Under Stacked
-            // Borrows a child of `subproc`'s tag would be invalidated when
-            // that borrow ends; rooting in the allocation's provenance keeps
-            // it valid for the box's lifetime.
-            // SAFETY: `subprocess` is the live, fully-initialised heap alloc.
-            let stdin_ptr: *mut Writable = unsafe { &raw mut (*subprocess).stdin };
-            // SAFETY: reborrow as a child of `stdin_ptr` so it does not
-            // invalidate the sibling we store in `source`.
-            if let Writable::Pipe(pipe) = unsafe { &mut *stdin_ptr } {
-                // SAFETY: shell is single-threaded; the FileSink allocation is
-                // disjoint from `*stdin_ptr`. `stdin_ptr` outlives the sink —
-                // the Subprocess owns both and `Writable::on_close` is the only
-                // path that drops it.
-                pipe.source
-                    .set(webcore::streams::SourceHandle::ShellWritable(
-                        // SAFETY: `stdin_ptr` is the live `&raw mut` writable (write provenance).
-                        unsafe { bun_ptr::BackRef::from_raw_mut(stdin_ptr) },
-                    ));
             }
         }
 
@@ -715,8 +674,7 @@ impl ShellSubprocess {
 // Writable
 // ───────────────────────────────────────────────────────────────────────────
 
-pub enum Writable {
-    Pipe(RefPtr<FileSink>),
+pub(crate) enum Writable {
     Fd,
     Buffer(StaticPipeWriter),
     Inherit,
@@ -724,22 +682,9 @@ pub enum Writable {
 }
 
 impl Writable {
-    // When the stream has closed we need to be notified to prevent a use-after-free
-    // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
-    pub fn on_close(&mut self, _: Option<bun_sys::Error>) {
-        *self = Writable::Ignore;
-    }
-}
-
-impl Writable {
     /// # Safety
     /// The result becomes the `stdin` of `subprocess`.
-    unsafe fn init(
-        stdio: Stdio,
-        #[cfg(windows)] event_loop: EventLoopHandle,
-        subprocess: *mut Subprocess,
-        result: StdioResult,
-    ) -> Writable {
+    unsafe fn init(stdio: Stdio, subprocess: *mut Subprocess, result: StdioResult) -> Writable {
         let owner = Owner::new(PollTag::ShellStdinWriter, subprocess.cast());
         // SAFETY: fn contract.
         let create_writer = |result, blob| unsafe { StaticPipeWriter::create(owner, result, blob) };
@@ -747,16 +692,8 @@ impl Writable {
         {
             match stdio {
                 Stdio::Pipe | Stdio::ReadableStream(_) => {
-                    if let StdioResult::Buffer(buf) = result {
-                        let pipe = FileSink::create_with_pipe(event_loop, buf);
-
-                        // TODO: uncoment this when is ready, commented because was not compiling
-                        // subprocess.weak_file_sink_stdin_ptr = pipe;
-                        // subprocess.flags.has_stdin_destructor_called = false;
-
-                        return Writable::Pipe(pipe);
-                    }
-                    return Writable::Inherit;
+                    // The shell never uses this
+                    panic!("Unimplemented stdin pipe");
                 }
 
                 Stdio::Blob(blob) => {
@@ -814,9 +751,9 @@ impl Writable {
     // Note: there is intentionally no `Writable::toJS` here — the shell never
     // exposes its stdin Writable to JS.
 
-    pub fn finalize(&mut self) {
+    pub(crate) fn finalize(&mut self) {
         match self {
-            Writable::Pipe(_) | Writable::Buffer(_) => *self = Writable::Ignore,
+            Writable::Buffer(_) => *self = Writable::Ignore,
             Writable::Ignore => {}
             Writable::Fd | Writable::Inherit => {}
         }

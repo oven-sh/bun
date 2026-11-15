@@ -47,8 +47,6 @@ describe("Memory", () => {
   });
 
   describe("Blob", () => {
-    // Each case builds its own Blob: Blob.prototype.bytes() detaches the blob
-    // it was called on when it throws.
     test(".text() rejects with ERR_STRING_TOO_LONG", async () => {
       await expect(new Blob(parts).text()).rejects.toMatchObject(stringTooLong);
     });
@@ -59,6 +57,12 @@ describe("Memory", () => {
 
     test(".bytes() rejects with RangeError: Out of memory", async () => {
       await expect(new Blob(parts).bytes()).rejects.toMatchObject(outOfMemory);
+    });
+
+    test(".bytes() leaves the Blob readable when it rejects", async () => {
+      const blob = new Blob(parts);
+      await expect(blob.bytes()).rejects.toMatchObject(outOfMemory);
+      expect((await blob.arrayBuffer()).byteLength).toBe(BLOB_SIZE);
     });
 
     test(".arrayBuffer() resolves with every byte", async () => {

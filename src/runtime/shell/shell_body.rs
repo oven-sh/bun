@@ -333,29 +333,23 @@ pub(crate) fn handle_template_value(
         }
 
         if let Some(blob) = template_value.as_class_ref::<crate::webcore::Blob>() {
-            if let Some(store) = blob.store.get().as_deref() {
-                if let crate::webcore::blob::store::Data::File(file) = &store.data {
-                    if let crate::node::PathOrFileDescriptor::Path(p) = &file.pathlike {
-                        let path: &[u8] = p.slice();
-
-                        // Check for null bytes in path (security: prevent null byte injection)
-                        if strings::index_of_char(path, 0).is_some() {
-                            return Err(global
-                                .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!(
-                                    "The shell argument must be a string without null bytes. Received {}",
-                                    bun_core::fmt::quote(path)
-                                ))
-                                .throw());
-                        }
-
-                        if !builder.append_utf8::<true>(path)? {
-                            return Err(global.throw(format_args!(
-                                "Shell script string contains invalid UTF-16"
-                            )));
-                        }
-                        return Ok(());
-                    }
+            if let Some(path) = blob.file().and_then(|file| file.path()) {
+                // Check for null bytes in path (security: prevent null byte injection)
+                if strings::index_of_char(path, 0).is_some() {
+                    return Err(global
+                        .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!(
+                            "The shell argument must be a string without null bytes. Received {}",
+                            bun_core::fmt::quote(path)
+                        ))
+                        .throw());
                 }
+
+                if !builder.append_utf8::<true>(path)? {
+                    return Err(
+                        global.throw(format_args!("Shell script string contains invalid UTF-16"))
+                    );
+                }
+                return Ok(());
             }
 
             let idx = out_jsobjs.size();

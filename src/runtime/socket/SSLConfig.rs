@@ -62,18 +62,14 @@ fn read_from_blob(
     global: &JSGlobalObject,
     blob: &Blob,
 ) -> Result<SensitiveCString, ReadFromBlobError> {
-    let store = blob
-        .store
-        .get()
-        .as_ref()
-        .ok_or(ReadFromBlobError::NullStore)?;
+    let store = blob.store().ok_or(ReadFromBlobError::NullStore)?;
     let file = match &store.data {
         StoreData::File(f) => f,
         _ => return Err(ReadFromBlobError::NotAFile),
     };
     let mut fs = node_fs::NodeFS::default();
     let read_args = node_fs::args::ReadFile {
-        path: file.pathlike.clone(),
+        path: file.pathlike(),
         ..Default::default()
     };
     let maybe = fs.read_file_with_options(

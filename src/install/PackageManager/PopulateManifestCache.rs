@@ -65,8 +65,6 @@ fn start_manifest_task(
     // that needs `&manager` *before* taking that borrow, then populate the pool
     // slot through a raw pointer (matches `runTasks::generate_network_task_for_tarball`).
     let scope = bun_ptr::BackRef::new(manager.scope_for_package_name(pkg_name));
-    // Backref address only — stored, not dereffed in this function.
-    let manager_backref: *mut PackageManager = manager;
 
     // Take the pool slot as a raw pointer so borrowck releases `manager` for the
     // `enqueue_network_task` tail.
@@ -76,7 +74,7 @@ fn start_manifest_task(
     // stale (reused hive slot).
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we hand it to `enqueue_network_task`.
-    unsafe { NetworkTask::write_init(net_ptr, task_id, manager_backref) };
+    unsafe { NetworkTask::write_init(net_ptr, task_id, bun_ptr::ParentRef::new(manager)) };
     // SAFETY: `write_init` populated every field.
     let task = unsafe { &mut *net_ptr };
     // `scope` points into `manager.options` which is not mutated by

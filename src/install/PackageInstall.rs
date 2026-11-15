@@ -837,17 +837,16 @@ bun_threading::intrusive_work_task!(HardLinkWindowsInstallTask, task);
 
 #[cfg(windows)]
 impl OwnedTask for HardLinkWindowsInstallTask {
-    fn run(self: Box<Self>) {
-        let queue = &HARDLINK_QUEUE;
-        scopeguard::defer! { queue.complete_one(); }
-
-        // A local, to be dropped before the guard above.
-        let mut this = self;
-        if let Some(err) = this.link() {
-            this.err = Some(err);
-            // Only the first error is kept.
-            queue.errored_task.lock().get_or_insert(this);
+    fn run(mut self: Box<Self>) {
+        match self.link() {
+            Some(err) => {
+                self.err = Some(err);
+                // Only the first error is kept.
+                HARDLINK_QUEUE.errored_task.lock().get_or_insert(self);
+            }
+            None => drop(self),
         }
+        HARDLINK_QUEUE.complete_one();
     }
 }
 
@@ -956,15 +955,6 @@ impl HardLinkWindowsInstallTask {
 
 // ───────────────────────────── UninstallTask ─────────────────────────────
 
-struct PendingTaskDone;
-
-impl Drop for PendingTaskDone {
-    fn drop(&mut self) {
-        INBOX.pending_tasks.fetch_sub(1, Ordering::Release);
-        INBOX.wake();
-    }
-}
-
 struct UninstallTask {
     absolute_path: Box<[u8]>,
     task: WorkPoolTask,
@@ -974,17 +964,16 @@ bun_threading::intrusive_work_task!(UninstallTask, task);
 
 impl OwnedTask for UninstallTask {
     fn run(self: Box<Self>) {
-        let _done = PendingTaskDone;
-        // A local, to be freed before the main thread can see that no task is pending.
-        let uninstall_task = self;
-
-        let dirname =
-            path::resolve_path::dirname::<path::platform::Auto>(&uninstall_task.absolute_path);
+        let dirname = path::resolve_path::dirname::<path::platform::Auto>(&self.absolute_path);
         if !dirname.is_empty()
             && let Ok(dir) = open_dir(Fd::cwd(), dirname)
         {
-            let _ = dir.delete_tree(bun_paths::basename(&uninstall_task.absolute_path));
+            let _ = dir.delete_tree(bun_paths::basename(&self.absolute_path));
         }
+        // Freed before the main thread can see that no task is pending.
+        drop(self);
+        INBOX.decrement_pending_tasks();
+        INBOX.wake();
     }
 }
 

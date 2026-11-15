@@ -92,12 +92,13 @@ fn range_selects(
         (dependency::Value::Npm(range_npm), dependency::Value::Npm(declared_npm)) => {
             let is_same_text = dependency::without_npm_protocol(range.literal.slice(buf))
                 == dependency::without_npm_protocol(declared.literal.slice(buf));
-            let (range, declared) = (range_npm, declared_npm);
             // An alias key selects aliases of the same package. A plain key never selects an alias.
-            range.is_alias == declared.is_alias
-                && (!range.is_alias || range.name.eql(declared.name, buf, buf))
+            range_npm.is_alias == declared_npm.is_alias
+                && (!range_npm.is_alias || range_npm.name.eql(declared_npm.name, buf, buf))
                 && match selects {
-                    Selects::Overlapping => range.version.intersects(buf, &declared.version, buf),
+                    Selects::Overlapping => {
+                        (range_npm.version).intersects(buf, &declared_npm.version, buf)
+                    }
                     Selects::SameRange => is_same_text,
                 }
         }

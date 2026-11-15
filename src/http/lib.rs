@@ -1697,34 +1697,31 @@ impl<'a> HTTPClient<'a> {
         allow_proxy_url: bool,
     ) -> bool {
         if self.wants_server_identity_check() {
-            let enforce = self.flags.reject_unauthorized;
-            if let Some(x509) = ssl.peer_certificate() {
-                let hostname = get_tls_hostname(self, allow_proxy_url);
+            let hostname = get_tls_hostname(self, allow_proxy_url);
 
-                // The JS callback only applies to the target's certificate: an HTTPS proxy's own gets the native SAN check.
-                let is_proxy_certificate = allow_proxy_url && self.http_proxy.is_some();
-                if !is_proxy_certificate && self.signals.get(signals::Field::CertErrors) {
-                    let cert = x509.to_der().unwrap_or_else(|| bun_core::out_of_memory());
+            // The JS callback only applies to the target's certificate: an HTTPS proxy's own gets the native SAN check.
+            let is_proxy_certificate = allow_proxy_url && self.http_proxy.is_some();
+            if !is_proxy_certificate
+                && self.signals.get(signals::Field::CertErrors)
+                && let Some(x509) = ssl.peer_certificate()
+            {
+                let cert = x509.to_der().unwrap_or_else(|| bun_core::out_of_memory());
 
-                    self.state.certificate_info = Some(CertificateInfo {
-                        cert: Box::<[u8]>::from(&*cert),
-                        hostname: Box::<[u8]>::from(hostname),
-                    });
+                self.state.certificate_info = Some(CertificateInfo {
+                    cert: Box::<[u8]>::from(&*cert),
+                    hostname: Box::<[u8]>::from(hostname),
+                });
 
-                    // Parks the connection until the JS thread calls `HTTPThread::schedule_cert_check_resume` or schedules a shutdown.
-                    self.state.flags.is_waiting_for_cert_check = true;
+                // Parks the connection until the JS thread calls `HTTPThread::schedule_cert_check_resume` or schedules a shutdown.
+                self.state.flags.is_waiting_for_cert_check = true;
 
-                    // we inform the user that the cert is invalid
-                    let ctx = self.get_ssl_ctx::<IS_SSL>();
-                    self.progress_update::<IS_SSL>(ctx, socket);
-                    // continue until we are aborted or not
-                    return true;
-                }
-                if !enforce || uws::check_server_identity(ssl, hostname) {
-                    return true;
-                }
+                // we inform the user that the cert is invalid
+                let ctx = self.get_ssl_ctx::<IS_SSL>();
+                self.progress_update::<IS_SSL>(ctx, socket);
+                // continue until we are aborted or not
+                return true;
             }
-            if !enforce {
+            if !self.flags.reject_unauthorized || uws::check_server_identity(ssl, hostname) {
                 return true;
             }
             // SSL error so we fail the connection

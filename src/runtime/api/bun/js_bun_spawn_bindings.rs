@@ -1710,7 +1710,7 @@ fn spawn_maybe_sync(
                         if let Some(active_file) =
                             crate::test_runner::bun_test::clone_active_strong()
                         {
-                            active_file.kill_dangling_processes_on_timeout(cx.global());
+                            crate::test_runner::execution::Execution::kill_dangling_processes_on_timeout(&active_file, cx.global());
                         }
                         let _ = subprocess.try_kill(subprocess.kill_signal);
                     }

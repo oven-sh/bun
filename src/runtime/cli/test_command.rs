@@ -1794,8 +1794,7 @@ pub(crate) struct CommandLineReporter {
     pub(crate) repeat_count: u32,
     pub(crate) last_printed_dot: Cell<bool>,
 
-    /// Set in a `--parallel` worker. Per-test output is sent over the IPC pipe
-    /// instead of to stderr; the coordinator owns the terminal.
+    /// Set in a `--parallel` worker, which sends per-test output to the coordinator instead of to stderr.
     pub(crate) worker: OnceCell<ParallelRunner::WorkerLink>,
 
     pub(crate) failures_to_repeat_buf: Cell<Vec<u8>>,
@@ -2086,7 +2085,7 @@ impl CommandLineReporter {
             earlier_failures: Vec::new(),
         };
         if let Some(worker) = self.worker.get() {
-            worker.emit_test_done(b"", Some(&report));
+            ParallelRunner::worker_emit_test_done(worker, b"", Some(&report));
         } else {
             self.with_junit(|junit| junit.record_test_case(&report).expect("oom"));
         }
@@ -2202,7 +2201,7 @@ impl CommandLineReporter {
             )
         });
         if let Some(worker) = this.worker.get() {
-            worker.emit_test_done(formatted_line, report.as_ref());
+            ParallelRunner::worker_emit_test_done(worker, formatted_line, report.as_ref());
         } else {
             let _ = Output::error_writer().write_all(formatted_line);
             if let Some(report) = &report {

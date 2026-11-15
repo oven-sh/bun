@@ -434,32 +434,6 @@ impl Result {
     }
 }
 
-impl BunTest {
-    /// The kill-only half of [`BunTest::handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
-    pub(crate) fn kill_dangling_processes_on_timeout(&self, global_this: &JSGlobalObject) {
-        // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
-        //   kill any dangling processes
-        // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
-        if let Some(current_group) = self.execution.active_group()
-            && let [sequence] = current_group.sequences(&self.execution)
-            && let Some(entry) = sequence.active_entry.get()
-        {
-            let now = Timespec::now_force_real_time();
-            if self.step(entry).timespec.get().order(&now) == core::cmp::Ordering::Less {
-                let kill_count = global_this.bun_vm().auto_killer.kill();
-                if kill_count.processes > 0 {
-                    bun_core::pretty_errorln!(
-                        "<d>killed {} dangling process{}<r>",
-                        kill_count.processes,
-                        if kill_count.processes != 1 { "es" } else { "" },
-                    );
-                    bun_core::Output::flush();
-                }
-            }
-        }
-    }
-}
-
 impl Execution {
     pub(crate) fn init() -> Execution {
         Execution {
@@ -483,6 +457,33 @@ impl Execution {
 
     pub(crate) fn sequences(&self) -> &[ExecutionSequence] {
         self.schedule.get().map_or(&[], |schedule| &schedule.sequences)
+    }
+
+    /// The kill-only half of [`BunTest::handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
+    pub(crate) fn kill_dangling_processes_on_timeout(buntest: &BunTest, global_this: &JSGlobalObject) {
+        // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
+        //   kill any dangling processes
+        // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
+        if let Some(current_group) = buntest.execution.active_group() {
+            let sequences = current_group.sequences(&buntest.execution);
+            if sequences.len() == 1 {
+                let sequence = &sequences[0];
+                if let Some(entry) = sequence.active_entry.get() {
+                    let now = Timespec::now_force_real_time();
+                    if buntest.step(entry).timespec.get().order(&now) == core::cmp::Ordering::Less {
+                        let kill_count = global_this.bun_vm().auto_killer.kill();
+                        if kill_count.processes > 0 {
+                            bun_core::pretty_errorln!(
+                                "<d>killed {} dangling process{}<r>",
+                                kill_count.processes,
+                                if kill_count.processes != 1 { "es" } else { "" },
+                            );
+                            bun_core::Output::flush();
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) fn step(

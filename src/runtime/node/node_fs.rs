@@ -2949,16 +2949,16 @@ mod _async_tasks {
         /// Using a lockless queue instead of mutex + joining the lists as we go was a meaningful performance improvement
         pub(crate) result_list_queue: UnboundedQueue<ResultListEntry>,
 
-        /// `ReaddirOutcome::root_dir`, for the subtasks to open files with.
+        /// `ReaddirState::root_dir`, for the subtasks to open files with.
         pub(crate) root_fd: FD,
 
         /// This is used when joining the file paths for error messages.
         pub(crate) root_path: ZBox,
 
-        outcome: bun_threading::Guarded<ReaddirOutcome>,
+        state: bun_threading::Guarded<ReaddirState>,
     }
 
-    struct ReaddirOutcome {
+    struct ReaddirState {
         /// Finished by whichever subtask ends the scan.
         done: Option<bun_jsc::Completion<AsyncReaddirRecursiveTask>>,
         /// Opened before the first subtask and closed by the last.
@@ -2983,14 +2983,14 @@ mod _async_tasks {
             match NodeFS::readdir_open(FD::cwd(), &this.root_path) {
                 Ok(fd) => this.root_fd = fd,
                 Err(err) => {
-                    this.outcome.get_mut().pending_err =
+                    this.state.get_mut().pending_err =
                         Some(err.with_path(this.root_path.as_bytes()));
                     return Some(done);
                 }
             }
-            let outcome = this.outcome.get_mut();
-            outcome.done = Some(done);
-            outcome.root_dir = Some(sys::File::from_fd(this.root_fd));
+            let state = this.state.get_mut();
+            state.done = Some(done);
+            state.root_dir = Some(sys::File::from_fd(this.root_fd));
             let mut buf = bun_paths::path_buffer_pool::get();
             this.perform_work(&this.root_path, &mut buf, true);
             (this.subtask_count.fetch_sub(1, Ordering::AcqRel) == 1).then(|| this.finish_scan())
@@ -3002,14 +3002,14 @@ mod _async_tasks {
             cx: &bun_jsc::JsThread<'_>,
         ) -> bun_jsc::JsResult<()> {
             let global_object = cx.global();
-            let outcome = this.outcome.get_mut();
-            let success = outcome.pending_err.is_none();
+            let state = this.state.get_mut();
+            let success = state.pending_err.is_none();
             let completion = &js.completion;
-            let converted = if let Some(err) = &outcome.pending_err {
+            let converted = if let Some(err) = &state.pending_err {
                 completion.error_to_js(global_object, err)
             } else {
                 let res = match core::mem::replace(
-                    &mut outcome.result_list,
+                    &mut state.result_list,
                     ResultListEntryValue::Files(Vec::new()),
                 ) {
                     ResultListEntryValue::WithFileTypes(v) => {
@@ -3120,7 +3120,7 @@ mod _async_tasks {
                     result_list_count: AtomicUsize::new(0),
                     result_list_queue: UnboundedQueue::default(),
                     root_fd: FD::INVALID,
-                    outcome: bun_threading::Guarded::new(ReaddirOutcome {
+                    state: bun_threading::Guarded::new(ReaddirState {
                         done: None,
                         root_dir: None,
                         pending_err: None,
@@ -3160,14 +3160,14 @@ mod _async_tasks {
                     match res {
                         Err(err) => {
                             {
-                                let mut outcome = self.outcome.lock();
-                                if outcome.pending_err.is_none() {
+                                let mut state = self.state.lock();
+                                if state.pending_err.is_none() {
                                     let err_path: &[u8] = if !err.path.is_empty() {
                                         &err.path[..]
                                     } else {
                                         self.root_path.as_bytes()
                                     };
-                                    outcome.pending_err = Some(err.with_path(err_path));
+                                    state.pending_err = Some(err.with_path(err_path));
                                 }
                             }
                             self.has_error.store(true, Ordering::Relaxed);
@@ -3206,12 +3206,12 @@ mod _async_tasks {
 
         /// For the subtask that takes `subtask_count` to zero.
         fn finish_scan(&self) -> bun_jsc::Completion<Self> {
-            let mut outcome = self.outcome.lock();
-            outcome.root_dir = None;
-            let success = outcome.pending_err.is_none();
+            let mut state = self.state.lock();
+            state.root_dir = None;
+            let success = state.pending_err.is_none();
             if success {
                 let count = self.result_list_count.load(Ordering::Relaxed);
-                outcome.result_list.reserve_exact(count);
+                state.result_list.reserve_exact(count);
             }
             let mut iter = self.result_list_queue.pop_batch().iterator();
             loop {
@@ -3222,10 +3222,10 @@ mod _async_tasks {
                 // SAFETY: boxed in `write_results`; `next` read its link before returning it.
                 let mut entry = unsafe { bun_core::heap::take(val) };
                 if success {
-                    outcome.result_list.append_from(&mut entry.value);
+                    state.result_list.append_from(&mut entry.value);
                 }
             }
-            outcome.done.take().expect("scan finished twice")
+            state.done.take().expect("scan finished twice")
         }
     }
 

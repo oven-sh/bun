@@ -3,7 +3,7 @@ use bun_alloc::AllocError;
 use crate::Error;
 use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::PackageColumns;
-use crate::npm::registry::{FolderTag, Scope};
+use crate::npm::registry::{FolderCacheKey, Scope};
 use crate::repository::Repository;
 use bun_core::ZStr;
 use bun_core::{Global, Output, ZBox, env_var, fmt as bun_fmt};
@@ -669,27 +669,28 @@ pub fn cached_github_folder_name_print_auto<'a>(
 }
 
 // TODO: normalize to alphanumeric
-pub fn cached_npm_package_folder_name_print<'a>(
+pub fn cached_npm_package_folder_name<'a>(
     this: &PackageManager,
     buf: &'a mut [u8],
     name: &[u8],
     version: Semver::Version,
     patch_hash: Option<u64>,
 ) -> &'a ZStr {
-    let registry = folder_tag(this, this.scope_for_package_name(name));
-    npm_package_folder_name_print(registry, buf, name, version, patch_hash)
+    let registry = folder_cache_key(this, this.scope_for_package_name(name));
+    cached_npm_package_folder_name_print(buf, name, version, registry, patch_hash)
 }
 
 /// `None` for the default registry.
-pub(crate) fn folder_tag(this: &PackageManager, scope: &Scope) -> Option<FolderTag> {
-    (!scope.name.is_empty() || this.options.did_override_default_scope).then_some(scope.folder_tag)
+pub(crate) fn folder_cache_key(this: &PackageManager, scope: &Scope) -> Option<FolderCacheKey> {
+    (!scope.name.is_empty() || this.options.did_override_default_scope)
+        .then_some(scope.folder_cache_key)
 }
 
-pub(crate) fn npm_package_folder_name_print<'a>(
-    registry: Option<FolderTag>,
+pub(crate) fn cached_npm_package_folder_name_print<'a>(
     buf: &'a mut [u8],
     name: &[u8],
     version: Semver::Version,
+    registry: Option<FolderCacheKey>,
     patch_hash: Option<u64>,
 ) -> &'a ZStr {
     let Some(registry) = registry else {
@@ -997,7 +998,7 @@ pub fn path_for_cached_npm_path<'a>(
     version: Semver::Version,
 ) -> Result<&'a mut [u8], Error> {
     let mut folder_name_buf = bun_paths::path_buffer_pool::get();
-    let folder_name = cached_npm_package_folder_name_print(
+    let folder_name = cached_npm_package_folder_name(
         this,
         &mut folder_name_buf.0[..],
         package_name,
@@ -1083,13 +1084,8 @@ pub fn compute_cache_dir_and_subpath<'a>(
     match resolution.tag {
         ResolutionTag::Npm => {
             let version = resolution.npm().version;
-            cache_dir_subpath = cached_npm_package_folder_name_print(
-                manager,
-                folder_path_buf,
-                name,
-                version,
-                patch_hash,
-            );
+            cache_dir_subpath =
+                cached_npm_package_folder_name(manager, folder_path_buf, name, version, patch_hash);
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Git => {

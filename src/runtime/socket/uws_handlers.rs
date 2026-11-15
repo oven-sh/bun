@@ -435,8 +435,7 @@ impl<const SSL: bool> VHandler for BunSocket<SSL> {
     }
 }
 
-/// Listener accept path: the ext has no owner at on_open time (see
-/// `us_internal_socket_clear_ext`), so we read the `*Listener` off `group->ext` and let
+/// Listener accept path: `us_internal_socket_clear_ext` left the ext empty, so we read the `*Listener` off `group->ext` and let
 /// `on_create` allocate the `NewSocket` and stash it in the ext. After that the
 /// socket is re-stamped as `.bun_socket_{tcp,tls}` and routes through
 /// `BunSocket` above.

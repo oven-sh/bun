@@ -226,7 +226,6 @@ pub(crate) struct ReadFile {
     pub(crate) max_length: SizeType,
     pub(crate) total_size: SizeType,
     pub(crate) opened_fd: Fd,
-    pub(crate) read_off: SizeType,
     pub(crate) read_eof: bool,
     pub(crate) size: SizeType,
     pub(crate) buffer: Vec<u8>,
@@ -290,7 +289,6 @@ impl ReadFile {
             max_length: blob.size.get(),
             total_size: MAX_SIZE,
             opened_fd: Fd::INVALID,
-            read_off: 0,
             read_eof: false,
             size: 0,
             buffer: Vec::new(),
@@ -640,7 +638,6 @@ impl ReadFile {
             }
             self.buffer = v;
         }
-        self.read_off = 0;
 
         // If it's not a regular file, it might be something
         // which would block on the next read. So we should
@@ -681,7 +678,7 @@ impl ReadFile {
         let mut stack_buffer = [const { MaybeUninit::uninit() }; 64 * 1024];
         let mut buffer = core::mem::take(&mut self.buffer);
         while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
-            let max = self.max_length.saturating_sub(self.read_off) as usize;
+            let max = (self.max_length as usize).saturating_sub(buffer.len());
 
             if max != 0 && self.errno.is_none() && !self.read_eof {
                 let mut retry = false;

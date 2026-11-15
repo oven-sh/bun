@@ -520,8 +520,11 @@ pub struct PackageManager {
 
     pub(crate) network_dedupe_map: crate::network_task::DedupeMap,
     pub(crate) async_network_task_queue: AsyncNetworkTaskQueue,
-    pub(crate) network_tarball_batch: thread_pool::Batch,
-    pub(crate) network_resolve_batch: thread_pool::Batch,
+    // The HTTP thread takes the requests of both batches in their boxes.
+    #[expect(clippy::vec_box)]
+    pub(crate) network_tarball_batch: Vec<Box<http::AsyncHTTP<'static>>>,
+    #[expect(clippy::vec_box)]
+    pub(crate) network_resolve_batch: Vec<Box<http::AsyncHTTP<'static>>>,
     pub(crate) network_task_fifo: NetworkQueue,
     pub(crate) retry_queue: crate::retry_timer::RetryQueue,
     pub(crate) patch_apply_batch: thread_pool::Batch,
@@ -1120,7 +1123,7 @@ impl PackageManager {
         headers: http::headers::EntryList,
         headers_buf: &'a [u8],
         body: &'a [u8],
-    ) -> http::AsyncHTTP<'a> {
+    ) -> Box<http::AsyncHTTP<'a>> {
         let http_proxy = self.http_proxy(&url);
         let mut req = http::AsyncHTTP::init_sync(
             method,
@@ -1590,8 +1593,8 @@ fn allocate_package_manager(
         wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
-        wr!(network_tarball_batch, thread_pool::Batch::default());
-        wr!(network_resolve_batch, thread_pool::Batch::default());
+        wr!(network_tarball_batch, Vec::new());
+        wr!(network_resolve_batch, Vec::new());
         wr!(patch_apply_batch, thread_pool::Batch::default());
         wr!(patch_calc_hash_batch, thread_pool::Batch::default());
         wr!(patch_task_queue, PatchTaskQueue::default());

@@ -2094,7 +2094,6 @@ name = "bun_threading"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
- "bun_collections",
  "bun_core",
  "bun_ptr",
  "bun_safety",

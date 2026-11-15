@@ -3284,51 +3284,6 @@ pub(crate) enum Filter {
     ScriptAndDescriptions,
 }
 
-type DoneChannel =
-    bun_threading::Channel<u32, bun_collections::linear_fifo::StaticBuffer<u32, 256>>;
-
-/// One pending remote-image download. Lives on the heap so its
-/// `async_http.task` (embedded in ThreadPool.Task) has a stable
-/// address — HTTPThread.schedule does `container_of` on that task,
-/// so moving the struct would break the worker's callback.
-struct RemoteImageDownload<'a> {
-    async_http: bun_http::AsyncHTTP<'a>,
-    response_buffer: bun_core::MutableString,
-    url: &'a [u8],
-    done: &'a DoneChannel,
-}
-
-impl RemoteImageDownload<'_> {
-    fn on_done(
-        this: *mut Self,
-        async_http: *mut bun_http::AsyncHTTP<'static>,
-        mut result: bun_http::HTTPClientResult<'_>,
-    ) {
-        // The worker's
-        // ThreadlocalAsyncHTTP is about to be freed, so copy its
-        // mutated state back into our owned AsyncHTTP before writing
-        // to the channel.
-        // SAFETY: `this` was passed as the callback ctx in `prefetch_remote_images`;
-        // `async_http` is the worker-thread temporary whose `.real` points back at
-        // `this.async_http`.
-        unsafe {
-            let this = &mut *this;
-            let async_http = &mut *async_http;
-            if let Some(real) = async_http.real {
-                // Raw bitwise overwrite with
-                // NO destructor on the old value: `ptr::write` —
-                // `*real.as_ptr() = …` would run Drop on the previous
-                // `this.async_http` (whose state the fresh copy still aliases).
-                real.as_ptr().write(::core::ptr::read(async_http));
-            }
-            result.body_into(&mut this.response_buffer.list);
-            // Channel payload is a placeholder tick — the main thread
-            // walks `downloads[]` to read per-task state after N wakeups.
-            let _ = this.done.write_item(0);
-        }
-    }
-}
-
 impl RunCommand {
     fn unlink_staged_path(path: &[u8]) {
         let mut zbuf = [0u8; MAX_PATH_BYTES + 1];
@@ -3361,7 +3316,7 @@ impl RunCommand {
 
         // Walk the collected URLs once, deduping and picking out the
         // http(s) ones. If there are no remote URLs we never spawn the
-        // HTTP worker or allocate any Download structs.
+        // HTTP worker.
         let mut seen: StringHashMap<()> = StringHashMap::default();
         let mut remote_urls: Vec<&[u8]> = Vec::new();
         for u in collector.urls.iter() {
@@ -3384,99 +3339,42 @@ impl RunCommand {
             return;
         }
 
-        bun_http::http_thread::init(&Default::default());
-
-        let done_channel = DoneChannel::init_static();
-
-        // Heap-allocate each Download so AsyncHTTP.task has a stable
-        // address (see RemoteImageDownload doc comment).
-        let mut downloads: Vec<Box<RemoteImageDownload>> = Vec::new();
-        // Drop frees response_buffer + the Box for each download.
-
-        // Kick off every download in parallel. Accumulate tasks into a
-        // single ThreadPool.Batch, then ship the whole batch to the
-        // HTTP thread in one schedule() call — worker picks up and runs
-        // them concurrently.
-        let mut batch = bun_threading::thread_pool::Batch::default();
-        for raw_url in remote_urls.iter() {
-            let Ok(response_buffer) = bun_core::MutableString::init(8 * 1024) else {
-                continue;
-            };
-            // The callback needs the heap address before there is a value to put there.
-            let mut d: Box<::core::mem::MaybeUninit<RemoteImageDownload>> = Box::new_uninit();
-            let d_ptr: *mut RemoteImageDownload = d.as_mut_ptr();
-            let mut d = Box::write(
-                d,
-                RemoteImageDownload {
-                    async_http: bun_http::AsyncHTTP::init(
-                        bun_http::Method::GET,
-                        bun_url::URL::parse(raw_url),
-                        Default::default(),
-                        b"",
-                        b"",
-                        bun_http::HTTPClientResultCallback::new::<RemoteImageDownload>(
-                            d_ptr,
-                            RemoteImageDownload::on_done,
-                        ),
-                        bun_http::FetchRedirect::Follow,
-                        Default::default(),
-                    ),
-                    response_buffer,
-                    url: raw_url,
-                    done: &done_channel,
-                },
-            );
-            d.async_http.schedule(&mut batch);
-            downloads.push(d);
-        }
-        if downloads.is_empty() {
-            return;
-        }
-        bun_http::HTTPThread::schedule(batch);
-
-        // Block the main thread on the channel until every scheduled
-        // download has reported back. readItem() uses a mutex+condvar,
-        // no busy loop. The payload value is unused — each wakeup just
-        // means "one more task finished".
-        let mut completed: usize = 0;
-        while completed < downloads.len() {
-            if done_channel.read_item().is_err() {
-                break;
-            }
-            completed += 1;
-        }
+        let results = bun_http::AsyncHTTP::send_all_sync(remote_urls.iter().map(|url| {
+            bun_http::AsyncHTTP::init_sync(
+                bun_http::Method::GET,
+                bun_url::URL::parse(url),
+                Default::default(),
+                b"",
+                b"",
+                None,
+                None,
+                bun_http::FetchRedirect::Follow,
+            )
+        }));
 
         // Second pass: walk completed downloads, write successful
         // bodies to temp files, populate out_map. All disk I/O is done
         // AFTER every network request has settled.
         let tmpdir = bun_resolver::fs::RealFS::tmpdir_path();
-        for d in downloads.iter_mut() {
-            if d.async_http.err.is_some() {
+        for (&url, result) in remote_urls.iter().zip(results) {
+            let metadata = result.metadata.as_ref();
+            if !result.is_success() || metadata.is_none_or(|m| m.status_code() != 200) {
                 continue;
             }
-            let status = d
-                .async_http
-                .response
-                .as_ref()
-                .map(|r| r.status_code)
-                .unwrap_or(0);
-            if status != 200 {
-                continue;
-            }
-            let bytes = d.response_buffer.slice();
+            let bytes = result.body_bytes();
             if bytes.is_empty() {
                 continue;
             }
 
             // Extension is best-effort from the URL path; Kitty inspects
             // the file's magic bytes regardless.
-            let ext: &[u8] = if d.url.ends_with(b".png") {
+            let ext: &[u8] = if url.ends_with(b".png") {
                 b".png"
-            } else if d.url.ends_with(b".jpg") || d.url.ends_with(b".jpeg") {
+            } else if url.ends_with(b".jpg") || url.ends_with(b".jpeg") {
                 b".jpg"
-            } else if d.url.ends_with(b".gif") {
+            } else if url.ends_with(b".gif") {
                 b".gif"
-            } else if d.url.ends_with(b".webp") {
+            } else if url.ends_with(b".webp") {
                 b".webp"
             } else {
                 b".bin"
@@ -3525,14 +3423,14 @@ impl RunCommand {
                 Self::unlink_staged_path(&path);
                 continue;
             }
-            // Dupe d.url for the map key — `collector.urls` owns the backing
+            // Dupe url for the map key — `collector.urls` owns the backing
             // bytes. Check capacity first while `path` is still
             // borrowable for `unlink_staged_path`.
             if out_map.try_reserve(1).is_err() {
                 Self::unlink_staged_path(&path);
                 continue;
             }
-            out_map.put_assume_capacity(d.url, path.into_boxed_slice());
+            out_map.put_assume_capacity(url, path.into_boxed_slice());
         }
     }
 

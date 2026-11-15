@@ -6,7 +6,7 @@ use core::ffi::{CStr, c_int};
 use core::mem::size_of;
 use core::ptr::NonNull;
 
-use bun_core::vec::BorrowedCursor;
+use bun_core::compress::Buffers;
 use bun_zlib_sys::shared::{DataType, ReturnCode, uInt, z_streamp, zStream_struct};
 
 #[allow(non_snake_case)]
@@ -105,26 +105,27 @@ impl ZStream {
         }
     }
 
-    /// Runs `call` on at most `u32::MAX` bytes of `input` and of `out`. Returns how much of `input` it consumed.
+    /// Runs `call` on at most `u32::MAX` bytes of each buffer. Returns how much input it consumed.
     pub(crate) fn step(
         &mut self,
-        input: &[u8],
-        mut out: BorrowedCursor<'_, u8>,
+        mut buffers: impl Buffers,
         call: impl FnOnce(z_streamp) -> ReturnCode,
     ) -> (usize, ReturnCode) {
         let strm = self.as_ptr();
+        let (input, out) = buffers.parts();
         let in_len = input.len().min(uInt::MAX as usize);
-        let out_len = out.capacity().min(uInt::MAX as usize);
-        // SAFETY: see `avail_out`. Only zlib lowers `avail_out`, by as many bytes as it wrote at
-        // the start of `out`.
+        let out_len = out.len().min(uInt::MAX as usize);
+        // SAFETY: see `avail_out`. Only zlib lowers the two counts, `avail_out` by as many bytes as
+        // it wrote at the start of `out`.
         unsafe {
-            (*strm).next_in = input.as_ptr();
+            (*strm).next_in = input.cast::<u8>();
             (*strm).avail_in = in_len as uInt;
-            (*strm).next_out = out.as_mut().as_mut_ptr().cast::<u8>();
+            (*strm).next_out = out.cast::<u8>();
             (*strm).avail_out = out_len as uInt;
             let rc = call(strm);
-            out.advance(out_len - (*strm).avail_out as usize);
-            (in_len - (*strm).avail_in as usize, rc)
+            let consumed = in_len - (*strm).avail_in as usize;
+            buffers.advance(consumed, out_len - (*strm).avail_out as usize);
+            (consumed, rc)
         }
     }
 }

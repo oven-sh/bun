@@ -147,7 +147,6 @@ export const shellInternals = {
 
 export const subprocessInternals = {
   injectStdioReadError: $bindgen("subprocess.bind.ts", "injectStdioReadError"),
-  closeStdinWriter: $bindgen("subprocess.bind.ts", "closeStdinWriter"),
 };
 
 export const iniInternals = {

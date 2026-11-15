@@ -407,6 +407,7 @@ void setDefaultSignalAction(int signalNumber)
     memset(&action, 0, sizeof(action));
     action.sa_sigaction = endProcessUnlessOwnCrash;
     action.sa_flags = SA_RESTART | SA_SIGINFO | SA_ONSTACK;
+    findDefinitionsForSignalHandler();
     callLibcSigaction(signalNumber, &action, nullptr);
 }
 

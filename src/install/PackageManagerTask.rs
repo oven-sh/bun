@@ -446,7 +446,6 @@ pub(crate) struct GitCommitRequest {
     /// The clone task whose bare repository is searched.
     pub(crate) clone_id: Id,
     pub(crate) name: StringOrTinyString,
-    pub(crate) url: StringOrTinyString,
     pub(crate) committish: StringOrTinyString,
 }
 

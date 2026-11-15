@@ -248,11 +248,15 @@ describe.concurrent("in a subprocess", () => {
     const write = bytes => { for (const socket of sockets) socket.write(bytes); return loopbackFence(); };
     const [a, b, c, d] = ["a", "b", "c".repeat(200), "d"].map(payload => pgNotificationResponse(1, "ch", payload));
     let waited = false;
+    const returned = Promise.withResolvers();
+    // No fence: with kqueue, its connect event is lost if it comes in the batch that reaches the listener.
+    const reachListener = bytes => { for (const socket of sockets) socket.write(bytes); return returned.promise; };
     await sql.listen("ch", payload => {
       console.log(payload[0]);
       if (waited) return;
       waited = true;
       Bun.build({ entrypoints: [import.meta.path], target: "bun", plugins: [{ name: "wait", setup: ${setup} }] });
+      returned.resolve();
     });
   `;
 
@@ -263,7 +267,7 @@ describe.concurrent("in a subprocess", () => {
       ${once(`() => write(stream.subarray(a.length + ${behind}, -d.length + 7))`)}
       const stream = Buffer.concat([a, b, c, d]);
       if (${split}) await write(stream.subarray(0, ${split}));
-      await write(stream.subarray(${split}, a.length + ${behind}));
+      await reachListener(stream.subarray(${split}, a.length + ${behind}));
       await write(d.subarray(7));
       await sql.close();
     `);
@@ -274,7 +278,7 @@ describe.concurrent("in a subprocess", () => {
   test("a listener runs the event loop until its own connection answers", async () => {
     const result = await run(`
       ${once(`async () => { await sql.listen("other", () => {}); console.log("listening"); }`)}
-      await write(Buffer.concat([a, b]));
+      await reachListener(Buffer.concat([a, b]));
       await sql.close();
     `);
     expect(result).toEqual(clean("a\nb\nlistening\n"));

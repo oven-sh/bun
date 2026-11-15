@@ -17,8 +17,7 @@ use crate::{format_args, write};
 
 pub(crate) fn write_call_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut Formatter<'a>) {
     let context = context_of_function(call.callee(), f);
-    // Inside a class list, nothing in a call to some other function is a class, strings and templates alike:
-    // `cn(a.includes("b c") && "d e")`. Under the plugin's rules it is: see `collapse_by_plugin`.
+    // In a call of some other function nothing is a class: `cn(a.includes("b c") && "d e")`. The plugin sorts there.
     let hides_context =
         context.is_none() && (f.context().tailwind_context()).is_some_and(|it| !it.follows_plugin);
     if hides_context {

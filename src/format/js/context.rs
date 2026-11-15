@@ -171,8 +171,7 @@ impl<'a> JsFormatContext<'a> {
         self.tailwind_contexts.push(Some(context));
     }
 
-    /// Hides the context until the matching `pop_tailwind_context`: in a call of a function that doesn't take
-    /// classes, nothing is a class list, so no reader sees a context there.
+    /// Until the matching `pop_tailwind_context`, `tailwind_context` is `None`.
     pub(crate) fn hide_tailwind_context(&mut self) {
         self.tailwind_contexts.push(None);
     }

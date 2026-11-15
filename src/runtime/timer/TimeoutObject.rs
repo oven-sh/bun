@@ -3,38 +3,20 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 
 use crate::generated_bindgen::timer::js_Timeout as js;
 
-use super::{Clock, Kind};
+use super::{EventLoopTimerTag, TimerObject};
 
-// `Timeout`, declared in `Timer.bind.ts`.
-super::impl_timer_object!(TimeoutObject);
+/// `Timeout`, declared in `Timer.bind.ts`.
+pub(crate) type TimeoutObject = TimerObject<{ EventLoopTimerTag::TimeoutObject }>;
+
+bun_event_loop::impl_timer_owner!(TimeoutObject; event_loop_timer: RefCountedTimer<TimeoutObject>);
 
 impl TimeoutObject {
-    pub(crate) fn init(
-        cx: &bun_jsc::JsThread<'_>,
-        id: u64,
-        kind: Kind,
-        interval: u32,
-        callback: JSValue,
-        arguments: JSValue,
-        clock: Clock,
-    ) -> JSValue {
-        Self::init_with(cx, id, kind, interval, callback, arguments, clock)
-    }
-
-    pub(crate) fn refresh(
-        this: &Self,
-        this_value: JsWrapper<'_, Self>,
-        cx: &mut JsScope<'_>,
-    ) -> JSValue {
-        this.internals.do_refresh(cx.global(), this_value.to_js())
-    }
-
     pub(crate) fn close<'a>(
         this: &Self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
     ) -> JsWrapper<'a, Self> {
-        this.internals.cancel(cx.global().bun_vm());
+        this.cancel(cx.global().bun_vm());
         this_value
     }
 
@@ -65,7 +47,7 @@ impl TimeoutObject {
     ) {
         let value = value.to_js();
         if let Some(ms) = value.get_number() {
-            this.internals.set_idle_start(ms);
+            this.reschedule_from_idle_start(ms);
         }
         js::idle_start_set_cached(this_value.to_js(), cx.global(), value);
     }

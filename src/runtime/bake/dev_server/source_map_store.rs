@@ -6,15 +6,16 @@
 //! a browser tab if it has a callback to a previously loaded chunk; so DevServer
 //! should be aware of it.
 
+use core::pin::Pin;
+
 use bun_collections::{ArrayHashMap, LinearFifo, linear_fifo::StaticBuffer};
 use bun_core::string_joiner::StringJoiner;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_sourcemap::{self as source_map, SourceMapState};
 
 use crate::bake::{self, Side};
-use crate::timer::EventLoopTimerState;
 
-use super::{ChunkKind, EventLoopTimer, OwnedTimer, TimerTag, packed_map};
+use super::{ChunkKind, DevServerTimers, packed_map};
 
 /// See `SourceId` for what the content of u64 is.
 #[repr(transparent)]
@@ -399,18 +400,13 @@ pub(crate) struct SourceMapStore {
     /// - The expiry time passes
     /// - Too many different weak references exist
     pub(crate) weak_refs: LinearFifo<WeakRef, StaticBuffer<WeakRef, WEAK_REF_ENTRY_MAX>>,
-    /// Shared
-    pub(crate) weak_ref_sweep_timer: OwnedTimer,
 }
-
-bun_event_loop::impl_timer_owner!(SourceMapStore; from_timer_ptr => weak_ref_sweep_timer);
 
 impl Default for SourceMapStore {
     fn default() -> Self {
         Self {
             entries: ArrayHashMap::new(),
             weak_refs: LinearFifo::<WeakRef, StaticBuffer<WeakRef, WEAK_REF_ENTRY_MAX>>::init(),
-            weak_ref_sweep_timer: OwnedTimer::init_paused(TimerTag::DevServerSweepSourceMaps),
         }
     }
 }
@@ -473,7 +469,7 @@ impl SourceMapStore {
     }
 
     /// `SourceMapStore.addWeakRef`.
-    pub(crate) fn add_weak_ref(&mut self, key: Key) {
+    pub(crate) fn add_weak_ref(&mut self, key: Key, timers: Pin<&DevServerTimers>) {
         // This function expects that `weak_ref_entry_max` is low.
         let Some(entry) = self.entries.get_mut(&key) else {
             debug_assert!(false);
@@ -499,8 +495,8 @@ impl SourceMapStore {
             if self.weak_refs.readable_length() >= WEAK_REF_ENTRY_MAX {
                 let first = self.weak_refs.read_item().unwrap();
                 self.unref_count(first.key(), first.count);
-                if self.weak_ref_sweep_timer.next.get().sec == first.expire {
-                    self.weak_ref_sweep_timer.disarm();
+                if timers.weak_ref_sweep_timer.next().sec == first.expire {
+                    timers.weak_ref_sweep_timer.disarm();
                 }
             }
         }
@@ -513,12 +509,9 @@ impl SourceMapStore {
             .write_item(WeakRef::init(key, new_weak_ref_count, expire.sec))
             .expect("unreachable"); // space has been cleared above
 
-        if self.weak_ref_sweep_timer.state.get() != EventLoopTimerState::ACTIVE {
+        if !timers.weak_ref_sweep_timer.is_active() {
             map_log!("arming weak ref sweep timer");
-            crate::jsc_hooks::timer_all().update(
-                OwnedTimer::node(&raw const self.weak_ref_sweep_timer),
-                &expire,
-            );
+            timers.arm_weak_ref_sweep_timer(&expire);
         }
         map_log!("addWeakRef {:x}, ref_count: {}", key.get(), entry_ref_count);
     }
@@ -573,49 +566,27 @@ impl SourceMapStore {
     }
 
     /// `SourceMapStore.sweepWeakRefs` — pop expired weak-refs, decrement,
-    /// reschedule. Called from the high-tier `EventLoopTimer` dispatch with
-    /// the raw `*EventLoopTimer`.
-    ///
-    /// # Safety
-    /// `timer` must point to the `weak_ref_sweep_timer` field of a live
-    /// `SourceMapStore`.
-    pub(crate) fn sweep_weak_refs(
-        timer: *mut EventLoopTimer,
-        now_ts: &bun_event_loop::EventLoopTimer::Timespec,
-    ) {
+    /// reschedule.
+    pub(crate) fn sweep_weak_refs(&mut self, now_ts: &Timespec, timers: Pin<&DevServerTimers>) {
         map_log!("sweepWeakRefs");
-        // SAFETY: `timer` points to the `weak_ref_sweep_timer` field of a SourceMapStore.
-        let store: &mut SourceMapStore = unsafe { &mut *SourceMapStore::from_timer_ptr(timer) };
 
         // Mixed-sign comparison: a negative `expire` must count as expired.
         // Keep `now` as i64 (already clamped ≥0) so the comparison stays
         // sign-correct without u64 wrap.
         let now: i64 = now_ts.sec.max(0);
 
-        while let Some(item) = store.weak_refs.read_item() {
+        while let Some(item) = self.weak_refs.read_item() {
             if item.expire <= now {
-                store.unref_count(item.key(), item.count);
+                self.unref_count(item.key(), item.count);
             } else {
-                store.weak_refs.unget(&[item]).expect("unreachable"); // space exists since the last item was just removed.
-                store
-                    .weak_ref_sweep_timer
-                    .state
-                    .set(EventLoopTimerState::FIRED);
-                crate::jsc_hooks::timer_all().update(
-                    OwnedTimer::node(&raw const store.weak_ref_sweep_timer),
-                    &Timespec {
-                        sec: item.expire + 1,
-                        nsec: 0,
-                    },
-                );
+                self.weak_refs.unget(&[item]).expect("unreachable"); // space exists since the last item was just removed.
+                timers.arm_weak_ref_sweep_timer(&Timespec {
+                    sec: item.expire + 1,
+                    nsec: 0,
+                });
                 return;
             }
         }
-
-        store
-            .weak_ref_sweep_timer
-            .state
-            .set(EventLoopTimerState::CANCELLED);
     }
 
     /// This is used in exactly one place: remapping errors.

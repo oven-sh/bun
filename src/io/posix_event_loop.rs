@@ -205,7 +205,7 @@ pub enum PollTag {
     SecurityScanReader,
 }
 
-/// Who is handed an [`IoEvent`]. Plain data: attaching it is what takes a contract.
+/// The receiver of an [`IoEvent`]. Safe to build: `set_owner` and `OwnedFilePoll::new` carry the contract.
 #[derive(Copy, Clone)]
 pub struct Owner {
     tag: PollTag,
@@ -260,6 +260,8 @@ impl IoEvent {
 }
 
 unsafe extern "Rust" {
+    /// # Safety
+    /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to.
     pub(crate) fn __bun_run_io(owner: Owner, event: IoEvent);
 }
 
@@ -296,7 +298,8 @@ impl FilePoll {
         self.flags.update(|flags| flags - removed);
     }
 
-    /// SAFETY: see [`crate::OwnedFilePoll::new`].
+    /// # Safety
+    /// See [`crate::OwnedFilePoll::new`].
     pub unsafe fn set_owner(&self, owner: Owner) {
         self.owner.set(owner);
     }
@@ -778,11 +781,7 @@ impl FilePoll {
         let fd = self.fd;
         debug_assert!(fd.native() >= 0 && fd != INVALID_FD);
 
-        let registered = self.has_flag(Flags::PollReadable)
-            || self.has_flag(Flags::PollWritable)
-            || self.has_flag(Flags::PollProcess)
-            || self.has_flag(Flags::PollMachport)
-            || self.has_flag(Flags::PollMemoryPressure);
+        let registered = self.is_registered();
         // The `needs_rearm` skip below keeps the disarmed kernel registration, so teardown must still delete it.
         let disarmed_only = !registered && self.has_flag(Flags::NeedsRearm);
         if !registered && !(disarmed_only && force_unregister) {
@@ -817,11 +816,13 @@ impl FilePoll {
                 <&'static str>::from(flag),
                 fd
             );
-            self.remove_flags(Flags::PollProcess);
-            self.remove_flags(Flags::PollReadable);
-            self.remove_flags(Flags::PollWritable);
-            self.remove_flags(Flags::PollMachport);
-            self.remove_flags(Flags::PollMemoryPressure);
+            self.remove_flags(
+                Flags::PollProcess
+                    | Flags::PollReadable
+                    | Flags::PollWritable
+                    | Flags::PollMachport
+                    | Flags::PollMemoryPressure,
+            );
             return sys::Result::Ok(());
         }
 
@@ -1011,13 +1012,15 @@ impl FilePoll {
             }
         }
 
-        self.remove_flags(Flags::NeedsRearm);
-        self.remove_flags(Flags::OneShot);
-        self.remove_flags(Flags::PollReadable);
-        self.remove_flags(Flags::PollWritable);
-        self.remove_flags(Flags::PollProcess);
-        self.remove_flags(Flags::PollMachport);
-        self.remove_flags(Flags::PollMemoryPressure);
+        self.remove_flags(
+            Flags::NeedsRearm
+                | Flags::OneShot
+                | Flags::PollReadable
+                | Flags::PollWritable
+                | Flags::PollProcess
+                | Flags::PollMachport
+                | Flags::PollMemoryPressure,
+        );
 
         sys::Result::Ok(())
     }
@@ -1224,7 +1227,8 @@ impl Store {
         count
     }
 
-    /// SAFETY: `poll` is a slot of `self.hive` that the caller gives up, `vm` is the loop that has this store.
+    /// # Safety
+    /// `poll` is a slot of `self.hive` that the caller gives up, `vm` is the loop that has this store.
     unsafe fn put(&self, poll: ptr::NonNull<FilePoll>, vm: EventLoopCtx, ever_registered: bool) {
         let poll = poll.as_ptr();
         if !ever_registered {
@@ -1277,7 +1281,9 @@ pub struct OwnedFilePoll<const FORCE_UNREGISTER: bool = false>(ptr::NonNull<File
 
 #[cfg(not(windows))]
 impl<const FORCE_UNREGISTER: bool> OwnedFilePoll<FORCE_UNREGISTER> {
-    /// SAFETY: `owner` is what `__bun_run_io` takes its tag for, until the poll is dropped or has another owner.
+    /// # Safety
+    /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to, until the poll
+    /// is dropped or has another owner.
     pub unsafe fn new(event_loop: EventLoopCtx, fd: Fd, owner: Owner) -> Self {
         let poll = FilePoll {
             fd,
@@ -1319,7 +1325,11 @@ impl<const FORCE_UNREGISTER: bool> Drop for OwnedFilePoll<FORCE_UNREGISTER> {
         let was_ever_registered = self.reset(FORCE_UNREGISTER);
         let event_loop = self.event_loop;
         // SAFETY: `new` took the slot from this store.
-        unsafe { (event_loop.file_polls()).put(self.0, event_loop, was_ever_registered) };
+        unsafe {
+            event_loop
+                .file_polls()
+                .put(self.0, event_loop, was_ever_registered)
+        };
     }
 }
 

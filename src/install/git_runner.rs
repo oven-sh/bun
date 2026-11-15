@@ -821,7 +821,7 @@ impl GitSubprocess {
         });
         for kind in [Kind::Stdout, Kind::Stderr] {
             let owner = Owner::with_kind(PollTag::InstallGit, kind, runner.as_ptr().cast());
-            // SAFETY: a field of its owner.
+            // SAFETY: `owner` points to the heap allocation that holds this reader.
             unsafe { runner.reader(kind).set_owner(owner) };
         }
         let this = runner.this_ptr();

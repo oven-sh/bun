@@ -250,13 +250,13 @@ impl<'a> ProcessHandle<'a> {
         }
     }
 
-    /// The exit of the process ends the script, not the end of a reader.
     pub(crate) fn read(&mut self, kind: Kind, event: Option<IoEvent>) {
         let reader = match kind {
             Kind::Stdout => &self.stdout,
             Kind::Stderr => &self.stderr,
         };
         let event_loop = self.output.shared.event_loop.as_event_loop_ctx();
+        // Ignored: `on_process_exit` ends the script.
         let _ = reader.read_chunks(event_loop, event, |chunk, _| {
             let _ = self.output.read_chunk(&chunk);
             true

@@ -895,7 +895,7 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
     #[cfg(not(windows))]
     let (size_or_offset, hup) = (event.size_or_offset, event.is_hup());
 
-    /// `$body` through [`in_features!`], with the owner as `$cast` makes it of a `*mut $Ty`.
+    /// Runs `$body` through [`in_features!`] with `$this = $cast(owner.ptr().cast::<$Ty>())`.
     macro_rules! io_arm {
         ($features:tt, $cast:expr, $Ty:ty, |$this:ident, $kind:pat, $event:ident| $body:expr) => {
             in_features!($features, (owner: Owner = owner, $event: IoEvent = event) {
@@ -1085,7 +1085,8 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
     }
 }
 
-/// SAFETY: `ptr` is `Rc::as_ptr` of a live `Rc`.
+/// # Safety
+/// `ptr` is `Rc::as_ptr` of a live `Rc`.
 unsafe fn clone_rc<T>(ptr: *mut T) -> Rc<T> {
     // SAFETY: fn contract.
     unsafe {

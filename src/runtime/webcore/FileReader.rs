@@ -248,9 +248,11 @@ impl FileReader {
     /// `this` pins the JS wrapper too: a consumer (JS, or a native sink such as HTMLRewriter) can drop the stream's last GC root.
     pub(crate) fn read(this: &RefPtr<Source>, event: Option<IoEvent>) {
         let this = &this.context;
-        let result = (this.reader).read_chunks(this.event_loop_ctx(), event, |chunk, state| {
-            this.on_read_chunk(chunk, state)
-        });
+        let result = this
+            .reader
+            .read_chunks(this.event_loop_ctx(), event, |chunk, state| {
+                this.on_read_chunk(chunk, state)
+            });
         this.on_read_result(result);
     }
 
@@ -294,11 +296,10 @@ impl FileReader {
                             {
                                 file_type = opened.file_type;
                             }
-                            (self.reader).update_flags(|f| {
-                                f.set(ReaderFlags::NONBLOCKING, opened.nonblocking)
+                            self.reader.update_flags(|f| {
+                                f.set(ReaderFlags::NONBLOCKING, opened.nonblocking);
+                                f.set(ReaderFlags::POLLABLE, pollable);
                             });
-                            self.reader
-                                .update_flags(|f| f.set(ReaderFlags::POLLABLE, pollable));
                         }
                     }
                 }
@@ -339,7 +340,8 @@ impl FileReader {
             self.reader.set_limit(self.max_size);
             let (event_loop, fd) = (self.event_loop_ctx(), self.fd.get());
             let start_result = if let Some(offset) = self.start_offset {
-                (self.reader).start_file_offset(event_loop, fd, pollable, offset)
+                self.reader
+                    .start_file_offset(event_loop, fd, pollable, offset)
             } else {
                 self.reader.start(event_loop, fd, pollable)
             };
@@ -878,7 +880,7 @@ impl readable_stream::SourceContext for FileReader {
                     streams::Result::IntoArray(into)
                 };
             }
-            // A completion may have landed in `buffered` while the report ran user JS.
+            // A completion may have landed in `buffered` while `on_read_result` ran user JS.
             let drained = self.drain();
             if !drained.is_empty() {
                 return if done {

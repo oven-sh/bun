@@ -2123,6 +2123,7 @@ pub mod waker {
         }
 
         pub fn wake(&self) {
+            // Relaxed: only `init` writes it, before the waker is shared.
             let loop_ = self.loop_.load(core::sync::atomic::Ordering::Relaxed);
             // SAFETY: `loop_` came from `WindowsLoop::get()`, which is `&'static`;
             // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.

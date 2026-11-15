@@ -513,6 +513,38 @@ describe.concurrent("the write() of the Duplex under a TLS socket", () => {
     expect(result).toEqual({ stdout: "server got x\n", stderr: "", exitCode: 0 });
   });
 
+  test("can destroy the socket while what was parked is written, which bytesWritten counts", async () => {
+    const result = await run(
+      withParkedWrite(`socket.on("secureConnect", () => (onWrite = () => socket.destroy()));
+        socket.on("close", () => (console.log(socket.bytesWritten), raw.end()));`),
+    );
+    expect(result).toEqual({ stdout: "1\nserver got x\n", stderr: "", exitCode: 0 });
+  });
+
+  test.each([
+    ["the first write", "", `socket.write("xy")`],
+    ["a write behind what was parked", `socket.write("x")`, `socket._write("y", "utf8", () => {})`],
+  ])("can complete the handshake under %s", async (_, afterConnect, beforeClientHello) => {
+    const result = await run(`
+      const near = new Duplex({ read() {}, write: (chunk, encoding, callback) => callback(void far.push(chunk)) });
+      const far = new Duplex({ read() {}, write: (chunk, encoding, callback) => callback(void near.push(chunk)) });
+      const secureContext = tls.createSecureContext(JSON.parse(process.env.CERTS));
+      new tls.TLSSocket(far, { isServer: true, secureContext }).on("data", data => console.log("server got " + data));
+      setImmediate(() => {
+        // The session is decoded after TLS has started and before it has sent the ClientHello.
+        const from = Buffer.from;
+        let socket;
+        Buffer.from = function (value) {
+          if (value !== "session" || !socket) return from.apply(this, arguments);
+          ${beforeClientHello};
+          return from("");
+        };
+        socket = tls.connect({ socket: near, session: "session", rejectUnauthorized: false });
+        ${afterConnect};
+      });`);
+    expect(result).toEqual({ stdout: "server got xy\n", stderr: "", exitCode: 0 });
+  });
+
   test("can detach the buffer that is about to be parked", async () => {
     const result = await run(`
       const buffer = new Uint8Array(1 << 16);

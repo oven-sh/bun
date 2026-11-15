@@ -1121,25 +1121,23 @@ test("lowering many decorated instance fields into a large constructor body stay
           tsconfig: { compilerOptions: { experimentalDecorators: true } },
         });
         function time(M, src) {
-          const start = process.cpuUsage();
+          const start = process.threadCpuUsage();
           const out = t.transformSync(src);
-          const { user, system } = process.cpuUsage(start);
+          const { user, system } = process.threadCpuUsage(start);
           if (!out.includes("this.f0 = 0") || !out.includes("this.f" + (M - 1) + " = " + (M - 1)))
             throw new Error("instance-field initializers missing from lowered constructor at M=" + M);
           return (user + system) / 1000;
         }
         // The least of several runs, in turns and in time of the processor: what else the machine does can only add.
-        // Seven turns take about a minute on a debug build, so no turn starts once half of the child's time is gone.
+        // The time is that of this thread: the collector's threads are busy beside the first transform, and where
+        // only one turn fits there is no other sample. Seven turns take about a minute on a debug build, so no turn
+        // starts once half of the child's time is gone.
         const [small, large] = [gen(100), gen(50000)];
         let [tSmall, tLarge] = [Infinity, Infinity];
-        let turns = 0;
-        for (; turns < 7 && (turns === 0 || performance.now() < ${limit / 2}); turns++) {
+        for (let i = 0; i < 7 && (i === 0 || performance.now() < ${limit / 2}); i++) {
           tSmall = Math.min(tSmall, time(100, small));
           tLarge = Math.min(tLarge, time(50000, large));
         }
-        // The first transform of a process is slow. After a single turn the small source has no other sample, and the
-        // ratio is then too low to show a quadratic lowering. One more takes a third of that turn: take it if it fits.
-        if (turns === 1 && performance.now() < ${(limit * 2) / 3}) tSmall = Math.min(tSmall, time(100, small));
         console.log(JSON.stringify({ tSmall, tLarge, ratio: tLarge / tSmall }));
       `,
     ],

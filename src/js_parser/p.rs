@@ -8426,9 +8426,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
         // match `data` by value (it is `Copy`) so the `StoreRef<_>`
-        // payloads bind owned + `mut`, letting `to_utf8` mutate the EString in
-        // place and `arr.items.slice_mut()` write through `DerefMut` into the
-        // underlying arena slots.
+        // payloads bind owned + `mut`, letting `to_utf8` mutate the EString in place.
         match call.args.at(0).data {
             js_ast::ExprData::EString(mut str_) => {
                 let loc = call.args.at(0).loc;
@@ -8437,8 +8435,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 call.args.mut_(0).data = d;
             }
-            js_ast::ExprData::EArray(mut arr) => {
-                for item in arr.items.slice_mut() {
+            js_ast::ExprData::EArray(arr) => {
+                // Every use of an inlined constant shares its array.
+                let mut items = ExprNodeList::init_capacity(arr.items.len());
+                for item in arr.items.iter() {
                     let js_ast::ExprData::EString(mut s) = item.data else {
                         let _ = self.log().add_error(
                             Some(self.source),
@@ -8451,8 +8451,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     else {
                         return;
                     };
-                    item.data = d;
+                    items.push(Expr {
+                        data: d,
+                        loc: item.loc,
+                    });
                 }
+                let loc = call.args.at(0).loc;
+                *call.args.mut_(0) = self.new_expr(E::Array { items, ..*arr }, loc);
             }
             _ => return,
         }

@@ -146,7 +146,7 @@ pub(crate) type Poll = IOWriter;
 // the raw ptr; `ref_` only touches `ref_count: Cell<u32>`.
 bun_io::impl_streaming_writer_parent! {
     FileSink;
-    poll_tag   = bun_io::posix_event_loop::poll_tag::FILE_SINK,
+    poll_tag   = bun_io::PollTag::FileSink,
     borrow     = ptr,
     on_write   = on_write,
     on_error   = on_error,

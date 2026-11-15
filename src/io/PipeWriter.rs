@@ -319,7 +319,7 @@ impl<Parent: WriterParent> Drop for KeepParentAlive<Parent> {
 /// pointers and never form a `&mut Parent` inside the writer.
 #[cfg(unix)]
 pub trait PosixBufferedWriterParent: WriterParent {
-    /// `bun_io::poll_tag` constant for this writer's `FilePoll` owner. The
+    /// The tag of this writer's `FilePoll` owner. The
     /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_io`
     /// recovers `*mut PosixBufferedWriter<Self>` from this.
     const POLL_OWNER_TAG: PollTag;
@@ -620,7 +620,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 /// pointers and never form a `&mut Parent` inside the writer.
 #[cfg(unix)]
 pub trait PosixStreamingWriterParent: WriterParent {
-    /// `bun_io::poll_tag` constant for this writer's `FilePoll` owner. The
+    /// The tag of this writer's `FilePoll` owner. The
     /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_io`
     /// recovers `*mut PosixStreamingWriter<Self>` from this.
     const POLL_OWNER_TAG: PollTag;
@@ -1185,7 +1185,7 @@ pub trait BaseWindowsPipeWriter: Sized {
             Source::SyncFile(mut file) | Source::File(mut file) => {
                 if file.is_busy() {
                     // The write still reads the payload, and its callback will not get back here.
-                    file.orphaned_buf = self.take_write_payload();
+                    file.buffer = self.take_write_payload();
                     _write_ref = self.take_write_ref();
                 }
                 file.close_on_drop = self.owns_fd();
@@ -1257,7 +1257,9 @@ pub trait BaseWindowsPipeWriter: Sized {
             return sys::Result::Err(sys::Error::from_code(sys::E::BUSY, sys::Tag::write));
         }
         self.close_current_source()?;
-        let mut source = Source::SyncFile(Source::open_file(fd));
+        // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
+        let loop_ = unsafe { Self::Parent::loop_(self.parent_ptr()) };
+        let mut source = Source::SyncFile(Source::open_file(loop_, fd));
         source.set_data(core::ptr::from_mut(self).cast::<c_void>());
         *self.source_mut() = Some(source);
         let p = self.parent_ptr();
@@ -1267,7 +1269,9 @@ pub trait BaseWindowsPipeWriter: Sized {
 
     fn start_with_file(&mut self, fd: Fd) -> sys::Result<()> {
         debug_assert!(self.source().is_none());
-        let mut source = Source::File(Source::open_file(fd));
+        // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
+        let loop_ = unsafe { Self::Parent::loop_(self.parent_ptr()) };
+        let mut source = Source::File(Source::open_file(loop_, fd));
         source.set_data(core::ptr::from_mut(self).cast::<c_void>());
         *self.source_mut() = Some(source);
         let p = self.parent_ptr();

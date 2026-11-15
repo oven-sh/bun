@@ -153,7 +153,7 @@ pub(super) fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) 
 pub(super) fn finalize_bundle(
     dev: &mut DevServer,
     bv2: &mut BundleV2,
-    result: &mut bundler::bundle_v2::DevServerOutput,
+    result: bundler::bundle_v2::DevServerOutput,
 ) -> JsResult<()> {
     debug_assert!(dev.magic == Magic::Valid);
     let mut had_sent_hmr_event = false;
@@ -162,10 +162,11 @@ pub(super) fn finalize_bundle(
     finalized
 }
 
+/// Drops `result` before `finalize_bundle_cleanup` frees what it borrows.
 fn finalize_bundle_inner(
     dev: &mut DevServer,
     bv2: &mut BundleV2,
-    result: &mut bundler::bundle_v2::DevServerOutput,
+    result: bundler::bundle_v2::DevServerOutput,
     had_sent_hmr_event: &mut bool,
 ) -> JsResult<()> {
     // Note: holding `&mut CurrentBundle` for the rest of the fn locks `*dev`
@@ -187,8 +188,8 @@ fn finalize_bundle_inner(
 
     let lock = dev.graph_safety_lock.guard();
 
-    // `[js] | [css; n_css] | [html; ..]`. Dropped before `finalize_bundle_cleanup` frees what they borrow.
-    let mut chunks = ::core::mem::take(&mut result.chunks);
+    // `[js] | [css; n_css] | [html; ..]`
+    let mut chunks = result.chunks;
     let n_css = result.css_file_list.count();
     let input_file_sources = bv2.graph.input_files.items_source();
     let input_file_loaders = bv2.graph.input_files.items_loader();
@@ -231,7 +232,7 @@ fn finalize_bundle_inner(
         gts: &mut gts_storage,
     };
 
-    let quoted_source_contents = bv2.linker.graph.files.items_quoted_source_contents();
+    let quoted_source_contents = result.linker_graph.files.items_quoted_source_contents();
     // Pass 1, update the graph's nodes, resolving every bundler source
     // index into its `IncrementalGraph(...).FileIndex`
     let js_chunk = &chunks[0];
@@ -378,8 +379,8 @@ fn finalize_bundle_inner(
 
         let code = output.code(
             None,
-            &bv2.graph,
-            &bv2.linker.graph,
+            bv2,
+            &result.linker_graph,
             b"THIS_SHOULD_NEVER_BE_EMITTED_IN_DEV_MODE",
             chunk,
             &chunks,

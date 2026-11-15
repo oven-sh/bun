@@ -22,11 +22,11 @@ use bun_ast::{
 
 use crate::options::Format;
 use crate::perf;
-use crate::{BundleV2, Index, LinkerContext, RefImportData, ResolvedExports, WrapKind, js_meta};
+use crate::{Index, LinkerContext, RefImportData, ResolvedExports, WrapKind, js_meta};
 
 pub use crate::ThreadPool;
 
-impl LinkerContext<'_> {
+impl LinkerContext<'_, '_> {
     /// Step 5: Create namespace exports for every file. This is always necessary
     /// for CommonJS files, and is also necessary for other files if they are
     /// imported using an import star statement.
@@ -49,19 +49,14 @@ impl LinkerContext<'_> {
         let source_index = source_index_.get();
         let _trace = perf::trace("Bundler.CreateNamespaceExports");
 
-        let c: &LinkerContext<'_> = self;
+        let c: &LinkerContext<'_, '_> = self;
 
         let id = source_index;
         if id as usize >= c.graph.meta.len() {
             return;
         }
 
-        // SAFETY: `c` is `BundleV2.linker` (caller is the worker-pool
-        // dispatch from `scan_imports_and_exports`); `container_of` shape.
-        // `Worker::get` only needs `&BundleV2`, so derive a shared ref — never
-        // form `&mut BundleV2` here (concurrent tasks would alias it).
-        let bundle_v2: &BundleV2<'_> = unsafe { &*LinkerContext::bundle_v2_const_ptr(c) };
-        let worker = ThreadPool::Worker::get(bundle_v2);
+        let worker = ThreadPool::Worker::get(c.bundle);
 
         // we must use this arena here
         // SAFETY: `Worker::create` initializes `arena` to point at

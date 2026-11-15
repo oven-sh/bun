@@ -602,7 +602,11 @@ impl Round<'_> {
             highway::Resizer::default().resize(filter, src, src_w, &mut want, dst_w);
             let got = rust::Resizer::default().resize(filter, fenced, src_w, into, dst_w);
             // As in `modulate`, a weight may be rounded the other way.
-            let tolerance = if cfg!(target_arch = "x86_64") { 0 } else { 2 };
+            let tolerance = match filter {
+                _ if cfg!(target_arch = "x86_64") => 0,
+                Filter::Mitchell | Filter::CatmullRom | Filter::Mks2013 | Filter::Mks2021 => 2,
+                _ => 0,
+            };
             let mut pairs = want.as_flattened().iter().zip(got.as_flattened());
             let is_same = pairs.all(|(a, b)| a.abs_diff(*b) <= tolerance);
             self.failures

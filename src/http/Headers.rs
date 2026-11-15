@@ -20,11 +20,11 @@ pub use bun_http_types::ETag::{HeaderEntry as Entry, HeaderEntryList as EntryLis
 /// (`bun_picohttp`). Kept as a trait so callers can keep writing
 /// `Headers::from_pico_http_headers(...)`.
 pub trait HeadersExt {
-    fn from_pico_http_headers(headers: &[picohttp::Header]) -> Headers;
+    fn from_pico_http_headers(headers: &[picohttp::Header<'_>]) -> Headers;
 }
 
 impl HeadersExt for Headers {
-    fn from_pico_http_headers(headers: &[picohttp::Header]) -> Headers {
+    fn from_pico_http_headers(headers: &[picohttp::Header<'_>]) -> Headers {
         let header_count = headers.len();
         let mut result = Headers {
             entries: EntryList::default(),

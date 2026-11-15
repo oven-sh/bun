@@ -633,24 +633,14 @@ pub(crate) fn execute_simple_s3_request(
         }
     };
 
-    let headers = 'brk: {
-        let mut header_buffer = [picohttp::Header::ZERO; SignResult::MAX_HEADERS + 1];
+    let headers = {
+        let mut headers = result.headers();
         if let Some(range_) = &options.range {
-            let _headers =
-                result.mix_with_header(&mut header_buffer, picohttp::Header::new(b"range", range_));
-            break 'brk Headers::from_pico_http_headers(_headers);
-        } else {
-            if let Some(content_type) = options.content_type {
-                if !content_type.is_empty() {
-                    let _headers = result.mix_with_header(
-                        &mut header_buffer,
-                        picohttp::Header::new(b"Content-Type", content_type),
-                    );
-                    break 'brk Headers::from_pico_http_headers(_headers);
-                }
-            }
-            break 'brk Headers::from_pico_http_headers(result.headers());
+            headers.append_assume_capacity(picohttp::Header::new(b"range", range_));
+        } else if let Some(content_type) = options.content_type.filter(|ct| !ct.is_empty()) {
+            headers.append_assume_capacity(picohttp::Header::new(b"Content-Type", content_type));
         }
+        Headers::from_pico_http_headers(&headers)
     };
 
     let proxy_url = resolve_proxy(options.proxy_url, &result.url);

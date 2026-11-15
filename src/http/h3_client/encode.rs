@@ -2,6 +2,7 @@
 //! from `HTTPClient.buildRequest` and drain the request body (inline bytes or
 //! a JS streaming sink) onto the lsquic stream. Mirrors `h2_client/encode.rs`.
 
+use bun_core::fmt::ItoaBuf;
 use bun_core::strings;
 use bun_uws::quic;
 use bun_uws::quic::Qpack;
@@ -34,8 +35,7 @@ pub(crate) fn write_request(
     let reject_unauthorized = client.flags.reject_unauthorized;
     // h3 body bytes flow into lsquic's send buffer asynchronously — compress
     // into the Vec so the cursor stays valid across event-loop ticks.
-    client.compress_body_for_send(thread, false)?;
-    let req_body: bun_ptr::RawSlice<u8> = client.state.request_body;
+    client.compress_body_for_send(thread)?;
     let body_len = client.body_len_for_send();
     let is_streaming = client.state.original_request_body.is_stream();
     let is_bytes = matches!(
@@ -43,10 +43,11 @@ pub(crate) fn write_request(
         HTTPRequestBody::Bytes(_)
     );
 
+    let mut content_length = ItoaBuf::new();
     let mut request_headers = RequestHeaders::new();
-    let request = client.build_request(body_len, &mut request_headers);
+    let request = client.build_request(body_len, &mut content_length, &mut request_headers);
     if verbose != HTTPVerboseLevel::None {
-        let body = req_body.slice();
+        let body = client.request_body();
         crate::print_request(
             Protocol::Http3,
             &request,
@@ -104,7 +105,7 @@ pub(crate) fn write_request(
     }
     headers[2] = quic::Header::init(b":authority", authority, Some(Qpack::Authority));
 
-    let has_inline_body = is_bytes && !req_body.is_empty();
+    let has_inline_body = is_bytes && !client.request_body().is_empty();
 
     let end_stream = !has_inline_body && !is_streaming;
     if qs.send_headers(&headers, end_stream) != 0 {
@@ -116,7 +117,6 @@ pub(crate) fn write_request(
     drop(headers);
 
     if has_inline_body {
-        stream.pending_body = req_body;
         drain_send_body(stream, qs);
     } else if is_streaming {
         stream.is_streaming_body = true;
@@ -194,16 +194,16 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         return;
     }
 
-    let mut remaining = stream.pending_body;
+    let body = client.request_body();
+    let mut remaining = &body[stream.body_sent..];
     while !remaining.is_empty() {
-        let w = qs.write(remaining.slice());
+        let w = qs.write(remaining);
         if w <= 0 {
             break;
         }
-        remaining =
-            bun_ptr::RawSlice::new(&remaining.slice()[usize::try_from(w).expect("int cast")..]);
+        remaining = &remaining[usize::try_from(w).expect("int cast")..];
     }
-    stream.pending_body = remaining;
+    stream.body_sent = body.len() - remaining.len();
     if remaining.is_empty() {
         stream.request_body_done = true;
         qs.shutdown();

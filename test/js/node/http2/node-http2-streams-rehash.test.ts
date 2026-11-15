@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tls } from "harness";
 import path from "node:path";
 
 // The spawned fixtures finish in well under a second in release but take
@@ -443,6 +443,44 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       for (const { session } of Object.values(peers)) session.destroy();
     `);
       expect(result).toEqual({ stdout: JSON.stringify(expected), stderr: "", exitCode: 0 });
+    },
+    10_000 * ASAN_MULTIPLIER,
+  );
+
+  test(
+    "does not free the TLS socket that is writing",
+    async () => {
+      const result = await run(/* js */ `
+      const server = http2.createSecureServer(${JSON.stringify(tls)});
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const raw = require("node:net").connect(server.address().port, "127.0.0.1");
+      await once(raw, "connect");
+      let inNextWrite;
+      const duplex = new Duplex({
+        read() {},
+        write(chunk, encoding, callback) {
+          const hook = inNextWrite;
+          inNextWrite = undefined;
+          hook?.();
+          raw.write(chunk, callback);
+        },
+      });
+      raw.on("data", chunk => duplex.push(chunk));
+      const socket = require("node:tls").connect({ socket: duplex, ALPNProtocols: ["h2"], rejectUnauthorized: false });
+      await once(socket, "secureConnect");
+      const session = http2.connect("https://localhost", { createConnection: () => socket });
+      await once(session, "localSettings");
+      inNextWrite = () => {
+        socket.destroy();
+        Bun.gc(true);
+      };
+      session.ping(() => {});
+      await once(session, "close");
+      console.log("closed");
+      raw.destroy();
+      server.close();
+    `);
+      expect(result).toEqual({ stdout: "closed", stderr: "", exitCode: 0 });
     },
     10_000 * ASAN_MULTIPLIER,
   );

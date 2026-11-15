@@ -619,7 +619,7 @@ pub(crate) mod command {
 
     pub(crate) use bun_options_types::command_tag::Tag;
     pub(crate) use bun_options_types::command_tag::{LOADS_CONFIG, USES_GLOBAL_OPTIONS};
-    pub(crate) use bun_options_types::context::{Context, ContextData, HotReload, TestOptions};
+    pub(crate) use bun_options_types::context::{Context, ContextData, HotReload};
 
     // Process-lifetime
     // storage, written exactly once in `create_context_data` during

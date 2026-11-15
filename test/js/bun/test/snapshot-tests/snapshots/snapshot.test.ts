@@ -1881,7 +1881,11 @@ describe.concurrent("an inline snapshot does not say who wrote it", () => {
     expect(results.map(result => result.exitCode)).toEqual([0, 0]);
   });
 
-  test.each(["<<<<<<< ours\nexports[`t 1`] = `1`;\n=======\n", "exports[`t 1`] = `"])(
+  test.each([
+    "<<<<<<< ours\nexports[`t 1`] = `1`;\n=======\n",
+    "exports[`t 1`] = `",
+    'import { m } from "./m.js" with { type: "macro" };\nexports[`t 1`] = m();\n',
+  ])(
     "does not need the file of the other snapshots, which the matcher that does says it cannot read: %j",
     async unreadable => {
       using dir = tempDir("inline-snapshot-alone", {

@@ -519,7 +519,7 @@ fn finish(
     }
 
     this_transpiler.configure_defines()?;
-    this_transpiler.configure_linker();
+    this_transpiler.configure_from_tsconfig();
 
     this_transpiler.options.compile_target_builtins = options::CompileTargetBuiltins::Host;
 

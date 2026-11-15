@@ -110,7 +110,7 @@ impl Framework {
         // `Clone`.
         out.sync_resolver_opts();
 
-        out.configure_linker();
+        out.configure_from_tsconfig();
         out.configure_defines()?;
 
         out.options.jsx.development = mode == Mode::Development;

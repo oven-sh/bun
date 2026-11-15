@@ -334,25 +334,26 @@ struct Preconnect {
     is_url_owned: bool,
 }
 
+impl Drop for Preconnect {
+    fn drop(&mut self) {
+        if self.is_url_owned {
+            // SAFETY: `is_url_owned` is the caller's promise that `url.href`
+            // is a global-allocator `Box<[u8]>` we now own.
+            unsafe { free_owned_href(self.url.href) };
+        }
+    }
+}
+
 impl Preconnect {
     fn on_result(this: *mut Preconnect, _: *mut AsyncHTTP<'static>, _: HTTPClientResult<'_>) {
-        // SAFETY: `this` was produced by `heap::alloc` in `preconnect()` and is
-        // uniquely owned here; `async_http` was fully written before scheduling.
-        unsafe {
-            (*this)
-                .async_http
-                .as_mut()
-                .expect("Preconnect.async_http set in preconnect()")
-                .clear_data();
-            if (*this).is_url_owned {
-                // SAFETY: `is_url_owned` is the caller's promise that `url.href`
-                // is a global-allocator `Box<[u8]>` we now own.
-                free_owned_href((*this).url.href);
-            }
-            // Reclaim and drop the heap allocation (runs Drop on `async_http`
-            // — which in turn drops `HTTPClient`).
-            drop(bun_core::heap::take(this));
-        }
+        // SAFETY: the box from `preconnect()`, and this is its request's only result.
+        unsafe { bun_core::heap::destroy(this) };
+    }
+
+    /// SAFETY: `this` is the box from `preconnect()`, and its request will have no result.
+    unsafe fn release_at_shutdown(this: *mut ()) {
+        // SAFETY: fn contract.
+        unsafe { bun_core::heap::destroy(this.cast::<Preconnect>()) };
     }
 }
 
@@ -392,7 +393,11 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool, tls_props: Option<SSLCo
             headers::EntryList::default(),
             b"",
             b"",
-            HTTPClientResultCallback::new::<Preconnect>(this, Preconnect::on_result),
+            HTTPClientResultCallback::new_with_release::<Preconnect>(
+                this,
+                Preconnect::on_result,
+                Preconnect::release_at_shutdown,
+            ),
             FetchRedirect::Manual,
             Options {
                 tls_props,

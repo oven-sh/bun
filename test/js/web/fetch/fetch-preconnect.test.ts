@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import "harness";
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import { join } from "node:path";
 
 // TODO: on Windows, these tests fail.
 // This feature is mostly meant for serverless JS environments, so we can no-op it on Windows.
@@ -122,6 +123,35 @@ describe.concurrent.todoIf(isWindows)("fetch.preconnect", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  });
+
+  // Through the flag: leaksan.supp hides what a module's top level allocates.
+  it.skipIf(!isASAN)("exiting during the handshake frees the preconnects", async () => {
+    let left = 16;
+    using listener = Bun.listen({
+      port: 0,
+      hostname: "127.0.0.1",
+      socket: { data: () => void (--left || proc.stdin.end()) },
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        ...Array(left).fill(`--fetch-preconnect=https://127.0.0.1:${listener.port}`),
+        "--eval",
+        "await Bun.stdin.text()",
+      ],
+      stdin: "pipe",
+      env: {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   });
 
   // A preconnect that finds a pooled keep-alive socket for its origin used to

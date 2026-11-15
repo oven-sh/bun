@@ -1762,7 +1762,7 @@ fn tarball_may_contain(
 ) -> bool {
     let lockfile: &Lockfile = &manager.lockfile;
     let res = &lockfile.packages.items_resolution()[pkg_id as usize];
-    let buf = &mut **bun_paths::path_buffer_pool::get();
+    let mut buf = bun_paths::path_buffer_pool::get();
     let entry = match res.tag {
         // Apart from bundled dependencies, Bun doesn't install the `node_modules` folder of a
         // workspace, a `file:` folder or a git checkout.
@@ -1771,14 +1771,14 @@ fn tarball_may_contain(
             let name = lockfile.packages.items_name()[pkg_id as usize];
             crate::package_manager::cached_npm_package_folder_name_print(
                 manager,
-                buf,
+                &mut buf,
                 name.slice(&lockfile.buffers.string_bytes),
                 res.npm().version,
                 None,
             )
         }
         ResolutionTag::Github => {
-            crate::package_manager::cached_github_folder_name(manager, buf, res.github(), None)
+            crate::package_manager::cached_github_folder_name(manager, &mut buf, res.github(), None)
         }
         // A tarball dependency can contain anything.
         _ => return true,

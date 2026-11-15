@@ -1669,7 +1669,7 @@ pub mod dir_entry_accessor {
         type Handle = DirEntryHandle;
 
         #[inline]
-        fn next(&mut self) -> Maybe<Option<walk::DirEntry<'_>>> {
+        fn next(&mut self) -> Maybe<Option<walk::AccessorDirEntry<'_>>> {
             if let Some(value) = &mut self.value {
                 let Some((key, val)) = value.next() else {
                     return Ok(None);
@@ -1693,7 +1693,7 @@ pub mod dir_entry_accessor {
                 // `Entry::kind` resolved through symlinks above; a non-empty
                 // cached realpath is what records the entry as a symlink.
                 let symlink_target = entry.cache().symlink.as_bytes();
-                Ok(Some(walk::DirEntry {
+                Ok(Some(walk::AccessorDirEntry {
                     name: key,
                     kind: fskind,
                     symlink_target: (!symlink_target.is_empty()).then_some(symlink_target),

@@ -464,17 +464,11 @@ impl DirEntry {
                 use core::ptr::addr_of_mut;
                 let p = (*slot).as_mut_ptr();
                 // name_slice only lives for the duration of the iteration.
-                // `init*_append_if_needed` are `#[inline(always)]` so the
-                // 32-byte `StringOrTinyString` is built directly into `*p`
-                // with no intermediate stack copy.
                 addr_of_mut!((*p).base_).write(strings::StringOrTinyString::init_append_if_needed(
                     name_slice,
                     filename_store,
                 )?);
-                // `name_lc` is already ASCII-lowercased, so interning it as-is
-                // is byte-identical to `init_lower_case_append_if_needed(name_slice, ..)`
-                // and skips a second lowercase pass over the basename. Moreover,
-                // when the basename has no uppercase bytes (the overwhelmingly
+                // `name_lc` is already lowercase. When the basename has no uppercase bytes (the
                 // common case on Linux), `copy_lowercase_if_needed` returns the
                 // *input slice unchanged* — so `name_lc` points at the same bytes
                 // `base_` just interned. Detect that and copy `base_` instead of
@@ -631,7 +625,7 @@ impl ModKey {
 unsafe impl Sync for Entry {}
 
 // ══════════════════════════════════════════════════════════════════════════
-// CANONICAL: read-file-with-handle (stat → grow → pread-loop → BOM-strip)
+// CANONICAL: read-file-with-handle (stat → grow → read loop → BOM-strip)
 //
 // One body, two entry points:
 //   • `read_file_with_handle_impl`  — free fn, const-generic, returns
@@ -762,7 +756,7 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         };
         debug!("stat({}) = {}", file.handle(), size);
 
-        // Skip the pread call for empty files
+        // Skip the read call for empty files
         // Otherwise will get out of bounds errors
         // plus it's an unnecessary syscall
         if size == 0 {
@@ -781,11 +775,10 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         shared_buffer.grow_by(size + 1)?;
 
         // if you press save on a large file we might not read all the
-        // bytes in the first few pread() calls. we only handle this on
+        // bytes in the first few read() calls. we only handle this on
         // stream because we assume that this only realistically happens
         // during HMR
         loop {
-            // We use pread to ensure if the file handle was open, it doesn't seek from the last position
             let read_count = append_with(&mut shared_buffer.list, usize::MAX, |spare| {
                 file.read_all_buf(spare)
             })?;

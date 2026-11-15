@@ -28,6 +28,7 @@ use bun_which::which;
 
 use crate::cli;
 use crate::cli::arguments;
+use crate::cli::cli_arena;
 use crate::cli::command::{ContextData, Tag as CommandTag};
 use crate::cli::shell_completions::ShellCompletions;
 
@@ -48,14 +49,6 @@ macro_rules! path_literal {
             $posix
         }
     }};
-}
-
-/// Process-lifetime arena for the runner's `Transpiler`; threads an
-/// `&'static Arena` per PORTING.md §AST crates. Route through the shared
-/// `cli::cli_arena()` (a `LazyLock` — `MimallocArena` is `Sync`).
-#[inline]
-fn runner_arena() -> &'static bun_alloc::Arena {
-    crate::cli::cli_arena()
 }
 
 // Passthrough-arg shell escaping. The escape tables + helpers are the lower-tier
@@ -436,7 +429,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // TODO: remember to free this when we add --filter or --concurrent
         // in the meantime we don't need to free it.
-        let envp = env.map.create_null_delimited_env_map()?;
+        let envp = env.map.to_envp();
 
         #[cfg(windows)]
         bun_spawn::ctrl_c::install();
@@ -632,7 +625,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let env_is_none = env.is_none();
         // Process-lifetime arena singleton for the runner's transpiler;
         // threads an `&'static Arena` per PORTING.md §AST crates.
-        let arena: &'static bun_alloc::Arena = runner_arena();
+        let arena: &'static bun_alloc::Arena = cli_arena();
         let this_transpiler = this_transpiler.insert(Transpiler::init(arena, ctx.log, args, env)?);
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
         let env_loader = this_transpiler.env_mut();
@@ -923,7 +916,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let mut args = ctx.args.clone();
         args.write = Some(false);
         args.target = Some(api::Target::Bun);
-        let mut bundle = Transpiler::init(runner_arena(), ctx.log, args, None)?;
+        let mut bundle = Transpiler::init(cli_arena(), ctx.log, args, None)?;
         bundle.run_env_loader(bundle.options.env.disable_default_env_files)?;
 
         let mini = bun_event_loop::MiniEventLoop::init_global(
@@ -1091,10 +1084,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 period = bstr::BStr::new(&escaped_period),
             );
             // process-lifetime (runner never returns) — store both
-            // the script bytes and the synthetic entry path in the runner arena
+            // the script bytes and the synthetic entry path in `cli_arena()`
             // so the `Source` stored in the VM can backref into them.
-            let cron_script: &'static [u8] =
-                runner_arena().alloc_slice_copy(cron_script.as_bytes());
+            let cron_script: &'static [u8] = cli_arena().alloc_slice_copy(cron_script.as_bytes());
 
             // entry_path must end with /[eval] for the transpiler to use eval_source
             let mut cwd_buf = bun_paths::path_buffer_pool::get();
@@ -1103,7 +1095,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             let mut eval_path: Vec<u8> = Vec::with_capacity(cwd_bytes.len() + EVAL_TRIGGER.len());
             eval_path.extend_from_slice(cwd_bytes);
             eval_path.extend_from_slice(EVAL_TRIGGER);
-            let heap_entry: &'static [u8] = runner_arena().alloc_slice_copy(&eval_path);
+            let heap_entry: &'static [u8] = cli_arena().alloc_slice_copy(&eval_path);
 
             let source = bun_ast::Source::init_path_string(heap_entry, cron_script);
             let _ = vm.module_loader.eval_source.set(Box::new(source));
@@ -1344,7 +1336,7 @@ pub(crate) struct Run<'a> {
     vm: &'a VirtualMachine,
     /// `vm.main` already points into these bytes; `'static` because the hot
     /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
-    /// the runner arena). `None` for `bun bake`, which has no entry module.
+    /// `cli_arena()`). `None` for `bun bake`, which has no entry module.
     entry_path: Option<&'static [u8]>,
     /// `--check` under `--watch`: what to type check before the program runs. With errors the
     /// program is not run, and the process waits for a change.
@@ -1873,10 +1865,9 @@ impl RunCommand {
             target_path_buffer[total] = 0;
 
             // Park the
-            // bytes in the per-process `runner_arena()` instead of leaking
+            // bytes in the per-process `cli_arena()` instead of leaking
             // (PORTING.md §Forbidden bars per-call leaks).
-            let stored: &'static [u8] =
-                runner_arena().alloc_slice_copy(&target_path_buffer[..=total]);
+            let stored: &'static [u8] = cli_arena().alloc_slice_copy(&target_path_buffer[..=total]);
             // SAFETY: `stored[total] == 0` (written above before the copy);
             // arena-backed slice lives for process lifetime.
             Ok(ZStr::from_buf(&stored[..], total))
@@ -2100,8 +2091,8 @@ impl RunCommand {
         if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH && executable.ends_with(b".exe") {
             debug_assert!(paths::is_absolute(executable));
 
-            let buf = &mut *bun_paths::w_path_buffer_pool::get();
-            let w = strings::to_nt_path(buf, executable);
+            let mut buf = bun_paths::w_path_buffer_pool::get();
+            let w = strings::to_nt_path(&mut buf, executable);
             let w_len = w.len();
             debug_assert!(w_len > sys::windows::NT_OBJECT_PREFIX.len() + b".exe".len());
             let new_len = w_len + b".bunx".len() - b".exe".len();
@@ -2109,7 +2100,7 @@ impl RunCommand {
             buf[new_len - bunx.len()..new_len].copy_from_slice(bunx);
             buf[new_len] = 0;
 
-            BunXFastPath::try_launch(ctx, buf, new_len, env, passthrough);
+            BunXFastPath::try_launch(ctx, &mut buf, new_len, env, passthrough);
         }
 
         Self::run_binary_without_bunx_path(
@@ -2171,7 +2162,7 @@ impl RunCommand {
 
         // TODO: remember to free this when we add --filter or --concurrent
         // in the meantime we don't need to free it.
-        let envp = env.map.create_null_delimited_env_map()?;
+        let envp = env.map.to_envp();
 
         // POSIX forwards signals inside `sync::spawn`; on Windows the child shares
         // our console and gets Ctrl+C itself, we just have to outlive it.
@@ -2426,7 +2417,7 @@ impl RunCommand {
         // otherwise faulted in for a plain `bun run <script>`).
         let (this_transpiler, root_dir_info) = Self::configure_env_for_run_without_linker(
             ctx,
-            runner_arena().alloc(None),
+            cli_arena().alloc(None),
             None,
             ConfigureEnvOptions {
                 log_errors,
@@ -2676,7 +2667,7 @@ impl RunCommand {
             && !ctx.runtime_options.check
             && !crate::cli::run_compiled::is_requested(ctx)
         {
-            let buf = &mut *bun_paths::w_path_buffer_pool::get();
+            let mut buf = bun_paths::w_path_buffer_pool::get();
             // NT object-manager prefix (`\??\`), NOT the Win32 long-path
             // `\\?\` — `try_launch` hands this to NtCreateFile.
             let root = bun_core::w!("\\??\\");
@@ -2704,7 +2695,7 @@ impl RunCommand {
                 buf[ptr] = 0;
 
                 let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
-                BunXFastPath::try_launch(ctx, buf, ptr, env_loader, &passthrough);
+                BunXFastPath::try_launch(ctx, &mut buf, ptr, env_loader, &passthrough);
             }
         }
 
@@ -3561,7 +3552,7 @@ impl RunCommand {
 
         let args = ctx.args.clone();
 
-        let Ok(mut this_transpiler) = Transpiler::init(runner_arena(), ctx.log, args, None) else {
+        let Ok(mut this_transpiler) = Transpiler::init(cli_arena(), ctx.log, args, None) else {
             return Ok(shell_out);
         };
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
@@ -3836,16 +3827,16 @@ impl RunCommand {
         this_transpiler.resolver.care_about_scripts = false;
 
         // `ShellCompletions` borrows the keys for `'static`: the arena never runs `Drop`.
-        let results: &'static ResultList = runner_arena().alloc(results);
+        let results: &'static ResultList = cli_arena().alloc(results);
         bun_core::asan::register_root_region(
             std::ptr::from_ref::<ResultList>(results).cast(),
             ::core::mem::size_of::<ResultList>(),
         );
         let mut all_keys: Vec<&'static [u8]> = results.keys().iter().map(|k| &**k).collect();
         strings::sort_asc(&mut all_keys);
-        shell_out.commands = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(&all_keys));
+        shell_out.commands = std::borrow::Cow::Borrowed(cli_arena().alloc_slice_copy(&all_keys));
         shell_out.descriptions =
-            std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(&descriptions));
+            std::borrow::Cow::Borrowed(cli_arena().alloc_slice_copy(&descriptions));
 
         Ok(shell_out)
     }

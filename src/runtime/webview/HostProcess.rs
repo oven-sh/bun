@@ -157,9 +157,9 @@ fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Res
     // Child sees fd 3 (first extra_fd → 3+0). The env var is the only
     // signal; no argv changes so `ps` shows a normal `bun` invocation.
     // Same pattern as NODE_CHANNEL_FD in js_bun_spawn_bindings.rs.
-    let base = vm.env_loader().map.create_null_delimited_env_map()?;
-    let host = [Some(c"BUN_INTERNAL_WEBVIEW_HOST=3".into()), None];
-    let env = [base.entries(), &host].concat();
+    let base = vm.env_loader().map.to_envp();
+    let host_variable = [Some(c"BUN_INTERNAL_WEBVIEW_HOST=3".into()), None];
+    let env = [base.unterminated(), &host_variable].concat();
 
     let argv = [Some(exe.into()), None];
 

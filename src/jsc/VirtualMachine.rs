@@ -3784,22 +3784,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
             .ctx
             .buffer
             .append_assume_capacity(SOURCE_MAP_URL_PREFIX_START);
-        {
-            // `MutableString::list` is a `Vec<u8>`; write into spare capacity,
-            // then commit the written length.
-            let buf = &mut printer.ctx.buffer.list;
-            // SAFETY: `grow_if_needed` reserved ≥encode_len spare; encode writes
-            // `wrote<=encode_len` bytes.
-            let wrote = unsafe {
-                bun_base64::encode(
-                    &mut bun_core::vec::spare_bytes_mut(buf)[..encode_len],
-                    temp_json_buffer.list.as_slice(),
-                )
-            };
-            // SAFETY: `wrote <= encode_len` bytes were just initialized in the
-            // spare capacity reserved by `grow_if_needed` above.
-            unsafe { bun_core::vec::commit_spare(buf, wrote) };
-        }
+        bun_base64::encode_append(&mut printer.ctx.buffer.list, &temp_json_buffer.list);
         printer
             .ctx
             .buffer
@@ -6872,16 +6857,6 @@ impl VirtualMachine {
             };
         }
         #[inline]
-        fn splat_space(w: &mut dyn bun_io::Write, mut n: u64) -> crate::CrateResult<()> {
-            const SPACES: &[u8; 32] = b"                                ";
-            while n > 0 {
-                let chunk = n.min(32) as usize;
-                w.write_all(&SPACES[..chunk])?;
-                n -= chunk as u64;
-            }
-            Ok(())
-        }
-        #[inline]
         fn count_digits(n: i32) -> u64 {
             bun_core::fmt::digit_count(n) as u64
         }
@@ -6905,7 +6880,7 @@ impl VirtualMachine {
             let int_size = count_digits(display_line);
             let pad = max_line_number_pad.saturating_sub(int_size);
             last_pad = pad;
-            splat_space(writer, pad)?;
+            writer.splat_byte_all(b' ', pad as usize)?;
 
             let trimmed = source.trimmed_text();
             let clamped = &trimmed[..trimmed.len().min(MAX_LINE_LENGTH)];
@@ -7033,7 +7008,7 @@ impl VirtualMachine {
                     let display_line = source.line + 1;
                     let int_size = count_digits(display_line);
                     let pad = max_line_number_pad.saturating_sub(int_size);
-                    splat_space(writer, pad)?;
+                    writer.splat_byte_all(b' ', pad as usize)?;
 
                     let clamped = &trimmed[..trimmed.len().min(MAX_LINE_LENGTH)];
                     let hl = bun_core::fmt::fmt_javascript(
@@ -7063,7 +7038,7 @@ impl VirtualMachine {
                         {
                             let indent =
                                 max_line_number_pad + b" | ".len() as u64 + col.max(0) as u64;
-                            splat_space(writer, indent)?;
+                            writer.splat_byte_all(b' ', indent as usize)?;
                             pretty_write!(writer, "<red><b>^<r>\n")?;
                         } else {
                             writer.write_all(b"\n")?;
@@ -7185,7 +7160,7 @@ impl VirtualMachine {
 
                     let pad_left = longest_name.saturating_sub(field.length());
                     is_first_property = false;
-                    splat_space(writer, pad_left as u64)?;
+                    writer.splat_byte_all(b' ', pad_left)?;
                     pretty_write!(writer, " {}<r><d>:<r> ", field)?;
 
                     if allow_side_effects && global_ref.has_exception() {
@@ -7218,7 +7193,7 @@ impl VirtualMachine {
             if let Some(code_str) = code {
                 let pad_left = longest_name.saturating_sub(b"code".len());
                 is_first_property = false;
-                splat_space(writer, pad_left as u64)?;
+                writer.splat_byte_all(b' ', pad_left)?;
                 pretty_write!(
                     writer,
                     " code<r><d>:<r> <green>{}<r>\n",
@@ -7234,7 +7209,7 @@ impl VirtualMachine {
                         if cause == error_instance || formatter.visited_contains(cause) {
                             let pad_left = longest_name.saturating_sub(b"cause".len());
                             is_first_property = false;
-                            splat_space(writer, pad_left as u64)?;
+                            writer.splat_byte_all(b' ', pad_left)?;
                             pretty_write!(
                                 writer,
                                 " cause<r><d>:<r> <r><cyan>[Circular]<r><r><d>,<r>\n"

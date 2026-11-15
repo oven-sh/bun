@@ -1962,26 +1962,9 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     #[cfg(unix)]
     let env = None;
     #[cfg(windows)]
-    let envp_owned;
+    let envp_owned = VirtualMachine::get().transpiler.get().env().map.to_envp();
     #[cfg(windows)]
-    let env = {
-        match VirtualMachine::get()
-            .transpiler
-            .get()
-            .env()
-            .map
-            .create_null_delimited_env_map()
-        {
-            Ok(v) => {
-                envp_owned = v;
-                Some(envp_owned.as_list())
-            }
-            Err(_) => {
-                this.set_err(format_args!("Failed to create environment block"));
-                return Err(());
-            }
-        }
-    };
+    let env = Some(envp_owned.as_list());
 
     let cwd = FileSystem::get().top_level_dir();
     let spawn_options = SpawnOptions {

@@ -44,7 +44,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
-            // The caller assumes `e` was visited, which is only true on a revisit.
+            // The caller assumes `e` was visited, so replace it. Don't mutate it on a revisit
+            // because it can be part of a shared `define` value.
             if !self.is_revisit_for_substitution {
                 e.data = Data::EMissing(E::Missing {});
             }

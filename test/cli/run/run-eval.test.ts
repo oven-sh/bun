@@ -5,6 +5,55 @@ import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
 
+test.concurrent.each([
+  { label: "block function", source: "{ function f() {} console.log(f.name); }", expected: "f" },
+  { label: "arrow initializer", source: "{ const f = () => {}; console.log(f.name); }", expected: "f" },
+  { label: "async arrow initializer", source: "{ const f = async () => {}; console.log(f.name); }", expected: "f" },
+  { label: "function initializer", source: "{ let f = function() {}; console.log(f.name); }", expected: "f" },
+  { label: "generator initializer", source: "{ const f = function*() {}; console.log(f.name); }", expected: "f" },
+  { label: "class initializer", source: "{ const C = class {}; console.log(C.name); }", expected: "C" },
+  {
+    label: "explicit function name",
+    source: "{ const alias = function original() {}; console.log(alias.name); }",
+    expected: "original",
+  },
+  {
+    label: "explicit class name",
+    source: "{ const alias = class Original {}; console.log(alias.name); }",
+    expected: "Original",
+  },
+  {
+    label: "mutable function binding",
+    source: '{ function f() { return f; } const original = f; f = "rebound"; console.log(original()); }',
+    expected: "rebound",
+  },
+  {
+    label: "mutable class binding",
+    source:
+      '{ let C = class { static current() { return C; } }; const original = C; C = "rebound"; console.log(original.current()); }',
+    expected: "rebound",
+  },
+  {
+    label: "recursive block function",
+    source: "{ function f(n) { return n === 0 ? 1 : n * f(n - 1); } console.log(f(5)); }",
+    expected: "120",
+  },
+  {
+    label: "direct eval binding access",
+    source: `{ function f() { return 7; } console.log(eval("f.name + ':' + f()")); }`,
+    expected: "f:7",
+  },
+])("eval preserves $label semantics", async ({ source, expected }) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", source],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
+});
+
 for (const flag of ["-e", "--print"]) {
   describe(`bun ${flag}`, () => {
     test("it works", async () => {

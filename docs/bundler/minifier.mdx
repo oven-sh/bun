@@ -1188,6 +1188,7 @@ await Bun.build({
 ```
 
 `--keep-names` preserves the `.name` property on functions and classes while still minifying the identifiers themselves.
+With identifier minification disabled, this also preserves names inferred from single-use local bindings, such as `const callback = () => {}`.
 
 ## Combined Example
 

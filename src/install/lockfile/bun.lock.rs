@@ -2457,9 +2457,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 if registry_str.is_empty() {
                     let url = ExtractTarball::build_url(
                         configured_registry,
-                        &strings::StringOrTinyString::init(
-                            name.slice(lockfile.buffers.string_bytes.as_slice()),
-                        ),
+                        name.slice(lockfile.buffers.string_bytes.as_slice()),
                         res.npm().version,
                         lockfile.buffers.string_bytes.as_slice(),
                     )?;

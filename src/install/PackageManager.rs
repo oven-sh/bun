@@ -18,7 +18,7 @@ use bun_dotenv as dot_env;
 use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
-use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
+use bun_paths::resolve_path::{self, PosixToWinNormalizer, SpillBuf, platform};
 use bun_paths::string_paths::without_trailing_slash_windows_path;
 use bun_paths::{DELIMITER, SEP};
 use bun_semver as Semver;
@@ -2029,6 +2029,7 @@ fn find_workspace_root_above<'a>(
             drop(log);
 
             debug_assert_eq!(workspace_names.keys().len(), workspace_names.values().len());
+            let mut relative_buf = SpillBuf::default();
             for (path_, entry) in workspace_names
                 .keys()
                 .iter()
@@ -2037,7 +2038,8 @@ fn find_workspace_root_above<'a>(
                 let child_path: &[u8] = if bun_paths::is_absolute(path_) {
                     child_cwd
                 } else {
-                    resolve_path::relative_normalized::<platform::Auto, true>(
+                    resolve_path::relative_normalized_spill::<platform::Auto>(
+                        &mut relative_buf,
                         Package::WorkspaceMap::package_json_dir(&json_source),
                         child_cwd,
                     )

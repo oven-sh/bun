@@ -6,6 +6,7 @@ use bun_ast::{ImportRecord, Log, Range, Ref, Source};
 use bun_collections::ArrayHashMap;
 use bun_core::StackCheck;
 use bun_core::fmt::quote;
+use bun_paths::resolve_path::{SpillBuf, relative_spill};
 
 use crate as css;
 use css::css_parser::LocalEntry;
@@ -28,28 +29,24 @@ impl<'a> CssModule<'a> {
         // TODO: this is BAAAAAAAAAAD we are going to remove it
         let hashes = 'hashes: {
             let mut hashes = BumpVec::with_capacity_in(sources.len(), bump);
-            for path in sources.iter() {
-                let mut alloced = false;
-                let source: &[u8] = 'source: {
-                    // Make paths relative to project root so hashes are stable
-                    if let Some(root) = project_root {
-                        if bun_paths::is_absolute(root) {
-                            alloced = true;
-                            break 'source bump.alloc_slice_copy(
-                                bun_paths::resolve_path::relative(root, path.as_ref()),
-                            );
+            SpillBuf::with_scratch(|buf| {
+                for path in sources.iter() {
+                    let source: &[u8] = 'source: {
+                        // Make paths relative to project root so hashes are stable
+                        if let Some(root) = project_root {
+                            if bun_paths::is_absolute(root) {
+                                break 'source relative_spill(buf, root, path.as_ref());
+                            }
                         }
-                    }
-                    break 'source path.as_ref();
-                };
-                // `source` is arena-allocated, bulk-freed on bump.reset()
-                let _ = alloced;
-                hashes.push(hash(
-                    bump,
-                    format_args!("{}", bstr::BStr::new(source)),
-                    matches!(config.pattern.segments.at(0), Segment::Hash),
-                ));
-            }
+                        break 'source path.as_ref();
+                    };
+                    hashes.push(hash(
+                        bump,
+                        format_args!("{}", bstr::BStr::new(source)),
+                        matches!(config.pattern.segments.at(0), Segment::Hash),
+                    ));
+                }
+            });
             break 'hashes hashes;
         };
         CssModule {

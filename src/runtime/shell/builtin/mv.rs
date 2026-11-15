@@ -695,7 +695,7 @@ impl ShellMvBatchedTask {
         };
         result.map_err(|e| {
             // Surface `target/basename(src)` as the failing path.
-            let mut spill = Vec::new();
+            let mut spill = resolve_path::SpillBuf::new(buf);
             let joined =
                 resolve_path::join_spill::<bun_paths::platform::Auto>(&mut spill, &[target, base]);
             e.with_path(joined)

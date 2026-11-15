@@ -242,6 +242,7 @@ impl InstallCompletionsCommand {
                 return Self::write_and_exit(stdout, shell.completions());
             }
 
+            let mut dir_buf = resolve_path::SpillBuf::default();
             let mut completions_dir: &[u8];
             let output_dir = bun_sys::Dir::from_fd('found: {
                 let argv = bun_core::argv();
@@ -251,8 +252,11 @@ impl InstallCompletionsCommand {
                             let input: &[u8] = argv.get(i + 1).expect("len checked").as_bytes();
 
                             if !bun_paths::is_absolute(input) {
-                                completions_dir =
-                                    resolve_path::join_abs::<platform::Auto>(cwd, input);
+                                completions_dir = resolve_path::join_abs_string_spill::<
+                                    platform::Auto,
+                                >(
+                                    cwd, &mut dir_buf, &[input]
+                                );
                             } else {
                                 completions_dir = input;
                             }
@@ -292,8 +296,11 @@ impl InstallCompletionsCommand {
                             (env_var::HOME.get(), config_fish, true),
                         ] {
                             let Some(base) = base else { continue };
-                            completions_dir =
-                                resolve_path::join_abs_string::<platform::Auto>(cwd, &[base, dir]);
+                            completions_dir = resolve_path::join_abs_string_spill::<platform::Auto>(
+                                cwd,
+                                &mut dir_buf,
+                                &[base, dir],
+                            );
                             let opened = if is_config {
                                 Self::open_fish_user_completions(completions_dir)
                             } else {
@@ -334,8 +341,11 @@ impl InstallCompletionsCommand {
 
                         if let Some(data_dir) = env_var::XDG_DATA_HOME.get() {
                             let paths: [&[u8]; 2] = [data_dir, b"./zsh-completions"];
-                            completions_dir =
-                                resolve_path::join_abs_string::<platform::Auto>(cwd, &paths);
+                            completions_dir = resolve_path::join_abs_string_spill::<platform::Auto>(
+                                cwd,
+                                &mut dir_buf,
+                                &paths,
+                            );
                             if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
                                 break 'found d;
                             }
@@ -351,8 +361,11 @@ impl InstallCompletionsCommand {
                         if let Some(home_dir) = env_var::HOME.get() {
                             for dir in [b"./.oh-my-zsh/completions".as_slice(), b"./.bun"] {
                                 let paths: [&[u8]; 2] = [home_dir, dir];
-                                completions_dir =
-                                    resolve_path::join_abs_string::<platform::Auto>(cwd, &paths);
+                                completions_dir = resolve_path::join_abs_string_spill::<
+                                    platform::Auto,
+                                >(
+                                    cwd, &mut dir_buf, &paths
+                                );
                                 if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
                                     break 'found d;
                                 }
@@ -390,8 +403,11 @@ impl InstallCompletionsCommand {
                             (env_var::HOME.get(), b"./.bash_completion.d".as_slice()),
                         ] {
                             let Some(base) = base else { continue };
-                            completions_dir =
-                                resolve_path::join_abs_string::<platform::Auto>(cwd, &[base, dir]);
+                            completions_dir = resolve_path::join_abs_string_spill::<platform::Auto>(
+                                cwd,
+                                &mut dir_buf,
+                                &[base, dir],
+                            );
                             if let Ok(d) = bun_sys::open_dir_absolute(completions_dir) {
                                 break 'found d;
                             }

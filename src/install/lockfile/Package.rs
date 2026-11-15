@@ -3,6 +3,7 @@ use core::mem;
 use bun_collections::{ArrayHashMap, AutoBitSet, MultiArrayList, StringSet, index_sort};
 use bun_core::strings;
 use bun_core::{Global, Output};
+use bun_paths::resolve_path::SpillBuf;
 use bun_paths::{self as path, MAX_PATH_BYTES, resolve_path};
 use bun_resolver::fs::FileSystem;
 use bun_semver::semver_query::Wildcard;
@@ -114,16 +115,18 @@ pub(crate) fn folder_relative_to_top_level_dir<'a>(
     buf: &'a mut [u8],
 ) -> Option<&'a [u8]> {
     let top_level_dir = FileSystem::get().top_level_dir();
-    let joined = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-        top_level_dir,
-        buf,
-        &[pkg_dir, folder],
-    )?;
-    let relative = resolve_path::relative(top_level_dir, joined);
-    // empty when the package depends on itself
-    let relative: &[u8] = if relative.is_empty() { b"." } else { relative };
-    let len = relative.len();
-    buf.get_mut(..len)?.copy_from_slice(relative);
+    let len = SpillBuf::with_scratch(|scratch| {
+        let joined = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+            top_level_dir,
+            buf,
+            &[pkg_dir, folder],
+        )?;
+        let relative = resolve_path::relative_spill(scratch, top_level_dir, joined);
+        // empty when the package depends on itself
+        let relative: &[u8] = if relative.is_empty() { b"." } else { relative };
+        buf.get_mut(..relative.len())?.copy_from_slice(relative);
+        Some(relative.len())
+    })?;
     #[cfg(windows)]
     path::dangerously_convert_path_to_posix_in_place::<u8>(&mut buf[..len]);
     Some(&buf[..len])
@@ -3132,13 +3135,15 @@ impl Package<u64> {
                                     continue;
                                 }
                                 if strings::eql_long(&value.name, &entry.name) {
-                                    let note_abs_path = bun_core::ZBox::from_bytes(
-                                        resolve_path::join_abs_string_z::<path::platform::Auto>(
-                                            root_dir,
-                                            &[note_path, b"package.json"],
+                                    let note_abs_path = SpillBuf::with_scratch(|buf| {
+                                        bun_core::ZBox::from_bytes(
+                                            resolve_path::join_abs_string_spill::<
+                                                path::platform::Auto,
+                                            >(
+                                                root_dir, buf, &[note_path, b"package.json"]
+                                            ),
                                         )
-                                        .as_bytes(),
-                                    );
+                                    });
 
                                     let note_src = match bun_ast::to_source(
                                         &note_abs_path,
@@ -3165,13 +3170,13 @@ impl Package<u64> {
                             break 'notes notes;
                         };
 
-                        let abs_path = bun_core::ZBox::from_bytes(
-                            resolve_path::join_abs_string_z::<path::platform::Auto>(
-                                root_dir,
-                                &[path_, b"package.json"],
-                            )
-                            .as_bytes(),
-                        );
+                        let abs_path = SpillBuf::with_scratch(|buf| {
+                            bun_core::ZBox::from_bytes(resolve_path::join_abs_string_spill::<
+                                path::platform::Auto,
+                            >(
+                                root_dir, buf, &[path_, b"package.json"]
+                            ))
+                        });
 
                         let src = match bun_ast::to_source(&abs_path, Default::default()) {
                             Ok(s) => s,

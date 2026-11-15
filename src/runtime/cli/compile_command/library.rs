@@ -9,7 +9,7 @@ use bun_ast::Expr;
 use bun_core::{Global, Output};
 use bun_options_types::context::ContextData;
 use bun_paths::platform::Auto;
-use bun_paths::resolve_path::join_abs_string;
+use bun_paths::resolve_path::join_abs_string_vec;
 
 pub(crate) use self::declarations::{add_declaration_files, is_declaration_file};
 pub(crate) use self::package_files::add_package_files;
@@ -107,7 +107,7 @@ impl Project {
 }
 
 fn absolute_path(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
-    join_abs_string::<Auto>(working_directory, &[path]).to_vec()
+    join_abs_string_vec::<Auto>(working_directory, &[path])
 }
 
 fn is_inside(ancestor: &[u8], path: &[u8]) -> bool {

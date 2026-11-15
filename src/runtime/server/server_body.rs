@@ -34,6 +34,7 @@ use bun_jsc::{
     JSValue, JsError, JsResult, Node, PendingAbortSignal, StringJsc as _, host_fn,
 };
 use bun_paths as paths;
+use bun_paths::resolve_path::SpillBuf;
 use bun_ptr::{AsCtxPtr, CellExt as _, RefPtr, VecCellExt as _};
 use bun_removable_features::{Feature, is_removed};
 use bun_resolver::fs::FileSystem;
@@ -619,8 +620,11 @@ impl AnyRoute {
             FileSystem::get().top_level_dir()
         };
 
-        let abs_path = FileSystem::get().abs(&[path_slice]);
-        let mut relative_path = FileSystem::get().relative(cwd, abs_path);
+        let mut abs_buf = SpillBuf::default();
+        let abs_path = FileSystem::get().abs_spill(&[path_slice], &mut abs_buf);
+        let mut relative_buf = SpillBuf::default();
+        let mut relative_path =
+            paths::resolve_path::relative_spill(&mut relative_buf, cwd, abs_path);
 
         if relative_path.starts_with(b"./") {
             relative_path = &relative_path[2..];

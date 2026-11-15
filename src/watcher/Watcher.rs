@@ -397,8 +397,9 @@ impl Watcher {
             bun_sys::open_a(file_path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?
         };
 
-        let parent_hash =
-            Self::get_hash(bun_paths::fs::PathName::init(file_path).dir_with_trailing_slash());
+        let parent_hash = Self::get_hash(
+            bun_paths::fs::PathName::init(file_path).dir_with_trailing_slash(file_path),
+        );
 
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         let watchlist_id = watchlist.len();
@@ -449,7 +450,7 @@ impl Watcher {
         debug_assert!(file_path.len() > 1);
         let pathname = bun_paths::fs::PathName::init(file_path);
 
-        let parent_dir = pathname.dir_with_trailing_slash();
+        let parent_dir = pathname.dir_with_trailing_slash(file_path);
         let parent_dir_hash: HashType = Self::get_hash(parent_dir);
 
         let mut parent_watch_item: Option<WatchItemIndex> = None;

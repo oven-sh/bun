@@ -10,6 +10,7 @@ use bun_core::fmt::for_terminal;
 use bun_core::{CStrList, Output, StringOrTinyString, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_paths as Path;
+use bun_paths::resolve_path::SpillBuf;
 use bun_spawn::{SpawnOptions, Status};
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPool;
@@ -454,11 +455,8 @@ fn read_package_json(
     };
 
     let mut dir_path_buf = Path::path_buffer_pool::get();
-    let json_path = match package_dir.get_fd_path(&mut dir_path_buf) {
-        Ok(dir_path) => Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-            dir_path,
-            &[b"package.json"],
-        ),
+    let dir_path = match package_dir.get_fd_path(&mut dir_path_buf) {
+        Ok(dir_path) => dir_path,
         Err(err) => {
             log.add_error_fmt(
                 None,
@@ -472,9 +470,16 @@ fn read_package_json(
             return Err(Error::InstallFailed);
         }
     };
-    let path = bun_resolver::fs::FileSystem::get()
-        .dirname_store()
-        .append(json_path)?;
+    let path = SpillBuf::with_scratch(|buf| {
+        let json_path = Path::resolve_path::join_abs_string_spill::<Path::platform::Auto>(
+            dir_path,
+            buf,
+            &[b"package.json"],
+        );
+        bun_resolver::fs::FileSystem::get()
+            .dirname_store()
+            .append(json_path)
+    })?;
 
     Ok(ExtractData {
         url,
@@ -508,11 +513,10 @@ impl CacheStaging {
         let tmp_name =
             Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())
                 .map_err(|_| Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-        let tmp_path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
+        let tmp_path = Path::resolve_path::join_abs_string_vec::<Path::platform::Auto>(
             cache_dir_path,
             &[tmp_name],
-        )
-        .to_vec();
+        );
         Ok(Self {
             entry: UnfinishedEntry::new(cache_dir, tmp_name),
             tmp_path,
@@ -903,14 +907,17 @@ impl GitRunner {
     /// Builds `--git-dir=<bare clone>`. With `-C` instead, git would search the parent folders for
     /// a repository if this folder turned out not to be one.
     fn git_dir_arg(&self, clone_id: Task::Id) -> Vec<u8> {
-        [
-            b"--git-dir=".as_slice(),
-            Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-                &self.cache_dir.path,
-                &[&bare_repo_folder_name(clone_id)],
-            ),
-        ]
-        .concat()
+        SpillBuf::with_scratch(|buf| {
+            [
+                b"--git-dir=".as_slice(),
+                Path::resolve_path::join_abs_string_spill::<Path::platform::Auto>(
+                    &self.cache_dir.path,
+                    buf,
+                    &[&bare_repo_folder_name(clone_id)],
+                ),
+            ]
+            .concat()
+        })
     }
 
     fn spawn_fetch(

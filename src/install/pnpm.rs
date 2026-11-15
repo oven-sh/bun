@@ -4,6 +4,7 @@ use bun_ast::{self, self as js_ast, E, Expr, ExprData};
 use bun_collections::StringArrayHashMap;
 use bun_core::fmt::{escape_control_chars, for_terminal};
 use bun_core::strings;
+use bun_paths::resolve_path::SpillBuf;
 use bun_semver as semver;
 use bun_semver::{ExternalString, String};
 use bun_sys::{self as sys, Fd};
@@ -1338,6 +1339,7 @@ fn declare_folder_dependencies_relative_to_their_package(
     lockfile: &mut Lockfile,
 ) -> Result<(), AllocError> {
     let mut literal: Vec<u8> = Vec::new();
+    let mut relative_buf = SpillBuf::default();
     for pkg_id in 0..lockfile.packages.len() {
         let pkg_resolution = lockfile.packages.items_resolution()[pkg_id];
         if pkg_resolution.tag != resolution::Tag::Folder {
@@ -1354,7 +1356,8 @@ fn declare_folder_dependencies_relative_to_their_package(
 
             literal.clear();
             literal.extend_from_slice(b"file:");
-            let relative = bun_paths::resolve_path::relative(
+            let relative = bun_paths::resolve_path::relative_spill(
+                &mut relative_buf,
                 pkg_dir.slice(string_bytes!(lockfile)),
                 folder.slice(string_bytes!(lockfile)),
             );

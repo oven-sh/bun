@@ -7,7 +7,7 @@ use bun_collections::ArrayHashMap;
 use bun_core::fmt::PathSep;
 use bun_core::{Output, ZBox, fmt as bun_fmt, handle_oom};
 use bun_core::{ZStr, strings};
-use bun_paths::resolve_path::{join_abs_string_z, platform};
+use bun_paths::resolve_path::{SpillBuf, join_abs_string_spill, platform};
 use bun_paths::{AutoAbsPath, EnvPath};
 use bun_semver::string::Builder as SemverStringBuilder;
 use bun_sys as Syscall;
@@ -396,7 +396,11 @@ impl ScriptCaller<'_, '_> {
         }
         script_env.put(b"PATH", path.slice())?;
 
-        put_npm_package_env(&mut script_env, cwd, &list.package_name)?;
+        SpillBuf::with_scratch(|buf| {
+            let package_json_path =
+                join_abs_string_spill::<platform::Auto>(cwd, buf, &[b"package.json"]);
+            put_npm_package_env(&mut script_env, package_json_path, &list.package_name)
+        })?;
 
         let envp = script_env.to_envp();
 
@@ -456,23 +460,20 @@ impl PackageManager {
 /// this install set.
 fn put_npm_package_env(
     script_env: &mut bun_dotenv::Map,
-    package_dir: &[u8],
+    package_json_path: &[u8],
     package_name: &[u8],
 ) -> Result<(), crate::Error> {
     script_env
         .map
         .retain(|key, _| !key.starts_with(b"npm_package_") && !key.starts_with(b"npm_lifecycle_"));
 
-    let package_json_path = join_abs_string_z::<platform::Auto>(package_dir, &[b"package.json"]);
-    script_env.put(b"npm_package_json", package_json_path.as_bytes())?;
+    script_env.put(b"npm_package_json", package_json_path)?;
     script_env.put(b"npm_package_name", package_name)?;
 
-    let Ok(json_buf) = Syscall::File::read_from(Syscall::Fd::cwd(), package_json_path.as_bytes())
-    else {
+    let Ok(json_buf) = Syscall::File::read_from(Syscall::Fd::cwd(), package_json_path) else {
         return Ok(());
     };
-    let json_src =
-        bun_ast::Source::init_path_string(package_json_path.as_bytes(), json_buf.as_slice());
+    let json_src = bun_ast::Source::init_path_string(package_json_path, json_buf.as_slice());
     let log = bun_ast::Log::init();
 
     let arena = bun_ast::AstArena::new();

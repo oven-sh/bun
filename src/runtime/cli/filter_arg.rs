@@ -9,6 +9,7 @@ use bun_install::package_manager::workspace_selection::{
 };
 use bun_parsers::json;
 use bun_paths::path_buffer_pool;
+use bun_paths::resolve_path::SpillBuf;
 use bun_paths::{PathBuffer, platform, resolve_path};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 
@@ -267,9 +268,11 @@ impl WorkspacePackage {
     /// `package.json` name, or the directory relative to the workspace root for unnamed packages.
     pub(crate) fn display_name(&self, root_dir: &[u8]) -> Box<[u8]> {
         if self.json.name.is_empty() {
-            Box::from(resolve_path::relative_platform::<platform::Posix, false>(
-                root_dir, &self.dir,
-            ))
+            SpillBuf::with_scratch(|buf| {
+                Box::from(resolve_path::relative_platform_spill::<platform::Posix>(
+                    buf, root_dir, &self.dir,
+                ))
+            })
         } else {
             Box::from(&self.json.name[..])
         }
@@ -315,6 +318,7 @@ fn for_each_package_json(
     root_dir: &[u8],
     mut found: impl FnMut(glob::walk::MatchedPath),
 ) -> Result<(), crate::Error> {
+    let mut relative_buf = SpillBuf::default();
     for pattern in patterns {
         let mut walker = GlobWalker::init_with_cwd(
             pattern,
@@ -333,10 +337,8 @@ fn for_each_package_json(
                 // As in `bun install`, a `!` entry never removes a path that's listed literally.
                 Ok(Some(path))
                     if glob::detect_glob_syntax(pattern)
-                        && negated.excludes(resolve_path::relative_platform::<
-                            platform::Auto,
-                            false,
-                        >(
+                        && negated.excludes(resolve_path::relative_spill(
+                            &mut relative_buf,
                             root_dir,
                             resolve_path::dirname::<platform::Auto>(&path),
                         )) => {}

@@ -7,7 +7,7 @@ use bun_bundler::options::BundleOptions;
 use bun_collections::index_sort;
 use bun_core::{StringOrTinyString, strings};
 use bun_output::{declare_scope, scoped_log};
-use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+use bun_paths::resolve_path::{SpillBuf, join_abs_string_buf_checked, platform, relative_spill};
 use bun_paths::{self, PathBuffer};
 use bun_ptr::Interned;
 use bun_resolver::fs::{
@@ -277,8 +277,17 @@ impl<'a> Scanner<'a> {
         if self.path_ignore_patterns.is_empty() {
             return false;
         }
-        let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), abs_path);
+        SpillBuf::with_scratch(|buf| {
+            self.rel_path_matches_ignore_pattern(relative_spill(
+                buf,
+                self.top_level_dir(),
+                abs_path,
+            ))
+        })
+    }
 
+    #[optimize(size)]
+    fn rel_path_matches_ignore_pattern(&self, rel_path: &[u8]) -> bool {
         // Build rel_path + '/' once. rel_path is a relative path from the project
         // root; 4096 bytes covers any sane test directory depth (POSIX PATH_MAX).
         let mut buf = [0u8; 4096];
@@ -385,11 +394,12 @@ impl<'a> Scanner<'a> {
                 };
                 let path = &self.open_dir_buf[..path_len];
 
-                if !self.does_absolute_path_match_filter(path) {
-                    let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), path);
-                    if !self.does_path_match_filter(rel_path) {
-                        return;
-                    }
+                if !self.does_absolute_path_match_filter(path)
+                    && !SpillBuf::with_scratch(|buf| {
+                        self.does_path_match_filter(relative_spill(buf, self.top_level_dir(), path))
+                    })
+                {
+                    return;
                 }
 
                 if self.matches_path_ignore_pattern(path) {

@@ -572,12 +572,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let bundler_framework = framework.as_bundler_view();
 
     let bundled_outputs_list: Vec<OutputFile> = {
-        // Without a separate SSR graph, the bundler never dereferences `ssr_transpiler`.
-        let ssr_transpiler = match ssr_transpiler {
-            Some(ssr_transpiler) => NonNull::from(ssr_transpiler),
-            None => NonNull::from(&mut *server_transpiler),
-        };
-
         // Construct the `AnyEventLoop` enum
         // value (NOT a pointer-cast: the bundler matches on its discriminant).
         // Lives in this block's stack frame, outliving the bundle call.
@@ -592,7 +586,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             server_transpiler,
             bun_bundler::bundle_v2::BakeOptions {
                 framework: bundler_framework,
-                client_transpiler: NonNull::from(client_transpiler),
+                client_transpiler,
                 ssr_transpiler,
                 plugins: (options.bundler_options.plugin.as_ref())
                     .map(|plugin| plugin.as_non_null()),

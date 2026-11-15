@@ -201,9 +201,70 @@ pub(crate) fn removed_feature_entered(pc: usize) -> Option<Feature> {
     bun_removable_features::removed_feature_at(pc)
 }
 
+#[cfg(unix)]
+const TRAP_OF_REMOVED_CODE: &[u8] = if cfg!(target_arch = "aarch64") {
+    &[0; 4]
+} else if cfg!(target_os = "macos") {
+    &[0xcc]
+} else {
+    &[0xf4]
+};
+
+#[cfg(unix)]
+pub(crate) fn is_at_trap_of_removed_code(pc: usize) -> bool {
+    if !is_in_own_segment(pc) {
+        return false;
+    }
+    let instruction = core::ptr::with_exposed_provenance::<u8>(pc);
+    // SAFETY: the processor has tried to run the instruction of this executable there.
+    let found = unsafe { core::slice::from_raw_parts(instruction, TRAP_OF_REMOVED_CODE.len()) };
+    found == TRAP_OF_REMOVED_CODE
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn is_in_own_segment(address: usize) -> bool {
+    let module_at =
+        |address| bun_sys::elf::find_loaded_module(address).map(|module| module.base_address);
+    let own = module_at(is_in_own_segment as *const () as usize);
+    own.is_some() && module_at(address) == own
+}
+
+#[cfg(target_os = "macos")]
+fn is_in_own_segment(address: usize) -> bool {
+    use bun_sys::macho::{
+        LC_SEGMENT_64, LoadCommandIterator, mach_header_64, offset_in_code, segment_command_64,
+    };
+
+    unsafe extern "C" {
+        #[link_name = "_mh_execute_header"]
+        safe static HEADER: mach_header_64;
+    }
+    let header = &raw const HEADER;
+    // SAFETY: the load commands follow the header in the same mapped segment.
+    let commands = unsafe {
+        core::slice::from_raw_parts(header.add(1).cast::<u8>(), HEADER.sizeofcmds as usize)
+    };
+    let Some(first) = LoadCommandIterator::new(HEADER.ncmds, commands)
+        .filter(|command| command.cmd() == LC_SEGMENT_64)
+        .filter_map(|command| command.cast::<segment_command_64>())
+        .find(|segment| segment.filesize > 0)
+    else {
+        return false;
+    };
+    let offset_in_image = address.wrapping_sub(header.addr()) as u64;
+    offset_in_code(
+        HEADER.ncmds,
+        commands,
+        first.vmaddr.wrapping_add(offset_in_image),
+    )
+    .is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::removed_feature_entered;
+    #[cfg(unix)]
+    use super::{TRAP_OF_REMOVED_CODE, is_at_trap_of_removed_code, is_in_own_segment};
 
     /// The engine's, as in an executable without compiled code.
     #[unsafe(no_mangle)]
@@ -217,5 +278,22 @@ mod tests {
         assert!(removed_feature_entered(0).is_none());
         assert!(removed_feature_entered(usize::MAX).is_none());
         assert!(removed_feature_entered(local_function).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_traps_of_this_executable_are_of_removed_code() {
+        let own_trap = TRAP_OF_REMOVED_CODE.as_ptr().addr();
+        assert!(is_in_own_segment(own_trap));
+        assert!(is_at_trap_of_removed_code(own_trap));
+
+        let copied = TRAP_OF_REMOVED_CODE.to_vec();
+        assert!(!is_in_own_segment(copied.as_ptr().addr()));
+        assert!(!is_at_trap_of_removed_code(copied.as_ptr().addr()));
+
+        let local_function = removed_feature_entered as *const () as usize;
+        assert!(is_in_own_segment(local_function));
+        assert!(!is_at_trap_of_removed_code(local_function));
+        assert!(!is_at_trap_of_removed_code(0));
     }
 }

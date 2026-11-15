@@ -16,7 +16,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
     self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CommonAbortReason,
-    CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult,
+    CommonAbortReasonExt as _, DOMWrapped, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult,
     VirtualMachineRef as VirtualMachine,
 };
 use bun_jsc::{JsCell, JsCellRefExt as _};
@@ -479,7 +479,7 @@ pub(crate) struct Arguments<'a> {
     pub global_this: &'a JSGlobalObject,
     /// The context of the script that called `fs.watch`: the watcher is that script's.
     pub(crate) context: &'a bun_jsc::ScriptExecutionContext,
-    pub(crate) signal: Option<&'a AbortSignal>,
+    pub(crate) signal: Option<DOMWrapped<AbortSignal>>,
     pub(crate) persistent: bool,
     pub(crate) recursive: bool,
     pub(crate) encoding: Encoding,
@@ -500,7 +500,7 @@ impl<'a> Arguments<'a> {
         // drops `path` automatically.
 
         let mut listener: JSValue = JSValue::ZERO;
-        let mut signal: Option<&AbortSignal> = None;
+        let mut signal = None;
         let mut persistent: bool = true;
         let mut recursive: bool = false;
         let mut encoding: Encoding = Encoding::Utf8;
@@ -547,16 +547,8 @@ impl<'a> Arguments<'a> {
 
                 // abort signal
                 if let Some(signal_) = options_or_callable.get_truthy(cx.global(), "signal")? {
-                    if let Some(signal_obj) = AbortSignal::from_js(signal_) {
-                        // Keep it alive
-                        signal_.ensure_still_alive();
-                        // `signal_obj` is the live C++ AbortSignal owned by
-                        // `signal_` (kept reachable for the duration of the call
-                        // by `ensure_still_alive`). `AbortSignal` is an
-                        // `opaque_ffi!` ZST handle; `opaque_ref` is the
-                        // centralised deref proof.
-                        signal = Some(AbortSignal::opaque_ref(signal_obj));
-                    } else {
+                    signal = AbortSignal::from_js(signal_);
+                    if signal.is_none() {
                         return Err(cx.global().throw_invalid_arguments(format_args!(
                             "signal is not of type AbortSignal"
                         )));
@@ -924,7 +916,7 @@ impl FSWatcher {
             #[cfg(not(windows))]
             pending_events: JsCell::new(Events::new()),
             mutex: Mutex::default(),
-            signal: JsCell::new(args.signal.map(|s| s.ref_())),
+            signal: JsCell::new(args.signal.as_ref().map(|s| s.ref_())),
             persistent: Cell::new(args.persistent),
             path_watcher: Cell::new(None),
             global_this: GlobalRef::from(args.global_this),
@@ -941,7 +933,7 @@ impl FSWatcher {
 
         ctx_ref
             .path_watcher
-            .set(if args.signal.is_none_or(|s| !s.aborted()) {
+            .set(if args.signal.as_ref().is_none_or(|s| !s.aborted()) {
                 match path_watcher::watch(vm_ref, file_path, args.recursive, ctx.cast()) {
                     Ok(r) => Some(r),
                     Err(err) => {

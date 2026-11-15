@@ -10,14 +10,12 @@ use bun_http_jsc::headers_jsc::from_fetch_headers;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsClass as _, JsError, JsRef,
-    JsResult, URLJsc as _,
+    self as jsc, HeadersInit, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsClass as _,
+    JsError, JsRef, JsResult, URLJsc as _,
 };
 use bun_ptr::RefPtr;
 
 use crate::socket::ssl_config::{SSLConfig, SSLConfigFromJs as _};
-use crate::webcore::FetchHeaders;
-use crate::webcore::response::HeadersRef;
 
 pub(crate) use crate::generated_bindgen::fetch_session::js_FetchSession as js;
 
@@ -140,10 +138,7 @@ pub(crate) fn parse_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsResu
     let mut headers = None;
     if let Some(headers_value) = proxy_arg.get(global, "headers")? {
         if !headers_value.is_undefined_or_null() {
-            if let Some(fetch_headers) = FetchHeaders::cast(headers_value) {
-                let fetch_headers = bun_ptr::BackRef::from(fetch_headers);
-                headers = Some(from_fetch_headers(global, Some(&*fetch_headers), None)?);
-            } else if let Some(fetch_headers) = HeadersRef::create_from_js(global, headers_value)? {
+            if let Some(fetch_headers) = HeadersInit::from_js(global, headers_value)? {
                 headers = Some(from_fetch_headers(global, Some(&fetch_headers), None)?);
             }
         }

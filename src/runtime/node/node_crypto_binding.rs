@@ -70,9 +70,9 @@ macro_rules! extern_crypto_job {
             use super::*;
 
             // `Ctx` is `opaque {}` — Nomicon FFI opaque-handle pattern.
-            bun_opaque::opaque_ffi! { pub struct Ctx; }
+            bun_opaque::sealed_handle! { pub struct Ctx; }
 
-            // `Ctx` is an `opaque_ffi!` ZST handle, so `&Ctx` is ABI-identical
+            // `Ctx` is a `sealed_handle!` ZST handle, so `&Ctx` is ABI-identical
             // to a non-null pointer and discharges the validity proof at the
             // type level. `global` in `runTask` is forwarded raw (the trait
             // hands us `*mut`; C++ never reads through it off-thread).
@@ -91,18 +91,16 @@ macro_rules! extern_crypto_job {
                     out: &mut JsCallbackArgs,
                 );
                 #[link_name = concat!("Bun__", $name_str, "Ctx__deinit")]
-                safe fn ctx_deinit(ctx: &Ctx);
+                fn ctx_deinit(ctx: *mut Ctx);
             }
 
-            /// The C++ context this job owns: plain data, freed wherever the job ends.
-            pub(crate) struct OwnedCtx(*mut Ctx);
+            // SAFETY: only C++ makes one, as the argument of `__create_and_schedule`.
+            bun_opaque::owned_handle! {
+                /// The C++ context this job owns: plain data, freed wherever the job ends.
+                pub(crate) struct OwnedCtx(Ctx) => unsafe ctx_deinit;
+            }
             // SAFETY: an owned C++ heap object with no thread affinity.
             unsafe impl Send for OwnedCtx {}
-            impl Drop for OwnedCtx {
-                fn drop(&mut self) {
-                    ctx_deinit(Ctx::opaque_ref(self.0));
-                }
-            }
 
             pub(crate) struct ExternJob {
                 ctx: OwnedCtx,
@@ -121,7 +119,7 @@ macro_rules! extern_crypto_job {
                     boringssl::c::ERR_clear_error();
                     // SAFETY: the creating global, alive under the job's ticket; C++
                     // only threads it through to error reporting state.
-                    ctx_run_task(Ctx::opaque_ref(this.ctx.0), unsafe {
+                    ctx_run_task(&this.ctx, unsafe {
                         this.global.under_ticket(done.ticket())
                     });
                     boringssl::c::ERR_clear_error();
@@ -134,7 +132,7 @@ macro_rules! extern_crypto_job {
                     // The job ran on another thread: this one's queue is not its error stack.
                     boringssl::c::ERR_clear_error();
                     let produced = jsc::from_js_host_call_generic(global, || {
-                        ctx_run_from_js(Ctx::opaque_ref(this.ctx.0), global, &mut args);
+                        ctx_run_from_js(&this.ctx, global, &mut args);
                     });
                     // `runFromJS` never sees the callback, so it cannot run user
                     // JS; free the ctx first, then invoke.
@@ -154,7 +152,7 @@ macro_rules! extern_crypto_job {
             #[unsafe(export_name = concat!("Bun__", $name_str, "__createAndSchedule"))]
             pub(crate) extern "C" fn __create_and_schedule(
                 global: &JSGlobalObject,
-                ctx: *mut Ctx,
+                ctx: OwnedCtx,
                 callback: JSValue,
             ) {
                 let cx = global.js_thread_of_caller();
@@ -162,7 +160,7 @@ macro_rules! extern_crypto_job {
                 Job::<ExternJob>::schedule(
                     &cx,
                     ExternJob {
-                        ctx: OwnedCtx(ctx),
+                        ctx,
                         // SAFETY: the creating global outlives every borrow of its VM.
                         global: unsafe { JsPtr::new(core::ptr::NonNull::from(global)) },
                     },

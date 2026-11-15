@@ -17,7 +17,7 @@ use super::decode_binary_value::{self, decode_binary_value};
 bun_core::declare_scope!(MySQLResultSet, visible);
 
 pub(crate) struct Row<'a> {
-    pub values: Vec<SQLDataCell>,
+    pub values: Vec<SQLDataCell<'a>>,
     pub columns: &'a [ColumnDefinition41],
     pub binary: bool,
     pub raw: bool,
@@ -47,7 +47,7 @@ impl<'a> Row<'a> {
         )
     }
 
-    fn parse_value(&self, column: &ColumnDefinition41, value: &[u8]) -> SQLDataCell {
+    fn parse_value(&self, column: &ColumnDefinition41, value: &'a [u8]) -> SQLDataCell<'a> {
         bun_core::scoped_log!(
             MySQLResultSet,
             "parseValue: {} {}",
@@ -160,7 +160,7 @@ impl<'a> Row<'a> {
         }
     }
 
-    fn decode_text(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
+    fn decode_text(&mut self, reader: PacketReader<'a>) -> Result<(), AnyMySQLError> {
         let mut cells = Vec::with_capacity(self.columns.len());
 
         for (index, column) in self.columns.iter().enumerate() {
@@ -190,7 +190,7 @@ impl<'a> Row<'a> {
         Ok(())
     }
 
-    fn decode_binary(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
+    fn decode_binary(&mut self, reader: PacketReader<'a>) -> Result<(), AnyMySQLError> {
         // Header
         let _ = reader.int::<u8>()?;
 
@@ -227,7 +227,7 @@ impl<'a> Row<'a> {
         Ok(())
     }
 
-    pub(crate) fn decode(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
+    pub(crate) fn decode(&mut self, reader: PacketReader<'a>) -> Result<(), AnyMySQLError> {
         if self.binary {
             self.decode_binary(reader)
         } else {

@@ -191,7 +191,7 @@ impl TestContext {
         };
         let thrown = match thrown.to_error() {
             Some(thrown) => thrown,
-            None if thrown.is_exception(global.vm_ptr()) => return Ok(()),
+            None if thrown.is_exception(global.vm()) => return Ok(()),
             None => thrown,
         };
         if thrown.is_object() || thrown.is_symbol() {
@@ -204,8 +204,7 @@ impl TestContext {
 
     pub(crate) fn abort_signal(this_value: JSValue, global: &JSGlobalObject) {
         if let Some(signal) = js::signal_get_cached(this_value).and_then(AbortSignal::from_js) {
-            // SAFETY: the wrapper in the cached slot keeps the signal alive.
-            unsafe { &*signal }.signal(global, CommonAbortReason::Timeout);
+            signal.signal(global, CommonAbortReason::Timeout);
         }
     }
 

@@ -104,8 +104,8 @@ pub struct JSPropertyIterator<'a> {
     /// Index of the property last yielded by `next()`.
     pub(crate) i: Cell<u32>,
     iter_i: Cell<u32>,
-    /// null if and only if `object` has no properties (i.e. `len == 0`)
-    pub(crate) impl_: Option<NonNull<JSPropertyIteratorImpl>>,
+    /// `None` if and only if `object` has no properties (i.e. `len == 0`)
+    impl_: Option<OwnedJSPropertyIteratorImpl>,
 
     pub(crate) global_object: &'a JSGlobalObject,
     pub(crate) object: *mut JSObject,
@@ -114,11 +114,9 @@ pub struct JSPropertyIterator<'a> {
 
 impl<'a> JSPropertyIterator<'a> {
     pub(crate) fn get_longest_property_name(&self) -> usize {
-        if let Some(iter) = self.impl_ {
-            // `JSPropertyIteratorImpl`/`JSObject` are opaque ZST handles;
-            // `opaque_mut`/`opaque_ref` are the centralised zero-byte deref proofs.
+        if let Some(iter) = &self.impl_ {
             Bun__JSPropertyIterator__getLongestPropertyName(
-                JSPropertyIteratorImpl::opaque_mut(iter.as_ptr()),
+                iter,
                 self.global_object,
                 JSObject::opaque_ref(self.object),
             )
@@ -179,11 +177,11 @@ impl<'a> JSPropertyIterator<'a> {
             self.iter_i.set(self.iter_i.get() + 1);
             let mut name = bun_core::StringView::DEAD;
             let mut value = JSValue::ZERO;
+            let iter = self
+                .impl_
+                .as_deref()
+                .expect("len > 0 implies impl_ is Some");
             if self.options.include_value {
-                let iter = self.impl_.expect("len > 0 implies impl_ is Some").as_ptr();
-                // `JSPropertyIteratorImpl`/`JSObject` are opaque ZST handles;
-                // `opaque_mut`/`opaque_ref` are the centralised zero-byte deref proofs.
-                let iter = JSPropertyIteratorImpl::opaque_mut(iter);
                 let object = JSObject::opaque_ref(self.object);
                 let current: JSValue = if self.options.observable {
                     JSPropertyIteratorImpl::get_name_and_value(
@@ -209,14 +207,7 @@ impl<'a> JSPropertyIterator<'a> {
                 value = current;
             } else {
                 // Exception check is unnecessary here because it won't throw.
-                let iter = self.impl_.expect("len > 0 implies impl_ is Some").as_ptr();
-                // `iter` is a live FFI handle owned by `self`; `JSPropertyIteratorImpl`
-                // is an opaque ZST handle so `opaque_mut` is the centralised proof.
-                Bun__JSPropertyIterator__getName(
-                    JSPropertyIteratorImpl::opaque_mut(iter),
-                    &mut name,
-                    i,
-                );
+                Bun__JSPropertyIterator__getName(iter, &mut name, i);
             }
 
             if name.is_dead() {
@@ -232,30 +223,25 @@ impl<'a> JSPropertyIterator<'a> {
     }
 }
 
-impl<'a> Drop for JSPropertyIterator<'a> {
-    fn drop(&mut self) {
-        if let Some(impl_) = self.impl_ {
-            // SAFETY: `impl_` was returned by Bun__JSPropertyIterator__create and has not been
-            // freed (we only free here, once).
-            unsafe { Bun__JSPropertyIterator__deinit(impl_.as_ptr()) };
-        }
-    }
+// Nomicon opaque-FFI pattern: !Send + !Sync + !Unpin
+bun_opaque::sealed_handle! { struct JSPropertyIteratorImpl; }
+
+// SAFETY: only `Bun__JSPropertyIterator__create` makes one.
+bun_opaque::owned_handle! {
+    struct OwnedJSPropertyIteratorImpl(JSPropertyIteratorImpl) => unsafe Bun__JSPropertyIterator__deinit;
 }
 
-// Nomicon opaque-FFI pattern: !Send + !Sync + !Unpin
-bun_opaque::opaque_ffi! { pub struct JSPropertyIteratorImpl; }
-
 impl JSPropertyIteratorImpl {
-    pub(crate) fn init(
+    fn init(
         global_object: &JSGlobalObject,
         object: *mut JSObject,
         count: &mut usize,
         own_properties_only: bool,
         only_non_index_properties: bool,
         include_symbols: bool,
-    ) -> JsResult<Option<NonNull<JSPropertyIteratorImpl>>> {
+    ) -> JsResult<Option<OwnedJSPropertyIteratorImpl>> {
         // may return null without an exception
-        let raw = from_js_host_call_generic(global_object, || {
+        from_js_host_call_generic(global_object, || {
             Bun__JSPropertyIterator__create(
                 global_object,
                 JSValue::from_cell(object),
@@ -264,15 +250,14 @@ impl JSPropertyIteratorImpl {
                 only_non_index_properties,
                 include_symbols,
             )
-        })?;
-        Ok(NonNull::new(raw))
+        })
     }
 
-    pub(crate) fn get_name_and_value(
-        iter: &mut JSPropertyIteratorImpl,
+    fn get_name_and_value<'i>(
+        iter: &'i JSPropertyIteratorImpl,
         global_object: &JSGlobalObject,
         object: &JSObject,
-        property_name: &mut bun_core::StringView<'_>,
+        property_name: &mut bun_core::StringView<'i>,
         i: usize,
     ) -> JsResult<JSValue> {
         // The FFI may return `.zero` without throwing, so the non-generic
@@ -283,11 +268,11 @@ impl JSPropertyIteratorImpl {
         })
     }
 
-    pub(crate) fn get_name_and_value_non_observable(
-        iter: &mut JSPropertyIteratorImpl,
+    fn get_name_and_value_non_observable<'i>(
+        iter: &'i JSPropertyIteratorImpl,
         global_object: &JSGlobalObject,
         object: &JSObject,
-        property_name: &mut bun_core::StringView<'_>,
+        property_name: &mut bun_core::StringView<'i>,
         i: usize,
     ) -> JsResult<JSValue> {
         from_js_host_call_generic(global_object, || {
@@ -302,8 +287,8 @@ impl JSPropertyIteratorImpl {
     }
 }
 
-// safe fn: `JSPropertyIteratorImpl`/`JSGlobalObject`/`JSObject` are `opaque_ffi!`
-// ZST handles (`&`/`&mut` are ABI-identical to non-null `*const`/`*mut`);
+// safe fn: `JSPropertyIteratorImpl`/`JSGlobalObject`/`JSObject` are opaque
+// ZST handles (`&` is ABI-identical to non-null `*const`);
 // `StringView` is a 24-byte out-param the C++ side fills in-place (borrowed, +0); remaining
 // args are by-value scalars. Only `deinit` (frees the allocation) keeps a raw
 // `*mut` and stays `unsafe`.
@@ -316,29 +301,29 @@ unsafe extern "C" {
         own_properties_only: bool,
         only_non_index_properties: bool,
         include_symbols: bool,
-    ) -> *mut JSPropertyIteratorImpl;
-    safe fn Bun__JSPropertyIterator__getNameAndValue(
-        iter: &mut JSPropertyIteratorImpl,
+    ) -> Option<OwnedJSPropertyIteratorImpl>;
+    safe fn Bun__JSPropertyIterator__getNameAndValue<'i>(
+        iter: &'i JSPropertyIteratorImpl,
         global_object: &JSGlobalObject,
         object: &JSObject,
-        property_name: &mut bun_core::StringView<'_>,
+        property_name: &mut bun_core::StringView<'i>,
         i: usize,
     ) -> JSValue;
-    safe fn Bun__JSPropertyIterator__getNameAndValueNonObservable(
-        iter: &mut JSPropertyIteratorImpl,
+    safe fn Bun__JSPropertyIterator__getNameAndValueNonObservable<'i>(
+        iter: &'i JSPropertyIteratorImpl,
         global_object: &JSGlobalObject,
         object: &JSObject,
-        property_name: &mut bun_core::StringView<'_>,
+        property_name: &mut bun_core::StringView<'i>,
         i: usize,
     ) -> JSValue;
-    safe fn Bun__JSPropertyIterator__getName(
-        iter: &mut JSPropertyIteratorImpl,
-        property_name: &mut bun_core::StringView<'_>,
+    safe fn Bun__JSPropertyIterator__getName<'i>(
+        iter: &'i JSPropertyIteratorImpl,
+        property_name: &mut bun_core::StringView<'i>,
         i: usize,
     );
     fn Bun__JSPropertyIterator__deinit(iter: *mut JSPropertyIteratorImpl);
     safe fn Bun__JSPropertyIterator__getLongestPropertyName(
-        iter: &mut JSPropertyIteratorImpl,
+        iter: &JSPropertyIteratorImpl,
         global_object: &JSGlobalObject,
         object: &JSObject,
     ) -> usize;

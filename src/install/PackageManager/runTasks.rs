@@ -435,9 +435,10 @@ pub(crate) fn run_tasks(
 
                     // Try once more, because the full document was only requested for `libc`.
                     if is_extended_manifest && manager.options.minimum_release_age_ms.is_none() {
+                        let log = manager.log();
                         let scope = manager.scope_for_package_name(name);
                         let is_optional = !manager.is_network_task_required(task.task_id);
-                        task.retry_with_abbreviated_manifest(scope, is_optional)?;
+                        task.retry_with_abbreviated_manifest(scope, is_optional, log)?;
                         enqueue::enqueue_network_task(manager, task_ptr);
                         continue;
                     }
@@ -1579,7 +1580,7 @@ pub(crate) fn fail_update_requests(
 }
 
 /// Runs once per pass. Skipped for auto-install, because the limit also applies to `fetch()`.
-fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mut bool) {
+fn throttle_after_network_error(manager: &mut PackageManager, has_network_error: &mut bool) {
     if manager.options.runtime_auto_install || core::mem::replace(has_network_error, true) {
         return;
     }
@@ -1654,6 +1655,7 @@ pub fn generate_network_task_for_tarball<'a>(
     // SAFETY: `write_init` populated every field.
     let network_task = unsafe { &mut *net_ptr };
 
+    let log = this.log();
     let pkg_name = this.lockfile.str(&package.name);
     let url = match package.resolution.tag {
         bun_install::ResolutionTag::Npm => this.lockfile.str(&package.resolution.npm().url),
@@ -1699,7 +1701,7 @@ pub fn generate_network_task_for_tarball<'a>(
         },
     };
 
-    if let Err(err) = network_task.for_tarball(extract_tarball, scope, authorization) {
+    if let Err(err) = network_task.for_tarball(extract_tarball, scope, authorization, log) {
         // No task will ever complete the dedupe entry, so a later enqueue would wait forever.
         this.mark_network_task_failed(task_id);
         return Err(err);

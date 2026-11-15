@@ -2255,9 +2255,9 @@ impl<'a> Installer<'a> {
 
     /// Call on the main thread once every task is done. The warnings are logged in entry order, so
     /// the output does not depend on which task finished first.
-    pub(crate) fn warn_left_out_links(&self) {
+    pub(crate) fn warn_left_out_links(&self, log: &bun_ast::Log) {
         for text in self.tasks.iter().flat_map(|task| &task.left_out_links) {
-            self.manager().log().add_warning_fmt(
+            log.add_warning_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!("{}", bun_core::fmt::escape_control_chars(text)),

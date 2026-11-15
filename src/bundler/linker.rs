@@ -65,11 +65,6 @@ pub(crate) fn dupe(src: &[u8]) -> &'static [u8] {
     RELATIVE_PATHS_LIST.append(src).expect("OOM")
 }
 
-// ── getModKey / getHashedFilename ────────────────────────────────────
-// `ModKey` lives at module scope (`bun_resolver::fs::ModKey`)
-// alongside `RealFS`. `file_path` is typed `PFs::Path` (not `Fs::Path`)
-// so `get_hashed_filename` — whose callers all build `PFs::Path` — can
-// forward directly; only `.text` (a `&[u8]`) is read.
 fn get_mod_key(file_path: &PFs::Path<'_>, fd: Option<Fd>) -> crate::Result<Fs::ModKey> {
     // Borrow the cached fd; own the freshly-opened one.
     let _owned: Option<bun_sys::File>;
@@ -87,12 +82,6 @@ fn get_mod_key(file_path: &PFs::Path<'_>, fd: Option<Fd>) -> crate::Result<Fs::M
     };
     let file = bun_sys::File::borrow(&raw_fd);
     Fs::FileSystem::set_max_fd(file.handle().native());
-    // spec called `Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs,
-    // path, file)`; both leading args are unread (fs.rs:1386). The inline
-    // `bun_resolver::fs::RealFS` and the full-port
-    // `fs_full::RealFS` are distinct types, so route through the
-    // RealFS-agnostic `from_file` wrapper added alongside the `ModKey`
-    // re-export.
     Ok(Fs::ModKey::from_file(file)?)
 }
 
@@ -105,12 +94,7 @@ pub(crate) fn get_hashed_filename(
     Ok(dupe(modkey.hash_name(file_path.text, &mut hash_name_buf)?))
 }
 
-/// This modifies the Ast in-place! It rewrites the import records of builtins
-/// and of the runtime.
-///
-/// `import_path_format` is a runtime arg rather than a const generic —
-/// `options::ImportPathFormat` doesn't derive `ConstParamTy`, and the
-/// crate doesn't enable `adt_const_params`.
+/// Rewrites the import records of builtins and of the runtime in place.
 pub fn link<const IGNORE_RUNTIME: bool, const IS_BUN: bool>(
     log: &Log,
     options: &BundleOptions<'_>,
@@ -181,8 +165,7 @@ pub fn link<const IGNORE_RUNTIME: bool, const IS_BUN: bool>(
                         continue;
                     }
                     if strings::starts_with(import_record.path.text, b"node:") {
-                        // if a module is not found here, it is not found at
-                        // all so we can just disable it
+                        // if a module is not found here, it is not found at all so we can just disable it
                         if when_module_not_found::<IS_BUN>(log, target, import_record, source)? {
                             return Err(crate::Error::ResolveMessage);
                         }

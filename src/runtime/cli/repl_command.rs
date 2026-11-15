@@ -72,7 +72,7 @@ impl ReplCommand {
             transform_options: core::mem::take(&mut ctx.args),
             argv: core::mem::take(&mut ctx.passthrough).leak(),
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
-            log: ctx.log.map(NonNull::from),
+            log: ctx.log,
             global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
             eval_mode: true,
@@ -106,7 +106,7 @@ impl ReplCommand {
             Global::exit(1);
         }
 
-        bun_http::async_http::load_env(vm.log().unwrap(), vm.transpiler.get().env());
+        bun_http::async_http::load_env(vm.log, vm.transpiler.get().env());
         vm.load_extra_env();
 
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
@@ -133,9 +133,7 @@ impl ReplCommand {
         Output::flush();
         let writer = Output::error_writer_buffered();
         let _flush = Output::flush_guard();
-        if let Some(log) = vm.log() {
-            let _ = log.print(writer);
-        }
+        let _ = vm.log.print(writer);
     }
 }
 

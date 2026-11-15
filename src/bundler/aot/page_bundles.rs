@@ -51,7 +51,7 @@ fn create_page_outputs(
 ) -> Result<PageOutputs, Failed> {
     with_ast_scope(|heap| {
         let page_log = Log::init();
-        let mut transpiler = create_page_transpiler(context, heap, &raw const page_log);
+        let mut transpiler = create_page_transpiler(context, heap, &page_log);
         transpiler.wire_after_move();
         let any_loop = AnyEventLoop::default();
         let carrier = context.bundle();
@@ -91,7 +91,7 @@ fn create_page_outputs(
 fn create_page_transpiler<'h>(
     context: &BuildContext,
     heap: &'h Arena,
-    log: *const Log,
+    log: &'h Log,
 ) -> Transpiler<'h> {
     let mut transpiler = Transpiler::for_worker(context.bundle().transpiler(), heap, log);
 
@@ -152,7 +152,8 @@ fn run<'h>(
     bundle.graph.entry_points.push(Index::init(index));
 
     bundle.wait_for_parse();
-    if bundle.transpiler.log().errors.get() > 0 {
+    let log = bundle.transpiler.log();
+    if log.errors.get() > 0 {
         return Err(crate::Error::BuildFailed);
     }
     bundle.fail_if_no_entry_points()?;
@@ -166,18 +167,19 @@ fn run<'h>(
     bundle.add_server_component_boundaries_as_extra_entry_points()?;
 
     let mut linker = LinkerContext::load(bundle, linker_graph, &reachable_files)?;
-    let mut chunks = linker.link(bundle.transpiler.log())?;
-    if bundle.transpiler.log().errors.get() > 0 {
+    let mut chunks = linker.link(log)?;
+    if log.errors.get() > 0 {
         return Err(crate::Error::BuildFailed);
     }
 
     let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
         &mut linker,
-        bundle.transpiler.log(),
+        log,
         &mut chunks,
     )?;
 
-    let manifests = write_page_manifests(bundle, &linker.graph, &chunks, &output_files, pages)?;
+    let manifests =
+        write_page_manifests(bundle, &linker.graph, &chunks, &output_files, pages, log)?;
     Ok(PageOutputs {
         manifests,
         output_files,
@@ -190,11 +192,12 @@ fn write_page_manifests(
     chunks: &[Chunk<'_>],
     output_files: &[OutputFile],
     pages: &[&[u8]],
+    log: &Log,
 ) -> Result<Vec<Vec<u8>>, crate::Error> {
     let server_source_indices = &bundle.graph.html_imports;
     if server_source_indices.len() != pages.len() {
         return Err(report_page_count(
-            bundle,
+            log,
             server_source_indices.len(),
             pages.len(),
         ));
@@ -228,17 +231,13 @@ fn write_page_manifests(
 
     let bundled_count = manifests.iter().flatten().count();
     if bundled_count != pages.len() {
-        return Err(report_page_count(bundle, bundled_count, pages.len()));
+        return Err(report_page_count(log, bundled_count, pages.len()));
     }
     Ok(manifests.into_iter().flatten().collect())
 }
 
-fn report_page_count(
-    bundle: &BundleV2<'_>,
-    bundled_count: usize,
-    requested_count: usize,
-) -> crate::Error {
-    bundle.transpiler().log().add_error_fmt(
+fn report_page_count(log: &Log, bundled_count: usize, requested_count: usize) -> crate::Error {
+    log.add_error_fmt(
         None,
         Loc::EMPTY,
         format_args!("{bundled_count} pages were bundled, {requested_count} were asked for"),

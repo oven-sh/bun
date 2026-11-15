@@ -1,6 +1,6 @@
 use core::ffi::{CStr, c_int};
 
-use bun_core::compress::Ranges;
+use bun_core::compress::RawBuffers;
 use bun_zlib as c;
 
 use crate::node::node_zlib_binding::{CompressionContext, Error};
@@ -122,7 +122,7 @@ mod _impl {
                 write_callback.with_async_context_if_needed(global),
             );
 
-            let initialized = self.take_idle_stream(global)?.context.init(
+            let initialized = self.borrow_idle_stream(global)?.context.init(
                 level,
                 window_bits,
                 mem_level,
@@ -145,7 +145,7 @@ mod _impl {
         ) -> JsResult<()> {
             let global = cx.global();
             let result = self
-                .take_idle_stream(global)?
+                .borrow_idle_stream(global)?
                 .context
                 .set_params(level, strategy);
             if let Err(err) = result {
@@ -162,7 +162,7 @@ pub(crate) use _impl::NativeZlib;
 
 // ─── non-JSC body (real): zlib stream Context ─────────────────────────────
 
-enum Engine {
+enum State {
     Deflate(c::DeflateEncoder),
     Inflate(c::InflateDecoder),
 }
@@ -170,7 +170,7 @@ enum Engine {
 pub(crate) struct Context {
     mode: c::NodeMode,
     /// `None` until `init()`: what would call zlib fails with `StreamError`.
-    engine: Option<Engine>,
+    state: Option<State>,
     err: c::ReturnCode,
     flush: c::FlushValue,
     dictionary: Vec<u8>,
@@ -186,7 +186,7 @@ impl Context {
     fn new(mode: c::NodeMode) -> Self {
         Self {
             mode,
-            engine: None,
+            state: None,
             err: c::ReturnCode::Ok,
             flush: c::FlushValue::NoFlush,
             dictionary: Vec::new(),
@@ -222,16 +222,16 @@ impl Context {
         self.dictionary = dictionary.to_vec();
 
         // `init` is JS-reachable twice on one handle: free the previous state first.
-        self.engine = None;
-        self.engine = match self.mode {
+        self.state = None;
+        self.state = match self.mode {
             DEFLATE | GZIP | DEFLATERAW => {
                 c::DeflateEncoder::new(level, window_bits_actual, mem_level, strategy)
-                    .map(Engine::Deflate)
+                    .map(State::Deflate)
             }
-            _ => c::InflateDecoder::new(window_bits_actual).map(Engine::Inflate),
+            _ => c::InflateDecoder::new(window_bits_actual).map(State::Inflate),
         }
         .ok();
-        if self.engine.is_none() {
+        if self.state.is_none() {
             return false;
         }
 
@@ -244,13 +244,11 @@ impl Context {
         if self.dictionary.is_empty() {
             return Ok(());
         }
-        self.err = match (self.mode, &mut self.engine) {
-            (DEFLATE | DEFLATERAW, Some(Engine::Deflate(encoder))) => {
+        self.err = match (self.mode, &mut self.state) {
+            (DEFLATE | DEFLATERAW, Some(State::Deflate(encoder))) => {
                 encoder.set_dictionary(&self.dictionary)
             }
-            (INFLATERAW, Some(Engine::Inflate(decoder))) => {
-                decoder.set_dictionary(&self.dictionary)
-            }
+            (INFLATERAW, Some(State::Inflate(decoder))) => decoder.set_dictionary(&self.dictionary),
             _ => c::ReturnCode::Ok,
         };
         if self.err != c::ReturnCode::Ok {
@@ -261,9 +259,9 @@ impl Context {
 
     fn set_params(&mut self, level: c_int, strategy: c_int) -> Result<(), Error> {
         use c::NodeMode::*;
-        self.err = match (self.mode, &mut self.engine) {
-            (DEFLATE | DEFLATERAW, Some(Engine::Deflate(encoder))) => {
-                encoder.params(level, strategy)
+        self.err = match (self.mode, &mut self.state) {
+            (DEFLATE | DEFLATERAW, Some(State::Deflate(encoder))) => {
+                encoder.set_params(level, strategy)
             }
             (DEFLATE | DEFLATERAW, _) => c::ReturnCode::StreamError,
             _ => c::ReturnCode::Ok,
@@ -275,9 +273,9 @@ impl Context {
     }
 
     fn error_for_message(&self, default: &'static CStr) -> Error {
-        let message = match &self.engine {
-            Some(Engine::Deflate(encoder)) => encoder.error_message(),
-            Some(Engine::Inflate(decoder)) => decoder.error_message(),
+        let message = match &self.state {
+            Some(State::Deflate(encoder)) => encoder.error_message(),
+            Some(State::Inflate(decoder)) => decoder.error_message(),
             None => None,
         };
         Error {
@@ -298,8 +296,8 @@ impl Context {
     }
 
     /// Resolves `UNZIP` to `GUNZIP` or `INFLATE` once the first bytes tell which it is.
-    fn detect_gzip_header(&mut self, ranges: &Ranges<'_>) {
-        let mut header = (0..2).map_while(|index| ranges.input_byte(index));
+    fn detect_gzip_header(&mut self, buffers: &RawBuffers<'_>) {
+        let mut header = (0..2).map_while(|index| buffers.input_byte(index));
         if self.gzip_id_bytes_read == 0 {
             match header.next() {
                 Some(Self::GZIP_HEADER_ID1) => self.gzip_id_bytes_read = 1,
@@ -317,10 +315,10 @@ impl Context {
 
 impl CompressionContext for Context {
     fn reset(&mut self) -> Result<(), Error> {
-        self.err = match (self.mode, &mut self.engine) {
+        self.err = match (self.mode, &mut self.state) {
             (c::NodeMode::UNZIP, _) => c::ReturnCode::Ok,
-            (_, Some(Engine::Deflate(encoder))) => encoder.reset(),
-            (_, Some(Engine::Inflate(decoder))) => decoder.reset(),
+            (_, Some(State::Deflate(encoder))) => encoder.reset(),
+            (_, Some(State::Inflate(decoder))) => decoder.reset(),
             (_, None) => c::ReturnCode::StreamError,
         };
         if self.err != c::ReturnCode::Ok {
@@ -348,42 +346,42 @@ impl CompressionContext for Context {
         };
     }
 
-    fn do_work(&mut self, mut ranges: Ranges<'_>) {
+    fn do_work(&mut self, mut buffers: RawBuffers<'_>) {
         if self.mode == c::NodeMode::UNZIP {
-            self.detect_gzip_header(&ranges);
+            self.detect_gzip_header(&buffers);
         }
 
-        match &mut self.engine {
+        match &mut self.state {
             None => self.err = c::ReturnCode::StreamError,
-            Some(Engine::Deflate(encoder)) => {
-                self.err = encoder.step_with(&mut ranges, self.flush).1;
+            Some(State::Deflate(encoder)) => {
+                self.err = encoder.step_buffers(&mut buffers, self.flush).1;
             }
-            Some(Engine::Inflate(decoder)) => {
-                self.err = decoder.step_with(&mut ranges, self.flush).1;
+            Some(State::Inflate(decoder)) => {
+                self.err = decoder.step_buffers(&mut buffers, self.flush).1;
 
                 if self.mode != c::NodeMode::INFLATERAW
                     && self.err == c::ReturnCode::NeedDict
                     && !self.dictionary.is_empty()
                 {
                     self.err = match decoder.set_dictionary(&self.dictionary) {
-                        c::ReturnCode::Ok => decoder.step_with(&mut ranges, self.flush).1,
+                        c::ReturnCode::Ok => decoder.step_buffers(&mut buffers, self.flush).1,
                         c::ReturnCode::DataError => c::ReturnCode::NeedDict,
                         err => err,
                     };
                 }
                 while self.mode == c::NodeMode::GUNZIP
                     && self.err == c::ReturnCode::StreamEnd
-                    && ranges.input_byte(0).is_some_and(|byte| byte != 0)
+                    && buffers.input_byte(0).is_some_and(|byte| byte != 0)
                 {
                     // Another member of the archive, or trailing garbage. Trailing zero bytes are padding.
                     let _ = decoder.reset();
-                    self.err = decoder.step_with(&mut ranges, self.flush).1;
+                    self.err = decoder.step_buffers(&mut buffers, self.flush).1;
                 }
             }
         }
 
-        self.avail_in = ranges.input_len();
-        self.avail_out = ranges.out_len();
+        self.avail_in = buffers.avail_in();
+        self.avail_out = buffers.avail_out();
     }
 
     fn write_result(&mut self) -> Result<[u32; 2], Error> {

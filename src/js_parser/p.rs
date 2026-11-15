@@ -7101,11 +7101,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // so clone the value.
             js_ast::ExprData::EObject(_) | js_ast::ExprData::EArray(_) => {
                 let shared = Expr { data: value, loc };
-                if let Ok(copy) = shared.deep_clone_no_detach(self.arena, self.stack_check) {
-                    return copy;
-                }
-                self.report_stack_overflow(loc);
-                return self.new_expr(E::Missing {}, loc);
+                let Ok(copy) = shared.deep_clone_no_detach(self.arena, self.stack_check) else {
+                    self.report_stack_overflow(loc);
+                    return self.new_expr(E::Missing {}, loc);
+                };
+                return copy;
             }
             _ => {}
         }
@@ -8392,12 +8392,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if call.args.len_u32() == 0 {
             return;
         }
+        let arg = *call.args.at(0);
         // match `data` by value (it is `Copy`) so the `StoreRef<_>`
         // payloads bind owned + `mut`, letting `to_utf8` mutate the EString in place.
-        match call.args.at(0).data {
+        match arg.data {
             js_ast::ExprData::EString(mut str_) => {
-                let loc = call.args.at(0).loc;
-                let Some(d) = self.rewrite_import_meta_hot_accept_string(&mut str_, loc) else {
+                let Some(d) = self.rewrite_import_meta_hot_accept_string(&mut str_, arg.loc) else {
                     return;
                 };
                 call.args.mut_(0).data = d;
@@ -8418,13 +8418,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     else {
                         return;
                     };
-                    items.push(Expr {
-                        data: d,
-                        loc: item.loc,
-                    });
+                    items.push(Expr { data: d, ..*item });
                 }
-                let loc = call.args.at(0).loc;
-                *call.args.mut_(0) = self.new_expr(E::Array { items, ..*arr }, loc);
+                *call.args.mut_(0) = self.new_expr(E::Array { items, ..*arr }, arg.loc);
             }
             _ => return,
         }

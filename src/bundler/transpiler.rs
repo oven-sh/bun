@@ -21,6 +21,7 @@ pub(crate) type ResolveResults = HashMap<u64, ()>;
 // is structurally equivalent (growable ring buffer); swap once the re-export lands.
 pub(crate) type ResolveQueue = std::collections::VecDeque<resolver::Result<'static>>;
 
+use js_ast::Macro::MacroContext;
 pub use js_ast::Macro::{MacroJSCtx, MacroLoadStates};
 /// The default (zero) macro JS context value.
 #[inline]
@@ -195,6 +196,17 @@ impl<'a> Transpiler<'a> {
             linker: crate::linker::Linker::init(log),
             env: from.env,
         }
+    }
+
+    /// # Safety
+    /// The contract of [`MacroContext::new`].
+    pub unsafe fn macro_context<'p>(
+        this: *mut Self,
+        macro_load_states: &'p MacroLoadStates,
+        macro_js_ctx: MacroJSCtx,
+    ) -> MacroContext<'p> {
+        // SAFETY: the caller's contract.
+        unsafe { MacroContext::new(this.cast(), macro_load_states, macro_js_ctx) }
     }
 
     /// Returns the resolver's auto-install package-manager handle. Errs when
@@ -1438,8 +1450,8 @@ impl<'a> Transpiler<'a> {
                 unsafe {
                     define = &*(*transpiler).options.define;
                     opts.macro_remap = Some(&(*transpiler).options.macro_remap);
-                    opts.macro_context = Some(js_ast::Macro::MacroContext::new(
-                        transpiler.cast(),
+                    opts.macro_context = Some(Self::macro_context(
+                        transpiler,
                         this_parse.macro_load_states,
                         this_parse.macro_js_ctx,
                     ));
@@ -2533,7 +2545,6 @@ impl<'a> Transpiler<'a> {
                 &item,
                 import_path_format,
                 outstream,
-                None,
                 &macro_load_states,
             ) {
                 Ok(Some(f)) => f,
@@ -2615,17 +2626,13 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 
-    fn build_with_resolve_result_eager<'p>(
+    fn build_with_resolve_result_eager(
         &mut self,
         resolve_result: &resolver::Result,
         import_path_format: options::ImportPathFormat,
         _outstream: TransformOutstream,
-        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint<'p>>,
-        macro_load_states: &'p MacroLoadStates,
-    ) -> crate::Result<Option<options::OutputFile>>
-    where
-        'a: 'p,
-    {
+        macro_load_states: &MacroLoadStates,
+    ) -> crate::Result<Option<options::OutputFile>> {
         if resolve_result.flags.is_external() {
             return Ok(None);
         }
@@ -2637,22 +2644,7 @@ impl<'a> Transpiler<'a> {
         let file_path_ext: &'static [u8] = crate::linker::dupe(file_path_ref.name().ext);
 
         // Step 1. Parse & scan
-        // Key the loader on the ORIGINAL resolve
-        // result's extension *before* the `client_entry_point` path override.
-        // Compute it here, then apply the override.
         let loader = self.options.loader(file_path_ext);
-
-        // `client_entry_point_` is always `None` from the only in-tree caller;
-        // its source path uses the `bun_paths::fs::Path<'static>` shape, so just override
-        // text/ext when present.
-        let (file_path_text, file_path_ext) = if let Some(cep) = client_entry_point_.as_deref() {
-            (
-                crate::linker::dupe(cep.source.path.text),
-                crate::linker::dupe(cep.source.path.name().ext),
-            )
-        } else {
-            (file_path_text, file_path_ext)
-        };
 
         let mut file_path = Fs::Path::init(file_path_text);
 
@@ -2732,7 +2724,7 @@ impl<'a> Transpiler<'a> {
                     allow_bytecode_cache: false,
                 };
 
-                let Some(mut result) = self.parse(parse_opts, client_entry_point_) else {
+                let Some(mut result) = self.parse(parse_opts, None) else {
                     return Ok(None);
                 };
 

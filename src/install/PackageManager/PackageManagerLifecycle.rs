@@ -381,7 +381,7 @@ impl PackageManager {
         // re-uses it across every `spawn_next_script` in the chain. Move the
         // owning `CStringList` by value so its `K=V\0` strings outlive
         // this stack frame (freed by the subprocess's `Drop`).
-        let envp = script_env.create_null_delimited_env_map()?;
+        let envp = script_env.to_envp();
 
         #[cfg(windows)]
         let shell_bin: Option<&ZStr> = None;

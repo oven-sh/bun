@@ -1324,9 +1324,9 @@ pub struct Map {
 
 impl Map {
     /// Builds a NULL-terminated `K=V\0` envp array.
-    pub fn create_null_delimited_env_map(&self) -> Result<CStringList, AllocError> {
+    pub fn to_envp(&self) -> CStringList {
         let entries = (self.map.iter()).map(|(key, value)| [&**key, b"=", &value.value]);
-        Ok(CStringList::concat(entries))
+        CStringList::from_parts(entries)
     }
 
     /// Build a heap-allocated Windows environment block suitable for

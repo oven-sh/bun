@@ -863,7 +863,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         if bun_io::parent_death_watchdog::is_enabled() {
             env.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1")?;
         }
-        let envp = env.map.create_null_delimited_env_map()?;
+        let envp = env.map.to_envp();
 
         #[cfg(windows)]
         {

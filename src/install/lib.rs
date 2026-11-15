@@ -1,7 +1,6 @@
 #![allow(nonstandard_style)]
 #![feature(adt_const_params)]
 #![feature(core_io_borrowed_buf)]
-#![feature(exclusive_wrapper)]
 
 // ──────────────────────────────────────────────────────────────────────────
 // Crate aliases — Phase-A drafts use the porting-doc crate names; map them
@@ -92,6 +91,7 @@ pub use lockfile_real::{DEFAULT_TRUSTED_DEPENDENCIES_LIST, default_trusted_depen
 pub mod audit_fix;
 #[path = "bin.rs"]
 pub mod bin_real;
+pub mod buffered_subprocess;
 pub mod cache_pack;
 pub(crate) mod cache_publish;
 pub mod dedupe;
@@ -286,7 +286,6 @@ pub use resolution::Tag as ResolutionTag;
 
 // Real types — previously shadowed by inline ZST stubs in this file.
 pub use isolated_install::Store;
-pub use lifecycle_script_runner::LifecycleScriptSubprocess;
 pub use network_task::NetworkTask;
 pub(crate) use package_install::PackageInstall;
 pub use package_manager_real::security_scanner::SecurityScanSubprocess;
@@ -298,10 +297,7 @@ pub use tarball_stream::TarballStream;
 // PackageManager + its associated types — re-exported from the file-backed
 // `package_manager_real` so `crate::PackageManager` and
 // `package_manager_real::PackageManager` are the SAME type.
-pub use package_manager_real::{
-    AsyncNetworkTaskQueue, CommandLineArguments, PackageManager, PatchTaskQueue, RootPackageId,
-    Subcommand,
-};
+pub use package_manager_real::{CommandLineArguments, PackageManager, RootPackageId, Subcommand};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Back-compat type aliases — `*Stub` names that other files still reference

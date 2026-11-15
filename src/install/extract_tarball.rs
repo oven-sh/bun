@@ -21,6 +21,7 @@ use bun_resolver::fs::FileSystem;
 use crate::cache_publish::{self, StagedEntry};
 type Error = crate::Error;
 
+#[derive(Clone)]
 pub struct ExtractTarball {
     pub(crate) name: StringOrTinyString,
     pub(crate) resolution: Resolution,

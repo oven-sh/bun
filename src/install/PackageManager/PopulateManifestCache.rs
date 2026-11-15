@@ -10,9 +10,9 @@ use crate::invalid_package_id;
 // Import the
 // *module* under the `Task` name so `Task::Id` resolves as a path (matches
 // `runTasks.rs` / `PackageManagerEnqueue.rs`).
-use super::PackageManager;
 use super::enqueue;
 use super::run_tasks::{self, Caller};
+use super::{InstallFields, PackageManager, install_fields};
 use crate::package_manager_task as Task;
 use crate::resolution::Tag as ResolutionTag;
 
@@ -43,7 +43,7 @@ impl From<StartManifestTaskError> for crate::Error {
 
 /// `is_required`: a failed fetch is logged as an error rather than a warning.
 fn start_manifest_task(
-    manager: &mut PackageManager,
+    manager: &mut InstallFields<'_>,
     pkg_name: &[u8],
     is_required: bool,
     needs_extended_manifest: bool,
@@ -53,43 +53,24 @@ fn start_manifest_task(
         return Ok(());
     }
     let task_id = Task::Id::for_manifest(pkg_name);
-    if manager.has_created_network_task(task_id, is_required) {
+    if manager.state.has_created_network_task(task_id, is_required) {
         return Ok(());
     }
     if manager.options.log_level.show_progress() {
-        manager.start_progress_bar_if_none();
+        manager.state.start_progress_bar_if_none();
     }
 
-    // reshaped for borrowck — `get_network_task()`
-    // borrows `&mut manager.preallocated_network_tasks`, so compute everything
-    // that needs `&manager` *before* taking that borrow, then populate the pool
-    // slot through a raw pointer (matches `runTasks::generate_network_task_for_tarball`).
-    let log = manager.log();
-    let scope = bun_ptr::BackRef::new(manager.scope_for_package_name(pkg_name));
-
-    // Take the pool slot as a raw pointer so borrowck releases `manager` for the
-    // `enqueue_network_task` tail.
-    let net_ptr: *mut NetworkTask = run_tasks::get_network_task(manager);
-    // `write_init` is a full struct overwrite that resets every other field to
-    // its struct default. The slot may be uninitialized (heap fallback) or
-    // stale (reused hive slot).
-    // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
-    // other alias exists until we hand it to `enqueue_network_task`.
-    unsafe { NetworkTask::write_init(net_ptr, task_id, bun_ptr::ParentRef::new(manager)) };
-    // SAFETY: `write_init` populated every field.
-    let task = unsafe { &mut *net_ptr };
-    // `scope` points into `manager.options` which is not mutated by
-    // `for_manifest` (it only writes the pool slot and `log`).
-    task.for_manifest(
+    let log = manager.state.log();
+    let task = NetworkTask::for_manifest(
+        manager,
+        log,
+        task_id,
         pkg_name,
-        scope.get(),
         None,
         !is_required,
         needs_extended_manifest,
-        log,
     )?;
-
-    enqueue::enqueue_network_task(manager, net_ptr);
+    enqueue::enqueue_network_task(manager.state, task);
     Ok(())
 }
 
@@ -113,26 +94,11 @@ pub fn populate_manifest_cache(
 ) -> crate::Result<()> {
     let log_level = manager.options.log_level;
 
-    // heavy borrowck overlap — slices into
-    // `manager.lockfile` are held while the loop body calls `&mut`-taking methods on
-    // `manager`. The lockfile lives in `Box<Lockfile>` (stable address) and is
-    // not resized by anything below, so derive the slices through a raw
-    // provenance root and reborrow `manager` per-call.
     let cache_ctx = manager.manifest_disk_cache_ctx();
-    let manager_ptr: *mut PackageManager = manager;
-    // BACKREF wrapper over the same provenance root for the read-only
-    // `options` projections in the loop body — collapses four per-site raw
-    // `(*manager_ptr).options` derefs into safe `Deref` through
-    // `ParentRef::get()`. Mutation (`manifests`, whole-`&mut PackageManager`)
-    // still goes through `manager_ptr` directly. Safe `From<NonNull>`
-    // construction — `manager_ptr` was just derived from `&mut *manager`.
-    let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
-        core::ptr::NonNull::new(manager_ptr).expect("derived from &mut, non-null"),
-    );
-    // SAFETY: `manager_ptr` is the live exclusive borrow's address; we only
-    // take *shared* projections of `lockfile` here, and the loop body never
-    // mutates `lockfile.buffers` / `lockfile.packages`.
-    let lockfile = unsafe { &*core::ptr::addr_of!((*manager_ptr).lockfile) };
+    let manifests = &mut manager.manifests;
+    let fields = &mut install_fields!(manager);
+    let (options, lockfile) = (fields.options, fields.lockfile);
+    let needs_extended_manifest = options.minimum_release_age_ms.is_some();
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -165,23 +131,10 @@ pub fn populate_manifest_cache(
 
                 let pkg_name = pkg_names[pkg_id as usize];
                 let pkg_name_slice = pkg_name.slice(string_buf);
-                // `options` is not mutated between here and the
-                // `start_manifest_task` call — read via the BACKREF `mgr_ref`.
-                let needs_extended_manifest = mgr_ref.options.minimum_release_age_ms.is_some();
-
-                // `scope_for_package_name` borrows only `options` (via the
-                // BACKREF `mgr_ref`); `manifests` is a disjoint field projected
-                // from the same raw provenance root. `by_name`'s `pm`-derived
-                // reads are hoisted into the by-value `cache_ctx`, so the call
-                // holds only `&mut manifests`.
-                let scope =
-                    bun_ptr::BackRef::new(mgr_ref.options.scope_for_package_name(pkg_name_slice));
                 let mut expired = false;
-                // SAFETY: `manifests` is disjoint from `options`/`lockfile`;
-                // `manager_ptr` is the SRW root.
-                let cached = unsafe { &mut (*manager_ptr).manifests }.by_name_allow_expired(
+                let cached = manifests.by_name_allow_expired(
                     cache_ctx,
-                    scope.get(),
+                    options.scope_for_package_name(pkg_name_slice),
                     pkg_name_slice,
                     Some(&mut expired),
                     needs_extended_manifest,
@@ -192,23 +145,10 @@ pub fn populate_manifest_cache(
                     !expired || manifest.find_by_version(res.npm().version).is_some()
                 });
                 if !has_version {
-                    start_manifest_task(
-                        // SAFETY: `manager_ptr` is the SRW provenance root;
-                        // `start_manifest_task` only touches the network-task
-                        // pool / progress bar / log, never `lockfile.buffers`
-                        // or `lockfile.packages`, so the outstanding shared
-                        // slice (`pkg_name_slice`) stays valid.
-                        unsafe { &mut *manager_ptr },
-                        pkg_name_slice,
-                        false,
-                        needs_extended_manifest,
-                    )?;
+                    start_manifest_task(fields, pkg_name_slice, false, needs_extended_manifest)?;
                 }
 
-                // SAFETY: SRW root; network-queue flush does not mutate `lockfile`.
-                run_tasks::flush_network_queue(unsafe { &mut *manager_ptr });
-                // SAFETY: SRW root; task scheduler does not mutate `lockfile`.
-                let _ = run_tasks::schedule_tasks(unsafe { &mut *manager_ptr });
+                let _ = run_tasks::schedule_tasks(fields);
             }
         }
         Packages::Ids(ids) => {
@@ -230,38 +170,22 @@ pub fn populate_manifest_cache(
                         continue;
                     }
 
-                    // `options` read via BACKREF `mgr_ref` — see provenance-root
-                    // note above.
-                    let needs_extended_manifest = mgr_ref.options.minimum_release_age_ms.is_some();
                     let package_name = pkg_names[pkg_id as usize].slice(string_buf);
-                    // See disjoint-field note on the `.All` arm above.
-                    let scope =
-                        bun_ptr::BackRef::new(mgr_ref.options.scope_for_package_name(package_name));
-                    // SAFETY: `manifests` is disjoint from `options`/`lockfile`;
-                    // `manager_ptr` is the SRW root.
-                    let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
+                    let cached = manifests.by_name(
                         cache_ctx,
-                        scope.get(),
+                        options.scope_for_package_name(package_name),
                         package_name,
                         needs_extended_manifest,
                     );
                     if cached.is_none() {
                         start_manifest_task(
-                            // SAFETY: `manager_ptr` is the SRW provenance
-                            // root; `start_manifest_task` only touches the
-                            // network-task pool / progress bar / log, never
-                            // `lockfile.buffers` or `lockfile.packages`, so
-                            // `package_name` stays valid.
-                            unsafe { &mut *manager_ptr },
+                            fields,
                             package_name,
                             dep.behavior.is_required(),
                             needs_extended_manifest,
                         )?;
 
-                        // SAFETY: SRW root; network-queue flush does not mutate `lockfile`.
-                        run_tasks::flush_network_queue(unsafe { &mut *manager_ptr });
-                        // SAFETY: SRW root; task scheduler does not mutate `lockfile`.
-                        let _ = run_tasks::schedule_tasks(unsafe { &mut *manager_ptr });
+                        let _ = run_tasks::schedule_tasks(fields);
                     }
                 }
             }
@@ -272,53 +196,38 @@ pub fn populate_manifest_cache(
                     continue;
                 }
                 let package_name = pkg_names[pkg_id as usize].slice(string_buf);
-                let needs_extended_manifest = mgr_ref.options.minimum_release_age_ms.is_some();
-                let scope =
-                    bun_ptr::BackRef::new(mgr_ref.options.scope_for_package_name(package_name));
-                // SAFETY: `manifests` is disjoint from `options`/`lockfile`; `manager_ptr` is the SRW root.
-                let cached = unsafe { &mut (*manager_ptr).manifests }.by_name(
+                let cached = manifests.by_name(
                     cache_ctx,
-                    scope.get(),
+                    options.scope_for_package_name(package_name),
                     package_name,
                     needs_extended_manifest,
                 );
                 if cached.is_none() {
-                    start_manifest_task(
-                        // SAFETY: SRW root; `start_manifest_task` never mutates `lockfile`, so `package_name` stays valid.
-                        unsafe { &mut *manager_ptr },
-                        package_name,
-                        false,
-                        needs_extended_manifest,
-                    )?;
-                    // SAFETY: SRW root; network-queue flush does not mutate `lockfile`.
-                    run_tasks::flush_network_queue(unsafe { &mut *manager_ptr });
-                    // SAFETY: SRW root; task scheduler does not mutate `lockfile`.
-                    let _ = run_tasks::schedule_tasks(unsafe { &mut *manager_ptr });
+                    start_manifest_task(fields, package_name, false, needs_extended_manifest)?;
+                    let _ = run_tasks::schedule_tasks(fields);
                 }
             }
         }
     }
 
-    // SAFETY: provenance root; no live shared borrows of `*manager_ptr` remain.
-    let manager = unsafe { &mut *manager_ptr };
-    run_tasks::flush_network_queue(manager);
-    let _ = run_tasks::schedule_tasks(manager);
+    run_tasks::enqueue_due_retries(fields.state);
+    let _ = run_tasks::schedule_tasks(fields);
 
-    if manager.pending_task_count() > 0 {
+    if manager.state.pending_task_count() > 0 {
         // `run_tasks` names the bar when a manifest download completes, and `start_manifest_task` starts none when every name is cached or already requested by a queued row.
         if log_level.show_progress() {
-            manager.start_progress_bar_if_none();
+            manager.state.start_progress_bar_if_none();
         }
 
         let mut result = Ok(());
         manager.sleep_until(|manager| {
             let log_level = manager.options.log_level;
-            result = run_tasks::run_tasks(manager, Caller::ManifestCache, true, log_level);
-            result.is_err() || manager.pending_task_count() == 0
+            result = run_tasks::run_tasks(Caller::ManifestCache(manager), true, log_level);
+            result.is_err() || manager.state.pending_task_count() == 0
         });
 
         if log_level.show_progress() {
-            manager.end_progress_bar();
+            manager.state.end_progress_bar();
             Output::flush();
         }
 

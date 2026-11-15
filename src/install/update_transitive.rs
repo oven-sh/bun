@@ -690,7 +690,7 @@ fn print_kept_rows(rows: &[Row]) {
     }
 }
 
-/// Once after resolution, before the lockfile is cleaned: the patched packages a move was held back for, rendered for the install summary (`tree_printer` flushes `kept_patched_text` after the update rows); `print_plan` prints them itself when it runs first.
+/// Once after resolution, before the lockfile is cleaned: the patched packages a move was held back for, rendered for the install summary (`tree_printer` prints `kept_patched_text` after the update rows); `print_plan` prints them itself when it runs first.
 pub(crate) fn print_kept_patched(manager: &mut PackageManager) {
     if manager.kept_patched.is_empty() {
         return;

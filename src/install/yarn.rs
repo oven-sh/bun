@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use crate::Origin;
 use crate::lockfile_real::package::meta::HasInstallScript;
 use crate::lockfile_real::package::{
-    Meta as PackageMeta, Package as LockfilePackage, PackageColumns as _,
+    Meta as PackageMeta, Package as LockfilePackage, PackageColumns as _, ParseFields,
 };
 use crate::lockfile_real::{self as lockfile, LoadResult, Lockfile};
 use crate::migration::{sbuf, string_hash};
@@ -461,15 +461,9 @@ fn append_package_json(
     };
     let mut package = LockfilePackage::default();
     let features = workspace_path.map_or(Features::main(), |_| Features::WORKSPACE);
-    package.parse_with_json(
-        this,
-        manager,
-        log,
-        &source,
-        bun_ast::JsonView::from(&json),
-        &mut (),
-        features,
-    )?;
+    let fields = &mut ParseFields::new(manager);
+    let json = bun_ast::JsonView::from(&json);
+    package.parse_with_json(this, fields, log, &source, json, &mut (), features)?;
     if let Some(workspace_path) = workspace_path {
         package.resolution = Resolution::init(ResolutionValue::Workspace(workspace_path));
     }
@@ -587,6 +581,7 @@ pub(crate) fn migrate_yarn_lockfile(
     manager: &mut PackageManager,
     log: &bun_ast::Log,
     data: &[u8],
+    swap_into_manager: bool,
 ) -> Result<LoadResult, Error> {
     // Yarn reads a file as v1 only when the marker is in the comment lines at its top.
     let is_berry = strings::contains(data, b"\n__metadata:") || data.starts_with(b"__metadata:");
@@ -924,7 +919,9 @@ pub(crate) fn migrate_yarn_lockfile(
     }
 
     this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
-        manager, true,  // update_os_cpu
+        manager,
+        swap_into_manager,
+        true,  // update_os_cpu
         false, // fill_integrity
         None,
     )?;

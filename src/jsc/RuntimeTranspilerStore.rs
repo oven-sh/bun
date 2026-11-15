@@ -615,17 +615,22 @@ impl TranspilerJob {
 
         let mut cache = RuntimeTranspilerCache::default();
 
+        let mut transpiler_storage = core::mem::MaybeUninit::<Transpiler<'_>>::uninit();
         // The whole Transpiler is copied by value here.
         // `Transpiler<'static>` is not `Clone`; we do
         // a bytewise copy. SAFETY: `vm.transpiler` is read via
         // a raw pointer; every internal raw pointer in the copy
         // still targets memory owned by `vm.transpiler` (resolver caches, define, env) which
         // outlives this stack frame; `vm.transpiler` is not concurrently mutated.
-        // The by-value copy must not be deinitialized; `ManuallyDrop` suppresses Drop so owned
-        // fields aren't double-freed against `vm.transpiler`.
-        let mut transpiler_storage =
-            core::mem::ManuallyDrop::new(unsafe { ptr::read((*vm).transpiler.as_ptr()) });
-        let transpiler: &mut Transpiler<'_> = &mut transpiler_storage;
+        // The by-value copy must not be deinitialized; `MaybeUninit` suppresses Drop so owned
+        // fields aren't double-freed against `vm.transpiler`. The `&mut` to the package manager,
+        // which only the JS thread may use, is overwritten before the copy is used as a value.
+        let transpiler = unsafe {
+            let copy = transpiler_storage.as_mut_ptr();
+            ptr::copy_nonoverlapping((*vm).transpiler.as_ptr().cast_const(), copy, 1);
+            (&raw mut (*copy).resolver.package_manager).write(Default::default());
+            transpiler_storage.assume_init_mut()
+        };
         transpiler.set_arena(&arena);
         transpiler.set_log(&this.log);
         // Note: the resolver already shares opts with the parent

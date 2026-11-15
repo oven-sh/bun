@@ -1,5 +1,3 @@
-use core::sync::atomic::Ordering;
-
 use bun_ast::AstArena;
 use bun_collections::{ArrayHashMap, ArrayIdentityContext, StringArrayHashMap};
 use bun_core::strings;
@@ -14,8 +12,8 @@ use bun_install::package_manager_real::{
     PackageJSONEditor, ProgressStrings, package_json_write_back, update_lockfile_if_needed,
 };
 use bun_install::{
-    self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
-    PackageID, PackageManager, ResolutionTag,
+    self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, PackageID, PackageManager,
+    ResolutionTag,
 };
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::AutoAbsPath;
@@ -528,11 +526,12 @@ impl TrustCommand {
         let show_progress = log_level.show_progress();
 
         if show_progress {
-            pm.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-            pm.progress.start(b"", 0);
-            pm.progress
+            pm.state.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
+            pm.state.progress.start(b"", 0);
+            pm.state
+                .progress
                 .start_child(scripts_node, ProgressStrings::script(), scripts_count);
-            pm.scripts_node = Some(scripts_node);
+            pm.state.scripts_node = Some(scripts_node);
         }
 
         for same_depth in blocked.chunk_by(|a, b| a.depth == b.depth) {
@@ -541,24 +540,22 @@ impl TrustCommand {
                     continue;
                 }
 
-                while LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
-                    >= max_concurrent
-                {
+                while pm.state.active_lifecycle_script_count() >= max_concurrent {
                     if log_level.is_verbose()
-                        && pm.has_enough_time_passed_between_waiting_messages()
+                        && pm.state.has_enough_time_passed_between_waiting_messages()
                     {
                         bun_core::pretty_errorln!(
                             "<d>[PackageManager]<r> waiting for {} scripts\n",
-                            LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
+                            pm.state.active_lifecycle_script_count()
                         );
                     }
 
-                    pm.sleep();
+                    pm.install_fields().sleep();
                 }
 
                 let output_in_foreground = false;
                 let optional = false;
-                pm.spawn_package_lifecycle_scripts(
+                pm.install_fields().spawn_package_lifecycle_scripts(
                     info.scripts_list.clone(),
                     optional,
                     output_in_foreground,
@@ -566,20 +563,20 @@ impl TrustCommand {
                 )?;
 
                 if show_progress {
-                    pm.progress.activate(scripts_node);
-                    pm.progress.refresh();
+                    pm.state.progress.activate(scripts_node);
+                    pm.state.progress.refresh();
                 }
             }
 
-            while pm.pending_lifecycle_script_tasks.load(Ordering::Relaxed) > 0 {
-                pm.sleep();
+            while pm.state.active_lifecycle_script_count() > 0 {
+                pm.install_fields().sleep();
             }
         }
 
         if show_progress {
-            pm.progress.end();
-            pm.progress = Progress::Progress::default();
-            pm.scripts_node = None;
+            pm.state.progress.end();
+            pm.state.progress = Progress::Progress::default();
+            pm.state.scripts_node = None;
         }
 
         // A migration's package.json edits must hit disk before the re-read below.

@@ -209,19 +209,23 @@ impl YesTask {
                 // SAFETY: the box that was just leaked.
                 let at = unsafe { &mut (*this).concurrent_task }.from(this, |this, _| {
                     // SAFETY: the loop of the script calls this once.
-                    unsafe { bun_core::heap::take(this) }.run_from_main_thread()
+                    unsafe { bun_core::heap::take(this).run_from_main_thread() }
                 });
                 mini.enqueue_task_concurrent(NonNull::new(at).expect("intrusive task"));
             }
         }
     }
 
-    pub(crate) fn run_from_main_thread(mut self: Box<Self>) {
+    /// # Safety
+    /// Called by the event loop that `enqueue` gave `self` to.
+    pub(crate) unsafe fn run_from_main_thread(mut self: Box<Self>) {
         let interp_ref = self.interp.take().expect("set by enqueue");
-        interp_ref.run_yield_with(|interp| {
+        let resume = |interp: &mut Interpreter<'_>| {
             let cmd = self.cmd;
             Yes::state_mut(interp, cmd).task = Some(self);
             Yes::write_no_io_loop(interp, cmd)
-        });
+        };
+        // SAFETY: caller contract.
+        unsafe { interp_ref.run_yield_with(resume) };
     }
 }

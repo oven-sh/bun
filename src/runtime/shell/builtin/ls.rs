@@ -310,6 +310,7 @@ pub(crate) struct ShellLsTask {
 }
 
 bun_threading::intrusive_work_task!(ShellLsTask, work_task);
+bun_core::intrusive_field!(ShellLsTask, task: ShellTask);
 
 impl ShellLsTask {
     fn schedule(
@@ -679,12 +680,6 @@ impl bun_event_loop::BoxedTask for ShellLsTask {
     /// See [`ShellTaskCtx`]: a step of a shell script always runs.
     fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
-    }
-}
-
-impl AsMut<ShellTask> for ShellLsTask {
-    fn as_mut(&mut self) -> &mut ShellTask {
-        &mut self.task
     }
 }
 

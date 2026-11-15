@@ -386,6 +386,7 @@ pub(crate) struct ShellCpTask {
 }
 
 bun_threading::intrusive_work_task!(ShellCpTask, work_task);
+bun_core::intrusive_field!(ShellCpTask, task: ShellTask);
 
 /// Why nothing is copied for a source operand.
 enum Stop {
@@ -717,12 +718,6 @@ impl bun_event_loop::BoxedTask for ShellCpTask {
     /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
     fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
-    }
-}
-
-impl AsMut<ShellTask> for ShellCpTask {
-    fn as_mut(&mut self) -> &mut ShellTask {
-        &mut self.task
     }
 }
 

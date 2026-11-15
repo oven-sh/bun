@@ -26,6 +26,7 @@
 //! own data up via `interp.as_<state>(this)` / `interp.as_<state>_mut(this)`.
 
 use bun_collections::VecExt;
+use bun_core::IntrusiveField;
 use bun_event_loop::{BoxedTask, EventLoopTask};
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::{ConcurrentPoster, GlobalRef, JsCell, JsCellRefExt as _, JsRef};
@@ -2360,16 +2361,25 @@ impl ShellInterpreterRef {
         ShellInterpreterRef(interp.shell_interp)
     }
 
-    fn get(&self) -> &ShellInterpreter {
-        // SAFETY: `ref_count` includes `self`, so `finish` has not run. Only a VM teardown frees the
-        // interpreter before that, and it releases the queued tasks first. Both callers hold
-        // `ensure_still_alive` from before `finish` can run.
+    /// # Safety
+    /// Called by the event loop of the script, for the queued task that held `self`.
+    unsafe fn get(&self) -> &ShellInterpreter {
+        // SAFETY: `ref_count` includes `self`, or a task that shares its `interp_owners`, so `finish`
+        // has not run. Only a VM teardown frees the interpreter before that, and it releases the queued
+        // tasks first. Both callers hold `ensure_still_alive` from before `finish` can run.
         unsafe { self.0.as_ref() }
     }
 
     /// Gives up the reference, and then runs [`ShellInterpreter::run_yield_with`].
-    pub(crate) fn run_yield_with(self, f: impl for<'a> FnOnce(&mut Interpreter<'a>) -> Yield) {
-        self.get().run_yield_with(|interp| {
+    ///
+    /// # Safety
+    /// See [`Self::get`].
+    pub(crate) unsafe fn run_yield_with(
+        self,
+        f: impl for<'a> FnOnce(&mut Interpreter<'a>) -> Yield,
+    ) {
+        // SAFETY: caller contract.
+        unsafe { self.get() }.run_yield_with(|interp| {
             interp.ref_count -= 1;
             f(interp)
         });
@@ -2381,7 +2391,7 @@ impl ShellInterpreterRef {
 /// Its `BoxedTask::context` is `ContextId::NONE`: a step is what its interpreter is waiting for, and the
 /// interpreter checks its own context before anything reaches script (`Interpreter::interrupted`,
 /// `finish`, `fail`).
-pub(crate) trait ShellTaskCtx: AsMut<ShellTask> + BoxedTask + Send {
+pub(crate) trait ShellTaskCtx: IntrusiveField<ShellTask> + BoxedTask + Send {
     /// `is_last` is false while a task related by [`ShellTask::new_child`] is still out.
     fn run_from_main_thread(self: Box<Self>, shell_interp: &ShellInterpreter, is_last: bool);
 }
@@ -2401,7 +2411,7 @@ pub(crate) struct ShellTask {
     concurrent_task: EventLoopTask,
 }
 
-// SAFETY: `poster` is for use on any thread, only `run_from_main_thread` dereferences `interp`, and
+// SAFETY: `poster` and `interp_owners` are `Send`, only `run_from_main_thread` dereferences `interp`, and
 // `concurrent_task` is empty until `on_finish` puts a `Send` task into it.
 unsafe impl Send for ShellTask {}
 
@@ -2452,11 +2462,11 @@ impl ShellTask {
     pub(crate) fn on_finish<C: ShellTaskCtx>(mut ctx: Box<C>) {
         log!("ShellTask onFinish");
         // Moved out: the owning thread may free `*ctx` once it is queued.
-        let poster = C::as_mut(&mut ctx).take_poster();
+        let poster = C::field_mut(&mut ctx).take_poster();
         let task = bun_event_loop::Task::from_boxed(ctx);
         let ctx = task.ptr().cast::<C>();
         // SAFETY: the box that `from_boxed` leaked, which no other thread has before the post.
-        let node = unsafe { &mut C::as_mut(&mut *ctx).concurrent_task };
+        let node = unsafe { &mut (*C::field_of(ctx)).concurrent_task };
         if !poster.is_js() {
             *node = EventLoopTask::Mini(Default::default());
         }
@@ -2479,9 +2489,10 @@ impl ShellTask {
     /// Called by the event loop that the poster of `ctx` posts to.
     pub(crate) unsafe fn run_from_main_thread<C: ShellTaskCtx>(mut ctx: Box<C>) {
         log!("ShellTask runFromJS");
-        let task = C::as_mut(&mut ctx);
+        let task = C::field_mut(&mut ctx);
         let interp_ref = task.interp.take().expect("shell task comes back once");
-        let shell_interp = interp_ref.get();
+        // SAFETY: caller contract.
+        let shell_interp = unsafe { interp_ref.get() };
         let _keep = shell_interp.ensure_still_alive();
         let is_last = (task.interp_owners.take()).is_none_or(|it| Arc::into_inner(it).is_some());
         if is_last {
@@ -2506,6 +2517,7 @@ pub(crate) struct PoolTask<W> {
 }
 
 bun_threading::intrusive_work_task!([W] PoolTask<W>, work_task);
+bun_core::intrusive_field!([W] PoolTask<W>, task: ShellTask);
 
 impl<W: ShellWork> PoolTask<W> {
     pub(crate) fn schedule(interp: &mut Interpreter<'_>, work: W) {
@@ -2531,12 +2543,6 @@ impl<W: ShellWork> BoxedTask for PoolTask<W> {
     /// See [`ShellTaskCtx`]: a step of a shell script always runs.
     fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
-    }
-}
-
-impl<W> AsMut<ShellTask> for PoolTask<W> {
-    fn as_mut(&mut self) -> &mut ShellTask {
-        &mut self.task
     }
 }
 

@@ -500,7 +500,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
     }
 
     #[inline(never)]
-    pub(crate) fn link(&mut self, log: &mut Log) -> Result<Box<[Chunk<'a>]>, LinkError> {
+    pub(crate) fn link(&mut self, log: &Log) -> Result<Box<[Chunk<'a>]>, LinkError> {
         if self.options.source_maps != SourceMapOption::None {
             self.compute_data_for_source_map();
         }
@@ -1351,7 +1351,7 @@ impl<'a> LinkerContext<'_, 'a> {
     }
 
     fn validate_tla(
-        log: &mut Log,
+        log: &Log,
         source_index: crate::IndexInt,
         tla_keywords: &[Range],
         tla_checks: &mut [TlaCheck],
@@ -2574,7 +2574,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         css_asts: &CssAsts,
         sources: &[Source],
         loaders: &[Loader],
-        log: &mut Log,
+        log: &Log,
     ) -> ScanCssImportsResult {
         for record in file_import_records.iter() {
             if record.source_index.is_valid() {
@@ -2619,7 +2619,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 }
             }
         }
-        if log.errors > 0 {
+        if log.has_errors() {
             ScanCssImportsResult::Errors
         } else {
             ScanCssImportsResult::Ok
@@ -2884,7 +2884,7 @@ struct ImportMatcher<'m, 'a> {
     output_format: Format,
     symbols: &'m mut bun_ast::symbol::Map,
     cycle_detector: &'m mut Vec<ImportTracker>,
-    log: &'m mut Log,
+    log: &'m Log,
 }
 
 impl<'m, 'a> ImportMatcher<'m, 'a> {
@@ -3911,7 +3911,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
     /// recording the bindings in its `imports_to_bind`.
     pub(crate) fn match_imports_with_exports_for_file(
         &mut self,
-        log: &mut Log,
+        log: &Log,
         cycle_detector: &mut Vec<ImportTracker>,
         source_index: crate::IndexInt,
         member_resolutions: &mut ImportMemberResolutions,
@@ -4223,7 +4223,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
     #[inline]
     pub(crate) fn generate_code_for_lazy_export(
         &mut self,
-        log: &mut Log,
+        log: &Log,
         source_index: crate::IndexInt,
     ) -> Result<(), AllocError> {
         crate::linker_context::generate_code_for_lazy_export::generate_code_for_lazy_export(

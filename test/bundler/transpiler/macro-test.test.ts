@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, tempDir } from "harness";
 import { existsSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -969,5 +969,112 @@ describe("macro VM env loader", () => {
     const [withMacro, withoutMacro] = await Promise.all([build("./with-macro.ts"), build("./without-macro.ts")]);
     expect(withoutMacro).toEqual({ resolved: false, unresolved: true, exitCode: 1 });
     expect(withMacro).toEqual(withoutMacro);
+  });
+});
+
+describe("errors in a file that calls a macro", () => {
+  test.concurrent("an unknown node: import is named when the macro's module is already loaded", async () => {
+    const result = await run({
+      "macro.ts": `export const one = () => 1, two = () => 2;`,
+      "first.ts": `import { one } from "./macro.ts" with { type: "macro" };\nexport default one();`,
+      "second.ts": `import { two } from "./macro.ts" with { type: "macro" };\nimport "node:nope";\nexport default two();`,
+      "index.ts": `require("./first.ts");\ntry { require("./second.ts"); } catch (e) { console.log(e.name + ": " + e.message); }`,
+    });
+    expect(result).toEqual({
+      lines: [`ResolveMessage: Could not resolve: "node:nope". Maybe you need to "bun install"?`],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent.each(["transformSync", "scan"])(
+    "Bun.Transpiler#%s throws the parse error when the macro uses the same transpiler",
+    async method => {
+      const result = await run({
+        "macro.ts": `export const again = () => globalThis.transpiler.transformSync("1").length;`,
+        "index.ts": `
+          globalThis.transpiler = new Bun.Transpiler({ loader: "ts" });
+          const macro = JSON.stringify(import.meta.dir + "/macro.ts");
+          try {
+            transpiler.${method}(\`import { again } from \${macro} with { type: "macro" }; again(); const y = 1; y = 2;\`);
+          } catch (e) {
+            console.log(e.name + ": " + e.message);
+          }
+        `,
+      });
+      expect(result).toEqual({
+        lines: [`BuildMessage: This assignment will throw because "y" is a constant`],
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+});
+
+describe("log level in a macro", () => {
+  // Runs `body`, in which macros send `count` requests, and returns the requests that were printed as verbose.
+  async function verboseRequests(files: Record<string, string>, count: number, body: string) {
+    using dir = tempDir("macro-log-level", {
+      ...files,
+      "macro.ts": `
+        import { readFileSync } from "node:fs";
+        export const one = () => 1;
+        export const request = () => void fetch(readFileSync(import.meta.dir + "/url", "utf8") + "from-macro");
+      `,
+      "index.ts": `
+        const { promise, resolve } = Promise.withResolvers();
+        let left = ${count};
+        const server = Bun.serve({ port: 0, fetch: () => (--left === 0 && resolve(), new Response()) });
+        await Bun.write("url", server.url.href);
+        ${body}
+        await promise;
+        // One thread sends all requests, and prints each right after it has sent it.
+        await fetch(server.url, { verbose: false });
+        console.log("done");
+        process.exit(0);
+      `,
+    });
+    // Not `run`: `bun run` does not apply the logLevel of bunfig.toml.
+    const { stdout, stderr, exitCode } = await bunRun(path.join(String(dir), "index.ts"), {
+      UV_THREADPOOL_SIZE: "2",
+      // A Worker does not free its tables of macros, nor a pool thread the `Response`s in its macro VM.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+    });
+    return {
+      verbose: stderr.split("\n").filter(line => line.includes("/from-macro")).length,
+      stdout: stdout.replace(/^\[macro\] call .*\n/gm, ""),
+      exitCode,
+    };
+  }
+  const calls = (name: string) =>
+    `import { ${name} } from "./macro.ts" with { type: "macro" };\nexport default ${name}();`;
+  const transforms = (name: string) => `
+    const code = ${JSON.stringify(calls(name))}.replace('"./macro.ts"', () => JSON.stringify(import.meta.dir + "/macro.ts"));
+    const transpiler = new Bun.Transpiler({ loader: "ts", logLevel: "debug" });
+    await Promise.all([0, 1, 2, 3].map(() => transpiler.transform(code)));
+  `;
+
+  test.concurrent("fetch is not verbose on a pool thread that served a verbose Bun.Transpiler", async () => {
+    const files = Object.fromEntries([0, 1, 2, 3].map(i => [`imported${i}.ts`, calls("request")]));
+    const imports = `await Promise.all([0, 1, 2, 3].map(i => import("./imported" + i + ".ts")));`;
+    expect(await verboseRequests(files, 4, transforms("one") + imports)).toEqual({
+      verbose: 0,
+      stdout: "done",
+      exitCode: 0,
+    });
+  });
+
+  const debug = {
+    "bunfig.toml": `logLevel = "debug"`,
+    "entry.ts": calls("request"),
+    "worker.ts": `require("./entry.ts");`,
+  };
+  test.concurrent.each([
+    ["not by the logLevel of a Bun.Transpiler", {}, 4, transforms("request"), 0],
+    ["by bunfig.toml on the main thread", debug, 1, `require("./entry.ts");`, 1],
+    ["by bunfig.toml on a pool thread", debug, 1, `await import("./entry.ts");`, 1],
+    ["not by bunfig.toml in a Worker", debug, 1, `new Worker("./worker.ts");`, 0],
+  ])("fetch is made verbose %s", async (_, files, count, body, verbose) => {
+    expect(await verboseRequests(files, count, body)).toEqual({ verbose, stdout: "done", exitCode: 0 });
   });
 });

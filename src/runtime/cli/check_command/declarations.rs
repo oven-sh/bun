@@ -39,7 +39,7 @@ pub(crate) fn take_module_types() -> Vec<ModuleTypes> {
     std::mem::take(&mut *MODULE_TYPES.lock())
 }
 
-pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
+pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &bun_ast::Log) -> bool {
     let TypeChecked {
         cwd,
         tsconfig,
@@ -149,18 +149,14 @@ pub(super) fn bundler_path(path: &[u8]) -> Vec<u8> {
     path
 }
 
-fn add_to_log(report: &Report, log: &mut bun_ast::Log) {
+fn add_to_log(report: &Report, log: &bun_ast::Log) {
     for reported in &report.diagnostics {
         let kind = match reported.category {
             Category::Error => bun_ast::Kind::Err,
             Category::Warning => bun_ast::Kind::Warn,
             Category::Suggestion | Category::Message => continue,
         };
-        match kind {
-            bun_ast::Kind::Err => log.errors += 1,
-            _ => log.warnings += 1,
-        }
-        log.add_msg(bun_ast::Msg {
+        log.add_counted_msg(bun_ast::Msg {
             kind,
             data: log_data_of(reported),
             metadata: format::metadata_of(reported),

@@ -841,9 +841,10 @@ describe.concurrent("Bun REPL", () => {
   });
 
   describe("-e / --eval and -p / --print", () => {
-    async function runReplWith(args: string[]) {
+    async function runReplWith(args: string[], cwd?: string) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "repl", ...args],
+        cwd,
         stdout: "pipe",
         stderr: "pipe",
         env: { ...bunEnv, NO_COLOR: "1" },
@@ -1030,6 +1031,25 @@ describe.concurrent("Bun REPL", () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-e", "console.log(this.Math === Math)"]);
       expect(stderr).toBe("");
       expect(stdout).toBe("true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("an HTML route is bundled with the [serve.static] settings of bunfig.toml", async () => {
+      using dir = tempDir("repl-serve-static", {
+        "bunfig.toml": `[serve.static]\nminify = false\nsourcemap = "inline"\ndefine = { FROM_BUNFIG = '"defined"' }\n`,
+        "index.html": `<script type="module" src="./app.js"></script>`,
+        "app.js": `const longName = FROM_BUNFIG; console.log(longName, longName);`,
+        "serve.js": `
+          import html from "./index.html";
+          using server = Bun.serve({ port: 0, development: false, routes: { "/": html } });
+          const page = await (await fetch(server.url)).text();
+          const js = await (await fetch(new URL(/src="([^"]+)"/.exec(page)[1], server.url))).text();
+          console.log(js.includes('var longName = "defined";'), js.includes("//# sourceMappingURL=data:"));
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runReplWith(["-e", "await import('./serve.js')"], String(dir));
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true true\n");
       expect(exitCode).toBe(0);
     });
   });

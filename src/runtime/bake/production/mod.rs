@@ -114,7 +114,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
         smol: ctx.runtime_options.smol,
         ..Default::default()
     };
-    let vm = VirtualMachine::init_bake(ctx.log, vm_options)?;
+    let vm = VirtualMachine::init_bake(ctx.log(), vm_options)?;
 
     vm.event_loop().ensure_waker();
     vm.preload.set(ctx.preloads.clone());
@@ -171,9 +171,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     if vm.transpiler.with_mut(|t| t.configure_defines()).is_err() {
         fail_with_build_error(vm);
     }
-    // `vm.log` was set from `ctx.log` above (non-null, process-lifetime);
-    // `log_mut()` is the safe accessor encapsulating the NonNull deref.
-    bun_http::async_http::load_env(vm.log_mut().unwrap(), vm.env_loader());
+    bun_http::async_http::load_env(vm.log, vm.env_loader());
     vm.load_extra_env();
     vm.is_main_thread.set(true);
     jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
@@ -208,11 +206,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
 #[cold]
 #[inline(never)]
 fn fail_with_build_error(vm: &VirtualMachine) -> ! {
-    // `vm.log` is the process-lifetime ctx.log set in build_command;
-    // `log_ref()` is the safe accessor encapsulating the NonNull deref.
-    if let Some(log) = vm.log_ref() {
-        let _ = log.print(Output::error_writer());
-    }
+    let _ = vm.log.print(Output::error_writer());
     Global::exit(1);
 }
 
@@ -383,14 +377,11 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     loader.map.put(b"NODE_ENV", b"production")?;
     dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader>(loader));
 
-    // `vm.log` is set from `ctx.log` (non-null, process-lifetime);
-    // `log_mut()` is the safe accessor encapsulating the NonNull deref.
-    let vm_log = vm.log_mut().unwrap();
     let unresolved_view = framework.as_bundler_view();
-    let mut init_transpiler = |renderer, bundler_options| {
+    let init_transpiler = |renderer, bundler_options| {
         framework.init_transpiler(
             &options.arena,
-            vm_log,
+            vm.log,
             bake::Mode::ProductionStatic,
             renderer,
             &unresolved_view,
@@ -438,8 +429,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         .is_err()
     {
         if framework.is_built_in_react {
-            // SAFETY: `server_transpiler.log` is the process-lifetime ctx.log.
-            bake::Framework::add_react_install_command_note(unsafe { &mut *server_transpiler.log });
+            bake::Framework::add_react_install_command_note(server_transpiler.log());
         }
         bun_core::err_generic!("Failed to resolve all imports required by the framework");
         Output::flush();

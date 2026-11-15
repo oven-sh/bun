@@ -138,19 +138,18 @@ pub(crate) fn install_hoisted_packages(
     let places = {
         // `lockfile` is `Box<Lockfile>` so the heap object
         // is disjoint from the `PackageManager` struct; snapshot raw `*mut
-        // Lockfile` and `*mut Log` first so `filter` can hold `&mut Lockfile`
+        // Lockfile` first so `filter` can hold `&mut Lockfile`
         // and `&mut PackageManager` simultaneously through `mgr_ptr`'s
         // provenance root.
-        let log: *mut bun_ast::Log = this.log;
+        let log = this.log();
         // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
         // via `Box`, so `*mut Lockfile` does not overlap `*mut PackageManager`.
         let lockfile_ptr: *mut crate::lockfile::Lockfile = unsafe { &raw mut *(*mgr_ptr).lockfile };
-        // SAFETY: `log` is the always-live logger backref (never null);
-        // `mgr_ptr` see shadow-reborrow above.
+        // SAFETY: `mgr_ptr` see shadow-reborrow above.
         unsafe {
             (*lockfile_ptr)
                 .filter(
-                    &mut *log,
+                    log,
                     &mut *mgr_ptr,
                     install_root_dependencies,
                     workspace_filters,
@@ -340,6 +339,7 @@ pub(crate) fn install_hoisted_packages(
                 pkg_name_hashes,
                 resolutions,
                 lockfile: lockfile_ptr,
+                log: this.log(),
                 root_node_modules_folder: node_modules_folder,
                 staging_lock: None,
                 tree_dir: None,

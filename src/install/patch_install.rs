@@ -127,7 +127,7 @@ fn resolve_patchfile_path<'a>(
 /// `log` may outlive `source`.
 pub(crate) fn parse_patch_source<'a>(
     source: &'a Source<'a>,
-    log: &mut Log,
+    log: &Log,
 ) -> Option<bun_patch::PatchFile<'a>> {
     let at = |offset: usize| Range {
         loc: Loc {
@@ -267,7 +267,7 @@ impl PatchTask {
         let Callback::Apply(apply) = &mut self.callback else {
             unreachable!()
         };
-        if apply.logger.errors > 0 {
+        if apply.logger.has_errors() {
             Output::err_generic(
                 "failed to apply patchfile ({})",
                 format_args!("{}", BStr::new(&apply.patchfilepath)),
@@ -396,7 +396,7 @@ impl PatchTask {
         let Callback::Apply(patch) = &mut self.callback else {
             unreachable!()
         };
-        let log = &mut patch.logger;
+        let log = &patch.logger;
 
         let dir = self.project_dir;
         let patchfile_path = &patch.patchfilepath;
@@ -533,7 +533,7 @@ impl PatchTask {
         if calc_hash.result.is_some() {
             return calc_hash.result;
         }
-        let log = &mut calc_hash.logger;
+        let log = &calc_hash.logger;
 
         let dir = self.project_dir;
         let patchfile_path = &calc_hash.patchfile_path;

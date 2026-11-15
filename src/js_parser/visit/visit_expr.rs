@@ -27,7 +27,7 @@ use js_ast::OpCode as Op;
 // The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
 // `visit_expr_in_out` are surfaced.
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SCAN_ONLY> {
     // PERF(port:noalias): `e: &mut Expr` is lowered to a `noalias` LLVM param, so reads
     // through `e` can be cached in registers across child recursion. The by-value
     // `Expr -> Expr` shape moved 24B in + 24B out per frame; the in-place form moves 8B
@@ -2447,11 +2447,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .name
                         .slice()
                 });
-                let start_error_count = p.log().msgs.len();
+                let start_error_count = p.log().msgs_len();
                 p.macro_call_count += 1;
                 let Ok(macro_result) = p.call_macro(macro_ref_data.import_record_id, expr, name)
                 else {
-                    if p.log().msgs.len() == start_error_count {
+                    if p.log().msgs_len() == start_error_count {
                         p.log()
                             .add_error(Some(p.source), expr.loc, b"macro threw exception");
                     }

@@ -182,14 +182,15 @@ mod tests {
             ReportEntry::line(ExplainSet::ALLOCATIONS, b"b".to_vec()),
             ReportEntry::line(ExplainSet::CHECKS, b"c".to_vec()),
         ];
-        let mut log = Log::init();
-        add_messages_to_log(messages_of(&entries), &mut log);
+        let log = Log::init();
+        add_messages_to_log(messages_of(&entries), &log);
         let texts: Vec<BString> = log
             .msgs
+            .take()
             .iter()
             .map(|message| BString::from(&message.data.text[..]))
             .collect();
         assert_eq!(texts, ["a", "c"]);
-        assert_eq!((log.errors, log.warnings), (0, 0));
+        assert_eq!((log.errors.get(), log.warnings.get()), (0, 0));
     }
 }

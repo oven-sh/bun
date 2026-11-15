@@ -29,7 +29,7 @@ type TrustedDependenciesSet =
 /// Trust comes from what the package.json files say now, like for an install. Returns what the
 /// lockfile had recorded.
 pub(crate) fn read_trusted_dependencies(pm: &mut PackageManager) -> Option<TrustedDependenciesSet> {
-    let log = pm.log_mut();
+    let log = pm.log();
     match pm
         .lockfile
         .read_trusted_dependencies_from_manifests(&mut pm.workspace_package_json_cache, log)
@@ -74,6 +74,7 @@ impl Blocked {
     /// run, and every other package needs trust.
     fn scripts_at(
         pm: &PackageManager,
+        log: &bun_ast::Log,
         dep_id: DependencyID,
         package_id: PackageID,
         folder: &mut AutoAbsPath,
@@ -101,7 +102,7 @@ impl Blocked {
 
         let mut scripts = packages.items_scripts()[package_id];
         // Pass `true` to get the scripts that will run once the package is trusted.
-        match scripts.get_list(pm.log_mut(), folder, alias, resolution, true) {
+        match scripts.get_list(log, folder, alias, resolution, true) {
             Ok(list) => Ok(list.filter(|list| list.total > 0)),
             Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => Ok(None),
             Err(e) => Err(e.into()),
@@ -109,19 +110,20 @@ impl Blocked {
     }
 
     fn find_all(pm: &mut PackageManager, linker: NodeLinker) -> crate::Result<Vec<Blocked>> {
+        let log = pm.log();
         // If there is no `node_modules/.bun`, another tool created `node_modules`. In that case,
         // look for each package where it resolves from.
         let mut store = AutoAbsPath::init_top_level_dir();
         let _ = store.append(b"node_modules/.bun");
         if linker == NodeLinker::Isolated && bun_sys::exists(store.slice()) {
-            return Self::find_in_store(pm);
+            return Self::find_in_store(pm, log);
         }
         // The tree saved in the lockfile also has the dependencies that packages bundle, and no
         // install runs the scripts of those. The install tree leaves them out.
-        bun_install::prune::with_install_tree(pm, Self::find_in_tree)?
+        bun_install::prune::with_install_tree(pm, |pm| Self::find_in_tree(pm, log))?
     }
 
-    fn find_in_store(pm: &PackageManager) -> crate::Result<Vec<Blocked>> {
+    fn find_in_store(pm: &PackageManager, log: &bun_ast::Log) -> crate::Result<Vec<Blocked>> {
         let lockfile: &Lockfile = &pm.lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
 
@@ -143,7 +145,8 @@ impl Blocked {
                 lockfile.packages.items_name()[folder.pkg_id as usize]
             };
             let _ = path.append(name.slice(buf));
-            let Some(scripts_list) = Self::scripts_at(pm, folder.dep_id, folder.pkg_id, &mut path)?
+            let Some(scripts_list) =
+                Self::scripts_at(pm, log, folder.dep_id, folder.pkg_id, &mut path)?
             else {
                 continue;
             };
@@ -162,7 +165,7 @@ impl Blocked {
         Ok(blocked)
     }
 
-    fn find_in_tree(pm: &PackageManager) -> crate::Result<Vec<Blocked>> {
+    fn find_in_tree(pm: &PackageManager, log: &bun_ast::Log) -> crate::Result<Vec<Blocked>> {
         let lockfile: &Lockfile = &pm.lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
@@ -194,7 +197,9 @@ impl Blocked {
                         .name
                         .slice(buf),
                 );
-                if let Some(scripts_list) = Self::scripts_at(pm, dep_id, package_id, &mut path)? {
+                if let Some(scripts_list) =
+                    Self::scripts_at(pm, log, dep_id, package_id, &mut path)?
+                {
                     blocked.push(Blocked {
                         dep_id,
                         package_id,
@@ -588,20 +593,16 @@ impl TrustCommand {
         );
 
         let bump = Bump::new();
-        // SAFETY: `ctx.log` set by `Command::init`, non-null for the command.
-        let mut package_json: bun_ast::Expr = match bun_parsers::json::parse_utf8(
-            &package_json_source,
-            unsafe { ctx.log_mut() },
-            &bump,
-        ) {
-            Ok(v) => v,
-            Err(err) => {
-                let _ = ctx.log_ref().print(Output::error_writer());
+        let mut package_json: bun_ast::Expr =
+            match bun_parsers::json::parse_utf8(&package_json_source, ctx.log(), &bump) {
+                Ok(v) => v,
+                Err(err) => {
+                    let _ = ctx.log().print(Output::error_writer());
 
-                Output::err_generic("failed to parse package.json: {s}", (err.name(),));
-                Global::crash();
-            }
-        };
+                    Output::err_generic("failed to parse package.json: {s}", (err.name(),));
+                    Global::crash();
+                }
+            };
 
         let mut total_scripts_ran: usize = 0;
         let mut total_packages_with_scripts: usize = 0;

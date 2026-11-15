@@ -36,12 +36,14 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // `Options::arena` doc — "must live until DevServer drops").
     let arena: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
     let unresolved_view = options.framework.as_bundler_view();
-    let mut log = Log::init();
-    let mut init_transpiler = |renderer, bundler_options| {
+    let log: &'static Log = arena.alloc(Log::init());
+    // The arena does not run `Drop`.
+    let free_log = scopeguard::guard(log, Log::clear_and_free);
+    let init_transpiler = |renderer, bundler_options| {
         (options.framework)
             .init_transpiler(
                 arena,
-                &mut log,
+                log,
                 bake::Mode::Development,
                 renderer,
                 &unresolved_view,
@@ -119,7 +121,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             server_transpiler,
             client_transpiler,
             ssr_transpiler,
-            log,
+            log: scopeguard::ScopeGuard::into_inner(free_log),
             plugin_state: PluginState::Unknown,
             current_bundle: None,
             next_bundle: NextBundle {
@@ -154,11 +156,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     }
 
     let watcher = Some(Arc::clone(&dev.bun_watcher));
-    // The transpilers still point at the local that `log` moved out of.
-    let log = &raw mut dev.log;
     for transpiler in dev.transpilers_mut() {
-        transpiler.set_log(log);
-        transpiler.options.log = log;
         transpiler.options.dev_server = dev_ptr as *const ();
         transpiler.resolver.watcher.clone_from(&watcher);
     }
@@ -175,7 +173,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         .is_err()
     {
         if dev.framework.is_built_in_react {
-            bake::Framework::add_react_install_command_note(&mut dev.log);
+            bake::Framework::add_react_install_command_note(dev.log);
         }
         return Err(global.throw_value(dev.log.to_js_aggregate_error(
             global,
@@ -488,6 +486,9 @@ impl Drop for DevServer {
                 EntryPointList::empty(),
             ));
         }
+
+        // The log is in the arena, which does not run `Drop`.
+        self.log.clear_and_free();
 
         debug_assert!(self.magic == Magic::Valid);
         // self.magic = undefined — no Rust equivalent; freed memory.

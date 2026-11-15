@@ -210,7 +210,7 @@ impl UpdateInteractiveCommand {
     fn save_package_json(
         package_json: &mut WorkspacePackageJsonCacheEntry,
         package_json_path: &[u8],
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
     ) -> crate::Result<()> {
         // The install reads this cache entry, not the file.
         if let Err(err) = package_json.save(package_json.root, log) {
@@ -277,7 +277,7 @@ impl UpdateInteractiveCommand {
     fn load_package_json<'a>(
         manager: &'a mut PackageManager,
         package_json_path: &[u8],
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
     ) -> Option<&'a mut WorkspacePackageJsonCacheEntry> {
         match manager.workspace_package_json_cache.get_with_path(
             log,
@@ -326,7 +326,7 @@ impl UpdateInteractiveCommand {
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
-            let log = manager.log_mut();
+            let log = manager.log();
             let Some(package_json) = Self::load_package_json(manager, package_json_path, log)
             else {
                 continue;
@@ -386,7 +386,7 @@ impl UpdateInteractiveCommand {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let package_json_path = Self::build_package_json_path(root_dir, b"", &mut path_buf);
 
-        let log = manager.log_mut();
+        let log = manager.log();
         let Some(package_json) = Self::load_package_json(manager, package_json_path, log) else {
             return Ok(());
         };

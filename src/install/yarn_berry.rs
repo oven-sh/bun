@@ -42,7 +42,7 @@ macro_rules! bail {
 
 #[cold]
 #[inline(never)]
-fn invalid_lockfile(log: &mut bun_ast::Log, args: core::fmt::Arguments<'_>) -> Error {
+fn invalid_lockfile(log: &bun_ast::Log, args: core::fmt::Arguments<'_>) -> Error {
     log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
     Error::InvalidYarnBerryLockfile
 }
@@ -257,7 +257,7 @@ struct PackageExtension {
 
 /// The first value found wins: `YARN_*` variables, then the rc file of the project, of each parent
 /// folder, and of the home folder.
-fn read_yarnrc(log: &mut bun_ast::Log, manager: &PackageManager) -> Result<YarnRc, Error> {
+fn read_yarnrc(log: &bun_ast::Log, manager: &PackageManager) -> Result<YarnRc, Error> {
     let env = |key: &[u8]| -> Option<&[u8]> {
         manager
             .env
@@ -335,7 +335,7 @@ fn read_yarnrc(log: &mut bun_ast::Log, manager: &PackageManager) -> Result<YarnR
 }
 
 fn read_yarnrc_file(
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     out: &mut YarnRc,
     folder: &[u8],
     rc_name: &[u8],
@@ -352,10 +352,10 @@ fn read_yarnrc_file(
     let source = bun_ast::Source::init_path_string(path.as_slice(), data.as_slice());
     let arena = bun_alloc::Arena::new();
     // The parser's messages point into `path` and `data`, which `log` outlives.
-    let mut parse_log = bun_ast::Log::init();
+    let parse_log = bun_ast::Log::init();
     let Ok(root) = bun_parsers::yaml::YAML::parse(
         &source,
-        &mut parse_log,
+        &parse_log,
         &arena,
         bun_parsers::yaml::CyclicAliases::Reject,
     ) else {
@@ -582,7 +582,7 @@ struct Workspace {
 
 fn package_json<'a>(
     manager: &'a mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     abs_path: &[u8],
     options: GetJsonOptions,
 ) -> Result<&'a mut WorkspacePackageJsonCacheEntry, Error> {
@@ -596,7 +596,7 @@ fn package_json<'a>(
 pub(crate) fn migrate_yarn_berry_lockfile(
     this: &mut Lockfile,
     manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     data: &[u8],
 ) -> Result<LoadResult, Error> {
     this.init_empty();
@@ -665,7 +665,7 @@ pub(crate) fn migrate_yarn_berry_lockfile(
                 dep_name.hash,
                 sliced.slice,
                 &sliced,
-                Some(&mut *log),
+                Some(log),
                 None,
             ) else {
                 continue;
@@ -1483,7 +1483,7 @@ pub(crate) fn migrate_yarn_berry_lockfile(
 /// A registry that yarn's configuration names for the package has to be the one bun uses.
 fn registry_for(
     manager: &PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     yarnrc: &YarnRc,
     name: &[u8],
 ) -> Result<Vec<u8>, Error> {
@@ -1563,7 +1563,7 @@ fn is_git_reference(head: &[u8]) -> bool {
 /// locked.
 fn git_resolution(
     this: &mut Lockfile,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     name: &[u8],
     head: &[u8],
 ) -> Result<Resolution, Error> {
@@ -1707,7 +1707,7 @@ struct Extended<'a> {
 /// Returns the dependencies that were added because of `extended`.
 fn append_entry_dependencies(
     this: &mut Lockfile,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     pkg: &mut lockfile::Package,
     source: &[u8],
     entry_name: &[u8],
@@ -1874,7 +1874,7 @@ fn extensions_of<'a>(
 /// From a package.json, with the same groups and duplicate handling as `Package::parse`.
 fn append_manifest_dependencies(
     this: &mut Lockfile,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     pkg: &mut lockfile::Package,
     manifest: &Expr,
     root_workspaces: Option<&Vec<Workspace>>,
@@ -2028,7 +2028,7 @@ fn range_before_rewrite(range: &[u8]) -> Option<Vec<u8>> {
 
 fn append_dependency(
     this: &mut Lockfile,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     name: &[u8],
     spec: &[u8],
     behavior: Behavior,
@@ -2041,7 +2041,7 @@ fn append_dependency(
         name.hash,
         sliced.slice,
         &sliced,
-        Some(&mut *log),
+        Some(log),
         None,
     )
     .unwrap_or_default();
@@ -2124,7 +2124,7 @@ fn extensions_object(extensions: &[PackageExtension]) -> Expr {
 /// Leaves existing keys alone. Edits the cached tree and returns what changed.
 fn edit_package_json(
     manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     abs_path: &[u8],
     rewrites: &Rewrites,
     patched: &[(Vec<u8>, Vec<u8>)],

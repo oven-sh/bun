@@ -1194,8 +1194,8 @@ fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<bun_core::MutableStrin
     options.features.no_macros = true;
     options.features.top_level_await = true;
     let define = bun_js_parser::Define::default();
-    let mut log = bun_ast::Log::init();
-    let parser = bun_js_parser::Parser::init(options, &mut log, &source, &define, &arena).ok()?;
+    let log = bun_ast::Log::init();
+    let parser = bun_js_parser::Parser::init(options, &log, &source, &define, &arena).ok()?;
     let bun_js_parser::Result::Ast(mut ast) = parser.parse().ok()? else {
         return None;
     };

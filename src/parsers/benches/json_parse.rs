@@ -56,14 +56,14 @@ fn bench_json(c: &mut Criterion) {
             let mut bump = Bump::new();
             b.iter(|| {
                 let _store_scope = js_ast::StoreResetGuard::new();
-                let mut log = js_ast::Log::init();
+                let log = js_ast::Log::init();
                 bump.reset();
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
                 let opts = json::JSONOptions {
                     json_warn_duplicate_keys: false,
                     ..json::JSONOptions::DEFAULT
                 };
-                let e = json::parse_package_json_utf8_with_opts(opts, &source, &mut log, &bump)
+                let e = json::parse_package_json_utf8_with_opts(opts, &source, &log, &bump)
                     .expect("parse failed");
                 std::hint::black_box(&e);
             })
@@ -71,10 +71,9 @@ fn bench_json(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("parse_rows", &name), |b| {
             b.iter(|| {
                 let _store_scope = js_ast::StoreResetGuard::new();
-                let mut log = js_ast::Log::init();
+                let log = js_ast::Log::init();
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
-                let e =
-                    json::ParsedJson::parse_npm_manifest(&source, &mut log).expect("parse failed");
+                let e = json::ParsedJson::parse_npm_manifest(&source, &log).expect("parse failed");
                 std::hint::black_box(&e);
             })
         });
@@ -82,14 +81,14 @@ fn bench_json(c: &mut Criterion) {
             let mut bump = Bump::new();
             b.iter(|| {
                 let _store_scope = js_ast::StoreResetGuard::new();
-                let mut log = js_ast::Log::init();
+                let log = js_ast::Log::init();
                 bump.reset_retain_with_limit(64 << 20);
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
                 let opts = json::JSONOptions {
                     json_warn_duplicate_keys: false,
                     ..json::JSONOptions::DEFAULT
                 };
-                let e = json::parse_package_json_utf8_with_opts(opts, &source, &mut log, &bump)
+                let e = json::parse_package_json_utf8_with_opts(opts, &source, &log, &bump)
                     .expect("parse failed");
                 std::hint::black_box(&e);
             })
@@ -98,10 +97,10 @@ fn bench_json(c: &mut Criterion) {
             let mut bump = Bump::new();
             b.iter(|| {
                 let _store_scope = js_ast::StoreResetGuard::new();
-                let mut log = js_ast::Log::init();
+                let log = js_ast::Log::init();
                 bump.reset();
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
-                let e = json::parse_utf8(&source, &mut log, &bump).expect("parse failed");
+                let e = json::parse_utf8(&source, &log, &bump).expect("parse failed");
                 std::hint::black_box(&e);
             })
         });
@@ -111,10 +110,10 @@ fn bench_json(c: &mut Criterion) {
         let two = b"{}".to_vec();
         b.iter(|| {
             let _store_scope = js_ast::StoreResetGuard::new();
-            let mut log = js_ast::Log::init();
+            let log = js_ast::Log::init();
             let bump = Bump::new();
             let source = js_ast::Source::init_path_string("fixture.json", &two[..]);
-            let e = json::parse_utf8(&source, &mut log, &bump).expect("parse failed");
+            let e = json::parse_utf8(&source, &log, &bump).expect("parse failed");
             std::hint::black_box(&e);
         })
     });

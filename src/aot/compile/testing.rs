@@ -404,8 +404,8 @@ fn lower_application(project: &TestProject) -> Vec<(FileId, LoweredFile)> {
 }
 
 fn link_project(project: &TestProject) -> Result<LinkedProgram, BuildFailed> {
-    let mut log = Log::init();
-    link_program(&project.options(BUNDLED_LIBS), &WithoutServices, &mut log)
+    let log = Log::init();
+    link_program(&project.options(BUNDLED_LIBS), &WithoutServices, &log)
 }
 
 fn find_replaced_runtime_sources(runtime: &Files<'_>, files: &[(&str, &str)]) -> Vec<FileId> {
@@ -582,8 +582,8 @@ pub(crate) fn run_build<R>(
     let mut build = Build::new(&options, provider, &caches, project.limits.clone());
     build.keeps_library_code_without_names = project.keeps_library_code_without_names;
     let result = run(&mut build);
-    let mut log = Log::init();
-    match build.finish(result, &mut log) {
+    let log = Log::init();
+    match build.finish(result, &log) {
         Ok((value, _)) => value,
         Err(failed) => panic!(
             "the build failed in stage \"{}\":\n{}",
@@ -625,16 +625,18 @@ impl Drop for TemporaryDirectory {
 
 pub(crate) fn describe_messages(log: &Log) -> String {
     let mut text = String::new();
-    for message in &log.msgs {
-        if let Some(location) = &message.data.location {
-            let file = BStr::new(&location.file);
-            let _ = write!(text, "{file}:{}:{}: ", location.line, location.column);
+    log.with_msgs(|messages| {
+        for message in messages {
+            if let Some(location) = &message.data.location {
+                let file = BStr::new(&location.file);
+                let _ = write!(text, "{file}:{}:{}: ", location.line, location.column);
+            }
+            let _ = writeln!(text, "{}", BStr::new(&message.data.text));
+            for note in message.notes.iter() {
+                let _ = writeln!(text, "  {}", BStr::new(&note.text));
+            }
         }
-        let _ = writeln!(text, "{}", BStr::new(&message.data.text));
-        for note in message.notes.iter() {
-            let _ = writeln!(text, "  {}", BStr::new(&note.text));
-        }
-    }
+    });
     text
 }
 

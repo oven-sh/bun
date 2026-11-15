@@ -846,6 +846,9 @@ fn start_second_process(
         Some(Ok(descriptor)) => Some(descriptor),
         Some(Err(error)) => exit_write_failed(&error),
     };
+    // Fails for a file that is no memfd.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let _ = descriptor.map(bun_sys::seal_memfd);
     let descriptor_text = descriptor.map(|descriptor| descriptor.native().to_string());
     let descriptor_text = descriptor_text
         .as_ref()
@@ -1046,7 +1049,7 @@ fn parse_descriptor(text: &[u8]) -> Option<Fd> {
 #[cold]
 #[inline(never)]
 pub(crate) fn use_graph_descriptor(text: &[u8]) {
-    if Graph::get().is_some() {
+    if Graph::get_ref().is_some() {
         return;
     }
     let Some(descriptor) = parse_descriptor(text) else {
@@ -1056,7 +1059,9 @@ pub(crate) fn use_graph_descriptor(text: &[u8]) {
         );
         Global::exit(1)
     };
-    let failure = match Graph::from_descriptor(descriptor) {
+    // SAFETY: the Bun that passes this flag has finished writing the file, and this one only reads it. Script can
+    // still write to `descriptor` by its number, unless `start_second_process` could seal it.
+    let failure = match unsafe { Graph::from_descriptor(descriptor) } {
         Ok(Some(_)) => {
             IS_FROM_DESCRIPTOR.store(true, Ordering::Relaxed);
             let _ = GRAPH_DESCRIPTOR.set(descriptor);
@@ -1138,7 +1143,7 @@ pub(crate) const PROGRAM_FILE_FLAG: &[u8] = b"--aot-program-file=";
 #[cfg(not(bun_locked_environment))]
 #[cold]
 #[inline(never)]
-pub(crate) fn load_program_file() -> bun_standalone_graph::Result<Option<*mut Graph>> {
+pub(crate) fn load_program_file() -> bun_standalone_graph::Result<Option<&'static Graph>> {
     use bun_paths::resolve_path::{join_abs_string, platform};
     use bun_resolver::compiled_program::{FILE_IN_PLACE_OF_EXECUTABLE, FileInPlaceOfExecutable};
 
@@ -1167,7 +1172,8 @@ pub(crate) fn load_program_file() -> bun_standalone_graph::Result<Option<*mut Gr
     // As an executable is Bun there.
     let graph = match env_var::feature_flag::BUN_BE_BUN::get().unwrap_or(false) {
         true => None,
-        false => match Graph::from_descriptor_at(descriptor, offset)? {
+        // SAFETY: `descriptor` is read-only. The test that starts the file leaves it alone while it runs.
+        false => match unsafe { Graph::from_descriptor_at(descriptor, offset)? } {
             Some(graph) => Some(graph),
             None => Graph::exit_without_program(),
         },

@@ -120,9 +120,38 @@ pub struct FileInPlaceOfExecutable {
     pub can_be_started: bool,
 }
 
+/// Not a `&[u8]`: `JSC::AOT::useImage` relocates the image in place. Mirrors `BunAOTBytes` (BunAOTCompile.h).
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct LoadedImage {
+    ptr: *mut u8,
+    len: usize,
+}
+
+// SAFETY: only `bun_jsc::compiled_program` passes the bytes on. `use_image` writes to them once, under its `Once`,
+// while the main thread creates its VM. No other thread reads them before that VM runs script.
+unsafe impl Send for LoadedImage {}
+// SAFETY: as above.
+unsafe impl Sync for LoadedImage {}
+
+impl LoadedImage {
+    /// # Safety
+    /// `bytes` stays mapped, and is not borrowed, while the result or a copy of it is in use.
+    pub unsafe fn from_raw(bytes: *mut [u8]) -> LoadedImage {
+        LoadedImage {
+            ptr: bytes.cast(),
+            len: bytes.len(),
+        }
+    }
+
+    pub fn as_ptr(self) -> *mut [u8] {
+        core::ptr::slice_from_raw_parts_mut(self.ptr, self.len)
+    }
+}
+
 pub struct CompiledProgram {
     /// Every image of the executable, one behind the other. The first is that of the program the process starts with.
-    pub image: &'static [u8],
+    pub image: LoadedImage,
     /// Where `image` begins.
     pub backing_file: Option<ImageFile>,
     /// Ascending by `file_index`.
@@ -688,7 +717,7 @@ fn read_refused_data<'a>(rest: &mut &'a [u8]) -> Option<(&'a [u8], RefusedData<'
 
 impl CompiledProgram {
     pub fn new(
-        image: &'static [u8],
+        image: LoadedImage,
         backing_file: Option<ImageFile>,
         entry_points: Box<[CompiledEntryPoint]>,
         source_path_order: Box<[u32]>,
@@ -1662,7 +1691,13 @@ mod tests {
             }
         });
         let order = Box::new(source_path_order);
-        CompiledProgram::new(b"image", None, entry_points.collect(), order, false)
+        CompiledProgram::new(
+            LoadedImage::default(),
+            None,
+            entry_points.collect(),
+            order,
+            false,
+        )
     }
 
     fn source_paths_in(program: &CompiledProgram, directory: &[u8]) -> Vec<&'static [u8]> {
@@ -1763,7 +1798,7 @@ mod tests {
 
         fn program_with_lookup(preserves_source_paths: bool) -> CompiledProgram {
             let program = CompiledProgram::new(
-                b"image",
+                LoadedImage::default(),
                 None,
                 Box::new([]),
                 Box::new([]),
@@ -1786,7 +1821,13 @@ mod tests {
                 LOOKUPS.fetch_add(1, Relaxed);
                 find_module(path)
             }
-            let program = CompiledProgram::new(b"image", None, Box::new([]), Box::new([]), false);
+            let program = CompiledProgram::new(
+                LoadedImage::default(),
+                None,
+                Box::new([]),
+                Box::new([]),
+                false,
+            );
             program.set_module_lookup(count_and_find);
             program.set_test_of_path_starts(may_hold);
             assert_eq!(resolve_in(&program, ROOT, b"./absent"), None);
@@ -1923,7 +1964,8 @@ mod tests {
                 );
             let order = Box::new([1, 0]);
             let entry_points = Box::new(entry_points);
-            let program = CompiledProgram::new(b"image", None, entry_points, order, false);
+            let program =
+                CompiledProgram::new(LoadedImage::default(), None, entry_points, order, false);
             let found = program.entry_point_by_module_path(b"/$bunfs/root/x/b.ts");
             assert_eq!(found.map(|entry_point| entry_point.file_index), Some(1));
             assert_eq!(
@@ -2107,9 +2149,14 @@ mod tests {
                     target,
                     is_base_url,
                 });
-                let program =
-                    CompiledProgram::new(b"image", None, Box::new([]), Box::new([]), false)
-                        .with_path_aliases(Box::new(aliases));
+                let program = CompiledProgram::new(
+                    LoadedImage::default(),
+                    None,
+                    Box::new([]),
+                    Box::new([]),
+                    false,
+                )
+                .with_path_aliases(Box::new(aliases));
                 program.set_module_lookup(find_file);
                 let extensions = [Box::<[u8]>::from(&b".js"[..])];
                 let search = ExtensionSearch {
@@ -2241,7 +2288,7 @@ mod tests {
                     }
                 });
                 let program = CompiledProgram::new(
-                    b"image",
+                    LoadedImage::default(),
                     None,
                     entry_points.collect(),
                     order,
@@ -2467,9 +2514,14 @@ mod tests {
                         true,
                     ),
                 ];
-                let program =
-                    CompiledProgram::new(b"image", None, Box::new([main]), Box::new([0]), false)
-                        .with_package_names(Box::new(names));
+                let program = CompiledProgram::new(
+                    LoadedImage::default(),
+                    None,
+                    Box::new([main]),
+                    Box::new([0]),
+                    false,
+                )
+                .with_package_names(Box::new(names));
                 program.set_module_lookup(find_file);
                 program.set_test_of_path_starts(|start| FILES[0].starts_with(start));
                 assert_eq!(
@@ -2508,7 +2560,13 @@ mod tests {
 
         #[test]
         fn program_without_lookup_resolves_nothing() {
-            let program = CompiledProgram::new(b"image", None, Box::new([]), Box::new([]), false);
+            let program = CompiledProgram::new(
+                LoadedImage::default(),
+                None,
+                Box::new([]),
+                Box::new([]),
+                false,
+            );
             assert_eq!(resolve_in(&program, ROOT, b"./lib.cjs"), None);
         }
     }

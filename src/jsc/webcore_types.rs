@@ -175,14 +175,12 @@ pub struct Blob {
 }
 
 // SAFETY: `global_this` is dereferenced only on its owning JS thread; blobs
-// that cross threads (object-URL registry entries, the standalone-graph
-// template) carry a null global and a `make_thread_shareable()`d `name`;
+// in the object-URL registry carry a null global and a `make_thread_shareable()`d `name`;
 // `store` (`RefPtr<Store>`) / `content_type` are atomically refcounted and
 // `Store::is_all_ascii` is atomic.
 unsafe impl Send for Blob {}
 // SAFETY: concurrent `&Blob` access only occurs under `ObjectURLRegistry`'s
-// mutex, on the standalone-graph template (never written after its `OnceLock`
-// init; dupes only bump atomic refcounts), or on the single owning JS thread;
+// mutex or on the single owning JS thread;
 // the `Cell` fields are never raced with a writer.
 unsafe impl Sync for Blob {}
 

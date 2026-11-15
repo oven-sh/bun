@@ -1481,7 +1481,7 @@ describe.concurrent("bun test --isolate=modules", () => {
             const { left } = require("node:zlib");
             for (const deadline = performance.now() + 15_000; ; await new Promise(setImmediate)) {
               try { return left.reset(); }
-              catch (error) { if (performance.now() > deadline) throw error; }
+              catch (error) { if (!left || performance.now() > deadline) throw error; }
             }
           }, 20_000);
         `,

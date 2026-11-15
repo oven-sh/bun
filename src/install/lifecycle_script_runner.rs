@@ -557,7 +557,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     /// Posix-only: re-prime a recycled `PosixBufferedReader` for a fresh socket fd.
-    /// Only called from the `#[cfg(unix)]` branch of [`Self::watch`]; on Windows
+    /// Only called from the `#[cfg(unix)]` branch of [`Self::start_readers`]; on Windows
     /// the `OutputReader` is a `WindowsBufferedReader` (libuv-pipe-backed) and this fn is dead.
     #[cfg(unix)]
     fn reset_output_flags(output: &OutputReader, fd: Fd) {

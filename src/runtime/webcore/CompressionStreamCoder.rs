@@ -484,19 +484,18 @@ impl CompressionStreamCoder {
             Backend::ZstdEncode(p) => {
                 // ZSTD_EndDirective: 0 = ZSTD_e_continue, 2 = ZSTD_e_end.
                 let end: core::ffi::c_uint = if finish { 2 } else { 0 };
-                let mut rest = input;
+                let mut remaining = input;
                 loop {
                     if out.len() >= cap {
                         return Ok(Progress::More {
-                            consumed: input.len() - rest.len(),
+                            consumed: input.len() - remaining.len(),
                         });
                     }
-                    let ((consumed, remaining), _) =
-                        append_step(out, cap, |spare| p.step((rest, spare), end))?;
-                    rest = &rest[consumed..];
-                    let remaining =
-                        remaining.map_err(|code| zstd_error(code, "zstd encode failed"))?;
-                    if rest.is_empty() && (!finish || remaining == 0) {
+                    let ((consumed, hint), _) =
+                        append_step(out, cap, |spare| p.step((remaining, spare), end))?;
+                    remaining = &remaining[consumed..];
+                    let hint = hint.map_err(|code| zstd_error(code, "zstd encode failed"))?;
+                    if remaining.is_empty() && (!finish || hint == 0) {
                         return Ok(Progress::Done);
                     }
                 }
@@ -504,13 +503,13 @@ impl CompressionStreamCoder {
             Backend::ZstdDecode(p) => {
                 // After a frame completes, whatever follows must be another frame
                 // magic (see `zstd_head`); `step` has already re-attached a split one.
-                let mut rest = input;
+                let mut remaining = input;
                 loop {
                     if self.ended {
-                        if rest.is_empty() {
+                        if remaining.is_empty() {
                             return Ok(Progress::Done);
                         }
-                        let head = &rest[..rest.len().min(4)];
+                        let head = &remaining[..remaining.len().min(4)];
                         if !Self::is_zstd_frame_prefix(head) {
                             return Err(CodecError::TrailingJunk);
                         }
@@ -527,17 +526,17 @@ impl CompressionStreamCoder {
                     }
                     if out.len() >= cap {
                         return Ok(Progress::More {
-                            consumed: input.len() - rest.len(),
+                            consumed: input.len() - remaining.len(),
                         });
                     }
-                    let ((consumed, remaining), has_room) =
-                        append_step(out, cap, |spare| p.step((rest, spare)))?;
-                    rest = &rest[consumed..];
-                    if remaining.map_err(|code| zstd_error(code, "zstd decode failed"))? == 0 {
+                    let ((consumed, hint), has_room) =
+                        append_step(out, cap, |spare| p.step((remaining, spare)))?;
+                    remaining = &remaining[consumed..];
+                    if hint.map_err(|code| zstd_error(code, "zstd decode failed"))? == 0 {
                         self.ended = true;
                         continue;
                     }
-                    if rest.is_empty() && has_room {
+                    if remaining.is_empty() && has_room {
                         if finish {
                             return Err(CodecError::Message("unexpected end of file"));
                         }

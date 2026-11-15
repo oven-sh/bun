@@ -4,7 +4,7 @@ use core::ops::Range;
 
 use scopeguard::ScopeGuard;
 
-use bun_core::compress::Ranges;
+use bun_core::compress::RawBuffers;
 use bun_jsc::bindgen::{JsLocal, JsPayload, JsScope, JsWrapper, StrongWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
@@ -48,7 +48,7 @@ pub(crate) fn crc32(data: &[u8], value: u32) -> u32 {
 pub(crate) trait CompressionContext: Send + 'static {
     fn set_flush(&mut self, flush: i32);
     fn flush_value_is_valid(flush: u32) -> bool;
-    fn do_work(&mut self, ranges: Ranges<'_>);
+    fn do_work(&mut self, buffers: RawBuffers<'_>);
     fn reset(&mut self) -> Result<(), Error>;
     /// `[avail_out, avail_in]`, the order `_writeState` holds them in, or why `do_work` failed.
     fn write_result(&mut self) -> Result<[u32; 2], Error>;
@@ -170,7 +170,7 @@ impl PendingBuffers {
         Ok(Self { input, out })
     }
 
-    fn ranges<'a>(&'a self, input_copy: &'a InputCopy) -> Ranges<'a> {
+    fn raw_buffers<'a>(&'a self, input_copy: &'a InputCopy) -> RawBuffers<'a> {
         let bytes = |buffer: &ArrayBuffer| -> *mut [u8] {
             if buffer.is_detached() {
                 return &mut [];
@@ -184,7 +184,7 @@ impl PendingBuffers {
         };
         // SAFETY: `write` refuses an output, and `pin` copies an input, that can be freed while it
         // is pinned. `pin` checked for overlap. The gap that `pinStorage` documents is still open.
-        unsafe { Ranges::from_raw(input, bytes(&self.out)) }
+        unsafe { RawBuffers::from_raw(input, bytes(&self.out)) }
     }
 }
 
@@ -201,10 +201,10 @@ impl<T: CompressionStreamImpl> JobContext for PendingWrite<T> {
     /// The handle needs its stream back, and the callbacks carry their own context.
     const OUTLIVES_SCRIPT: bool = true;
 
-    fn run(this: &mut Self, done: Completion<Self>) -> Option<Completion<Self>> {
+    fn run(write: &mut Self, done: Completion<Self>) -> Option<Completion<Self>> {
         if done.ticket().script_allowed() {
-            let ranges = this.buffers.ranges(&this.stream.input_copy);
-            this.stream.context.do_work(ranges);
+            let buffers = write.buffers.raw_buffers(&write.stream.input_copy);
+            write.stream.context.do_work(buffers);
         }
         Some(done)
     }
@@ -315,7 +315,7 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
     }
 
     /// Takes the stream until the guard drops. Throws if a write has it, or the handle is closing or closed.
-    fn take_idle_stream(
+    fn borrow_idle_stream(
         &self,
         global_this: &JSGlobalObject,
     ) -> JsResult<ScopeGuard<Box<Stream<Self::Context>>, impl FnOnce(Box<Stream<Self::Context>>)>>
@@ -336,7 +336,7 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
     }
 
     fn throw_unless_idle(&self, global_this: &JSGlobalObject) -> JsResult<()> {
-        self.take_idle_stream(global_this).map(drop)
+        self.borrow_idle_stream(global_this).map(drop)
     }
 
     fn write(
@@ -449,7 +449,7 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
                 .throw());
         }
 
-        let mut stream = self.take_idle_stream(global_this)?;
+        let mut stream = self.borrow_idle_stream(global_this)?;
         let buffers = PendingBuffers::pin(
             global_this,
             in_js,
@@ -570,12 +570,12 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
         out_buf.narrow(out_off as usize, out_len as usize);
         throw_if_overlapping(global_this, &in_buf, &out_buf)?;
 
-        let mut stream = self.take_idle_stream(global_this)?;
+        let mut stream = self.borrow_idle_stream(global_this)?;
         stream
             .context
             .set_flush(i32::try_from(flush).expect("int cast"));
-        let ranges = Ranges::new(in_buf.byte_slice(), out_buf.byte_slice_mut());
-        stream.context.do_work(ranges);
+        let buffers = RawBuffers::new(in_buf.byte_slice(), out_buf.byte_slice_mut());
+        stream.context.do_work(buffers);
         let result = stream.context.write_result();
         drop(stream);
 

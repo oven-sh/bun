@@ -307,7 +307,7 @@ pub struct Job<C: JobContext> {
     ticket: Option<Ticket>,
     task: WorkPoolTask,
     /// What [`Completion::finish`] queues on the JS thread.
-    completion_node: ConcurrentTask,
+    concurrent_task: ConcurrentTask,
     _keep_alive: JsKeepAlive,
     off: C::OffThread,
     js: C::Js,
@@ -356,7 +356,7 @@ impl<C: JobContext> Job<C> {
                 node: Default::default(),
                 callback: Self::run_on_pool,
             },
-            completion_node: ConcurrentTask::default(),
+            concurrent_task: ConcurrentTask::default(),
             _keep_alive: JsKeepAlive::active(),
             off,
             js,
@@ -437,7 +437,7 @@ impl<C: JobContext> Completion<C> {
         let (ticket, node) = unsafe {
             (
                 core::ptr::read(&raw const me.ticket),
-                (*job).completion_node.from(job),
+                (*job).concurrent_task.from(job),
             )
         };
         ticket.post_intrusive(NonNull::from(node));

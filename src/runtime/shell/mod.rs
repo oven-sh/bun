@@ -9,10 +9,10 @@
 //! - Dispatch: `interp.child_done(parent_id, child_id, exit)` looks up
 //!   `interp.nodes[parent_id]` and matches on its tag
 //! - Every method that previously took `*Parent` now takes
-//!   `&Interpreter` + the relevant `NodeId`s
+//!   `&mut Interpreter` + the relevant `NodeId`s
 //!
 //! This avoids self-referential `&mut` graphs entirely: all inter-node edges
-//! are integer indices, and the only `&mut` is the single `&Interpreter`
+//! are integer indices, and the only `&mut` is the single `&mut Interpreter`
 //! threaded through the trampoline.
 
 #[path = "shell_body.rs"]
@@ -115,14 +115,13 @@ pub(crate) mod builtins {
 
 // ─── re-exports ──────────────────────────────────────────────────────────────
 pub(crate) use env_str::EnvStr;
-pub(crate) use interpreter::{ExitCode, Interpreter};
+pub(crate) use interpreter::{ExitCode, Interpreter, ShellInterpreter};
 pub(crate) use yield_::Yield;
 
 /// Forward-decl task payloads for `runtime::dispatch::run_task` arms whose
 /// owning modules are still gated. See `dispatch_tasks.rs` header.
 pub(crate) mod dispatch_tasks;
 
-/// `bun.shell.subproc`. Exposed so `runtime::dispatch::__bun_run_io` can name `ShellSubprocess`.
 #[path = "subproc.rs"]
 pub(crate) mod subproc;
 
@@ -130,34 +129,10 @@ pub(crate) mod subproc;
 // Re-export so `crate::shell::*` callers resolve without duplicating the table.
 pub(crate) use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
 
-// ─── AST surface (lifetime-erased aliases over `bun_shell_parser::ast`) ──────
-// State nodes hold `*const ast::*` raw pointers into the bumpalo-allocated AST
-// (`ShellArgs::__arena`). The arena outlives every state node, so the `'arena`
-// lifetime on `bun_shell_parser::ast::*<'arena>` carries no information the
-// interpreter can use — threading it through `Interpreter`/`Node`/every state
-// struct would be pure noise. Instead we erase it to `'static` here and store
-// raw pointers; `ShellArgs::set_script_ast` performs the single
-// lifetime-widening slice cast (`Script<'a>` → `Script<'static>`, identical
-// layout) at the arena/state-machine boundary.
+// ─── AST surface ─────────────────────────────────────────────────────────────
 pub(crate) mod ast {
-    use bun_shell_parser::parse::ast as p;
-    pub(crate) use p::{BinaryOp, CondExprOp, IoKind, RedirectFlags};
-
-    pub(crate) type SmolList<T> = bun_shell_parser::parse::SmolList<'static, T>;
-    pub(crate) type Script = p::Script<'static>;
-    pub(crate) type Stmt = p::Stmt<'static>;
-    pub(crate) type Expr = p::Expr<'static>;
-    pub(crate) type Binary = p::Binary<'static>;
-    pub(crate) type Pipeline = p::Pipeline<'static>;
-    pub(crate) type PipelineItem = p::PipelineItem<'static>;
-    pub(crate) type Cmd = p::Cmd<'static>;
-    pub(crate) type Redirect = p::Redirect<'static>;
-    pub(crate) type If = p::If<'static>;
-    pub(crate) type Subshell = p::Subshell<'static>;
-    pub(crate) type CondExpr = p::CondExpr<'static>;
-    pub(crate) type Assign = p::Assign<'static>;
-    pub(crate) type Atom = p::Atom<'static>;
-    pub(crate) type SimpleAtom = p::SimpleAtom<'static>;
+    pub(crate) use bun_shell_parser::parse::SmolList;
+    pub(crate) use bun_shell_parser::parse::ast::*;
 }
 
 // Canonical 4-variant shell error enum. Defined in

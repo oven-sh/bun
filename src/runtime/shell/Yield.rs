@@ -2,29 +2,33 @@
 //!
 //! See the doc comment on `Yield` for the design. The Rust port carries
 //! `NodeId`s (indices into `Interpreter::nodes`) instead of `&mut State`
-//! borrows — the only `&mut` is the `&Interpreter` threaded through
+//! borrows — the only `&mut` is the `&mut Interpreter` threaded through
 //! `run`.
 
-use core::cell::Cell;
+use bun_collections::smallvec::SmallVec;
 
-use crate::shell::interpreter::{Interpreter, NodeId, StateKind, log};
+use crate::shell::interpreter::{Interpreter, NodeId, StateKind};
+use crate::shell::io_reader::{IOReader, IOReaderId};
+use crate::shell::io_writer::IOWriterId;
+use crate::shell::states::cmd::JsRedirect;
 use crate::shell::states::pipeline::Pipeline;
+use crate::shell::{ExitCode, ShellErr};
 
 /// A "continuation" of the shell interpreter. Shell state-machine functions
-/// return a `Yield`; `Yield::run(&Interpreter)` is the trampoline that
+/// return a `Yield`; `Yield::run(&mut Interpreter)` is the trampoline that
 /// drives execution without blowing up the call stack.
 ///
-/// Variants name the *next state to step* by `NodeId`. The trampoline looks
+/// Most variants name the *next state to step* by `NodeId`. The trampoline looks
 /// up the node and matches on its kind (hoisted dispatch — see
 /// `Interpreter::next_node`).
-#[derive(strum::IntoStaticStr)]
 // OnIoWriterChunk's `err` is constructed inline at several sites in IOWriter.rs;
 // boxing it would add an allocation to the synchronous-write fast path for no win.
 #[allow(clippy::large_enum_variant)]
-pub enum Yield {
+#[must_use]
+pub(crate) enum Yield {
     /// Step the node at this id (`Interpreter::next_node`).
     Next(NodeId),
-    /// IOWriter completed a chunk synchronously; fire `on_io_writer_chunk` on
+    /// IOWriter completed a chunk; fire `on_io_writer_chunk` on
     /// the registered child at top-of-stack.
     OnIoWriterChunk {
         child: crate::shell::io_writer::ChildPtr,
@@ -34,12 +38,27 @@ pub enum Yield {
         // the throw boundary.
         err: Option<bun_sys::SystemError>,
     },
+    /// A write failed; fire `on_io_writer_chunk` for each chunk still queued.
+    FailPendingWriters(IOWriterId),
+    /// A read finished; notify each of its listeners.
+    FinishListeners(IOReaderId),
     /// Execution is waiting on async IO (epoll/kqueue/uv). The caller's task
-    /// callback will resume by calling `.run()` again later.
+    /// callback will resume by calling `ShellInterpreter::run_yield_with` later.
     Suspended,
-    /// The node threw a JS exception; `Interpreter::fail` winds the script down.
+    /// The node's JS exception was taken; `Interpreter::fail` winds the script down.
     Failed(NodeId),
+    Action(ReentrantAction),
     Done,
+}
+
+/// Can run JS or I/O callbacks: `ShellInterpreter::run_yield` does it with no borrow of the `Interpreter`.
+pub(crate) enum ReentrantAction {
+    /// Throws the error, then runs `Yield::Failed`.
+    Throw(NodeId, Box<ShellErr>),
+    StartBuiltinWithJsBuf(NodeId, JsRedirect),
+    Spawn(NodeId),
+    TickMiniLoop(NodeId),
+    Finish(ExitCode),
 }
 
 impl Yield {
@@ -51,73 +70,46 @@ impl Yield {
     pub(crate) const fn done() -> Yield {
         Yield::Done
     }
-}
-
-thread_local! {
-    /// Debug-only re-entrancy guard.
-    static DBG_CATCH_EXEC_WITHIN_EXEC: Cell<usize> = const { Cell::new(0) };
-}
-
-/// RAII re-entrancy depth guard: increments the thread-local depth counter on
-/// construction, decrements on `Drop`. Debug-only (no-op in release).
-struct DbgDepthGuard;
-
-impl DbgDepthGuard {
-    /// Ideally 1, but resolving the JS Promise in `Interpreter::finish` can
-    /// re-enter another shell script.
-    const MAX_DEPTH: usize = 2;
-
-    #[inline]
-    fn enter(tag: &'static str) -> Self {
-        if cfg!(debug_assertions) {
-            let n = DBG_CATCH_EXEC_WITHIN_EXEC.get();
-            log!("Yield({}) depth = {} + 1", tag, n);
-            debug_assert!(n <= Self::MAX_DEPTH);
-            DBG_CATCH_EXEC_WITHIN_EXEC.set(n + 1);
-        }
-        Self
+    pub(crate) fn throw(node: NodeId, err: ShellErr) -> Yield {
+        Yield::Action(ReentrantAction::Throw(node, Box::new(err)))
     }
 }
 
-impl Drop for DbgDepthGuard {
-    #[inline]
-    fn drop(&mut self) {
-        if cfg!(debug_assertions) {
-            DBG_CATCH_EXEC_WITHIN_EXEC.set(DBG_CATCH_EXEC_WITHIN_EXEC.get() - 1);
-        }
-    }
+/// What `Yield::run` continues with when the current node suspends.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Deferred {
+    /// For `cmd1 | cmd2`, we start cmd1, return to the pipeline, start cmd2, etc.
+    Pipeline(NodeId),
+    FailPendingWriters(IOWriterId),
+    FinishListeners(IOReaderId),
+    WritePending(IOWriterId),
 }
+
+pub(crate) type DeferredStack = SmallVec<[Deferred; 4]>;
 
 impl Yield {
-    /// Trampoline: drive the interpreter until it suspends/finishes.
-    pub(crate) fn run(self, interp: &Interpreter) {
-        let tag: &'static str = (&self).into();
-        let _depth = DbgDepthGuard::enter(tag);
-
-        // A pipeline starts multiple "threads" of execution (`cmd1 | cmd2 | cmd3`).
-        // We start cmd1, return to the pipeline, start cmd2, etc. — so we keep
-        // a small stack of pipeline NodeIds to resume.
-        //
-        // PERF: profile if hot; smallvec::SmallVec<[NodeId; 4]> would avoid
-        // the heap allocation.
-        let mut pipeline_stack: Vec<NodeId> = Vec::with_capacity(4);
-        let mut rejection = None;
-
+    /// Trampoline: drive the interpreter until it suspends (`None`) or needs a `ReentrantAction`.
+    pub(crate) fn run(
+        self,
+        interp: &mut Interpreter<'_>,
+        stack: &mut DeferredStack,
+    ) -> Option<ReentrantAction> {
         // Tail-call trampoline: `loop { state = match state { ... } }`.
         let mut state = self;
         loop {
             state = match state {
                 Yield::Next(id) => {
                     if matches!(interp.node(id).kind(), StateKind::Pipeline) {
+                        let this = Deferred::Pipeline(id);
                         let done = Pipeline::is_done(interp, id);
                         if done {
                             // remove before stepping (next() will deinit it)
-                            if let Some(idx) = pipeline_stack.iter().position(|p| *p == id) {
-                                pipeline_stack.remove(idx);
+                            if let Some(idx) = stack.iter().position(|d| *d == this) {
+                                stack.remove(idx);
                             }
                         } else {
-                            debug_assert!(!pipeline_stack.contains(&id));
-                            pipeline_stack.push(id);
+                            debug_assert!(!stack.contains(&this));
+                            stack.push(this);
                         }
                     }
                     interp.next_node(id)
@@ -127,29 +119,51 @@ impl Yield {
                     written,
                     err,
                 } => crate::shell::io_writer::on_io_writer_chunk(interp, child, written, err),
-                Yield::Failed(id) => interp.fail(id, &mut rejection),
-                Yield::Suspended | Yield::Done => {
-                    if let Some(y) = Self::drain_pipelines(interp, &mut pipeline_stack) {
-                        y
-                    } else {
-                        if let Some(rejection) = rejection {
-                            interp.reject(rejection);
-                        }
-                        return;
+                Yield::FailPendingWriters(id) => {
+                    let (next, more) = match interp.io_writers.get_mut(id) {
+                        Some(writer) => writer.fail_next_writer(),
+                        None => (Yield::done(), false),
+                    };
+                    if more {
+                        stack.push(Deferred::FailPendingWriters(id));
                     }
+                    next
                 }
+                Yield::FinishListeners(id) => {
+                    let (next, more) = IOReader::finish_next_listener(interp, id);
+                    if more {
+                        stack.push(Deferred::FinishListeners(id));
+                    }
+                    next
+                }
+                Yield::Failed(id) => interp.fail(id),
+                Yield::Action(action) => return Some(action),
+                Yield::Suspended | Yield::Done => Self::drain_deferred(interp, stack)?,
             };
         }
     }
 
-    fn drain_pipelines(interp: &Interpreter, pipeline_stack: &mut Vec<NodeId>) -> Option<Yield> {
-        while let Some(&id) = pipeline_stack.last() {
-            if Pipeline::is_starting_cmds(interp, id) {
+    fn drain_deferred(interp: &mut Interpreter<'_>, stack: &mut DeferredStack) -> Option<Yield> {
+        while let Some(&deferred) = stack.last() {
+            if let Deferred::Pipeline(id) = deferred
+                && Pipeline::is_starting_cmds(interp, id)
+            {
                 return Some(interp.next_node(id));
             }
-            pipeline_stack.pop();
-            if Pipeline::is_done(interp, id) {
-                return Some(interp.next_node(id));
+            stack.pop();
+            match deferred {
+                Deferred::Pipeline(id) => {
+                    if Pipeline::is_done(interp, id) {
+                        return Some(interp.next_node(id));
+                    }
+                }
+                Deferred::FailPendingWriters(id) => return Some(Yield::FailPendingWriters(id)),
+                Deferred::FinishListeners(id) => return Some(Yield::FinishListeners(id)),
+                Deferred::WritePending(id) => {
+                    if let Some(writer) = interp.io_writers.get_mut(id) {
+                        return Some(writer.write_pending());
+                    }
+                }
             }
         }
         None

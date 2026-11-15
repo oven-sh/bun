@@ -1,14 +1,14 @@
 //! Similar to `IOWriter` but for reading.
-//!
-//! *NOTE* This type is reference counted via `Rc`; see the `Drop` impl note.
 
-use core::cell::UnsafeCell;
+use core::marker::PhantomData;
+use core::ops::ControlFlow;
+use std::rc::Rc;
 
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
 use bun_sys::{self as sys, Fd};
 
-use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId};
-use crate::shell::yield_::Yield;
+use crate::shell::interpreter::{EventLoopHandle, ExitCode, Interpreter, NodeId, ShellInterpreter};
+use crate::shell::yield_::{DeferredStack, Yield};
 
 // ──────────────────────────────────────────────────────────────────────────
 // ChildPtr
@@ -29,304 +29,297 @@ pub(crate) enum ReaderTag {
     Cat,
 }
 
+struct Reader {
+    ptr: ChildPtr,
+    /// Set by `finish_listeners` (0 at EOF).
+    errno: Option<ExitCode>,
+}
+
 // PERF: an inline small-vec may be worth it — profile if hot.
-type Readers = Vec<ChildPtr>;
+type Readers = Vec<Reader>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // IOReader
 // ──────────────────────────────────────────────────────────────────────────
 
-struct State {
-    fd: Fd,
-    buf: Vec<u8>,
-    /// Listeners for the in-flight read (see `take_readers`).
+pub(crate) type IOReaderId = bun_core::GenericIndex<u32, IOReader<'static>>;
+
+pub(crate) struct IOReader<'a> {
+    /// `on_reader_io` holds a clone, because a listener may remove the `IOReader` during the read.
+    inner: Rc<Inner>,
+    id: IOReaderId,
+    /// Listeners for the in-flight read.
     readers: Readers,
     /// The reader is paused until a listener calls `resume()` (see `nobody_ready`).
     paused: bool,
-    evtloop: EventLoopHandle,
     #[cfg(windows)]
     is_reading: bool,
     /// True after EOF. The Windows reader closes its source and the fd at EOF, so later listeners can't read.
     #[cfg(windows)]
     reached_eof: bool,
-    /// Weak self-ref so `keepalive()` can bump the strong count from `&self`
-    /// without unsafe Rc-pointer reconstruction. Set via `Rc::new_cyclic` in
-    /// `init()` (the sole constructor).
-    self_weak: std::rc::Weak<IOReader>,
-    /// Backref so async read callbacks can drive `Yield::run`. See
-    /// `IOWriter::interp`.
-    interp: Option<bun_ptr::ParentRef<Interpreter>>,
+    /// Ties it to `Interpreter<'a>`, so it cannot leave a `with_interp` closure.
+    _interp: PhantomData<&'a ()>,
 }
 
-pub(crate) struct IOReader {
+struct Inner {
     reader: BufferedReader,
-    state: UnsafeCell<State>,
+    fd: Fd,
+    evtloop: EventLoopHandle,
 }
 
-impl IOReader {
-    #[inline]
-    #[allow(clippy::mut_from_ref)] // interior mutability via UnsafeCell; single-threaded
-    fn state(&self) -> &mut State {
-        // SAFETY: shell is single-threaded; no overlapping borrow of `state`
-        // escapes a callback.
-        unsafe { &mut *self.state.get() }
+impl Inner {
+    fn io_evtloop(&self) -> bun_io::EventLoopHandle {
+        self.evtloop.as_event_loop_ctx()
     }
+}
 
-    /// Bump our own Rc strong count. Held across re-entrant `run_yield` calls
-    /// whose child callback may drop the last external ref and free us
-    /// mid-method.
-    #[inline]
-    fn keepalive(&self) -> std::rc::Rc<IOReader> {
-        self.state()
-            .self_weak
-            .upgrade()
-            .expect("IOReader::keepalive after last Rc dropped")
-    }
-
-    pub(crate) fn init(fd: Fd, evtloop: EventLoopHandle) -> std::rc::Rc<IOReader> {
-        let this = std::rc::Rc::new_cyclic(|w| IOReader {
-            reader: BufferedReader::init(),
-            state: UnsafeCell::new(State {
+impl IOReader<'_> {
+    /// The caller removes it from `interp.io_readers`, which closes `fd`.
+    pub(crate) fn init(interp: &mut Interpreter<'_>, fd: Fd) -> IOReaderId {
+        let (shell_interp, evtloop) = (interp.shell_interp(), interp.event_loop);
+        interp.io_readers.insert_with(|id| {
+            let inner = Rc::new(Inner {
+                reader: BufferedReader::init(),
                 fd,
-                buf: Vec::new(),
+                evtloop,
+            });
+            let ptr = shell_interp.as_ptr().cast();
+            let owner = Owner::with_key(PollTag::ShellIoReader, id.get(), ptr);
+            // SAFETY: `shell_interp` owns `interp`, and `on_reader_io` borrows it while it holds the
+            // only other `Rc`.
+            unsafe { inner.reader.set_external_owner(owner) };
+            #[cfg(not(windows))]
+            inner
+                .reader
+                .update_flags(|f| f.remove(bun_io::PosixFlags::CLOSE_HANDLE));
+            #[cfg(windows)]
+            inner
+                .reader
+                .set_source(bun_io::Source::File(bun_io::Source::open_file(
+                    evtloop.loop_(),
+                    fd,
+                )));
+            crate::shell_log!("IOReader({}, fd={}) create", id, fd);
+            IOReader {
+                inner,
+                id,
                 readers: Readers::new(),
                 paused: false,
-                evtloop,
                 #[cfg(windows)]
                 is_reading: false,
                 #[cfg(windows)]
                 reached_eof: false,
-                self_weak: std::rc::Weak::clone(w),
-                interp: None,
-            }),
-        });
-        let ptr = std::rc::Rc::as_ptr(&this);
-        let owner = Owner::new(PollTag::ShellIoReader, ptr.cast_mut().cast());
-        // SAFETY: `owner` points to the heap allocation that holds this reader.
-        unsafe { this.reader.set_owner(owner) };
-        #[cfg(not(windows))]
-        this.reader
-            .update_flags(|f| f.remove(bun_io::PosixFlags::CLOSE_HANDLE));
-        #[cfg(windows)]
-        this.reader
-            .set_source(bun_io::Source::File(bun_io::Source::open_file(
-                evtloop.loop_(),
-                fd,
-            )));
-        crate::shell_log!("IOReader(0x{:x}, fd={}) create", ptr as usize, fd);
-        this
-    }
-
-    /// `interp` must outlive this reader (it owns the IO struct that holds this `Rc`).
-    #[inline]
-    pub(crate) fn set_interp(&self, interp: &Interpreter) {
-        self.state().interp = Some(bun_ptr::ParentRef::new(interp));
+                _interp: PhantomData,
+            }
+        })
     }
 
     #[inline]
     pub(crate) fn fd(&self) -> Fd {
-        self.state().fd
+        self.inner.fd
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
-        let s = self.state();
         core::mem::size_of::<IOReader>()
-            + s.buf.capacity()
-            + s.readers.capacity() * core::mem::size_of::<ChildPtr>()
-    }
-
-    #[inline]
-    fn io_evtloop(&self) -> bun_io::EventLoopHandle {
-        self.state().evtloop.as_event_loop_ctx()
+            + core::mem::size_of::<Inner>()
+            + self.readers.capacity() * core::mem::size_of::<Reader>()
     }
 
     /// Only does things on windows.
     #[inline]
-    fn set_reading(&self, reading: bool) {
+    fn set_reading(&mut self, reading: bool) {
         #[cfg(windows)]
         {
-            self.state().is_reading = reading;
+            self.is_reading = reading;
         }
         let _ = reading;
     }
 
-    /// Idempotent function to start the reading. The caller's trampoline is on the stack,
-    /// so a failure to start is returned as a continuation (see `finish_listeners`).
-    pub(crate) fn start(&self) -> Yield {
+    /// Idempotent function to start the reading.
+    pub(crate) fn start(&mut self) -> Yield {
         #[cfg(windows)]
-        if self.state().reached_eof {
+        if self.reached_eof {
             return self.finish_listeners(None);
         }
-        self.state().paused = false;
+        self.paused = false;
         match self.start_impl() {
             Ok(()) => Yield::suspended(),
-            Err(e) => {
-                self.set_reading(false);
-                self.finish_listeners(Some(&e))
-            }
+            Err(e) => self.finish_listeners(Some(&e)),
         }
     }
 
     #[cfg(not(windows))]
-    fn start_impl(&self) -> sys::Result<()> {
-        let r = &self.reader;
+    fn start_impl(&mut self) -> sys::Result<()> {
+        let r = &self.inner.reader;
         let _ = r.unpause();
         // After a read finishes, the one-shot poll has fired but is still registered,
         // so checking `is_registered()` would skip the read a later listener needs.
         if r.has_pending_read() {
             return Ok(());
         }
-        match r.start(self.io_evtloop(), self.state().fd, true)? {
+        match r.start(self.inner.io_evtloop(), self.fd(), true)? {
             ReadResult::Err(err) => Err(err),
             ReadResult::Pending | ReadResult::Done => Ok(()),
         }
     }
 
     #[cfg(windows)]
-    fn start_impl(&self) -> sys::Result<()> {
-        let s = self.state();
-        if s.is_reading {
+    fn start_impl(&mut self) -> sys::Result<()> {
+        if self.is_reading {
             return Ok(());
         }
-        s.is_reading = true;
-        self.reader.start_with_current_pipe()
+        self.is_reading = true;
+        self.inner.reader.start_with_current_pipe()
     }
 
     /// A listener has written the chunks it got. Reads on if the reader was paused for that.
-    pub(crate) fn resume(&self) -> Yield {
-        if !self.state().paused {
+    pub(crate) fn resume(&mut self) -> Yield {
+        if !self.paused {
             return Yield::suspended();
         }
         self.start()
     }
 
     /// Every listener still writes the chunks it got. Reading on would queue input without bound.
-    fn nobody_ready(&self) -> bool {
-        let s = self.state();
-        !s.readers.is_empty() && s.readers.iter().all(|r| awaits_write(*r, s.interp))
+    fn nobody_ready(&self, interp: &Interpreter<'_>) -> bool {
+        !self.readers.is_empty() && self.readers.iter().all(|r| awaits_write(r.ptr, interp))
     }
 
     /// Only adds if not already present.
-    pub(crate) fn add_reader(&self, reader: ChildPtr) {
-        let s = self.state();
-        if !s.readers.contains(&reader) {
-            s.readers.push(reader);
+    pub(crate) fn add_reader(&mut self, reader: ChildPtr) {
+        if !self.readers.iter().any(|r| r.ptr == reader) {
+            self.readers.push(Reader {
+                ptr: reader,
+                errno: None,
+            });
         }
     }
 
     /// Unregister a listener; no-op if it was never added.
-    pub(crate) fn remove_reader(&self, reader: ChildPtr) {
-        let s = self.state();
-        if let Some(idx) = s.readers.iter().position(|r| *r == reader) {
-            s.readers.swap_remove(idx);
+    pub(crate) fn remove_reader(&mut self, reader: ChildPtr) {
+        if let Some(idx) = self.readers.iter().position(|r| r.ptr == reader) {
+            self.readers.swap_remove(idx);
         }
     }
 
-    /// A listener may drop every other `Rc`.
-    pub(crate) fn on_io(self: &std::rc::Rc<Self>, event: IoEvent) {
-        let result = self
-            .reader
-            .read_chunks(self.io_evtloop(), Some(event), |chunk, state| {
-                self.on_read_chunk(&chunk, state)
-            });
-        match result {
-            ReadResult::Pending => {}
-            ReadResult::Done => self.on_reader_done(),
-            ReadResult::Err(err) => self.on_reader_error(&err),
+    /// Passes `chunk` to `readers[reader_idx]`. Past the last listener, breaks with whether to read on.
+    fn on_read_chunk(
+        interp: &mut Interpreter<'_>,
+        id: IOReaderId,
+        reader_idx: usize,
+        chunk: &[u8],
+        has_more: bun_io::ReadState,
+    ) -> ControlFlow<bool, Yield> {
+        let Some(me) = interp.io_readers.get_mut(id) else {
+            return ControlFlow::Break(false);
+        };
+        if reader_idx == 0 {
+            me.set_reading(false);
+        }
+        match me.readers.get(reader_idx) {
+            Some(reader) => ControlFlow::Continue(dispatch_read_chunk(reader.ptr, chunk, interp)),
+            None => ControlFlow::Break(Self::after_read_chunk(interp, id, has_more)),
         }
     }
 
-    fn on_read_chunk(&self, chunk: &[u8], has_more: bun_io::ReadState) -> bool {
-        self.set_reading(false);
-        // NOTE: reshaped for borrowck — `dispatch_read_chunk`/`run_yield`
-        // both re-derive `state()` (and the interpreter callback may re-enter
-        // `add_reader`/`remove_reader`), so we must NOT hold a long-lived
-        // `&mut State` across the dispatch. Re-derive `state()` per access
-        // instead.
-        let mut i = 0usize;
-        while i < self.state().readers.len() {
-            let r = self.state().readers[i];
-            let interp = self.state().interp;
-            let mut remove = false;
-            self.run_yield(dispatch_read_chunk(r, chunk, &mut remove, interp));
-            if remove {
-                self.state().readers.swap_remove(i);
-            } else {
-                i += 1;
-            }
-        }
-
-        let should_continue = has_more != bun_io::ReadState::Eof;
-        if should_continue && self.nobody_ready() {
-            self.state().paused = true;
-            self.reader.pause();
+    fn after_read_chunk(
+        interp: &mut Interpreter<'_>,
+        id: IOReaderId,
+        has_more: bun_io::ReadState,
+    ) -> bool {
+        if has_more == bun_io::ReadState::Eof {
             return false;
         }
-        if should_continue && !self.state().readers.is_empty() {
+        let nobody_ready = interp.io_readers[id].nobody_ready(interp);
+        let me = &mut interp.io_readers[id];
+        if nobody_ready {
+            me.paused = true;
+            me.inner.reader.pause();
+            return false;
+        }
+        if !me.readers.is_empty() {
             // The caller re-arms after we return (on posix, based on the `bool` below).
-            self.set_reading(true);
+            me.set_reading(true);
         }
-        should_continue
+        true
     }
 
-    fn on_reader_error(&self, err: &sys::Error) {
+    fn on_read_result(&mut self, result: ReadResult) -> Yield {
+        match result {
+            ReadResult::Pending => Yield::suspended(),
+            ReadResult::Done => {
+                // Set this before notifying listeners, because a notification can start the next `cat`.
+                #[cfg(windows)]
+                {
+                    self.reached_eof = true;
+                }
+                self.finish_listeners(None)
+            }
+            ReadResult::Err(err) => self.finish_listeners(Some(&err)),
+        }
+    }
+
+    /// Reports EOF (`None`) or an error to the current listeners.
+    fn finish_listeners(&mut self, err: Option<&sys::Error>) -> Yield {
         self.set_reading(false);
-        let interp = self.state().interp;
-        for r in self.take_readers() {
-            // Re-derive a fresh SystemError per callee (see
-            // IOWriter.on_error note).
-            let ee = err.to_shell_system_error();
-            self.run_yield(dispatch_reader_done(r, Some(ee), interp));
+        let errno = err.map_or(0, |e| e.to_shell_system_error().get_errno() as ExitCode);
+        for r in &mut self.readers {
+            r.errno.get_or_insert(errno);
         }
+        Yield::FinishListeners(self.id)
     }
 
-    fn on_reader_done(&self) {
-        self.set_reading(false);
-        // Set this before notifying listeners, because a notification can start the next `cat`.
-        #[cfg(windows)]
-        {
-            self.state().reached_eof = true;
-        }
-        let interp = self.state().interp;
-        for r in self.take_readers() {
-            self.run_yield(dispatch_reader_done(r, None, interp));
-        }
+    /// Removes and notifies the oldest finished listener, and returns whether there are more.
+    pub(crate) fn finish_next_listener(
+        interp: &mut Interpreter<'_>,
+        id: IOReaderId,
+    ) -> (Yield, bool) {
+        let Some(me) = interp.io_readers.get_mut(id) else {
+            return (Yield::suspended(), false);
+        };
+        let mut finished = me
+            .readers
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| Some((i, r.errno?)));
+        let Some((idx, errno)) = finished.next() else {
+            return (Yield::suspended(), false);
+        };
+        let more = finished.next().is_some();
+        let child = me.readers.remove(idx).ptr;
+        (dispatch_reader_done(child, errno, interp), more)
     }
+}
 
-    /// Reports EOF (`None`) or an error to the listeners from under `start()`. Returns the last
-    /// continuation instead of running it, so consecutive `cat`s don't nest `Yield::run` calls.
-    fn finish_listeners(&self, err: Option<&sys::Error>) -> Yield {
-        let _keepalive = self.keepalive();
-        let interp = self.state().interp;
-        let mut readers = self.take_readers();
-        let last = readers.pop();
-        let done = |r| dispatch_reader_done(r, err.map(sys::Error::to_shell_system_error), interp);
-        for r in readers {
-            self.run_yield(done(r));
-        }
-        match last {
-            Some(r) => done(r),
-            None => Yield::suspended(),
-        }
-    }
-
-    /// Removes and returns the finished read's listeners. The next read would notify a
-    /// stale entry again, and by then its `NodeId` may be recycled.
-    fn take_readers(&self) -> Readers {
-        core::mem::take(&mut self.state().readers)
-    }
-
-    fn run_yield(&self, y: Yield) {
-        let Some(interp) = self.state().interp else {
-            debug_assert!(
-                matches!(y, Yield::Done | Yield::Suspended),
-                "IOReader async callback fired without interp backref"
-            );
+impl ShellInterpreter {
+    pub(crate) fn on_reader_io(&self, id: IOReaderId, event: IoEvent) {
+        let _keep = self.ensure_still_alive();
+        let Some(inner) = self.with_interp(|interp| Rc::clone(&interp.io_readers[id].inner)) else {
             return;
         };
-        // `ParentRef: Deref<Target=Interpreter>` — the interpreter owns the IO
-        // struct holding this Rc and outlives every IOReader. Single-threaded.
-        y.run(&interp);
+        let evtloop = inner.io_evtloop();
+        let result = inner
+            .reader
+            .read_chunks(evtloop, Some(event), |chunk, has_more| {
+                // A listener may add or remove listeners, remove the `IOReader` or finish the script.
+                let mut reader_idx = 0usize;
+                loop {
+                    match self.with_interp(|interp| {
+                        IOReader::on_read_chunk(interp, id, reader_idx, &chunk, has_more)
+                    }) {
+                        Some(ControlFlow::Continue(y)) => self.run_yield(y, DeferredStack::new()),
+                        Some(ControlFlow::Break(should_continue)) => return should_continue,
+                        None => return false,
+                    }
+                    reader_idx += 1;
+                }
+            });
+        // So that removing the `IOReader` below closes the fd.
+        drop(inner);
+        self.run_yield_with(|interp| match interp.io_readers.get_mut(id) {
+            Some(me) => me.on_read_result(result),
+            None => Yield::suspended(),
+        });
     }
 }
 
@@ -336,13 +329,12 @@ impl IOReader {
 
 // The windows reader closes the file descriptor.
 #[cfg(not(windows))]
-impl Drop for IOReader {
+impl Drop for Inner {
     fn drop(&mut self) {
         // The poll goes before its fd.
         self.reader.release_handle();
-        let fd = self.state.get_mut().fd;
-        if fd != Fd::INVALID {
-            let _ = sys::close(fd);
+        if self.fd != Fd::INVALID {
+            let _ = sys::close(self.fd);
         }
     }
 }
@@ -352,44 +344,24 @@ impl Drop for IOReader {
 // `.onReaderDone`)
 // ──────────────────────────────────────────────────────────────────────────
 
-fn dispatch_read_chunk(
-    child: ChildPtr,
-    chunk: &[u8],
-    remove: &mut bool,
-    interp: Option<bun_ptr::ParentRef<Interpreter>>,
-) -> Yield {
-    let Some(interp) = interp else {
-        return Yield::suspended();
-    };
-    let interp = interp.get();
+fn dispatch_read_chunk(child: ChildPtr, chunk: &[u8], interp: &mut Interpreter<'_>) -> Yield {
     match child.tag {
         ReaderTag::Cat => {
-            crate::shell::builtins::cat::Cat::on_io_reader_chunk(interp, child.node, chunk, remove)
+            crate::shell::builtins::cat::Cat::on_io_reader_chunk(interp, child.node, chunk)
         }
     }
 }
 
-fn awaits_write(child: ChildPtr, interp: Option<bun_ptr::ParentRef<Interpreter>>) -> bool {
-    let Some(interp) = interp else {
-        return false;
-    };
+fn awaits_write(child: ChildPtr, interp: &Interpreter<'_>) -> bool {
     match child.tag {
-        ReaderTag::Cat => crate::shell::builtins::cat::Cat::awaits_write(interp.get(), child.node),
+        ReaderTag::Cat => crate::shell::builtins::cat::Cat::awaits_write(interp, child.node),
     }
 }
 
-fn dispatch_reader_done(
-    child: ChildPtr,
-    err: Option<sys::SystemError>,
-    interp: Option<bun_ptr::ParentRef<Interpreter>>,
-) -> Yield {
-    let Some(interp) = interp else {
-        return Yield::suspended();
-    };
-    let interp = interp.get();
+fn dispatch_reader_done(child: ChildPtr, errno: ExitCode, interp: &mut Interpreter<'_>) -> Yield {
     match child.tag {
         ReaderTag::Cat => {
-            crate::shell::builtins::cat::Cat::on_io_reader_done(interp, child.node, err)
+            crate::shell::builtins::cat::Cat::on_io_reader_done(interp, child.node, errno)
         }
     }
 }

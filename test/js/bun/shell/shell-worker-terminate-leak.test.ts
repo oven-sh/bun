@@ -289,6 +289,37 @@ test.skipIf(!isASAN || isWindows)(
   LEAK_TEST_TIMEOUT,
 );
 
+// Opening a FIFO blocks the worker inside the interpreter, so terminate() lands between the two opens.
+// `ls` goes to the thread pool, so the rest runs from an event loop task and not inside `run()`.
+test.skipIf(isWindows)(
+  "worker.terminate() stops a Bun.$ script that has not reached its buffer redirect yet",
+  async () => {
+    await runTerminateScenario(
+      `
+      Bun.spawnSync(["mkfifo", "a.fifo", "b.fifo"]);
+      postMessage("go");
+      Bun.$\`ls > /dev/null; true < a.fifo; true < b.fifo; echo hi > \${new Uint8Array(8)} || echo ran > ran.txt\`
+        .nothrow()
+        .run();
+      `,
+      {},
+      {
+        beforeTerminate: `
+          const { existsSync, promises: fs } = require("node:fs");
+          const closed = new Promise(resolve => worker.addEventListener("close", resolve));
+          await (await fs.open("a.fifo", "w")).close();
+        `,
+        afterTerminate: `
+          await (await fs.open("b.fifo", "w")).close();
+          await closed;
+          if (existsSync("ran.txt")) throw new Error("the script went on after terminate()");
+        `,
+      },
+    );
+  },
+  LEAK_TEST_TIMEOUT,
+);
+
 test.skipIf(!isLinux)(
   "worker.terminate() kills a live Bun.$ subprocess",
   async () => {

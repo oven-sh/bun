@@ -9,21 +9,26 @@
 //!
 //! So `IOWriter` is essentially a writer queue to a file descriptor.
 //!
-//! `IOWriter` is also reference counted (`Rc`), which simplifies management of
-//! the file descriptor.
+//! It never calls its children: methods return the `Yield` to run next.
 
 use bun_collections::VecExt;
-#[cfg(windows)]
 use core::cell::Cell;
-use core::cell::UnsafeCell;
+use core::marker::PhantomData;
+#[cfg(windows)]
+use core::mem::ManuallyDrop;
 
 use bun_io::{
     BufferedWriteHandler, BufferedWriter, IoEvent, Owner, PollTag, WriteHandler, WriteStatus,
 };
+#[cfg(windows)]
+use bun_ptr::AliasableBox;
 use bun_sys::{self as sys, E, Fd};
 
-use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId};
-use crate::shell::yield_::Yield;
+use crate::shell::builtin::IoKind;
+use crate::shell::interpreter::{
+    BufioId, EventLoopHandle, Interpreter, NodeId, ShellExecEnvs, ShellInterpreter,
+};
+use crate::shell::yield_::{Deferred, DeferredStack, Yield};
 
 // ──────────────────────────────────────────────────────────────────────────
 // ChildPtr
@@ -32,65 +37,35 @@ use crate::shell::yield_::Yield;
 /// In the NodeId-arena port, a "writer child" is `(NodeId, WriterTag)` — the
 /// id of the owning state node plus a tag saying which `on_io_writer_chunk`
 /// impl to dispatch to.
-///
-/// The one tag that does **not** live in the NodeId arena is
-/// `WriterTag::Subproc` (the `subproc::CapturedWriter` embedded inside a
-/// heap-allocated `PipeReader`); for that variant the dispatch target is
-/// carried in `raw` instead of `node`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ChildPtr {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ChildPtr {
     pub node: NodeId,
     pub(crate) tag: WriterTag,
-    /// Only meaningful when `tag == Subproc` — `*mut subproc::CapturedWriter`.
-    /// `core::ptr::null_mut()` otherwise. Stored untyped to keep this header
-    /// free of a `subproc` dependency.
-    pub(crate) raw: *mut core::ffi::c_void,
 }
 
 impl ChildPtr {
-    const NULL: ChildPtr = ChildPtr {
-        node: NodeId::NONE,
-        tag: WriterTag::Cmd,
-        raw: core::ptr::null_mut(),
-    };
+    const NULL: ChildPtr = ChildPtr::new(NodeId::NONE, WriterTag::Cmd);
 
     #[inline]
     pub(crate) const fn new(node: NodeId, tag: WriterTag) -> ChildPtr {
-        ChildPtr {
-            node,
-            tag,
-            raw: core::ptr::null_mut(),
-        }
-    }
-
-    /// Construct a `ChildPtr` targeting a `subproc::CapturedWriter` (lives
-    /// outside the NodeId arena).
-    #[inline]
-    pub(crate) fn subproc_capture(cw: *mut core::ffi::c_void) -> ChildPtr {
-        ChildPtr {
-            node: NodeId::NONE,
-            tag: WriterTag::Subproc,
-            raw: cw,
-        }
+        ChildPtr { node, tag }
     }
 
     #[inline]
-    fn is_null(&self) -> bool {
-        self.node == NodeId::NONE && self.raw.is_null()
+    fn is_null(self) -> bool {
+        self.node == NodeId::NONE
     }
 }
 
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WriterTag {
     /// Builtin running inside a Cmd — dispatch via `Builtin::on_io_writer_chunk`.
     Builtin,
     Cmd,
     CondExpr,
     Pipeline,
-    /// `subproc::PipeReader::CapturedWriter` — heap-allocated, addressed via
-    /// `ChildPtr::raw` rather than `node`.
-    Subproc,
+    /// `subproc::CapturedWriter` of the Cmd's stdout or stderr `PipeReader`.
+    Subproc(IoKind),
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -112,11 +87,10 @@ struct Writer {
     ptr: ChildPtr,
     len: usize,
     written: usize,
-    bytelist: Option<*mut Vec<u8>>,
+    captured: Option<BufioId>,
 }
 
 impl Writer {
-    #[cfg(not(windows))]
     #[inline]
     fn wrote_everything(&self) -> bool {
         self.written >= self.len
@@ -130,16 +104,10 @@ impl Writer {
         self.ptr = ChildPtr::NULL;
     }
     /// Tee `chunk` into the optional capture buffer.
-    ///
-    /// `bytelist` (when set) points into a live `ShellExecEnv` `Bufio`
-    /// (`OutFd::captured` — see its doc); the root env outlives every queued
-    /// `Writer`. Localises the per-callsite raw deref in
-    /// `do_file_write` / `on_write_pollable`.
     #[inline]
-    fn tee(&self, chunk: &[u8]) {
-        if let Some(bl) = self.bytelist {
-            // SAFETY: see doc comment.
-            let _ = unsafe { (*bl).append_slice(chunk) };
+    fn tee(&self, shells: &mut ShellExecEnvs<'_>, chunk: &[u8]) {
+        if let Some(captured) = self.captured {
+            shells.captured_mut(captured).append_slice(chunk);
         }
     }
 }
@@ -155,9 +123,15 @@ const SHRINK_THRESHOLD: usize = 1024 * 128;
 // IOWriter
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Mutable state. Wrapped in `UnsafeCell` so `Rc<IOWriter>`-shared callers can
-/// mutate via `&self` (single-threaded shell).
-struct State {
+pub(crate) type IOWriterId = bun_core::GenericIndex<u32, IOWriter<'static>>;
+
+pub(crate) struct IOWriter<'a> {
+    #[cfg(not(windows))]
+    writer: BufferedWriter,
+    /// libuv holds its address, and a write in flight keeps it past the drop.
+    #[cfg(windows)]
+    writer: ManuallyDrop<AliasableBox<BufferedWriter>>,
+    id: IOWriterId,
     fd: Fd,
     writers: Writers,
     buf: Vec<u8>,
@@ -171,65 +145,40 @@ struct State {
     /// `SystemError`.
     err: Option<sys::Error>,
     evtloop: EventLoopHandle,
+    #[cfg(windows)]
     is_writing: bool,
     started: bool,
     flags: Flags,
-    /// Weak self-ref so `keepalive()` can bump the strong count from `&self`
-    /// without unsafe Rc-pointer reconstruction. Set via `Rc::new_cyclic` in
-    /// `init()` (the sole constructor).
-    self_weak: std::rc::Weak<IOWriter>,
-    /// Backref to the owning interpreter for async-poll callbacks (which must
-    /// drive `Yield::run`). Set by the first `enqueue`/`set_interp`; `None`
-    /// until then.
-    interp: Option<bun_ptr::ParentRef<Interpreter>>,
+    /// Ties it to `Interpreter<'a>`, so it cannot leave a `with_interp` closure.
+    _interp: PhantomData<&'a ()>,
 }
 
-pub(crate) struct IOWriter {
-    writer: BufferedWriter,
-    /// Held while a write is in flight.
-    #[cfg(windows)]
-    inflight_write_ref: Cell<Option<std::rc::Rc<IOWriter>>>,
-    state: UnsafeCell<State>,
-}
-
-impl IOWriter {
-    /// SAFETY: single-threaded; no overlapping `&mut State` may be live across
-    /// a re-entrant `enqueue` from a child callback (the `Yield` trampoline
-    /// runs child callbacks after the borrow is dropped).
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    fn state(&self) -> &mut State {
-        // SAFETY: single-threaded; callers uphold the no-overlapping-`&mut State`
-        // invariant documented on this fn (re-derive across re-entrant calls).
-        unsafe { &mut *self.state.get() }
-    }
-
-    /// Bump our own Rc strong count. Held across re-entrant `run_yield` calls
-    /// whose child callback may drop the last external ref and free us
-    /// mid-method; the stack-held strong ref prevents that.
-    #[inline]
-    fn keepalive(&self) -> std::rc::Rc<IOWriter> {
-        self.state()
-            .self_weak
-            .upgrade()
-            .expect("IOWriter::keepalive after last Rc dropped")
-    }
-
+impl IOWriter<'_> {
     /// Read-only accessor for the `is_socket` flag (used by
-    /// `ShellSubprocess::spawn` to decide `no_sigpipe`).
+    /// `SubprocExec::init` to decide `no_sigpipe`).
     #[inline]
     #[cfg(not(windows))]
     pub(crate) fn is_socket(&self) -> bool {
-        self.state().flags.is_socket
+        self.flags.is_socket
     }
 
-    pub(crate) fn init(fd: Fd, flags: Flags, evtloop: EventLoopHandle) -> std::rc::Rc<IOWriter> {
-        let this = std::rc::Rc::new_cyclic(|w| IOWriter {
+    /// The caller removes it from `interp.io_writers`, which closes `fd`.
+    pub(crate) fn init(interp: &mut Interpreter<'_>, fd: Fd, flags: Flags) -> IOWriterId {
+        let (shell_interp, evtloop) = (interp.shell_interp(), interp.event_loop);
+        interp.io_writers.insert_with(|id| {
             // `Drop` closes the file descriptor.
-            writer: BufferedWriter::borrowing_fd(),
+            let writer = BufferedWriter::borrowing_fd();
             #[cfg(windows)]
-            inflight_write_ref: Cell::new(None),
-            state: UnsafeCell::new(State {
+            let writer = ManuallyDrop::new(AliasableBox::new(writer));
+            let ptr = shell_interp.as_ptr().cast();
+            let owner = Owner::with_key(PollTag::ShellIoWriter, id.get(), ptr);
+            // SAFETY: `shell_interp` owns `interp`, which owns the writer. On Windows the box keeps it in
+            // place and is never borrowed mutably.
+            unsafe { writer.set_owner(owner) };
+            crate::shell_log!("IOWriter({}, fd={}) init", id, fd);
+            IOWriter {
+                writer,
+                id,
                 fd,
                 writers: Writers::new(),
                 buf: Vec::new(),
@@ -237,61 +186,42 @@ impl IOWriter {
                 total_bytes_written: 0,
                 err: None,
                 evtloop,
+                #[cfg(windows)]
                 is_writing: false,
                 started: false,
                 flags,
-                self_weak: std::rc::Weak::clone(w),
-                interp: None,
-            }),
-        });
-        let ptr = std::rc::Rc::as_ptr(&this).cast_mut();
-        let owner = Owner::new(PollTag::ShellIoWriter, ptr.cast());
-        // SAFETY: `owner` points to the heap allocation that holds this writer.
-        unsafe { this.writer.set_owner(owner) };
-        crate::shell_log!("IOWriter(0x{:x}, fd={}) init", ptr as usize, fd);
-        this
-    }
-
-    /// Stash the interpreter backref so async poll callbacks can drive
-    /// `Yield::run`. Idempotent.
-    /// `interp` must outlive this writer (it owns the IO struct that holds this `Rc`).
-    #[inline]
-    pub(crate) fn set_interp(&self, interp: &Interpreter) {
-        self.state().interp = Some(bun_ptr::ParentRef::new(interp));
+                _interp: PhantomData,
+            }
+        })
     }
 
     #[inline]
     pub(crate) fn fd(&self) -> Fd {
-        self.state().fd
+        self.fd
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
-        let s = self.state();
         let mut cost = core::mem::size_of::<IOWriter>();
-        cost += s.buf.capacity();
-        cost += s.writers.capacity() * core::mem::size_of::<Writer>();
+        cost += self.buf.capacity();
+        cost += self.writers.capacity() * core::mem::size_of::<Writer>();
         cost += self.writer.memory_cost();
         cost
     }
 
-    /// `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the io-layer
-    /// `FilePollVTable` round-trips back to the runtime. We pass the address of
-    /// the stored `bun_event_loop::EventLoopHandle` so the (runtime-registered)
-    /// vtable can recover it.
     #[inline]
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
-        // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
-        // type-erasure; vtable consumers treat the pointee as read-only
-        self.state().evtloop.as_event_loop_ctx()
+        self.evtloop.as_event_loop_ctx()
     }
 
     // ── start ────────────────────────────────────────────────────────────
 
-    fn __start(&self) -> sys::Result<()> {
-        let (fd, pollable) = (self.fd(), self.state().flags.pollable);
-        crate::shell_log!("IOWriter(fd={}) __start()", fd);
-        let started = self.writer.start(self, self.io_evtloop(), fd, pollable);
-        let s = self.state();
+    fn __start(&mut self) -> sys::Result<()> {
+        crate::shell_log!("IOWriter(fd={}) __start()", self.fd);
+        // An empty buffer, because Windows writes from `start`.
+        let handler = Handler::default();
+        let started = self
+            .writer
+            .start(&handler, self.io_evtloop(), self.fd, self.flags.pollable);
         if let Err(e) = started {
             #[cfg(not(windows))]
             {
@@ -304,10 +234,10 @@ impl IOWriter {
                 // same file descriptor. The shell code here makes sure to
                 // _not_ run into that case, but it is possible.
                 if e.get_errno() == E::EINVAL {
-                    crate::shell_log!("IOWriter(fd={}) got EINVAL", s.fd);
-                    s.flags.pollable = false;
-                    s.flags.nonblock = false;
-                    s.flags.is_socket = false;
+                    crate::shell_log!("IOWriter(fd={}) got EINVAL", self.fd);
+                    self.flags.pollable = false;
+                    self.flags.nonblock = false;
+                    self.flags.is_socket = false;
                     return self.__start();
                 }
                 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -315,9 +245,9 @@ impl IOWriter {
                     // On linux regular files are not pollable and return EPERM,
                     // so restart if that's the case with polling disabled.
                     if e.get_errno() == E::EPERM {
-                        s.flags.pollable = false;
-                        s.flags.nonblock = false;
-                        s.flags.is_socket = false;
+                        self.flags.pollable = false;
+                        self.flags.nonblock = false;
+                        self.flags.is_socket = false;
                         return self.__start();
                     }
                 }
@@ -330,10 +260,11 @@ impl IOWriter {
                 // uv_tty_init, but this returns EBADF. As a workaround,
                 // we'll try opening the file descriptor as a file.
                 if e.get_errno() == E::EBADF {
-                    s.flags.pollable = false;
-                    s.flags.nonblock = false;
-                    s.flags.is_socket = false;
-                    self.writer.start_with_file(self, self.io_evtloop(), fd);
+                    self.flags.pollable = false;
+                    self.flags.nonblock = false;
+                    self.flags.is_socket = false;
+                    self.writer
+                        .start_with_file(&handler, self.io_evtloop(), self.fd);
                     return Ok(());
                 }
             }
@@ -343,20 +274,20 @@ impl IOWriter {
         {
             // libuv closes the HANDLE of a pipe or a tty.
             if self.writer.is_stream() {
-                s.fd = Fd::INVALID;
+                self.fd = Fd::INVALID;
             }
         }
         #[cfg(not(windows))]
         {
             use bun_io::FilePollFlag;
-            if s.flags.nonblock {
+            if self.flags.nonblock {
                 self.writer.set_poll_flag(FilePollFlag::Nonblocking);
             }
             // On macOS `sendto` with MSG_DONTWAIT can still block, unless the fd is O_NONBLOCK.
             let sendto_msg_nowait_blocks = cfg!(target_os = "macos");
-            if s.flags.is_socket && (!sendto_msg_nowait_blocks || s.flags.nonblock) {
+            if self.flags.is_socket && (!sendto_msg_nowait_blocks || self.flags.nonblock) {
                 self.writer.set_poll_flag(FilePollFlag::Socket);
-            } else if s.flags.pollable {
+            } else if self.flags.pollable {
                 self.writer.set_poll_flag(FilePollFlag::Fifo);
             }
         }
@@ -364,24 +295,15 @@ impl IOWriter {
     }
 
     /// Idempotent write call.
-    ///
-    /// Failures are *returned* (`WriteOutcome::Failed`), never dispatched from
-    /// here: the caller sits inside the enqueuing child's trampoline, so the
-    /// error completion has to bounce off it (`on_sync_error`) instead of
-    /// re-entering `Yield::run` (see `DbgDepthGuard`).
-    fn write(&self) -> WriteOutcome {
-        let s = self.state();
+    fn write(&mut self) -> WriteOutcome {
         #[cfg(not(windows))]
-        debug_assert!(s.flags.pollable);
+        debug_assert!(self.flags.pollable);
 
-        if !s.started {
-            crate::shell_log!("IOWriter(fd={}) starting", s.fd);
+        if !self.started {
+            crate::shell_log!("IOWriter(fd={}) starting", self.fd);
             // Set before the fallible `__start` so a later enqueue does not
             // retry it.
-            s.started = true;
-            // A first write that libuv refuses runs the children, which may drop every other `Rc`.
-            #[cfg(windows)]
-            let _keepalive = self.keepalive();
+            self.started = true;
             if let Err(e) = self.__start() {
                 return WriteOutcome::Failed(e);
             }
@@ -390,24 +312,29 @@ impl IOWriter {
                 // no poll means it's a file which does not
                 // support polling for writeability and we should just write to it
                 if !self.writer.has_poll() {
-                    debug_assert!(!self.state().flags.pollable);
+                    debug_assert!(!self.flags.pollable);
                     return WriteOutcome::IsActuallyFile;
                 }
                 return WriteOutcome::Suspended;
             }
-            #[cfg(windows)]
-            return WriteOutcome::Suspended;
         }
 
         #[cfg(windows)]
         {
-            crate::shell_log!("IOWriter(fd={}) write() is_writing={}", s.fd, s.is_writing);
-            if s.is_writing {
+            crate::shell_log!(
+                "IOWriter(fd={}) write() is_writing={}",
+                self.fd,
+                self.is_writing
+            );
+            if self.is_writing {
                 return WriteOutcome::Suspended;
             }
-            s.is_writing = true;
-            self.writer.start_with_current_pipe(self);
-            return WriteOutcome::Suspended;
+            self.skip_dead();
+            let handler = Handler::new(self.get_buffer());
+            self.writer.write(&handler);
+            let err = handler.err.take();
+            self.is_writing = handler.has_inflight_write.get();
+            return err.map_or(WriteOutcome::Suspended, WriteOutcome::Failed);
         }
 
         #[cfg(not(windows))]
@@ -417,8 +344,11 @@ impl IOWriter {
             if self.writer.is_watching() {
                 return WriteOutcome::Suspended;
             }
-            let (fd, pollable) = (s.fd, s.flags.pollable);
-            if let Err(e) = self.writer.start(self, self.io_evtloop(), fd, pollable) {
+            let handler = Handler::default();
+            let started =
+                self.writer
+                    .start(&handler, self.io_evtloop(), self.fd, self.flags.pollable);
+            if let Err(e) = started {
                 return WriteOutcome::Failed(e);
             }
             WriteOutcome::Suspended
@@ -428,16 +358,8 @@ impl IOWriter {
     // ── queue management ────────────────────────────────────────────────
 
     /// Cancel the chunks enqueued by the given child by marking them as dead.
-    pub(crate) fn cancel_chunks(&self, ptr: ChildPtr) {
-        let s = self.state();
-        if s.writers.is_empty() {
-            return;
-        }
-        let idx = s.writer_idx;
-        if idx >= s.writers.len() {
-            return;
-        }
-        for w in &mut s.writers[idx..] {
+    pub(crate) fn cancel_chunks(&mut self, ptr: ChildPtr) {
+        for w in &mut self.writers[self.writer_idx..] {
             if w.ptr == ptr {
                 w.set_dead();
             }
@@ -446,32 +368,22 @@ impl IOWriter {
 
     /// Skips over dead children and increments `total_bytes_written` by the
     /// amount they would have written so the buf is skipped as well.
-    fn skip_dead(&self) {
-        let s = self.state();
-        while s.writer_idx < s.writers.len() {
-            let w = &s.writers[s.writer_idx];
-            if w.is_dead() {
-                s.total_bytes_written += w.len - w.written;
-                s.writer_idx += 1;
-                continue;
-            }
-            return;
+    fn skip_dead(&mut self) {
+        while let Some(w) = self.writers.get(self.writer_idx).filter(|w| w.is_dead()) {
+            self.total_bytes_written += w.len - w.written;
+            self.writer_idx += 1;
         }
     }
 
     fn wrote_everything(&self) -> bool {
-        let s = self.state();
-        s.total_bytes_written >= s.buf.len()
+        self.total_bytes_written >= self.buf.len()
     }
 
-    /// Only does things on windows.
-    #[inline]
-    fn set_writing(&self, writing: bool) {
-        #[cfg(windows)]
-        {
-            self.state().is_writing = writing;
-        }
-        let _ = writing;
+    fn clear(&mut self) {
+        self.buf.clear();
+        self.writer_idx = 0;
+        self.writers.clear();
+        self.total_bytes_written = 0;
     }
 
     // ── buffer slicing ──────────────────────────────────────────────────
@@ -479,69 +391,39 @@ impl IOWriter {
     /// Returns the buffer of data that needs to be written for the *current*
     /// writer.
     fn get_buffer(&self) -> &[u8] {
-        // NOTE: reshaped for borrowck — re-derive `state()` after
-        // `skip_dead()` instead of holding one `&mut State` across it.
-        {
-            let s = self.state();
-            if s.writer_idx >= s.writers.len() {
-                return &[];
-            }
-            if s.writers[s.writer_idx].is_dead() {
-                self.skip_dead();
-            }
-        }
-        let s = self.state();
-        if s.writer_idx >= s.writers.len() {
+        let Some(writer) = self.writers.get(self.writer_idx) else {
             return &[];
-        }
-        let remaining = {
-            let writer = &s.writers[s.writer_idx];
-            debug_assert!(writer.len != writer.written);
-            writer.len - writer.written
         };
-        // `state()` already ties `s` to `&self`, so a plain slice borrow has
-        // the right lifetime. `buf` is not reallocated until after the
-        // caller's write syscall completes.
-        let start = s.total_bytes_written;
-        &s.buf[start..start + remaining]
+        debug_assert!(writer.len != writer.written);
+        let start = self.total_bytes_written;
+        &self.buf[start..start + (writer.len - writer.written)]
     }
 
     // ── bump (chunk completed) ──────────────────────────────────────────
 
     /// Advance past `current_writer`, shrinking `buf` if appropriate, and
     /// return the `Yield` for the child's `on_io_writer_chunk` callback.
-    fn bump(&self, current_idx: usize) -> Yield {
-        // NOTE: reshaped for borrowck — `skip_dead()` re-derives `state()`,
-        // so we must drop `s` before calling it and re-derive after, otherwise
-        // two `&mut State` are live simultaneously (UB under Stacked Borrows).
-        let (is_dead, written, child_ptr) = {
-            let s = self.state();
-            let w = &s.writers[current_idx];
-            (w.is_dead(), w.written, w.ptr)
-        };
+    fn bump(&mut self, current_idx: usize) -> Yield {
+        let w = &self.writers[current_idx];
+        let (is_dead, written, child_ptr) = (w.is_dead(), w.written, w.ptr);
 
         if is_dead {
             self.skip_dead();
         } else {
-            let s = self.state();
-            debug_assert!(s.writers[current_idx].written == s.writers[current_idx].len);
-            s.writer_idx += 1;
+            debug_assert!(w.written == w.len);
+            self.writer_idx += 1;
         }
 
-        let s = self.state();
-        if s.writer_idx >= s.writers.len() {
-            s.buf.clear();
-            s.writer_idx = 0;
-            s.writers.clear();
-            s.total_bytes_written = 0;
-        } else if s.total_bytes_written >= SHRINK_THRESHOLD {
-            s.buf.drain_front(s.total_bytes_written);
-            s.total_bytes_written = 0;
+        if self.writer_idx >= self.writers.len() {
+            self.clear();
+        } else if self.total_bytes_written >= SHRINK_THRESHOLD {
+            self.buf.drain_front(self.total_bytes_written);
+            self.total_bytes_written = 0;
             // Drop the *prefix* of the writers queue: Vec::drain(..idx).
-            s.writers.drain(..s.writer_idx);
-            s.writer_idx = 0;
-            if cfg!(debug_assertions) && !s.writers.is_empty() {
-                debug_assert!(s.buf.len() >= s.writers[0].len);
+            self.writers.drain(..self.writer_idx);
+            self.writer_idx = 0;
+            if cfg!(debug_assertions) && !self.writers.is_empty() {
+                debug_assert!(self.buf.len() >= self.writers[0].len);
             }
         }
 
@@ -559,60 +441,48 @@ impl IOWriter {
 
     /// Tee `amt` bytes from the current buffer position into `writers[idx]`'s
     /// capture and advance its `written` / `total_bytes_written` counters.
-    #[cfg(not(windows))]
-    fn record_write_progress(&self, idx: usize, amt: usize) {
-        let s = self.state();
-        let lo = s.total_bytes_written;
-        s.writers[idx].tee(&s.buf[lo..lo + amt]);
-        s.total_bytes_written += amt;
-        s.writers[idx].written += amt;
+    fn record_write_progress(&mut self, shells: &mut ShellExecEnvs<'_>, idx: usize, amt: usize) {
+        let lo = self.total_bytes_written;
+        self.writers[idx].tee(shells, &self.buf[lo..lo + amt]);
+        self.total_bytes_written += amt;
+        self.writers[idx].written += amt;
     }
 
-    /// POSIX-only. `child` is the writer being enqueued (see `on_sync_error`).
     #[cfg(not(windows))]
-    fn do_file_write(&self, child: ChildPtr) -> Yield {
-        {
-            let s = self.state();
-            debug_assert!(!s.flags.pollable);
-            debug_assert!(s.writer_idx < s.writers.len());
-        }
+    fn do_file_write(&mut self, shells: &mut ShellExecEnvs<'_>) -> Yield {
+        debug_assert!(!self.flags.pollable);
+        debug_assert!(self.writer_idx < self.writers.len());
 
-        scopeguard::defer! { self.set_writing(false); }
         self.skip_dead();
 
-        let idx = self.state().writer_idx;
-        debug_assert!(!self.state().writers[idx].is_dead());
+        let idx = self.writer_idx;
+        debug_assert!(!self.writers[idx].is_dead());
 
         let buf = self.get_buffer();
         debug_assert!(!buf.is_empty());
 
-        let result = drain_buffered_data(self, buf, u32::MAX as usize);
-        // NOTE: re-derive `state()` after `drain_buffered_data` instead of
-        // holding a stale `&mut`.
-        let amt = match result {
+        let amt = match drain_buffered_data(self.fd, buf, u32::MAX as usize) {
             bun_io::WriteResult::Done(amt) | bun_io::WriteResult::Wrote(amt) => amt,
             bun_io::WriteResult::Pending(amt) => {
                 // EAGAIN from a target that was classified non-pollable (a
                 // FIFO or chardev opened by path with O_NONBLOCK). Record the
                 // partial write and restart this writer on the pollable path.
-                self.record_write_progress(idx, amt);
-                let s = self.state();
-                s.flags.pollable = true;
-                s.flags.nonblock = true;
-                s.started = false;
+                self.record_write_progress(shells, idx, amt);
+                self.flags.pollable = true;
+                self.flags.nonblock = true;
+                self.started = false;
                 return match self.write() {
                     WriteOutcome::Suspended => Yield::suspended(),
-                    WriteOutcome::IsActuallyFile => self
-                        .on_sync_error(child, &sys::Error::from_code(E::EAGAIN, sys::Tag::write)),
-                    WriteOutcome::Failed(e) => self.on_sync_error(child, &e),
+                    WriteOutcome::IsActuallyFile => {
+                        self.fail_pending_writers(sys::Error::from_code(E::EAGAIN, sys::Tag::write))
+                    }
+                    WriteOutcome::Failed(e) => self.fail_pending_writers(e),
                 };
             }
-            // The caller is inside the enqueuing child's trampoline, so the
-            // error completion is returned, not `Yield::run` from here.
-            bun_io::WriteResult::Err(e) => return self.on_sync_error(child, &e),
+            bun_io::WriteResult::Err(e) => return self.fail_pending_writers(e),
         };
-        self.record_write_progress(idx, amt);
-        if !self.state().writers[idx].wrote_everything() {
+        self.record_write_progress(shells, idx, amt);
+        if !self.writers[idx].wrote_everything() {
             // The only case where we get partial writes is when an error is
             // encountered, which returns above.
             unreachable!(
@@ -624,173 +494,112 @@ impl IOWriter {
 
     // ── poll callback ───────────────────────────────────────────────────
 
-    pub(crate) fn on_io(&self, event: IoEvent) {
-        self.writer.on_io(self, event);
+    /// The caller runs the result, and then [`Self::write_pending`].
+    fn on_io(&mut self, shells: &mut ShellExecEnvs<'_>, event: IoEvent) -> Yield {
+        // On Windows the current chunk was already written, dead or not.
+        #[cfg(not(windows))]
+        self.skip_dead();
+        let handler = Handler::new(self.get_buffer());
+        #[cfg(windows)]
+        handler.has_inflight_write.set(self.is_writing);
+        self.writer.on_io(&handler, event);
+        let (written, err) = (handler.written.get(), handler.err.take());
+        #[cfg(windows)]
+        {
+            self.is_writing = handler.has_inflight_write.get();
+        }
+        match (written, err) {
+            (None, None) => Yield::suspended(),
+            (Some((amount, status)), None) => self.on_write_pollable(shells, amount, status),
+            (None, Some(err)) => self.fail_pending_writers(err),
+            // A short write, after which the poll could not be registered again.
+            (Some((amount, _)), Some(err)) => {
+                self.record_write_progress(shells, self.writer_idx, amount);
+                self.fail_pending_writers(err)
+            }
+        }
     }
 
-    /// The `BufferedWriter.onWrite` hook. Runs on the event loop when the fd
-    /// is writable.
-    fn on_write_pollable(&self, amount: usize, status: WriteStatus) {
-        // NOTE: `set_writing` re-derives `state()` on Windows, which would
-        // invalidate `s` under Stacked Borrows; do it before binding `s`
-        // (matches the ordering in `on_error`).
-        self.set_writing(false);
-        let s = self.state();
+    fn on_write_pollable(
+        &mut self,
+        shells: &mut ShellExecEnvs<'_>,
+        amount: usize,
+        status: WriteStatus,
+    ) -> Yield {
         #[cfg(not(windows))]
-        debug_assert!(s.flags.pollable);
+        debug_assert!(self.flags.pollable);
 
-        if s.writer_idx >= s.writers.len() {
-            return;
+        let idx = self.writer_idx;
+        let Some(current) = self.writers.get(idx) else {
+            return Yield::suspended();
+        };
+        if current.is_dead() {
+            return self.bump(idx);
         }
-        let idx = s.writer_idx;
-        if s.writers[idx].is_dead() {
-            self.run_yield(self.bump(idx));
-        } else {
-            let lo = s.total_bytes_written;
-            s.writers[idx].tee(&s.buf[lo..lo + amount]);
-            s.total_bytes_written += amount;
-            s.writers[idx].written += amount;
-            if status == WriteStatus::EndOfFile {
-                // NOTE: inline `is_last_idx` instead of calling
-                // `self.is_last_idx(idx)` — that re-derives `state()` while `s`
-                // is still live, which is two simultaneous `&mut State` (UB).
-                let last = idx == s.writers.len().saturating_sub(1);
-                let not_fully_written = if last {
-                    true
-                } else {
-                    s.writers[idx].written < s.writers[idx].len
-                };
-                if !not_fully_written {
-                    return;
-                }
-                // The other end of the socket/pipe closed (e.g. `ls | echo`).
-                self.fail_pending_writers(&sys::Error::from_code(E::EPIPE, sys::Tag::write), None);
-                return;
-            }
-            if s.writers[idx].written >= s.writers[idx].len {
-                self.run_yield(self.bump(idx));
-            }
+        self.record_write_progress(shells, idx, amount);
+        if status == WriteStatus::EndOfFile {
+            // The other end of the socket/pipe closed (e.g. `ls | echo`).
+            return self.fail_pending_writers(sys::Error::from_code(E::EPIPE, sys::Tag::write));
         }
+        if self.writers[idx].wrote_everything() {
+            return self.bump(idx);
+        }
+        Yield::suspended()
+    }
 
-        let wrote_everything = self.wrote_everything();
-        let s = self.state();
-        if !wrote_everything && s.writer_idx < s.writers.len() {
-            #[cfg(windows)]
-            {
-                // NOTE: inline `set_writing(true)` instead of calling the
-                // helper — the helper re-derives `state()` while `s` is live,
-                // which is two simultaneous `&mut State` (UB under Stacked
-                // Borrows). Same discipline as the top of this fn.
-                s.is_writing = true;
-                self.writer.write(self);
-            }
-            #[cfg(not(windows))]
-            {
-                debug_assert!(self.writer.has_poll());
-                self.writer.register_poll(self);
-            }
+    pub(crate) fn write_pending(&mut self) -> Yield {
+        if self.wrote_everything() || self.writer_idx >= self.writers.len() {
+            return Yield::suspended();
+        }
+        match self.write() {
+            WriteOutcome::Failed(err) => self.fail_pending_writers(err),
+            _ => Yield::suspended(),
         }
     }
 
     /// Fails every chunk still queued, oldest first, each with its own error
     /// completion: a builtin that queues one chunk per item waits for one
     /// completion per chunk. A child that finishes at its first error has to
-    /// `cancel_chunks` there. The first chunk of `withhold` is returned
-    /// instead of run (see `on_sync_error`).
-    fn fail_pending_writers(&self, err: &sys::Error, withhold: Option<ChildPtr>) -> Option<Yield> {
-        // A completion may drop the last external `Rc` to this writer.
-        let _keepalive = self.keepalive();
-        self.set_writing(false);
-        let s = self.state();
+    /// `cancel_chunks` there.
+    fn fail_pending_writers(&mut self, err: sys::Error) -> Yield {
         if err.get_errno() == E::EPIPE {
-            s.flags.broken_pipe = true;
+            self.flags.broken_pipe = true;
         }
-        // Mark the writer dead before any completion below runs: a child that
+        // Mark the writer dead before any completion runs: a child that
         // enqueues from its callback (the next statement, the RHS of `&&`, ...)
         // must be rejected by `handle_dead_writer`, not queued onto a writer
-        // whose handle the error path is tearing down.
-        s.err = Some(err.clone());
-        // `SystemError` owns `bun_core::String`s by value (no shared refcount
-        // yet), so each completion derives a fresh one.
-        let completion = |child| Yield::OnIoWriterChunk {
+        // whose handle the error path has torn down.
+        self.err = Some(err);
+        Yield::FailPendingWriters(self.id)
+    }
+
+    /// Returns the error completion of the oldest queued chunk, and whether more are queued.
+    pub(crate) fn fail_next_writer(&mut self) -> (Yield, bool) {
+        // A completion may have cancelled the entries behind it.
+        self.skip_dead();
+        let child = self.writers.get(self.writer_idx).map(|w| w.ptr);
+        self.writer_idx += 1;
+        let more = self.writer_idx < self.writers.len();
+        if !more {
+            self.clear();
+        }
+        let completion = child.map_or(Yield::done(), |child| Yield::OnIoWriterChunk {
             child,
             written: 0,
-            err: Some(err.to_shell_system_error()),
-        };
-        // Writers before writer_idx have already had their callback fired and
-        // may have been freed; only notify the still-pending ones.
-        let mut idx = s.writer_idx;
-        let mut withheld: Option<usize> = None;
-        // Re-derived every iteration: a completion may `cancel_chunks` the entries behind it.
-        while let Some(w) = self.state().writers.get(idx) {
-            let (dead, child) = (w.is_dead(), w.ptr);
-            idx += 1;
-            if dead {
-                continue;
-            }
-            if withheld.is_none() && withhold == Some(child) {
-                withheld = Some(idx - 1);
-                continue;
-            }
-            self.run_yield(completion(child));
-        }
-        let s = self.state();
-        let withheld = withheld
-            .map(|i| &s.writers[i])
-            .filter(|w| !w.is_dead())
-            .map(|w| completion(w.ptr));
-        s.total_bytes_written = 0;
-        s.writer_idx = 0;
-        s.buf.clear();
-        s.writers.clear();
-        withheld
-    }
-
-    /// Synchronous write failure while `child`'s `enqueue` call (and therefore
-    /// its trampoline) is still on the stack. `child`'s error completion is
-    /// *returned* so that trampoline delivers it after `enqueue` unwinds;
-    /// calling `on_error` here instead would re-enter `Yield::run` once per
-    /// failing command and fire `child`'s callback from inside its own
-    /// `enqueue`. Usually `child`'s chunk is the only pending one (a
-    /// synchronous failure is the first write attempt of a batch); if a poll
-    /// re-registration fails while other chunks are still queued, those are
-    /// dispatched the way the async path dispatches them.
-    fn on_sync_error(&self, child: ChildPtr, err: &sys::Error) -> Yield {
-        // `None`: an inline completion made `child` cancel its chunks, so it has finished.
-        self.fail_pending_writers(err, Some(child))
-            .unwrap_or_else(Yield::done)
-    }
-
-    /// Drive a `Yield` from inside an async poll callback. Requires `interp`
-    /// to have been set; if not, the chunk-complete is dropped (debug-asserts).
-    fn run_yield(&self, y: Yield) {
-        let Some(interp) = self.state().interp else {
-            debug_assert!(
-                matches!(y, Yield::Done),
-                "IOWriter async callback fired without interp backref"
-            );
-            return;
-        };
-        // SAFETY: interp outlives every IOWriter (it owns the IO struct that
-        // holds the Rc). Single-threaded; R-2: `Interpreter::run` takes
-        // `&self` now — `ParentRef: Deref<Target=Interpreter>` yields the
-        // shared borrow without `assume_mut()`.
-        y.run(&interp);
+            err: self.err.as_ref().map(sys::Error::to_shell_system_error),
+        });
+        (completion, more)
     }
 
     // ── enqueue ─────────────────────────────────────────────────────────
 
     /// A writer that already reported a fatal error must not accept new
-    /// chunks: `PosixBufferedWriter::report_error_and_close` closes the handle after
-    /// `on_error` returns, so a chunk queued from inside the completion
-    /// callbacks (or any later one) would wait on a poll that is being torn
-    /// down, and a later `write()` would run with `handle == Closed` (the
+    /// chunks: a later `write()` would run with `handle == Closed` (the
     /// pollable path asserts `handle == Poll`). Broken pipes are the EPIPE
     /// flavor of the same thing. Report the error to the child instead of
     /// queueing the chunk.
     fn handle_dead_writer(&self, ptr: ChildPtr) -> Option<Yield> {
-        let s = self.state();
-        if s.flags.broken_pipe {
+        if self.flags.broken_pipe {
             let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_system_error();
             return Some(Yield::OnIoWriterChunk {
                 child: ptr,
@@ -798,12 +607,12 @@ impl IOWriter {
                 err: Some(err),
             });
         }
-        if let Some(err) = &s.err {
+        if let Some(err) = &self.err {
             return Some(Yield::OnIoWriterChunk {
                 child: ptr,
                 written: 0,
                 // `SystemError` owns its `bun_core::String`s by value, so
-                // derive a fresh one per rejected chunk (see `on_error`).
+                // derive a fresh one per rejected chunk.
                 err: Some(err.to_shell_system_error()),
             });
         }
@@ -811,41 +620,38 @@ impl IOWriter {
     }
 
     #[cfg(not(windows))]
-    fn enqueue_file(&self, child: ChildPtr) -> Yield {
-        let s = self.state();
-        if s.is_writing {
-            return Yield::suspended();
-        }
+    fn enqueue_file(&mut self, shells: &mut ShellExecEnvs<'_>) -> Yield {
         // The pollable path sets `started` in write(); the non-pollable file
         // path bypasses write() entirely, so set it here.
-        s.started = true;
-        self.set_writing(true);
-        self.do_file_write(child)
+        self.started = true;
+        self.do_file_write(shells)
     }
 
     /// You MUST have already added the data to `self.buf`!
-    /// `child` is the writer that was just pushed (see `on_sync_error`).
-    fn enqueue_internal(&self, child: ChildPtr) -> Yield {
-        debug_assert!(!self.state().flags.broken_pipe);
-        debug_assert!(self.state().err.is_none());
+    fn enqueue_internal(&mut self, shells: &mut ShellExecEnvs<'_>) -> Yield {
+        debug_assert!(!self.flags.broken_pipe);
+        debug_assert!(self.err.is_none());
+        #[cfg(windows)]
+        let _ = shells;
         #[cfg(not(windows))]
-        if !self.state().flags.pollable {
-            return self.enqueue_file(child);
+        if !self.flags.pollable {
+            return self.enqueue_file(shells);
         }
         match self.write() {
             WriteOutcome::Suspended => Yield::suspended(),
             #[cfg(not(windows))]
-            WriteOutcome::IsActuallyFile => self.enqueue_file(child),
-            WriteOutcome::Failed(e) => self.on_sync_error(child, &e),
+            WriteOutcome::IsActuallyFile => self.enqueue_file(shells),
+            WriteOutcome::Failed(e) => self.fail_pending_writers(e),
         }
     }
 
     /// Queue `buf` for writing; when the chunk completes (or errors),
     /// `child`'s `on_io_writer_chunk` fires.
     pub(crate) fn enqueue(
-        &self,
+        &mut self,
+        shells: &mut ShellExecEnvs<'_>,
         child: ChildPtr,
-        bytelist: Option<*mut Vec<u8>>,
+        captured: Option<BufioId>,
         buf: &[u8],
     ) -> Yield {
         if let Some(y) = self.handle_dead_writer(child) {
@@ -858,96 +664,104 @@ impl IOWriter {
                 err: None,
             };
         }
-        let s = self.state();
-        s.buf.extend_from_slice(buf);
-        s.writers.push(Writer {
+        self.buf.extend_from_slice(buf);
+        self.writers.push(Writer {
             ptr: child,
             len: buf.len(),
             written: 0,
-            bytelist,
+            captured,
         });
-        self.enqueue_internal(child)
+        self.enqueue_internal(shells)
     }
 
     /// Prefix `"{kind}: "` then format.
     pub(crate) fn enqueue_fmt_bltn(
-        &self,
+        &mut self,
+        shells: &mut ShellExecEnvs<'_>,
         child: ChildPtr,
-        bytelist: Option<*mut Vec<u8>>,
+        captured: Option<BufioId>,
         kind: Option<crate::shell::builtin::Kind>,
         args: core::fmt::Arguments<'_>,
     ) -> Yield {
         use std::io::Write as _;
-        let s = self.state();
-        let start = s.buf.len();
+        if let Some(y) = self.handle_dead_writer(child) {
+            return y;
+        }
+        let start = self.buf.len();
         if let Some(k) = kind {
-            let _ = write!(&mut s.buf, "{}: ", k.as_str());
+            let _ = write!(&mut self.buf, "{}: ", k.as_str());
         }
-        let _ = s.buf.write_fmt(args);
-        // `buf` is written *before* the dead-writer checks (the bytes are dead
-        // on the error path but no `Writer` references them, and an errored
-        // writer never drains again).
-        // NOTE: inline `handle_dead_writer` instead of calling the helper —
-        // the helper re-derives `state()` while `s` is still live, which is two
-        // simultaneous `&mut State` (UB under Stacked Borrows).
-        if s.flags.broken_pipe {
-            let err = sys::Error::from_code(E::EPIPE, sys::Tag::write).to_system_error();
-            return Yield::OnIoWriterChunk {
-                child,
-                written: 0,
-                err: Some(err),
-            };
-        }
-        if let Some(err) = &s.err {
-            return Yield::OnIoWriterChunk {
-                child,
-                written: 0,
-                err: Some(err.to_shell_system_error()),
-            };
-        }
-        let end = s.buf.len();
-        s.writers.push(Writer {
+        let _ = self.buf.write_fmt(args);
+        let end = self.buf.len();
+        self.writers.push(Writer {
             ptr: child,
             len: end - start,
             written: 0,
-            bytelist,
+            captured,
         });
-        self.enqueue_internal(child)
+        self.enqueue_internal(shells)
+    }
+}
+
+impl ShellInterpreter {
+    pub(crate) fn on_writer_io(&self, id: IOWriterId, event: IoEvent) {
+        if let Some(y) =
+            self.with_interp(|interp| interp.io_writers[id].on_io(&mut interp.shells, event))
+        {
+            let mut stack = DeferredStack::new();
+            stack.push(Deferred::WritePending(id));
+            self.run_yield(y, stack);
+        }
     }
 }
 
 enum WriteOutcome {
     Suspended,
-    /// The write/poll-registration failed synchronously; the caller turns this
-    /// into the enqueuing child's error completion (`on_sync_error`).
+    /// The write/poll-registration failed synchronously.
     Failed(sys::Error),
     #[cfg(not(windows))]
     IsActuallyFile,
 }
 
-impl BufferedWriteHandler for IOWriter {
-    fn with_buffer<R>(&self, f: impl FnOnce(&[u8]) -> R) -> R {
-        f(self.get_buffer())
+/// Records the callbacks of one `BufferedWriter` call, for `IOWriter` to handle after it returns.
+#[derive(Default)]
+struct Handler<'a> {
+    buffer: &'a [u8],
+    written: Cell<Option<(usize, WriteStatus)>>,
+    err: Cell<Option<sys::Error>>,
+    #[cfg(windows)]
+    has_inflight_write: Cell<bool>,
+}
+
+impl<'a> Handler<'a> {
+    fn new(buffer: &'a [u8]) -> Self {
+        Handler {
+            buffer,
+            ..Default::default()
+        }
     }
 }
 
-impl WriteHandler for IOWriter {
+impl BufferedWriteHandler for Handler<'_> {
+    fn with_buffer<R>(&self, f: impl FnOnce(&[u8]) -> R) -> R {
+        f(self.buffer)
+    }
+}
+
+impl WriteHandler for Handler<'_> {
     fn on_write(&self, amount: usize, status: WriteStatus) {
-        self.on_write_pollable(amount, status);
+        self.written.set(Some((amount, status)));
     }
 
-    /// On Windows also from under `write()`, which cannot turn it into a `WriteOutcome::Failed`.
     fn on_error(&self, err: sys::Error) {
-        self.fail_pending_writers(&err, None);
+        self.err.set(Some(err));
     }
 
-    fn on_close(&self) {
-        self.set_writing(false);
-    }
+    fn on_close(&self) {}
 
     #[cfg(windows)]
     fn set_has_inflight_write(&self, value: bool) {
-        self.inflight_write_ref.set(value.then(|| self.keepalive()));
+        self.has_inflight_write.set(value);
     }
 }
 
@@ -984,11 +798,7 @@ fn try_write_with_write_fn(
 }
 
 #[cfg(not(windows))]
-fn drain_buffered_data(
-    parent: &IOWriter,
-    buf: &[u8],
-    max_write_size: usize,
-) -> bun_io::WriteResult {
+fn drain_buffered_data(fd: Fd, buf: &[u8], max_write_size: usize) -> bun_io::WriteResult {
     let trimmed = if max_write_size < buf.len() && max_write_size > 0 {
         &buf[..max_write_size]
     } else {
@@ -996,7 +806,7 @@ fn drain_buffered_data(
     };
     let mut drained: usize = 0;
     while drained < trimmed.len() {
-        match try_write_with_write_fn(parent.state().fd, buf, sys::write) {
+        match try_write_with_write_fn(fd, buf, sys::write) {
             bun_io::WriteResult::Pending(pending) => {
                 drained += pending;
                 return bun_io::WriteResult::Pending(drained);
@@ -1006,8 +816,7 @@ fn drain_buffered_data(
             }
             bun_io::WriteResult::Err(err) => {
                 // Reported as an error even after a partial write: the caller
-                // (`do_file_write`) fails the whole chunk either way, and it
-                // must not dispatch the failure from under the trampoline.
+                // (`do_file_write`) fails the whole chunk either way.
                 return bun_io::WriteResult::Err(err);
             }
             bun_io::WriteResult::Done(amt) => {
@@ -1023,14 +832,34 @@ fn drain_buffered_data(
 // Drop
 // ──────────────────────────────────────────────────────────────────────────
 
-impl Drop for IOWriter {
+impl Drop for IOWriter<'_> {
     fn drop(&mut self) {
+        crate::shell_log!("IOWriter(fd={}) deinit", self.fd);
         // The poll goes before its fd.
-        self.writer.close(self);
-        let s = self.state.get_mut();
-        crate::shell_log!("IOWriter(fd={}) deinit", s.fd);
-        if s.fd != Fd::INVALID {
-            let _ = sys::close(s.fd);
+        #[cfg(not(windows))]
+        self.writer.close(&Handler::default());
+        #[cfg(windows)]
+        {
+            /// # Safety
+            /// `writer` is the box of an `IOWriter` that was dropped.
+            unsafe fn free(writer: *mut ()) {
+                // SAFETY: fn contract.
+                unsafe { bun_core::heap::destroy(writer.cast::<BufferedWriter>()) };
+            }
+            let writer = self.writer.as_ptr().cast();
+            // SAFETY: nothing else frees the box, or uses it from here on.
+            unsafe {
+                if !self.writer.close_and_detach(writer, free) {
+                    free(writer);
+                }
+            }
+            // A libuv thread may still be writing to `fd`.
+            if self.is_writing {
+                return;
+            }
+        }
+        if self.fd != Fd::INVALID {
+            let _ = sys::close(self.fd);
         }
     }
 }
@@ -1040,16 +869,16 @@ impl Drop for IOWriter {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Hoisted dispatch for the `onIOWriterChunk` callback (PORTING.md §Dispatch
-/// hot-path). Called by `Yield::OnIoWriterChunk` and by the writer's poll
-/// callback.
+/// hot-path). Called by `Yield::OnIoWriterChunk`.
 pub(crate) fn on_io_writer_chunk(
-    interp: &Interpreter,
+    interp: &mut Interpreter<'_>,
     child: ChildPtr,
     written: usize,
     err: Option<sys::SystemError>,
 ) -> Yield {
     use crate::shell::builtin::Builtin;
     use crate::shell::states::{cmd, cond_expr, pipeline};
+    use crate::shell::subproc::PipeReader;
     match child.tag {
         WriterTag::Builtin => Builtin::on_io_writer_chunk(interp, child.node, written, err),
         WriterTag::Cmd => cmd::Cmd::on_io_writer_chunk(interp, child.node, written, err),
@@ -1059,18 +888,8 @@ pub(crate) fn on_io_writer_chunk(
         WriterTag::Pipeline => {
             pipeline::Pipeline::on_io_writer_chunk(interp, child.node, written, err)
         }
-        // The target is the subprocess PipeReader's `CapturedWriter`; it
-        // lives outside the NodeId arena (heap-allocated PipeReader), so it
-        // is carried in `child.raw` instead of `child.node`.
-        WriterTag::Subproc => {
-            debug_assert!(!child.raw.is_null());
-            // SAFETY: `raw` was set from `&mut CapturedWriter` in
-            // `CapturedWriter::do_write`; the PipeReader (and the embedded
-            // CapturedWriter) is kept alive by the `Readable::Pipe` Rc on
-            // the owning ShellSubprocess until `on_close_io` runs, which only
-            // happens after the writer has finished draining. Single-threaded.
-            let cw = unsafe { &mut *child.raw.cast::<crate::shell::subproc::CapturedWriter>() };
-            cw.on_iowriter_chunk(written, err)
+        WriterTag::Subproc(kind) => {
+            PipeReader::on_io_writer_chunk(interp, child.node, kind, written, err)
         }
     }
 }

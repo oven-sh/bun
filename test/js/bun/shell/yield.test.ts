@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -12,10 +12,7 @@ describe("yield", async () => {
     .fileEquals("myfile.txt", array.join(" "))
     .runAsTest("doesn't stackoverflow");
 
-  // A synchronously failing write (/dev/full, Linux-only: write(2) gives ENOSPC)
-  // used to re-enter the `Yield::run` trampoline from `IOWriter::on_error`, one
-  // nesting level per failing command, tripping the interpreter's re-entrancy
-  // guard. Spawn a subprocess so the aborting child stays contained.
+  // A write to /dev/full (Linux) fails synchronously. It must not nest `Yield::run` once per failing command.
   async function expectShellOutput(script: string, expected: { stdout: string; exitCode: number }) {
     await using proc = Bun.spawn({
       cmd: [
@@ -102,6 +99,27 @@ describe("yield", async () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  test("scripts started from a `then` getter while the promise resolves", async () => {
+    const result = await bunRun([
+      "-e",
+      `
+      let depth = 0;
+      Object.defineProperty(Object.prototype, "then", {
+        get() {
+          if (this.exitCode !== undefined && depth < 10) {
+            depth++;
+            Bun.$\`echo x\`.quiet().run();
+          }
+        },
+      });
+      Bun.$\`echo x\`.quiet().run();
+      console.log(depth);
+      `,
+      "--debug-crash-handler-use-trace-string",
+    ]);
+    expect(result).toSpawn("10");
   });
 
   // A state can throw a JS error (here: a `${value}` redirect target the command

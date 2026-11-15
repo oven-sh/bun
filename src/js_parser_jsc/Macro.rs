@@ -14,7 +14,7 @@ use bun_core::strings;
 use bun_dotenv::Loader as DotEnvLoader;
 
 use crate::Error;
-use bun_js_parser::Macro::MacroContext;
+use bun_js_parser::Macro::{MacroContext, MacroLoadState};
 
 use crate::expr_jsc::ExprJsc;
 use bun_jsc::js_property_iterator::JSPropertyIteratorOptions;
@@ -33,7 +33,7 @@ fn is_macro_path(str: &[u8]) -> bool {
     strings::has_prefix(str, NAMESPACE_WITH_COLON)
 }
 
-fn call(
+fn call_macro(
     ctx: MacroContext<'_>,
     bump: &bun_alloc::Arena,
     import_record_path: &[u8],
@@ -48,10 +48,10 @@ fn call(
         .is_some_and(|program| !bun_jsc::compiled_program::admits_unknown_javascript(program))
     {
         log.add_range_error(
-                Some(source),
-                import_range,
-                b"Macros cannot be used in this executable, which only runs code that was compiled into it",
-            );
+            Some(source),
+            import_range,
+            b"Macros cannot be used in this executable, which only runs code that was compiled into it",
+        );
         return Err(crate::Error::MacroFailed);
     }
     // A macro's entry point is text made here, with names in it from the source that imports the macro, which may be a
@@ -65,7 +65,6 @@ fn call(
         return Err(crate::Error::MacroFailed);
     }
     let _store_guard = DisableStoreReset::new();
-    // const is_package_path = isPackagePath(specifier);
     let import_record_path_without_macro_prefix = if is_macro_path(import_record_path) {
         &import_record_path[NAMESPACE_WITH_COLON.len()..]
     } else {
@@ -132,12 +131,11 @@ fn call(
         &mut specifier_buf_len,
     );
 
-    let vm = match ctx.loaded.get(hash) {
-        Some(true) => VirtualMachine::get(),
-        Some(false) => return Ok(caller),
+    let vm = match ctx.macro_load_states.get(hash) {
+        Some(MacroLoadState::Loaded) => VirtualMachine::get(),
+        Some(MacroLoadState::Disabled) => return Ok(caller),
         None => {
-            // Stays if it fails to load, so that the next call does not try again.
-            ctx.loaded.set(hash, false);
+            ctx.macro_load_states.set(hash, MacroLoadState::Disabled);
             let (vm, is_new_vm) = if VirtualMachine::is_loaded() {
                 (VirtualMachine::get(), false)
             } else {
@@ -149,9 +147,9 @@ fn call(
                         (*transpiler).env.as_ref(),
                     )
                 };
-                (init_vm(log, env, options)?, true)
+                (init_macro_vm(log, env, options)?, true)
             };
-            load(
+            load_macro(
                 vm,
                 is_new_vm,
                 input_specifier,
@@ -159,7 +157,7 @@ fn call(
                 &specifier_buf[0..specifier_buf_len as usize],
                 hash,
             )?;
-            ctx.loaded.set(hash, true);
+            ctx.macro_load_states.set(hash, MacroLoadState::Loaded);
             Output::flush();
             vm
         }
@@ -204,7 +202,7 @@ fn __bun_macro_collect_vm_garbage() {
 #[unsafe(no_mangle)]
 fn __bun_macro_context_call(
     ctx: MacroContext<'_>,
-    arena: &bun_alloc::Arena,
+    bump: &bun_alloc::Arena,
     import_record_path: &[u8],
     source_dir: &[u8],
     log: &mut Log,
@@ -216,9 +214,9 @@ fn __bun_macro_context_call(
     // ABI: the `extern "Rust"` declaration in bun_js_parser names
     // `bun_js_parser::Error`; keep both sides byte-identical.
     let caller_loc = caller.loc;
-    call(
+    call_macro(
         ctx,
-        arena,
+        bump,
         import_record_path,
         source_dir,
         log,
@@ -243,7 +241,7 @@ fn __bun_macro_context_call(
     })
 }
 
-fn init_vm(
+fn init_macro_vm(
     log: &mut Log,
     env: Option<&DotEnvLoader>,
     transform_options: &TransformOptions,
@@ -273,7 +271,7 @@ fn init_vm(
     })?)
 }
 
-fn load(
+fn load_macro(
     vm: &VirtualMachine,
     is_new_vm: bool,
     input_specifier: &[u8],
@@ -284,10 +282,10 @@ fn load(
     // Covers `configure_defines` (new-VM path) and `load_macro_entry_point`
     // (which runs the macro module's top-level JS via `wait_for_promise`) so
     // a top-level `Bun.Transpiler#transformSync` doesn't see
-    // `macro_guard_depth == 0` and free the printer mid-init. Drops on every
+    // `macro_guard_depth == 0` and free the printer mid-load. Drops on every
     // exit (success, `?`, Rejected) so depth/state can't leak; the caller's
     // own `MacroModeGuard` re-enables for the actual macro call.
-    let _init_guard = MacroModeGuard::new(vm);
+    let _mode_guard = MacroModeGuard::new(vm);
     vm.event_loop().ensure_waker();
     if is_new_vm {
         vm.transpiler.with_mut(|t| t.configure_defines())?;
@@ -404,7 +402,7 @@ pub(crate) struct Run<'a> {
     pub(crate) caller: Expr,
     pub(crate) vm: &'a VirtualMachine,
     pub(crate) global: &'a JSGlobalObject,
-    /// The parser's: the returned `Expr` becomes part of its AST.
+    /// The parser's arena: the returned `Expr` joins its AST.
     pub(crate) bump: &'a bun_alloc::Arena,
     pub(crate) log: &'a mut Log,
     pub(crate) source: &'a Source<'a>,

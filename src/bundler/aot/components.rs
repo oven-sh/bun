@@ -17,7 +17,7 @@ const SOURCE_INDEX: u32 = 2;
 const TARGET: Target = Target::Bun;
 
 /// Parses `file` through `ParseTask`, so the parser gets exactly the options a bundle gives it. Returns false if the
-/// file has an error. Calling a macro is one.
+/// file has an error, such as a macro call.
 pub(crate) fn compile_components(
     context: &BuildContext,
     file: &ComponentFile<'_>,

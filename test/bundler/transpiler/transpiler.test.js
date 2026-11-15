@@ -2727,7 +2727,7 @@ export const after = { a: 1 };
       expect([transpiler.transformSync(source), transpiler.transformSync(source)]).toEqual([expected, expected]);
     });
 
-    it("reports a stack overflow when there is no stack left to copy it", () => {
+    it("reports a stack overflow when an array define cannot be copied", () => {
       const nested = Buffer.alloc(200, "[").toString() + Buffer.alloc(200, "]").toString();
       const transpiler = new Bun.Transpiler({ loader: "js", define: { FLAT: "[]", NESTED: nested } });
       // The parser reads a member chain in a loop and visits it recursively, and scan() does not print.
@@ -5247,7 +5247,7 @@ console.log(foo, array);
         });
       });
 
-      it("does not take the context from the next macro", async () => {
+      it("leaves the context argument for the next macro", async () => {
         const code = `imports + "f(scans(), scans())"`;
         expect(await run(`console.log(transpiler.transformSync(${code}, { name: "context" }));`)).toEqual({
           lastLine: `f("context", "context");`,
@@ -5256,7 +5256,7 @@ console.log(foo, array);
         });
       });
 
-      it.each(["transformSync", "scan"])("does not hide the error from %s", async method => {
+      it.each(["transformSync", "scan"])("%s still throws its parse error", async method => {
         const code = `imports + "scans(); const c = 1; c = 2;"`;
         expect(await run(`try { transpiler.${method}(${code}); } catch (e) { console.log(e.message); }`)).toEqual({
           lastLine: `This assignment will throw because "c" is a constant`,

@@ -229,7 +229,7 @@ pub(super) fn configure(ctx: Context<'_>) -> Result<Configuration, crate::Error>
 
     let arena: &'static bun_alloc::Arena = crate::cli::cli_arena();
     let this_transpiler: &'static mut Transpiler<'static> =
-        arena.alloc(Transpiler::init(arena, ctx.log, ctx.args.clone(), None)?);
+        arena.alloc(Transpiler::init(arena, ctx.log(), ctx.args.clone(), None)?);
     if reads_no_configuration {
         this_transpiler.options.load_tsconfig_json = false;
         this_transpiler.resolver.opts.load_tsconfig_json = false;
@@ -640,7 +640,7 @@ pub(super) fn request_from_context<'r>(
             ],
             embeds_source_maps,
         },
-        log: ctx.log,
+        log: ctx.log(),
     }
 }
 

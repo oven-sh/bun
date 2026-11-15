@@ -2344,10 +2344,7 @@ pub fn init(
                 && let Some((parent, json_file, name_hash)) = find_workspace_root(
                     &mut walk,
                     child_cwd,
-                    // SAFETY: `ctx.log` is a borrow of the CLI's `Log`; valid for the
-                    // duration of `init()` (set by `Command::create()` before any install
-                    // entry point runs).
-                    unsafe { &*ctx.log },
+                    ctx.log(),
                     Some((&mut workspace_names, &mut workspace_package_json_cache)),
                     (subcommand == Subcommand::Pm)
                         .then_some(&mut root_package_json_name_at_time_of_init),
@@ -2500,7 +2497,7 @@ pub fn init(
 
     let manager_ptr = allocate_package_manager(
         options,
-        ctx.log,
+        ctx.log(),
         entries_option,
         env,
         original_package_json_path_buf,
@@ -2567,9 +2564,7 @@ pub fn init(
         );
 
         manager.options.load(
-            // SAFETY: ctx.log is the process-lifetime CLI log set by
-            // create_context_data(); single-threaded init region.
-            unsafe { &*ctx.log },
+            ctx.log(),
             env,
             cli,
             ctx.install.as_deref(),

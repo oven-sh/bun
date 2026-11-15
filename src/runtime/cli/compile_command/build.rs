@@ -16,7 +16,7 @@ use bun_exe_format::identity::{
 };
 use bun_options_types::Format;
 use bun_options_types::aot_options::AotOptions;
-use bun_paths::resolve_path::{self, platform};
+use bun_paths::resolve_path::{self, SpillBuf, platform};
 use bun_resolver::compiled_program::{
     PathForFileSystemAlone, encode_files_for_file_system_alone, folders_up_to,
 };
@@ -562,7 +562,10 @@ fn build_program(
     let working_directory = bun_sys::getcwd_alloc().ok();
     let to_absolute = |path: &[u8]| {
         let folder = working_directory.as_ref()?.as_bytes();
-        Some(resolve_path::join_abs_string::<platform::Auto>(folder, &[path]).to_vec())
+        Some(resolve_path::join_abs_string_vec::<platform::Auto>(
+            folder,
+            &[path],
+        ))
     };
     let outfile = match request.product {
         CompileProduct::Executable { outfile } => to_absolute(outfile),
@@ -875,10 +878,13 @@ fn add_data_files_under_root(
     // What an earlier build left where this one writes its executable is no file of the program.
     let outfile = bun_sys::getcwd_alloc().ok().map(|working_directory| {
         let folder = working_directory.as_bytes();
-        with_forward_slashes(resolve_path::join_abs_string::<platform::Auto>(
-            folder,
-            &[entry_name],
-        ))
+        SpillBuf::with_scratch(|buf| {
+            with_forward_slashes(resolve_path::join_abs_string_spill::<platform::Auto>(
+                folder,
+                buf,
+                &[entry_name],
+            ))
+        })
     });
     let is_outfile = |path: &[u8]| {
         outfile.as_deref().is_some_and(|outfile| {
@@ -1331,7 +1337,7 @@ fn split_file_path(path: &[u8]) -> impl Iterator<Item = &[u8]> {
 /// `path.resolve(folder, path)`. `resolve_path` takes a backslash for a separator on every host; off Windows it is part of a file's name.
 fn join_file_path(folder: &[u8], path: &[u8]) -> Vec<u8> {
     if cfg!(windows) {
-        return resolve_path::join_abs_string::<platform::Auto>(folder, &[path]).to_vec();
+        return resolve_path::join_abs_string_vec::<platform::Auto>(folder, &[path]);
     }
     let folder = split_file_path(folder).filter(|_| !path.starts_with(b"/"));
     let mut names: Vec<&[u8]> = Vec::new();
@@ -1347,7 +1353,7 @@ fn join_file_path(folder: &[u8], path: &[u8]) -> Vec<u8> {
 /// `path.relative(from, to)` of two absolute paths, by the same rule.
 fn relative_file_path(from: &[u8], to: &[u8]) -> Vec<u8> {
     if cfg!(windows) {
-        return resolve_path::relative(from, to).to_vec();
+        return resolve_path::relative_vec(from, to);
     }
     let from: Vec<&[u8]> = split_file_path(from).collect();
     let to: Vec<&[u8]> = split_file_path(to).collect();
@@ -1379,11 +1385,10 @@ fn add_assets_in_place(
 
         let asset_path = trim_trailing_separators(asset);
         let asset_name = to_embedded_name(bun_paths::basename(asset_path));
-        let written_path = resolve_path::join_abs_string::<platform::Auto>(
+        let written_path = resolve_path::join_abs_string_vec::<platform::Auto>(
             working_directory.as_bytes(),
             &[asset_path],
-        )
-        .to_vec();
+        );
         let real_path = bun_sys::realpath(&ZBox::from_bytes(&written_path), &mut real_path_buffer)
             .map_err(|error| AssetError::Unreadable {
                 asset: asset.clone(),
@@ -1458,7 +1463,9 @@ pub(super) fn asset_output_file(dest: Vec<u8>, bytes: Vec<u8>) -> OutputFile {
 /// An executable that is shipped tells nobody the folders of the machine that built it, so a root that lies elsewhere is not written down.
 fn find_root_below_working_directory(root_directory: &[u8]) -> Option<Vec<u8>> {
     let working_directory = bun_sys::getcwd_alloc().ok()?;
-    let root = resolve_path::relative(
+    let mut buf = SpillBuf::default();
+    let root = resolve_path::relative_spill(
+        &mut buf,
         working_directory.as_bytes(),
         trim_trailing_separators(root_directory),
     );
@@ -1471,10 +1478,19 @@ fn find_root_below_working_directory(root_directory: &[u8]) -> Option<Vec<u8>> {
 /// where the two have no folder in common but the root of the disk, or where the way there names more than two folders: that tells where the program was built.
 fn find_root_from_executable(root_directory: &[u8], outfile: &[u8]) -> Option<Vec<u8>> {
     let working_directory = bun_sys::getcwd_alloc().ok()?;
-    let outfile =
-        resolve_path::join_abs_string::<platform::Auto>(working_directory.as_bytes(), &[outfile]);
+    let mut outfile_buf = SpillBuf::default();
+    let outfile = resolve_path::join_abs_string_spill::<platform::Auto>(
+        working_directory.as_bytes(),
+        &mut outfile_buf,
+        &[outfile],
+    );
     let folder = resolve_path::dirname::<platform::Auto>(outfile);
-    let root = resolve_path::relative(folder, trim_trailing_separators(root_directory));
+    let mut root_buf = SpillBuf::default();
+    let root = resolve_path::relative_spill(
+        &mut root_buf,
+        folder,
+        trim_trailing_separators(root_directory),
+    );
     if bun_paths::is_absolute(root) {
         return None;
     }

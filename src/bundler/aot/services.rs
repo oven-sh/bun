@@ -12,7 +12,7 @@ use bun_aot::{SourceProvider, WithoutServices};
 use bun_ast::{Loader, Log, Msg, SideEffects};
 use bun_core::ZBox;
 use bun_js_parser::{Define, ExpandedImportMetaGlob};
-use bun_paths::resolve_path::posix_to_platform_in_place;
+use bun_paths::resolve_path::{SpillBuf, posix_to_platform_in_place, relative_spill};
 use bun_paths::string_paths::without_trailing_slash_windows_path;
 use bun_react_compiler::Observer;
 use bun_resolver::compiled_program::{RefusedData, encode_refused_data};
@@ -246,9 +246,11 @@ fn count_levels_above(root: &[u8], asset: &[u8]) -> usize {
     if folders.iter().flatten().any(|it| is_at_or_below(it, root)) {
         return 0;
     }
-    let relative = bun_paths::resolve_path::relative(root, real_folder.unwrap_or(written_folder));
-    let steps = relative.split(|&byte| bun_paths::is_sep_any(byte));
-    steps.take_while(|&step| step == b"..").count()
+    SpillBuf::with_scratch(|buf| {
+        let relative = relative_spill(buf, root, real_folder.unwrap_or(written_folder));
+        let steps = relative.split(|&byte| bun_paths::is_sep_any(byte));
+        steps.take_while(|&step| step == b"..").count()
+    })
 }
 
 const LOCK_FILES: [&[u8]; 6] = [
@@ -405,9 +407,10 @@ fn is_reached_through_symlink(asset: &[u8], path: &[u8]) -> bool {
 /// Purely lexical, because the executable does not follow symlinks.
 fn count_lexical_levels_above(root: &[u8], written: &[u8]) -> usize {
     let folder = bun_paths::dirname(written).unwrap_or(written);
-    let relative = bun_paths::resolve_path::relative(root, folder);
-    let steps = relative.split(|&byte| bun_paths::is_sep_any(byte));
-    steps.take_while(|&step| step == b"..").count()
+    SpillBuf::with_scratch(|buf| {
+        let steps = relative_spill(buf, root, folder).split(|&byte| bun_paths::is_sep_any(byte));
+        steps.take_while(|&step| step == b"..").count()
+    })
 }
 
 pub(crate) struct NamesWanted {

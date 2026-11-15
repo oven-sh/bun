@@ -233,52 +233,50 @@ impl ShellWork for ShellTouchTask {
     /// utimes() the path; on ENOENT
     /// fall back to `open(O_CREAT|O_WRONLY, 0o664)`.
     fn run_from_thread_pool(&mut self) {
-        use bun_paths::resolve_path::{self, Platform, platform};
-        // We have to give an absolute path. An operand that does not fit the
-        // path buffer is still passed on whole, so the OS reports ENAMETOOLONG
-        // for it like for any other operand.
-        let mut spill = Vec::new();
-        let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.filepath) {
-            // Re-terminate (`filepath` is the bare argv bytes without the
-            // trailing NUL).
-            resolve_path::join_z_spill::<platform::Auto>(&mut spill, &[&self.filepath])
-        } else {
-            resolve_path::join_z_spill::<platform::Auto>(
-                &mut spill,
-                &[&self.cwd_path, &self.filepath],
-            )
-        };
+        use bun_paths::resolve_path::{self, Platform, SpillBuf, platform};
+        SpillBuf::with_scratch(|buf| {
+            // We have to give an absolute path. An operand that does not fit the
+            // path buffer is still passed on whole, so the OS reports ENAMETOOLONG
+            // for it like for any other operand.
+            let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.filepath) {
+                // Re-terminate (`filepath` is the bare argv bytes without the
+                // trailing NUL).
+                resolve_path::join_z_spill::<platform::Auto>(buf, &[&self.filepath])
+            } else {
+                resolve_path::join_z_spill::<platform::Auto>(buf, &[&self.cwd_path, &self.filepath])
+            };
 
-        // Call the bun_sys layer directly (uv_fs_utime on Windows) to avoid
-        // the heavyweight NodeFS state.
-        let milliseconds = bun_core::time::milli_timestamp();
-        let atime = bun_sys::TimeLike {
-            sec: milliseconds.div_euclid(1_000),
-            nsec: milliseconds.rem_euclid(1_000) * 1_000_000,
-        };
-        let mtime = atime;
-        if let Err(err) = bun_sys::utimens(filepath, atime, mtime) {
-            'out: {
-                // The executable holds it: it is there.
-                if err.get_errno() == bun_sys::E::ENOENT
-                    && crate::node::fs::is_embedded_source_file(filepath.as_bytes())
-                {
-                    break 'out;
-                }
-                if err.get_errno() == bun_sys::E::ENOENT {
-                    const PERM: bun_sys::Mode = 0o664;
-                    let flags = bun_sys::O::CREAT | bun_sys::O::WRONLY;
-                    match bun_sys::File::open(filepath, flags, PERM) {
-                        Ok(_) => break 'out,
-                        Err(e) => {
-                            self.err = Some(e.with_path(filepath.as_bytes()));
-                            break 'out;
+            // Call the bun_sys layer directly (uv_fs_utime on Windows) to avoid
+            // the heavyweight NodeFS state.
+            let milliseconds = bun_core::time::milli_timestamp();
+            let atime = bun_sys::TimeLike {
+                sec: milliseconds.div_euclid(1_000),
+                nsec: milliseconds.rem_euclid(1_000) * 1_000_000,
+            };
+            let mtime = atime;
+            if let Err(err) = bun_sys::utimens(filepath, atime, mtime) {
+                'out: {
+                    // The executable holds it: it is there.
+                    if err.get_errno() == bun_sys::E::ENOENT
+                        && crate::node::fs::is_embedded_source_file(filepath.as_bytes())
+                    {
+                        break 'out;
+                    }
+                    if err.get_errno() == bun_sys::E::ENOENT {
+                        const PERM: bun_sys::Mode = 0o664;
+                        let flags = bun_sys::O::CREAT | bun_sys::O::WRONLY;
+                        match bun_sys::File::open(filepath, flags, PERM) {
+                            Ok(_) => break 'out,
+                            Err(e) => {
+                                self.err = Some(e.with_path(filepath.as_bytes()));
+                                break 'out;
+                            }
                         }
                     }
+                    self.err = Some(err.with_path(filepath.as_bytes()));
                 }
-                self.err = Some(err.with_path(filepath.as_bytes()));
             }
-        }
+        })
     }
 
     fn run_from_main_thread(&mut self, interp: &mut Interpreter<'_>) -> Yield {

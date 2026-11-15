@@ -14,6 +14,7 @@ use std::cell::RefCell;
 
 use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::strings;
+use bun_paths::resolve_path::SpillBuf;
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -361,7 +362,8 @@ impl<'a> RouteLoader<'a> {
         let mut route_dirname_len: u16 = 0;
 
         // Call bun_paths directly to avoid the higher-tier bun_resolver dep.
-        let relative_dir = bun_paths::resolve_path::relative(base_dir, &config.dir);
+        let mut buf = SpillBuf::default();
+        let relative_dir = bun_paths::resolve_path::relative_spill(&mut buf, base_dir, &config.dir);
         if !relative_dir.starts_with(b"..") {
             route_dirname_len =
                 (relative_dir.len() + usize::from(config.dir[config.dir.len() - 1] != SEP)) as u16;
@@ -377,7 +379,7 @@ impl<'a> RouteLoader<'a> {
             index: None,
             route_dirname_len,
         };
-        this.load(resolver, root_dir_info, base_dir);
+        this.load(resolver, root_dir_info, base_dir, &mut buf);
         if this.all_routes.is_empty() {
             return Routes {
                 static_: this.static_list,
@@ -433,6 +435,7 @@ impl<'a> RouteLoader<'a> {
         resolver: &mut R,
         root_dir_info: &DirInfo,
         base_dir: &[u8],
+        buf: &mut SpillBuf<'_>,
     ) {
         let fs = self.fs;
 
@@ -462,9 +465,10 @@ impl<'a> RouteLoader<'a> {
                     }
 
                     let abs_parts = [entry.dir(), entry.base()];
-                    if let Some(dir_info) = resolver.read_dir_info_ignore_error(fs.abs(&abs_parts))
+                    if let Some(dir_info) =
+                        resolver.read_dir_info_ignore_error(fs.abs_spill(&abs_parts, buf))
                     {
-                        self.load(resolver, dir_info, base_dir);
+                        self.load(resolver, dir_info, base_dir, buf);
                     }
                 }
 

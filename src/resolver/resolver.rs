@@ -115,9 +115,6 @@ mod bun_paths {
             ::bun_paths::resolve_path::join_abs_string_buf_checked::<P>(cwd, buf, parts)
         })
     }
-    pub(super) fn join(parts: &[&[u8]], platform: Platform) -> &'static [u8] {
-        dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join::<P>(parts))
-    }
     pub(super) fn join_string_buf<'b>(
         buf: &'b mut [u8],
         parts: &[&[u8]],
@@ -240,6 +237,7 @@ use ::bun_core::{FeatureFlags, Generation, StackCheck};
 use bun_ast::Msg;
 use bun_collections::BoundedArray;
 use bun_dotenv::env_loader as DotEnv;
+use bun_paths::resolve_path::SpillBuf;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
 use bun_perf::system_timer::Timer;
 use bun_ptr::Interned;
@@ -3771,6 +3769,7 @@ impl<'a> Resolver<'a> {
         out: &mut MatchResult,
     ) -> MatchStatus {
         use crate::package_json::Status;
+        use bun_paths::resolve_path::{join_spill, platform};
         if !((matches!(
             esm_resolution.status,
             Status::Inexact | Status::Exact | Status::ExactEndsWithStar
@@ -3894,12 +3893,12 @@ impl<'a> Resolver<'a> {
                                             ms.extend_from_slice(&file_name[..]);
                                             let parts =
                                                 [package_json.name.as_ref(), package_subpath];
+                                            let mut join_buf = SpillBuf::default();
+                                            let import =
+                                                join_spill::<platform::Auto>(&mut join_buf, &parts);
                                             debug.add_note_fmt(format_args!(
                                                 "The import {} is missing the suffix {}",
-                                                bstr::BStr::new(ResolvePath::join(
-                                                    &parts,
-                                                    bun_paths::Platform::AUTO
-                                                )),
+                                                bstr::BStr::new(import),
                                                 bstr::BStr::new(&ms)
                                             ));
                                         }
@@ -4159,8 +4158,12 @@ impl<'a> Resolver<'a> {
         if result.has_base_url() {
             // this might leak
             if !bun_paths::is_absolute(&result.base_url) {
-                let abs = self.fs_ref().abs(&[file_dir, &result.base_url[..]]);
-                result.base_url = Box::from(abs);
+                result.base_url = SpillBuf::with_scratch(|buf| {
+                    Box::from(
+                        self.fs_ref()
+                            .abs_spill(&[file_dir, &result.base_url[..]], buf),
+                    )
+                });
             }
         }
 
@@ -4169,8 +4172,12 @@ impl<'a> Resolver<'a> {
                 || !bun_paths::is_absolute(&result.base_url_for_paths))
         {
             // this might leak
-            let abs = self.fs_ref().abs(&[file_dir, &result.base_url[..]]);
-            result.base_url_for_paths = Box::from(abs);
+            result.base_url_for_paths = SpillBuf::with_scratch(|buf| {
+                Box::from(
+                    self.fs_ref()
+                        .abs_spill(&[file_dir, &result.base_url[..]], buf),
+                )
+            });
         }
 
         // NOTE: return the `Box` so the caller (`dir_info_uncached`) takes
@@ -5205,8 +5212,11 @@ impl<'a> Resolver<'a> {
                     {
                         // Is the path disabled?
                         if remap.is_empty() {
-                            let paths = [path, field_rel_path];
-                            let new_path = self.fs_ref().abs_alloc(&paths).expect("unreachable");
+                            let new_path = self
+                                .fs_ref()
+                                .dirname_store
+                                .append_slice(field_abs_path)
+                                .expect("unreachable");
                             let mut _path = Path::init(new_path);
                             _path.is_disabled = true;
                             *out = MatchResult {
@@ -5458,8 +5468,11 @@ impl<'a> Resolver<'a> {
                     {
                         // Is the path disabled?
                         if remap.is_empty() {
-                            let new_path =
-                                self.fs_ref().abs_alloc(&index_paths).expect("unreachable");
+                            let new_path = self
+                                .fs_ref()
+                                .dirname_store
+                                .append_slice(index_abs_path)
+                                .expect("unreachable");
                             let mut _path = Path::init(new_path);
                             _path.is_disabled = true;
                             *out = MatchResult {

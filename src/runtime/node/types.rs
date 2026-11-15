@@ -1153,7 +1153,10 @@ fn join_onto_working_directory_in_executable(path: &[u8]) -> Option<Vec<u8>> {
     if path.is_empty() || bun_paths::is_absolute(path) || strings::contains_char(path, 0) {
         return None;
     }
-    Some(resolve_path::join_abs_string::<platform::Auto>(directory, &[path]).to_vec())
+    Some(resolve_path::join_abs_string_vec::<platform::Auto>(
+        directory,
+        &[path],
+    ))
 }
 
 /// Whether `find_path_meant` may find another path than the one that is written.

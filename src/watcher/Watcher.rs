@@ -360,8 +360,9 @@ impl Watcher {
         #[cfg(windows)]
         let dir = CloseOnDrop::new(sys::open_a(file_path, sys::O::RDONLY | sys::O::CLOEXEC, 0)?);
 
-        let parent_hash =
-            Self::get_hash(bun_paths::fs::PathName::init(file_path).dir_with_trailing_slash());
+        let parent_hash = Self::get_hash(
+            bun_paths::fs::PathName::init(file_path).dir_with_trailing_slash(file_path),
+        );
 
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         self.add_file_descriptor_to_kqueue_without_checks(&dir, watchlist.len());
@@ -408,7 +409,7 @@ impl Watcher {
         debug_assert!(file_path.len() > 1);
         let pathname = bun_paths::fs::PathName::init(file_path);
 
-        let parent_dir = pathname.dir_with_trailing_slash();
+        let parent_dir = pathname.dir_with_trailing_slash(file_path);
         let parent_dir_hash: HashType = Self::get_hash(parent_dir);
 
         let append_parent_dir = feature_flags::WATCH_DIRECTORIES

@@ -249,8 +249,7 @@ fn specifier_from(from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
     if cfg!(windows) {
         // Each directory in `from` takes at least two bytes and can become `../`.
         let mut buf = vec![0u8; from.len() * 2 + to.len() + 8];
-        let below =
-            resolve_path::relative_platform_buf::<platform::Loose, true>(&mut buf, from, to);
+        let below = resolve_path::relative_platform_buf::<platform::Loose>(&mut buf, from, to);
         if !below.starts_with(b"../") {
             path.extend_from_slice(b"./");
         }

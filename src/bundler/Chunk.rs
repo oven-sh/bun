@@ -15,6 +15,7 @@ use bun_core::{FeatureFlags, Output};
 // it from parser-side indices; all consumers only call `.get()`.
 use bun_ast::Index;
 use bun_core::{string_joiner::StringJoiner, strings};
+use bun_paths::resolve_path::{SpillBuf, platform, relative_platform_spill};
 use bun_sourcemap as source_map;
 
 use crate::analyze_transpiled_module;
@@ -675,18 +676,21 @@ impl IntermediateOutput {
                                 );
                                 &file_path_posix
                             };
-                            let cheap_normalizer = cheap_prefix_normalizer(
-                                import_prefix,
-                                if use_outdir_relative_path {
-                                    file_path
-                                } else {
-                                    bun_paths::resolve_path::relative_platform::<
-                                        bun_paths::platform::Posix,
-                                        false,
-                                    >(from_chunk_dir, file_path)
-                                },
-                            );
-                            count += cheap_normalizer[0].len() + cheap_normalizer[1].len();
+                            let count_path = |path: &[u8]| {
+                                let cheap_normalizer = cheap_prefix_normalizer(import_prefix, path);
+                                cheap_normalizer[0].len() + cheap_normalizer[1].len()
+                            };
+                            count += if use_outdir_relative_path {
+                                count_path(file_path)
+                            } else {
+                                SpillBuf::with_scratch(|buf| {
+                                    count_path(relative_platform_spill::<platform::Posix>(
+                                        buf,
+                                        from_chunk_dir,
+                                        file_path,
+                                    ))
+                                })
+                            };
                         }
                         QueryKind::None => {}
                     }
@@ -854,30 +858,33 @@ impl IntermediateOutput {
                                 );
                                 &file_path_posix
                             };
-                            let cheap_normalizer = cheap_prefix_normalizer(
-                                import_prefix,
-                                if use_outdir_relative_path {
-                                    file_path
-                                } else {
-                                    bun_paths::resolve_path::relative_platform::<
-                                        bun_paths::platform::Posix,
-                                        false,
-                                    >(from_chunk_dir, file_path)
-                                },
-                            );
+                            let mut write_path = |path: &[u8]| {
+                                let cheap_normalizer = cheap_prefix_normalizer(import_prefix, path);
 
-                            if !cheap_normalizer[0].is_empty() {
-                                total_buf.extend_from_slice(cheap_normalizer[0]);
-                                if ENABLE_SOURCE_MAP_SHIFTS {
-                                    shift.after.advance(cheap_normalizer[0]);
+                                if !cheap_normalizer[0].is_empty() {
+                                    total_buf.extend_from_slice(cheap_normalizer[0]);
+                                    if ENABLE_SOURCE_MAP_SHIFTS {
+                                        shift.after.advance(cheap_normalizer[0]);
+                                    }
                                 }
-                            }
 
-                            if !cheap_normalizer[1].is_empty() {
-                                total_buf.extend_from_slice(cheap_normalizer[1]);
-                                if ENABLE_SOURCE_MAP_SHIFTS {
-                                    shift.after.advance(cheap_normalizer[1]);
+                                if !cheap_normalizer[1].is_empty() {
+                                    total_buf.extend_from_slice(cheap_normalizer[1]);
+                                    if ENABLE_SOURCE_MAP_SHIFTS {
+                                        shift.after.advance(cheap_normalizer[1]);
+                                    }
                                 }
+                            };
+                            if use_outdir_relative_path {
+                                write_path(file_path);
+                            } else {
+                                SpillBuf::with_scratch(|buf| {
+                                    write_path(relative_platform_spill::<platform::Posix>(
+                                        buf,
+                                        from_chunk_dir,
+                                        file_path,
+                                    ))
+                                });
                             }
 
                             if ENABLE_SOURCE_MAP_SHIFTS {

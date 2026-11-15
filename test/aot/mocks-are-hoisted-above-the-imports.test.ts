@@ -24,9 +24,6 @@ const differs = {
   "an error of the build has its number in front": [
     "errors > an import statement in a CommonJS file is still rejected",
   ],
-  "the runner is not told of a compiled import of a builtin module": [
-    "errors > a factory for a builtin module is named too",
-  ],
 };
 
 // How many cases of each section of the specification pass.
@@ -38,7 +35,7 @@ const sections = {
   "modes": 7,
   "a top-level variable in a factory of jest.mock": 18,
   "a top-level variable in a factory of vi.mock": 18,
-  "errors": 13,
+  "errors": 3,
   "source locations": 4,
 };
 
@@ -70,6 +67,6 @@ test.each(Object.entries(sections))(
     expect(named("fail")).toEqual(differing.sort());
     expect(named("pass")).toHaveLength(passing);
     // A section that is not listed here would run in no case.
-    expect(Number(/^ *(\d+) filtered out$/m.exec(stderr)?.[1])).toBe(132 + 13 - passing - differing.length);
+    expect(Number(/^ *(\d+) filtered out$/m.exec(stderr)?.[1])).toBe(122 + 12 - passing - differing.length);
   },
 );

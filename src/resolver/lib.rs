@@ -50,10 +50,10 @@ pub use tsconfig_json::TSConfigJSON;
 // `result` / `standalone_module_graph` sibling modules.
 /// Re-export so dependents can spell `bun_resolver::install_types::AutoInstaller`.
 pub use ::bun_install_types::resolver_hooks as install_types;
-pub use resolver::{BrowserMapPathKind, Bufs, Dirname, Resolver, module_type_from_ext};
+pub use resolver::{BrowserMapPathKind, Dirname, Resolver, module_type_from_ext};
 pub use result::{
-    DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
-    MatchStatus, PathPair, Result, ResultFlags, ResultUnion,
+    DebugLogs, ExternalKind, FlushMode, LoadResult, MatchResult, MatchStatus, PathPair, Result,
+    ResultFlags, ResultUnion,
 };
 pub use standalone_module_graph::{
     BytecodeModule, LINKED_BYTECODE_REGION_COUNT, StandaloneModuleGraph,
@@ -629,27 +629,11 @@ pub mod fs {
     use bun_sys::Fd;
     use bun_threading::Mutex;
 
-    // Port of `threadlocal var temp_entries_option: EntriesOption = undefined` —
-    // `read_directory*` returns a pointer into this when the entry-cache is
-    // disabled or the path is `mark_not_found`. `RefCell` (not `UnsafeCell`) so
-    // the per-thread unique-borrow is debug-checked; matches the sibling
-    // `TEMP_ENTRIES_OPTION` in `fs.rs`.
-    thread_local! {
-        static TEMP_ENTRIES_OPTION: core::cell::RefCell<core::mem::MaybeUninit<EntriesOption>> =
-            const { core::cell::RefCell::new(core::mem::MaybeUninit::uninit()) };
-    }
-
-    fn temp_entries_option_write(value: EntriesOption) -> &'static EntriesOption {
-        TEMP_ENTRIES_OPTION.with_borrow_mut(|slot| {
-            slot.write(value);
-            // SAFETY: just wrote; threadlocal storage outlives the caller.
-            // Re-erase to 'static for the BSSMap-shaped
-            // unbounded `&EntriesOption` return type — the `RefMut` guard
-            // drops immediately on return, so no live `RefCell` borrow aliases
-            // the escaped reference.
-            unsafe { &*slot.as_ptr() }
-        })
-    }
+    /// What `read_directory*` returns for a path that is `mark_not_found`.
+    const NOT_FOUND: &EntriesOption = &EntriesOption::Err(dir_entry::Err {
+        original_err: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+        canonical_error: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+    });
 
     // Modeled as
     // an unbounded `&mut DirEntry` so resolver match arms (`Entries(entries) =>
@@ -916,8 +900,7 @@ pub mod fs {
             Ok(dir)
         }
 
-        /// Cache (or threadlocal-
-        /// stash) an `EntriesOption::Err` for `dir` and hand back its address.
+        /// Cache an `EntriesOption::Err` for `dir` and hand back its address.
         fn read_directory_error(
             &mut self,
             dir: &[u8],
@@ -926,12 +909,7 @@ pub mod fs {
             let mut get_or_put_result = self.entries.get_or_put(dir)?;
             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                 self.entries.mark_not_found(get_or_put_result);
-                return Ok(temp_entries_option_write(EntriesOption::Err(
-                    dir_entry::Err {
-                        original_err: err,
-                        canonical_error: err,
-                    },
-                )));
+                return Ok(NOT_FOUND);
             }
             let opt = self.entries.put(
                 &mut get_or_put_result,
@@ -944,7 +922,6 @@ pub mod fs {
             Ok(unsafe { &*opt })
         }
 
-        /// A missing directory's `Err` is this thread's scratch slot; read it before the next call.
         pub fn read_directory(
             &mut self,
             dir_: &[u8],
@@ -996,12 +973,7 @@ pub mod fs {
                     }
                 } else if cache_result.status == bun_alloc::ItemStatus::NotFound && generation == 0
                 {
-                    return Ok(temp_entries_option_write(EntriesOption::Err(
-                        dir_entry::Err {
-                            original_err: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
-                            canonical_error: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
-                        },
-                    )));
+                    return Ok(NOT_FOUND);
                 }
             }
 

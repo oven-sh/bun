@@ -2,7 +2,7 @@
 
 #![allow(non_camel_case_types)]
 
-use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
 
 pub type brotli_alloc_func =
     Option<unsafe extern "C" fn(opaque: *mut c_void, size: usize) -> *mut c_void>;
@@ -18,12 +18,8 @@ pub type BrotliSharedDictionaryType = enum_BrotliSharedDictionaryType;
 // BrotliSharedDictionaryAttach (unused).
 
 unsafe extern "C" {
-    // Opaque handle by reference + scalars only.
-    pub safe fn BrotliDecoderSetParameter(
-        state: &mut BrotliDecoder,
-        param: c_uint,
-        value: u32,
-    ) -> c_int;
+    pub fn BrotliDecoderSetParameter(state: *mut BrotliDecoder, param: c_uint, value: u32)
+    -> c_int;
     pub fn BrotliDecoderAttachDictionary(
         state: *mut BrotliDecoder,
         type_: BrotliSharedDictionaryType,
@@ -44,59 +40,14 @@ unsafe extern "C" {
         next_out: *mut *mut u8,
         total_out: *mut usize,
     ) -> BrotliDecoderResult;
-    // Query fns: opaque handle by reference + scalars only — `BrotliDecoder` is
-    // `!Freeze` (UnsafeCell) so internal C mutation through `&` is sound.
-    pub safe fn BrotliDecoderGetErrorCode(state: &BrotliDecoder) -> BrotliDecoderErrorCode2;
-    pub safe fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) -> *const c_char;
-    pub safe fn BrotliDecoderHasMoreOutput(state: &BrotliDecoder) -> c_int;
+    pub fn BrotliDecoderGetErrorCode(state: *const BrotliDecoder) -> BrotliDecoderErrorCode2;
+    safe fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) -> *const c_char;
+    pub fn BrotliDecoderHasMoreOutput(state: *const BrotliDecoder) -> c_int;
 }
 
 bun_opaque::opaque_ffi! {
-    /// Opaque brotli decoder state. `UnsafeCell` makes the type `!Freeze` so a
-    /// `&BrotliDecoder` does not assert immutability of the C-owned state.
+    /// Opaque brotli decoder state.
     pub struct BrotliDecoder;
-}
-
-impl BrotliDecoder {
-    pub fn set_parameter(
-        state: &mut BrotliDecoder,
-        param: BrotliDecoderParameter,
-        value: u32,
-    ) -> bool {
-        BrotliDecoderSetParameter(state, param as c_uint, value) > 0
-    }
-
-    pub fn decompress_stream(
-        state: &mut BrotliDecoder,
-        available_in: &mut usize,
-        next_in: &mut *const u8,
-        available_out: &mut usize,
-        next_out: &mut *mut u8,
-        total_out: Option<&mut usize>,
-    ) -> BrotliDecoderResult {
-        // SAFETY: all pointers are valid for the duration of the call; brotli advances next_in/next_out
-        unsafe {
-            BrotliDecoderDecompressStream(
-                state,
-                available_in,
-                next_in,
-                available_out,
-                next_out,
-                total_out
-                    .map(std::ptr::from_mut::<usize>)
-                    .unwrap_or(core::ptr::null_mut()),
-            )
-        }
-    }
-
-    /// True when decoded bytes are still held in the decoder's ring buffer.
-    pub fn has_more_output(state: &BrotliDecoder) -> bool {
-        BrotliDecoderHasMoreOutput(state) != 0
-    }
-
-    pub fn initialize_brotli() -> bool {
-        true
-    }
 }
 
 #[repr(u32)]
@@ -162,6 +113,12 @@ impl BrotliDecoderErrorCode2 {
                 | Self::ERROR_ALLOC_BLOCK_TYPE_TREES
         )
     }
+
+    /// `BrotliDecoderErrorString()`, like `_ERROR_FORMAT_PADDING_2`.
+    pub fn name(self) -> &'static CStr {
+        // SAFETY: brotli returns a string literal for every value.
+        unsafe { CStr::from_ptr(BrotliDecoderErrorString(self)) }
+    }
 }
 
 #[repr(u32)]
@@ -183,12 +140,8 @@ pub enum BrotliEncoderMode {
 }
 
 unsafe extern "C" {
-    // Opaque handle by reference + scalars only.
-    pub safe fn BrotliEncoderSetParameter(
-        state: &mut BrotliEncoder,
-        param: c_uint,
-        value: u32,
-    ) -> c_int;
+    pub fn BrotliEncoderSetParameter(state: *mut BrotliEncoder, param: c_uint, value: u32)
+    -> c_int;
     pub fn BrotliEncoderCreateInstance(
         alloc_func: brotli_alloc_func,
         free_func: brotli_free_func,
@@ -231,8 +184,7 @@ unsafe extern "C" {
 }
 
 bun_opaque::opaque_ffi! {
-    /// Opaque brotli encoder state. `UnsafeCell` makes the type `!Freeze` so a
-    /// `&BrotliEncoder` does not assert immutability of the C-owned state.
+    /// Opaque brotli encoder state.
     pub struct BrotliEncoder;
 }
 

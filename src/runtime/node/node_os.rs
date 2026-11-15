@@ -1,6 +1,6 @@
 use core::ffi::c_int;
 #[cfg(not(windows))]
-use core::ffi::{c_char, c_uint, c_void};
+use core::ffi::{c_char, c_uint};
 
 use bun_core::String as BunString;
 use bun_jsc::bindgen::JsScope;
@@ -716,92 +716,48 @@ mod _impl {
     #[cfg(windows)]
     pub(crate) use network_interfaces_windows as network_interfaces;
 
-    /// The list that `getifaddrs` returns.
-    #[cfg(unix)]
-    struct Interfaces(*mut libc::ifaddrs);
-
-    #[cfg(unix)]
-    impl Interfaces {
-        fn iter(&self) -> impl Iterator<Item = &libc::ifaddrs> {
-            // SAFETY: each link is null or an entry that lives until `drop`.
-            core::iter::successors(unsafe { self.0.as_ref() }, |it| unsafe {
-                it.ifa_next.as_ref()
-            })
-        }
-    }
-
-    #[cfg(unix)]
-    impl Drop for Interfaces {
-        fn drop(&mut self) {
-            // SAFETY: returned by getifaddrs
-            unsafe { libc::freeifaddrs(self.0) };
-        }
-    }
-
     #[cfg(unix)]
     pub(crate) fn network_interfaces_posix(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        use bun_sys::net::{IfAddr, getifaddrs};
+
         let global_this = cx.global();
-        // getifaddrs sets a pointer to a linked list
-        let mut interface_start: *mut libc::ifaddrs = core::ptr::null_mut();
-        // SAFETY: valid out-pointer
-        let rc = unsafe { libc::getifaddrs(&raw mut interface_start) };
-        if rc != 0 {
-            let errno = bun_sys::posix::errno();
+        let interfaces = match getifaddrs() {
+            Ok(interfaces) => interfaces,
             // Android API 30+: SELinux denies the netlink socket getifaddrs uses.
             // Node returns {} rather than throwing.
             #[cfg(target_os = "android")]
-            {
-                if errno == bun_sys::posix::E::EACCES as c_int
-                    || errno == bun_sys::posix::E::EPERM as c_int
-                {
-                    return Ok(JSValue::create_empty_object(global_this, 0));
-                }
+            Err(err) if matches!(err.get_errno(), bun_sys::E::EACCES | bun_sys::E::EPERM) => {
+                return Ok(JSValue::create_empty_object(global_this, 0));
             }
-            let err = SystemError {
-                message: BunString::static_(
-                    "A system error occurred: getifaddrs returned an error",
-                ),
-                code: BunString::static_("ERR_SYSTEM_ERROR"),
-                errno: errno as c_int,
-                syscall: BunString::static_("getifaddrs"),
-                ..Default::default()
-            };
+            Err(err) => {
+                let err = SystemError {
+                    message: BunString::static_(
+                        "A system error occurred: getifaddrs returned an error",
+                    ),
+                    code: BunString::static_("ERR_SYSTEM_ERROR"),
+                    errno: err.errno.into(),
+                    syscall: BunString::static_("getifaddrs"),
+                    ..Default::default()
+                };
 
-            return Err(global_this.throw_value(err.to_error_instance(global_this)));
-        }
-        let interfaces = Interfaces(interface_start);
+                return Err(global_this.throw_value(err.to_error_instance(global_this)));
+            }
+        };
 
         // We'll skip interfaces that aren't actually available
-        fn skip(iface: &libc::ifaddrs) -> bool {
+        fn skip(iface: IfAddr<'_>) -> bool {
             // Skip interfaces that aren't actually available
-            if iface.ifa_flags & libc::IFF_RUNNING as c_uint == 0 {
+            if iface.flags() & libc::IFF_RUNNING as c_uint == 0 {
                 return true;
             }
-            if iface.ifa_flags & libc::IFF_UP as c_uint == 0 {
-                return true;
-            }
-            if iface.ifa_addr.is_null() {
+            if iface.flags() & libc::IFF_UP as c_uint == 0 {
                 return true;
             }
             false
         }
 
-        // We won't actually return link-layer interfaces but we need them for
-        //  extracting the MAC address
-        fn is_link_layer(iface: &libc::ifaddrs) -> bool {
-            if iface.ifa_addr.is_null() {
-                return false;
-            }
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            // SAFETY: ifa_addr is non-null per check above
-            return unsafe { (*iface.ifa_addr).sa_family } as c_int == libc::AF_PACKET;
-            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-            // SAFETY: ifa_addr is non-null per check above
-            return unsafe { (*iface.ifa_addr).sa_family } as c_int == libc::AF_LINK;
-        }
-
-        fn is_loopback(iface: &libc::ifaddrs) -> bool {
-            iface.ifa_flags & libc::IFF_LOOPBACK as c_uint == libc::IFF_LOOPBACK as c_uint
+        fn is_loopback(iface: IfAddr<'_>) -> bool {
+            iface.flags() & libc::IFF_LOOPBACK as c_uint == libc::IFF_LOOPBACK as c_uint
         }
 
         // The list currently contains entries for link-layer interfaces
@@ -811,17 +767,14 @@ mod _impl {
 
         // Populate each interface object
         for iface in interfaces.iter() {
-            if skip(iface) || is_link_layer(iface) {
+            if skip(iface) || iface.link_layer_address().is_some() {
                 continue;
             }
+            let Some((addr, netmask)) = iface.address_and_netmask() else {
+                continue;
+            };
 
-            // SAFETY: ifa_name is a NUL-terminated C string
-            let interface_name = unsafe { bun_core::ffi::cstr(iface.ifa_name) }.to_bytes();
-            // SAFETY: ifa_addr/ifa_netmask are valid sockaddr* (skip() ensures ifa_addr non-null)
-            let addr = unsafe { bun_sys::net::Address::init_posix(iface.ifa_addr.cast_const()) };
-            // SAFETY: ifa_netmask is a valid sockaddr* populated by getifaddrs for this entry
-            let netmask =
-                unsafe { bun_sys::net::Address::init_posix(iface.ifa_netmask.cast_const()) };
+            let interface_name = iface.name();
 
             let interface = JSValue::create_empty_object(global_this, 0);
 
@@ -830,21 +783,7 @@ mod _impl {
             {
                 // Compute the CIDR suffix; returns null if the netmask cannot
                 //  be converted to a CIDR suffix
-                let maybe_suffix: Option<u8> = match addr.family() as c_int {
-                    // SAFETY: family checked; storage is sockaddr_in/sockaddr_in6-sized
-                    libc::AF_INET => netmask_to_cidr_suffix(unsafe {
-                        (*netmask.as_sockaddr().cast::<libc::sockaddr_in>())
-                            .sin_addr
-                            .s_addr
-                    }),
-                    // SAFETY: family checked; storage is sockaddr_in6-sized
-                    libc::AF_INET6 => netmask_to_cidr_suffix(u128::from_ne_bytes(unsafe {
-                        (*netmask.as_sockaddr().cast::<libc::sockaddr_in6>())
-                            .sin6_addr
-                            .s6_addr
-                    })),
-                    _ => None,
-                };
+                let maybe_suffix = cidr_suffix(&netmask);
 
                 // Format the address and then, if valid, the CIDR suffix; both
                 //  the address and cidr values can be slices into this same buffer
@@ -897,7 +836,7 @@ mod _impl {
             interface.put(
                 global_this,
                 b"family",
-                match addr.family() as c_int {
+                match addr.family() {
                     libc::AF_INET => global_this.common_strings().ipv4(),
                     libc::AF_INET6 => global_this.common_strings().ipv6(),
                     _ => global_this.common_strings().unknown(),
@@ -907,14 +846,16 @@ mod _impl {
             // mac <string> The MAC address of the network interface
             {
                 // We need to search for the link-layer interface whose name matches this one
-                let maybe_ll_addr: Option<*const c_void> = 'search: {
+                let maybe_ll_addr: Option<&[u8]> = 'search: {
                     for ll_iface in interfaces.iter() {
-                        if skip(ll_iface) || !is_link_layer(ll_iface) {
+                        if skip(ll_iface) {
                             continue;
                         }
+                        let Some(ll_addr) = ll_iface.link_layer_address() else {
+                            continue;
+                        };
 
-                        // SAFETY: ifa_name is a NUL-terminated C string
-                        let ll_name = unsafe { bun_core::ffi::cstr(ll_iface.ifa_name) }.to_bytes();
+                        let ll_name = ll_iface.name();
                         if !strings::has_prefix(ll_name, interface_name) {
                             continue;
                         }
@@ -924,26 +865,13 @@ mod _impl {
                             continue;
                         }
 
-                        // This is the correct link-layer interface entry for the current interface,
-                        //  cast to a link-layer socket address
-                        break 'search Some(ll_iface.ifa_addr.cast::<c_void>().cast_const());
+                        // This is the correct link-layer interface entry for the current interface
+                        break 'search Some(ll_addr);
                     }
                     None
                 };
 
-                if let Some(ll_addr) = maybe_ll_addr {
-                    #[cfg(any(target_os = "linux", target_os = "android"))]
-                    // SAFETY: ll_addr is a sockaddr_ll* per is_link_layer check
-                    let addr_data: &[u8] =
-                        unsafe { &(*ll_addr.cast::<libc::sockaddr_ll>()).sll_addr };
-                    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-                    let addr_data: &[u8] = {
-                        // SAFETY: ll_addr is a sockaddr_dl* per is_link_layer check.
-                        // `sdl_data` is `[c_char; N]` (signedness varies by platform);
-                        // reinterpret as bytes — same width, same provenance.
-                        let dl = unsafe { &*ll_addr.cast::<c::sockaddr_dl>() };
-                        bun_core::slice_as_bytes(&dl.sdl_data[dl.sdl_nlen as usize..])
-                    };
+                if let Some(addr_data) = maybe_ll_addr {
                     if addr_data.len() < 6 {
                         let mac = b"00:00:00:00:00:00";
                         interface.put(
@@ -975,11 +903,9 @@ mod _impl {
             interface.put(global_this, b"internal", JSValue::from(is_loopback(iface)));
 
             // scopeid <number> The numeric IPv6 scope ID (only specified when family is IPv6)
-            if addr.family() as c_int == libc::AF_INET6 {
-                // SAFETY: family checked; storage is sockaddr_in6-sized
-                let scope_id =
-                    unsafe { (*addr.as_sockaddr().cast::<libc::sockaddr_in6>()).sin6_scope_id };
-                interface.put(global_this, b"scopeid", JSValue::js_number(scope_id as f64));
+            if let Some(addr) = addr.as_in6() {
+                let scope_id = JSValue::js_number(addr.scope_id as f64);
+                interface.put(global_this, b"scopeid", scope_id);
             }
 
             // Does this entry already exist?
@@ -1398,6 +1324,14 @@ mod _impl {
     }
 } // mod _impl
 pub(crate) use _impl::*;
+
+#[cfg(unix)]
+fn cidr_suffix(netmask: &bun_sys::net::Address) -> Option<u8> {
+    match netmask.as_in4() {
+        Some(mask) => netmask_to_cidr_suffix(mask.addr),
+        None => netmask_to_cidr_suffix(u128::from_ne_bytes(netmask.as_in6()?.addr)),
+    }
+}
 
 /// Given a netmask returns a CIDR suffix.  Returns null if the mask is not valid.
 /// `T` must be one of u32 (IPv4) or u128 (IPv6)

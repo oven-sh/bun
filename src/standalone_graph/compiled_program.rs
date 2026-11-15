@@ -1846,8 +1846,7 @@ impl StandaloneModuleGraph {
         stat.st_blocks = ((stat.st_size as u64).div_ceil(512)) as _;
         #[cfg(not(windows))]
         {
-            // SAFETY: they take nothing and cannot fail.
-            (stat.st_uid, stat.st_gid) = unsafe { (libc::getuid(), libc::getgid()) };
+            (stat.st_uid, stat.st_gid) = (bun_sys::c::getuid(), bun_sys::c::getgid());
             stat.st_atime = seconds as _;
             stat.st_atime_nsec = nanoseconds as _;
             stat.st_mtime = seconds as _;

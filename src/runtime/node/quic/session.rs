@@ -20,7 +20,7 @@ use bun_lsquic_sys as lsquic;
 use bun_ptr::{CellExt as _, OptionCellExt as _};
 
 use crate::socket::SocketAddress;
-use crate::socket::socket_address::{inet, sockaddr};
+use crate::socket::socket_address::sockaddr;
 
 use super::aliased_struct::{AliasedStruct, all_atomic_struct, put_state_and_stats};
 use super::callbacks;
@@ -123,9 +123,7 @@ pub(crate) struct StoredAddr(pub(super) sockaddr);
 
 impl Default for StoredAddr {
     fn default() -> Self {
-        Self(sockaddr {
-            sin6: inet::sockaddr_in6::ZEROED,
-        })
+        Self(sockaddr::ZEROED)
     }
 }
 

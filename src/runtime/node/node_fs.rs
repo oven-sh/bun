@@ -39,6 +39,7 @@ pub(crate) trait MaybeSysResultExt<R>: Sized {
     fn get_errno(&self) -> E;
     fn errno_sys<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self>;
     fn errno_sys_fd<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self>;
+    #[cfg(not(target_os = "freebsd"))]
     fn errno_sys_p<Rc: sys::GetErrno>(
         rc: Rc,
         syscall: sys::Tag,
@@ -84,6 +85,7 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
             })),
         }
     }
+    #[cfg(not(target_os = "freebsd"))]
     #[inline]
     fn errno_sys_p<Rc: sys::GetErrno>(
         rc: Rc,
@@ -6539,9 +6541,7 @@ impl NodeFS {
             // generated name back into the buffer in-place.
             let rc = unsafe { libc::mkdtemp(prefix_buf.as_mut_ptr().cast()) };
             if !rc.is_null() {
-                // SAFETY: `rc` is non-null and points back into `prefix_buf`, which is
-                // NUL-terminated and outlives this borrow.
-                let bytes = unsafe { bun_core::ffi::cstr(rc) }.to_bytes();
+                let bytes = bun_core::slice_to_nul(&prefix_buf[..len + 6]);
                 return Ok(encode_path_result(bytes, args.encoding));
             }
 
@@ -8255,14 +8255,10 @@ impl NodeFS {
                 Ok(result) => Ok(result),
             };
         }
-        // SAFETY: path is NUL-terminated by slice_z; rmdir(2) is the libc FFI
         #[cfg(not(windows))]
-        Maybe::<ret::Rmdir>::errno_sys_p(
-            unsafe { libc::rmdir(args.path.slice_z(&mut self.sync_error_buf).as_ptr().cast()) },
-            sys::Tag::rmdir,
-            args.path.slice(),
-        )
-        .unwrap_or(Ok(()))
+        Syscall::rmdir(args.path.slice_z(&mut self.sync_error_buf)).map_err(|err| {
+            sys::Error::from_code(err.get_errno(), sys::Tag::rmdir).with_path(args.path.slice())
+        })
     }
 
     pub(crate) fn rm(&mut self, args: &args::Rm, flavor: Flavor) -> Maybe<ret::Rm> {
@@ -8525,18 +8521,9 @@ impl NodeFS {
         #[cfg(not(windows))]
         {
             let _ = flags;
-            // SAFETY: path is NUL-terminated by slice_z; truncate(2) is the libc FFI
-            Maybe::<ret::Truncate>::errno_sys_p(
-                unsafe {
-                    libc::truncate(
-                        path.slice_z(&mut self.sync_error_buf).as_ptr().cast(),
-                        len_i64,
-                    )
-                },
-                sys::Tag::truncate,
-                path.slice(),
-            )
-            .unwrap_or(Ok(()))
+            sys::truncate(path.slice_z(&mut self.sync_error_buf), len_i64).map_err(|err| {
+                sys::Error::from_code(err.get_errno(), sys::Tag::truncate).with_path(path.slice())
+            })
         }
     }
 
@@ -8575,14 +8562,10 @@ impl NodeFS {
                 Ok(result) => Ok(result),
             };
         }
-        // SAFETY: path is NUL-terminated by slice_z; unlink(2) is the libc FFI
         #[cfg(not(windows))]
-        Maybe::<ret::Unlink>::errno_sys_p(
-            unsafe { libc::unlink(args.path.slice_z(&mut self.sync_error_buf).as_ptr().cast()) },
-            sys::Tag::unlink,
-            args.path.slice(),
-        )
-        .unwrap_or(Ok(()))
+        Syscall::unlink(args.path.slice_z(&mut self.sync_error_buf)).map_err(|err| {
+            sys::Error::from_code(err.get_errno(), sys::Tag::unlink).with_path(args.path.slice())
+        })
     }
 
     pub(crate) fn watch_file(

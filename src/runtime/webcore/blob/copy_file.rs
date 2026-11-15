@@ -350,18 +350,10 @@ impl CopyFile {
                             // make() can set STDOUT / STDERR to O_APPEND
                             // this messes up sendfile()
                             has_unset_append = true;
-                            // SAFETY: dest_fd is a valid open fd; raw fcntl(2).
-                            let flags =
-                                unsafe { libc::fcntl(dest_fd.native(), libc::F_GETFL, 0 as c_int) };
+                            let flags = bun_sys::get_fcntl_flags(dest_fd).unwrap_or(0) as c_int;
                             if (flags & bun_sys::O::APPEND) != 0 {
-                                // SAFETY: dest_fd is a valid open fd; raw fcntl(2).
-                                let _ = unsafe {
-                                    libc::fcntl(
-                                        dest_fd.native(),
-                                        libc::F_SETFL,
-                                        flags ^ bun_sys::O::APPEND,
-                                    )
-                                };
+                                let _ =
+                                    bun_sys::set_fcntl_flags(dest_fd, flags ^ bun_sys::O::APPEND);
                                 continue;
                             }
                         }
@@ -587,17 +579,13 @@ impl CopyFile {
                             && self.max_length < SizeType::try_from(stat_size).expect("int cast")
                         {
                             // If this fails...well, there's not much we can do about it.
-                            // SAFETY: NUL-terminated path in path_buf; libc truncate(2).
-                            let _ = unsafe {
-                                bun_sys::c::truncate(
-                                    self.destination_file_store
-                                        .pathlike
-                                        .path()
-                                        .slice_z(&mut path_buf)
-                                        .as_ptr(),
-                                    i64::try_from(self.max_length).expect("int cast"),
-                                )
-                            };
+                            let _ = bun_sys::truncate(
+                                self.destination_file_store
+                                    .pathlike
+                                    .path()
+                                    .slice_z(&mut path_buf),
+                                i64::try_from(self.max_length).expect("int cast"),
+                            );
                             self.read_len = SizeType::try_from(self.max_length).expect("int cast");
                         } else {
                             self.read_len = SizeType::try_from(stat_size).expect("int cast");

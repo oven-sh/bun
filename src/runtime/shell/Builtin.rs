@@ -653,7 +653,7 @@ impl Builtin {
             }
             Self::start(interp, cmd)
         });
-        Ok(started.unwrap_or(Yield::suspended()))
+        Ok(started.expect("the script waits for this Cmd"))
     }
 
     /// Sets the owning Cmd's state to

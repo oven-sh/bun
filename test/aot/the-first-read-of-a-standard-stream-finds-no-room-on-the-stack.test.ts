@@ -1,7 +1,4 @@
-// process.stdout and process.stderr are made at their first read, by code of Bun's library that needs room on the stack. Where
-// that read stands in the deepest frames of a recursion that has just run out of stack, the code fails: Bun reports the error and
-// the property is undefined from then on. The compiler held both to be objects always, and a read of a member died of a
-// segmentation fault. The report goes to stderr with positions that differ between the two ways to run, so only stdout is compared.
+// atTheBrink retries failed construction as RangeError unwinds the stack; a failed read must not cache a stream value.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
@@ -45,15 +42,16 @@ console.log("console.log still writes");
 `;
 
 test.skipIf(!!unsupported)(
-  "a standard stream whose first read found no room on the stack is undefined in compiled code too",
+  "a standard stream whose first read found no room on the stack recovers in compiled code too",
   async () => {
     await slot(async () => {
       using dir = tempDir("aot-stream-at-the-brink", { "entry.js": program });
       const folder = String(dir);
       const executable = join(folder, isWindows ? "entry.exe" : "entry");
       const plain = await spawned([bunExe(), "run", "entry.js"], folder, bunEnv);
-      expect(plain.stdout).toContain("stdout.write, first read: TypeError\nstdout: undefined\n");
+      expect(plain.stdout).toStartWith("stdout.write, first read: function\nstdout: object\n");
       expect(plain.stdout).toEndWith("console.log still writes\n");
+      expect({ exitCode: plain.exitCode, signal: plain.signal }).toEqual({ exitCode: 0, signal: null });
       built(
         await spawned([bunExe(), "build", "--compile", "--aot", "entry.js", "--outfile", executable], folder, bunEnv),
       );

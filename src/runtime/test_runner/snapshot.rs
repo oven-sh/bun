@@ -16,11 +16,8 @@ use super::diff_format::DiffFormatter;
 use super::execution::Result as TestResult;
 use super::expect::Expect;
 use super::expect::get_state::full_test_name;
-use super::jest::{FileColumns as _, FileList};
+use super::jest::{File as TestFile, FileId};
 use bun_collections::index_sort;
-
-// TestRunner.File.ID — concrete alias from jest.rs (`pub type FileId = u32`).
-type FileId = super::jest::FileId;
 
 bun_core::declare_scope!(inline_snapshot, visible);
 
@@ -108,10 +105,9 @@ pub(crate) struct Snapshots {
     values: StringArrayHashMap<Entry>,
     counts: StringHashMap<usize>,
     _current_file: Option<File>,
-    /// Directory whose `__snapshots__/` was last created (or found existing);
-    /// borrowed from the runner's `File::source.path`, a `Path<'static>`.
+    /// Directory whose `__snapshots__/` was last created (or found existing).
     snapshot_dir_path: Option<&'static [u8]>,
-    inline_snapshots_to_write: IndexMap<FileId, Vec<InlineSnapshotToWrite>>,
+    inline_snapshots_to_write: IndexMap<FileId, (&'static [u8], Vec<InlineSnapshotToWrite>)>,
     pub(crate) last_error_snapshot_name: Option<Box<[u8]>>,
 }
 
@@ -124,8 +120,8 @@ impl Snapshots {
     #[cfg(not(windows))]
     const SNAPSHOTS_DIR_NAME: &'static [u8] = b"__snapshots__/";
 
-    pub(crate) fn init(update_snapshots: bool) -> Snapshots {
-        Snapshots {
+    pub(crate) fn init(update_snapshots: bool) -> Box<Snapshots> {
+        Box::new(Snapshots {
             update_snapshots,
             total: 0,
             added: 0,
@@ -138,7 +134,7 @@ impl Snapshots {
             snapshot_dir_path: None,
             inline_snapshots_to_write: IndexMap::new(),
             last_error_snapshot_name: None,
-        }
+        })
     }
 }
 
@@ -215,7 +211,7 @@ impl Drop for InitializedParser<'_, '_> {
 }
 
 pub(crate) struct File {
-    pub(crate) id: FileId,
+    test_file: TestFile,
     format: Format,
     file: Option<bun_sys::File>,
     dirty: bool,
@@ -226,8 +222,8 @@ pub(crate) struct File {
 
 /// Fills `buf` with the `.snap` path. Returns (test file's directory, length through `__snapshots__/`, full length), or `None` if it doesn't fit.
 #[optimize(size)]
-fn snapshot_file_path(files: &FileList, file_id: FileId, buf: &mut [u8]) -> Option<(&'static [u8], usize, usize)> {
-    let name = files.items_source()[file_id as usize].path.name();
+fn snapshot_file_path(test_file: TestFile, buf: &mut [u8]) -> Option<(&'static [u8], usize, usize)> {
+    let name = bun_paths::fs::PathName::init(test_file.path);
     let dir_path = name.dir_with_trailing_slash();
     let mut pos = 0usize;
     for part in [dir_path, Snapshots::SNAPSHOTS_DIR_NAME] {
@@ -335,17 +331,17 @@ impl Snapshots {
 
     /// Loads the running test's snapshot file if it isn't the current one. Never creates it.
     #[optimize(size)]
-    pub(crate) fn format_of(&mut self, files: &FileList, expect: &Expect) -> Result<Format, Error> {
+    pub(crate) fn format_of(&mut self, expect: &Expect) -> Result<Format, Error> {
         let buntest = expect.bun_test().ok_or(Error::SnapshotFailed)?;
-        let file_id = buntest.file_id;
-        if let Some(file) = self._current_file.as_ref().filter(|file| file.id == file_id) {
+        let test_file = buntest.file;
+        if let Some(file) = self._current_file.as_ref().filter(|file| file.test_file.id == test_file.id) {
             return Ok(file.format);
         }
-        self.write_snapshot_file(files)?;
+        self.write_snapshot_file()?;
 
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let (_, _, len) =
-            snapshot_file_path(files, file_id, path_buf.0.as_mut_slice()).ok_or(Error::FailedToOpenSnapshotFile)?;
+            snapshot_file_path(test_file, path_buf.0.as_mut_slice()).ok_or(Error::FailedToOpenSnapshotFile)?;
         let path = &path_buf.0[..len];
         let contents = match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
             Ok(contents) => contents,
@@ -374,7 +370,7 @@ impl Snapshots {
             self.file_buf = Vec::new();
         }
         let may_hold_entries_of_bun = format == Format::Bun || !self.keys_are_sorted();
-        self._current_file = Some(File { id: file_id, format, file: None, dirty: false, may_hold_entries_of_bun });
+        self._current_file = Some(File { test_file, format, file: None, dirty: false, may_hold_entries_of_bun });
         Ok(format)
     }
 
@@ -388,14 +384,13 @@ impl Snapshots {
 
     pub(crate) fn match_or_write(
         &mut self,
-        files: &FileList,
         expect: &Expect,
         received: &[u8],
         hint: &[u8],
     ) -> Result<Outcome, Error> {
-        let format = self.format_of(files, expect)?;
+        let format = self.format_of(expect)?;
         if format == Format::Bun {
-            self.open_to_append(files)?;
+            self.open_to_append()?;
         }
 
         let (mut key, counter) = self.add_count(expect, format, hint)?;
@@ -450,7 +445,7 @@ impl Snapshots {
             }
         } else if self._current_file.as_ref().is_some_and(|file| !file.dirty) {
             // `write_sorted` writes the file after the tests. If it can't be written, the test that adds to it fails.
-            self.open_to_append(files)?;
+            self.open_to_append()?;
             if let Some(file) = self._current_file.as_mut() {
                 file.dirty = true;
                 file.file = None;
@@ -465,8 +460,9 @@ impl Snapshots {
 
     fn parse_file(&mut self, snapshot_file_path: &[u8]) -> Result<(), Error> {
         let vm = VirtualMachine::get();
-        let opts =
+        let mut opts =
             js_parser::ParserOptions::init(vm.transpiler.get().options.jsx.clone(), bun_ast::Loader::Js);
+        opts.features.no_macros = true;
         // Thread a per-call arena — js_parser is bump-allocated.
         let arena = bun_alloc::Arena::new();
         let mut temp_log = bun_ast::Log::init();
@@ -547,7 +543,7 @@ impl Snapshots {
 
     /// With `--update-snapshots`, drops the entries no test asked for. Entries of skipped or failed tests stay.
     pub(crate) fn remove_obsolete(&mut self, buntest: &BunTest) {
-        let Some(file) = self._current_file.as_mut().filter(|file| file.id == buntest.file_id) else { return };
+        let Some(file) = self._current_file.as_mut().filter(|file| file.test_file.id == buntest.file.id) else { return };
         if !self.update_snapshots || file.format == Format::Bun || self.values.values().iter().all(|entry| entry.checked) {
             return;
         }
@@ -612,22 +608,21 @@ impl Snapshots {
     #[cold]
     pub(crate) fn match_or_write_file(
         &mut self,
-        files: &FileList,
         expect: &Expect,
         path: &[u8],
         received: &[u8],
         hint: &[u8],
     ) -> FileOutcome {
-        let format = match self.format_of(files, expect) {
+        let format = match self.format_of(expect) {
             Ok(format) => format,
             Err(err) => return FileOutcome::NoTest(err),
         };
-        let Some(file_id) = self._current_file.as_ref().map(|file| file.id) else {
+        let Some(test_file) = self._current_file.as_ref().map(|file| file.test_file) else {
             return FileOutcome::NoTest(Error::NoTest);
         };
 
         let mut snapshot_path_buf = bun_paths::path_buffer_pool::get();
-        let Some((test_dir, _, len)) = snapshot_file_path(files, file_id, snapshot_path_buf.0.as_mut_slice()) else {
+        let Some((test_dir, _, len)) = snapshot_file_path(test_file, snapshot_path_buf.0.as_mut_slice()) else {
             return FileOutcome::NoTest(Error::FailedToOpenSnapshotFile);
         };
         let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -678,9 +673,9 @@ impl Snapshots {
     }
 
     #[optimize(size)]
-    pub(crate) fn write_snapshot_file(&mut self, files: &FileList) -> Result<(), Error> {
+    pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
         if let Some(file) = self._current_file.take() {
-            let result = if file.dirty { self.write_sorted(files, &file) } else { Ok(()) };
+            let result = if file.dirty { self.write_sorted(&file) } else { Ok(()) };
             if let Some(file) = file.file {
                 file.write_all(&self.file_buf)
                     .and_then(|()| bun_sys::ftruncate(file.handle, self.file_buf.len() as i64))
@@ -700,10 +695,10 @@ impl Snapshots {
     /// jest-snapshot's `saveSnapshotFile`.
     #[cold]
     #[optimize(size)]
-    fn write_sorted(&self, files: &FileList, file: &File) -> Result<(), Error> {
+    fn write_sorted(&self, file: &File) -> Result<(), Error> {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let (_, _, len) =
-            snapshot_file_path(files, file.id, path_buf.0.as_mut_slice()).ok_or(Error::FailedToWriteSnapshotFile)?;
+            snapshot_file_path(file.test_file, path_buf.0.as_mut_slice()).ok_or(Error::FailedToWriteSnapshotFile)?;
         let path = ZStr::from_buf(&path_buf.0[..], len);
         if self.values.is_empty() {
             return match bun_sys::unlink(path) {
@@ -737,30 +732,24 @@ impl Snapshots {
 
     pub(crate) fn add_inline_snapshot_to_write(
         &mut self,
-        file_id: FileId,
+        test_file: TestFile,
         value: InlineSnapshotToWrite,
     ) -> Result<(), Error> {
-        let list = self.inline_snapshots_to_write.entry(file_id).or_default();
+        let (_, list) = self.inline_snapshots_to_write.entry(test_file.id).or_insert_with(|| (test_file.path, Vec::new()));
         list.push(value);
         Ok(())
     }
 
     #[optimize(size)]
-    pub(crate) fn write_inline_snapshots(&mut self, files: &FileList) -> Result<bool, Error> {
+    pub(crate) fn write_inline_snapshots(&mut self) -> Result<bool, Error> {
         let success = core::cell::Cell::new(true);
         let vm = VirtualMachine::get();
 
         // The arena is reset() inside the loop, bulk-freeing per-iteration scratch.
         let mut arena = bun_alloc::Arena::new();
 
-        // reshaped for borrowck — iterate by index to allow &mut access to values while reading keys.
-        let file_ids: Vec<FileId> = self.inline_snapshots_to_write.keys().to_vec();
-        for file_id in file_ids {
+        for (test_file_path, ils_info) in self.inline_snapshots_to_write.values_mut() {
             arena.reset();
-            let ils_info = self
-                .inline_snapshots_to_write
-                .get_mut(&file_id)
-                .expect("unreachable");
 
             let mut log = ReportedLog { log: bun_ast::Log::init(), success: &success };
 
@@ -776,9 +765,8 @@ impl Snapshots {
             });
 
             // 2. load file text
-            let test_file_source = &files.items_source()[file_id as usize];
             let test_filename: Box<[u8]> = {
-                let mut v = test_file_source.path.text.to_vec();
+                let mut v = test_file_path.to_vec();
                 v.push(0);
                 v.into_boxed_slice()
             };
@@ -1128,8 +1116,6 @@ impl Snapshots {
                 result_text.extend_from_slice(b"`");
 
                 if ils.is_added {
-                    // `runner.snapshots` *is* `*self`: going back through `Jest::runner()` would
-                    // create a second `&mut Snapshots` aliasing `self` (UB) and invalidate `ils_info`.
                     self.added += 1;
                 }
             }
@@ -1175,8 +1161,8 @@ impl Snapshots {
         Ok(success.get())
     }
 
-    fn open_to_append(&mut self, files: &FileList) -> Result<(), Error> {
-        self.try_open_to_append(files).map_err(|err| {
+    fn open_to_append(&mut self) -> Result<(), Error> {
+        self.try_open_to_append().map_err(|err| {
             // `bun_sys::Tag` is a newtype-struct with assoc consts (lowercase),
             // not an enum — match arms require structural-eq; use if-chain instead.
             if err.syscall == bun_sys::Tag::mkdir {
@@ -1189,13 +1175,13 @@ impl Snapshots {
         })
     }
 
-    fn try_open_to_append(&mut self, files: &FileList) -> bun_sys::Result<()> {
+    fn try_open_to_append(&mut self) -> bun_sys::Result<()> {
         let Some(current) = self._current_file.as_mut().filter(|file| file.file.is_none()) else {
             return Ok(());
         };
         let mut snapshot_file_path_buf = bun_paths::path_buffer_pool::get();
         let buf = snapshot_file_path_buf.0.as_mut_slice();
-        let Some((dir_path, dir_len, len)) = snapshot_file_path(files, current.id, buf) else {
+        let Some((dir_path, dir_len, len)) = snapshot_file_path(current.test_file, buf) else {
             return Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open));
         };
 

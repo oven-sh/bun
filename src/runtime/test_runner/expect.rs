@@ -1,4 +1,3 @@
-use crate::test_runner::jest::FileColumns as _;
 use core::cell::Cell;
 use core::fmt;
 
@@ -224,15 +223,7 @@ impl Expect {
             sequence.expect_call_count.update(|calls| calls.saturating_add_signed(count));
         } else {
             // in concurrent group or otherwise failed to get the sequence; increment the expect call count in the reporter directly
-            if let Some(reporter) = buntest.reporter {
-                // SAFETY: `reporter` is `Option<NonNull<CommandLineReporter>>`,
-                // owned by `test_command` for the process lifetime, never
-                // aliased mutably elsewhere here.
-                unsafe {
-                    let s = (*reporter.as_ptr()).summary();
-                    s.expectations = s.expectations.saturating_add_signed(count);
-                }
-            }
+            buntest.reporter.update_summary(|s| s.expectations = s.expectations.saturating_add_signed(count));
         }
     }
 
@@ -1139,7 +1130,7 @@ impl Expect {
             let signature = Self::get_signature(fn_name, "", false);
             return throw!(this, global_this, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n");
         };
-        let update = runner.snapshots.update_snapshots;
+        let update = runner.with_snapshots(|snapshots| snapshots.update_snapshots);
         let needs_write;
 
         // An inline snapshot has no file header naming its format, so go by the module the test was registered through.
@@ -1150,7 +1141,7 @@ impl Expect {
         let (shown, same_as_older_bun) =
             this.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name, format)?;
         if this.bun_test().is_some() {
-            match runner.snapshots.format_of(&runner.files, this).and_then(|format| runner.snapshots.add_count(this, format, b"")) {
+            match runner.with_snapshots(|snapshots| snapshots.format_of(this).and_then(|format| snapshots.add_count(this, format, b""))) {
                 Ok(_) => {}
                 Err(crate::Error::NoTest | crate::Error::SnapshotInConcurrentGroup | crate::Error::TestNotActive) => {}
                 // Inline snapshots don't need the snapshot file, so leave these errors to a matcher that does.
@@ -1166,10 +1157,10 @@ impl Expect {
             let trim_res = Self::trim_leading_whitespace_for_inline_snapshot(saved_value, &mut buf);
 
             if format.matches(trim_res.trimmed, &pretty_value) {
-                runner.snapshots.passed += 1;
+                runner.with_snapshots(|snapshots| snapshots.passed += 1);
                 return Ok(JSValue::UNDEFINED);
             } else if update {
-                runner.snapshots.passed += 1;
+                runner.with_snapshots(|snapshots| snapshots.passed += 1);
                 needs_write = true;
                 start_indent = trim_res.start_indent.map(Box::<[u8]>::from);
                 end_indent = trim_res.end_indent.map(Box::<[u8]>::from);
@@ -1187,10 +1178,10 @@ impl Expect {
                 property_matchers,
                 trim_res.trimmed,
             )? {
-                runner.snapshots.passed += 1;
+                runner.with_snapshots(|snapshots| snapshots.passed += 1);
                 return Ok(JSValue::UNDEFINED);
             } else {
-                runner.snapshots.failed += 1;
+                runner.with_snapshots(|snapshots| snapshots.failed += 1);
                 let signature = Self::get_signature(fn_name, "<green>expected<r>", false);
                 let diff_format = DiffFormatter::from_strings(&pretty_value, trim_res.trimmed, false);
                 return throw!(this, global_this, signature, "\n\n{}\n", diff_format);
@@ -1219,10 +1210,7 @@ impl Expect {
             // 1. find the src loc of the snapshot
             let srcloc = ExpectDeferred::call_site(global_this, this_value)
                 .unwrap_or_else(|| global_this.get_caller_src_loc());
-            let file_id = buntest.file_id;
-            // MultiArrayList::get requires MultiArrayElement (derive pending);
-            // use the column accessor which already compiles in jest.rs.
-            let fget_source_path_text = runner.files.items_source()[file_id as usize].path.text;
+            let fget_source_path_text = buntest.file.path;
 
             if !srcloc.str.eql_utf8(fget_source_path_text) {
                 let signature = Self::get_signature(fn_name, "", false);
@@ -1237,7 +1225,7 @@ impl Expect {
             }
 
             // 2. save to write later
-            runner.snapshots.add_inline_snapshot_to_write(file_id, super::snapshot::InlineSnapshotToWrite {
+            let to_write = super::snapshot::InlineSnapshotToWrite {
                 line: core::ffi::c_ulong::from(srcloc.line),
                 col: core::ffi::c_ulong::from(srcloc.column),
                 value: core::mem::take(&mut pretty_value).into_boxed_slice(),
@@ -1247,7 +1235,8 @@ impl Expect {
                 start_indent,
                 end_indent,
                 is_in_vitest_test: is_vitest,
-            })?;
+            };
+            runner.with_snapshots(|snapshots| snapshots.add_inline_snapshot_to_write(buntest.file, to_write))?;
         }
 
         Ok(JSValue::UNDEFINED)
@@ -1336,7 +1325,7 @@ impl Expect {
     ) -> JsResult<JSValue> {
         let runner = Jest::runner().expect("unreachable");
         let mut pretty_value: Vec<u8> = Vec::new();
-        let format = match runner.snapshots.format_of(&runner.files, self) {
+        let format = match runner.with_snapshots(|snapshots| snapshots.format_of(self)) {
             Ok(format) => format,
             Err(err) => return Err(self.throw_snapshot_error(global_this, &err, &pretty_value)),
         };
@@ -1344,10 +1333,10 @@ impl Expect {
         let (shown, same_as_older_bun) =
             self.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name, format)?;
 
-        match runner.snapshots.match_or_write(&runner.files, self, &pretty_value, hint) {
+        match runner.with_snapshots(|snapshots| snapshots.match_or_write(self, &pretty_value, hint)) {
             Ok(SnapshotOutcome::Passed | SnapshotOutcome::Written) => Ok(JSValue::UNDEFINED),
             Ok(SnapshotOutcome::Mismatch { saved }) => {
-                if runner.snapshots.may_hold_entries_of_bun()
+                if runner.with_snapshots(|snapshots| snapshots.may_hold_entries_of_bun())
                     && Self::was_written_by_another(
                         &[],
                         !same_as_older_bun || property_matchers.is_some(),
@@ -1358,10 +1347,10 @@ impl Expect {
                         &saved,
                     )?
                 {
-                    runner.snapshots.passed += 1;
+                    runner.with_snapshots(|snapshots| snapshots.passed += 1);
                     return Ok(JSValue::UNDEFINED);
                 }
-                runner.snapshots.failed += 1;
+                runner.with_snapshots(|snapshots| snapshots.failed += 1);
                 let signature = Self::get_signature(fn_name, "<green>expected<r>", false);
                 let diff_format = DiffFormatter::from_strings(&pretty_value, &saved, false);
                 throw!(self, global_this, signature, "\n\n{}\n", diff_format)
@@ -1373,13 +1362,10 @@ impl Expect {
     #[cold]
     #[optimize(size)]
     pub(crate) fn throw_snapshot_error(&self, global_this: &JSGlobalObject, err: &crate::Error, pretty_value: &[u8]) -> JsError {
-        let runner = Jest::runner().expect("unreachable");
         let Some(buntest) = self.bun_test() else {
             return global_this.throw(format_args!("Snapshot matchers cannot be used outside of a test"));
         };
-        // MultiArrayList::get requires MultiArrayElement (derive pending); use column accessor.
-        let test_file_path = runner.files.items_source()[buntest.file_id as usize].path.text;
-        let test_file_path = bstr::BStr::new(test_file_path);
+        let test_file_path = bstr::BStr::new(buntest.file.path);
         match err {
             crate::Error::FailedToOpenSnapshotFile => {
                 global_this.throw(format_args!("Failed to open snapshot file for test file: {test_file_path}"))
@@ -1394,7 +1380,7 @@ impl Expect {
                 global_this.throw(format_args!("Failed to parse snapshot file for: {test_file_path}"))
             }
             crate::Error::SnapshotCreationNotAllowedInCI => {
-                let snapshot_name = runner.snapshots.last_error_snapshot_name.take();
+                let snapshot_name = buntest.reporter.jest.with_snapshots(|snapshots| snapshots.last_error_snapshot_name.take());
                 if let Some(name) = snapshot_name {
                     global_this.throw(format_args!(
                         "Snapshot creation is disabled in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nSnapshot name: \"{}\"\nReceived: {}",

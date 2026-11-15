@@ -768,6 +768,49 @@ describe("junit reporter", () => {
     expect(exitCode).toBe(1);
   });
 
+  it.each([
+    ["a test", error => `test("t", async () => { throw ${error}; });`, [["t", ["outer", "nested", "cause"]]]],
+    [
+      "no test",
+      error => `beforeAll(() => { reportError(${error}); }); test("t", () => {});`,
+      [
+        ["(unhandled error)", ["nested"]],
+        ["(unhandled error)", ["outer", "cause"]],
+        ["t", []],
+      ],
+    ],
+  ])("keeps the cause of an error of %s whose getter reports another error", async (_, source, expected) => {
+    using dir = tempDir("junit-nested-report", {
+      "nested.test.js": `
+        import { beforeAll, test } from "bun:test";
+        ${source(`Object.defineProperty(new Error("outer"), "cause", {
+          get() {
+            reportError(new Error("nested"));
+            return new Error("cause");
+          },
+        })`)}
+      `,
+    });
+
+    const junitPath = join(String(dir), "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const exitCode = await proc.exited;
+
+    const result = await xml2js.parseStringPromise(await file(junitPath).text(), { strict: true });
+    expect(
+      result.testsuites.testsuite[0].testcase.map(testcase => [
+        testcase.$.name,
+        testcase.failure?.[0]._.match(/(?<=^Error: ).*/gm) ?? [],
+      ]),
+    ).toEqual(expected);
+    expect(exitCode).toBe(1);
+  });
+
   it("includes the error type, message and stack in <failure>", async () => {
     await using tmpDir = tempDir("junit-failure", {
       "package.json": "{}",

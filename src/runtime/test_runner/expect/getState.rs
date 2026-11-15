@@ -6,7 +6,6 @@ use bun_jsc::{JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSV
 
 use super::super::bun_test::{self, BunTest, ExecutionEntry, RefDataValue};
 use super::super::execution::{ExecutionSequence, ExpectAssertions};
-use super::super::jest::{FileColumns as _, Jest};
 use crate::generated_bindgen::expect::js_ExpectMatcherUtils as js;
 use super::{Expect, ExpectMatcherContext, ExpectMatcherUtils};
 
@@ -67,10 +66,10 @@ fn current_test_name(global: &JSGlobalObject, test: Test) -> JsResult<JSValue> {
 
 #[optimize(size)]
 fn test_path(global: &JSGlobalObject) -> JsResult<JSValue> {
-    let (Some(buntest), Some(runner)) = (bun_test::clone_active_strong(), Jest::runner()) else {
+    let Some(buntest) = bun_test::clone_active_strong() else {
         return Ok(JSValue::UNDEFINED);
     };
-    bun_string_jsc::create_utf8_for_js(global, runner.files.items_source()[buntest.file_id as usize].path.text)
+    bun_string_jsc::create_utf8_for_js(global, buntest.file.path)
 }
 
 fn to_count(global: &JSGlobalObject, name: &'static str, value: JSValue) -> JsResult<u32> {

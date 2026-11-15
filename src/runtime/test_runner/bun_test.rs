@@ -1,7 +1,6 @@
 use core::cell::{Cell, OnceCell};
 use core::fmt;
 use core::num::NonZeroU32;
-use core::ptr::NonNull;
 use std::cell::UnsafeCell;
 use std::rc::{Rc, Weak};
 
@@ -14,10 +13,10 @@ use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_ptr::RefPtr;
 use bun_sema::util::SmallLocalVec;
 use super::cells::{CellExt as _, StrongCell};
-use super::jest::{Jest, FileId, FileColumns as _};
+use super::jest::{File, Jest};
 use crate::jsc_hooks::timer_all;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, OwnedTimer};
-use crate::cli::test_command::CommandLineReporter;
+use crate::cli::test_command::{CommandLineReporter, TestFailure};
 use crate::generated_bindgen::bun_test::{
     Bun__BunTest__hook, Bun__TestScope__Describe2__bunTestCatch, Bun__TestScope__Describe2__bunTestThen,
 };
@@ -75,25 +74,18 @@ pub(crate) mod js_fns {
     fn get_test_root(
         global_this: &JSGlobalObject,
         signature: Signature<'_>,
-    ) -> JsResult<&'static mut BunTestRoot> {
-        // `Jest.runner` is a process-global that outlives every caller, so the
-        // unbounded `&'static mut` is the honest model here.
+    ) -> JsResult<&'static BunTestRoot> {
         let Some(runner) = Jest::runner() else {
-            if global_this.bun_vm().worker_ref().is_some()
-                && jsc::virtual_machine::isBunTest.load(core::sync::atomic::Ordering::Relaxed)
-            {
-                return Err(global_this.throw(format_args!("Cannot use {} in a Worker.", signature)));
+            if jsc::virtual_machine::isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
+                let place = if global_this.bun_vm().worker_ref().is_some() { "Worker" } else { "macro" };
+                return Err(global_this.throw(format_args!("Cannot use {} in a {}.", signature, place)));
             }
             return Err(global_this.throw(format_args!(
                 "Cannot use {} outside of the test runner. Run \"bun test\" to run tests.",
                 signature
             )));
         };
-        // The runner calls every registered callback on the main thread's VM.
-        if global_this.bun_vm().worker_ref().is_some() {
-            return Err(global_this.throw(format_args!("Cannot use {} in a Worker.", signature)));
-        }
-        Ok(&mut runner.bun_test_root)
+        Ok(&runner.bun_test_root)
     }
 
     pub(crate) fn clone_active_strong(
@@ -239,7 +231,7 @@ pub(crate) mod js_fns {
                 ..Default::default()
             };
 
-            let Some(bun_test) = bun_test_root.get_active_file_unless_in_preload(global_this.bun_vm()) else {
+            let Some(bun_test) = &bun_test_root.get_active_file_unless_in_preload(global_this.bun_vm()) else {
                 if tag.deferred().is_some() {
                     return Err(global_this.throw(format_args!(
                         "Cannot call {}() in preload. It can only be called inside a test.",
@@ -307,9 +299,7 @@ pub(crate) mod js_fns {
                     };
 
                     if let (Flavor::Vitest, Some(when), Some(callback)) = (flavor, tag.deferred(), args.callback) {
-                        let (RefDataValue::Execution { group_index, entry_data: Some(entry_data) }, Some(strong)) =
-                            (active, super::clone_active_strong())
-                        else {
+                        let RefDataValue::Execution { group_index, entry_data: Some(entry_data) } = active else {
                             return Ok(());
                         };
                         if sequence_ref.test_entry.is_none() {
@@ -318,7 +308,7 @@ pub(crate) mod js_fns {
                                 tag_name
                             )));
                         }
-                        sequence_ref.context(global_this, &strong, group_index, entry_data.sequence_index);
+                        sequence_ref.context(global_this, bun_test, group_index, entry_data.sequence_index);
                         sequence_ref.defer(bun_test, when, callback, cfg.timeout);
                         return Ok(());
                     }
@@ -425,7 +415,6 @@ pub(crate) mod js_fns {
 /// explicit `UnsafeCell` so all writes go through interior-mutable provenance.
 pub(crate) type BunTestPtr = Rc<BunTestCell>;
 pub(crate) type BunTestPtrWeak = Weak<BunTestCell>;
-pub(crate) type BunTestPtrOptional = Option<Rc<BunTestCell>>;
 
 /// `UnsafeCell` newtype so `Rc<BunTestCell>` permits mutation of the shared
 /// `BunTest` (`UnsafeCell` is required for any write reachable through a
@@ -487,26 +476,23 @@ pub(crate) unsafe fn buntest_as_mut(ptr: &BunTestPtr) -> &mut BunTest {
 }
 
 pub(crate) struct BunTestRoot {
-    // gpa dropped — global mimalloc
-    pub(crate) active_file: BunTestPtrOptional,
+    active_file: Cell<Option<BunTestPtr>>,
     preload: Cell<Option<Rc<Preload>>>,
-    /// `RefData` pointers handed to `Promise.then()`. Tracked here (process-lifetime)
-    /// so a never-settled promise's `+1` stays reachable; do not free orphans —
-    /// a queued reaction may still consume them.
-    pub(crate) pending_then_refs: std::cell::RefCell<Vec<*const RefData>>,
+    /// One for each promise the runner waits for, whose reactions get the address as a key.
+    pending_then_refs: Cell<Vec<RefPtr<RefData>>>,
     /// Monotonic per-`enter_file` counter. Exposed to JS so per-file module
     /// state (node:test root) resets on `--rerun-each` where `Bun.main` is
     /// unchanged across iterations.
-    pub(crate) file_generation: u32,
+    pub(crate) file_generation: Cell<u32>,
 }
 
 impl BunTestRoot {
     pub(crate) fn init() -> BunTestRoot {
         BunTestRoot {
-            active_file: None,
+            active_file: Cell::new(None),
             preload: Cell::new(None),
-            pending_then_refs: std::cell::RefCell::new(Vec::new()),
-            file_generation: 0,
+            pending_then_refs: Cell::default(),
+            file_generation: Cell::new(0),
         }
     }
 
@@ -521,19 +507,19 @@ impl BunTestRoot {
     }
 
     pub(crate) fn mark_timed_out(&self, group_index: usize, timed_out: EntryData) {
-        for &pending in self.pending_then_refs.borrow().iter() {
-            // SAFETY: the list owns a ref on each entry.
-            let pending = unsafe { &*pending };
-            if let RefDataValue::Execution {
-                group_index: group,
-                entry_data: Some(data),
-            } = pending.phase
-                && group == group_index
-                && data == timed_out
-            {
+        let timed_out = RefDataValue::Execution { group_index, entry_data: Some(timed_out) };
+        self.pending_then_refs.with_taken(|pending_then_refs| {
+            for pending in pending_then_refs.iter().filter(|pending| pending.phase == timed_out) {
                 pending.timed_out.set(true);
             }
-        }
+        });
+    }
+
+    fn take_pending_then_ref(&self, key: *const RefData) -> Option<RefPtr<RefData>> {
+        self.pending_then_refs.with_taken(|pending_then_refs| {
+            let position = pending_then_refs.iter().position(|pending| core::ptr::eq(pending.as_ptr(), key))?;
+            Some(pending_then_refs.swap_remove(position))
+        })
     }
 
     /// Tear down `bun:test` GC roots before `global_exit()` so
@@ -542,135 +528,64 @@ impl BunTestRoot {
     /// bail path skips its `scopeguard::defer! { exit_file() }` because
     /// `process::exit()` does not unwind), the preload-hook `Strong`s held in
     /// `preload`, and the `pending_then_refs` Vec.
-    pub(crate) fn deinit_for_exit(&mut self) {
-        if self.active_file.is_some() {
-            self.exit_file();
-        }
+    pub(crate) fn deinit_for_exit(&self) {
+        self.active_file.set(None);
         self.reset_hook_scope_for_test_isolation();
-        // `pending_then_refs` holds the `+1` `RefData` ref taken at
-        // `Promise.then()` time so a never-settled promise's box stays
-        // reachable. The corresponding deref happens in
-        // `bun_test_then_or_catch` when the promise settles — which it now
-        // never will (the VM is going away). Release each orphan ourselves;
-        // any reaction that is still queued is dropped wholesale by
-        // `Zig__GlobalObject__destructOnExit`.
-        for ptr in self.pending_then_refs.borrow_mut().drain(..) {
-            // SAFETY: `ptr` was produced by `RefPtr::into_raw` in
-            // `BunTest::run_test_callback`; it is live because the promise
-            // never settled (the settle path removes the entry before
-            // releasing). Single-threaded.
-            drop(unsafe { RefPtr::from_raw(ptr.cast_mut()) });
-        }
+        self.pending_then_refs.take();
     }
 
     pub(crate) fn enter_file(
-        &mut self,
-        file_id: FileId,
-        reporter: &mut CommandLineReporter,
+        &self,
+        file: File,
+        reporter: &'static CommandLineReporter,
         default_concurrent: bool,
         first_last: FirstLast,
     ) {
         let _g = group_begin!();
 
-        debug_assert!(self.active_file.is_none());
-        self.file_generation = self.file_generation.wrapping_add(1);
+        debug_assert!(!self.has_active_file());
+        self.file_generation.update(|generation| generation.wrapping_add(1));
 
-        // Derive the stored backref from the TestRunner's *stable* storage
-        // (the global `Jest::RUNNER` NonNull) rather than `self as *mut _`.
-        // A pointer coerced from `&mut self` carries provenance bounded by this
-        // call's reborrow; the next `Jest::runner()` hands out a fresh
-        // an exclusive `&mut TestRunner`, invalidating that tag, so later derefs at
-        // `BunTest::run`/`on_uncaught_exception` would be use-after-invalidation
-        // under Stacked Borrows.
-        // SAFETY: single-threaded; `RUNNER` outlives every BunTest. Field
-        // projection via `addr_of_mut!` creates no intermediate `&mut TestRunner`,
-        // and `addr_of_mut!` on a live struct field is never null.
-        let stable_root: NonNull<BunTestRoot> = Jest::runner_ptr()
-            .map(|p| unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*p.as_ptr()).bun_test_root)) })
-            .unwrap_or_else(|| NonNull::from(&mut *self));
-
-        // BunTest stores a backref to BunTestRoot, but the backref is the
-        // `stable_root` raw pointer above (not an `Rc`), so plain construction
-        // works without `Rc::new_cyclic`/two-phase init.
-        // The reporter is the global `CommandLineReporter` owned by
-        // `test_command::exec` which outlives every `BunTest`. `exit_file()`
-        // nulls this before the file is dropped.
-        let reporter_ptr = NonNull::from(&mut *reporter);
-        let bun_test = BunTestCell::new(BunTest::init(
-            stable_root,
+        self.active_file.set(Some(BunTestCell::new(BunTest::init(
             self.preload(),
-            self.file_generation,
-            file_id,
-            Some(reporter_ptr),
+            self.file_generation.get(),
+            file,
+            reporter,
             default_concurrent,
             first_last,
-        ));
-        self.active_file = Some(bun_test);
+        ))));
     }
 
-    pub(crate) fn exit_file(&mut self) {
+    pub(crate) fn exit_file(&self) {
         let _g = group_begin!();
 
-        debug_assert!(self.active_file.is_some());
-        if let Some(active) = &self.active_file {
-            // SAFETY: single-threaded; no other `&mut BunTest` is live during
-            // teardown. Write goes through `UnsafeCell` (see `BunTestCell::get`).
-            active.get().reporter = None;
-        }
-        self.active_file = None; // drops the Rc (deinit)
+        debug_assert!(self.has_active_file());
+        self.active_file.set(None);
     }
 
-    pub(crate) fn get_active_file_unless_in_preload(&mut self, vm: &VirtualMachine) -> Option<&mut BunTest> {
+    fn get_active_file_unless_in_preload(&self, vm: &VirtualMachine) -> Option<BunTestPtr> {
         if vm.is_in_preload.get() {
             return None;
         }
-        // SAFETY: single-threaded; caller (js_fns::generic_hook) holds the only
-        // live `&mut` for the duration of the hook-append below. Projection goes
-        // through `UnsafeCell` (see `BunTestCell::get`).
-        self.active_file.as_ref().map(|rc| rc.get())
+        self.clone_active_file()
     }
 
     pub(crate) fn clone_active_file(&self) -> Option<BunTestPtr> {
-        self.active_file.clone()
+        self.active_file.with_taken(|active_file| active_file.clone())
+    }
+
+    pub(crate) fn has_active_file(&self) -> bool {
+        self.active_file.with_taken(|active_file| active_file.is_some())
     }
 
     pub(crate) fn on_before_print(&self) {
-        if let Some(active_file) = &self.active_file {
-            // Do NOT go through `<BunTestCell as Deref>` here. Two of the three
-            // callers (`on_uncaught_exception`, test_command.rs report-status)
-            // reach this while a `&mut BunTest` to the *same* cell payload is
-            // live and reused afterward; materialising a sibling `&BunTest`
-            // would pop the caller's Unique tag under Stacked Borrows. Read the
-            // reporter field via raw ptr instead — `Option<NonNull<_>>` is `Copy`.
-            // SAFETY: single-threaded; `active_file` keeps the cell alive; raw
-            // field read creates no intermediate `&BunTest`.
-            let reporter = unsafe { *core::ptr::addr_of!((*active_file.as_ptr()).reporter) };
-            if let Some(reporter) = reporter {
-                // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
-                // `last_printed_dot` is `Cell<bool>` so a `&` borrow suffices.
-                let reporter = unsafe { reporter.as_ref() };
-                if reporter.reporters.dots && reporter.last_printed_dot.get() {
-                    bun_core::pretty_error!("<r>\n");
-                    Output::flush();
-                    reporter.last_printed_dot.set(false);
-                }
-                // `Jest::runner()` would hand out an exclusive `&mut TestRunner` while
-                // `self: &BunTestRoot` — a field of that same TestRunner — is
-                // live. Project `current_file` through the raw global ptr instead.
-                if let Some(runner_ptr) = Jest::runner_ptr() {
-                    // SAFETY: single-threaded; disjoint field from `bun_test_root`.
-                    unsafe {
-                        (*core::ptr::addr_of_mut!((*runner_ptr.as_ptr()).current_file)).print_if_needed();
-                    }
-                }
+        if let Some(reporter) = self.active_file.with_taken(|active_file| Some(active_file.as_ref()?.reporter)) {
+            if reporter.reporters.dots && reporter.last_printed_dot.take() {
+                bun_core::pretty_error!("<r>\n");
+                Output::flush();
             }
+            reporter.jest.current_file.print_if_needed();
         }
-    }
-}
-
-impl Drop for BunTestRoot {
-    fn drop(&mut self) {
-        debug_assert!(self.active_file.is_none());
     }
 }
 
@@ -760,20 +675,12 @@ pub enum Phase {
 }
 
 pub(crate) struct BunTest {
-    pub(crate) bun_test_root: bun_ptr::BackRef<BunTestRoot>,
     pub(crate) in_run_loop: bool,
     // gpa / arena_allocator / arena dropped — see §Allocators (non-AST crate)
-    pub(crate) file_id: FileId,
+    pub(crate) file: File,
     /// `BunTestRoot::file_generation` of this run of the file.
     pub(crate) generation: u32,
-    /// null if the runner has moved on to the next file but a strong reference to BunTest is still keeping it alive
-    ///
-    /// Stored as
-    /// `NonNull` (not `&`) so callbacks (`handle_test_completed`, junit writer,
-    /// uncaught-exception handler) can write through it without deriving `&mut`
-    /// from `&` (UB). The reporter is owned by `test_command::exec`'s stack
-    /// frame, which never returns; `exit_file()` nulls this before drop.
-    pub(crate) reporter: Option<NonNull<CommandLineReporter>>,
+    pub(crate) reporter: &'static CommandLineReporter,
     pub(crate) timer: OwnedTimer,
     pub(crate) result_queue: ResultQueue,
     /// Whether tests in this file should default to concurrent execution
@@ -788,6 +695,8 @@ pub(crate) struct BunTest {
     pending_phase: RefDataValue,
     /// Set while the global unhandled-error handler reports an error through `on_uncaught_exception`.
     pub(crate) is_reporting_uncaught: bool,
+    recording_target: Cell<RecordingTarget>,
+    unhandled_failure: Cell<Option<TestFailure>>,
     /// True until `TestCommand::run` starts the runner, because the file's module may still be registering tests.
     pub(crate) is_loading: bool,
     /// Callback-less entry that runs last in the file. `defer_to_file_end` links its entries after it.
@@ -799,33 +708,36 @@ pub(crate) struct BunTest {
     pub(crate) execution: Execution::Execution,
 }
 
+/// Where `BunTest::record_printed_error` puts the errors that are printed.
+#[derive(Copy, Clone)]
+enum RecordingTarget {
+    None,
+    Sequence(RefDataValue),
+    Unhandled,
+}
+
 bun_event_loop::impl_timer_owner!(BunTest; from_timer_ptr => timer);
 
 impl BunTest {
-    /// `bun_test_root` must point at the stable global `BunTestRoot` storage
-    /// that outlives the returned `BunTest`.
     fn init(
-        bun_test_root: NonNull<BunTestRoot>,
         preload: Rc<Preload>,
         generation: u32,
-        file_id: FileId,
-        reporter: Option<NonNull<CommandLineReporter>>,
+        file: File,
+        reporter: &'static CommandLineReporter,
         default_concurrent: bool,
         first_last: FirstLast,
     ) -> Self {
         let _g = group_begin!();
 
-        let self_only = Jest::runner().is_some_and(|runner| runner.only);
         let root = BaseScope::init(BaseScopeCfg::default(), None, Some(&preload.scope), false);
-        root.only.set(if self_only { Only::Contains } else { Only::No });
+        root.only.set(if reporter.jest.only { Only::Contains } else { Only::No });
         let scopes = SmallLocalVec::new();
         scopes.push(DescribeScope::create(ScopeId::ROOT, root, Default::default()));
 
         BunTest {
-            bun_test_root: bun_ptr::BackRef::from(bun_test_root),
             in_run_loop: false,
             phase: Phase::Collection,
-            file_id,
+            file,
             generation,
             collection: Collection::init(),
             execution: Execution::Execution::init(),
@@ -843,6 +755,8 @@ impl BunTest {
             wants_wakeup: false,
             pending_phase: RefDataValue::Start,
             is_reporting_uncaught: false,
+            recording_target: Cell::new(RecordingTarget::None),
+            unhandled_failure: Cell::new(None),
             is_loading: true,
             file_end: OnceCell::new(),
             unclaimed: Default::default(),
@@ -1043,21 +957,14 @@ impl BunTest {
     fn bun_test_then_or_catch(
         global_this: &JSGlobalObject,
         result: JSValue,
-        raw_ref: *mut RefData,
+        key: *const RefData,
         is_catch: bool,
     ) -> JsResult<()> {
         let _g = group_begin!();
 
-        // SAFETY: `raw_ref` was produced by `RefPtr::into_raw` in `run_test_callback`;
-        // we adopt the +1 it carried.
-        let refdata = unsafe { RefPtr::from_raw(raw_ref) };
-        // Remove the pending_then_refs entry first so it never holds a freed `RefData`.
-        if let Some(runner) = Jest::runner() {
-            let mut pending = runner.bun_test_root.pending_then_refs.borrow_mut();
-            if let Some(pos) = pending.iter().position(|p| *p == raw_ref.cast_const()) {
-                pending.swap_remove(pos);
-            }
-        }
+        let Some(refdata) = Jest::runner().and_then(|runner| runner.bun_test_root.take_pending_then_ref(key)) else {
+            return Ok(());
+        };
         let has_one_ref = refdata.has_one_ref();
         let Some(this_strong) = refdata.buntest_weak.upgrade() else {
             bun_core::scoped_log!(bun_test_group, "bunTestThenOrCatch -> the BunTest is no longer active");
@@ -1344,33 +1251,19 @@ impl BunTest {
                 self.phase = Phase::Execution;
                 debug::dump_describe(self, self.scope(ScopeId::ROOT))?;
 
-                let has_filter = if let Some(reporter) = self.reporter {
-                    // SAFETY: reporter outlives every BunTest (see field doc).
-                    unsafe { reporter.as_ref() }.jest.filter_regex.is_some()
-                } else {
-                    false
-                };
+                let jest = &self.reporter.jest;
                 // Derive a per-file shuffle seed from (seed, file_path) so a
                 // file's test order depends only on the path and the printed
                 // seed — not on which worker ran it or what files preceded it
                 // on that worker. This is what makes --parallel --randomize
                 // reproducible via --seed=N.
-                let (randomize, seed) = if let Some(reporter) = self.reporter {
-                    // SAFETY: reporter outlives every BunTest (see field doc).
-                    let jest = &unsafe { reporter.as_ref() }.jest;
-                    let path = jest.files.items_source()[self.file_id as usize].path.text;
-                    // Basename only so the hash is platform-independent (path
-                    // separators and absolute prefixes differ on Windows).
-                    let seed = bun_wyhash::hash(bun_paths::basename(path))
-                        .wrapping_add(u64::from(jest.test_options.seed.unwrap_or(0)));
-                    (jest.test_options.randomize, seed)
-                } else {
-                    (false, 0)
-                };
+                // Basename only so the hash is platform-independent (path
+                // separators and absolute prefixes differ on Windows).
+                let seed = bun_wyhash::hash(bun_paths::basename(self.file.path)).wrapping_add(u64::from(jest.seed));
 
                 let mut order = Order::Order::init(self, Order::Config {
-                    always_use_hooks: self.scope(ScopeId::ROOT).base.only.get() == Only::No && !has_filter,
-                    randomize: randomize.then(|| bun_core::rand::DefaultPrng::init(seed)),
+                    always_use_hooks: self.scope(ScopeId::ROOT).base.only.get() == Only::No && jest.filter_regex.is_none(),
+                    randomize: jest.randomize.then(|| bun_core::rand::DefaultPrng::init(seed)),
                     seed,
                 });
 
@@ -1405,9 +1298,8 @@ impl BunTest {
                     order.append_group_of(file_end);
                 }
 
-                if let (true, Some(reporter)) = (order.shuffled, self.reporter) {
-                    // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s `&mut`; no other borrow is live here.
-                    unsafe { (*reporter.as_ptr()).jest.summary.shuffled += 1 };
+                if order.shuffled {
+                    self.reporter.update_summary(|summary| summary.shuffled += 1);
                 }
                 self.execution.load_from_order(order);
                 debug::dump_order(self)?;
@@ -1515,25 +1407,14 @@ impl BunTest {
             }
         }
 
-        // `dcb_ref` is a raw observer alias, NOT a
-        // counted handle. The single +1 from `ref()` is owned by
-        // `dcb_data.ref`; `dcb_ref` just remembers the address so the
-        // pending-promise branch can `dupe()` it and the tail can branch on
-        // "wait for done callback". Holding a second `RefPtr<RefData>` here would
-        // over-count and the done-callback path would never observe
-        // `has_one_ref()`.
-        let mut dcb_ref: Option<NonNull<RefData>> = None;
+        let mut uncalled_done: Option<&DoneCallback> = None;
         if !done_callback.is_empty() && !result.is_empty() {
             if let Some(dcb_data) = done_callback.as_class_ref::<DoneCallback>() {
                 if dcb_data.called.get() {
                     // done callback already called or the callback errored; add result immediately
                 } else {
-                    let r = Self::ref_(this_strong, cfg_data);
-                    let alias = NonNull::new(r.as_ptr())
-                        .expect("ref_() returns a freshly-boxed RefData");
-                    // Move the sole +1 into the DoneCallback.
-                    dcb_data.r#ref.set(Some(r));
-                    dcb_ref = Some(alias);
+                    dcb_data.r#ref.set(Some(Self::ref_(this_strong, cfg_data)));
+                    uncalled_done = Some(dcb_data);
                 }
             } else {
                 debug_assert!(false); // this should be unreachable, we create DoneCallback above
@@ -1550,26 +1431,15 @@ impl BunTest {
                 match bun_jsc::JSPromise::opaque_mut(promise).status() {
                     PromiseStatus::Pending => {
                         // not immediately resolved; register 'then' to handle the result when it becomes available
-                        let this_ref: RefPtr<RefData> = if let Some(dcb_ref_value) = dcb_ref {
-                            // SAFETY: `dcb_ref_value` aliases the live RefData
-                            // owned by `dcb_data.r#ref` (set just above; GC
-                            // roots `done_callback` for this frame). Bump the
-                            // refcount 1→2.
-                            unsafe { RefPtr::init_ref(dcb_ref_value.as_ptr()) }
-                        } else {
-                            Self::ref_(this_strong, cfg_data)
-                        };
-                        // Track the `+1` handed to `Promise.then()` in case the promise never settles.
-                        let raw_ref: *mut RefData = RefPtr::into_raw(this_ref);
-                        this_strong
-                            .bun_test_root
-                            .get()
-                            .pending_then_refs
-                            .borrow_mut()
-                            .push(raw_ref.cast_const());
+                        let this_ref: RefPtr<RefData> = uncalled_done
+                            .and_then(|done| done.r#ref.with_taken(|r#ref| r#ref.clone()))
+                            .unwrap_or_else(|| Self::ref_(this_strong, cfg_data));
+                        let key = this_ref.as_ptr();
+                        let root = &this_strong.reporter.jest.bun_test_root;
+                        root.pending_then_refs.with_taken(|pending_then_refs| pending_then_refs.push(this_ref));
                         let _ = result.then(
                             global_this,
-                            raw_ref,
+                            key,
                             Bun__TestScope__Describe2__bunTestThen,
                             Bun__TestScope__Describe2__bunTestCatch,
                         );
@@ -1597,7 +1467,7 @@ impl BunTest {
             }
         }
 
-        if dcb_ref.is_some() {
+        if uncalled_done.is_some() {
             // completed asynchronously
             bun_core::scoped_log!(bun_test_group, "callTestCallback -> wait for done callback");
             return None;
@@ -1695,70 +1565,44 @@ impl BunTest {
             return; // the exception should not be visible (eg m_terminationException)
         };
 
-        let mut unhandled_failure: Option<crate::cli::test_command::TestFailure> = None;
-        let failure_ctx: *mut core::ffi::c_void = 'ctx: {
-            let Some(reporter) = self.reporter else {
-                break 'ctx core::ptr::null_mut();
-            };
-            // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
-            // `&mut`; single-threaded test runner, no other borrow live here.
-            let reporter = unsafe { &mut *reporter.as_ptr() };
-            if !reporter.jest.test_options.reporters.junit {
-                core::ptr::null_mut()
-            } else if handle_status == HandleUncaughtExceptionResult::ShowHandledError {
-                match self
-                    .execution
-                    .get_current_and_valid_execution_sequence(user_data)
-                {
-                    // Points into `execution.sequences`, a boxed slice that lives until the file is done.
-                    Some((sequence, _)) => sequence.failure.as_ptr().cast(),
-                    None => core::ptr::null_mut(),
-                }
-            } else {
-                core::ptr::from_mut(&mut unhandled_failure).cast()
-            }
+        let recording_target = if !self.reporter.jest.reports_to_junit {
+            RecordingTarget::None
+        } else if handle_status == HandleUncaughtExceptionResult::ShowHandledError {
+            RecordingTarget::Sequence(*user_data)
+        } else {
+            RecordingTarget::Unhandled
         };
 
-        self.bun_test_root.on_before_print();
+        self.reporter.jest.bun_test_root.on_before_print();
         if matches!(
             handle_status,
             HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
                 | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
         ) {
-            // SAFETY: reporter is Some (asserted by call sites that reach here);
-            // `NonNull<CommandLineReporter>` carries write provenance from
-            // `enter_file`'s `&mut`; single-threaded, no other borrow live.
-            unsafe {
-                (*self.reporter.unwrap().as_ptr()).jest.unhandled_errors_between_tests += 1;
-            }
+            self.reporter.jest.unhandled_errors_between_tests.update(|errors| errors + 1);
             bun_core::pretty_errorln!(
                 "<r>\n<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>\n<d>-------------------------------<r>\n",
             );
             Output::flush();
         }
 
-        let vm = global_this.bun_vm();
-        if !failure_ctx.is_null() {
-            vm.on_print_error_zig_exception.set(Some(crate::cli::test_command::TestFailure::record_cb));
-            vm.on_print_error_zig_exception_ctx.set(failure_ctx);
+        // A getter of `exception` can report another error while this one is printed.
+        let outer_target = self.recording_target.replace(recording_target);
+        let outer_failure = self.unhandled_failure.take();
+        print_error(global_this.bun_vm(), global_this, exception, None);
+        if let Some(slot) = self.recording_slot() {
+            slot.with_taken(|slot| {
+                TestFailure::record_log_message(slot, exception);
+                if let Some(failure) = slot
+                    && handle_status == HandleUncaughtExceptionResult::ShowHandledError
+                {
+                    failure.uncaught |= self.is_reporting_uncaught;
+                }
+            });
         }
-        print_error(vm, global_this, exception, None);
-        if !failure_ctx.is_null() {
-            vm.on_print_error_zig_exception.set(None);
-            vm.on_print_error_zig_exception_ctx.set(core::ptr::null_mut());
-            // SAFETY: `failure_ctx` is one of the two `Option<TestFailure>` above, and the callback is done with it.
-            let slot: &mut Option<crate::cli::test_command::TestFailure> =
-                unsafe { &mut *failure_ctx.cast() };
-            crate::cli::test_command::TestFailure::record_log_message(slot, exception);
-            if let Some(failure) = slot
-                && handle_status == HandleUncaughtExceptionResult::ShowHandledError
-            {
-                failure.uncaught |= self.is_reporting_uncaught;
-            }
-        }
-        if let (Some(failure), Some(reporter)) = (unhandled_failure, self.reporter) {
-            // SAFETY: as above.
-            unsafe { &mut *reporter.as_ptr() }.record_unhandled_error(self.file_id, failure);
+        self.recording_target.set(outer_target);
+        if let Some(failure) = self.unhandled_failure.replace(outer_failure) {
+            self.reporter.record_unhandled_error(self.file.path, failure);
         }
 
         if matches!(
@@ -1770,6 +1614,24 @@ impl BunTest {
         }
 
         Output::flush();
+    }
+
+    fn recording_slot(&self) -> Option<&Cell<Option<TestFailure>>> {
+        match self.recording_target.get() {
+            RecordingTarget::None => None,
+            RecordingTarget::Sequence(data) => Some(&data.sequence(self)?.failure),
+            RecordingTarget::Unhandled => Some(&self.unhandled_failure),
+        }
+    }
+
+    /// `VirtualMachine::on_print_error_zig_exception`
+    #[optimize(size)]
+    pub(crate) fn record_printed_error(exception: &jsc::ZigException<'_>) {
+        if let Some(this) = clone_active_strong()
+            && let Some(slot) = this.recording_slot()
+        {
+            slot.with_taken(|slot| TestFailure::record(slot, exception));
+        }
     }
 }
 

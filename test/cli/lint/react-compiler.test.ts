@@ -228,6 +228,21 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     expect(exit).toBe(1);
   });
 
+  // For its output the compiler gives no local the name of an outer variable that the function assigns, or of the JSX
+  // factory, which here is `createElement`. Nothing is output here, so a report has each name as it is written.
+  test("a local that the compiler renames for its output keeps its name", async () => {
+    const { diagnostics, exit } = await report(small.renames);
+    expect(diagnostics).toEqual(expected.reports.renames.diagnostics);
+    const inferred = (file: string) =>
+      (diagnostics[file] as { help: string }[]).map(it => it.help.match(/The inferred dependency was `([^`]+)`/)?.[1]);
+    expect({
+      closure: inferred("closure.jsx"),
+      render: inferred("render.jsx"),
+      factory: inferred("factory.jsx"),
+    }).toEqual({ closure: ["items"], render: ["items"], factory: ["createElement"] });
+    expect(exit).toBe(1);
+  });
+
   test("a module's own useMemo isn't React's, and an expression that contains JSX can't be evaluated earlier", async () => {
     const { diagnostics, exit } = await report(small.names);
     expect(diagnostics).toEqual(expected.reports.names.diagnostics);

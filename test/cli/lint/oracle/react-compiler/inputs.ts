@@ -406,6 +406,30 @@ function NotNull(props: Props) {
 }
 `;
 
+/** A local `name` of a block that `useMemo` reads, with a dependency list that the compiler doesn't infer. */
+const blockLocalInMemo = (
+  name: string,
+  outside: string,
+  before: string,
+  props: string,
+) => `import { useMemo } from "react";
+${outside}export function Component(props) {
+${before}  let data;
+  {
+    const ${name} = props.list;
+    data = useMemo(() => {
+      const x = [];
+      x.push(${name}?.a);
+      if (props.cond) {
+        x.push(${name}.a);
+      }
+      return x;
+    }, [${name}?.a, props.cond]);
+  }
+  return <div${props}>{data}</div>;
+}
+`;
+
 /** The small input directories, keyed by test name. */
 export const small: Record<string, Files> = {
   comments,
@@ -651,6 +675,19 @@ function Component(props) {
     "vendor/node_modules/package/a.jsx": impure,
     // `node_modules` only has to be a substring of the path.
     "src/not_node_modules/a.jsx": impure,
+  },
+  // For its output the compiler gives no local the name of an outer variable that the function assigns, or of the JSX
+  // factory. A report has the name as it is written.
+  renames: {
+    ".oxlintrc.json": rc(["react/preserve-manual-memoization"]),
+    "closure.jsx": blockLocalInMemo(
+      "items",
+      "let items = null;\n",
+      "  const remember = () => {\n    items = props.a;\n  };\n",
+      " onClick={remember}",
+    ),
+    "render.jsx": blockLocalInMemo("items", "let items = null;\n", "  items = props.a;\n", ""),
+    "factory.jsx": blockLocalInMemo("createElement", "", "", ""),
   },
 };
 

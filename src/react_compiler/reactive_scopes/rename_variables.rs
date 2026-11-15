@@ -321,6 +321,12 @@ fn rename_variables_impl(func: &ReactiveFunction, visitor: &Visitor, scopes: &mu
 fn collect_referenced_globals(block: &ReactiveBlock, env: &Environment) -> HashSet<StoreStr> {
     let mut globals = HashSet::default();
     collect_globals_block(block, &mut globals, env);
+    // Not in upstream, which prints no JSX factory. Codegen prints it, and no instruction names it.
+    if let Some(root) = env.jsx_factory_root
+        && env.output_mode != OutputMode::Lint
+    {
+        globals.insert(root);
+    }
     globals
 }
 
@@ -370,6 +376,12 @@ fn collect_globals_value(
                 InstructionValue::FunctionExpression { lowered_func, .. }
                 | InstructionValue::ObjectMethod { lowered_func, .. } => {
                     collect_globals_hir_function(lowered_func.func, globals, env);
+                }
+                // Not in upstream, where a local can take the name of a variable that the function only assigns.
+                InstructionValue::StoreGlobal { name, .. }
+                    if env.output_mode != OutputMode::Lint =>
+                {
+                    globals.insert(*name);
                 }
                 _ => {}
             }
@@ -426,6 +438,12 @@ fn collect_globals_hir_function(
                 InstructionValue::FunctionExpression { lowered_func, .. }
                 | InstructionValue::ObjectMethod { lowered_func, .. } => {
                     collect_globals_hir_function(lowered_func.func, globals, env);
+                }
+                // Not in upstream: see `collect_globals_value`.
+                InstructionValue::StoreGlobal { name, .. }
+                    if env.output_mode != OutputMode::Lint =>
+                {
+                    globals.insert(*name);
                 }
                 _ => {}
             }

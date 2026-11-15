@@ -333,6 +333,11 @@ pub(super) fn lower_jsx_call(
                 suggestions: None,
             })?;
         }
+        // RenameVariables keeps the locals off the name of the classic factory, which is one for the file.
+        if callee.is_none() && builder.environment().jsx_factory_root.is_none() {
+            let (host, env) = builder.host_and_env_mut();
+            env.jsx_factory_root = host.jsx_classic_factory_root().map(StoreStr::new);
+        }
         if let Some(p) = props_arg {
             if let ExprData::EObject(obj) = &p.data {
                 for prop in obj.properties.iter() {

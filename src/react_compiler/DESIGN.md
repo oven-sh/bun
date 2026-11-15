@@ -169,3 +169,5 @@ overlap in arity, so lowering tells them apart by the callee
 The callee is not an operand of the HIR `JsxExpression`: codegen resolves the
 classic factory again (`Host::jsx_classic_factory`). Lowering rejects a factory
 that is a local of the function, because the compiler would drop it as unused.
+RenameVariables gives no local the first identifier of the factory
+(`Host::jsx_classic_factory_root`), because codegen prints it by name.

@@ -273,6 +273,9 @@ impl Host for RecordingHost<'_> {
         }
         factory
     }
+    fn jsx_classic_factory_root(&self) -> Option<&[u8]> {
+        self.host.jsx_classic_factory_root()
+    }
     fn new_generated(&mut self, name: &[u8]) -> Ref {
         let reference = self.host.new_generated(name);
         self.add(reference, SymbolOrigin::Outlined)

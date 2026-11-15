@@ -130,6 +130,13 @@
       "rules": {
         "bun/no-unused-expressions": "off"
       }
+    },
+    {
+      // A test file can delete or replace these three on `globalThis`. The module takes them once, when it loads.
+      "files": ["src/js/internal/test/globals.ts"],
+      "rules": {
+        "no-restricted-globals": ["error", "globalThis", "process", "Bun"]
+      }
     }
   ]
 }

@@ -327,6 +327,32 @@ describe.concurrent("test environment", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("--isolate=modules opens a window for the files after one that leaves no \`globalThis.globalThis\`", async () => {
+    const file = (change: string) => `// ${VITEST} happy-dom
+      test("window", () => {
+        console.log(JSON.stringify([typeof document === "object" && environment, typeof window === "object" && window === global && document.defaultView === global]));
+        ${change}
+      });
+    `;
+    using dir = tempDir("test-environment", {
+      ...fakePackages,
+      "a.test.js": file(`delete globalThis.globalThis;`),
+      "b.test.js": file(
+        `Object.defineProperty(globalThis, "globalThis", { get() { throw new Error("no globalThis"); }, configurable: true });`,
+      ),
+      "c.test.js": file(""),
+    });
+    const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate=modules");
+    expect(warnings(stderr)).toEqual([]);
+    expect(stdout.filter(line => line.startsWith("["))).toEqual([
+      `["happy-dom#1",true]`,
+      `["happy-dom#2",true]`,
+      `["happy-dom#3",true]`,
+    ]);
+    expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("the package is resolved from the test file", async () => {
     using dir = tempDir("test-environment", {
       "packages/a/node_modules/happy-dom/package.json": fakePackages["node_modules/happy-dom/package.json"],

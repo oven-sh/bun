@@ -71,7 +71,9 @@ test/cli/test/isolation.test.ts: --isolate: require(esm) caches a BunTranspiledM
 test/cli/test/isolation.test.ts: bun test --isolate > with --isolate, cached module records keep short, Latin-1 and UTF-16 names
 # --isolate=modules runs like --isolate in a compiled run, as docs/compiler/debugging.mdx says: each test file gets a global object and builtin modules of its own.
 # One of them also writes to members that stay read-only, and one asks how often the JIT has compiled a function.
+# One deletes or replaces `globalThis.globalThis`. A compiled run refuses that: it reads `globalThis` without a lookup.
 test/cli/test/isolation.test.ts: bun test --isolate=modules > a file runs the code that was compiled for the files before it
+test/cli/test/isolation.test.ts: bun test --isolate=modules > every file finds `globalThis` and `process` as the first one did, whatever the files before it did to them
 test/cli/test/isolation.test.ts: bun test --isolate=modules > every file finds the builtins as the first one did, whatever the files before it did to them
 test/cli/test/isolation.test.ts: bun test --isolate=modules > no other builtin module patches a global class when it loads
 test/cli/test/isolation.test.ts: bun test --isolate=modules > the global object and the builtin modules are the same for every file
@@ -82,6 +84,8 @@ test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that
 test/cli/test/test-changed.test.ts: bun test --changed --watch > editing one of several dirty test files reruns only that one
 test/cli/test/test-changed.test.ts: bun test --changed --watch > restarts and reruns only affected tests when a dependency changes
 test/cli/test/test-changed.test.ts: bun test --changed --watch > trigger file path handed to restarted runs has a 128-bit random hex suffix
+# The next one deletes `globalThis.globalThis`, which a compiled run refuses.
+test/cli/test/test-environment.test.ts: test environment > --isolate=modules opens a window for the files after one that leaves no `globalThis.globalThis`
 test/cli/test/test-environment.test.ts: test environment > without --isolate > switching environments works even if a file leaves builtins patched
 test/cli/test/test-shard.test.ts: --timings > --parallel with --timings cuts chunks by duration and dispatches each chunk slowest-first
 test/cli/test/test-shard.test.ts: --timings > --shard with --timings cuts path-sorted files into runs of equal total time

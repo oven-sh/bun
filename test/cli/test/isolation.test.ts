@@ -1616,6 +1616,66 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect(lines).toEqual(Array(2).fill(JSON.stringify(["fetch", true, false])));
   });
 
+  test("every file finds \`globalThis\` and \`process\` as the first one did, whatever the files before it did to them", async () => {
+    // Read through `global` and node:process: the file before may have left no `globalThis` and no `process`.
+    const state = `JSON.stringify((({ value, writable, enumerable, configurable }) => [
+      typeof globalThis, value === global, writable, enumerable, configurable, typeof process === "object" && process === require("node:process"),
+      String(Date.now).includes("[native code]"), "_added" in global, require("node:process").env.ADDED, require("node:process").listenerCount("exit"),
+    ])(Object.getOwnPropertyDescriptor(global, "globalThis") ?? {}))`;
+    const change = [
+      `delete globalThis.globalThis;`,
+      `Object.defineProperty(globalThis, "globalThis", { get() { throw new Error("no globalThis"); }, configurable: true });`,
+      // On another object than globalThis, a name that starts with an underscore would be left alone.
+      `global._added = 1; delete global.globalThis; global.globalThis = {};`,
+      `delete globalThis.process; delete globalThis.globalThis;`,
+      `globalThis.process = { env: {} }; delete globalThis.globalThis;`,
+      `globalThis.globalThis = 1;`,
+      `Object.defineProperty(globalThis, "globalThis", { value: {}, writable: false, configurable: false });`,
+      `globalThis.process = { env: {} };`,
+      ``,
+    ];
+    const files = Object.fromEntries(
+      change.map((code, i) => [
+        `${i}.test.js`,
+        `test("${i}", () => {
+          console.log(${state});
+          Date.now = () => 0; process.env.ADDED = "1"; process.on("exit", () => {});
+          ${code}
+        });`,
+      ]),
+    );
+    const lines = (await passes(files, change.length)).split("\n").filter(line => line.startsWith("["));
+    const atStart = JSON.stringify(["object", true, true, false, true, true, true, false, null, 0]);
+    expect(lines).toEqual(Array(change.length).fill(atStart));
+  });
+
+  test("what a file did is undone although it left \`globalThis\` without \`process\` and non-extensible", async () => {
+    // `Object.defineProperty()` can't add `process` to that global object again, so the later files have no `process` global.
+    // The restore of the other objects, of the environment variables and of the listeners doesn't need one.
+    const read = (name: string) => `test("${name}", () => {
+      const realProcess = require("node:process");
+      console.log(JSON.stringify([realProcess.env.ADDED, realProcess.listenerCount("exit"), "added" in realProcess, "added" in Math]));
+    });`;
+    using dir = tempDir("isolate-modules-no-process", {
+      "a.test.js": `test("a", () => {
+        process.env.ADDED = "1";
+        process.on("exit", () => {});
+        process.added = Math.added = 1;
+        delete globalThis.process;
+        Object.preventExtensions(globalThis);
+      });`,
+      "b.test.js": read("b"),
+      "c.test.js": read("c"),
+    });
+    const names = ["./a.test.js", "./b.test.js", "./c.test.js"];
+    const { stdout, stderr, exitCode } = await runTests(String(dir), ["--isolate=modules"], names);
+    const lines = stdout.split("\n").filter(line => line.startsWith("["));
+    expect(lines).toEqual(Array(2).fill(JSON.stringify([null, 0, false, false])));
+    // How a run with such a global object is judged is not asserted here, only that it gets to its end and exits as a test run does.
+    expect(stderr).toContain("Ran 3 tests across 3 files.");
+    expect([0, 1]).toContain(exitCode);
+  });
+
   test("keeps what node:perf_hooks and node:worker_threads add to the builtins when they load", async () => {
     const file = `
       import "node:perf_hooks";

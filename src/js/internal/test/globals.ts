@@ -28,7 +28,12 @@ require("node:worker_threads");
 // so only use what's captured here, $-private names, index loops and null-prototype descriptors.
 const { getPrototypeOf, getOwnPropertyDescriptor, defineProperty, getOwnPropertyNames } = Object;
 const { ownKeys } = Reflect;
-const { eventNames, rawListeners, removeListener } = process;
+/* oxlint-disable no-restricted-globals */
+const realGlobalThis = globalThis;
+const realProcess = process;
+const realBun = Bun;
+/* oxlint-enable no-restricted-globals */
+const { eventNames, rawListeners, removeListener } = realProcess;
 
 type Properties = Map<PropertyKey, PropertyDescriptor>;
 
@@ -62,10 +67,10 @@ function getDescriptor(object: object, key: PropertyKey): PropertyDescriptor | u
 }
 
 function isTracked(object: object, key: PropertyKey) {
-  if (object === globalThis) return true;
+  if (object === realGlobalThis) return true;
   // Underscore-prefixed properties hold internal state, like `process._events`.
   if (typeof key === "string" && key.$charCodeAt(0) === 95) return false;
-  return !((object === process || object === Bun) && skippedKeys.$has(key as string));
+  return !((object === realProcess || object === realBun) && skippedKeys.$has(key as string));
 }
 
 // Walks globalThis, its object properties, every function reachable from those, and their prototypes.
@@ -117,7 +122,7 @@ function restoreProperties(object: object, properties: Properties, size: number)
     const saved = properties.$get(key);
     if (saved) found++;
     // The next file's window replaces these.
-    if (object === globalThis && isEnvironmentGlobal(key)) continue;
+    if (object === realGlobalThis && isEnvironmentGlobal(key)) continue;
     if (!saved) {
       if (isTracked(object, key)) deleteOwnProperty(object, key);
       continue;
@@ -138,7 +143,7 @@ function restoreProperties(object: object, properties: Properties, size: number)
 }
 
 function restoreEnv() {
-  const current = process.env;
+  const current = realProcess.env;
   const keys = getOwnPropertyNames(current);
   for (let i = 0; i < keys.length; i++) if (!env.$has(keys[i])) delete current[keys[i]];
   env.$forEach((value, key) => {
@@ -149,14 +154,14 @@ function restoreEnv() {
 }
 
 function restoreListeners() {
-  const names = eventNames.$call(process);
+  const names = eventNames.$call(realProcess);
   for (let i = 0; i < names.length; i++) {
     const saved = listeners.$get(names[i]);
-    const current = rawListeners.$call(process, names[i]);
+    const current = rawListeners.$call(realProcess, names[i]);
     for (let j = 0; j < current.length; j++) {
       let isSaved = false;
       for (let k = 0; saved && k < saved.length; k++) isSaved ||= saved[k] === current[j];
-      if (!isSaved) removeListener.$call(process, names[i], current[j]);
+      if (!isSaved) removeListener.$call(realProcess, names[i], current[j]);
     }
   }
 }
@@ -169,14 +174,14 @@ function saveShapes() {
 // The first call takes the snapshot. Later calls restore it.
 export default function restoreGlobals() {
   if (!env) {
-    saveProperties(globalThis, true);
+    saveProperties(realGlobalThis, true);
     saveShapes();
     env = new Map();
-    const keys = getOwnPropertyNames(process.env);
-    for (let i = 0; i < keys.length; i++) env.$set(keys[i], process.env[keys[i]]);
+    const keys = getOwnPropertyNames(realProcess.env);
+    for (let i = 0; i < keys.length; i++) env.$set(keys[i], realProcess.env[keys[i]]);
     listeners = new Map();
-    const names = eventNames.$call(process);
-    for (let i = 0; i < names.length; i++) listeners.$set(names[i], rawListeners.$call(process, names[i]));
+    const names = eventNames.$call(realProcess);
+    for (let i = 0; i < names.length; i++) listeners.$set(names[i], rawListeners.$call(realProcess, names[i]));
     return;
   }
   const changed = indexesOfChanged(objects, shapes);

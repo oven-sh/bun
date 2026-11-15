@@ -248,8 +248,6 @@ pub use bundle_v2::BundleV2;
 /// See `chunk` module.
 pub use chunk::Chunk;
 pub use defines::{Define, DefineDataExt, DefineExt};
-/// See `linker` module.
-pub use linker::Linker;
 /// See `linker_context_mod` module.
 pub(crate) use linker_context_mod::LinkerContext;
 /// See `linker_graph` module.

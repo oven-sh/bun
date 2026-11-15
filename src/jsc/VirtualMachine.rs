@@ -358,7 +358,6 @@ pub struct VirtualMachine {
     /// The watcher's loop turned after an unhandled error, so that error did not stop the timers.
     pub timers_ran_after_error: Cell<bool>,
 
-    pub modules: crate::async_module::Queue,
     pub aggressive_garbage_collection: Cell<GCLevel>,
 
     pub module_loader: ModuleLoader::ModuleLoader,
@@ -3187,7 +3186,6 @@ impl VirtualMachine {
             exit_on_uncaught_exception: Cell::new(false),
             hot_run_failed: Cell::new(false),
             timers_ran_after_error: Cell::new(false),
-            modules: Default::default(),
             aggressive_garbage_collection: Default::default(),
             module_loader: Default::default(),
             text_format_arena: Cell::new(None),
@@ -3650,33 +3648,13 @@ pub fn process_fetch_log(
 
     match log.msgs.len() {
         0 => {
-            let msg = if err == crate::CrateError::UnexpectedPendingResolution {
-                bun_ast::Msg {
-                    data: bun_ast::range_data(
-                        None,
-                        bun_ast::Range::NONE,
-                        format!(
-                            "Unexpected pending import in \"{specifier}\". To automatically \
-                             install npm packages with Bun, please use an import statement \
-                             instead of require() or dynamic import().\nThis error can also \
-                             happen if dependencies import packages which are not referenced \
-                             anywhere. Worst case, run `bun install` and opt-out of the \
-                             node_modules folder until we come up with a better way to handle \
-                             this error."
-                        )
-                        .into_bytes(),
-                    ),
-                    ..Default::default()
-                }
-            } else {
-                bun_ast::Msg {
-                    data: bun_ast::range_data(
-                        None,
-                        bun_ast::Range::NONE,
-                        format!("{} while building {specifier}", err.name()).into_bytes(),
-                    ),
-                    ..Default::default()
-                }
+            let msg = bun_ast::Msg {
+                data: bun_ast::range_data(
+                    None,
+                    bun_ast::Range::NONE,
+                    format!("{} while building {specifier}", err.name()).into_bytes(),
+                ),
+                ..Default::default()
             };
             take(BuildMessage::create(global_this, msg))
         }
@@ -4538,19 +4516,12 @@ impl VirtualMachine {
     /// `PackageManager` is exactly that struct, just type-erased at a lower
     /// tier.
     ///
-    /// Panics when the lazy init fails (unreadable top-level dir). Production
-    /// callers (AsyncModule's pending-task machinery) only run after a pending
-    /// dependency was enqueued, which requires a previously successful
-    /// `get_package_manager`, so the init error is surfaced as a resolve
-    /// failure in `Resolver::load_node_modules` long before reaching here.
-    /// The one caller outside that machinery is the `bun:internal-for-testing`
-    /// `parseLockfile` binding (`install_jsc/install_binding.rs`), which may
-    /// lazy-init here and accepts the panic on its test-only surface.
+    /// Panics when the lazy init fails. Only for `bun:internal-for-testing`'s `parseLockfile`.
     #[inline]
     pub fn package_manager(&self) -> *mut bun_install::PackageManager {
         self.transpiler
             .with_mut(Transpiler::get_package_manager)
-            .expect("package manager init already succeeded when the pending task was enqueued")
+            .expect("package manager init")
             .cast()
     }
 
@@ -4957,9 +4928,6 @@ impl VirtualMachine {
             .get()
             .expect("source_code_printer not initialized");
 
-        // Note: the §Dispatch shim takes path/loader/module_type/printer/
-        // promise_ptr bundled as `TranspileExtra` behind `args.extra` (see
-        // ModuleLoader.rs `TranspileArgs`).
         let extra = ModuleLoader::TranspileExtra {
             path: lr.path,
             loader: Cell::new(loader.or(lr.loader).unwrap_or(if lr.is_main {
@@ -4969,8 +4937,6 @@ impl VirtualMachine {
             })),
             module_type: Cell::new(module_type),
             source_code_printer: printer.as_ptr(),
-            // `fetchWithoutOnLoadPlugins` forbids the async path.
-            promise_ptr: core::ptr::null_mut(),
         };
         let args = ModuleLoader::TranspileArgs {
             specifier: lr.specifier,
@@ -5083,7 +5049,7 @@ impl VirtualMachine {
             }) {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
-                ResultUnion::Pending(_) | ResultUnion::NotFound => {
+                ResultUnion::NotFound => {
                     // Not found on disk. Look it up in the executable.
                     if (self.transpiler)
                         .with_mut(|t| core::mem::take(&mut t.resolver.resolves_for_code_from_disk))

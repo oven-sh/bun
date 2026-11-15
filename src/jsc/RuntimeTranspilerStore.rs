@@ -29,7 +29,6 @@ use bun_threading::unbounded_queue::{self, UnboundedQueue};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 use bun_watcher::Watcher;
 
-use crate::async_module::AsyncModule;
 use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::hot_reloader::ImportWatcher;
 use crate::resolved_source::PrintedAst;
@@ -40,8 +39,11 @@ use crate::runtime_transpiler_cache::{
 };
 use crate::saved_source_map::SavedSourceMap;
 use crate::strong::Optional as StrongOptional;
-use crate::virtual_machine::{SourceMapHandlerGetter, VirtualMachine};
-use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsResult, ResolvedSource};
+use crate::virtual_machine::{SourceMapHandlerGetter, VirtualMachine, process_fetch_log};
+use crate::{
+    ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue, JsError, JsResult,
+    ResolvedSource,
+};
 
 // LAYERING: `ParseOptions.runtime_transpiler_cache` carries the canonical
 // lower-tier type from `bun_js_parser` (re-exported via `bun_bundler`). The
@@ -59,7 +61,7 @@ fn dump_source(maps: &SavedSourceMap, specifier: &[u8], printer: &BufferPrinter)
     dump_source_string(maps, specifier, printer.ctx.get_written());
 }
 
-pub(crate) fn dump_source_string(maps: &SavedSourceMap, specifier: &[u8], written: &[u8]) {
+fn dump_source_string(maps: &SavedSourceMap, specifier: &[u8], written: &[u8]) {
     if let Err(e) = dump_source_string_failiable(maps, specifier, written) {
         bun_core::debug_warn!("Failed to dump source string: {}", e.name());
     }
@@ -476,6 +478,57 @@ fn tls_get_or_leak<T>(
     unsafe { &mut *p.as_ptr() }
 }
 
+/// `module_loader`: the `JSModuleLoader` that fetched, or empty for the global object's.
+fn fulfill(
+    global_this: &JSGlobalObject,
+    promise: JSValue,
+    module_loader: JSValue,
+    result: Result<ResolvedSource, crate::CrateError>,
+    specifier: &String,
+    referrer: &String,
+    log: &mut bun_ast::Log,
+) -> JsResult<()> {
+    crate::mark_binding();
+    let mut errorable = match result {
+        Ok(resolved_source) => ErrorableResolvedSource::ok(resolved_source),
+        Err(crate::CrateError::JSError | crate::CrateError::Bundler(bun_bundler::Error::Js(_))) => {
+            ErrorableResolvedSource::err(global_this.take_error(JsError::Thrown))
+        }
+        Err(e) => ErrorableResolvedSource::err(process_fetch_log(
+            global_this,
+            specifier,
+            referrer,
+            log,
+            e,
+        )),
+    };
+    bun_core::scoped_log!(RuntimeTranspilerStore, "fulfill: {}", specifier);
+
+    crate::from_js_host_call_generic(global_this, || {
+        Bun__onFulfillAsyncModule(
+            global_this,
+            promise,
+            module_loader,
+            &mut errorable,
+            specifier,
+            referrer,
+        )
+    })
+}
+
+// C++ takes the fields of `res` that it keeps by zeroing them. The caller drops the rest.
+unsafe extern "C" {
+    #[allow(improper_ctypes)]
+    safe fn Bun__onFulfillAsyncModule(
+        global_object: &JSGlobalObject,
+        promise_value: JSValue,
+        module_loader: JSValue,
+        res: &mut ErrorableResolvedSource,
+        specifier: &String,
+        referrer: &String,
+    );
+}
+
 impl TranspilerJob {
     /// Pool thread: hand the slot back. `ticket` was moved out of `self`
     /// first — the JS thread may reuse the slot the moment it is queued.
@@ -549,7 +602,7 @@ impl TranspilerJob {
             );
         }
 
-        AsyncModule::fulfill(
+        fulfill(
             &global_this,
             promise,
             module_loader,

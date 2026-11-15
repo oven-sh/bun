@@ -136,7 +136,6 @@ pub(crate) mod bun {
 pub(crate) use crate::api::bun::h2_frame_parser::H2FrameParser;
 pub(crate) use crate::api::bun::ssl_context_cache as SSLContextCache;
 pub(crate) use crate::api::js_bundler::BuildArtifact;
-pub(crate) use crate::api::js_bundler::JSBundler;
 
 // ─── shared scaffold for Bun.{TOML,JSONC,JSON5,YAML,XML}.parse ───────────────
 //

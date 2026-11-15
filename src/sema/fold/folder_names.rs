@@ -49,8 +49,9 @@ impl<'s> Folder<'_, 's> {
     }
 
     fn may_be_replaced(&self, e: ExprId, name: Atom) -> bool {
-        matches!(name, known::undefined | known::NaN | known::Infinity)
-            || !self.hir.is_in_known_evaluation(self.hir[e].pos)
+        !self.hir.is_in_known_evaluation(self.hir[e].pos)
+            || (matches!(name, known::undefined | known::NaN | known::Infinity)
+                && self.has_static_lookup(e))
     }
 
     fn fold_symbol_read(&mut self, e: ExprId, symbol: SymbolId) -> Folded {

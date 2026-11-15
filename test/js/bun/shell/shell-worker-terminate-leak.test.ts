@@ -290,8 +290,9 @@ test.skipIf(!isASAN || isWindows)(
 );
 
 // Opening a FIFO blocks the worker inside the interpreter, so terminate() lands between the two opens.
+// `ls` goes to the thread pool, so the rest runs from an event loop task and not inside `run()`.
 test.skipIf(isWindows)(
-  "worker.terminate() before a buffer redirect stops the script",
+  "worker.terminate() stops a Bun.$ script that has not reached its buffer redirect yet",
   async () => {
     await runTerminateScenario(
       `

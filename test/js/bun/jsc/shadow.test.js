@@ -186,6 +186,7 @@ describe.concurrent("an unreachable ShadowRealm", () => {
       await run(`${prelude}
         runInRealms("() => void new Bun.ModuleGraph()");
         await gcUntil(mostRealmsAreCollected);
+        // The graph's context is stopped in a task.
         await new Promise(resolve => setImmediate(resolve));
         console.log("done");`),
     ).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });

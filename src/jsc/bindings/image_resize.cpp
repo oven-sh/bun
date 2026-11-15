@@ -475,9 +475,9 @@ int buildWeights(int kind, int32_t src_len, int32_t dst_len,
     for (int32_t i = 0; i < dst_len; i++) {
         const double center = (i + 0.5) / scale - 0.5;
         int32_t start = static_cast<int32_t>(std::floor(center - support + 0.5));
-        int32_t end = static_cast<int32_t>(std::floor(center + support + 0.5));
+        // Clamped as a double: the cast can overflow.
+        int32_t end = static_cast<int32_t>(std::min(std::floor(center + support + 0.5), src_len - 1.0));
         if (start < 0) start = 0;
-        if (end >= src_len) end = src_len - 1;
         int32_t n = end - start + 1;
         if (n > wstride) n = wstride;
         // Evaluate in f64, normalise, then quantise.

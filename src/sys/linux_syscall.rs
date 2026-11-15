@@ -20,8 +20,8 @@
 
 use core::mem::MaybeUninit;
 
-use rustix::fd::{BorrowedFd, IntoRawFd, OwnedFd};
-use rustix::io::Errno;
+use rustix::fd::{IntoRawFd, OwnedFd};
+use rustix::io::{Errno, IoSlice};
 
 use crate::{Fd, Mode};
 use bun_core::ZStr;
@@ -29,21 +29,6 @@ use bun_core::ZStr;
 // ──────────────────────────────────────────────────────────────────────────
 // Glue: rustix ↔ bun_sys primitive types
 // ──────────────────────────────────────────────────────────────────────────
-
-/// Reinterpret a raw posix fd as a `BorrowedFd` for the duration of a single
-/// rustix call. SAFETY: `fd` must be a valid open descriptor (and ≠ -1; that
-/// value is `BorrowedFd`'s niche) for the duration of the call. Caller-owned;
-/// rustix never closes a `BorrowedFd`.
-///
-/// The lifetime is unbounded (chosen by inference at each call site) rather
-/// than `'static` — every use in this module is a single-expression borrow,
-/// so inference picks a local lifetime and the wrapper cannot accidentally
-/// outlive the real fd.
-#[inline(always)]
-unsafe fn bfd<'a>(fd: i32) -> BorrowedFd<'a> {
-    // SAFETY: forwarded — see fn doc.
-    unsafe { BorrowedFd::borrow_raw(fd) }
-}
 
 /// rustix `Errno` → raw positive errno (matches `libc::E*` constants on Linux).
 #[inline(always)]
@@ -196,9 +181,8 @@ pub(crate) fn lstat(path: &ZStr) -> Result<libc::stat, i32> {
 }
 
 #[inline]
-pub(crate) fn fstatat(dir: i32, path: &ZStr, flags: i32) -> Result<libc::stat, i32> {
-    // SAFETY: `dir` is caller-owned (or AT_FDCWD) for the call.
-    let dir = unsafe { bfd(dir) };
+pub(crate) fn fstatat(dir: Fd, path: &ZStr, flags: i32) -> Result<libc::stat, i32> {
+    let dir = dir.as_borrowed_fd();
     let at = rustix::fs::AtFlags::from_bits_retain(flags as u32);
     retry(|| rustix::fs::statat(dir, path.as_cstr(), at)).map(stat_to_libc)
 }
@@ -320,18 +304,10 @@ pub(crate) unsafe fn readv(fd: Fd, vecs: *const libc::iovec, n: usize) -> Result
     })
 }
 
-/// Raw `writev(2)`.
 #[inline]
-pub(crate) unsafe fn writev(fd: Fd, vecs: *const libc::iovec, n: usize) -> Result<usize, i32> {
-    // Same shape as `readv` above: hand the raw `(iovec*, n)` pair straight to
-    // the kernel rather than fabricating a `&[IoSlice]` just to satisfy
-    // rustix's typed wrapper. The caller already owns a `&[PlatformIoVec]`;
-    // round-tripping through a reconstructed borrowed slice buys nothing.
-    sys_retry(|| {
-        // SAFETY: caller guarantees `vecs[..n]` are valid `iovec`s whose
-        // `iov_base` are readable for `iov_len` bytes.
-        unsafe { libc::syscall(libc::SYS_writev, fd.native(), vecs, n as libc::c_long) }
-    })
+pub(crate) fn writev(fd: Fd, vecs: &[IoSlice<'_>]) -> Result<usize, i32> {
+    let fd = fd.as_borrowed_fd();
+    retry(|| rustix::io::writev(fd, vecs))
 }
 
 /// Raw `preadv(2)`.
@@ -364,33 +340,10 @@ pub(crate) unsafe fn preadv(
     })
 }
 
-/// Raw `pwritev(2)`.
 #[inline]
-pub(crate) unsafe fn pwritev(
-    fd: Fd,
-    vecs: *const libc::iovec,
-    n: usize,
-    off: i64,
-) -> Result<usize, i32> {
-    // Mirror `preadv`: split offset per the kernel `pwritev` ABI and pass the
-    // raw `(iovec*, n)` straight through instead of reconstructing a borrowed
-    // `&[IoSlice]` for rustix's typed wrapper.
-    let lo = off as libc::c_long;
-    let hi = ((off as u64) >> 32) as libc::c_long;
-    sys_retry(|| {
-        // SAFETY: caller guarantees `vecs[..n]` are valid `iovec`s whose
-        // `iov_base` are readable for `iov_len` bytes.
-        unsafe {
-            libc::syscall(
-                libc::SYS_pwritev,
-                fd.native(),
-                vecs,
-                n as libc::c_long,
-                lo,
-                hi,
-            )
-        }
-    })
+pub(crate) fn pwritev(fd: Fd, vecs: &[IoSlice<'_>], off: i64) -> Result<usize, i32> {
+    let fd = fd.as_borrowed_fd();
+    retry(|| rustix::io::pwritev(fd, vecs, off as u64))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

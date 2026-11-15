@@ -110,10 +110,6 @@ impl StandaloneModuleGraph {
     pub fn get_ref() -> Option<&'static StandaloneModuleGraph> {
         INSTANCE.get()
     }
-
-    pub fn set(instance: StandaloneModuleGraph) -> &'static StandaloneModuleGraph {
-        INSTANCE.get_or_init(|| instance)
-    }
 }
 
 // A runtime `suffix: &[u8]` parameter cannot be
@@ -1151,28 +1147,8 @@ impl StandaloneModuleGraph {
         raw: RawPayload,
         offsets: Offsets,
     ) -> crate::Result<StandaloneModuleGraph> {
-        let raw_len = raw.len();
-        if raw_len == 0 {
-            return Ok(StandaloneModuleGraph {
-                files: ArrayHashMap::new(),
-                dirs: StringArrayHashMap::new(),
-                entry_point_id: 0,
-                compile_exec_argv: b"",
-                flags: Flags::default(),
-                builtin_bytecode: Vec::new(),
-                bytecode_string_table: &[],
-                linked_bytecode_payload: None,
-                module_info_string_table: &[],
-                prelinked_module_graph: &[],
-                prelinked_module_files: Vec::new(),
-                startup_module_count: 0,
-                runtime_options: RuntimeOptions::default(),
-                compiled_program: None,
-                sources_on_disk: bun_threading::Guarded::default(),
-            });
-        }
-
         const CORRUPTED: crate::Error = crate::Error::CorruptedModuleGraph;
+        let raw_len = raw.len();
         let flags = Flags::from_bits_retain(offsets.flags);
         let modules_list_count =
             offsets.modules_ptr.length as usize / size_of::<CompiledModuleGraphFile>();
@@ -3318,7 +3294,8 @@ impl StandaloneModuleGraph {
         let Some(offsets) = Self::read_offsets(&payload) else {
             return Ok(None);
         };
-        let graph = Self::set(Self::from_bytes(payload, offsets)?);
+        let graph = Self::from_bytes(payload, offsets)?;
+        let graph = INSTANCE.get_or_init(|| graph);
         graph.prefetch_startup_pages();
         Ok(Some(graph))
     }
@@ -3461,6 +3438,12 @@ impl StandaloneModuleGraph {
             return None;
         }
         let (lo, hi) = address_span(self.files.values().iter().map(|f| f.contents))?;
+        // Dropping a page of the image discards what JavaScriptCore relocated.
+        if let Some(program) = &self.compiled_program
+            && (lo..hi).contains(&program.image.as_ptr().addr())
+        {
+            return None;
+        }
         let page = bun_alloc::page_size();
         let start = (lo + page - 1) & !(page - 1);
         let end = hi & !(page - 1);

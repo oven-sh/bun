@@ -128,7 +128,8 @@ pub struct LoadedImage {
     len: usize,
 }
 
-// SAFETY: safe Rust can neither read nor write the bytes.
+// SAFETY: only `bun_jsc::compiled_program` passes the bytes on. `use_image` writes to them once, under its `Once`,
+// while the main thread creates its VM. No other thread reads them before that VM runs script.
 unsafe impl Send for LoadedImage {}
 // SAFETY: as above.
 unsafe impl Sync for LoadedImage {}

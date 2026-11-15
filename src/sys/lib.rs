@@ -3454,7 +3454,8 @@ mod posix_impl {
         #[inline]
         fn older_kernel_flag(self) -> u32 {
             match self {
-                MemfdFlags::NonExecutable | MemfdFlags::Executable => libc::MFD_CLOEXEC,
+                MemfdFlags::Executable => libc::MFD_ALLOW_SEALING | libc::MFD_CLOEXEC,
+                MemfdFlags::NonExecutable => libc::MFD_CLOEXEC,
                 MemfdFlags::CrossProcess => 0,
             }
         }
@@ -3516,6 +3517,13 @@ mod posix_impl {
             }
             return Ok(move_above_stdio(Fd::from_native(rc)));
         }
+    }
+
+    /// After this, neither the bytes nor the size of the memfd can change.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn seal_memfd(fd: Fd) -> Maybe<()> {
+        let seals = libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_WRITE;
+        fcntl(fd, libc::F_ADD_SEALS, seals as isize).map(drop)
     }
 
     /// `sendfile(src, dest, len)`. Clamps `len` (avoid EINVAL on

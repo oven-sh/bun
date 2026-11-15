@@ -1054,9 +1054,7 @@ impl LazySourceMap {
             .filter(|parts| SourceMap::InternalSourceMap::new(parts.mapping_blob).is_some())?;
         let mut stored = SourceMap::ParsedSourceMap::from_internal(parts.mapping_blob.into());
 
-        // PERF: `external_source_names` is `Vec<Box<[u8]>>` so we
-        // copy the section bytes. Could switch
-        // the field to `Vec<&'static [u8]>` for the standalone path.
+        // PERF: copies the names, because `external_source_names` is a `Vec<Box<[u8]>>`.
         let file_names: Vec<Box<[u8]>> = (parts.file_names.iter())
             .map(|name| Box::from(serialized.get(name.get()).unwrap_or_default()))
             .collect();

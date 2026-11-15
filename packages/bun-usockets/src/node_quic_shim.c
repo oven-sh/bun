@@ -21,7 +21,7 @@ extern void Bun__nodeQuic__onNewToken(lsquic_conn_t *c, const unsigned char *tok
 extern void Bun__nodeQuic__onSessResume(lsquic_conn_t *c, const unsigned char *blob, size_t len);
 extern void Bun__nodeQuic__onConnCloseFrame(lsquic_conn_t *c, int app_error, uint64_t code,
                                             const char *reason, int reason_len);
-extern ssize_t Bun__nodeQuic__onDatagramWrite(lsquic_conn_t *c, void *buf, size_t len);
+extern ssize_t Bun__nodeQuic__onDgWrite(lsquic_conn_t *c, void *buf, size_t len);
 extern void Bun__nodeQuic__onDatagram(lsquic_conn_t *c, const void *buf, size_t len);
 extern void Bun__nodeQuic__onDatagramStatus(lsquic_conn_t *c, unsigned count, int acked);
 extern void Bun__nodeQuic__onEarlyDataFailed(lsquic_conn_t *c);
@@ -218,7 +218,7 @@ static const struct lsquic_stream_if nq_stream_if = {
     .on_sess_resume_info = Bun__nodeQuic__onSessResume,
     .on_reset = Bun__nodeQuic__onStreamReset,
     .on_conncloseframe_received = Bun__nodeQuic__onConnCloseFrame,
-    .on_dg_write = Bun__nodeQuic__onDatagramWrite,
+    .on_dg_write = Bun__nodeQuic__onDgWrite,
     .on_datagram = Bun__nodeQuic__onDatagram,
     .on_datagram_status = Bun__nodeQuic__onDatagramStatus,
     .on_early_data_failed = Bun__nodeQuic__onEarlyDataFailed,
@@ -316,6 +316,13 @@ void us_nq_settings_set_preferred_address(
         const unsigned char addr[US_NQ_PREFERRED_ADDRESS_LEN]) {
     memcpy(s->es_preferred_address, addr, US_NQ_PREFERRED_ADDRESS_LEN);
 }
+/* The blob is NOT copied — the caller keeps it alive for the engine's
+ * lifetime (it lives on the Rust Engine). */
+void us_nq_settings_set_origin_blob(struct lsquic_engine_settings *s,
+                                    const unsigned char *blob, size_t len) {
+    s->es_origin_blob = blob;
+    s->es_origin_blob_len = len;
+}
 NQ_SET(max_datagram_frame_size, unsigned short)
 NQ_SET(max_h3_header_pairs, unsigned short)
 NQ_SET(max_h3_header_bytes, unsigned)
@@ -341,17 +348,13 @@ NQ_GET(datagrams, int)
 NQ_GET(max_datagram_frame_size, unsigned short)
 #undef NQ_SET
 
-/* `ctx` and `origin_blob` must outlive the engine; `settings` is copied by lsquic. */
-lsquic_engine_t *us_nq_engine_new(int is_server, int is_http, void *ctx,
-                                  struct lsquic_engine_settings *settings,
-                                  const unsigned char *origin_blob,
-                                  size_t origin_blob_len) {
+/* `ctx` must outlive the engine; `settings` is copied by lsquic. */
+lsquic_engine_t *us_nq_engine_new(int is_server, int is_http,
+                                  void *ctx,
+                                  const struct lsquic_engine_settings *settings,
+                                  const char *alpn) {
     struct lsquic_engine_api api;
     memset(&api, 0, sizeof(api));
-    if (origin_blob_len) {
-        settings->es_origin_blob = origin_blob;
-        settings->es_origin_blob_len = origin_blob_len;
-    }
     api.ea_settings = settings;
     api.ea_stream_if = &nq_stream_if;
     api.ea_stream_if_ctx = ctx;
@@ -362,6 +365,7 @@ lsquic_engine_t *us_nq_engine_new(int is_server, int is_http, void *ctx,
         api.ea_lookup_cert = Bun__nodeQuic__lookupCert;
         api.ea_cert_lu_ctx = ctx;
     }
+    api.ea_alpn = alpn;
     unsigned flags = is_server ? LSENG_SERVER : 0;
     if (is_http) {
         flags |= LSENG_HTTP;

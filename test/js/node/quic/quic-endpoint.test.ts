@@ -404,7 +404,7 @@ describe("endpoint.close() with an unsent stateless reset", () => {
   );
 });
 
-describe.concurrent("script that runs under a native call", () => {
+describe.concurrent("native handles", () => {
   async function run(body: string, env = {}) {
     const fixture = `
       import { createPrivateKey } from "node:crypto";
@@ -418,25 +418,31 @@ describe.concurrent("script that runs under a native call", () => {
       const client = { alpn: "x", verifyPeer: "manual", transportParams };
       const nativeTls = { keys: [key.export({ type: "pkcs8", format: "pem" })], certs: [cert] };
       const nativeAlpn = Buffer.from("\\x01x");
-      const turn = () => new Promise(setImmediate);
-      const symbol = (object, name) => Object.getOwnPropertySymbols(object).find(s => s.description === name);
-      function quiet(session) {
+      async function until(condition) {
+        const deadline = Date.now() + 4000;
+        while (!condition()) {
+          if (Date.now() > deadline) throw new Error("timed out: " + condition);
+          await new Promise(setImmediate);
+        }
+      }
+      const findSymbol = (object, name) => Object.getOwnPropertySymbols(object).find(s => s.description === name);
+      function ignoreErrors(session) {
         session.onstream = stream => stream.closed.catch(() => {});
         session.opened.catch(() => {});
         session.closed.catch(() => {});
         return session;
       }
-      // The library validates the element, and then native code reads it.
+      // The first read is the validation in JS, the second read is native code.
       function onNativeRead(value, callback) {
         let reads = 0;
         return Object.defineProperty([], 0, { enumerable: true, get: () => (++reads === 2 && callback(), value) });
       }
-      async function nativeEndpoint() {
+      async function createEndpointAndHandle() {
         let session, handle;
         Object.defineProperty(Object.prototype, "_pendingQlog", { configurable: true, get() { session ??= this; } });
-        await quiet(await connect(server.address, client)).opened;
+        await ignoreErrors(await connect(server.address, client)).opened;
         delete Object.prototype._pendingQlog;
-        const kOwner = symbol(session, "kOwner");
+        const kOwner = findSymbol(session, "kOwner");
         Object.defineProperty(Object.prototype, kOwner, {
           configurable: true,
           set(value) { handle = Object.defineProperty(this, kOwner, { value, writable: true }); },
@@ -445,7 +451,7 @@ describe.concurrent("script that runs under a native call", () => {
         delete Object.prototype[kOwner];
         return [endpoint, handle];
       }
-      const server = await listen(quiet, { sni: { "*": identity }, alpn: "x", transportParams });
+      const server = await listen(ignoreErrors, { sni: { "*": identity }, alpn: "x", transportParams });
       ${body}
     `;
     await using proc = Bun.spawn({
@@ -458,79 +464,79 @@ describe.concurrent("script that runs under a native call", () => {
     return { stdout, stderr, exitCode };
   }
 
-  // AddressSanitizer only sees the memory of an ArrayBuffer with Malloc=1. Without it, a later buffer gets the write.
-  const seesBuffers = isASAN ? { Malloc: "1", ASAN_OPTIONS: bunEnv.ASAN_OPTIONS + ":detect_leaks=0" } : {};
-  const takeAway = `
-    const later = [];
-    function takeAway(buffer) {
+  // ASAN only tracks ArrayBuffer memory with Malloc=1. Without ASAN, the write lands in a buffer allocated later.
+  const mallocEnv = isASAN ? { Malloc: "1", ASAN_OPTIONS: bunEnv.ASAN_OPTIONS + ":detect_leaks=0" } : {};
+  const detachAndCopy = `
+    const laterBuffers = [];
+    function detachAndCopy(buffer) {
       const copy = buffer.slice(0);
       buffer.transfer(0);
-      for (let i = 0; i < 128; i++) later.push(new Uint8Array(new ArrayBuffer(copy.byteLength)));
+      for (let i = 0; i < 128; i++) laterBuffers.push(new Uint8Array(new ArrayBuffer(copy.byteLength)));
       return copy;
     }
-    const sizes = () => [...new Set(later.map(bytes => bytes.length))].sort().join();
-    const written = () => later.filter(bytes => bytes.some(Boolean)).length;
+    const sizes = () => [...new Set(laterBuffers.map(bytes => bytes.length))].sort().join();
+    const written = () => laterBuffers.filter(bytes => bytes.some(Boolean)).length;
   `;
 
-  test("transfers the state of an endpoint, a session and a stream", async () => {
+  test("state isn't written to freed memory after its ArrayBuffer is transferred", async () => {
     const result = await run(
       `
-        ${takeAway}
+        ${detachAndCopy}
         const { DataView } = globalThis;
         globalThis.DataView = function (buffer) {
-          return new DataView(takeAway(buffer));
+          return new DataView(detachAndCopy(buffer));
         };
         const endpoint = new QuicEndpoint();
-        const session = quiet(await connect(server.address, { ...client, endpoint }));
+        const session = ignoreErrors(await connect(server.address, { ...client, endpoint }));
         await session.opened;
         (await session.createBidirectionalStream()).destroy();
         endpoint.busy = true;
         console.log(sizes(), written());
         process.exit(0);
       `,
-      seesBuffers,
+      mallocEnv,
     );
     expect(result).toEqual({ stdout: "24,40,56 0\n", stderr: "", exitCode: 0 });
   });
 
-  test("transfers the stats of a stream", async () => {
+  test("stats aren't written to freed memory after their ArrayBuffer is transferred", async () => {
     const result = await run(
       `
-        ${takeAway}
-        const session = quiet(await connect(server.address, client));
+        ${detachAndCopy}
+        const session = ignoreErrors(await connect(server.address, client));
         await session.opened;
         const stream = await session.createBidirectionalStream();
         stream.stats;
         BigUint64Array.prototype.constructor = {
           [Symbol.species]: function (buffer) {
-            return new BigUint64Array(takeAway(buffer));
+            return new BigUint64Array(detachAndCopy(buffer));
           },
         };
         stream.destroy();
         console.log(sizes(), written());
         process.exit(0);
       `,
-      seesBuffers,
+      mallocEnv,
     );
     expect(result).toEqual({ stdout: "104 0\n", stderr: "", exitCode: 0 });
   });
 
-  test("closes the endpoint while connect() reads the certificates", async () => {
+  test("connect() rejects if a getter on ca closes the endpoint", async () => {
     const result = await run(`
       const endpoint = new QuicEndpoint();
       const ca = onNativeRead(cert, () => endpoint.close());
-      const session = await connect(server.address, { ...client, endpoint, ca }).then(quiet, e => console.log(e.code));
+      const session = await connect(server.address, { ...client, endpoint, ca }).then(ignoreErrors, e => console.log(e.code));
       await endpoint.closed;
-      await turn();
+      await new Promise(setImmediate);
       session?.destroy(undefined, { code: 1 });
       process.exit(0);
     `);
     expect(result).toEqual({ stdout: "ERR_QUIC_ENDPOINT_CLOSED\n", stderr: "", exitCode: 0 });
   });
 
-  test.each(["transportParams", "qlog"])("releases the socket while connect() reads %s", async name => {
+  test.each(["transportParams", "qlog"])("connect() throws if the %s getter releases the socket", async name => {
     const result = await run(`
-      const [, handle] = await nativeEndpoint();
+      const [, handle] = await createEndpointAndHandle();
       handle.connect(server.address, { tls: { alpn: nativeAlpn } });
       try {
         handle.connect(server.address, { tls: { alpn: nativeAlpn }, get ${name}() { handle.releaseSocket(); } });
@@ -542,20 +548,20 @@ describe.concurrent("script that runs under a native call", () => {
     expect(result).toEqual({ stdout: "ERR_QUIC_ENDPOINT_CLOSED\n", stderr: "", exitCode: 0 });
   });
 
-  test("listens while listen() reads the transport parameters", async () => {
+  test("listen() from a transportParams getter keeps its ORIGIN frame", async () => {
     const result = await run(`
       const endpoint = new QuicEndpoint();
       let inner;
-      endpoint[symbol(QuicEndpoint.prototype, "kListen")](quiet, {
+      endpoint[findSymbol(QuicEndpoint.prototype, "kListen")](ignoreErrors, {
         tls: { ...nativeTls, origins: ["https://a.example"] },
         transportParams: {
           get maxIdleTimeout() {
-            inner ??= listen(quiet, { endpoint, sni: { "*": identity, "b.example": identity } });
+            inner ??= listen(ignoreErrors, { endpoint, sni: { "*": identity, "b.example": identity } });
           },
         },
       });
       const { promise, resolve } = Promise.withResolvers();
-      quiet(await connect(endpoint.address, { verifyPeer: "manual", transportParams, onorigin: resolve }));
+      ignoreErrors(await connect(endpoint.address, { verifyPeer: "manual", transportParams, onorigin: resolve }));
       console.log((await promise).join());
       process.exit(0);
     `);
@@ -563,13 +569,13 @@ describe.concurrent("script that runs under a native call", () => {
   });
 
   test.skipIf(!isASAN || !isLinux)(
-    "listens while listen() reads the certificates",
+    "listen() from a getter on certs doesn't leak an engine",
     async () => {
       const result = await run(
         `
           const endpoint = new QuicEndpoint();
           const options = certs => ({ endpoint, alpn: "x", sni: { "*": { keys: [key], certs } } });
-          await listen(quiet, options(onNativeRead(cert, () => console.log(typeof listen(quiet, options([cert]))))));
+          await listen(ignoreErrors, options(onNativeRead(cert, () => console.log(typeof listen(ignoreErrors, options([cert]))))));
           await Promise.all([endpoint.close(), server.close()]);
         `,
         {
@@ -584,19 +590,19 @@ describe.concurrent("script that runs under a native call", () => {
     60_000,
   );
 
-  test("the options of listen() are read once, not for each session", async () => {
+  test("listen() reads its options once, not once per session", async () => {
     const result = await run(`
-      const [endpoint, handle] = await nativeEndpoint();
+      const [endpoint, handle] = await createEndpointAndHandle();
       process.on("uncaughtException", () => {});
       let reads = 0;
       handle.listen({ tls: { ...nativeTls, alpn: nativeAlpn }, get qlog() { if (reads++) handle.releaseSocket(); } });
       reads = 1;
-      // Not announced for its first packet, so the session is made when lsquic promotes the connection.
+      // A busy endpoint creates no provisional session, so the session is created in on_new_conn.
       endpoint.busy = true;
-      quiet(await connect(handle.address(), client));
-      while (endpoint.stats.packetsReceived === 0n) await turn();
+      ignoreErrors(await connect(handle.address(), client));
+      await until(() => endpoint.stats.packetsReceived > 0n);
       endpoint.busy = false;
-      while (endpoint.stats.serverSessions === 0n) await turn();
+      await until(() => endpoint.stats.serverSessions > 0n);
       console.log(reads);
       process.exit(0);
     `);

@@ -4,43 +4,44 @@
 use core::cell::Cell;
 use core::ffi::{CStr, c_int, c_uint, c_void};
 use core::net::SocketAddr;
-use core::ptr::null_mut;
+use core::ptr::null;
+use core::sync::atomic::Ordering::Relaxed;
+use core::sync::atomic::{AtomicU8, AtomicU16, AtomicU64};
 
 use bun_io::KeepAlive;
-use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper, LentWrapper, StrongWrapper};
+use bun_jsc::bindgen::{BorrowedWrapper, JsLocal, JsScope, JsStructure, JsWrapper, StrongWrapper};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, StringJsc};
 use bun_lsquic_sys as lsquic;
-use bun_ptr::RefPtr;
+use bun_ptr::{CellExt as _, RefPtr};
 use bun_uws as uws;
 
 use crate::jsc_hooks::timer_all;
 use crate::node::net::block_list::BlockList;
-use crate::test_runner::cells::CellExt as _;
 use crate::timer::{EventLoopTimerState, EventLoopTimerTag, OwnedTimer};
 
+use super::aliased_struct::{AliasedStruct, all_atomic_struct};
 use super::callbacks;
-use super::engine::{self, Attached, Engine, EngineSlot, OutSpec};
-use super::exposed::{Exposed, U8, U16, U64, state_struct};
+use super::engine::{self, Engine, EngineCell, OutSpec, StrongCtx};
 use super::now_ns;
-use super::roots::{Key, Root as _, RootSlot, Table};
+use super::roots::{Key, StrongWrapperCell, StrongWrapperMap};
 use super::session::{self, QuicSession, SessionOptions, StoredAddr};
 use super::tls::{TlsConfig, TlsContext};
 
 bun_core::declare_scope!(quic, hidden);
 
-state_struct! {
+all_atomic_struct! {
     /// Mirrors Node's `Endpoint::State`.
     pub(crate) struct EndpointState {
-        pub bound: U8,
-        pub(crate) receiving: U8,
-        pub(crate) listening: U8,
-        pub(crate) closing: U8,
-        pub(crate) busy: U8,
-        _pad0: U8,
-        pub(crate) max_connections_per_host: U16,
-        pub(crate) max_connections_total: U16,
-        _pad1: [U8; 6],
-        pub(crate) pending_callbacks: U64,
+        pub bound: AtomicU8,
+        pub(crate) receiving: AtomicU8,
+        pub(crate) listening: AtomicU8,
+        pub(crate) closing: AtomicU8,
+        pub(crate) busy: AtomicU8,
+        _pad0: AtomicU8,
+        pub(crate) max_connections_per_host: AtomicU16,
+        pub(crate) max_connections_total: AtomicU16,
+        _pad1: [AtomicU8; 6],
+        pub(crate) pending_callbacks: AtomicU64,
     }
 }
 
@@ -140,7 +141,8 @@ impl Default for BindConfig {
 }
 
 pub(crate) struct QuicEndpoint {
-    state: Exposed<EndpointState, { ENDPOINT_STATS_FIELDS.len() }>,
+    state: AliasedStruct<EndpointState>,
+    stats: AliasedStruct<[AtomicU64; ENDPOINT_STATS_FIELDS.len()]>,
     closing: Cell<bool>,
     closed: Cell<bool>,
 
@@ -149,14 +151,14 @@ pub(crate) struct QuicEndpoint {
     bind_config: BindConfig,
     local_addr: Cell<StoredAddr>,
     poll_ref: KeepAlive,
-    /// From before there is a socket until `deliver_endpoint_close`.
-    self_root: RootSlot<QuicEndpoint>,
-    /// In `ENDPOINT_REGISTRY`.
+    /// Set before the socket is created, taken by `deliver_endpoint_close`.
+    this_value: StrongWrapperCell<QuicEndpoint>,
+    /// Key in `ENDPOINT_REGISTRY`.
     registry_key: Cell<Option<Key>>,
 
     /// Both can coexist on one endpoint — Node allows that.
-    server_engine: EngineSlot,
-    client_engine: EngineSlot,
+    server_engine: EngineCell,
+    client_engine: EngineCell,
     pub(super) sni_contexts: Cell<Vec<(Vec<u8>, TlsContext)>>,
     server_alpn_wire: Cell<Vec<u8>>,
     send_scratch: Cell<Vec<u8>>,
@@ -167,13 +169,13 @@ pub(crate) struct QuicEndpoint {
     client_is_http: Cell<bool>,
     pub(super) server_verify_client: Cell<bool>,
     server_session_options: Cell<SessionOptions>,
-    disable_stateless_reset: bool,
-    stateless_reset_burst: u32,
-    stateless_reset_rate: f64,
+    disable_stateless_reset: Cell<bool>,
+    stateless_reset_burst: Cell<u32>,
+    stateless_reset_rate: Cell<f64>,
 
     processing: Cell<bool>,
     followup_due: Cell<bool>,
-    sessions: Table<Attached<QuicSession>>,
+    sessions: StrongWrapperMap<QuicSession, StrongCtx<QuicSession>>,
     server_local_tp: Cell<lsquic::NqTransportParams>,
     client_local_tp: Cell<lsquic::NqTransportParams>,
     pending_new_sessions: Cell<Vec<Key>>,
@@ -182,9 +184,9 @@ pub(crate) struct QuicEndpoint {
     pending_verneg: Cell<Vec<(Key, [u8; VERNEG_PROBE_CID_LEN], u64)>>,
     dead_provisional_peers: Cell<Vec<(StoredAddr, u64)>>,
     block_list: Option<RefPtr<BlockList>>,
-    /// By the address of the `SSL`.
+    /// `(address of the SSL, peer, line)`.
     early_keylog: Cell<Vec<(usize, StoredAddr, Vec<u8>)>>,
-    block_list_allow: bool,
+    block_list_allow: Cell<bool>,
     pub(crate) event_loop_timer: OwnedTimer,
     pending_endpoint_close: Cell<bool>,
     /// Intrusive node on the loop's node:quic driver list; linked only while
@@ -203,10 +205,20 @@ pub(crate) struct QuicEndpoint {
 /// Mirrors `struct us_nq_driver_s` in node_quic_shim.c. Owned by the endpoint
 /// it belongs to; the C side only ever links it into the loop's list.
 #[repr(C)]
-struct UsNqDriver {
+pub(crate) struct UsNqDriver {
     next: Cell<*const UsNqDriver>,
     owner: Cell<*const c_void>,
     pending: Cell<c_int>,
+}
+
+impl Default for UsNqDriver {
+    fn default() -> Self {
+        Self {
+            next: Cell::new(null()),
+            owner: Cell::new(null()),
+            pending: Cell::new(0),
+        }
+    }
 }
 
 unsafe extern "C" {
@@ -216,7 +228,7 @@ unsafe extern "C" {
 
 impl QuicEndpoint {
     /// Links this endpoint into the loop's driver list. Idempotent.
-    fn link_loop_driver(this: LentWrapper<'_, Self>) {
+    fn link_loop_driver(this: BorrowedWrapper<'_, Self>) {
         if this.nq_registered.replace(true) {
             return;
         }
@@ -254,11 +266,11 @@ impl QuicEndpoint {
             self.mark_driver_pending();
             return;
         }
-        self.self_root
+        self.this_value
             .with(|this| Self::process(this, defer_closes));
     }
 
-    fn engine(&self, is_server: bool) -> &EngineSlot {
+    fn engine(&self, is_server: bool) -> &EngineCell {
         if is_server {
             &self.server_engine
         } else {
@@ -271,8 +283,8 @@ impl QuicEndpoint {
         self.client_engine.with(f);
     }
 
-    /// Which engine hashes `cid`: true for the server's.
-    fn engine_of_cid(&self, cid: &[u8]) -> Option<bool> {
+    /// `None` if neither engine has `cid`.
+    fn cid_owner_is_server(&self, cid: &[u8]) -> Option<bool> {
         [true, false]
             .into_iter()
             .find(|&is_server| self.engine(is_server).with(|e| e.cid_in_use(cid)) == Some(true))
@@ -301,14 +313,14 @@ pub(crate) extern "C" fn Bun__nodeQuic__processEndpoint(owner: &QuicEndpoint) {
 bun_event_loop::impl_timer_owner!(QuicEndpoint; from_timer_ptr => event_loop_timer);
 
 /// # Safety
-/// uSockets is calling back for a socket that `QuicEndpoint::bind` made.
-unsafe fn with_socket_owner(
+/// `socket` was created by `QuicEndpoint::bind`, and uSockets is running one of its callbacks.
+unsafe fn with_socket_user(
     socket: *mut uws::udp::Socket,
-    f: impl FnOnce(LentWrapper<'_, QuicEndpoint>),
+    f: impl FnOnce(BorrowedWrapper<'_, QuicEndpoint>),
 ) {
     let user = uws::udp::Socket::opaque_mut(socket).user();
-    // SAFETY: `self_root` names it until the socket is closed.
-    unsafe { StrongWrapper::lend_payload(user.cast(), f) };
+    // SAFETY: `this_value` roots it until the socket is closed.
+    unsafe { StrongWrapper::try_with_payload_ptr(user.cast(), f) };
 }
 
 extern "C" fn on_data(
@@ -316,7 +328,7 @@ extern "C" fn on_data(
     buf: *mut uws::udp::PacketBuffer,
     packets: c_int,
 ) {
-    let feed = |this: LentWrapper<'_, QuicEndpoint>| {
+    let feed = |this: BorrowedWrapper<'_, QuicEndpoint>| {
         let local = this.local_addr.get();
         // Apply a stashed close before feeding: a closing peer discards new
         // streams rather than announcing them (RFC 9000 s10.2.1), and ci_close
@@ -327,8 +339,8 @@ extern "C" fn on_data(
         if closed_any {
             this.drive_engines_once();
         }
-        // The loop can dispatch JS (another endpoint's pass) before it feeds the next
-        // packet; hold the send scope so that JS cannot flush lsquic underneath us.
+        // This callback dispatches JS (another endpoint's `process`) before it feeds
+        // packets; hold the send scope so that JS cannot flush lsquic underneath us.
         let _send_scope = this.send_scope();
         bun_boringssl_sys::ERR_clear_error();
         for i in 0..packets {
@@ -345,24 +357,24 @@ extern "C" fn on_data(
         // handlers wrote (sessions stash it; the next depth-0 pass applies it).
         QuicEndpoint::process(this, false);
     };
-    // SAFETY: only `bind` names this function.
-    unsafe { with_socket_owner(socket, feed) }
+    // SAFETY: only `bind` refers to this function.
+    unsafe { with_socket_user(socket, feed) }
 }
 extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     // SAFETY: as above.
-    unsafe { with_socket_owner(socket, |this| this.on_drain()) }
+    unsafe { with_socket_user(socket, |this| this.on_drain()) }
 }
 /// uSockets also closes a socket by itself, on some errors.
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     // SAFETY: as above.
-    unsafe { with_socket_owner(socket, |this| this.socket.set(None)) }
+    unsafe { with_socket_user(socket, |this| this.socket.set(None)) }
 }
 extern "C" fn on_recv_error(_socket: *mut uws::udp::Socket, _errno: c_int, _is_errqueue: c_int) {}
 
 thread_local! {
     /// A server may advertise another local endpoint's address as its
     /// preferred_address (RFC 9000 sec 9.6).
-    static ENDPOINT_REGISTRY: Table<StrongWrapper<QuicEndpoint>> = const { Table::new() };
+    static ENDPOINT_REGISTRY: StrongWrapperMap<QuicEndpoint> = const { StrongWrapperMap::new() };
 }
 
 /// Header byte 0 bit 7 (RFC 8999 sec 5.1): 1 = long header, 0 = short.
@@ -391,14 +403,13 @@ impl QuicEndpoint {
     }
 
     fn on_packet(
-        this: LentWrapper<'_, Self>,
+        this: BorrowedWrapper<'_, Self>,
         payload: &[u8],
         local: &StoredAddr,
         peer: &StoredAddr,
     ) {
-        this.state.add_stat(IDX_STATS_PACKETS_RECEIVED, 1);
-        this.state
-            .add_stat(IDX_STATS_BYTES_RECEIVED, payload.len() as u64);
+        this.add_stat(IDX_STATS_PACKETS_RECEIVED, 1);
+        this.add_stat(IDX_STATS_BYTES_RECEIVED, payload.len() as u64);
         if this.peer_blocked(peer) {
             return;
         }
@@ -406,7 +417,7 @@ impl QuicEndpoint {
             let dcid = &payload[1..1 + SHORT_HEADER_DCID_LEN];
             // Feeding the other engine a packet it cannot match makes it
             // answer with a stateless reset.
-            if let Some(is_server) = this.engine_of_cid(dcid) {
+            if let Some(is_server) = this.cid_owner_is_server(dcid) {
                 this.engine(is_server)
                     .with(|engine| engine.packet_in(&this, payload, local, peer));
                 return;
@@ -417,7 +428,7 @@ impl QuicEndpoint {
                     if is_this(other) {
                         return None;
                     }
-                    Some((key, other.engine_of_cid(dcid)?))
+                    Some((key, other.cid_owner_is_server(dcid)?))
                 })?;
                 registry.with(owner, |other| {
                     if other.peer_blocked(peer) {
@@ -508,11 +519,11 @@ impl QuicEndpoint {
         self.send_scratch.with_taken(|scratch| {
             for (sent, spec) in specs.iter().enumerate() {
                 let payload = match spec.iov() {
-                    [one] => one.bytes(),
+                    [one] => one.as_slice(),
                     many => {
                         scratch.clear();
                         for v in many {
-                            scratch.extend_from_slice(v.bytes());
+                            scratch.extend_from_slice(v.as_slice());
                         }
                         scratch.as_slice()
                     }
@@ -520,7 +531,7 @@ impl QuicEndpoint {
                 if payload.is_empty() {
                     continue;
                 }
-                let spec_local = spec.local.decode();
+                let spec_local = spec.local_sa.decode();
                 let out_socket = if spec_local != my_addr {
                     self.find_socket_by_addr(spec_local).unwrap_or(socket)
                 } else {
@@ -529,14 +540,13 @@ impl QuicEndpoint {
                 let rv = uws::udp::Socket::opaque_mut(out_socket).send(
                     &[payload.as_ptr()],
                     &[payload.len()],
-                    &[spec.dest.as_ptr()],
+                    &[spec.dest_sa.as_ptr()],
                 );
                 if rv < 1 {
                     return sent;
                 }
-                self.state.add_stat(IDX_STATS_PACKETS_SENT, 1);
-                self.state
-                    .add_stat(IDX_STATS_BYTES_SENT, payload.len() as u64);
+                self.add_stat(IDX_STATS_PACKETS_SENT, 1);
+                self.add_stat(IDX_STATS_BYTES_SENT, payload.len() as u64);
             }
             specs.len()
         })
@@ -837,17 +847,18 @@ impl QuicEndpoint {
         }
 
         let this = QuicEndpoint {
-            state: Exposed::new(),
+            state: AliasedStruct::new(EndpointState::default()),
+            stats: AliasedStruct::new([const { AtomicU64::new(0) }; _]),
             closing: Cell::new(false),
             closed: Cell::new(false),
             socket: Cell::new(None),
             bind_config,
             local_addr: Cell::new(StoredAddr::default()),
             poll_ref: KeepAlive::init(),
-            self_root: RootSlot::new(None),
+            this_value: StrongWrapperCell::new(None),
             registry_key: Cell::new(None),
-            server_engine: EngineSlot::default(),
-            client_engine: EngineSlot::default(),
+            server_engine: EngineCell::default(),
+            client_engine: EngineCell::default(),
             sni_contexts: Cell::new(Vec::new()),
             server_alpn_wire: Cell::new(Vec::new()),
             send_scratch: Cell::new(Vec::new()),
@@ -856,13 +867,13 @@ impl QuicEndpoint {
             server_is_http: Cell::new(false),
             server_verify_client: Cell::new(false),
             server_session_options: Cell::new(SessionOptions::default()),
-            disable_stateless_reset,
-            stateless_reset_burst,
-            stateless_reset_rate,
+            disable_stateless_reset: Cell::new(disable_stateless_reset),
+            stateless_reset_burst: Cell::new(stateless_reset_burst),
+            stateless_reset_rate: Cell::new(stateless_reset_rate),
             client_is_http: Cell::new(false),
             processing: Cell::new(false),
             followup_due: Cell::new(false),
-            sessions: Table::new(),
+            sessions: StrongWrapperMap::new(),
             server_local_tp: Cell::new(lsquic::NqTransportParams::default()),
             client_local_tp: Cell::new(lsquic::NqTransportParams::default()),
             pending_new_sessions: Cell::new(Vec::new()),
@@ -871,31 +882,40 @@ impl QuicEndpoint {
             dead_provisional_peers: Cell::new(Vec::new()),
             block_list,
             early_keylog: Cell::new(Vec::new()),
-            block_list_allow,
+            block_list_allow: Cell::new(block_list_allow),
             event_loop_timer: OwnedTimer::init_paused(EventLoopTimerTag::QuicEndpoint),
             pending_endpoint_close: Cell::new(false),
-            nq_driver: UsNqDriver {
-                next: Cell::new(null_mut()),
-                owner: Cell::new(null_mut()),
-                pending: Cell::new(0),
-            },
+            nq_driver: UsNqDriver::default(),
             nq_registered: Cell::new(false),
             send_scope_depth: Cell::new(0),
         };
-        this.state.write_stat(IDX_STATS_CREATED_AT, now_ns());
-        let buffers = this.state.buffers(cx.global())?;
+        this.write_stat(IDX_STATS_CREATED_AT, now_ns());
+        let state = this.state.to_array_buffer(cx.global())?;
+        let stats = this.stats.to_array_buffer(cx.global())?;
         let this_value = structure.create(&cx.heap, this);
-        buffers.expose(cx.global(), this_value.to_js());
+        let js_value = this_value.to_js();
+        let global = cx.global();
+        js_value.put(global, b"state", state);
+        js_value.put(global, b"stats", stats);
+        js_value.put(global, b"stateByteOffset", JSValue::js_number(0.0));
+        js_value.put(global, b"statsByteOffset", JSValue::js_number(0.0));
         Ok(this_value)
+    }
+
+    fn write_stat(&self, idx: usize, value: u64) {
+        self.stats[idx].store(value, Relaxed);
+    }
+    fn add_stat(&self, idx: usize, value: u64) {
+        self.write_stat(idx, self.stats[idx].load(Relaxed).wrapping_add(value));
     }
 
     fn peer_blocked(&self, peer: &StoredAddr) -> bool {
         let Some(bl) = &self.block_list else {
             return false;
         };
-        let blocked = bl.check_sockaddr(&peer.0) != self.block_list_allow;
+        let blocked = bl.check_sockaddr(&peer.0) != self.block_list_allow.get();
         if blocked {
-            self.state.add_stat(IDX_STATS_PACKETS_BLOCKED, 1);
+            self.add_stat(IDX_STATS_PACKETS_BLOCKED, 1);
         }
         blocked
     }
@@ -915,13 +935,13 @@ impl QuicEndpoint {
     /// Returns false when the bind fails: Node does not throw here.
     fn ensure_bound(&self, global: &JSGlobalObject, this_value: JsWrapper<'_, Self>) -> bool {
         if self.socket.get().is_none() {
-            self.self_root.set(StrongWrapper::new(this_value, global));
-            self.self_root.with(Self::bind);
+            self.this_value.set(StrongWrapper::new(this_value, global));
+            self.this_value.with(Self::bind);
         }
         self.socket.get().is_some()
     }
 
-    fn bind(this: LentWrapper<'_, Self>) {
+    fn bind(this: BorrowedWrapper<'_, Self>) {
         let mut err: c_int = 0;
         let socket = uws::udp::Socket::create(
             uws::Loop::get(),
@@ -957,13 +977,13 @@ impl QuicEndpoint {
             _ => crate::socket::SocketAddress::init_ipv4([127, 0, 0, 1], port as u16),
         };
         this.local_addr.set(StoredAddr(addr._addr));
-        this.state.bound.set(1);
-        this.state.receiving.set(1);
+        this.state.bound.store(1, Relaxed);
+        this.state.receiving.store(1, Relaxed);
         this.update_keepalive();
         if this.registry_key.get().is_none() {
             ENDPOINT_REGISTRY.with(|registry| {
-                let key = registry.new_key();
-                registry.insert(key, this.root());
+                let key = registry.next_key();
+                registry.insert(key, this.to_strong());
                 this.registry_key.set(Some(key));
             });
         }
@@ -973,7 +993,7 @@ impl QuicEndpoint {
         if self.closed.get() || self.socket.get().is_none() {
             return;
         }
-        let busy = self.state.listening.get() != 0 || !self.sessions.is_empty();
+        let busy = self.state.listening.load(Relaxed) != 0 || !self.sessions.is_empty();
         let ctx = bun_io::js_vm_ctx();
         if busy {
             self.poll_ref.ref_(ctx);
@@ -984,7 +1004,7 @@ impl QuicEndpoint {
 
     /// `defer_closes`: the pass runs from the microtask drain, so session Closed events
     /// are requeued for the next loop point instead of dispatching mid-chain.
-    fn process(this: LentWrapper<'_, Self>, defer_closes: bool) {
+    fn process(this: BorrowedWrapper<'_, Self>, defer_closes: bool) {
         if this.closed.get() {
             return;
         }
@@ -1012,9 +1032,8 @@ impl QuicEndpoint {
         this.for_each_engine(|engine| engine.process_conns(&this));
         this.processing.set(false);
         if let Some((sent, limited)) = this.server_engine.with(|engine| engine.sreset_stats()) {
-            this.state.write_stat(IDX_STATS_STATELESS_RESET_COUNT, sent);
-            this.state
-                .write_stat(IDX_STATS_STATELESS_RESET_RATE_LIMITED, limited);
+            this.write_stat(IDX_STATS_STATELESS_RESET_COUNT, sent);
+            this.write_stat(IDX_STATS_STATELESS_RESET_RATE_LIMITED, limited);
         }
 
         loop {
@@ -1135,16 +1154,19 @@ impl QuicEndpoint {
             self.deliver_endpoint_close(CLOSECONTEXT_CLOSE, 0);
             return;
         }
-        self.self_root.with(|this| Self::process(this, false));
+        self.this_value.with(|this| Self::process(this, false));
     }
 
     /// Node announces server sessions at Initial receipt.
     fn maybe_announce_provisional(
-        this: LentWrapper<'_, Self>,
+        this: BorrowedWrapper<'_, Self>,
         payload: &[u8],
         peer: &StoredAddr,
     ) -> JsResult<()> {
-        if !this.server_engine.is_some() || this.state.listening.get() == 0 || this.closing.get() {
+        if !this.server_engine.is_some()
+            || this.state.listening.load(Relaxed) == 0
+            || this.closing.get()
+        {
             return Ok(());
         }
         // Long header: 0b1xxx_xxxx; version != 0 (0 = version negotiation);
@@ -1179,7 +1201,7 @@ impl QuicEndpoint {
         // On a dual-mode endpoint the peer's Initial *response* carries our
         // client's SCID, which only the client engine hashes -- checking the
         // server engine alone would announce a phantom server session for it.
-        if this.engine_of_cid(dcid).is_some() || this.at_capacity() {
+        if this.cid_owner_is_server(dcid).is_some() || this.is_at_capacity() {
             return Ok(());
         }
         bun_core::scoped_log!(
@@ -1201,26 +1223,34 @@ impl QuicEndpoint {
         Ok(())
     }
 
-    fn at_capacity(&self) -> bool {
-        let max_conns = self.state.max_connections_total.get();
-        self.state.busy.get() != 0 || (max_conns > 0 && self.sessions.len() >= max_conns as usize)
+    fn is_at_capacity(&self) -> bool {
+        let max_conns = self.state.max_connections_total.load(Relaxed);
+        self.state.busy.load(Relaxed) != 0
+            || (max_conns > 0 && self.sessions.len() >= max_conns as usize)
     }
 
     fn create_server_session(
-        this: LentWrapper<'_, Self>,
-    ) -> JsResult<(Key, Attached<QuicSession>)> {
-        let key = this.sessions.new_key();
+        this: BorrowedWrapper<'_, Self>,
+    ) -> JsResult<(Key, StrongCtx<QuicSession>)> {
+        let key = this.sessions.next_key();
         let session = this.server_session_options.with_taken(|options| {
             let application = this.application(true);
-            QuicSession::create(this.global(), this.root(), key, true, application, options)
+            QuicSession::create(
+                this.global(),
+                this.to_strong(),
+                key,
+                true,
+                application,
+                options,
+            )
         })?;
         Ok((key, session))
     }
 
-    fn add_server_session(&self, key: Key, session: Attached<QuicSession>) {
+    fn add_server_session(&self, key: Key, session: StrongCtx<QuicSession>) {
         self.sessions.insert(key, session);
         self.pending_new_sessions.with_taken(|v| v.push(key));
-        self.state.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
+        self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
     }
 
     fn take_provisional(&self, peer: &StoredAddr) -> Option<Key> {
@@ -1289,10 +1319,10 @@ impl QuicEndpoint {
 
     /// lsquic promotes a server conn after its handshake and never calls `on_hsk_done` for it.
     pub(super) fn on_new_conn(&self, handshaken: &lsquic::Conn) {
-        let peer = engine::addresses(handshaken).map(|(_, peer)| peer);
+        let peer = engine::conn_sockaddrs(handshaken).map(|(_, peer)| peer);
         if let Some(key) = peer.and_then(|peer| self.take_provisional(&peer)) {
             self.sessions
-                .with_entry(key, |session| session.bind(handshaken));
+                .with_value(key, |session| session.bind(handshaken));
             let promoted = self.sessions.with(key, |session| {
                 session.on_promoted(self.take_early_keylog(handshaken));
                 session.note_handshake_ok();
@@ -1308,9 +1338,9 @@ impl QuicEndpoint {
             handshaken.abort_error(false, QUIC_TRANSPORT_CONNECTION_REFUSED, c"");
             return;
         }
-        if self.at_capacity() {
+        if self.is_at_capacity() {
             handshaken.abort_error(false, QUIC_TRANSPORT_CONNECTION_REFUSED, c"");
-            self.state.add_stat(IDX_STATS_SERVER_BUSY_COUNT, 1);
+            self.add_stat(IDX_STATS_SERVER_BUSY_COUNT, 1);
             return;
         }
         // One marker per destroyed provisional, so consume exactly one:
@@ -1328,11 +1358,11 @@ impl QuicEndpoint {
             handshaken.abort_silent();
             return;
         }
-        match self.self_root.with(Self::create_server_session) {
+        match self.this_value.with(Self::create_server_session) {
             Some(Ok((key, session))) => {
                 session.bind(handshaken);
-                session.wrapper().payload().cache_sockaddrs();
-                session.wrapper().payload().note_handshake_ok();
+                session.payload().cache_sockaddrs();
+                session.payload().note_handshake_ok();
                 self.add_server_session(key, session);
             }
             failed => {
@@ -1426,7 +1456,7 @@ impl QuicEndpoint {
         });
     }
 
-    fn engine_settings(
+    fn read_engine_settings(
         &self,
         config: &TlsConfig,
         options: JSValue,
@@ -1441,11 +1471,14 @@ impl QuicEndpoint {
         // Node's `closed` promise on the peer resolves on receipt of CONNECTION_CLOSE.
         settings.silent_close(0);
         // RFC 9000 sec 10.3: stateless reset.
-        settings.send_prst(!self.disable_stateless_reset as c_int);
+        settings.send_prst(!self.disable_stateless_reset.get() as c_int);
         settings.honor_prst(1);
-        if is_server && self.stateless_reset_burst > 0 {
-            settings.sreset_burst(self.stateless_reset_burst as c_uint);
-            settings.sreset_rate(self.stateless_reset_rate);
+        if is_server {
+            let burst = self.stateless_reset_burst.get();
+            if burst > 0 {
+                settings.sreset_burst(burst as c_uint);
+                settings.sreset_rate(self.stateless_reset_rate.get());
+            }
         }
         let mut local_tp = lsquic::NqTransportParams::default();
         apply_transport_params(global, &mut settings, options, &mut local_tp)?;
@@ -1477,13 +1510,14 @@ impl QuicEndpoint {
         Ok((settings, local_tp))
     }
 
-    fn start_engine(
+    fn build_engine(
         &self,
         config: &TlsConfig,
-        (settings, local_tp): (lsquic::Settings, lsquic::NqTransportParams),
+        settings: lsquic::Settings,
+        local_tp: &lsquic::NqTransportParams,
         origin_blob: Vec<u8>,
         global: &JSGlobalObject,
-    ) -> JsResult<()> {
+    ) -> JsResult<Engine> {
         let is_server = config.is_server;
         let tls = TlsContext::new(config).map_err(|e| global.throw(format_args!("tls: {}", e)))?;
         let alpn_cstr = TlsContext::alpn_cstr(config);
@@ -1505,14 +1539,13 @@ impl QuicEndpoint {
             self.server_alpn.set(alpn_cstr);
             self.server_is_http.set(is_http);
             self.server_verify_client.set(config.verify_client);
-            self.server_local_tp.set(local_tp);
+            self.server_local_tp.set(*local_tp);
         } else {
             self.client_alpn.set(alpn_cstr);
             self.client_is_http.set(is_http);
-            self.client_local_tp.set(local_tp);
+            self.client_local_tp.set(*local_tp);
         }
-        self.engine(is_server).set(Some(engine));
-        Ok(())
+        Ok(engine)
     }
 
     fn release_native(&self) -> bool {
@@ -1522,8 +1555,8 @@ impl QuicEndpoint {
         // Unlink first: the driver walk must never reach a freed endpoint.
         self.unlink_loop_driver();
         self.event_loop_timer.disarm();
-        self.server_engine.set(None);
-        self.client_engine.set(None);
+        self.server_engine.clear();
+        self.client_engine.clear();
         if let Some(socket) = self.socket.take() {
             uws::udp::Socket::opaque_mut(socket).close();
         }
@@ -1542,11 +1575,11 @@ impl QuicEndpoint {
         }
         self.sni_contexts.take();
         self.server_session_options.take();
-        self.state.closing.set(1);
-        self.state.bound.set(0);
-        self.state.receiving.set(0);
-        self.state.listening.set(0);
-        self.state.write_stat(IDX_STATS_DESTROYED_AT, now_ns());
+        self.state.closing.store(1, Relaxed);
+        self.state.bound.store(0, Relaxed);
+        self.state.receiving.store(0, Relaxed);
+        self.state.listening.store(0, Relaxed);
+        self.write_stat(IDX_STATS_DESTROYED_AT, now_ns());
         true
     }
 
@@ -1585,7 +1618,7 @@ impl QuicEndpoint {
     fn deliver_endpoint_close(&self, context: u8, status: c_int) {
         debug_assert!(self.closed.get());
         self.poll_ref.disable();
-        self.self_root.with(|this| {
+        self.this_value.with(|this| {
             let global = this.global();
             if let Some(callback) = callbacks::get(global, "onEndpointClose") {
                 let vm = global.bun_vm();
@@ -1600,7 +1633,7 @@ impl QuicEndpoint {
                     ],
                 );
             }
-            this.self_root.take();
+            this.this_value.take();
         });
     }
 
@@ -1651,11 +1684,13 @@ impl QuicEndpoint {
                     sni_contexts = Some(Self::build_sni_contexts(global, sni, &config.alpn)?);
                 }
             }
-            let settings = self.engine_settings(&config, options, global)?;
-            // A getter can have closed this endpoint, or made it listen.
+            let (settings, local_tp) = self.read_engine_settings(&config, options, global)?;
+            // A getter on `options` can call close() or listen().
             self.throw_if_closed(global)?;
             if !self.server_engine.is_some() {
-                self.start_engine(&config, settings, origin_blob, global)?;
+                let engine =
+                    self.build_engine(&config, settings, &local_tp, origin_blob, global)?;
+                self.server_engine.set(engine);
                 self.server_session_options.set(session_options);
                 self.server_alpn_wire.set(config.alpn);
                 if let Some(sni_contexts) = sni_contexts {
@@ -1663,7 +1698,7 @@ impl QuicEndpoint {
                 }
             }
         }
-        self.state.listening.set(1);
+        self.state.listening.store(1, Relaxed);
         self.update_keepalive();
         Ok(())
     }
@@ -1705,7 +1740,7 @@ impl QuicEndpoint {
         let settings = if self.client_engine.is_some() {
             None
         } else {
-            Some(self.engine_settings(&config, options, global)?)
+            Some(self.read_engine_settings(&config, options, global)?)
         };
         // Node's DEFAULT_MAX_IDLE_TIMEOUT is 10 seconds when unspecified.
         let idle_ms = options
@@ -1721,10 +1756,13 @@ impl QuicEndpoint {
         let use_preferred = read_u64_option(global, options, "preferredAddressPolicy")?
             == Some(PREFERRED_ADDRESS_USE);
         let session_options = SessionOptions::from_js(global, options)?;
-        // A getter can have closed this endpoint, or made it connect.
+        // A getter on `options` can call close() or connect().
         self.throw_if_closed(global)?;
         match settings.filter(|_| !self.client_engine.is_some()) {
-            Some(settings) => self.start_engine(&config, settings, Vec::new(), global)?,
+            Some((settings, local_tp)) => {
+                let engine = self.build_engine(&config, settings, &local_tp, Vec::new(), global)?;
+                self.client_engine.set(engine);
+            }
             None => self.replace_client_tls(&config, global)?,
         }
         // Keep what localTransportParams() reports in step with what this
@@ -1734,8 +1772,8 @@ impl QuicEndpoint {
             max_idle_timeout: idle_ms,
             ..tp
         });
-        let key = self.sessions.new_key();
-        let attached = QuicSession::create(
+        let key = self.sessions.next_key();
+        let strong = QuicSession::create(
             global,
             StrongWrapper::new(this_value, global),
             key,
@@ -1744,17 +1782,20 @@ impl QuicEndpoint {
             &session_options,
         )?;
         // `TlsConfig::from_js` defaults servername to "localhost\0" (Node parity).
-        let sni = (config.servername.as_deref()).and_then(|s| CStr::from_bytes_until_nul(s).ok());
+        let sni = config
+            .servername
+            .as_deref()
+            .and_then(|s| CStr::from_bytes_until_nul(s).ok());
         let ticket = session_ticket
             .as_array_buffer(global)
             .filter(|_| config.enable_early_data);
         let resume = ticket.as_ref().map_or(&[][..], |buf| buf.byte_slice());
         self.client_engine.with(|engine| {
             engine.set_idle_timeout_ms(idle_ms.min(c_uint::MAX as u64) as c_uint);
-            engine.connect(&attached, &self.local_addr.get(), &remote, sni, resume);
+            engine.connect(&strong, &self.local_addr.get(), &remote, sni, resume);
         });
-        let session = attached.wrapper().payload();
-        if session.conn.is_empty() {
+        let session = strong.payload();
+        if session.conn.is_null() {
             session.teardown(global);
             return Ok(JSValue::UNDEFINED);
         }
@@ -1767,9 +1808,9 @@ impl QuicEndpoint {
         if use_preferred {
             session.conn.use_preferred_address(true);
         }
-        let handle = attached.wrapper().to_js();
-        self.sessions.insert(key, attached);
-        self.state.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
+        let handle = strong.to_js();
+        self.sessions.insert(key, strong);
+        self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
         self.schedule_process();
         Ok(handle)
     }
@@ -1804,8 +1845,8 @@ impl QuicEndpoint {
         version: u32,
         min_version: u32,
     ) -> JsResult<JSValue> {
-        let key = self.sessions.new_key();
-        let attached = QuicSession::create(
+        let key = self.sessions.next_key();
+        let strong = QuicSession::create(
             global,
             StrongWrapper::new(this_value, global),
             key,
@@ -1830,26 +1871,25 @@ impl QuicEndpoint {
         probe[off] = VERNEG_PROBE_CID_LEN as u8;
         off += 1;
         probe[off..off + VERNEG_PROBE_CID_LEN].copy_from_slice(&scid);
-        let session = attached.wrapper().payload();
+        let session = strong.payload();
         session.verneg.set(Some((version, min_version)));
         session.remote_addr.set(remote);
-        let handle = attached.wrapper().to_js();
+        let handle = strong.to_js();
         self.pending_verneg
             .with_taken(|v| v.push((key, scid, now_ns())));
         // A probe has no engine, so nothing else would ever arm the timer that
         // runs the sweep expiring it.
         self.schedule_process();
-        self.sessions.insert(key, attached);
-        self.state.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
+        self.sessions.insert(key, strong);
+        self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
         if let Some(socket) = self.socket.get() {
             uws::udp::Socket::opaque_mut(socket).send(
                 &[probe.as_ptr()],
                 &[probe.len()],
                 &[remote.as_ptr()],
             );
-            self.state.add_stat(IDX_STATS_PACKETS_SENT, 1);
-            self.state
-                .add_stat(IDX_STATS_BYTES_SENT, probe.len() as u64);
+            self.add_stat(IDX_STATS_PACKETS_SENT, 1);
+            self.add_stat(IDX_STATS_BYTES_SENT, probe.len() as u64);
         }
         Ok(handle)
     }
@@ -1901,9 +1941,9 @@ impl QuicEndpoint {
             return;
         }
         self.closing.set(true);
-        self.state.closing.set(1);
-        self.state.listening.set(0);
-        self.self_root
+        self.state.closing.store(1, Relaxed);
+        self.state.listening.store(0, Relaxed);
+        self.this_value
             .set(StrongWrapper::new(this_value, cx.global()));
         if self.sessions.is_empty() && self.engine_conn_count() == 0 {
             self.finish_close();
@@ -1922,7 +1962,7 @@ impl QuicEndpoint {
         self.local_addr.get().to_js_socket_address(cx.global())
     }
     pub(crate) fn mark_busy(&self, busy: bool) {
-        self.state.busy.set(busy as u8);
+        self.state.busy.store(busy as u8, Relaxed);
     }
     fn build_sni_contexts(
         global: &JSGlobalObject,

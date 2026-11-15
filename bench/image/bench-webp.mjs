@@ -13,17 +13,19 @@ const images = join(import.meta.dir, "../../docs/images");
 // Stored, so that getting at the pixels costs next to nothing.
 const stored = image => image.png({ compressionLevel: 0 }).bytes();
 const open = name => new Bun.Image(readFileSync(join(images, name)));
+const photo = name => open(`../../test/js/node/test/fixtures/${name}.jpg`);
 const screenshots = readdirSync(images, { recursive: true })
   .filter(name => name.endsWith(".png"))
   .sort()
   .filter((_, i) => i % 8 === 0);
 
 const subjects = {
-  "a photo": [await stored(open("cat.jpg"))],
-  "a photo of 256 colors": [await stored(new Bun.Image(await open("cat.jpg").png({ palette: true }).bytes()))],
+  "a soft photo": [await stored(photo("person-large"))],
+  "that with 256 colors": [await stored(new Bun.Image(await photo("person-large").png({ palette: true }).bytes()))],
+  "30 small, sharp photos": Array(30).fill(await stored(photo("person"))),
   "100 logos with transparency": Array(100).fill(await stored(open("../logo/bun.png"))),
   [`${screenshots.length} screenshots`]: await Promise.all(screenshots.map(name => stored(open(name)))),
-  "200 thumbnails": Array(200).fill(await stored(open("cat.jpg").resize(64, 64))),
+  "200 thumbnails": Array(200).fill(await stored(photo("person").resize(64, 64))),
 };
 
 async function report(name, rounds, files, fn) {

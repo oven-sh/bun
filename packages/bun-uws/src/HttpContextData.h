@@ -29,7 +29,6 @@ struct HttpRequest;
 struct Http2Context;
 
 struct HttpFlags {
-    bool isParsingHttp: 1 = false;
     bool rejectUnauthorized: 1 = false;
     bool usingCustomExpectHandler: 1 = false;
     bool requireHostHeader: 1 = true;
@@ -70,13 +69,11 @@ private:
     /* The socket onData is currently parsing, nullptr outside a parse. The
      * close gates in internalEnd need the per-socket identity: a DIFFERENT
      * socket's response can complete inside this window (a microtask drained
-     * during a request dispatch), and the context-wide isParsingHttp bit
-     * alone would wrongly defer its close to a post-parse gate that only
-     * checks the parsed socket. */
+     * during a request dispatch), and the post-parse gate only checks the
+     * parsed socket. */
     struct us_socket_t *parsingSocket = nullptr;
 
     HttpRouter<RouterData> router;
-    void *upgradedWebSocket = nullptr;
     /* Used to simulate Node.js socket events. */
     OnSocketClosedCallback onSocketClosed = nullptr;
     OnSocketDrainCallback onSocketDrain = nullptr;
@@ -109,7 +106,7 @@ public:
     
     HttpFlags flags;
 
-    bool isParsing(struct us_socket_t *s) const { return flags.isParsingHttp && parsingSocket == s; }
+    bool isParsing(struct us_socket_t *s) const { return parsingSocket == s; }
 };
 
 }

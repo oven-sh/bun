@@ -35,7 +35,7 @@ impl SourceProvider for DefinedData {
         &self,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> FoldOptions<'s> {
         let define = Define {
             path: DefinePath {
@@ -50,11 +50,11 @@ impl SourceProvider for DefinedData {
         }
     }
 
-    fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
+    fn resolve(&self, request: &ResolveRequest<'_>, log: &Log) -> Result<Resolution, Failed> {
         WithoutServices.resolve(request, log)
     }
 
-    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+    fn load(&self, request: &LoadRequest<'_>, log: &Log) -> Result<Loaded, Failed> {
         WithoutServices.load(request, log)
     }
 
@@ -62,7 +62,7 @@ impl SourceProvider for DefinedData {
         WithoutServices.has_load_plugin(module)
     }
 
-    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+    fn finish_deferred_loads(&self, log: &Log) -> Vec<DeferredLoad> {
         WithoutServices.finish_deferred_loads(log)
     }
 
@@ -71,12 +71,12 @@ impl SourceProvider for DefinedData {
         file: &SourceFile<'_>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<DataModule<'s>, DataFailure> {
         WithoutServices.parse_data(file, arena, atoms, log)
     }
 
-    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+    fn check_embedded_files(&self, log: &Log) -> Result<(), Failed> {
         WithoutServices.check_embedded_files(log)
     }
 }
@@ -88,16 +88,16 @@ impl SourceProvider for BundledPages {
         &self,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> FoldOptions<'s> {
         WithoutServices.fold_options(arena, atoms, log)
     }
 
-    fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
+    fn resolve(&self, request: &ResolveRequest<'_>, log: &Log) -> Result<Resolution, Failed> {
         WithoutServices.resolve(request, log)
     }
 
-    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+    fn load(&self, request: &LoadRequest<'_>, log: &Log) -> Result<Loaded, Failed> {
         WithoutServices.load(request, log)
     }
 
@@ -105,7 +105,7 @@ impl SourceProvider for BundledPages {
         WithoutServices.has_load_plugin(module)
     }
 
-    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+    fn finish_deferred_loads(&self, log: &Log) -> Vec<DeferredLoad> {
         WithoutServices.finish_deferred_loads(log)
     }
 
@@ -114,7 +114,7 @@ impl SourceProvider for BundledPages {
         file: &SourceFile<'_>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<DataModule<'s>, DataFailure> {
         match file.loader {
             Loader::Html => Ok(DataModule::Page),
@@ -122,7 +122,7 @@ impl SourceProvider for BundledPages {
         }
     }
 
-    fn bundle_pages(&self, pages: &[&[u8]], _log: &mut Log) -> Result<Vec<Vec<u8>>, Failed> {
+    fn bundle_pages(&self, pages: &[&[u8]], _log: &Log) -> Result<Vec<Vec<u8>>, Failed> {
         let write_manifest = |page: &&[u8]| {
             let name = BStr::new(bun_paths::basename(page));
             let files = r#"[{"loader":"js","isEntry":true}]"#;
@@ -131,7 +131,7 @@ impl SourceProvider for BundledPages {
         Ok(pages.iter().map(write_manifest).collect())
     }
 
-    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+    fn check_embedded_files(&self, log: &Log) -> Result<(), Failed> {
         WithoutServices.check_embedded_files(log)
     }
 }

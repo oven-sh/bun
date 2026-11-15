@@ -796,9 +796,8 @@ impl<'a> JSXTag<'a> {
 
             if let Some(index) = strings::index_of_char(member, b'-') {
                 let source = p.source();
-                // SAFETY: `log_ptr()` returns the externally-lent `&mut Log`;
-                // sole live alias while `P` lives.
-                unsafe { p.log_ptr().as_mut() }.add_error(
+                // SAFETY: `log_ptr()` returns the externally-lent `Log`, which outlives `P`.
+                unsafe { p.log_ptr().as_ref() }.add_error(
                     Some(source),
                     bun_ast::Loc {
                         start: member_range.loc.start + i32::try_from(index).expect("int cast"),
@@ -1111,7 +1110,7 @@ pub enum InvalidLocTag {
 
 impl InvalidLoc {
     #[cold]
-    pub(crate) fn add_error(self, log: &mut bun_ast::Log, source: &bun_ast::Source) {
+    pub(crate) fn add_error(self, log: &bun_ast::Log, source: &bun_ast::Source) {
         let text: &'static [u8] = match self.kind {
             InvalidLocTag::Spread => b"Unexpected trailing comma after rest element",
             InvalidLocTag::Parentheses => b"Unexpected parentheses in binding pattern",
@@ -1679,7 +1678,7 @@ pub fn new_lazy_export_ast<'bump>(
     bump: &'bump bun_alloc::Arena,
     define: &'bump mut Define,
     opts: ParserOptions<'bump>,
-    log_to_copy_into: &mut bun_ast::Log,
+    log_to_copy_into: &bun_ast::Log,
     expr: Expr,
     source: &'bump bun_ast::Source<'bump>,
     runtime_api_call: &'static [u8],
@@ -1700,17 +1699,17 @@ pub fn new_lazy_export_ast_impl<'bump>(
     bump: &'bump bun_alloc::Arena,
     define: &'bump mut Define,
     opts: ParserOptions<'bump>,
-    log_to_copy_into: &mut bun_ast::Log,
+    log_to_copy_into: &bun_ast::Log,
     expr: Expr,
     source: &'bump bun_ast::Source<'bump>,
     runtime_api_call: &'static [u8],
     symbols: js_ast::symbol::List<'bump>,
 ) -> crate::CrateResult<Option<js_ast::Ast<'bump>>> {
-    let mut temp_log = bun_ast::Log::init();
+    let temp_log = bun_ast::Log::init();
     // parser.log and lexer.log both store `NonNull<Log>`; copy the lexer's
     // pointer so they share one provenance chain. See `Parser::init` for the
     // same pattern.
-    let lexer = js_lexer::Lexer::init_without_reading(&mut temp_log, source, bump);
+    let lexer = js_lexer::Lexer::init_without_reading(&temp_log, source, bump);
     let log_ptr = lexer.log;
     let range = lexer.range();
     let parser = Parser {
@@ -1725,7 +1724,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
     let result = match parser.into_lazy_export_ast(expr, runtime_api_call, symbols) {
         Ok(r) => r,
         Err(err) => {
-            if temp_log.errors == 0 {
+            if temp_log.errors.get() == 0 {
                 log_to_copy_into.add_range_error(Some(source), range, err.name().as_bytes());
             }
             temp_log.append_to(log_to_copy_into);

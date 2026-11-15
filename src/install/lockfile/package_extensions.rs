@@ -272,7 +272,7 @@ impl PackageExtensions {
 
     pub(crate) fn parse(
         &mut self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &bun_ast::Source,
         root_package_json: &Expr,
     ) {
@@ -284,7 +284,7 @@ impl PackageExtensions {
 
     #[cold]
     #[inline(never)]
-    fn parse_rules(&mut self, log: &mut bun_ast::Log, source: &bun_ast::Source, rules: &Expr) {
+    fn parse_rules(&mut self, log: &bun_ast::Log, source: &bun_ast::Source, rules: &Expr) {
         if !rules.is_object() {
             log.add_warning(
                 Some(source),
@@ -383,7 +383,7 @@ impl Lockfile {
     fn package_extension_row(
         &mut self,
         wanted: &Wanted<'_>,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
     ) -> Result<Dependency, AllocError> {
         let edge = wanted.edge;
         let mut string_buf = self.string_buf();
@@ -413,7 +413,7 @@ impl Lockfile {
         &mut self,
         rules: &[Rule],
         applied: &[Applied],
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         id: PackageID,
         now: &mut Vec<Applied>,
         unresolved: &mut Vec<DependencyID>,
@@ -466,7 +466,7 @@ impl Lockfile {
                     continue;
                 };
                 if !rule.is_row(&row, self.buffers.string_bytes.as_slice()) {
-                    row = self.package_extension_row(rule, &mut *log)?;
+                    row = self.package_extension_row(rule, log)?;
                     resolved = invalid_package_id;
                     changed = true;
                 }
@@ -496,7 +496,7 @@ impl Lockfile {
             {
                 continue;
             }
-            let row = self.package_extension_row(rule, &mut *log)?;
+            let row = self.package_extension_row(rule, log)?;
             now.push(Applied(package, row.name_hash, kind_of(&row)));
             rows.push((row, invalid_package_id));
             changed = true;
@@ -556,7 +556,7 @@ impl Lockfile {
     #[inline(never)]
     pub(crate) fn record_migrated_package_extensions(
         &mut self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         added: &[(PackageID, PackageNameHash, bool)],
     ) -> Result<(), AllocError> {
         let rules = core::mem::take(&mut self.package_extensions.rules);
@@ -570,7 +570,7 @@ impl Lockfile {
     fn record_migrated_package_extension(
         &mut self,
         rules: &[Rule],
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         id: PackageID,
         name_hash: PackageNameHash,
         is_peer: bool,
@@ -623,7 +623,7 @@ impl Lockfile {
     #[inline(never)]
     pub(crate) fn extend_new_package(
         &mut self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         id: PackageID,
     ) -> Result<Package, AllocError> {
         let rules = core::mem::take(&mut self.package_extensions.rules);
@@ -644,15 +644,14 @@ impl Lockfile {
     #[inline(never)]
     pub(crate) fn reconcile_package_extensions(
         &mut self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
     ) -> Result<Option<(Vec<DependencyID>, Vec<(u64, PackageNameHash)>)>, AllocError> {
         let PackageExtensions { rules, applied } = core::mem::take(&mut self.package_extensions);
         let mut now = Vec::with_capacity(applied.len());
         let mut unresolved = Vec::new();
         let mut changed = false;
         for id in 0..self.packages.len() as PackageID {
-            changed |=
-                self.extend_package(&rules, &applied, &mut *log, id, &mut now, &mut unresolved)?;
+            changed |= self.extend_package(&rules, &applied, log, id, &mut now, &mut unresolved)?;
         }
         // If there are fewer, a record belonged to a package that's no longer in the lockfile.
         changed |= now.len() != applied.len();

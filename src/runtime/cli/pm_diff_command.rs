@@ -349,7 +349,7 @@ fn package_json_name(bytes: &[u8]) -> Option<Vec<u8>> {
     let src: &[u8] = bump.alloc_slice_copy(bytes);
     let json = bun_parsers::json::parse_utf8(
         &bun_ast::Source::init_path_string(b"package.json", src),
-        &mut bun_ast::Log::init(),
+        &bun_ast::Log::init(),
         &bump,
     )
     .ok()?;
@@ -409,9 +409,9 @@ fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> Vec<u8> {
 fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     // Detach the lockfile while it loads so it and the manager are not borrowed through each other.
     let mut lockfile = core::mem::take(&mut pm.lockfile);
-    let mut log = bun_ast::Log::init();
+    let log = bun_ast::Log::init();
     let log_level = pm.options.log_level;
-    let loaded = match lockfile.load_from_cwd::<true>(Some(pm), &mut log) {
+    let loaded = match lockfile.load_from_cwd::<true>(Some(pm), &log) {
         LoadResult::Ok(_) => true,
         LoadResult::NotFound => false,
         // A lockfile that exists but will not load is reported as that, not as "package not installed".
@@ -619,7 +619,7 @@ fn read_dir_tree(
             let src: &[u8] = bump.alloc_slice_copy(&pkg);
             if let Ok(json) = bun_parsers::json::parse_utf8(
                 &bun_ast::Source::init_path_string(b"package.json", src),
-                &mut bun_ast::Log::init(),
+                &bun_ast::Log::init(),
                 &bump,
             ) {
                 crate::cli::pack_command::drop_shadowed_properties(json);
@@ -836,10 +836,10 @@ fn fetch_registry_tree(
         Some((name, version)),
     )?;
 
-    let mut log = bun_ast::Log::init();
+    let log = bun_ast::Log::init();
     let manifest = match PackageManifest::parse(
         scope.manifest_cache_key(),
-        &mut log,
+        &log,
         body.list.as_slice(),
         name,
         b"",
@@ -916,7 +916,7 @@ fn fetch_registry_tree(
     // same entry that `found` was built from.
     let registry_entry = bun_parsers::json::parse_utf8(
         &bun_ast::Source::init_path_string(b"", body.list.as_slice()),
-        &mut bun_ast::Log::init(),
+        &bun_ast::Log::init(),
         &bump,
     )
     .ok()
@@ -2235,7 +2235,7 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
         let src: &[u8] = bump.alloc_slice_copy(bytes);
         bun_parsers::json::parse_utf8(
             &bun_ast::Source::init_path_string(b"package.json", src),
-            &mut bun_ast::Log::init(),
+            &bun_ast::Log::init(),
             &bump,
         )
         .ok()

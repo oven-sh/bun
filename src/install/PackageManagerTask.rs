@@ -231,7 +231,7 @@ impl Task {
                         *registry,
                         metadata,
                         body.slice(),
-                        &mut this.log,
+                        &this.log,
                         name.slice(),
                         loaded_manifest.take(),
                         *temp_dir,
@@ -280,7 +280,7 @@ impl Task {
                     // tarball body drops on every exit of this arm.
                     let mut buffer = core::mem::take(&mut network.response_buffer);
 
-                    let result = match tarball.run(&mut this.log, buffer.slice()) {
+                    let result = match tarball.run(&this.log, buffer.slice()) {
                         Ok(v) => v,
                         Err(err) => {
                             this.err = Some(err);
@@ -310,7 +310,7 @@ impl Task {
                     // other dependencies.
 
                     let result =
-                        match read_and_extract(tarball, path.slice(), *normalize, &mut this.log) {
+                        match read_and_extract(tarball, path.slice(), *normalize, &this.log) {
                             Ok(v) => v,
                             Err(err) => {
                                 this.err = Some(err);
@@ -345,7 +345,7 @@ fn read_and_extract(
     tarball: &ExtractTarball,
     tarball_path: &[u8],
     normalize: bool,
-    log: &mut Log,
+    log: &Log,
 ) -> crate::Result<ExtractData> {
     let bytes = if normalize {
         // Resolves

@@ -22,7 +22,7 @@ use super::{
 };
 
 /// [`MapEntry::save`] for a command that cannot go on without the new text.
-pub(crate) fn save_entry(entry: &mut MapEntry, root: bun_ast::Expr, log: &mut bun_ast::Log) {
+pub(crate) fn save_entry(entry: &mut MapEntry, root: bun_ast::Expr, log: &bun_ast::Log) {
     if let Err(err) = entry.save(root, log) {
         let verb = if matches!(err, Error::JsPrinter(_)) {
             "write"
@@ -55,9 +55,9 @@ pub(super) fn package_json_entry_or_crash<'a>(
     manager: &'a mut PackageManager,
     path: &[u8],
 ) -> &'a mut MapEntry {
-    let log = manager.log_mut();
+    let log = manager.log();
     let (verb, err) = match manager.workspace_package_json_cache.get_with_path(
-        &mut *log,
+        log,
         path,
         GetJSONOptions {
             guess_indentation: true,
@@ -107,7 +107,7 @@ pub fn update_package_json_and_install_with_manager(
             Some(manager),
             // SAFETY: `ctx.log` is set once during `Command::create()` (process-
             // lifetime singleton) and is never null afterward.
-            unsafe { &mut *ctx.log },
+            unsafe { &*ctx.log },
             positionals,
             &mut update_requests,
             subcommand,
@@ -142,8 +142,8 @@ fn update_package_json_and_install_with_manager_with_updates(
     original_cwd: &[u8],
 ) -> Result<(), Error> {
     let log_level = manager.options.log_level;
-    if manager.log_mut().errors > 0 {
-        let _ = manager.log_mut().print(Output::error_writer());
+    if manager.log().errors.get() > 0 {
+        let _ = manager.log().print(Output::error_writer());
         Global::crash();
     }
 

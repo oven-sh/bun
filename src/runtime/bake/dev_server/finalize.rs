@@ -252,7 +252,7 @@ fn finalize_bundle_inner(
         } = compile_result
         {
             let source = &ctx.sources[index.get() as usize];
-            let mut log = Log::init();
+            let log = Log::init();
             match err {
                 bun_js_printer::Error::StackOverflow => log.add_error(
                     Some(source),
@@ -326,7 +326,7 @@ fn finalize_bundle_inner(
         // Report a chunk that failed to print as its entry point's failure. The next
         // good build's `receive_client_chunk` clears it.
         let entry_source = &ctx.sources[index.get() as usize];
-        let mut log = Log::init();
+        let log = Log::init();
         for compile_result in chunk.compile_results_for_chunk.iter() {
             let (err, err_source_index) = match compile_result {
                 bundler::CompileResult::Css {
@@ -347,7 +347,7 @@ fn finalize_bundle_inner(
                 format_args!("Failed to generate CSS for this file ({})", err.name()),
             );
         }
-        if log.errors > 0 {
+        if log.errors.get() > 0 {
             let entry_key = entry_source.path.key_for_incremental_graph();
             dev.graphs.insert_failure::<{ Side::Client }>(
                 incremental_graph::InsertFailureKey::AbsPath(entry_key, bake::Graph::Client),

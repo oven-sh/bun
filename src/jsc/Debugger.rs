@@ -459,8 +459,8 @@ impl Debugger {
 
         let _ = this.global().handle_rejected_promises();
 
-        if let Some(log) = this.log_ref() {
-            if !log.msgs.is_empty() {
+        if let Some(log) = this.log() {
+            if log.msgs_len() > 0 {
                 let _ = log.print(bun_core::Output::error_writer());
                 bun_core::pretty_errorln!("\n");
                 bun_core::Output::flush();

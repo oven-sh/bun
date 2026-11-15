@@ -38,7 +38,7 @@ fn call_macro(
     bump: &bun_alloc::Arena,
     import_record_path: &[u8],
     source_dir: &[u8],
-    log: &mut Log,
+    log: &Log,
     source: &Source,
     import_range: Range,
     caller: Expr,
@@ -201,7 +201,7 @@ fn __bun_macro_context_call(
     bump: &bun_alloc::Arena,
     import_record_path: &[u8],
     source_dir: &[u8],
-    log: &mut Log,
+    log: &Log,
     source: &Source,
     import_range: Range,
     caller: Expr,
@@ -238,7 +238,7 @@ fn __bun_macro_context_call(
 }
 
 fn init_macro_vm(
-    log: &mut Log,
+    log: &Log,
     env: Option<&DotEnvLoader>,
     transform_options: &TransformOptions,
 ) -> crate::Result<&'static VirtualMachine> {
@@ -395,7 +395,7 @@ pub(crate) struct Run<'a> {
     pub(crate) global: &'a JSGlobalObject,
     /// The parser's arena: the returned `Expr` joins its AST.
     pub(crate) bump: &'a bun_alloc::Arena,
-    pub(crate) log: &'a mut Log,
+    pub(crate) log: &'a Log,
     pub(crate) source: &'a Source<'a>,
     pub(crate) visited: VisitMap<'a>,
     pub(crate) is_top_level: bool,
@@ -405,7 +405,7 @@ pub(crate) struct Run<'a> {
 impl<'a> Run<'a> {
     pub(crate) fn run_async(
         vm: &VirtualMachine,
-        log: &mut Log,
+        log: &Log,
         bump: &bun_alloc::Arena,
         caller: Expr,
         args: &[JSValue],
@@ -742,7 +742,7 @@ impl<'a> Run<'a> {
 impl Runner {
     fn run(
         vm: &VirtualMachine,
-        log: &mut Log,
+        log: &Log,
         bump: &bun_alloc::Arena,
         function_name: &[u8],
         caller: Expr,
@@ -844,7 +844,7 @@ impl Runner {
 
         struct CallData<'c> {
             vm: &'c VirtualMachine,
-            log: &'c mut Log,
+            log: &'c Log,
             bump: &'c bun_alloc::Arena,
             caller: Expr,
             js_args: &'c [JSValue],
@@ -905,7 +905,7 @@ fn expr_from_blob(
     bytes: &[u8],
     bump: &bun_alloc::Arena,
     content_type: &[u8],
-    log: &mut Log,
+    log: &Log,
     loc: bun_ast::Loc,
 ) -> crate::Result<Expr> {
     use bun_ast::{E, ExprData, StoreStr as Str};

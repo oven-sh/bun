@@ -47,7 +47,7 @@ fn estring_to_owned(s: &E::EString, bump: &Bump) -> Box<[u8]> {
 /// `StringArrayHashMap` newtype boundary that `bun_resolver`'s copy uses.
 fn parse_macros_json(
     macros: &Expr,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     json_source: &bun_ast::Source,
     bump: &Bump,
 ) -> MacroMap {
@@ -145,7 +145,7 @@ fn num_to_u32(n: f64) -> u32 {
 struct Parser<'a, 'tool> {
     json: Expr,
     source: &'a bun_ast::Source<'a>,
-    log: &'a mut bun_ast::Log,
+    log: &'a bun_ast::Log,
     // Holding both a `TransformOptions` pointer (= `&ctx.args`) and `ctx`
     // would be an overlapping borrow, so `bunfig` writes route through
     // `self.ctx.args` directly.
@@ -1288,13 +1288,13 @@ impl Bunfig {
         // bunfig load; single-threaded CLI startup invariant. The raw pointer
         // is copied out so the resulting `&mut Log` does not borrow `ctx`
         // (Parser later needs `&mut ctx` alongside `&mut log`).
-        let log_ptr: *mut bun_ast::Log = ctx.log;
+        let log_ptr: *const bun_ast::Log = ctx.log;
         debug_assert!(!log_ptr.is_null());
         // SAFETY: `log_ptr` is non-null (asserted above) and points to the Log
         // owned by single-threaded CLI startup; Parser only touches the log via
         // this borrow (never via `ctx.log`), so the `&mut` is exclusive.
-        let log: &mut bun_ast::Log = unsafe { &mut *log_ptr };
-        let log_count = log.errors + log.warnings;
+        let log: &bun_ast::Log = unsafe { &*log_ptr };
+        let log_count = log.errors.get() + log.warnings.get();
 
         // This previously called `Arena::new()` (= `mi_heap_new` +
         // `mi_heap_destroy` on drop), which perf attributed ~1.6% of
@@ -1310,7 +1310,7 @@ impl Bunfig {
             match TOML::parse(source, log, &bump, true) {
                 Ok(e) => e,
                 Err(e) => {
-                    if log.errors + log.warnings == log_count {
+                    if log.errors.get() + log.warnings.get() == log_count {
                         log.add_error_opts(
                             b"Failed to parse",
                             bun_ast::ErrorOpts {
@@ -1327,7 +1327,7 @@ impl Bunfig {
             match json_parser::parse_ts_config(source, log, &bump) {
                 Ok(e) => e,
                 Err(e) => {
-                    if log.errors + log.warnings == log_count {
+                    if log.errors.get() + log.warnings.get() == log_count {
                         log.add_error_opts(
                             b"Failed to parse",
                             bun_ast::ErrorOpts {
@@ -1367,7 +1367,7 @@ impl Bunfig {
         // parsing a module whose nodes live in the same store.
         bun_ast::initialize_store();
         let bump = Bump::borrowing_default();
-        let file = TOML::parse(source, &mut bun_ast::Log::init(), &bump, true)?;
+        let file = TOML::parse(source, &bun_ast::Log::init(), &bump, true)?;
         let security = file.get(b"install").and_then(|it| it.get(b"security"));
         Ok(security.is_some_and(|it| it.get(b"scanner").is_some()))
     }
@@ -1379,9 +1379,9 @@ impl Bunfig {
         // The AST store is not reset afterwards, because the caller may be in the middle of
         // parsing a module whose nodes live in the same store.
         bun_ast::initialize_store();
-        let mut log = bun_ast::Log::init();
+        let log = bun_ast::Log::init();
         let mut ctx = ContextData {
-            log: &raw mut log,
+            log: &raw const log,
             ..Default::default()
         };
         let cmd = CommandTag::InstallCommand;

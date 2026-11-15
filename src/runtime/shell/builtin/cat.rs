@@ -178,7 +178,7 @@ impl Cat {
         };
         match branch {
             Branch::Stdin => {
-                // Stdin doesn't need IO (captured/ignored): read it all
+                // Stdin doesn't need IO (ArrayBuffer or Blob): read it all
                 // synchronously and write straight to stdout.
                 let BuiltinInput::Fd(reader) = Builtin::of(interp, cmd).stdin else {
                     if let CatState::ExecStdin { in_done, .. } =

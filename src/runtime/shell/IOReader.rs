@@ -57,7 +57,7 @@ pub(crate) struct IOReader<'a> {
     /// True after EOF. The Windows reader closes its source and the fd at EOF, so later listeners can't read.
     #[cfg(windows)]
     reached_eof: bool,
-    /// Keeps it inside its `Interpreter<'a>`.
+    /// Ties it to `Interpreter<'a>`, so it cannot leave a `with_interp` closure.
     _interp: PhantomData<&'a ()>,
 }
 
@@ -76,7 +76,7 @@ impl Inner {
 impl IOReader<'_> {
     /// The caller removes it from `interp.io_readers`, which closes `fd`.
     pub(crate) fn init(interp: &mut Interpreter<'_>, fd: Fd) -> IOReaderId {
-        let (shell_interp, evtloop) = (interp.as_ctx_ptr(), interp.event_loop);
+        let (shell_interp, evtloop) = (interp.shell_interp, interp.event_loop);
         interp.io_readers.insert_with(|id| {
             let inner = Rc::new(Inner {
                 reader: BufferedReader::init(),
@@ -277,7 +277,11 @@ impl IOReader<'_> {
         let Some(me) = interp.io_readers.get_mut(id) else {
             return (Yield::suspended(), false);
         };
-        let mut finished = (me.readers.iter().enumerate()).filter_map(|(i, r)| Some((i, r.errno?)));
+        let mut finished = me
+            .readers
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| Some((i, r.errno?)));
         let Some((idx, errno)) = finished.next() else {
             return (Yield::suspended(), false);
         };

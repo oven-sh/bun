@@ -33,6 +33,7 @@ pub(crate) enum CmdOrResult {
 impl CmdOrResult {
     fn deinit(self, interp: &mut Interpreter<'_>) {
         if let CmdOrResult::Cmd { id, pipe_ends } = self {
+            // The node first: a builtin's redirection fd is closed by the time a reader of the pipe sees EOF.
             interp.deinit_node(id);
             pipe_ends.deinit(interp);
         }
@@ -96,7 +97,7 @@ impl<'a> Pipeline<'a> {
         Yield::Next(this)
     }
 
-    /// Queried by the trampoline (`Yield::run`) to manage the pipeline stack.
+    /// Queried by the trampoline (`Yield::run`) to manage its `DeferredStack`.
     #[inline]
     pub(crate) fn is_done(interp: &Interpreter<'a>, this: NodeId) -> bool {
         matches!(interp.as_pipeline(this).state, PipelineState::Done { .. })
@@ -210,7 +211,9 @@ impl<'a> Pipeline<'a> {
                 continue;
             }
             let pipe_ends = PipeEnds {
-                stdin: (read_end.take()).map(|read| IOReader::init(interp, read.into_raw())),
+                stdin: read_end
+                    .take()
+                    .map(|read| IOReader::init(interp, read.into_raw())),
                 stdout: pipes.next().map(|[read, write]| {
                     read_end = Some(read);
                     // `is_socket` is set on POSIX — the POSIX
@@ -301,7 +304,10 @@ impl<'a> Pipeline<'a> {
             return interp.enqueue(fd, child, &buf);
         }
         let shell = interp.as_pipeline(this).shell;
-        (interp.shells.buffered_mut(shell, IoKind::Stderr)).extend_from_slice(&buf);
+        interp
+            .shells
+            .buffered_mut(shell, IoKind::Stderr)
+            .extend_from_slice(&buf);
         Self::finish(interp, this, 1)
     }
 
@@ -374,7 +380,10 @@ impl<'a> Pipeline<'a> {
     ) {
         let me = interp.as_pipeline_mut(this);
         me.exited_count += 1;
-        let slot = (me.cmds.iter_mut().flatten())
+        let slot = me
+            .cmds
+            .iter_mut()
+            .flatten()
             .find(|slot| matches!(slot, CmdOrResult::Cmd { id, .. } if *id == child))
             .expect("a child is in cmds");
         core::mem::replace(slot, CmdOrResult::Result(exit_code)).deinit(interp);

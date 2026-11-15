@@ -19,13 +19,11 @@ impl FieldDescription {
         types::Tag::from_oid(self.type_oid)
     }
 
-    pub(crate) fn decode_internal<Container: super::new_reader::ReaderContext>(
-        reader: &mut NewReader<Container>,
-    ) -> Result<Self, AnyPostgresError> {
+    pub(crate) fn decode_internal(reader: &NewReader<'_>) -> Result<Self, AnyPostgresError> {
         let name = reader.read_z()?;
 
         // Field name (null-terminated string)
-        let field_name = ColumnIdentifier::init(name).map_err(|_| AnyPostgresError::OutOfMemory)?;
+        let field_name = ColumnIdentifier::init(name.into());
         // Table OID (4 bytes)
         // If the field can be identified as a column of a specific table, the object ID of the table; otherwise zero.
         let table_oid = reader.int4()?;

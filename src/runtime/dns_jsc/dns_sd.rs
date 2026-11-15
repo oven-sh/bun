@@ -1,6 +1,7 @@
 //! macOS DNSServiceQueryRecord backend: all lookups share one mDNSResponder connection (see dns.rs banner).
 
 use super::*;
+use crate::timer::OwnedTimer;
 use bun_collections::index_sort;
 
 type DNSServiceRef = *mut c_void;
@@ -157,17 +158,18 @@ enum Attempt {
     Reissued,
 }
 
-/// The A and the AAAA subordinate of one lookup; null for a family that was not asked for.
-type FamilyRefs = [DNSServiceRef; 2];
+/// A subordinate has to drop before the primary.
+struct OwnedServiceRef(NonNull<c_void>);
 
-fn deallocate_refs(sd_refs: FamilyRefs) {
-    for sd_ref in sd_refs {
-        if !sd_ref.is_null() {
-            // SAFETY: FFI; a non-null entry is a live subordinate that nothing else releases.
-            unsafe { DNSServiceRefDeallocate(sd_ref) };
-        }
+impl Drop for OwnedServiceRef {
+    fn drop(&mut self) {
+        // SAFETY: FFI; made only from a ref that dns_sd just returned.
+        unsafe { DNSServiceRefDeallocate(self.0.as_ptr()) };
     }
 }
+
+/// The A and the AAAA subordinate of one lookup; `None` for a family that was not asked for.
+type FamilyRefs = [Option<OwnedServiceRef>; 2];
 
 /// What dnssd_clientstub's `handle_addrinfo_response` builds: a link-local address is scoped to the interface it was seen on.
 fn address_from_record(
@@ -211,7 +213,7 @@ pub(crate) struct QueryState {
 impl QueryState {
     pub(crate) fn new(protocol: DNSServiceProtocol) -> Self {
         Self {
-            sd_refs: [ptr::null_mut(); 2],
+            sd_refs: FamilyRefs::default(),
             results: Default::default(),
             saw_timeout: false,
             awaiting_more: false,
@@ -220,10 +222,6 @@ impl QueryState {
             attempt: Attempt::Plain,
             hostname: bun::ZBox::from_bytes(b""),
         }
-    }
-
-    fn deallocate_refs(&mut self) {
-        deallocate_refs(core::mem::replace(&mut self.sd_refs, [ptr::null_mut(); 2]));
     }
 
     /// Back to a fresh in-flight state for the unsuppressed reissue.
@@ -258,7 +256,8 @@ impl QueryState {
         self.awaiting_more = flags & FLAGS_MORE_COMING != 0;
         // As in libinfo, any error ends only its own family. The daemon's refusals carry no rrtype, so `sd_ref` names the family.
         if error_code != ERR_NO_ERROR || matches!(rrtype, TYPE_A | TYPE_AAAA) {
-            self.pending_proto &= !if sd_ref == self.sd_refs[0] {
+            let is_ipv4 = matches!(&self.sd_refs[0], Some(ipv4) if ipv4.0.as_ptr() == sd_ref);
+            self.pending_proto &= !if is_ipv4 {
                 PROTOCOL_IPV4
             } else {
                 PROTOCOL_IPV6
@@ -406,16 +405,23 @@ unsafe extern "C" fn on_reply<const INTERNAL: bool>(
 
 /// One per event loop: owns the primary `DNSServiceRef` + `FilePoll`; lookups are ShareConnection subordinates.
 pub(crate) struct SharedConnection {
-    main_ref: DNSServiceRef,
-    file_poll: NonNull<FilePoll>,
-    ctx: Async::EventLoopCtx,
+    file_poll: bun_io::OwnedFilePoll,
+    /// After `file_poll`, whose fd it closes.
+    main_ref: OwnedServiceRef,
+    ctx: bun_io::EventLoopCtx,
     inflight: Vec<Inflight>,
     /// `context` of the previous reply (a different one ends the prior request's contiguous run).
     last_ctx: *mut c_void,
     /// Early-out timer (JS threads only; the daemon timeout backstops other loops).
-    pub(crate) early_out_timer: EventLoopTimer,
+    pub(crate) early_out_timer: OwnedTimer,
     /// Deadline the timer is currently armed for (0 = disarmed).
     early_out_armed_for: Cell<i64>,
+}
+
+impl Drop for SharedConnection {
+    fn drop(&mut self) {
+        debug_assert!(self.inflight.is_empty());
+    }
 }
 
 thread_local! {
@@ -429,65 +435,51 @@ impl SharedConnection {
         unsafe { SHARED.get().as_mut() }
     }
 
-    fn file_poll(&mut self) -> &mut FilePoll {
-        // SAFETY: `file_poll` is the live hive slot owned by this connection until `destroy`.
-        unsafe { self.file_poll.as_mut() }
-    }
-
     /// Lazily connect; `None` (caller falls back to getaddrinfo) if mDNSResponder is unreachable.
-    pub(crate) fn get<'a>(ctx: Async::EventLoopCtx) -> Option<&'a mut Self> {
+    pub(crate) fn get<'a>(ctx: bun_io::EventLoopCtx) -> Option<&'a mut Self> {
         if let Some(existing) = Self::current() {
             return Some(existing);
         }
         let mut main_ref: DNSServiceRef = ptr::null_mut();
         // SAFETY: FFI; `main_ref` is stack-local.
         let err = unsafe { DNSServiceCreateConnection(&raw mut main_ref) };
-        if err != ERR_NO_ERROR || main_ref.is_null() {
+        let (ERR_NO_ERROR, Some(main_ref)) = (err, NonNull::new(main_ref)) else {
             bun_output::scoped_log!(dns, "DNSServiceCreateConnection failed: {}", err);
             return None;
-        }
+        };
+        let main_ref = OwnedServiceRef(main_ref);
         // SAFETY: FFI; `main_ref` is the live ref just returned above.
-        let raw_fd = unsafe { DNSServiceRefSockFD(main_ref) };
+        let raw_fd = unsafe { DNSServiceRefSockFD(main_ref.0.as_ptr()) };
         if raw_fd < 0 {
             bun_output::scoped_log!(dns, "DNSServiceRefSockFD returned {}", raw_fd);
-            // SAFETY: FFI; releasing the ref we just created.
-            unsafe { DNSServiceRefDeallocate(main_ref) };
             return None;
         }
         let fd = sys::Fd::from_native(raw_fd);
         let mut this = Box::new(Self {
+            file_poll: bun_io::OwnedFilePoll::new(
+                ctx,
+                fd,
+                bun_io::Owner::new(
+                    bun_io::posix_event_loop::poll_tag::GET_ADDR_INFO_REQUEST,
+                    ptr::null_mut(),
+                ),
+            ),
             main_ref,
-            file_poll: NonNull::dangling(),
             ctx,
             inflight: Vec::new(),
             last_ctx: ptr::null_mut(),
-            early_out_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DnsSdConnection),
+            early_out_timer: OwnedTimer::init_paused(EventLoopTimerTag::DnsSdConnection),
             early_out_armed_for: Cell::new(0),
         });
-        let poll_ptr = FilePoll::init(
-            ctx,
-            fd,
-            Default::default(),
-            Async::Owner::new(
-                Async::posix_event_loop::poll_tag::GET_ADDR_INFO_REQUEST,
-                (&raw mut *this).cast(),
-            ),
-        );
-        // SAFETY: `FilePoll::init` returned a live pool slot; exclusive here.
-        let poll = unsafe { &mut *poll_ptr };
-        let rc = poll.register_with_fd(
-            ctx.loop_(),
-            Async::PollKind::Readable,
-            Async::posix_event_loop::OneShotFlag::None,
-            fd,
-        );
-        if rc.is_err() {
-            poll.deinit();
-            // SAFETY: FFI; `main_ref` is the live connection ref.
-            unsafe { DNSServiceRefDeallocate(main_ref) };
-            return None;
-        }
-        this.file_poll = NonNull::new(poll_ptr).unwrap();
+        this.file_poll.owner.ptr = (&raw mut *this).cast();
+        this.file_poll
+            .register_with_fd(
+                ctx.loop_(),
+                bun_io::PollKind::Readable,
+                bun_io::posix_event_loop::OneShotFlag::None,
+                fd,
+            )
+            .ok()?;
         SHARED.set(bun_core::heap::into_raw(this));
         Self::current()
     }
@@ -504,8 +496,7 @@ impl SharedConnection {
             return false;
         };
         if self.inflight.is_empty() {
-            let ctx = self.ctx;
-            self.file_poll().enable_keeping_process_alive(ctx);
+            self.file_poll.enable_keeping_process_alive(self.ctx);
         }
         // SAFETY: `owner` is the caller's live request, tracked here until `finish()`.
         let q = unsafe { owner.query() };
@@ -532,14 +523,14 @@ impl SharedConnection {
         // Sent as given: the daemon tries search domains only for a name with no trailing dot.
         let name = hostname.as_ptr().cast::<c_char>();
         let (callback, context) = (owner.reply_callback(), owner.context());
-        let mut sd_refs: FamilyRefs = [ptr::null_mut(); 2];
+        let mut sd_refs = FamilyRefs::default();
         let families = [(PROTOCOL_IPV4, TYPE_A), (PROTOCOL_IPV6, TYPE_AAAA)];
         for (i, (family, rrtype)) in families.into_iter().enumerate() {
             if protocol & family == 0 {
                 continue;
             }
             // ShareConnection requires `sub` to start as a copy of the primary ref.
-            let mut sub: DNSServiceRef = self.main_ref;
+            let mut sub: DNSServiceRef = self.main_ref.0.as_ptr();
             // SAFETY: FFI; `name` is NUL-terminated (copied by dns_sd); `context` is only stored.
             let err = unsafe {
                 match query_record_allowing_failover() {
@@ -568,10 +559,9 @@ impl SharedConnection {
             };
             if err != ERR_NO_ERROR {
                 bun_output::scoped_log!(dns, "DNSServiceQueryRecord failed: {}", err);
-                deallocate_refs(sd_refs);
                 return None;
             }
-            sd_refs[i] = sub;
+            sd_refs[i] = NonNull::new(sub).map(OwnedServiceRef);
         }
         Some(sd_refs)
     }
@@ -596,7 +586,7 @@ impl SharedConnection {
     /// Socket readable: drain every buffered reply (callbacks fire inline), then finish complete queries.
     pub(crate) fn on_readable(this: *mut Self) {
         // SAFETY: `this` is the live connection registered with the FilePoll.
-        let main_ref = unsafe { (*this).main_ref };
+        let main_ref = unsafe { (*this).main_ref.0.as_ptr() };
         // One scope across `finish()` so the microtask drain runs after we let go of `this`.
         let _exit = event_loop_scope();
 
@@ -614,7 +604,7 @@ impl SharedConnection {
                 Self::fail(inf);
             }
             // SAFETY: `detached` was just removed from SHARED and drained.
-            unsafe { Self::destroy(detached) };
+            drop(unsafe { bun_core::heap::take(detached) });
             return;
         }
         let ready = this.take_ready(|q| q.is_ready());
@@ -637,8 +627,7 @@ impl SharedConnection {
             }
         }
         if self.inflight.is_empty() {
-            let ctx = self.ctx;
-            self.file_poll().disable_keeping_process_alive(ctx);
+            self.file_poll.disable_keeping_process_alive(self.ctx);
         }
         ready
     }
@@ -664,7 +653,8 @@ impl SharedConnection {
         }
         let now = bun::timespec::now(bun::TimespecMockMode::ForceRealTime);
         let next = now.add_ms((deadline - now.ms()).max(1));
-        crate::jsc_hooks::timer_all().update(&raw const self.early_out_timer, &next);
+        crate::jsc_hooks::timer_all()
+            .update(OwnedTimer::node(&raw const self.early_out_timer), &next);
         self.early_out_armed_for.set(deadline);
     }
 
@@ -673,13 +663,11 @@ impl SharedConnection {
         // Raw receiver like `on_readable`: `finish()` may re-derive `&mut Self`, so no borrow of `*this` outlives it.
         let _exit = event_loop_scope();
         // SAFETY: `this` is the live connection whose timer fired; each borrow
-        // below is scoped to its statement and ends before `finish()`.
+        // below ends before `finish()`.
         let ready = unsafe {
             // The heap pops without updating state; mark FIRED so a re-arm inserts instead of removing.
-            (*this)
-                .early_out_timer
-                .state
-                .set(EventLoopTimerState::FIRED);
+            let timer = &(*this).early_out_timer;
+            timer.state.set(EventLoopTimerState::FIRED);
             (*this).early_out_armed_for.set(0);
             let now = now_ms();
             let ready = (*this).take_ready(|q| {
@@ -697,27 +685,10 @@ impl SharedConnection {
         }
     }
 
-    /// Free a detached connection. SAFETY: `this` is live, removed from SHARED, `inflight` empty.
-    unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract.
-        let conn = unsafe { bun_core::heap::take(this) };
-        debug_assert!(conn.inflight.is_empty());
-        if conn.early_out_timer.state.get() == EventLoopTimerState::ACTIVE
-            && VirtualMachine::is_loaded()
-        {
-            crate::jsc_hooks::timer_all().remove(&conn.early_out_timer);
-        }
-        // SAFETY: `file_poll` is the live hive slot; `deinit` returns it.
-        unsafe { (*conn.file_poll.as_ptr()).deinit() };
-        // SAFETY: FFI; releases the primary ref (and any remaining subordinates).
-        unsafe { DNSServiceRefDeallocate(conn.main_ref) };
-        drop(conn);
-    }
-
     fn finish(inf: Inflight) {
         // SAFETY: `inf` is a live heap request just removed from `inflight`.
         let q = unsafe { inf.query() };
-        q.deallocate_refs();
+        q.sd_refs = FamilyRefs::default();
         if q.should_retry_unsuppressed() && Self::retry_unsuppressed(inf) {
             return;
         }
@@ -728,7 +699,7 @@ impl SharedConnection {
     fn fail(inf: Inflight) {
         // SAFETY: `inf` is a live heap request just removed from `inflight`.
         let q = unsafe { inf.query() };
-        q.deallocate_refs();
+        q.sd_refs = FamilyRefs::default();
         q.results.clear();
         inf.complete();
     }
@@ -752,8 +723,7 @@ impl SharedConnection {
         );
         q.sd_refs = sd_refs;
         if this.inflight.is_empty() {
-            let ctx = this.ctx;
-            this.file_poll().enable_keeping_process_alive(ctx);
+            this.file_poll.enable_keeping_process_alive(this.ctx);
         }
         this.inflight.push(inf);
         true
@@ -774,7 +744,7 @@ impl SharedConnection {
                 // thread going away is not an answer. Finish it on the work pool.
                 Inflight::Internal(req) => {
                     // SAFETY: `inf` is a live heap request just removed from `inflight`.
-                    unsafe { inf.query() }.deallocate_refs();
+                    unsafe { inf.query() }.sd_refs = FamilyRefs::default();
                     internal::run_on_work_pool(req);
                 }
                 // A dns.lookup() from this thread's script: only this VM waits on it.
@@ -782,7 +752,7 @@ impl SharedConnection {
             }
         }
         // SAFETY: `this` is detached and drained.
-        unsafe { Self::destroy(this) };
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -801,7 +771,7 @@ pub(crate) fn start(this: &Resolver, query: &GetAddrInfo, pending: Query) -> Res
         return Err(pending);
     }
 
-    let Some(shared) = SharedConnection::get(js_event_loop_ctx()) else {
+    let Some(shared) = SharedConnection::get(bun_io::js_vm_ctx()) else {
         return Err(pending);
     };
 

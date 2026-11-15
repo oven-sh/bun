@@ -707,9 +707,7 @@ impl FakeTimers {
         self.from_preload.set(false);
         self.installs.update(|installs| installs.wrapping_add(1));
         self.tick_mode.set(TickMode::Manual);
-        if self.tick_timer.state.get() == EventLoopTimerState::ACTIVE {
-            timer_all().remove(&self.tick_timer);
-        }
+        self.tick_timer.disarm();
     }
 
     /// `global` won't run JS again (`--isolate` swap, VM teardown). `cancel_all_timeout_objects` drains the heap afterwards.
@@ -721,7 +719,7 @@ impl FakeTimers {
         // SAFETY: JS thread; releasing a `Strong` runs no JS.
         unsafe {
             (*self.replaced.as_ptr()).clear();
-            (*self.originals.get()).deinit();
+            *self.originals.get() = Default::default();
             (*self.ticks.get()).clear();
             (*self.drives.as_ptr()).clear();
         }
@@ -1279,7 +1277,7 @@ impl FakeTimers {
                 // Like sinon, reject with this one even if a timer threw earlier.
                 // SAFETY: JS thread; the borrow ends at this statement.
                 if let Some(drive) = AsyncDrive::find(unsafe { &mut *this.drives.as_ptr() }, id) {
-                    drive.thrown.deinit();
+                    drive.thrown = Default::default();
                 }
                 Self::drive_threw(global, id, thrown);
                 Some(Step::Finished)
@@ -1307,15 +1305,12 @@ impl FakeTimers {
 
     #[optimize(size)]
     fn set_tick_mode(mode: TickMode) {
-        let all = timer_all();
-        let this = &all.fake_timers;
+        let this = &timer_all().fake_timers;
         if this.tick_mode.get() == mode {
             return;
         }
         this.tick_mode.set(mode);
-        if this.tick_timer.state.get() == EventLoopTimerState::ACTIVE {
-            all.remove(&this.tick_timer);
-        }
+        this.tick_timer.disarm();
         Self::arm_tick_timer();
         this.post_auto_step();
     }

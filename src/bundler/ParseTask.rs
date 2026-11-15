@@ -135,7 +135,7 @@ pub struct Result<'a> {
     pub(crate) watcher_data: WatcherData,
     /// This is used for native onBeforeParsePlugins to store
     /// a function pointer and context pointer to free the
-    /// returned source code by the plugin.
+    /// returned source code by the plugin. After `value`, which may borrow it.
     pub(crate) external: ExternalFreeFunction,
 }
 impl bun_event_loop::Taskable for Result<'static> {
@@ -144,12 +144,7 @@ impl bun_event_loop::Taskable for Result<'static> {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the box `run_from_thread_pool_impl` (or
         // `ServerComponentParseTask`) leaked.
-        let mut result = unsafe { bun_core::heap::take(this) };
-        // A native plugin's source buffer: `on_parse_task_complete` would have handed this to
-        // the bundle's finalizers. The source may borrow the buffer, so it goes first.
-        let external = core::mem::take(&mut result.external);
-        drop(result);
-        external.call();
+        drop(unsafe { bun_core::heap::take(this) });
     }
     /// A step of the bundle.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
@@ -1533,7 +1528,7 @@ pub mod parse_worker {
 
                 // Always read into the worker arena: it is pinned for the
                 // entire bundle pass (freed only via `pool.deinit()` inside
-                // `deinit_without_freeing_arena`, after `process_files_to_copy`
+                // `BundleV2::drop`, after `process_files_to_copy`
                 // has already deep-copied every additional-file body into its
                 // `OutputFile`). This avoids churning the global allocator with
                 // one `Vec<u8>` per file.
@@ -2147,19 +2142,19 @@ pub mod parse_worker {
                 should_continue_running,
             );
             if count > 0 {
-                if let Some(e) = self.deferred_error {
-                    if let Some(free_user_context) = wrapper.result.free_user_context {
-                        free_user_context(wrapper.result.user_context);
-                    }
+                let ctx = wrapper.result.user_context;
+                let user_context = ExternalFreeFunction {
+                    ctx,
+                    function: wrapper.result.free_user_context.filter(|_| !ctx.is_null()),
+                };
 
+                if let Some(e) = self.deferred_error {
                     return Err(e);
                 }
 
                 // If the plugin sets the `free_user_context` function pointer, it _must_ set the `user_context` pointer.
                 // Otherwise this is just invalid behavior.
-                if wrapper.result.user_context.is_null()
-                    && wrapper.result.free_user_context.is_some()
-                {
+                if ctx.is_null() && wrapper.result.free_user_context.is_some() {
                     let mut msg = Msg {
                     data: bun_ast::Data {
                         location: None,
@@ -2180,28 +2175,12 @@ pub mod parse_worker {
                 }
 
                 if self.log.errors > 0 {
-                    if let Some(free_user_context) = wrapper.result.free_user_context {
-                        free_user_context(wrapper.result.user_context);
-                    }
-
                     return Err(crate::Error::SyntaxError);
                 }
 
                 if !wrapper.result.source_ptr.is_null() {
                     let ptr = wrapper.result.source_ptr;
-                    // `ExternalFreeFunction.function` is `Option<unsafe extern "C" fn>`;
-                    // `OnBeforeParseResult.free_user_context` is `Option<extern "C" fn>` (safe ABI per
-                    // the C header). Coerce safe→unsafe via cast.
-                    let free_fn = wrapper
-                        .result
-                        .free_user_context
-                        .map(|f| f as unsafe extern "C" fn(*mut c_void));
-                    if free_fn.is_some() {
-                        self.task.external_free_function = ExternalFreeFunction {
-                            ctx: wrapper.result.user_context,
-                            function: free_fn,
-                        };
-                    }
+                    self.task.external_free_function = user_context;
                     *from_plugin = true;
                     *self.loader = wrapper.result.loader;
                     // If the plugin called `fetch_source_code` and left the
@@ -2345,7 +2324,7 @@ pub mod parse_worker {
         //
         // Changing from `.contents` to `.fd` will cause a double free.
         // This was the case in the situation where the ParseTask receives its `.contents` from an onLoad plugin, which caused it to be
-        // allocated by `bun.default_allocator` and then freed in `BundleV2.deinit` (and also by `entry.deinit(arena)` below).
+        // allocated by `bun.default_allocator` and then freed in `BundleV2::drop` (and also by `entry.deinit(arena)` below).
         #[cfg(debug_assertions)]
         let debug_original_variant_check: ContentsOrFdTag = task.contents_or_fd.tag();
 
@@ -2706,7 +2685,7 @@ pub mod parse_worker {
                     loader,
                     task_ctx.unique_key,
                     &mut unique_key_for_additional_file,
-                    &task_ctx.linker.has_any_css_locals,
+                    &task_ctx.has_any_css_locals,
                 )
             } else if loader.is_css() {
                 get_empty_css_ast(log, transpiler, opts, bump, source)
@@ -2721,7 +2700,7 @@ pub mod parse_worker {
                 // Error-path cleanup: reset the AST store
                 // unconditionally, and free the owned `entry.contents` only when
                 // it was sourced from `.fd` (the `.contents` variant is borrowed —
-                // freeing it would double-free in `BundleV2.deinit`).
+                // freeing it would double-free in `BundleV2::drop`).
                 #[cfg(debug_assertions)]
                 if task.contents_or_fd.tag() != debug_original_variant_check {
                     panic!(
@@ -2792,9 +2771,7 @@ pub mod parse_worker {
 
     fn run_from_thread_pool_impl(this: &mut ParseTask<'static>) {
         let ctx = this.ctx.expect("ParseTask.ctx unset");
-        let worker: &mut crate::Worker = crate::Worker::get(ctx.get());
-        // `defer worker.unget()` — handled at function exit (scopeguard
-        // would alias the `&mut worker` borrows below).
+        let mut worker = crate::Worker::get(ctx.get());
         scoped_log!(
             ParseTask,
             "ParseTask(0x{:x}, {}) callback",
@@ -2808,7 +2785,7 @@ pub mod parse_worker {
 
         let value: ResultValue = 'value: {
             if matches!(this.stage, ParseTaskStage::NeedsSourceCode) {
-                match get_source_code(this, worker, &mut log) {
+                match get_source_code(this, &mut worker, &mut log) {
                     Ok(entry) => this.stage = ParseTaskStage::NeedsParse(entry),
                     Err(e) => {
                         break 'value ResultValue::Err(ResultError {
@@ -2835,7 +2812,6 @@ pub mod parse_worker {
                     // SAFETY: `pool` is a `NonNull<ThreadPool>` BACKREF live for the
                     // bundle pass.
                     ctx.graph.pool().schedule_inside_thread_pool(this);
-                    worker.unget();
                     return;
                 }
             }
@@ -2852,7 +2828,7 @@ pub mod parse_worker {
                     ParseTaskStage::NeedsParse(e) => e,
                     ParseTaskStage::NeedsSourceCode => unreachable!(),
                 };
-            let parsed = run_with_source_code(this, worker, &mut step, &mut log, &mut entry);
+            let parsed = run_with_source_code(this, &mut worker, &mut step, &mut log, &mut entry);
             this.stage = ParseTaskStage::NeedsParse(entry);
             match parsed {
                 Ok(ast) => {
@@ -2910,20 +2886,10 @@ pub mod parse_worker {
         // `ParseTask` is arena-owned (no Drop); `jsx` may hold owned slices from tsconfig.
         drop(core::mem::take(&mut this.jsx));
 
-        // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
-        // of `linker.r#loop` is centralised in `LinkerContext::any_loop`.
-        //
-        // The loop is effectively non-optional — `BundleV2::init`
-        // always sets `linker.r#loop` before scheduling any ParseTask. Running
-        // `on_complete` inline on the worker thread would violate
+        // Running `on_complete` inline on the worker thread would violate
         // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
         // bundler graph, which is owned by the main/bundler thread).
-        match worker
-            .ctx
-            .linker
-            .any_loop()
-            .expect("BundleV2.linker.loop must be set before scheduling ParseTask")
-        {
+        match worker.ctx.any_loop() {
             bun_event_loop::AnyEventLoop::Js { .. } => {
                 let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(result);
                 let poster = worker
@@ -2952,8 +2918,6 @@ pub mod parse_worker {
                 }
             }
         }
-        // Runs at function exit, i.e. after enqueue.
-        worker.unget();
     }
 
     // The struct-only `dealloc` below skips field Drop, so take the heap-owning

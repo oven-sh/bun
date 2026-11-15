@@ -14,8 +14,6 @@
 
 use bun_collections::VecExt;
 use core::cell::UnsafeCell;
-#[cfg(not(windows))]
-use core::ffi::c_void;
 
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
@@ -1129,11 +1127,8 @@ impl Drop for IOWriter {
         crate::shell_log!("IOWriter(fd={}) deinit", s.fd);
         #[cfg(not(windows))]
         {
-            if matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                s.writer
-                    .handle
-                    .close_impl(None, None::<fn(*mut c_void)>, false);
-            }
+            // The poll goes before its fd.
+            s.writer.handle = bun_io::pipes::PollOrFd::Closed;
         }
         #[cfg(windows)]
         {

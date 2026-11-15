@@ -300,9 +300,7 @@ pub(crate) trait BlobExt {
     /// The Blob's bytes, or `None` for a file- or S3-backed Blob, which has to be read first.
     fn in_memory_view(&self) -> Option<&[u8]>;
     fn set_is_ascii_flag(&self, is_all_ascii: bool);
-    /// # Safety
-    /// `raw_bytes` must be valid for reads for the duration of the call; when
-    /// `LIFETIME == Temporary` it must be a leaked default-allocator `Box<[u8]>`.
+    /// SAFETY: `raw_bytes` is a view of the store backing this blob.
     unsafe fn to_string_with_bytes<const LIFETIME: Lifetime>(
         &self,
         global: &JSGlobalObject,
@@ -310,34 +308,10 @@ pub(crate) trait BlobExt {
     ) -> JsResult<JSValue>;
     fn to_string_transfer(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
     fn to_string(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue>;
-    fn to_json(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue>;
-    /// # Safety
-    /// `raw_bytes` must be valid for reads for the duration of the call; when
-    /// `LIFETIME == Temporary` it must be a leaked default-allocator `Box<[u8]>`.
-    unsafe fn to_json_with_bytes<const LIFETIME: Lifetime>(
-        &self,
-        global: &JSGlobalObject,
-        raw_bytes: *mut [u8],
-    ) -> JsResult<JSValue>;
+    fn to_json(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
+    fn to_json_with_bytes(&self, global: &JSGlobalObject, raw_bytes: &[u8]) -> JsResult<JSValue>;
     fn to_form_data_with_bytes(&self, global: &JSGlobalObject, buf: &[u8]) -> JSValue;
-    /// # Safety
-    /// See [`BlobExt::to_array_buffer_view_with_bytes`].
-    unsafe fn to_array_buffer_with_bytes<const LIFETIME: Lifetime>(
-        &self,
-        global: &JSGlobalObject,
-        buf: *mut [u8],
-    ) -> JsResult<JSValue>;
-    /// # Safety
-    /// See [`BlobExt::to_array_buffer_view_with_bytes`].
-    unsafe fn to_uint8_array_with_bytes<const LIFETIME: Lifetime>(
-        &self,
-        global: &JSGlobalObject,
-        buf: *mut [u8],
-    ) -> JsResult<JSValue>;
-    /// # Safety
-    /// `buf` must be valid for reads (and, for `Share`/`Transfer`, owned by the
-    /// store backing this blob); when `LIFETIME == Temporary` it must be a
-    /// leaked default-allocator `Box<[u8]>` whose ownership transfers to JSC.
+    /// SAFETY: `buf` is a view of the store backing this blob.
     unsafe fn to_array_buffer_view_with_bytes<
         const LIFETIME: Lifetime,
         const TYPED_ARRAY_VIEW: jsc::JSType,
@@ -353,7 +327,7 @@ pub(crate) trait BlobExt {
         cx: &bun_jsc::JsThread<'_>,
         lifetime: Lifetime,
     ) -> JsResult<JSValue>;
-    fn to_form_data(&self, cx: &bun_jsc::JsThread<'_>, _lifetime: Lifetime) -> JsResult<JSValue>;
+    fn to_form_data(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue>;
     fn get<const MOVE: bool, const REQUIRE_ARRAY: bool>(
         global: &JSGlobalObject,
         arg: JSValue,
@@ -405,15 +379,15 @@ impl BlobExt for Blob {
         cx: &bun_jsc::JsThread<'_>,
     ) -> JsResult<JSValue> {
         debug!("doReadFromS3");
-        // Adapt `(b, g, bytes)` → `(b, g, bytes, .clone)`
-        // and route through `to_js_host_call` so the exception scope is asserted.
-        fn wrapped<F: read_file::ReadFileToJs>(
+        /// SAFETY: see [`S3ReadHandler`].
+        unsafe fn wrapped<F: read_file::ReadFileToJs>(
             b: &Blob,
             g: bun_ptr::BackRef<JSGlobalObject>,
             by: *mut [u8],
         ) -> JSValue {
             let g = g.get();
-            jsc::host_fn::to_js_host_call(g, || F::call(b, g, by, Lifetime::Clone))
+            // SAFETY: fn contract. `to_js_host_call` asserts the exception scope.
+            jsc::host_fn::to_js_host_call(g, || unsafe { F::from_store(b, g, by) })
         }
         S3BlobDownloadTask::init(cx, self, wrapped::<F>)
     }
@@ -485,62 +459,26 @@ impl BlobExt for Blob {
             return Ok(());
         }
         if self.is_s3() {
-            struct Task<H> {
-                ctx: Box<H>,
-                blob: Blob, // dupe for store ref + offset/size
-                poll: bun_io::KeepAlive,
-            }
-            impl<H: ReadBytesHandler> Task<H> {
-                fn done(self: Box<Self>, r: ReadBytesResult) -> JsResult<()> {
-                    self.poll.unref(bun_io::js_vm_ctx());
-                    // The braces move the box: the rest of the `Task` is freed here.
-                    let ctx = { self }.ctx;
-                    ctx.on_read_bytes(r)
-                }
-                fn cb(
-                    result: crate::webcore::__s3_client::S3DownloadResult,
-                    opaque_self: *mut c_void,
-                ) -> JsResult<()> {
-                    // SAFETY: `opaque_self` was heap-allocated below.
-                    let t = unsafe { bun_core::heap::take(opaque_self.cast::<Task<H>>()) };
-                    match result {
-                        // `body` is owned by us (simple_request.rs); take the Vec's items as-is.
-                        crate::webcore::__s3_client::S3DownloadResult::Success(response) => {
-                            t.done(ReadBytesResult::Ok(response.body.list))
-                        }
-                        // S3Error has its own JS-error builder; flatten to a
-                        // SystemError so the callback has one shape to handle.
-                        crate::webcore::__s3_client::S3DownloadResult::NotFound(e)
-                        | crate::webcore::__s3_client::S3DownloadResult::Failure(e) => {
-                            // reshaped for borrowck — `t.done` moves
-                            // `t`, so build the SystemError (cloning the path
-                            // out of `t.blob.store`) before the call.
-                            let err = bun_jsc::SystemError {
-                                code: BunString::clone_utf8(e.code),
-                                message: BunString::clone_utf8(e.message),
-                                path: BunString::clone_utf8(
-                                    t.blob.store().and_then(|s| s.get_path()).unwrap_or(b""),
-                                ),
-                                syscall: BunString::static_("fetch"),
-                                ..Default::default()
-                            };
-                            t.done(ReadBytesResult::Err(Box::new(err)))
-                        }
+            let store = self.store().expect("infallible: store present");
+            let (s3, store) = (store.data.as_s3(), store.clone());
+            let callback = Box::new(move |result: S3DownloadResult<'_>| {
+                let result = match result {
+                    // `body` is owned by us (simple_request.rs); take the Vec's items as-is.
+                    S3DownloadResult::Success(response) => ReadBytesResult::Ok(response.body.list),
+                    // Flattened to a SystemError so the callback has one shape to handle.
+                    S3DownloadResult::NotFound(e) | S3DownloadResult::Failure(e) => {
+                        ReadBytesResult::Err(Box::new(bun_jsc::SystemError {
+                            code: BunString::clone_utf8(e.code),
+                            message: BunString::clone_utf8(e.message),
+                            path: BunString::clone_utf8(store.get_path().unwrap_or(b"")),
+                            syscall: BunString::static_("fetch"),
+                            ..Default::default()
+                        }))
                     }
-                }
-            }
-            let t = Box::new(Task::<H> {
-                ctx,
-                blob: self.dupe(),
-                poll: bun_io::KeepAlive::default(),
+                };
+                drop(store);
+                ctx.on_read_bytes(result)
             });
-            t.poll.ref_(bun_io::js_vm_ctx());
-            let s3 = self
-                .store()
-                .expect("infallible: store present")
-                .data
-                .as_s3();
-            let t_ptr = bun_core::heap::into_raw(t).cast::<c_void>();
             if self.offset.get() > 0 || self.size.get() != MAX_SIZE {
                 let len: Option<usize> = if self.size.get() != MAX_SIZE {
                     Some(self.size.get() as usize)
@@ -553,8 +491,7 @@ impl BlobExt for Blob {
                     s3.path(),
                     self.offset.get() as usize,
                     len,
-                    Task::<H>::cb,
-                    t_ptr,
+                    callback,
                     s3.request_payer,
                 )?;
             } else {
@@ -562,8 +499,7 @@ impl BlobExt for Blob {
                     s3.get_credentials(),
                     cx.context(),
                     s3.path(),
-                    Task::<H>::cb,
-                    t_ptr,
+                    callback,
                     s3.request_payer,
                 )?;
             }
@@ -1070,7 +1006,7 @@ impl BlobExt for Blob {
     fn json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let _store = self.store.get().clone();
         let cx = cx.js_thread();
-        JSPromise::wrap(cx.global(), |_| self.to_json(&cx, Lifetime::Share))
+        JSPromise::wrap(cx.global(), |_| self.to_json(&cx))
     }
 
     fn array_buffer(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -1088,7 +1024,7 @@ impl BlobExt for Blob {
     fn form_data(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let _store = self.store.get().clone();
         let cx = cx.js_thread();
-        JSPromise::wrap(cx.global(), |_| self.to_form_data(&cx, Lifetime::Temporary))
+        JSPromise::wrap(cx.global(), |_| self.to_form_data(&cx))
     }
 
     fn get_exists_sync(&self) -> JSValue {
@@ -1251,7 +1187,6 @@ impl BlobExt for Blob {
                 None,
                 aws_options.request_payer,
                 None,
-                core::ptr::null_mut(),
             );
         }
 
@@ -1304,30 +1239,11 @@ impl BlobExt for Blob {
                     }
                 };
 
-                let is_stdout_or_stderr = 'brk: {
-                    if !matches!(pathlike, PathOrFileDescriptor::Fd(_)) {
-                        break 'brk false;
-                    }
-
-                    if let Some(rare) = cx.vm().rare_data.get() {
-                        // `RareData::std{out,err}_store` is `Option<NonNull<c_void>>`
-                        // (type-erased `*Blob.Store`); compare on raw pointer
-                        // identity exactly like the POSIX arm below.
-                        let store_ptr = store.as_ptr().cast::<c_void>();
-                        if rare.stdout_store.get().map(|p| p.as_ptr()) == Some(store_ptr) {
-                            break 'brk true;
-                        }
-                        if rare.stderr_store.get().map(|p| p.as_ptr()) == Some(store_ptr) {
-                            break 'brk true;
-                        }
-                    }
-
-                    if let Some(tag) = fd.stdio_tag() {
-                        matches!(tag, bun_sys::Stdio::StdOut | bun_sys::Stdio::StdErr)
-                    } else {
-                        false
-                    }
-                };
+                let is_stdout_or_stderr = matches!(pathlike, PathOrFileDescriptor::Fd(_))
+                    && matches!(
+                        fd.stdio_tag(),
+                        Some(bun_sys::Stdio::StdOut | bun_sys::Stdio::StdErr)
+                    );
                 let sink = webcore::FileSink::init(
                     fd,
                     jsc::EventLoopHandle::init(
@@ -1491,7 +1407,6 @@ impl BlobExt for Blob {
             use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
             let pathlike = &store.data.as_file().pathlike;
-            let vm = global_this.bun_vm();
             let fd: Fd = match pathlike {
                 PathOrFileDescriptor::Fd(fd) => *fd,
                 PathOrFileDescriptor::Path(p) => {
@@ -1513,24 +1428,11 @@ impl BlobExt for Blob {
                 }
             };
 
-            let is_stdout_or_stderr = 'brk: {
-                if !matches!(pathlike, PathOrFileDescriptor::Fd(_)) {
-                    break 'brk false;
-                }
-                if let Some(rare) = vm.rare_data.get() {
-                    let store_ptr = store.as_ptr().cast::<c_void>();
-                    if rare.stdout_store.get().map(|p| p.as_ptr()) == Some(store_ptr) {
-                        break 'brk true;
-                    }
-                    if rare.stderr_store.get().map(|p| p.as_ptr()) == Some(store_ptr) {
-                        break 'brk true;
-                    }
-                }
-                matches!(
+            let is_stdout_or_stderr = matches!(pathlike, PathOrFileDescriptor::Fd(_))
+                && matches!(
                     fd.stdio_tag(),
-                    Some(bun_core::Stdio::StdOut) | Some(bun_core::Stdio::StdErr)
-                )
-            };
+                    Some(bun_sys::Stdio::StdOut | bun_sys::Stdio::StdErr)
+                );
 
             let sink = webcore::FileSink::init(
                 fd,
@@ -1702,7 +1604,7 @@ impl BlobExt for Blob {
 
     fn get_mime_type_or_content_type(&self) -> Option<MimeType> {
         if self.content_type_was_set.get() {
-            return Some(MimeType::init(self.content_type_slice(), false, None));
+            return Some(MimeType::init(self.content_type_slice()));
         }
         self.store().map(|s| s.mime_type.clone())
     }
@@ -2199,84 +2101,27 @@ impl BlobExt for Blob {
             }
         }
     }
-    /// `raw_bytes` is a raw `*mut [u8]` (not `&[u8]`) so the
-    /// `LIFETIME == Temporary` branch can `heap::take` it with the
-    /// caller's original allocation provenance — going through `&[u8]`
-    /// would narrow to read-only and make the dealloc UB.
-    ///
-    /// # Safety
-    /// `raw_bytes` must be valid for reads for the duration of the call; when
-    /// `LIFETIME == Temporary` it must be a leaked default-allocator `Box<[u8]>`.
+    /// `raw_bytes` is not a `&[u8]`: `Transfer` can free the store before this returns.
     unsafe fn to_string_with_bytes<const LIFETIME: Lifetime>(
         &self,
         global: &JSGlobalObject,
         raw_bytes: *mut [u8],
     ) -> JsResult<JSValue> {
-        // SAFETY: `raw_bytes` is valid for reads for the duration of this call
-        // (either a leaked Box for `Temporary` or a store-backed view otherwise).
-        let raw_slice: &[u8] = unsafe { &*raw_bytes };
-        let (bom, buf) = strings::BOM::detect_and_split(raw_slice);
-
-        if buf.is_empty() {
-            // If all it contained was the bom, we need to free the bytes
-            if LIFETIME == Lifetime::Temporary {
-                // SAFETY: temporary lifetime means raw_bytes is a leaked default-allocator buffer.
-                unsafe { drop(bun_core::heap::take(raw_bytes)) };
-            }
-            return Ok(JSValue::js_empty_string(global));
-        }
-
-        if bom == Some(strings::BOM::Utf16Le) {
-            let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
-            // This branch intentionally does NOT `self.detach()` for
-            // `Lifetime::Transfer`, unlike the toJSON path.
-            return BunString::clone_utf16_bytes(buf).into_js(global);
-        }
-
-        // null == unknown
-        // false == can't be
-        let could_be_all_ascii = self
-            .is_all_ascii()
-            .or_else(|| self.store().and_then(|s| s.is_all_ascii.get()));
-
-        if could_be_all_ascii.is_none() || !could_be_all_ascii.unwrap() {
-            // if to_utf16_alloc returns None, it means there are no non-ASCII characters
-            let converted = match strings::to_utf16_alloc(buf, false, false) {
-                Ok(converted) => converted,
-                Err(_) => {
-                    let err = bun_string_jsc::throw_utf16_transcode_failure(global, buf);
-                    if LIFETIME == Lifetime::Temporary {
-                        // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
-                        unsafe { drop(bun_core::heap::take(raw_bytes)) };
-                    }
-                    return Err(err);
-                }
-            };
-            if let Some(external) = converted {
-                if LIFETIME != Lifetime::Temporary {
-                    self.set_is_ascii_flag(false);
-                }
+        // SAFETY: fn contract.
+        match decode_text::<true>(self, global, unsafe { &*raw_bytes })? {
+            Text::Decoded(value) => Ok(value),
+            Text::Utf16(external) => {
                 if LIFETIME == Lifetime::Transfer {
                     self.detach();
                 }
-                if LIFETIME == Lifetime::Temporary {
-                    // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
-                    unsafe { drop(bun_core::heap::take(raw_bytes)) };
-                }
-                return bun_string_jsc::owned_utf16_into_js(global, external);
+                bun_string_jsc::owned_utf16_into_js(global, external)
             }
-
-            if LIFETIME != Lifetime::Temporary {
-                self.set_is_ascii_flag(true);
-            }
-        }
-
-        match LIFETIME {
-            // strings are immutable
-            // we don't need to clone
-            Lifetime::Clone => {
-                let store = self.store().expect("infallible: store present").clone();
-                // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.
+            Text::Ascii(buf) => {
+                let store = match LIFETIME {
+                    Lifetime::Clone => self.store().cloned(),
+                    Lifetime::Transfer => self.take_store(),
+                };
+                let store = store.expect("infallible: store present");
                 // SAFETY: `into_raw` hands the store's +1 ref to JSC; `Store::external`
                 // is the matching finalizer that consumes `ctx` and the buffer.
                 unsafe {
@@ -2286,46 +2131,6 @@ impl BlobExt for Blob {
                         Store::external,
                     )
                 }
-            }
-            Lifetime::Transfer => {
-                // Cloning the RefPtr<Store> here would bump the
-                // intrusive count by +1 *and* `transfer()` would leak the original
-                // +1, leaving an unmatched ref. Move the existing ref out instead;
-                // `into_raw` then hands that single ref to JSC.
-                let store = self.take_store().expect("transfer with null store");
-                debug_assert!(matches!(store.data, store::Data::Bytes(_)));
-                // SAFETY: `into_raw` hands the store's +1 ref to JSC; `Store::external`
-                // is the matching finalizer that consumes `ctx` and the buffer.
-                unsafe {
-                    EncodedSlice::latin1(buf).external(
-                        global,
-                        store.into_raw().cast::<c_void>(),
-                        Store::external,
-                    )
-                }
-            }
-            Lifetime::Share => {
-                let store = self.store().expect("infallible: store present").clone();
-                // SAFETY: `into_raw` hands the store's +1 ref to JSC; `Store::external`
-                // is the matching finalizer that consumes `ctx` and the buffer.
-                unsafe {
-                    EncodedSlice::latin1(buf).external(
-                        global,
-                        store.into_raw().cast::<c_void>(),
-                        Store::external,
-                    )
-                }
-            }
-            Lifetime::Temporary => {
-                // if there was a UTF-8 BOM, we need to clone the buffer because
-                // external doesn't support this case here yet.
-                if buf.len() != raw_slice.len() {
-                    let out = BunString::clone_latin1(buf);
-                    // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`.
-                    unsafe { drop(bun_core::heap::take(raw_bytes)) };
-                    return out.into_js(global);
-                }
-                EncodedSlice::latin1(buf).to_external_value(global)
             }
         }
     }
@@ -2342,11 +2147,6 @@ impl BlobExt for Blob {
             return self.do_read_from_s3::<ToStringWithBytesFn>(cx);
         }
 
-        // `shared_view_raw` yields a `*mut [u8]` with mutable provenance (via
-        // `RefPtr<Store>::as_ptr`), avoiding a const→mut cast. `to_string_with_bytes`
-        // only ever reads through it (`&*raw_bytes`); the sole write path —
-        // `heap::take` in the `Temporary` arm — is statically unreachable
-        // below.
         let view_ptr = self.shared_view_raw();
         if view_ptr.len() == 0 {
             return Ok(JSValue::js_empty_string(cx.global()));
@@ -2361,104 +2161,31 @@ impl BlobExt for Blob {
             Lifetime::Transfer => unsafe {
                 self.to_string_with_bytes::<{ Lifetime::Transfer }>(cx.global(), view_ptr)
             },
-            // SAFETY: same as `Clone` above.
-            Lifetime::Share => unsafe {
-                self.to_string_with_bytes::<{ Lifetime::Share }>(cx.global(), view_ptr)
-            },
-            // UB guard: `Temporary` would `heap::take(view_ptr)`, but
-            // `view_ptr` points at a store-owned interior slice (not a leaked
-            // `Box<[u8]>`). No caller passes `Temporary` to `to_string`;
-            // the leaked-buffer path calls `to_string_with_bytes` directly.
-            Lifetime::Temporary => {
-                unreachable!("Blob::to_string: store-owned bytes are never Temporary")
-            }
         }
     }
 
-    fn to_json(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue> {
+    fn to_json(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         if self.needs_to_read_file() {
             return Ok(self.do_read_file::<ToJsonWithBytesFn>(cx));
         }
         if self.is_s3() {
             return self.do_read_from_s3::<ToJsonWithBytesFn>(cx);
         }
-
-        // `shared_view_raw` yields a `*mut [u8]` with mutable provenance (via
-        // `RefPtr<Store>::as_ptr`). `to_json_with_bytes` only reads through it for the
-        // non-`Temporary` lifetimes below.
-        let view_ptr = self.shared_view_raw();
-        match lifetime {
-            // SAFETY: `view_ptr` is the store-backed view from `shared_view_raw`;
-            // valid for reads while the store ref is held.
-            Lifetime::Clone => unsafe {
-                self.to_json_with_bytes::<{ Lifetime::Clone }>(cx.global(), view_ptr)
-            },
-            // SAFETY: same as `Clone` above.
-            Lifetime::Transfer => unsafe {
-                self.to_json_with_bytes::<{ Lifetime::Transfer }>(cx.global(), view_ptr)
-            },
-            // SAFETY: same as `Clone` above.
-            Lifetime::Share => unsafe {
-                self.to_json_with_bytes::<{ Lifetime::Share }>(cx.global(), view_ptr)
-            },
-            // UB guard: `Temporary` would `heap::take(view_ptr)`, but
-            // `view_ptr` points at a store-owned interior slice (not a leaked
-            // `Box<[u8]>`). No caller passes `Temporary` to `to_json`; the
-            // leaked-buffer path calls `to_json_with_bytes` directly.
-            Lifetime::Temporary => {
-                unreachable!("Blob::to_json: store-owned bytes are never Temporary")
-            }
-        }
+        self.to_json_with_bytes(cx.global(), self.shared_view())
     }
 
-    /// See [`to_string_with_bytes`] for why `raw_bytes` is `*mut [u8]`.
-    ///
-    /// # Safety
-    /// `raw_bytes` must be valid for reads for the duration of the call; when
-    /// `LIFETIME == Temporary` it must be a leaked default-allocator `Box<[u8]>`.
-    unsafe fn to_json_with_bytes<const LIFETIME: Lifetime>(
-        &self,
-        global: &JSGlobalObject,
-        raw_bytes: *mut [u8],
-    ) -> JsResult<JSValue> {
-        // SAFETY: `raw_bytes` is valid for reads for the duration of this call
-        // (either a leaked Box for `Temporary` or a store-backed view otherwise).
-        let (bom, buf) = strings::BOM::detect_and_split(unsafe { &*raw_bytes });
+    fn to_json_with_bytes(&self, global: &JSGlobalObject, raw_bytes: &[u8]) -> JsResult<JSValue> {
+        let (bom, buf) = strings::BOM::detect_and_split(raw_bytes);
         if buf.is_empty() {
-            if LIFETIME == Lifetime::Temporary {
-                // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
-                unsafe { drop(bun_core::heap::take(raw_bytes)) };
-            }
             return Err(global.throw_value(
                 global.create_syntax_error_instance(format_args!("Unexpected end of JSON input")),
             ));
         }
 
         if bom == Some(strings::BOM::Utf16Le) {
-            let out = BunString::clone_utf16_bytes(buf);
-            // Compute the
-            // result first, then perform the deferred work explicitly — capturing
-            // `&mut self` in a scopeguard closure conflicts with later uses below.
-            let result = out.to_js_by_parse_json(global);
-            if LIFETIME == Lifetime::Temporary {
-                // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`.
-                unsafe { drop(bun_core::heap::take(raw_bytes)) };
-            }
-            if LIFETIME == Lifetime::Transfer {
-                self.detach();
-            }
-            return result;
+            return BunString::clone_utf16_bytes(buf).to_js_by_parse_json(global);
         }
-        // null == unknown
-        // false == can't be
-        let could_be_all_ascii = self
-            .is_all_ascii()
-            .or_else(|| self.store().and_then(|s| s.is_all_ascii.get()));
-        // When a BOM is present `buf` is an interior slice of `raw_bytes`; we must
-        // free the original allocation, not the offset pointer.
-        let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
-
-        if could_be_all_ascii == Some(true) {
+        if could_be_all_ascii(self) == Some(true) {
             return EncodedSlice::latin1(buf).to_json_object(global);
         }
         EncodedSlice::utf8(buf).to_json_object(global)
@@ -2480,42 +2207,7 @@ impl BlobExt for Blob {
         }
     }
 
-    /// # Safety
-    /// See [`BlobExt::to_array_buffer_view_with_bytes`].
-    unsafe fn to_array_buffer_with_bytes<const LIFETIME: Lifetime>(
-        &self,
-        global: &JSGlobalObject,
-        buf: *mut [u8],
-    ) -> JsResult<JSValue> {
-        // SAFETY: forwarded from caller's contract.
-        unsafe {
-            self.to_array_buffer_view_with_bytes::<LIFETIME, { jsc::JSType::ArrayBuffer }>(
-                global, buf,
-            )
-        }
-    }
-
-    /// # Safety
-    /// See [`BlobExt::to_array_buffer_view_with_bytes`].
-    unsafe fn to_uint8_array_with_bytes<const LIFETIME: Lifetime>(
-        &self,
-        global: &JSGlobalObject,
-        buf: *mut [u8],
-    ) -> JsResult<JSValue> {
-        // SAFETY: forwarded from caller's contract.
-        unsafe {
-            self.to_array_buffer_view_with_bytes::<LIFETIME, { jsc::JSType::Uint8Array }>(
-                global, buf,
-            )
-        }
-    }
-
     /// See [`to_string_with_bytes`] for why `buf` is `*mut [u8]`.
-    ///
-    /// # Safety
-    /// `buf` must be valid for reads (and, for `Share`/`Transfer`, owned by the
-    /// store backing this blob); when `LIFETIME == Temporary` it must be a
-    /// leaked default-allocator `Box<[u8]>` whose ownership transfers to JSC.
     unsafe fn to_array_buffer_view_with_bytes<
         const LIFETIME: Lifetime,
         const TYPED_ARRAY_VIEW: jsc::JSType,
@@ -2524,9 +2216,7 @@ impl BlobExt for Blob {
         global: &JSGlobalObject,
         buf: *mut [u8],
     ) -> JsResult<JSValue> {
-        // SAFETY: `buf` is valid for reads for the duration of this call (either a
-        // leaked Box for `Temporary` or a store-backed view otherwise).
-        let buf_len = unsafe { &*buf }.len();
+        let buf_len = buf.len();
         match LIFETIME {
             Lifetime::Clone => {
                 if TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer {
@@ -2575,26 +2265,6 @@ impl BlobExt for Blob {
                 // SAFETY: `Clone` copies into a new JSC allocation; `buf` is only read.
                 jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, unsafe { &*buf })
             }
-            Lifetime::Share => {
-                if buf_len > jsc::virtual_machine::synthetic_allocation_limit()
-                    && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer
-                {
-                    return Err(global.throw_out_of_memory());
-                }
-                let store = self.store().expect("infallible: store present").clone();
-                // SAFETY: `from_bytes` only records ptr+len into the FFI struct; the
-                // pointer is then handed to JSC as an external buffer backing whose
-                // lifetime is the cloned `store` ref above (the deallocator releases
-                // that ref exactly once at GC). No Rust-side `&` to the Store bytes
-                // is live across this reborrow.
-                unsafe {
-                    jsc::ArrayBuffer::from_bytes(&mut *buf, TYPED_ARRAY_VIEW).to_js_with_context(
-                        global,
-                        store.into_raw().cast::<c_void>(),
-                        Some(blob_store_array_buffer_deallocator),
-                    )
-                }
-            }
             Lifetime::Transfer => {
                 if self.store().is_some_and(|s| !s.has_one_ref()) {
                     // SAFETY: same `buf` contract as the caller; the `Clone` arm only reads it.
@@ -2614,7 +2284,7 @@ impl BlobExt for Blob {
                 }
                 // Move the existing +1 out. Cloning then `transfer()` would leak a ref.
                 let store = self.take_store().expect("transfer with null store");
-                // SAFETY: see `Share` arm. After `take()` the store ref is moved
+                // SAFETY: nothing borrows the bytes. After `take()` the store ref is moved
                 // out of `self`, so JSC becomes the sole owner via the deallocator.
                 unsafe {
                     jsc::ArrayBuffer::from_bytes(&mut *buf, TYPED_ARRAY_VIEW).to_js_with_context(
@@ -2623,21 +2293,6 @@ impl BlobExt for Blob {
                         Some(blob_store_array_buffer_deallocator),
                     )
                 }
-            }
-            Lifetime::Temporary => {
-                if buf_len > jsc::virtual_machine::synthetic_allocation_limit()
-                    && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer
-                {
-                    // SAFETY: `Temporary` ⇒ `buf` is a leaked default-allocator `Box<[u8]>`.
-                    unsafe { drop(bun_core::heap::take(buf)) };
-                    return Err(global.throw_out_of_memory());
-                }
-                // SAFETY: `Temporary` ⇒ `buf` is a leaked `Box<[u8]>` we exclusively own;
-                // ownership is transferred to JSC.
-                // `to_js_unchecked`: `to_js`'s heap-region probe would skip the deallocator
-                // for a non-mimalloc buffer, but `Temporary` is always default-allocator.
-                jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW)
-                    .to_js_unchecked(global)
             }
         }
     }
@@ -2658,24 +2313,15 @@ impl BlobExt for Blob {
         lifetime: Lifetime,
     ) -> JsResult<JSValue> {
         if self.needs_to_read_file() {
-            return Ok(match TYPED_ARRAY_VIEW {
-                jsc::JSType::ArrayBuffer => self.do_read_file::<ToArrayBufferWithBytesFn>(cx),
-                _ => self.do_read_file::<ToUint8ArrayWithBytesFn>(cx),
-            });
+            return Ok(self.do_read_file::<ToArrayBufferViewWithBytesFn<TYPED_ARRAY_VIEW>>(cx));
         }
         if self.is_s3() {
-            return match TYPED_ARRAY_VIEW {
-                jsc::JSType::ArrayBuffer => self.do_read_from_s3::<ToArrayBufferWithBytesFn>(cx),
-                _ => self.do_read_from_s3::<ToUint8ArrayWithBytesFn>(cx),
-            };
+            return self.do_read_from_s3::<ToArrayBufferViewWithBytesFn<TYPED_ARRAY_VIEW>>(cx);
         }
 
         // `shared_view_raw` yields a `*mut [u8]` with mutable provenance (via
         // `RefPtr<Store>::as_ptr`). The `Clone` arm only reads (`&*buf`);
-        // `Share`/`Transfer` hand the ptr to JSC as an external ArrayBuffer
-        // backing via FFI and materialize `&mut *buf` to record ptr+len, which
-        // is sound now that the provenance is writable. The `Temporary` arm
-        // (`heap::take`) is statically unreachable below.
+        // `Transfer` hands the ptr to JSC as an ArrayBuffer's writable backing.
         let view_ptr = self.shared_view_raw();
         if view_ptr.len() == 0 {
             return jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(cx.global(), b"");
@@ -2690,31 +2336,16 @@ impl BlobExt for Blob {
                 )
             },
             // SAFETY: same as `Clone` above.
-            Lifetime::Share => unsafe {
-                self.to_array_buffer_view_with_bytes::<{ Lifetime::Share }, TYPED_ARRAY_VIEW>(
-                    cx.global(),
-                    view_ptr,
-                )
-            },
-            // SAFETY: same as `Clone` above.
             Lifetime::Transfer => unsafe {
                 self.to_array_buffer_view_with_bytes::<{ Lifetime::Transfer }, TYPED_ARRAY_VIEW>(
                     cx.global(),
                     view_ptr,
                 )
             },
-            // UB guard: `Temporary` would `heap::take(view_ptr)`, but
-            // `view_ptr` points at a store-owned interior slice (not a leaked
-            // `Box<[u8]>`). No caller passes `Temporary` to
-            // `to_array_buffer_view`; the leaked-buffer path calls
-            // `to_array_buffer_view_with_bytes` directly.
-            Lifetime::Temporary => {
-                unreachable!("Blob::to_array_buffer_view: store-owned bytes are never Temporary")
-            }
         }
     }
 
-    fn to_form_data(&self, cx: &bun_jsc::JsThread<'_>, _lifetime: Lifetime) -> JsResult<JSValue> {
+    fn to_form_data(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         if self.needs_to_read_file() {
             return Ok(self.do_read_file::<ToFormDataWithBytesFn>(cx));
         }
@@ -3173,19 +2804,7 @@ impl BlobExt for Blob {
             PathOrFileDescriptor::Fd(fd) => {
                 if let Some(tag) = fd.stdio_tag() {
                     let vm = global_this.bun_vm();
-                    // `RareData::{stdin,stdout,stderr}()` return the cached
-                    // `webcore::blob::Store` erased to `*mut c_void` (the
-                    // low-tier crate cannot name the high-tier type — see
-                    // `STDIO_BLOB_STORE_CTOR`). Cast back and take a counted ref.
-                    let erased = match tag {
-                        bun_sys::Stdio::StdIn => vm.rare_data().stdin(),
-                        bun_sys::Stdio::StdErr => vm.rare_data().stderr(),
-                        bun_sys::Stdio::StdOut => vm.rare_data().stdout(),
-                    };
-                    // SAFETY: the ctor hook (`__bun_stdio_blob_store_new`)
-                    // returns `Box::<Store>::into_raw` — non-null, live for the
-                    // process lifetime, and laid out as `Store`.
-                    let store = unsafe { RefPtr::init_ref(erased.cast::<Store>()) };
+                    let store = vm.rare_data().stdio_store(tag).clone();
                     return Blob::init_with_store(store, global_this);
                 }
                 PathOrFileDescriptor::Fd(*fd)
@@ -3222,7 +2841,7 @@ use crate::api::archive::Archive;
 use crate::image::Image;
 use crate::node;
 use crate::webcore::s3::client as s3_client;
-use crate::webcore::s3::simple_request::S3UploadResult;
+use crate::webcore::s3::simple_request::{S3DownloadResult, S3UploadResult};
 use crate::webcore::s3_file as S3File;
 use bun_bundler::options_impl::LoaderExt as _;
 use bun_core::string_joiner::StringJoiner;
@@ -3830,10 +3449,6 @@ fn write_file_with_empty_source_to_destination(
     match &destination_store.data {
         store::Data::File(file) => {
             // TODO: make this async
-            // `VirtualMachine::node_fs()` currently returns `*mut c_void`; the
-            // typed `&mut NodeFS` accessor isn't wired yet, so use a fresh
-            // `NodeFS` (it carries no per-call state for
-            // `truncate`/`mkdir_recursive`).
             let mut node_fs = node::fs::NodeFS::default();
             let mut result = node_fs.truncate(
                 &node::fs::args::Truncate {
@@ -3937,36 +3552,10 @@ fn write_file_with_empty_source_to_destination(
                     }
                 };
 
-            struct Wrapper {
-                promise: jsc::JSPromiseStrong,
-                store: RefPtr<Store>,
-                global: bun_ptr::BackRef<JSGlobalObject>,
-            }
-            impl Wrapper {
-                fn resolve(result: S3UploadResult, opaque_this: *mut c_void) -> JsResult<()> {
-                    // SAFETY: opaque_this was heap-allocated in the caller below.
-                    let mut this = unsafe { bun_core::heap::take(opaque_this.cast::<Wrapper>()) };
-                    let global = this.global.get();
-                    match result {
-                        S3UploadResult::Success => {
-                            this.promise.resolve(global, JSValue::js_number(0.0))?
-                        }
-                        S3UploadResult::Failure(err) => {
-                            let err_js = s3_client::error_jsc::s3_error_to_js_with_async_stack(
-                                &err,
-                                global,
-                                this.store.get_path(),
-                                this.promise.get(),
-                            );
-                            this.promise.reject(global, Ok(err_js))?;
-                        }
-                    }
-                    Ok(())
-                }
-            }
-
-            let promise = jsc::JSPromiseStrong::init(cx.global());
+            let mut promise = jsc::JSPromiseStrong::init(cx.global());
             let promise_value = promise.value();
+            let store = destination_store.clone();
+            let global = jsc::GlobalRef::from(cx.global());
             s3_client::upload(
                 &aws_options.credentials,
                 cx.context(),
@@ -3978,13 +3567,18 @@ fn write_file_with_empty_source_to_destination(
                 aws_options.acl,
                 aws_options.storage_class,
                 aws_options.request_payer,
-                Wrapper::resolve,
-                bun_core::heap::into_raw(Box::new(Wrapper {
-                    promise,
-                    store: destination_store.clone(),
-                    global: bun_ptr::BackRef::new(cx.global()),
-                }))
-                .cast::<c_void>(),
+                Box::new(move |result| match result {
+                    S3UploadResult::Success => promise.resolve(&global, JSValue::js_number(0.0)),
+                    S3UploadResult::Failure(err) => {
+                        let err_js = s3_client::error_jsc::s3_error_to_js_with_async_stack(
+                            &err,
+                            &global,
+                            store.get_path(),
+                            promise.get(),
+                        );
+                        promise.reject(&global, Ok(err_js))
+                    }
+                }),
             )?;
             return Ok(promise_value);
         }
@@ -4158,7 +3752,6 @@ pub(crate) fn write_file_with_source_destination(
                             None,
                             aws_options.request_payer,
                             None,
-                            core::ptr::null_mut(),
                         );
                     } else {
                         return Ok(JSPromise::rejected_promise(
@@ -4170,43 +3763,10 @@ pub(crate) fn write_file_with_source_destination(
                         .to_js());
                     }
                 } else {
-                    struct Wrapper {
-                        store: RefPtr<Store>,
-                        promise: jsc::JSPromiseStrong,
-                        global: bun_ptr::BackRef<JSGlobalObject>,
-                    }
-                    impl Wrapper {
-                        fn resolve(
-                            result: S3UploadResult,
-                            opaque_self: *mut c_void,
-                        ) -> JsResult<()> {
-                            // SAFETY: opaque_self is the heap::alloc(Wrapper) we passed to S3::upload below.
-                            let mut this =
-                                unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
-                            let global = this.global.get();
-                            match result {
-                                S3UploadResult::Success => {
-                                    this.promise.resolve(
-                                        global,
-                                        JSValue::js_number(this.store.data.as_bytes().len() as f64),
-                                    )?;
-                                }
-                                S3UploadResult::Failure(err) => {
-                                    let err_js =
-                                        s3_client::error_jsc::s3_error_to_js_with_async_stack(
-                                            &err,
-                                            global,
-                                            this.store.get_path(),
-                                            this.promise.get(),
-                                        );
-                                    this.promise.reject(global, Ok(err_js))?;
-                                }
-                            }
-                            Ok(())
-                        }
-                    }
-                    let promise = jsc::JSPromiseStrong::init(cx.global());
+                    let mut promise = jsc::JSPromiseStrong::init(cx.global());
                     let promise_value = promise.value();
+                    let store = source_store.clone();
+                    let global = jsc::GlobalRef::from(cx.global());
                     s3_client::upload(
                         &aws_options.credentials,
                         cx.context(),
@@ -4218,13 +3778,21 @@ pub(crate) fn write_file_with_source_destination(
                         aws_options.acl,
                         aws_options.storage_class,
                         aws_options.request_payer,
-                        Wrapper::resolve,
-                        bun_core::heap::into_raw(Box::new(Wrapper {
-                            store: source_store.clone(),
-                            promise,
-                            global: bun_ptr::BackRef::new(cx.global()),
-                        }))
-                        .cast::<c_void>(),
+                        Box::new(move |result| match result {
+                            S3UploadResult::Success => promise.resolve(
+                                &global,
+                                JSValue::js_number(store.data.as_bytes().len() as f64),
+                            ),
+                            S3UploadResult::Failure(err) => {
+                                let err_js = s3_client::error_jsc::s3_error_to_js_with_async_stack(
+                                    &err,
+                                    &global,
+                                    store.get_path(),
+                                    promise.get(),
+                                );
+                                promise.reject(&global, Ok(err_js))
+                            }
+                        }),
                     )?;
                     return Ok(promise_value);
                 }
@@ -4257,7 +3825,6 @@ pub(crate) fn write_file_with_source_destination(
                         None,
                         aws_options.request_payer,
                         None,
-                        core::ptr::null_mut(),
                     );
                 } else {
                     return Ok(JSPromise::rejected_promise(
@@ -4446,7 +4013,7 @@ pub(crate) fn write_file_internal(
     };
 
     // TODO: implement a writev() fast path
-    let source_blob: Blob = 'brk: {
+    let mut source_blob: Blob = 'brk: {
         // `Response` and `Request` both expose `get_body_value()` /
         // `get_body_readable_stream()`; one helper takes the
         // body-value pointer and a `get_stream` closure.
@@ -4550,7 +4117,6 @@ pub(crate) fn write_file_internal(
                                 None,
                                 aws_options.request_payer,
                                 None,
-                                core::ptr::null_mut(),
                             )?));
                         }
                         return Err(cx.global().throw_invalid_arguments(format_args!(
@@ -4672,10 +4238,8 @@ pub(crate) fn write_file_internal(
 
         break 'brk Blob::get::<false, false>(cx.global(), data)?;
     };
-    // Detach the source blob on scope exit.
-    let mut source_blob = scopeguard::guard(source_blob, |b| b.detach());
 
-    write_file_with_source_destination(cx, &mut *source_blob, &mut destination_blob, &options)
+    write_file_with_source_destination(cx, &mut source_blob, &mut destination_blob, &options)
 }
 
 fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult<()> {
@@ -5190,25 +4754,20 @@ struct S3BlobDownloadTask {
     /// the borrow detaches from `&self` (Copy) for use across `&mut self` calls.
     pub global_this: bun_ptr::BackRef<JSGlobalObject>,
     pub(crate) promise: jsc::JSPromiseStrong,
-    pub poll_ref: bun_io::KeepAlive,
     pub(crate) handler: S3ReadHandler,
 }
 
-/// The bytes are `by` of [`read_file::ReadFileToJs::call`] for `Lifetime::Clone`.
-type S3ReadHandler = fn(&Blob, bun_ptr::BackRef<JSGlobalObject>, *mut [u8]) -> JSValue;
+/// SAFETY: as [`read_file::ReadFileToJs::from_store`].
+type S3ReadHandler = unsafe fn(&Blob, bun_ptr::BackRef<JSGlobalObject>, *mut [u8]) -> JSValue;
 
 impl S3BlobDownloadTask {
-    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
-    pub(crate) fn on_s3_download_resolved(
-        result: crate::webcore::__s3_client::S3DownloadResult,
-        mut this: Box<S3BlobDownloadTask>,
-    ) -> JsResult<()> {
+    fn on_s3_download_resolved(this: &mut Self, result: S3DownloadResult) -> JsResult<()> {
         // Copy the `BackRef` out so the `&JSGlobalObject` borrow is detached
         // from `this` (it must coexist with `&mut this` calls below).
         let global_ref = this.global_this;
         let global = global_ref.get();
         match result {
-            crate::webcore::__s3_client::S3DownloadResult::Success(response) => {
+            S3DownloadResult::Success(response) => {
                 // Move the downloaded body into a Blob store so its lifetime is
                 // tied to the Blob/JS view and freed via the store's finalizer.
                 let store = Store::init(response.body.list);
@@ -5221,12 +4780,12 @@ impl S3BlobDownloadTask {
                     this.blob.size.set(bytes.len() as SizeType);
                 }
                 let value = JSPromise::wrap(global, |_g| {
-                    Ok((this.handler)(&this.blob, global_ref, bytes))
+                    // SAFETY: `bytes` is the store set above.
+                    Ok(unsafe { (this.handler)(&this.blob, global_ref, bytes) })
                 })?;
                 this.promise.resolve(global, value)?;
             }
-            crate::webcore::__s3_client::S3DownloadResult::NotFound(err)
-            | crate::webcore::__s3_client::S3DownloadResult::Failure(err) => {
+            S3DownloadResult::NotFound(err) | S3DownloadResult::Failure(err) => {
                 let path = this.blob.store().and_then(|s| s.get_path());
                 let promise = this.promise.get();
                 let value = crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack(
@@ -5246,31 +4805,22 @@ impl S3BlobDownloadTask {
         // The callback may read this.blob.content_type, which is heap-owned by the
         // source JS Blob and freed on finalize(). Take an owning dupe so the task
         // outliving the source can't dangle.
-        let this = Box::new(S3BlobDownloadTask {
+        let mut this = S3BlobDownloadTask {
             global_this: bun_ptr::BackRef::new(cx.global()),
             blob: Blob::dupe(blob),
             promise: jsc::JSPromiseStrong::init(cx.global()),
-            poll_ref: bun_io::KeepAlive::default(),
             handler,
-        });
-        this.poll_ref.ref_(bun_io::js_vm_ctx());
+        };
         let promise = this.promise.value();
-        let this = bun_core::heap::into_raw(this);
+        let callback = Box::new(move |result: S3DownloadResult<'_>| {
+            Self::on_s3_download_resolved(&mut this, result)
+        });
         let store::Data::S3(s3_store) = &blob.store().expect("infallible: store present").data
         else {
             unreachable!("S3BlobDownloadTask::init on non-S3 blob")
         };
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
-
-        fn s3_cb(
-            result: crate::webcore::__s3_client::S3DownloadResult<'_>,
-            ctx: *mut c_void,
-        ) -> JsResult<()> {
-            // SAFETY: `ctx` is the box leaked in `init()`; the download callback fires once.
-            let task = unsafe { bun_core::heap::take(ctx.cast::<S3BlobDownloadTask>()) };
-            S3BlobDownloadTask::on_s3_download_resolved(result, task)
-        }
 
         if blob.offset.get() > 0 {
             let len: Option<usize> = if blob.size.get() != MAX_SIZE {
@@ -5285,8 +4835,7 @@ impl S3BlobDownloadTask {
                 path,
                 offset,
                 len,
-                s3_cb,
-                this.cast::<c_void>(),
+                callback,
                 s3_store.request_payer,
             )?;
         } else if blob.size.get() == MAX_SIZE {
@@ -5294,8 +4843,7 @@ impl S3BlobDownloadTask {
                 credentials,
                 cx.context(),
                 path,
-                s3_cb,
-                this.cast::<c_void>(),
+                callback,
                 s3_store.request_payer,
             )?;
         } else {
@@ -5307,19 +4855,11 @@ impl S3BlobDownloadTask {
                 path,
                 offset,
                 Some(len),
-                s3_cb,
-                this.cast::<c_void>(),
+                callback,
                 s3_store.request_payer,
             )?;
         }
         Ok(promise)
-    }
-}
-
-impl Drop for S3BlobDownloadTask {
-    fn drop(&mut self) {
-        self.poll_ref.unref(bun_io::js_vm_ctx());
-        // promise: Drop handles deinit.
     }
 }
 
@@ -5573,91 +5113,100 @@ pub(crate) fn store_yields_bytes_once(store: &RefPtr<Store>) -> bool {
 // toStringWithBytes / toString / toJSON / toFormData / toArrayBuffer{View}
 // ──────────────────────────────────────────────────────────────────────────
 
-/// RAII owner for a leaked `Box<[u8]>` passed across the
-/// `to_*_with_bytes::<Lifetime::Temporary>` boundary as `*mut [u8]`. Stores
-/// the raw pointer and reconstructs/drops the `Box` only at scope end so
-/// interior `&[u8]` borrows of the same allocation remain valid until then
-/// (constructing the `Box` eagerly would assert uniqueness and invalidate
-/// them under Stacked Borrows).
-struct TemporaryBytes(*mut [u8]);
-impl Drop for TemporaryBytes {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: only constructed when `LIFETIME == Temporary`, where the
-        // caller passed ownership of a leaked default-allocator `Box<[u8]>`.
-        unsafe { drop(bun_core::heap::take(self.0)) };
+/// `None`: unknown.
+fn could_be_all_ascii(blob: &Blob) -> Option<bool> {
+    blob.is_all_ascii()
+        .or_else(|| blob.store().and_then(|s| s.is_all_ascii.get()))
+}
+
+enum Text<'a> {
+    Decoded(JSValue),
+    Utf16(Vec<u16>),
+    /// Without its BOM.
+    Ascii(&'a [u8]),
+}
+
+/// `IN_STORE`: what the scan finds holds for the next read too.
+fn decode_text<'a, const IN_STORE: bool>(
+    blob: &Blob,
+    global: &JSGlobalObject,
+    raw_bytes: &'a [u8],
+) -> JsResult<Text<'a>> {
+    let (bom, buf) = strings::BOM::detect_and_split(raw_bytes);
+    if buf.is_empty() {
+        return Ok(Text::Decoded(JSValue::js_empty_string(global)));
     }
+    if bom == Some(strings::BOM::Utf16Le) {
+        let string = BunString::clone_utf16_bytes(buf);
+        return string.into_js(global).map(Text::Decoded);
+    }
+    if could_be_all_ascii(blob) == Some(true) {
+        return Ok(Text::Ascii(buf));
+    }
+    let converted = strings::to_utf16_alloc(buf, false, false)
+        .map_err(|_| bun_string_jsc::throw_utf16_transcode_failure(global, buf))?;
+    if IN_STORE {
+        blob.set_is_ascii_flag(converted.is_none());
+    }
+    Ok(converted.map_or(Text::Ascii(buf), Text::Utf16))
 }
 
 // Marker types for static fn dispatch through do_read_file/do_read_from_s3.
 // Each implements `ReadFileToJs` so a plain fn-pointer monomorphizes per `*WithBytes` body.
 pub(crate) struct ToStringWithBytesFn;
 pub(crate) struct ToJsonWithBytesFn;
-pub(crate) struct ToArrayBufferWithBytesFn;
-pub(crate) struct ToUint8ArrayWithBytesFn;
+pub(crate) struct ToArrayBufferViewWithBytesFn<const TYPED_ARRAY_VIEW: jsc::JSType>;
 pub(crate) struct ToFormDataWithBytesFn;
 
 impl read_file::ReadFileToJs for ToStringWithBytesFn {
-    fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
-        // SAFETY: `by` upholds the `ReadFileToJs::call` contract — a leaked
-        // `Box<[u8]>` for `Temporary`, store-backed otherwise.
-        unsafe {
-            match l {
-                Lifetime::Clone => b.to_string_with_bytes::<{ Lifetime::Clone }>(g, by),
-                Lifetime::Temporary => b.to_string_with_bytes::<{ Lifetime::Temporary }>(g, by),
-                Lifetime::Share => b.to_string_with_bytes::<{ Lifetime::Share }>(g, by),
-                Lifetime::Transfer => b.to_string_with_bytes::<{ Lifetime::Transfer }>(g, by),
+    fn from_owned(b: &Blob, g: &JSGlobalObject, by: Box<[u8]>) -> JsResult<JSValue> {
+        match decode_text::<false>(b, g, &by)? {
+            Text::Decoded(value) => Ok(value),
+            Text::Utf16(external) => {
+                drop(by);
+                bun_string_jsc::owned_utf16_into_js(g, external)
             }
+            // An external string can't start past a BOM.
+            Text::Ascii(buf) if buf.len() != by.len() => BunString::clone_latin1(buf).into_js(g),
+            Text::Ascii(_) => bun_string_jsc::owned_latin1_into_js(g, by.into_vec()),
         }
+    }
+    unsafe fn from_store(b: &Blob, g: &JSGlobalObject, by: *mut [u8]) -> JsResult<JSValue> {
+        // SAFETY: fn contract.
+        unsafe { b.to_string_with_bytes::<{ Lifetime::Clone }>(g, by) }
     }
 }
 impl read_file::ReadFileToJs for ToJsonWithBytesFn {
-    fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
-        // SAFETY: see `ToStringWithBytesFn::call`.
-        unsafe {
-            match l {
-                Lifetime::Clone => b.to_json_with_bytes::<{ Lifetime::Clone }>(g, by),
-                Lifetime::Temporary => b.to_json_with_bytes::<{ Lifetime::Temporary }>(g, by),
-                Lifetime::Share => b.to_json_with_bytes::<{ Lifetime::Share }>(g, by),
-                Lifetime::Transfer => b.to_json_with_bytes::<{ Lifetime::Transfer }>(g, by),
-            }
-        }
+    fn from_owned(b: &Blob, g: &JSGlobalObject, by: Box<[u8]>) -> JsResult<JSValue> {
+        b.to_json_with_bytes(g, &by)
+    }
+    unsafe fn from_store(b: &Blob, g: &JSGlobalObject, by: *mut [u8]) -> JsResult<JSValue> {
+        // SAFETY: fn contract.
+        b.to_json_with_bytes(g, unsafe { &*by })
     }
 }
-impl read_file::ReadFileToJs for ToArrayBufferWithBytesFn {
-    fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
-        // SAFETY: see `ToStringWithBytesFn::call`.
-        unsafe {
-            match l {
-                Lifetime::Clone => b.to_array_buffer_with_bytes::<{ Lifetime::Clone }>(g, by),
-                Lifetime::Temporary => {
-                    b.to_array_buffer_with_bytes::<{ Lifetime::Temporary }>(g, by)
-                }
-                Lifetime::Share => b.to_array_buffer_with_bytes::<{ Lifetime::Share }>(g, by),
-                Lifetime::Transfer => b.to_array_buffer_with_bytes::<{ Lifetime::Transfer }>(g, by),
-            }
+impl<const TYPED_ARRAY_VIEW: jsc::JSType> read_file::ReadFileToJs
+    for ToArrayBufferViewWithBytesFn<TYPED_ARRAY_VIEW>
+{
+    fn from_owned(_: &Blob, g: &JSGlobalObject, by: Box<[u8]>) -> JsResult<JSValue> {
+        if by.len() > jsc::virtual_machine::synthetic_allocation_limit()
+            && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer
+        {
+            return Err(g.throw_out_of_memory());
         }
+        jsc::ArrayBuffer::from_owned_bytes(by, TYPED_ARRAY_VIEW).to_js_unchecked(g)
     }
-}
-impl read_file::ReadFileToJs for ToUint8ArrayWithBytesFn {
-    fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
-        // SAFETY: see `ToStringWithBytesFn::call`.
-        unsafe {
-            match l {
-                Lifetime::Clone => b.to_uint8_array_with_bytes::<{ Lifetime::Clone }>(g, by),
-                Lifetime::Temporary => {
-                    b.to_uint8_array_with_bytes::<{ Lifetime::Temporary }>(g, by)
-                }
-                Lifetime::Share => b.to_uint8_array_with_bytes::<{ Lifetime::Share }>(g, by),
-                Lifetime::Transfer => b.to_uint8_array_with_bytes::<{ Lifetime::Transfer }>(g, by),
-            }
-        }
+    unsafe fn from_store(b: &Blob, g: &JSGlobalObject, by: *mut [u8]) -> JsResult<JSValue> {
+        // SAFETY: fn contract.
+        unsafe { b.to_array_buffer_view_with_bytes::<{ Lifetime::Clone }, TYPED_ARRAY_VIEW>(g, by) }
     }
 }
 impl read_file::ReadFileToJs for ToFormDataWithBytesFn {
-    fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
-        let _free = (l == Lifetime::Temporary).then(|| TemporaryBytes(by));
-        // SAFETY: `by` is valid for reads per the `ReadFileToJs::call` contract.
+    fn from_owned(b: &Blob, g: &JSGlobalObject, by: Box<[u8]>) -> JsResult<JSValue> {
+        Ok(b.to_form_data_with_bytes(g, &by))
+    }
+    unsafe fn from_store(b: &Blob, g: &JSGlobalObject, by: *mut [u8]) -> JsResult<JSValue> {
+        // SAFETY: fn contract.
         Ok(b.to_form_data_with_bytes(g, unsafe { &*by }))
     }
 }
@@ -5824,7 +5373,7 @@ impl Any {
                 }
                 self.to_array_buffer_transfer(cx)
             }
-            streams::BufferActionTag::Json => self.to_json(cx, Lifetime::Share),
+            streams::BufferActionTag::Json => self.to_json(cx),
         }
     }
 
@@ -5867,16 +5416,12 @@ impl Any {
         }
     }
 
-    pub(crate) fn to_json(
-        &mut self,
-        cx: &bun_jsc::JsThread<'_>,
-        lifetime: Lifetime,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn to_json(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         if self.is_null_without_parsing() {
             return Ok(JSValue::NULL);
         }
         match self {
-            Any::Blob(b) => b.to_json(cx, lifetime),
+            Any::Blob(b) => b.to_json(cx),
             Any::InternalBlob(ib) => {
                 let str = ib.to_json(cx.global());
                 // the GC will collect the string
@@ -5885,10 +5430,6 @@ impl Any {
             }
             Any::WTFStringImpl(_) => self.take_string().to_js_by_parse_json(cx.global()),
         }
-    }
-
-    pub(crate) fn to_json_share(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
-        self.to_json(cx, Lifetime::Share)
     }
 
     pub(crate) fn to_string_transfer(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
@@ -5977,7 +5518,7 @@ impl Any {
             Any::Blob(b) => b.to_array_buffer_view::<TYPED_ARRAY_VIEW>(cx, lifetime),
             Any::InternalBlob(ib) => {
                 // Ownership transfers to JSC via the default-allocator path.
-                let bytes: &mut [u8] = ib.to_owned_slice().leak();
+                let bytes = ib.to_owned_slice();
                 *self = Any::Blob(Blob::default());
                 jsc::ArrayBuffer::from_default_allocator(cx.global(), TYPED_ARRAY_VIEW, bytes)
             }
@@ -5986,7 +5527,7 @@ impl Any {
 
                 let out_bytes = str.to_utf8();
                 if out_bytes.is_owned() {
-                    let owned: &mut [u8] = out_bytes.into_vec().leak();
+                    let owned = out_bytes.into_vec();
                     return jsc::ArrayBuffer::from_default_allocator(
                         cx.global(),
                         TYPED_ARRAY_VIEW,

@@ -10,7 +10,6 @@ use scopeguard::ScopeGuard;
 use crate::Error;
 #[cfg(windows)]
 use crate::node::types::PathLikeExt as _;
-use crate::webcore::Lifetime;
 use crate::webcore::blob::store::{Data, File as FileStore};
 use crate::webcore::blob::{Blob, MAX_SIZE, SizeType, Store};
 #[cfg(not(windows))]
@@ -23,9 +22,6 @@ use bun_core::String as BunString;
 use bun_io::IntrusiveUvFs as _;
 #[cfg(not(windows))]
 use bun_io::{self as io, FileAction};
-#[cfg(windows)]
-// `bun_jsc::EventLoop` is the *module*; the struct is one level deeper.
-use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SystemError,
 };
@@ -60,11 +56,9 @@ macro_rules! log {
 /// `F` provides the callback that converts the read bytes to a JSValue.
 /// Modelled as a trait so each instantiation monomorphizes.
 pub(crate) trait ReadFileToJs {
-    /// `by` carries the caller's allocation provenance unchanged:
-    /// `Lifetime::Temporary` ⇒ a `Box::<[u8]>::into_raw` the callee MUST take
-    /// ownership of (every `to_*_with_bytes::<Temporary>` arm reclaims it);
-    /// otherwise a borrow valid for the call.
-    fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], lifetime: Lifetime) -> JsResult<JSValue>;
+    fn from_owned(b: &Blob, g: &JSGlobalObject, by: Box<[u8]>) -> JsResult<JSValue>;
+    /// SAFETY: `by` is a view of the store backing `b`.
+    unsafe fn from_store(b: &Blob, g: &JSGlobalObject, by: *mut [u8]) -> JsResult<JSValue>;
 }
 
 pub(crate) struct NewReadFileHandler<F: ReadFileToJs> {
@@ -112,15 +106,8 @@ impl<F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<F> {
                 }
                 // The `#[track_caller]` `to_js_host_call` inside `AnyPromise::wrap`
                 // provides the source-location/exception-scope behaviour.
-                AnyPromise::Normal(promise).wrap(global_this, move |g| {
-                    F::call(
-                        &blob,
-                        g,
-                        // Leaked only here: `wrap` does not call this for a graph that was disposed.
-                        bun_core::heap::into_raw(bytes),
-                        Lifetime::Temporary,
-                    )
-                })?;
+                AnyPromise::Normal(promise)
+                    .wrap(global_this, move |g| F::from_owned(&blob, g, bytes))?;
             }
             ReadFileResultType::Err(err) => {
                 let val = err.to_error_instance_with_async_stack(global_this, promise);
@@ -158,7 +145,6 @@ impl PendingReadFileCompletion {
 unsafe impl bun_jsc::job::JsAffine for PendingReadFileCompletion {}
 
 pub(crate) struct ReadFileRead {
-    /// Not a `Vec`: `to_*_with_bytes::<Temporary>` reclaims it from `(ptr, len)` alone.
     pub(crate) buf: Box<[u8]>,
 }
 
@@ -837,7 +823,7 @@ impl ReadFile {
 #[cfg(windows)]
 pub(crate) struct ReadFileUV {
     pub(crate) loop_: *mut libuv::uv_loop_t,
-    pub(crate) event_loop: &'static EventLoop,
+    _keep_alive: bun_io::JsKeepAlive,
     pub(crate) file_store: FileStore,
     pub(crate) store: RefPtr<Store>,
     pub offset: SizeType,
@@ -866,14 +852,11 @@ impl ReadFileUV {
         cx: &bun_jsc::JsThread<'_>,
     ) {
         log!("ReadFileUV.start");
-        let event_loop = cx.global().bun_vm().event_loop();
         let store = blob.store().expect("infallible: store present").clone();
         let file_store = store.data.as_file().clone();
         let mut this = Box::new(ReadFileUV {
-            // Projected through the helper to avoid materializing a
-            // `&VirtualMachine`.
-            loop_: event_loop.uv_loop().cast(),
-            event_loop,
+            loop_: cx.global().bun_vm().event_loop().uv_loop().cast(),
+            _keep_alive: bun_io::JsKeepAlive::active(),
             file_store,
             store, // store.ref() — Arc clone owned here
             offset: blob.offset.get(),
@@ -887,8 +870,6 @@ impl ReadFileUV {
             context: cx.context().id(),
             req: bun_core::ffi::zeroed(),
         });
-        // Keep the event loop alive while the async operation is pending
-        event_loop.ref_keep_alive();
         // A request that libuv refuses completes inside this call: the checkpoint is the caller's.
         let _caller =
             jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
@@ -950,7 +931,6 @@ impl ReadFileUV {
 
     fn finalize(mut self: Box<Self>) {
         log!("ReadFileUV.finalize");
-        let event_loop = self.event_loop;
 
         let completion = self.completion.take().expect("a ReadFileUV completes once");
         let vm = jsc::virtual_machine::VirtualMachine::get();
@@ -965,13 +945,11 @@ impl ReadFileUV {
         };
 
         // The completion must run BEFORE the cleanup below (store deref /
-        // box drop / event_loop.unref) — it may inspect store. A libuv callback returns void: an
+        // box drop / keep-alive) — it may inspect store. A libuv callback returns void: an
         // exception the JS side left pending is reported here (a termination just stands down).
         crate::dispatch::fold(completion.complete(result));
 
         drop(self);
-        // Release the event loop reference now that we're done
-        event_loop.unref_keep_alive();
         log!("ReadFileUV.finalize destroy");
     }
 

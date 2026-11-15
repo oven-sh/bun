@@ -15,8 +15,7 @@ use bun_bundler::transpiler::{self as transpiler, AlreadyBundled, ParseOptions, 
 use bun_collections::HiveArrayFallback;
 use bun_core::{MutableString, String, strings};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
-use bun_io::posix_event_loop::get_vm_ctx;
-use bun_io::{AllocatorType, KeepAlive};
+use bun_io::JsKeepAlive;
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter};
 use bun_paths;
 use bun_ptr::BackRef;
@@ -24,7 +23,7 @@ use bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
-use bun_sys::{self, Dir, Fd, FdExt as _, File, OpenDirOptions};
+use bun_sys::{self, Dir, Fd, File, OpenDirOptions};
 use bun_threading::Guarded;
 use bun_threading::unbounded_queue::{self, UnboundedQueue};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
@@ -245,12 +244,7 @@ impl RuntimeTranspilerStore {
                 break;
             }
             // SAFETY: a live job popped from the intrusive queue; see fn doc.
-            unsafe {
-                (*job).promise.deinit();
-                (*job).module_loader.deinit();
-                (*job).reset_for_pool();
-                self.store.put(job);
-            }
+            unsafe { self.store.put(job) };
         }
     }
 
@@ -362,7 +356,7 @@ impl RuntimeTranspilerStore {
                 } else {
                     StrongOptional::create(module_loader, global_object)
                 },
-                poll_ref: KeepAlive::default(),
+                _keep_alive: JsKeepAlive::active(),
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
                 has_plugins: global_object.has_plugins(),
@@ -424,7 +418,7 @@ pub struct TranspilerJob {
     /// pushes to are all VM-owned, and the VM's teardown waits for the ticket.
     pub(crate) ticket: Option<crate::Ticket>,
     pub global_this: BackRef<JSGlobalObject>,
-    pub(crate) poll_ref: KeepAlive,
+    _keep_alive: JsKeepAlive,
     pub(crate) generation_number: u32,
     /// Macros load through `Bun.plugin()` callbacks, which the pool thread's VM lacks, so the JS thread must run them.
     has_plugins: bool,
@@ -482,21 +476,6 @@ fn tls_get_or_leak<T>(
 }
 
 impl TranspilerJob {
-    /// Kept as a private inherent fn (not `impl Drop`) because the
-    /// slot is recycled into the HiveArray via `store.put(this)`.
-    ///
-    /// Note: `HiveArrayFallback::put` runs `drop_in_place` on the slot (see
-    /// hive_array.rs note), so the Drop-carrying fields — `path_text`, `bun_core::String` ×2,
-    /// `ResolvedSource`, `Log`, `StrongOptional` — are torn down
-    /// *there*, not here. This function handles only the teardown that field
-    /// drop glue does **not** cover: `poll_ref.disable()`.
-    fn reset_for_pool(&self) {
-        self.poll_ref.disable();
-        // Fields with Drop glue are handled by `store.put()` →
-        // `drop_in_place`; do NOT `take()` them here (would drop the empty
-        // replacement a second time).
-    }
-
     /// Pool thread: hand the slot back. `ticket` was moved out of `self`
     /// first — the JS thread may reuse the slot the moment it is queued.
     fn dispatch_to_main_thread(&mut self, ticket: &crate::Ticket) {
@@ -518,9 +497,6 @@ impl TranspilerJob {
         // before `put` needs `&mut *self` below; deref at the
         // `fulfill` call site instead.
         let global_this = self.global_this;
-        // Note: the KeepAlive takes an `EventLoopCtx`
-        // vtable; resolve it via the `get_vm_ctx` hook (registered by `bun_runtime::init`).
-        self.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
 
         let referrer = core::mem::take(&mut self.non_threadsafe_referrer);
         let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
@@ -551,10 +527,6 @@ impl TranspilerJob {
                 (out, Ok(resolved_source))
             }
         };
-
-        self.promise.deinit();
-        self.module_loader.deinit();
-        self.reset_for_pool();
 
         // SAFETY: `self` came from this store and is not used again.
         unsafe {
@@ -588,10 +560,6 @@ impl TranspilerJob {
     }
 
     fn schedule(&mut self) {
-        // Note: the KeepAlive takes an
-        // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by
-        // `bun_runtime::init`).
-        self.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
         // SAFETY: JS thread; the VM owns the store this slot lives in.
         self.ticket = Some(unsafe { (*self.vm).ticket() });
         WorkPool::schedule(&raw mut self.work_task);
@@ -702,30 +670,13 @@ impl TranspilerJob {
         transpiler.set_log(&raw mut *log_clone_guard.1);
         // Note: the resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
-        transpiler.macro_context = None;
         // The JS thread may have been in macro mode when its options were copied, but a job is never part of a macro.
         transpiler.options.target = bun_ast::Target::Bun;
         if this.has_plugins {
             transpiler.options.no_macros = true;
         }
-        // Note: `parse_maybe` re-creates the macro context per-iteration
-        // when `macro_context.is_none()`. It boxes a
-        // higher-tier `MacroContext` via `__bun_macro_context_init`; that Box
-        // stays with the long-lived `vm.transpiler`, but here
-        // we operate on a per-iteration `ManuallyDrop` bytewise copy, so we
-        // MUST free what `parse_maybe` allocates or every dynamic `import()`
-        // leaks one `Box<MacroContext>` (require-cache.test.ts "files
-        // transpiled and loaded don't leak file paths > via import()" OOMs at
-        // ~0.5 GB after 100k iterations). The owned `MimallocArena` inside is
-        // now lazy (`bump: Option<Arena>`, init on first `.call()`), so the
-        // per-iteration `mi_heap_new()` is gone; this guard just reclaims the
-        // small `Box`.
-        let mut macro_ctx_guard = scopeguard::guard(transpiler, |transpiler| {
-            if let Some(ctx) = transpiler.macro_context.take() {
-                ctx.deinit();
-            }
-        });
-        let transpiler: &mut Transpiler<'_> = &mut macro_ctx_guard;
+        // The one in the copy is the VM's.
+        let mut macro_context = None;
 
         let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
@@ -766,13 +717,7 @@ impl TranspilerJob {
         // only, so skipping `Drop` is sound.
         let mut fallback_source = core::mem::MaybeUninit::<bun_ast::Source>::uninit();
 
-        // Close the input file automatically unless the watcher adopts the
-        // descriptor after the parse (`add_file` below).
-        let mut input_file_fd = scopeguard::guard(Fd::INVALID, |fd| {
-            if fd.is_valid() {
-                fd.close();
-            }
-        });
+        let mut input_file = None;
 
         // SAFETY: leaf scalar field reads on `*vm`; see `vm` note above.
         let (vm_main, vm_main_hash) = unsafe { ((*vm).main(), (*vm).main_hash.get()) };
@@ -794,9 +739,10 @@ impl TranspilerJob {
             loader,
             dirname_fd: Fd::INVALID,
             file_descriptor: None,
-            file_fd_ptr: Some(&mut *input_file_fd),
+            opened_file: Some(&mut input_file),
             macro_remappings,
             macro_js_ctx: transpiler::default_macro_js_value(),
+            macro_context: Some(&mut macro_context),
             jsx: transpiler.options.jsx.clone(),
             emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
             experimental_decorators: transpiler.options.experimental_decorators,
@@ -839,58 +785,26 @@ impl TranspilerJob {
         if let Some(own) = &this.aot_package_config {
             parse_options.apply_aot_package_config(own);
         }
-        let Some(mut parse_result) = transpiler
-            .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None)
-        else {
-            if let Some(iw) = import_watcher
-                && input_file_fd.is_valid()
-            {
-                if !is_node_override
-                    && bun_paths::is_absolute(path.text)
-                    && !strings::contains(path.text, b"node_modules")
-                {
-                    // SAFETY: BACKREF — process-lifetime watcher; no other
-                    // `&ImportWatcher` is live here, and `add_file` is
-                    // thread-safe via watcher mutex.
-                    let added = unsafe { iw.assume_mut() }.add_file::<true>(
-                        *input_file_fd,
-                        path.text,
-                        hash,
-                        Fd::INVALID,
-                        package_json,
-                    );
-                    if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
-                        *input_file_fd = Fd::INVALID;
-                    }
-                }
-            }
+        let parse_result = transpiler
+            .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None);
 
+        if let Some(iw) = import_watcher
+            && input_file.is_some()
+            && !is_node_override
+            && bun_paths::is_absolute(path.text)
+            && !strings::contains(path.text, b"node_modules")
+        {
+            // SAFETY: BACKREF — process-lifetime watcher; no other
+            // `&ImportWatcher` is live here, and `add_file` is
+            // thread-safe via watcher mutex.
+            let iw = unsafe { iw.assume_mut() };
+            let _ = iw.add_owned_file(input_file, path.text, hash, package_json);
+        }
+
+        let Some(mut parse_result) = parse_result else {
             this.parse_error = Some(crate::CrateError::ParseError);
             return;
         };
-
-        if let Some(iw) = import_watcher
-            && input_file_fd.is_valid()
-        {
-            if !is_node_override
-                && bun_paths::is_absolute(path.text)
-                && !strings::contains(path.text, b"node_modules")
-            {
-                // SAFETY: BACKREF — process-lifetime watcher; no other
-                // `&ImportWatcher` is live here, and `add_file` is
-                // thread-safe via watcher mutex.
-                let added = unsafe { iw.assume_mut() }.add_file::<true>(
-                    *input_file_fd,
-                    path.text,
-                    hash,
-                    Fd::INVALID,
-                    package_json,
-                );
-                if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
-                    *input_file_fd = Fd::INVALID;
-                }
-            }
-        }
 
         // SAFETY: leaf scalar field read; see `vm` note above. Inlined
         // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming

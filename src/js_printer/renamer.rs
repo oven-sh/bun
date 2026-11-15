@@ -947,7 +947,7 @@ impl NumberRenamer {
 
     pub fn add_top_level_declared_symbols(
         &mut self,
-        declared_symbols: &mut js_ast::DeclaredSymbolList,
+        declared_symbols: &js_ast::DeclaredSymbolList,
     ) {
         js_ast::DeclaredSymbol::for_each_top_level_symbol(declared_symbols, self, |r, ref_| {
             r.add_top_level_symbol(ref_)

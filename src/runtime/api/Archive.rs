@@ -263,15 +263,6 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         let data_slice = get_entry_data(global, value, &mut array_buffer)?;
         let data = data_slice.slice();
 
-        // Readers take it for a directory, and its contents for more entries.
-        let last = bun_core::slice_to_nul(key_slice.slice()).last();
-        if !data.is_empty() && last.is_some_and(|&c| bun_paths::is_sep_native(c)) {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Failed to create tarball: {} is a directory and cannot have contents",
-                bun_core::fmt::quote(key_slice.slice())
-            )));
-        }
-
         writer
             .header(&tar::writer::File {
                 path: key_slice.slice(),
@@ -279,7 +270,13 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
                 perm: 0o644,
                 mtime: now_secs,
             })
-            .map_err(fail)?;
+            .map_err(|err| match err {
+                tar::Error::DirectoryWithContents => global.throw_invalid_arguments(format_args!(
+                    "Failed to create tarball: {} is a directory and cannot have contents",
+                    bun_core::fmt::quote(key_slice.slice())
+                )),
+                err => fail(err),
+            })?;
         writer.data(data).map_err(fail)?;
     }
 
@@ -1150,6 +1147,10 @@ pub(crate) fn match_glob_patterns(patterns: &[GlobPattern], pathname: &[u8]) -> 
     !has_positive_patterns || matches_positive
 }
 
+/// In bytes of memory. Names take next to nothing once they are compressed.
+#[cfg(unix)]
+const DEFERRED_SYMLINKS_LIMIT: usize = 128 * 1024 * 1024;
+
 /// Extract archive to disk with glob pattern filtering.
 /// Supports negative patterns with "!" prefix (e.g., "!node_modules/**").
 fn extract_to_disk_filtered(
@@ -1194,7 +1195,7 @@ fn extract_to_disk_filtered(
     let mut count: u32 = 0;
     let mut write_strategy = bun_archive::WriteStrategy::default();
     #[cfg(unix)]
-    let mut deferred_symlinks = Vec::new();
+    let (mut deferred_symlinks, mut deferred_bytes) = (Vec::new(), 0usize);
 
     loop {
         let entry_ref = match reader.next_entry() {
@@ -1281,7 +1282,13 @@ fn extract_to_disk_filtered(
                 #[cfg(unix)]
                 {
                     let target = entry_ref.symlink().unwrap_or_default();
-                    if is_safe_path(target) {
+                    if target.len() < bun_paths::MAX_PATH_BYTES && is_safe_path(target) {
+                        deferred_bytes += size_of::<bun_archive::DeferredSymlink>()
+                            + pathname.len()
+                            + target.len();
+                        if deferred_bytes > DEFERRED_SYMLINKS_LIMIT {
+                            return Err(crate::Error::ReadError);
+                        }
                         deferred_symlinks.push(bun_archive::DeferredSymlink::new(pathname, target));
                     }
                 }
@@ -1429,10 +1436,7 @@ pub(crate) mod testing {
                         entry.mtime(),
                     );
                     let mut wide = Vec::new();
-                    if options.windows
-                        && tar::compose::to_utf16(entry.path(), entry.path_is_utf8(), &mut wide)
-                            .is_ok()
-                    {
+                    if options.windows && tar::compose::to_utf16(entry, &mut wide).is_ok() {
                         // A name that is not UTF-8 has one unit for each byte.
                         let name = if entry.path_is_utf8() {
                             String::from_utf16_lossy(&wide).into_bytes()

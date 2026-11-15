@@ -424,7 +424,7 @@ impl HttpThread {
                 if let Err(err) = custom_context.init_with_client_config(client) {
                     // `init_with_client_config` fails before `group.init()` runs.
                     // `impl Drop for HTTPContext` tolerates an uninitialized
-                    // group (skips close_all/destroy when `group.loop_` is
+                    // group (skips close_all when `group.loop_` is
                     // null), so dropping `ctx` here is safe.
                     return Err(match err {
                         InitError::InvalidCRL => crate::Error::InvalidCRL,
@@ -728,7 +728,7 @@ impl HttpThread {
                             }
                             if let Some(session) = tagged.session() {
                                 // The resume may tear the session down and
-                                // release the socket's ref; hold one across
+                                // release its last ref; hold one across
                                 // the second call.
                                 let _guard = RefPtr::from_this(session);
                                 h2::ClientSession::resume_receive_by_http_id(session, id);

@@ -156,6 +156,8 @@ pub mod js_type;
 pub mod js_value;
 #[path = "rare_data.rs"]
 pub mod rare_data;
+#[path = "SpawnSyncEventLoop.rs"]
+pub mod spawn_sync_event_loop;
 #[path = "StringBuilder.rs"]
 pub mod string_builder;
 #[path = "Strong.rs"]
@@ -1126,10 +1128,6 @@ impl FromJsEnum for bun_http_types::FetchCacheMode::FetchCacheMode {
 pub mod js_string;
 pub use self::js_string::{JSString, JSStringView};
 
-#[path = "RefString.rs"]
-pub mod ref_string;
-pub use self::ref_string as RefString;
-
 pub mod jsc_abi;
 
 #[path = "Debugger.rs"]
@@ -1415,6 +1413,12 @@ impl Ref {
         }
         self.has.set(true);
         vm.active_tasks.update(|n| n + 1);
+    }
+}
+
+impl Drop for Ref {
+    fn drop(&mut self) {
+        self.unref(virtual_machine::VirtualMachine::get());
     }
 }
 

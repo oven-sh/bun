@@ -11,12 +11,30 @@ impl<T> AliasableBox<T> {
 
     /// As [`Box::into_raw`].
     pub fn into_raw(self) -> *mut T {
-        core::mem::ManuallyDrop::new(self).as_ptr()
+        self.into_non_null().as_ptr()
+    }
+
+    /// As [`Box::into_non_null`].
+    pub fn into_non_null(self) -> NonNull<T> {
+        core::mem::ManuallyDrop::new(self).0
     }
 
     /// Valid until `self` is dropped.
     pub fn as_ptr(&self) -> *mut T {
         self.0.as_ptr()
+    }
+
+    /// Valid until `self` is dropped.
+    pub fn as_non_null(&self) -> NonNull<T> {
+        self.0
+    }
+}
+
+impl<T> core::ops::Deref for AliasableBox<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: live until `self` is dropped.
+        unsafe { self.0.as_ref() }
     }
 }
 

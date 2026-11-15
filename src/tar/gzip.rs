@@ -2,6 +2,7 @@
 
 use crate::error::{Error, Result};
 use crate::output::Output;
+use crate::reader::Dialect;
 use bun_alloc::AllocError;
 use bun_core::strings;
 use bun_zlib::{InflateDecoder, ReturnCode, crc32_bytes};
@@ -29,10 +30,19 @@ fn fixed_header_flags(fixed: &[u8; FIXED_HEADER_SIZE]) -> Option<u8> {
     (fixed.starts_with(&MAGIC) && flags & flag::RESERVED == 0).then_some(flags)
 }
 
+/// All that npm looks at.
+pub(crate) fn starts_with_id(data: &[u8]) -> bool {
+    data.starts_with(&MAGIC[..2])
+}
+
 /// Whether `data` starts like a gzip header. The optional fields are not looked at.
 pub fn starts_like_header(data: &[u8]) -> bool {
     data.first_chunk::<FIXED_HEADER_SIZE>()
         .is_some_and(|fixed| fixed_header_flags(fixed).is_some())
+}
+
+fn is_zero(bytes: &[u8]) -> bool {
+    strings::index_of_not_char(bytes, 0).is_none()
 }
 
 // https://github.com/libarchive/libarchive/blob/27cbc7827172698143e440801fc0ba39ccb4f1f5/libarchive/archive_read_support_filter_gzip.c#L120
@@ -59,6 +69,8 @@ enum State {
     HeaderCrc,
     Body,
     Trailer,
+    /// Zeros behind a member.
+    Padding,
     Done,
     Failed(Error),
 }
@@ -84,13 +96,16 @@ pub struct Decoder {
     header_len: usize,
     /// The current header started in an earlier piece of input.
     header_spilled: bool,
+    npm: bool,
+    /// Something other than zeros was found behind the last member.
+    left_data: bool,
     crc: u32,
     /// Modulo 2^32, like the field it is compared with.
     size: u32,
 }
 
 impl Decoder {
-    pub fn new() -> Result<Self> {
+    pub fn new(dialect: Dialect) -> Result<Self> {
         Ok(Self {
             state: State::Fixed,
             inflate: InflateDecoder::new(RAW_DEFLATE).map_err(|_| Error::Alloc(AllocError))?,
@@ -99,9 +114,16 @@ impl Decoder {
             small_len: 0,
             header_len: 0,
             header_spilled: false,
+            npm: dialect == Dialect::Npm,
+            left_data: false,
             crc: 0,
             size: 0,
         })
+    }
+
+    /// After [`Progress::Done`]: npm may find more to decompress. Always `false` in the other dialect.
+    pub(crate) fn left_data_for_npm(&self) -> bool {
+        self.npm && self.left_data
     }
 
     /// Gathers `want` bytes in `small`. `false` when `input` ran out first.
@@ -137,6 +159,7 @@ impl Decoder {
         } else {
             self.crc = 0;
             self.size = 0;
+            self.left_data = false;
             State::Body
         };
     }
@@ -197,12 +220,18 @@ impl Decoder {
             State::Done => Ok(Some(Progress::Done)),
 
             State::Fixed => {
-                if !self.gather(FIXED_HEADER_SIZE, input, used) {
+                let gathered = self.gather(FIXED_HEADER_SIZE, input, used);
+                self.left_data |= !is_zero(input.get(..*used).unwrap_or_default());
+                if !gathered {
                     return Ok(starved(self));
                 }
                 let Some(flags) = fixed_header_flags(&self.small) else {
-                    self.state = State::Done;
-                    return Ok(Some(Progress::Done));
+                    self.state = if self.npm {
+                        State::Padding
+                    } else {
+                        State::Done
+                    };
+                    return Ok(None);
                 };
                 self.flags = flags;
                 self.next_header_field(Field::Extra);
@@ -234,8 +263,15 @@ impl Decoder {
                     this.state = State::Done;
                     Ok(Some(Progress::Done))
                 };
+                let header_limit = if self.npm {
+                    usize::MAX
+                } else {
+                    SPILLED_HEADER_LIMIT
+                };
                 let looked_at = if self.header_spilled {
-                    let room = (SPILLED_HEADER_LIMIT + 1).saturating_sub(self.header_len);
+                    let room = header_limit
+                        .saturating_add(1)
+                        .saturating_sub(self.header_len);
                     input.get(..room.min(input.len())).unwrap_or_default()
                 } else {
                     input
@@ -243,7 +279,7 @@ impl Decoder {
                 let Some(end) = strings::index_of_char_usize(looked_at, 0) else {
                     *used = looked_at.len();
                     if looked_at.len() < input.len()
-                        || self.header_len.saturating_add(input.len()) > SPILLED_HEADER_LIMIT
+                        || self.header_len.saturating_add(input.len()) > header_limit
                     {
                         return not_a_header(self);
                     }
@@ -313,6 +349,15 @@ impl Decoder {
                 self.header_spilled = false;
                 // What follows a member is not looked at for a block that is already full.
                 Ok((out.len() >= limit).then_some(Progress::OutputFull))
+            }
+            State::Padding => {
+                self.left_data |= !is_zero(input);
+                if self.left_data {
+                    self.state = State::Done;
+                    return Ok(None);
+                }
+                *used = input.len();
+                Ok(starved(self))
             }
         }
     }

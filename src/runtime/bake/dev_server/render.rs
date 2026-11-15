@@ -163,10 +163,7 @@ impl DevServer {
             let url_bunstr = match &req {
                 // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
                 SavedRequestUnion::Stack(r) => bun_core::StringView::borrow_utf8((**r).url()),
-                SavedRequestUnion::Saved(data) => {
-                    // SAFETY: data.request is a live *mut webcore::Request (held strong by ctx)
-                    bun_core::StringView::new(unsafe { (*data.request).url.get() })
-                }
+                SavedRequestUnion::Saved(data) => bun_core::StringView::new(data.request.url.get()),
             };
             let url = url_bunstr.to_utf8();
             // Extract pathname from URL (remove protocol, host, query, hash)

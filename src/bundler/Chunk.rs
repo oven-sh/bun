@@ -4,7 +4,7 @@ use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-use bun_ast::{ImportKind, ImportRecord};
+use bun_ast::ImportKind;
 use bun_ast::{Ref, Stmt};
 use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
 use bun_core::{FeatureFlags, Output};
@@ -21,9 +21,10 @@ use crate::analyze_transpiled_module;
 use crate::bun_css;
 use crate::bun_fs;
 
-use crate::Graph::Graph;
+use crate::BundleV2;
 #[cfg(debug_assertions)]
 use crate::LinkerContext;
+use crate::bundled_ast::CssAstRef;
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::{
@@ -42,9 +43,9 @@ pub struct Chunk<'a> {
     /// This is a random string and is used to represent the output path of this
     /// chunk before the final output path has been computed. See OutputPiece
     /// for more info on this technique.
-    pub(crate) unique_key: &'static [u8],
+    pub(crate) unique_key: &'a [u8],
     /// Like `unique_key`, but replaced with `id()` rather than the chunk's path.
-    pub(crate) id_key: &'static [u8],
+    pub(crate) id_key: &'a [u8],
 
     /// Maps source index to bytes contributed to this chunk's output (for metafile).
     /// The value is updated during parallel chunk generation to track bytesInOutput.
@@ -112,7 +113,7 @@ impl Default for Content<'_> {
 
 // SAFETY: `Chunk` is processed across the bundler thread pool (see
 // `computeCrossChunkDependencies`, `generateChunksInParallel`). Raw-pointer
-// fields (`Layers::Borrowed`, `ChunkRenamer` arena)
+// fields (`CssAstRef`, `ChunkRenamer` arena)
 // point into bundler-arena storage that outlives the
 // pool join and is only mutated by the owning task; this mirrors
 // `InputFile`'s blanket impls (bundle_v2.rs).
@@ -562,7 +563,7 @@ impl IntermediateOutput {
     pub fn code<'d>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
-        parse_graph: &Graph,
+        bundle: &BundleV2<'_>,
         linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
         // Note: `chunk` aliases `&chunks[i]`. The body only reads both, so
@@ -580,7 +581,7 @@ impl IntermediateOutput {
         match shift_tracking {
             SourceMapShiftTracking::Enabled => self.code_with_source_map_shifts::<true>(
                 allocator_to_use,
-                parse_graph,
+                bundle,
                 linker_graph,
                 import_prefix,
                 chunk,
@@ -591,7 +592,7 @@ impl IntermediateOutput {
             ),
             SourceMapShiftTracking::Disabled => self.code_with_source_map_shifts::<false>(
                 allocator_to_use,
-                parse_graph,
+                bundle,
                 linker_graph,
                 import_prefix,
                 chunk,
@@ -611,7 +612,7 @@ impl IntermediateOutput {
     pub(crate) fn code_standalone<'d>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
-        parse_graph: &Graph,
+        bundle: &BundleV2<'_>,
         linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
         // See `code()` note — `chunk` aliases `chunks[i]`; body is read-only.
@@ -628,7 +629,7 @@ impl IntermediateOutput {
         match shift_tracking {
             SourceMapShiftTracking::Enabled => self.code_with_source_map_shifts::<true>(
                 allocator_to_use,
-                parse_graph,
+                bundle,
                 linker_graph,
                 import_prefix,
                 chunk,
@@ -639,7 +640,7 @@ impl IntermediateOutput {
             ),
             SourceMapShiftTracking::Disabled => self.code_with_source_map_shifts::<false>(
                 allocator_to_use,
-                parse_graph,
+                bundle,
                 linker_graph,
                 import_prefix,
                 chunk,
@@ -655,7 +656,7 @@ impl IntermediateOutput {
     pub(crate) fn code_with_source_map_shifts<const ENABLE_SOURCE_MAP_SHIFTS: bool>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
-        graph: &Graph,
+        bundle: &BundleV2<'_>,
         linker_graph: &LinkerGraph<'_>,
         import_prefix: &[u8],
         // See `code()` note — `chunk` aliases `chunks[i]`; body is read-only.
@@ -669,6 +670,7 @@ impl IntermediateOutput {
         // `LinkerGraph.files` SoA (`items_entry_point_chunk_index`) lands with
         // the LinkerGraph work. `bun_paths` / `bun_core::fmt::count` /
         // `bun_alloc::alloc_slice` surfaces are tracked upstream.
+        let graph = &bundle.graph;
         let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files =
             graph.input_files.items_unique_key_for_additional_file();
@@ -765,7 +767,7 @@ impl IntermediateOutput {
                                     let output_file =
                                         additional_output_file_index(files.slice().last().unwrap());
 
-                                    &graph.additional_output_files.as_slice()[output_file].dest_path
+                                    &linker_graph.additional_output_files[output_file].dest_path
                                 }
                                 QueryKind::Chunk => &chunks[index].final_rel_path,
                                 QueryKind::Scb => {
@@ -776,7 +778,7 @@ impl IntermediateOutput {
                                 QueryKind::HtmlImport => {
                                     count += HTMLImportManifest::count_escaped_json(
                                         piece.query.index(),
-                                        graph,
+                                        bundle,
                                         linker_graph,
                                         chunks,
                                     );
@@ -928,8 +930,7 @@ impl IntermediateOutput {
                                             .advance(&unique_key_for_additional_files[index]);
                                     }
 
-                                    break 'brk &graph.additional_output_files.as_slice()
-                                        [output_file]
+                                    break 'brk &linker_graph.additional_output_files[output_file]
                                         .dest_path;
                                 }
                                 QueryKind::Chunk => 'brk: {
@@ -957,7 +958,7 @@ impl IntermediateOutput {
                                     let before_len = cursor.len();
                                     HTMLImportManifest::write_escaped_json(
                                         piece.query.index(),
-                                        graph,
+                                        bundle,
                                         linker_graph,
                                         chunks,
                                         &mut cursor,
@@ -1330,51 +1331,44 @@ pub struct JavaScriptChunk {
 
 pub struct CssChunk<'a> {
     pub(crate) imports_in_chunk_in_order: Vec<CssImportOrder<'a>>,
-    /// When creating a chunk, this is to be an uninitialized slice with
-    /// length of `imports_in_chunk_in_order`
-    ///
-    /// Multiple imports may refer to the same file/stylesheet, but may need to
-    /// wrap them in conditions (e.g. a layer).
-    ///
-    /// When we go through the `prepareCssAstsForChunk()` step, each import will
-    /// create a shallow copy of the file's AST (just dereferencing the pointer).
-    pub(crate) asts: Box<[bun_css::BundlerStyleSheet<'a>]>,
 }
 
-impl Drop for CssChunk<'_> {
-    fn drop(&mut self) {
-        // `asts` is a slice of bitwise shallow
-        // copies (see `prepareCssAstsForChunk` `ptr::read`). Multiple slots may
-        // alias the same source AST's heap buffers when a file is imported more
-        // than once, so element-wise drop would double-free.
-        let mut asts = core::mem::take(&mut self.asts).into_vec();
-        // SAFETY: `set_len(0)` then `Vec::drop` frees the slab without running element destructors.
-        unsafe { asts.set_len(0) };
+/// The conditions of an `@import` rule, found through the stylesheet that owns them.
+#[derive(Copy, Clone)]
+pub(crate) struct CssImportCondition<'a> {
+    pub(crate) sheet: CssAstRef<'a>,
+    /// Index into the top-level rules of `sheet`.
+    pub(crate) rule: u32,
+    /// Each visit of a bare `layer` import is a layer of its own. Zero for the others.
+    pub(crate) anonymous_layer: u32,
+}
+
+impl<'a> core::ops::Deref for CssImportCondition<'a> {
+    type Target = bun_css::ImportConditions<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        match &self.sheet.rules.v[self.rule as usize] {
+            bun_css::css_parser::BundlerCssRule::Import(rule) => &rule.conditions,
+            _ => unreachable!(),
+        }
     }
 }
 
+impl CssImportCondition<'_> {
+    pub(crate) fn layers_eql(&self, other: &Self) -> bool {
+        self.anonymous_layer == other.anonymous_layer
+            && bun_css::ImportConditions::layers_eql(self, other)
+    }
+}
+
+#[derive(Copy, Clone)]
 pub struct CssImportOrder<'a> {
-    pub(crate) conditions: Vec<bun_css::ImportConditions<'a>>,
-    pub(crate) condition_import_records: Vec<ImportRecord<'a>>,
+    pub(crate) conditions: &'a [CssImportCondition<'a>],
 
     pub(crate) kind: CssImportOrderKind<'a>,
 }
 
-impl Drop for CssImportOrder<'_> {
-    fn drop(&mut self) {
-        // `conditions`: bitwise-shared across multiple order entries by
-        // `findImportedFilesInCSSOrder` (`bitwise_copy(wrapping_conditions)`);
-        // freeing here would double-free. The slab is allocated from the
-        // `LinkerGraph` arena and is bulk-freed with it.
-        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.conditions));
-        // `condition_import_records`: every populated value is uniquely owned
-        // (moved `all_import_records`) or an empty-Vec bitwise copy (cap == 0,
-        // drop is a no-op). Normal drop frees the owned buffers; no
-        // double-free path exists.
-    }
-}
-
-#[derive(strum::IntoStaticStr)]
+#[derive(Copy, Clone, strum::IntoStaticStr)]
 pub enum CssImportOrderKind<'a> {
     /// Represents earlier imports that have been made redundant by later ones (see `isConditionalImportRedundant`)
     /// We don't want to redundantly print the rules of these redundant imports
@@ -1388,45 +1382,20 @@ pub enum CssImportOrderKind<'a> {
     SourceIndex(Index),
 }
 
-// Copy-on-write list of layer names.
-// `std::borrow::Cow<'_, Vec<_>>` requires `Vec: Clone` (not implemented), so this
-// is a hand-rolled Cow: a tag + raw pointer for the borrowed
-// arm. LayerName payload allocations live in the arena, so dropping the owned
-// arm is a shallow free and `to_owned` deep-clones element-wise.
+#[derive(Copy, Clone)]
 pub enum Layers<'a> {
-    /// Borrowed from another `CssImportOrder`'s `Layers` or the parsed stylesheet.
-    Borrowed(bun_ptr::BackRef<Vec<bun_css::LayerName<'a>>>),
-    Owned(Vec<bun_css::LayerName<'a>>),
+    None,
+    PreImport(CssAstRef<'a>),
+    PostImport(CssAstRef<'a>),
 }
 
 impl<'a> Layers<'a> {
     #[inline]
-    pub(crate) fn inner(&self) -> &Vec<bun_css::LayerName<'a>> {
+    pub(crate) fn inner(&self) -> &[bun_css::LayerName<'a>] {
         match self {
-            Layers::Borrowed(p) => p.get(),
-            Layers::Owned(b) => b,
-        }
-    }
-
-    /// Cow::Borrowed constructor.
-    ///
-    /// The pointee is arena-owned storage that outlives the chunk pipeline
-    /// (see the lifetime note on `Chunk`); `BackRef` encapsulates that
-    /// invariant so `inner()`/`to_owned()` deref sites are safe.
-    #[inline]
-    pub(crate) fn borrow(p: &Vec<bun_css::LayerName<'a>>) -> Self {
-        Layers::Borrowed(bun_ptr::BackRef::new(p))
-    }
-
-    /// If borrowed, deep-clone into an owned
-    /// list and return `&mut` to it; if already owned, return as-is.
-    pub(crate) fn to_owned(&mut self) -> &mut Vec<bun_css::LayerName<'a>> {
-        if let Layers::Borrowed(p) = *self {
-            *self = Layers::Owned(p.deep_clone_with(|l| l.clone()));
-        }
-        match self {
-            Layers::Owned(b) => b,
-            Layers::Borrowed(_) => unreachable!(),
+            Layers::None => &[],
+            Layers::PreImport(sheet) => &sheet.layers_pre_import,
+            Layers::PostImport(sheet) => &sheet.layer_names,
         }
     }
 }
@@ -1444,9 +1413,9 @@ impl<'a> CssImportOrder<'a> {
         bun_core::write_any_to_hasher(hasher, tag);
         match &self.kind {
             CssImportOrderKind::Layers(layers) => {
-                for layer in layers.inner().slice() {
+                for layer in layers.inner() {
                     for (i, layer_name) in layer.v.slice().iter().enumerate() {
-                        let is_last = i == layers.inner().len() as usize - 1;
+                        let is_last = i == layers.inner().len() - 1;
                         if is_last {
                             hasher.update(layer_name);
                         } else {
@@ -1465,7 +1434,7 @@ impl<'a> CssImportOrder<'a> {
     }
 
     #[cfg(debug_assertions)]
-    pub(crate) fn fmt<'r>(&'r self, ctx: &'r LinkerContext<'a>) -> CssImportOrderDebug<'r, 'a> {
+    pub(crate) fn fmt<'r>(&'r self, ctx: &'r LinkerContext<'_, 'a>) -> CssImportOrderDebug<'r, 'a> {
         CssImportOrderDebug { inner: self, ctx }
     }
 }
@@ -1473,7 +1442,7 @@ impl<'a> CssImportOrder<'a> {
 #[cfg(debug_assertions)]
 pub(crate) struct CssImportOrderDebug<'r, 'a> {
     inner: &'r CssImportOrder<'a>,
-    ctx: &'r LinkerContext<'a>,
+    ctx: &'r LinkerContext<'r, 'a>,
 }
 
 #[cfg(debug_assertions)]
@@ -1484,7 +1453,7 @@ impl fmt::Display for CssImportOrderDebug<'_, '_> {
             CssImportOrderKind::Layers(layers) => {
                 write!(writer, "[")?;
                 let l = layers.inner();
-                for (i, layer) in l.slice_const().iter().enumerate() {
+                for (i, layer) in l.iter().enumerate() {
                     if i > 0 {
                         write!(writer, ", ")?;
                     }
@@ -1497,8 +1466,6 @@ impl fmt::Display for CssImportOrderDebug<'_, '_> {
                 write!(writer, "\"{}\"", bstr::BStr::new(&path.pretty))?;
             }
             CssImportOrderKind::SourceIndex(source_index) => {
-                // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid
-                // for the lifetime of the link step that owns this LinkerContext.
                 let source =
                     &self.ctx.parse_graph().input_files.items_source()[source_index.get() as usize];
                 write!(
@@ -1597,10 +1564,6 @@ impl<'a> Content<'a> {
     #[inline]
     pub(crate) fn is_javascript(&self) -> bool {
         matches!(self, Content::Javascript(_))
-    }
-    #[inline]
-    pub(crate) fn is_css(&self) -> bool {
-        matches!(self, Content::Css(_))
     }
     bun_core::enum_unwrap!(pub Content, Javascript => fn javascript / javascript_mut -> JavaScriptChunk);
     bun_core::enum_unwrap!(pub Content, Css        => fn css        / css_mut        -> CssChunk<'a>);

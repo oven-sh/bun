@@ -22,7 +22,7 @@ use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
-use bun_io::KeepAlive;
+use bun_io::{JsKeepAlive, KeepAlive};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 use crate::debugger::AsyncTaskTracker;
@@ -298,7 +298,7 @@ pub struct Job<C: JobContext> {
     /// from then on (never touched on the JS side).
     ticket: Option<Ticket>,
     task: WorkPoolTask,
-    keep_alive: KeepAlive,
+    _keep_alive: JsKeepAlive,
     off: C::OffThread,
     js: C::Js,
 }
@@ -321,8 +321,6 @@ impl<C: JobContext> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
-        let keep_alive = KeepAlive::default();
-        keep_alive.ref_(bun_io::js_vm_ctx());
         let job = bun_core::heap::into_raw(Box::new(Self {
             header: JobHeader {
                 // SAFETY: (this and the entry below) the erased dispatchers are
@@ -344,7 +342,7 @@ impl<C: JobContext> Job<C> {
                 node: Default::default(),
                 callback: Self::run_on_pool,
             },
-            keep_alive,
+            _keep_alive: JsKeepAlive::active(),
             off,
             js,
         }));
@@ -387,14 +385,7 @@ impl<C: JobContext> Job<C> {
         if C::CANCELLABLE {
             vm.jobs.with_mut(|j| j.unlink(&raw mut job.header));
         }
-        let Job {
-            keep_alive,
-            off,
-            js,
-            ..
-        } = *job;
-        keep_alive.unref(bun_io::js_vm_ctx());
-        (off, js)
+        (job.off, job.js)
     }
 
     /// JS thread dispatch: run the completion and free the job.

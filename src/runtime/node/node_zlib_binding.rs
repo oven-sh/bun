@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 use bun_ptr::{ParentRef, RefPtr};
 
 use bun_event_loop::Taskable;
-use bun_io::KeepAlive;
+use bun_io::JsKeepAlive;
 use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
@@ -20,14 +20,8 @@ bun_output::declare_scope!(zlib, hidden);
 
 #[derive(Default)]
 pub(crate) struct CountedKeepAlive {
-    pub(crate) keep_alive: KeepAlive,
+    pub(crate) keep_alive: JsKeepAlive,
     pub(crate) ref_count: Cell<u32>,
-}
-
-impl Drop for CountedKeepAlive {
-    fn drop(&mut self) {
-        self.keep_alive.disable();
-    }
 }
 
 /// `msg` / `code` are nullable NUL-terminated C strings.
@@ -610,7 +604,7 @@ pub(crate) trait CompressionStreamImpl:
         }
         self.pending_close().set(false);
         self.closed().set(true);
-        self.this_value().with_mut(|v| v.deinit());
+        self.this_value().set(Default::default());
         self.stream().with_mut(|s| s.close());
         self.input_copy().set(InputCopy::default());
     }

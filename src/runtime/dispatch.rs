@@ -85,18 +85,18 @@ use crate::shell::builtins::{
     yes::YesTask as ShellYesTask,
 };
 use crate::shell::dispatch_tasks::{ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask};
-use crate::shell::interpreter::ShellTask;
+use crate::shell::interpreter::{PoolTask, ShellTask};
 #[cfg(not(windows))]
 use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
 use crate::shell::states::r#async::Async as ShellAsync;
 
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
-use crate::webcore::file_sink::FlushPendingTask as FlushPendingFileSinkTask;
+use crate::webcore::file_sink::FileSink;
 #[cfg(not(windows))]
 use crate::webcore::file_sink::Poll as FileSinkPoll;
 use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 use crate::webcore::s3::multipart::WriterCollected as S3UploadWriterCollected;
-use crate::webcore::s3::simple_request::S3HttpSimpleTask;
+use crate::webcore::s3::simple_request::{RefusedRequest as S3RefusedRequest, S3HttpSimpleTask};
 use crate::webcore::streams::Pending as StreamPending;
 
 use crate::api::bun_subprocess::Subprocess;
@@ -232,9 +232,8 @@ pub(crate) fn run_task(
             unsafe { bun_jsc::job::complete_erased(task.ptr, global) }?;
         }
         task_tag::SendQueueDeferred => feature_arm!([Ipc], |queue: crate::ipc::SendQueue| {
-            // SAFETY: §Dispatch — the queued pointer is the SendQueue root and
-            // the task owns a ref for its duration; `run_deferred` releases it.
-            unsafe { crate::ipc::SendQueue::run_deferred(queue) };
+            // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
+            unsafe { bun_ptr::RefPtr::from_raw(queue) }.run_deferred();
         }),
         task_tag::AsyncModule => feature_arm!(
             [Install],
@@ -390,17 +389,19 @@ pub(crate) fn run_task(
             feature_arm!(
                 [Fetch],
                 |drain: crate::webcore::fetch::FetchTaskletRequestDrain| {
-                    crate::webcore::fetch::FetchTaskletRequestDrain::run(drain);
+                    // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
+                    let tasklet = unsafe { bun_ptr::RefPtr::from_raw(drain.cast()) };
+                    FetchTasklet::resume_request_data_stream(&tasklet);
                 }
             )
         }
         task_tag::HTMLRewriterBackgroundPull => feature_arm!(
             [HtmlRewriter],
-            |pipe: crate::api::html_rewriter::RewriterPipe| -> JsResult<()> {
-                crate::api::html_rewriter::RewriterPipe::run_background_pull(pipe)?;
-                Ok(())
+            |pipe: crate::api::html_rewriter::RewriterPipe| {
+                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
+                unsafe { bun_ptr::RefPtr::from_raw(pipe) }.run_background_pull();
             }
-        )?,
+        ),
         task_tag::RunTestsTask => feature_arm!(
             [Test],
             |run: crate::test_runner::bun_test::RunTestsTask| -> JsResult<()> {
@@ -545,15 +546,14 @@ pub(crate) fn run_task(
 
         // ── fetch / S3 ───────────────────────────────────────────────────
         task_tag::FetchTasklet => feature_arm!([Fetch], |tasklet: FetchTasklet| -> JsResult<()> {
-            // SAFETY: §Dispatch — tag identifies pointee; live for this dispatch.
-            unsafe { &mut *tasklet }.on_progress_update()?;
-            Ok(())
+            // SAFETY: §Dispatch — tag identifies pointee.
+            unsafe { FetchTasklet::on_progress_update(tasklet) }
         })?,
         task_tag::FetchTaskletDeinit => {
             feature_arm!(
                 [Fetch],
                 |hop: crate::webcore::fetch::FetchTaskletDeinitHop| {
-                    // SAFETY: posted by `deref_from_thread` with the last ref.
+                    // SAFETY: posted by `HttpThreadRef` with the last ref.
                     unsafe { crate::webcore::fetch::FetchTaskletDeinitHop::run(hop) };
                 }
             )
@@ -570,6 +570,13 @@ pub(crate) fn run_task(
             feature_arm!([S3Client], |download: S3HttpDownloadStreamingTask| {
                 S3HttpDownloadStreamingTask::on_response(download);
             })
+        }
+        task_tag::S3RefusedRequest => {
+            feature_arm!([S3Client], |refused: S3RefusedRequest| -> JsResult<()> {
+                // SAFETY: boxed in `Callback::refuse`; the arm consumes it.
+                unsafe { bun_core::heap::take(refused) }.run()?;
+                Ok(())
+            })?
         }
         task_tag::S3UploadWriterCollected => feature_arm!(
             [S3Client],
@@ -761,13 +768,10 @@ pub(crate) fn run_task(
         )?,
         // A child's stdin pipe is a `FileSink` too, whether or not the program looks at it.
         task_tag::FlushPendingFileSinkTask => {
-            feature_arm!(
-                [FileSink, Spawn, Shell],
-                |flush: FlushPendingFileSinkTask| {
-                    // SAFETY: the payload is the heap-allocated task; sole owner.
-                    unsafe { FlushPendingFileSinkTask::run_from_js_thread(flush) };
-                }
-            )
+            feature_arm!([FileSink, Spawn, Shell], |sink: FileSink| {
+                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
+                FileSink::run_pending_if_armed(&unsafe { bun_ptr::RefPtr::from_raw(sink) });
+            })
         }
         // `cast_ptr!` yields the heap-allocated task; sole owner.
         task_tag::StreamPending => feature_arm!([WebStreams], |pending: StreamPending| {
@@ -799,9 +803,6 @@ fn run_task_cold(task: Task) {
             task.ptr.cast::<$ty>()
         };
     }
-    /// Shell builtin tasks: route through `ShellTask::run_from_main_thread`
-    /// so the keep-alive ref taken in `ShellTask::schedule` is unref'd before
-    /// the per-builtin body runs.
     /// The wrapper recovers `&mut Interpreter` from the embedded
     /// `ShellTask.interp` back-ref.
     macro_rules! shell_dispatch {
@@ -810,48 +811,30 @@ fn run_task_cold(task: Task) {
             // `interp` was set at schedule time and outlives the task.
             unsafe { ShellTask::run_from_main_thread::<$ty>(cast_ptr!($ty)) };
         }};
-        // Cond-expr wraps an inner `task: ShellTask`-embedding struct one
-        // level deeper. The type *does* implement `ShellTaskCtx`
-        // (with a two-hop `TASK_OFFSET`, needed for `ShellTask::schedule`),
-        // so this arm is behaviorally identical to the plain arm; the unref +
-        // interp-recovery are inlined here only to keep the `.task.task`
-        // shape explicit at the dispatch site.
-        (nested $ty:ty) => {{
-            let t = cast_ptr!($ty);
-            // SAFETY: see above; `task.task` is the embedded ShellTask.
-            unsafe {
-                let st = &raw mut (*t).task.task;
-                (*st).keep_alive.unref((*st).event_loop.as_event_loop_ctx());
-                let interp = &*(*st).interp;
-                <$ty>::run_from_main_thread(t, interp);
-            }
-        }};
     }
 
     match task.tag {
         // ── shell interpreter ────────────────────────────────────────────
         task_tag::ShellAsync => {
             // SAFETY: §Dispatch — tag identifies pointee.
-            let t = unsafe { &mut *cast_ptr!(crate::shell::dispatch_tasks::ShellAsyncTask) };
+            let t = unsafe { &*cast_ptr!(crate::shell::dispatch_tasks::ShellAsyncTask) };
             // SAFETY: `interp` set at enqueue; outlives task.
             let interp = unsafe { &*t.interp };
-            ShellAsync::run_from_main_thread(interp, t.node);
+            ShellAsync::run_from_main_thread(interp, t.node.get());
         }
-        task_tag::ShellCondExprStatTask => {
-            shell_dispatch!(nested ShellCondExprStatTask);
-        }
+        task_tag::ShellCondExprStatTask => shell_dispatch!(PoolTask<ShellCondExprStatTask>),
         task_tag::ShellCpTask => shell_dispatch!(ShellCpTask),
-        task_tag::ShellTouchTask => shell_dispatch!(ShellTouchTask),
-        task_tag::ShellMkdirTask => shell_dispatch!(ShellMkdirTask),
-        task_tag::ShellLsTask => shell_dispatch!(ShellLsTask),
+        task_tag::ShellTouchTask => shell_dispatch!(PoolTask<ShellTouchTask>),
+        task_tag::ShellMkdirTask => shell_dispatch!(PoolTask<ShellMkdirTask>),
+        task_tag::ShellLsTask => shell_dispatch!(PoolTask<ShellLsTask>),
         task_tag::ShellMvBatchedTask => shell_dispatch!(ShellMvBatchedTask),
-        task_tag::ShellMvCheckTargetTask => shell_dispatch!(ShellMvCheckTargetTask),
+        task_tag::ShellMvCheckTargetTask => shell_dispatch!(PoolTask<ShellMvCheckTargetTask>),
         task_tag::ShellRmTask => shell_dispatch!(ShellRmTask),
         task_tag::ShellRmDirTask => {
             let t = cast_ptr!(ShellRmDirTask);
             ShellRmDirTask::run_from_main_thread(t);
         }
-        task_tag::ShellGlobTask => shell_dispatch!(ShellGlobTask),
+        task_tag::ShellGlobTask => shell_dispatch!(PoolTask<ShellGlobTask>),
         task_tag::ShellYesTask => {
             // SAFETY: §Dispatch — tag identifies pointee; enqueued by
             // `YesTask::enqueue`, storage lives inside `Box<Yes>` in the
@@ -868,7 +851,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 86,
+    task_tag::COUNT == 87,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -993,13 +976,12 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
         }),
         poll_tag::PROCESS => {
             in_features!([ChildProcess], (proc: *mut Process = owner.ptr.cast::<Process>()) {
-                // SAFETY: adopts the ref taken when the poll was registered.
-                let process = unsafe { bun_ptr::RefPtr::from_raw(proc) };
-                Process::wait(process.this_ptr(), false);
+                // SAFETY: a process frees its poll before it is freed, and `wait` ends with the exit handler.
+                Process::wait(unsafe { bun_ptr::ThisPtr::new(proc) }, false);
             })
         }
         poll_tag::MEMORY_PRESSURE => {
-            crate::node::memory_pressure::on_poll(poll_ref, size_or_offset);
+            crate::node::memory_pressure::on_poll(poll_ref.fd, poll_ref.flags, size_or_offset);
         }
         poll_tag::PARENT_DEATH_WATCHDOG => {
             let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);
@@ -1047,14 +1029,15 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             [Dns],
             (
                 resolver: *const DNSResolver = owner.ptr.cast_const().cast::<DNSResolver>(),
-                poll: *mut FilePoll = poll,
+                fd: i32 = poll_ref.fd.native(),
+                readable: bool = poll_ref.is_readable(),
+                writable: bool = poll_ref.is_writable(),
             ) {
                 // R-2: deref as shared (`&*const`) — `on_dns_poll` takes `&self` and
                 // `Channel::process` re-enters the resolver via c-ares callbacks.
                 // SAFETY: tag set with this pointee type at `FilePoll::init`.
                 let resolver = unsafe { &*resolver };
-                // SAFETY: `poll` outlives this call (caller contract).
-                resolver.on_dns_poll(unsafe { &mut *poll });
+                resolver.on_dns_poll(fd, readable, writable);
             }
         ),
         poll_tag::GET_ADDR_INFO_REQUEST => {
@@ -1325,7 +1308,7 @@ pub(crate) unsafe fn fire_timer(
                 [NodeFs],
                 StatWatcherScheduler,
                 event_loop_timer,
-                |c, _now, _vm| (*c).timer_callback()
+                |c, _now, _vm| StatWatcherScheduler::timer_callback(bun_ptr::ThisPtr::new(c))
             )
         }
         EventLoopTimerTag::UpgradedDuplex => {
@@ -1723,7 +1706,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             unreachable!("posix-only tag");
         }
         task_tag::FlushPendingFileSinkTask => {
-            release_in!([FileSink, Spawn, Shell], FlushPendingFileSinkTask)
+            release_in!([FileSink, Spawn, Shell], FileSink)
         }
         task_tag::RuntimeTranspilerStore => {
             release_in!([RuntimeTranspiler], RuntimeTranspilerStore)
@@ -1732,22 +1715,23 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release_in!([S3Client], S3HttpDownloadStreamingTask)
         }
         task_tag::S3HttpSimpleTask => release_in!([S3Client], S3HttpSimpleTask),
+        task_tag::S3RefusedRequest => release_in!([S3Client], S3RefusedRequest),
         task_tag::S3UploadWriterCollected => release_in!([S3Client], S3UploadWriterCollected),
         task_tag::SendQueueDeferred => release_in!([Ipc], crate::ipc::SendQueue),
         task_tag::ServerAllConnectionsClosedTask => {
             release_in!([Serve], ServerAllConnectionsClosedTask)
         }
         task_tag::ShellAsync => release_in!([Shell], crate::shell::dispatch_tasks::ShellAsyncTask),
-        task_tag::ShellCondExprStatTask => release_in!([Shell], ShellCondExprStatTask),
+        task_tag::ShellCondExprStatTask => release_in!([Shell], PoolTask<ShellCondExprStatTask>),
         task_tag::ShellCpTask => release_in!([Shell], ShellCpTask),
-        task_tag::ShellGlobTask => release_in!([Shell], ShellGlobTask),
-        task_tag::ShellLsTask => release_in!([Shell], ShellLsTask),
-        task_tag::ShellMkdirTask => release_in!([Shell], ShellMkdirTask),
+        task_tag::ShellGlobTask => release_in!([Shell], PoolTask<ShellGlobTask>),
+        task_tag::ShellLsTask => release_in!([Shell], PoolTask<ShellLsTask>),
+        task_tag::ShellMkdirTask => release_in!([Shell], PoolTask<ShellMkdirTask>),
         task_tag::ShellMvBatchedTask => release_in!([Shell], ShellMvBatchedTask),
-        task_tag::ShellMvCheckTargetTask => release_in!([Shell], ShellMvCheckTargetTask),
+        task_tag::ShellMvCheckTargetTask => release_in!([Shell], PoolTask<ShellMvCheckTargetTask>),
         task_tag::ShellRmDirTask => release_in!([Shell], ShellRmDirTask),
         task_tag::ShellRmTask => release_in!([Shell], ShellRmTask),
-        task_tag::ShellTouchTask => release_in!([Shell], ShellTouchTask),
+        task_tag::ShellTouchTask => release_in!([Shell], PoolTask<ShellTouchTask>),
         task_tag::StatWatcherTimerUpdate => {
             release_in!(
                 [NodeFs],

@@ -19,8 +19,6 @@ use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{BufferedReader, ReadState};
 use bun_jsc::{self as jsc, EventLoopHandle};
 use bun_ptr::RefPtr;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_sys::FdExt;
 use bun_sys::{self, Fd, SystemError};
 use enumset::EnumSet;
 
@@ -65,7 +63,7 @@ fn rc_as_mut_ptr<T>(a: &Rc<T>) -> *mut T {
 /// Mutably borrow a `RefPtr<StaticPipeWriter>` payload.
 ///
 /// `RefPtr` only exposes `&T` via `Deref`; the shell is single-threaded.
-/// Localises the `(*buffer.as_ptr()).method()` pattern at the five
+/// Localises the `(*buffer.as_ptr()).method()` pattern at the
 /// `Writable::Buffer` callsites.
 ///
 /// # Safety
@@ -187,6 +185,7 @@ pub(crate) type StaticPipeWriter = JscSubprocess::NewStaticPipeWriter<ShellSubpr
 impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubprocess {
     const POLL_OWNER_TAG: bun_io::PollTag =
         bun_io::posix_event_loop::poll_tag::SHELL_STATIC_PIPE_WRITER;
+    type Source = webcore::AnyBlob;
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind) {
         // `Writable::init` only creates the writer for stdin.
         debug_assert!(matches!(kind, StdioKind::Stdin));
@@ -224,10 +223,7 @@ impl ShellSubprocess {
             let slot = unsafe { &mut (*this).stdin };
             match core::mem::replace(slot, Writable::Ignore) {
                 // Drops `create()`'s ref; `start()`'s ref outlives this call.
-                Writable::Buffer(buffer) => {
-                    // SAFETY: single-threaded; sole borrow of the payload.
-                    unsafe { buffer_mut(&buffer) }.source.detach();
-                }
+                Writable::Buffer(_) => {}
                 other => {
                     *slot = other;
                     return;
@@ -415,28 +411,15 @@ impl ShellSubprocess {
     /// process backref.
     #[cfg(not(windows))]
     pub(crate) unsafe fn deinit_in_flight_io(this: *mut Self) {
-        // Claim `start()`'s +1, `close()` (fires `on_close` → `on_stdin_writer_close`:
-        // slot → `Ignore`, `create()`'s ref released), release the claimed
-        // ref — the JS `Subprocess::close_io` stdin shape.
         // SAFETY: caller contract; the `stdin` borrow ends before `close()`.
-        let pending_start: *mut StaticPipeWriter = match unsafe { &(*this).stdin } {
-            Writable::Buffer(buffer) => {
-                // SAFETY: single-threaded; temporary `&mut` for the flag swap.
-                let writer = unsafe { buffer_mut(buffer) };
-                if core::mem::replace(&mut writer.started, false) {
-                    buffer.as_ptr()
-                } else {
-                    core::ptr::null_mut()
-                }
-            }
-            _ => core::ptr::null_mut(),
+        let pending_start = match unsafe { &(*this).stdin } {
+            // SAFETY: single-threaded; the borrow ends with the `take`.
+            Writable::Buffer(buffer) => unsafe { buffer_mut(buffer) }.start_ref.take(),
+            _ => None,
         };
-        if !pending_start.is_null() {
-            // SAFETY: live writer holding `create()`'s ref plus the claimed
-            // start ref.
-            unsafe { (*pending_start).close() };
-            // SAFETY: releases the claimed start ref; last use of the pointer.
-            unsafe { bun_ptr::RefCount::deref(pending_start) };
+        if let Some(writer) = pending_start {
+            // SAFETY: single-threaded; `writer` outlives the close, which empties the slot.
+            unsafe { buffer_mut(&writer) }.close();
         }
 
         // SAFETY: disjoint field projections of the live subprocess.
@@ -746,8 +729,11 @@ impl ShellSubprocess {
 
         // SAFETY: borrow of the stdin slot scoped to this match; single-threaded.
         let stdin_start_err = match unsafe { &(*subprocess).stdin } {
-            // SAFETY: single-threaded; the writer is uniquely reachable here.
-            Writable::Buffer(buffer) => unsafe { buffer_mut(buffer) }.start().err(),
+            Writable::Buffer(buffer) => {
+                let start_ref = buffer.clone();
+                // SAFETY: single-threaded; the writer is uniquely reachable here.
+                unsafe { buffer_mut(buffer) }.start(start_ref).err()
+            }
             _ => None,
         };
         if let Some(err) = stdin_start_err {
@@ -836,8 +822,6 @@ pub enum Writable {
     Pipe(RefPtr<FileSink>),
     Fd(Fd),
     Buffer(RefPtr<StaticPipeWriter>),
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    Memfd(Fd),
     Inherit,
     Ignore,
 }
@@ -902,10 +886,7 @@ impl Writable {
                         _ => unreachable!(),
                     };
                     return Ok(Writable::Buffer(StaticPipeWriter::create(
-                        event_loop,
-                        subprocess,
-                        result,
-                        JscSubprocess::source_from_blob(blob),
+                        event_loop, subprocess, result, blob,
                     )));
                 }
                 Stdio::Fd(fd) => {
@@ -955,25 +936,11 @@ impl Writable {
                         _ => unreachable!(),
                     };
                     Ok(Writable::Buffer(StaticPipeWriter::create(
-                        event_loop,
-                        subprocess,
-                        result,
-                        JscSubprocess::source_from_blob(blob),
+                        event_loop, subprocess, result, blob,
                     )))
                 }
                 #[cfg(any(target_os = "linux", target_os = "android"))]
-                Stdio::Memfd(memfd) => {
-                    debug_assert!(memfd.is_valid());
-                    let fd = *memfd;
-                    // Ownership of the fd transfers to `Writable::Memfd`.
-                    // Swap in `Ignore` and suppress the old value's destructor
-                    // so `Stdio::Drop` doesn't close the fd we just took
-                    // (`stdio = Stdio::Ignore` alone would drop+close the old
-                    // `Stdio::Memfd`).
-                    let _ =
-                        core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
-                    Ok(Writable::Memfd(fd))
-                }
+                Stdio::Memfd(_) => unreachable!("the shell makes no memfd"),
                 Stdio::Fd(fd) => Ok(Writable::Fd(*fd)),
                 Stdio::Inherit => Ok(Writable::Inherit),
                 Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
@@ -1008,11 +975,6 @@ impl Writable {
                 // `buffer` drops here with the variant already `Ignore`, so a
                 // re-entrant `on_stdin_writer_close` from the writer's drop is a no-op.
             }
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            Writable::Memfd(fd) => {
-                fd.close();
-                *self = Writable::Ignore;
-            }
             Writable::Ignore => {}
             Writable::Fd(_) | Writable::Inherit => {}
         }
@@ -1025,8 +987,6 @@ impl Writable {
 
 pub(crate) enum Readable {
     Fd,
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    Memfd(Fd),
     Pipe(Rc<PipeReader>),
     Inherit,
     Ignore,
@@ -1163,15 +1123,7 @@ impl Readable {
                 // where the user passed in a Blob with an fd
                 Stdio::Blob(_) => Readable::Ignore,
                 #[cfg(any(target_os = "linux", target_os = "android"))]
-                Stdio::Memfd(memfd) => {
-                    let fd = *memfd;
-                    // Ownership of the fd transfers to `Readable::Memfd`. Swap in
-                    // `Ignore` and suppress the old value's destructor so
-                    // `Stdio::Drop` doesn't close the fd we just took.
-                    let _ =
-                        core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
-                    Readable::Memfd(fd)
-                }
+                Stdio::Memfd(_) => unreachable!("the shell makes no memfd"),
                 Stdio::Pipe => Readable::Pipe(PipeReader::create(
                     event_loop,
                     process,
@@ -1199,11 +1151,6 @@ impl Readable {
 
     pub(crate) fn finalize(&mut self) {
         match core::mem::replace(self, Readable::Closed) {
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            Readable::Memfd(fd) => {
-                *self = Readable::Closed;
-                fd.close();
-            }
             // .fd is borrowed from the shell's IOWriter (see IO.OutKind.to_subproc_stdio) or
             // the `Cmd`'s `redirection_fd`; the owner closes it.
             Readable::Fd => {

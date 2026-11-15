@@ -836,9 +836,7 @@ impl WindowsNamedPipe {
     }
 
     pub(crate) fn set_timeout_in_milliseconds(&self, ms: c_uint) {
-        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-            timer_all().remove(&self.event_loop_timer);
-        }
+        self.event_loop_timer.disarm();
         self.current_timeout.set(ms);
 
         // if the interval is 0 means that we stop the timer
@@ -980,36 +978,24 @@ impl bun_io::pipe_writer::WindowsStreamingWriterParent for WindowsNamedPipe {
 /// The three `stream.readStart` callbacks (alloc/error/read) baked into a
 /// trait so the
 /// `extern "C"` libuv trampoline is monomorphised over `WindowsNamedPipe`.
-impl uv::StreamReader for WindowsNamedPipe {
+// SAFETY: nothing touches `incoming` between `on_read_alloc` and the report of the read.
+unsafe impl uv::StreamReader for WindowsNamedPipe {
     #[inline]
-    fn on_read_alloc(this: &mut Self, suggested_size: usize) -> &mut [u8] {
-        let this: &Self = this;
-        // SAFETY: the returned region is the buffer's spare capacity handed to
-        // libuv for the pending read; nothing else touches `incoming` until
-        // `on_read` commits the byte count.
-        let incoming = unsafe { &mut *this.incoming.as_ptr() };
-        // SAFETY: libuv writes into this region before `on_read` commits it.
-        let spare = unsafe { incoming.uv_alloc_spare_u8(suggested_size) };
-        &mut spare[..suggested_size]
+    fn on_read_alloc(this: &Self, suggested_size: usize) -> *mut [u8] {
+        this.incoming
+            .with_mut(|incoming| incoming.uv_alloc_spare(suggested_size))
     }
     #[inline]
-    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
+    fn on_read_error(this: &Self, err: core::ffi::c_int) {
         // The trampoline only reaches this arm when `nreads < 0`, and for any
         // negative code `translate_uv_error_to_e` already
         // yields a concrete `E` (falling back to `UNKNOWN` for unmapped
         // codes). Pass it straight through; do NOT remap UNKNOWN→CANCELED.
         let e = bun_sys::windows::translate_uv_error_to_e(err);
-        let this: &Self = this;
         this.on_read_error(e);
     }
     #[inline]
-    unsafe fn on_read(this: *mut Self, data: &[u8]) {
-        // `data` points into `(*this).incoming` (it was returned from
-        // `on_read_alloc`). Capture the only thing the body needs (length)
-        // and drop the slice before touching `*this`.
-        let nread = data.len();
-        // SAFETY: `this` is the live context stashed in `handle.data` by
-        // `read_start_ctx`; `data` is no longer live.
-        unsafe { &*this }.on_read(nread);
+    unsafe fn on_read(this: &Self, nread: usize) {
+        this.on_read(nread);
     }
 }

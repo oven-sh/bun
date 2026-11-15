@@ -84,3 +84,31 @@ impl KeepAlive {
         self.ref_(event_loop_ctx)
     }
 }
+
+/// A [`KeepAlive`] on the JS thread's loop, released when it drops.
+#[derive(Default)]
+pub struct JsKeepAlive(KeepAlive);
+
+impl JsKeepAlive {
+    pub fn active() -> Self {
+        let this = Self::default();
+        this.ref_(js_vm_ctx());
+        this
+    }
+}
+
+impl core::ops::Deref for JsKeepAlive {
+    type Target = KeepAlive;
+    fn deref(&self) -> &KeepAlive {
+        &self.0
+    }
+}
+
+impl Drop for JsKeepAlive {
+    fn drop(&mut self) {
+        // An inactive one can drop on any thread.
+        if self.is_active() {
+            self.unref(js_vm_ctx());
+        }
+    }
+}

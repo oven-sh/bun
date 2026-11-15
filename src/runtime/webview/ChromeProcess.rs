@@ -66,7 +66,7 @@ struct WindowsPipes {
     reply: Option<uv::Owned<uv::Pipe>>,
     /// Child reads the other end as fd 3.
     cmd: Option<uv::Owned<uv::Pipe>>,
-    read_buf: Box<[u8]>,
+    read_buf: bun_jsc::JsCell<Box<[u8]>>,
 }
 
 // PORTING.md §Global mutable state: JS-thread-only singleton ptr → AtomicPtr.
@@ -645,31 +645,28 @@ impl Endpoints {
 
     /// Publishes the singleton and returns our fd for C++ to adopt.
     fn attach(self, process: ProcessHandle) -> crate::Result<i32> {
-        let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess {
+        let chrome = bun_ptr::AliasableBox::new(ChromeProcess {
             process,
             retired: false,
-        }));
-        // SAFETY: `self_ptr` is the freshly-allocated Box that owns `process`
-        // and outlives it.
+        });
+        // SAFETY: `chrome` owns `process` and outlives it.
         let process = unsafe {
-            let process = &(*self_ptr).process;
+            let process = &(*chrome.as_ptr()).process;
             Process::set_exit_handler(
                 process,
-                ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr),
+                ProcessExit::new(ProcessExitKind::ChromeProcess, chrome.as_ptr()),
             );
             process
         };
         if let Err(e) = process.watch() {
             scoped_log!(Chrome, "watch failed: {}", e);
-            // SAFETY: reclaim the Box (drops our process ref).
-            drop(unsafe { bun_core::heap::take(self_ptr) });
             return Err(crate::Error::WatchFailed);
         }
         // Same weak-handle reasoning as HostProcess: parent exit → Chrome's
         // fd 3 EOFs → DevToolsPipeHandler::Shutdown → exit. dispatchOnExit
         // also SIGKILLs via Bun__Chrome__kill.
         process.disable_keeping_event_loop_alive();
-        INSTANCE.store(self_ptr, Ordering::Relaxed);
+        INSTANCE.store(chrome.into_raw(), Ordering::Relaxed);
 
         debug_assert!(self.child.is_none());
         // usockets owns the fd from here on; this module only owns the process.
@@ -738,7 +735,7 @@ impl Endpoints {
         let pipes = WindowsPipes {
             reply: Some(self.reply),
             cmd: Some(self.cmd),
-            read_buf: vec![0u8; READ_BUF_SIZE].into_boxed_slice(),
+            read_buf: bun_jsc::JsCell::new(vec![0u8; READ_BUF_SIZE].into_boxed_slice()),
         };
         let generation = GENERATION.load(Ordering::Relaxed).wrapping_add(1);
         let chrome = bun_ptr::AliasableBox::new(ChromeProcess {
@@ -786,13 +783,14 @@ impl WindowsPipes {
     }
 }
 
+// SAFETY: only these callbacks use `read_buf`, and `reply` closes ahead of it.
 #[cfg(windows)]
-impl uv::StreamReader for ChromeProcess {
-    fn on_read_alloc(this: &mut Self, _suggested_size: usize) -> &mut [u8] {
-        &mut this.pipes.read_buf
+unsafe impl uv::StreamReader for ChromeProcess {
+    fn on_read_alloc(this: &Self, _suggested_size: usize) -> *mut [u8] {
+        this.pipes.read_buf.with_mut(|buf| &raw mut **buf)
     }
 
-    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
+    fn on_read_error(this: &Self, err: core::ffi::c_int) {
         scoped_log!(
             Chrome,
             "reply pipe closed: {:?}",
@@ -801,11 +799,9 @@ impl uv::StreamReader for ChromeProcess {
         PipeEvent::Closed.post(this.generation);
     }
 
-    unsafe fn on_read(this: *mut Self, data: &[u8]) {
-        scoped_log!(Chrome, "read {} bytes", data.len());
-        // SAFETY: `this` is live for the duration of the callback.
-        let generation = unsafe { (*this).generation };
-        PipeEvent::Data(Box::from(data)).post(generation);
+    unsafe fn on_read(this: &Self, nread: usize) {
+        scoped_log!(Chrome, "read {} bytes", nread);
+        PipeEvent::Data(Box::from(&this.pipes.read_buf.get()[..nread])).post(this.generation);
     }
 }
 

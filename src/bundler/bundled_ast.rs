@@ -13,7 +13,7 @@ pub use bun_css::BundlerStyleSheet;
 
 /// Arena-owned handle to a parsed CSS stylesheet.
 ///
-/// It lives in a `Worker.heap`, so `deinit_without_freeing_arena` drops it before the workers.
+/// It lives in a `Worker.heap`, so `BundleV2::drop` drops it before the workers.
 pub(crate) type CssAstRef<'arena> = bun_ast::StoreRef<BundlerStyleSheet<'arena>>;
 
 /// Element type of the `css` SoA column (`items_css()`). Exposed so bundler

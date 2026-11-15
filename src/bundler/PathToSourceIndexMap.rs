@@ -27,11 +27,45 @@ impl PathLike for bun_paths::fs::Path<'_> {
 }
 
 /// The modules of one namespace.
-#[derive(Default)]
 struct Table<V> {
     by_path: StringHashMap<V>,
     /// The `Some(loader)` keys: a `with { type }` import of a file under another loader. Rare.
     by_loader: Option<Box<EnumMap<Loader, StringHashMap<V>>>>,
+}
+
+impl<V> Default for Table<V> {
+    fn default() -> Self {
+        Table {
+            by_path: StringHashMap::default(),
+            by_loader: None,
+        }
+    }
+}
+
+impl<V> Table<V> {
+    fn map(&mut self, key_loader: Option<Loader>) -> &mut StringHashMap<V> {
+        match key_loader {
+            None => &mut self.by_path,
+            Some(loader) => &mut self
+                .by_loader
+                .get_or_insert_with(|| Box::new(EnumMap::from_fn(|_| StringHashMap::default())))
+                [loader],
+        }
+    }
+
+    fn iter_mut(&mut self) -> impl Iterator<Item = (&[u8], Option<Loader>, &mut V)> {
+        let by_path = self
+            .by_path
+            .iter_mut()
+            .map(|(text, value)| (&**text, None, value));
+        let by_loader = self.by_loader.iter_mut().flat_map(|by_loader| {
+            by_loader.iter_mut().flat_map(|(loader, map)| {
+                map.iter_mut()
+                    .map(move |(text, value)| (&**text, Some(loader), value))
+            })
+        });
+        by_path.chain(by_loader)
+    }
 }
 
 impl<V: Copy + Default> Table<V> {
@@ -49,10 +83,7 @@ impl<V: Copy + Default> Table<V> {
     ) -> Result<GetOrPutResult<'_, V>, bun_alloc::AllocError> {
         // PERF: bun_collections::StringHashMap is keyed by `Box<[u8]>`, so we dupe here.
         // Revisit once StringHashMap gains a borrowed-key variant.
-        match key_loader {
-            None => self.by_path.get_or_put(text),
-            Some(loader) => self.by_loader.get_or_insert_default()[loader].get_or_put(text),
-        }
+        self.map(key_loader).get_or_put(text)
     }
 
     /// Forgets the modules of `text` under every key loader.
@@ -65,25 +96,10 @@ impl<V: Copy + Default> Table<V> {
         }
         removed
     }
-
-    fn iter(&self) -> impl Iterator<Item = (&[u8], Option<Loader>, V)> {
-        let by_path = self
-            .by_path
-            .iter()
-            .map(|(text, value)| (&**text, None, *value));
-        let by_loader = self.by_loader.iter().flat_map(|by_loader| {
-            by_loader.iter().flat_map(|(loader, map)| {
-                map.iter()
-                    .map(move |(text, value)| (&**text, Some(loader), *value))
-            })
-        });
-        by_path.chain(by_loader)
-    }
 }
 
 /// A module is its namespace, its resolved path, and a key loader: `None` for the loader the path gets by default.
 /// The functions that take `text` are for files.
-#[derive(Default)]
 pub struct ModuleMap<V> {
     files: Table<V>,
     /// Every namespace but `file`. Only plugins and a few virtual modules fill it, and a lookup does not allocate.
@@ -96,14 +112,16 @@ pub type PathToSourceIndexMap = ModuleMap<IndexInt>;
 /// `found_existing` + value-ptr together, so we hand-roll a thin shim.
 pub(crate) type GetOrPutResult<'a, V> = bun_collections::string_hash_map::GetOrPutResult<'a, V>;
 
-impl<V: Copy + Default> ModuleMap<V> {
-    fn table(&self, namespace: &[u8]) -> Option<&Table<V>> {
-        if is_file_namespace(namespace) {
-            return Some(&self.files);
+impl<V> Default for ModuleMap<V> {
+    fn default() -> Self {
+        ModuleMap {
+            files: Table::default(),
+            namespaces: None,
         }
-        self.namespaces.as_ref()?.get(namespace)
     }
+}
 
+impl<V> ModuleMap<V> {
     fn table_mut(&mut self, namespace: &[u8]) -> Result<&mut Table<V>, bun_alloc::AllocError> {
         if is_file_namespace(namespace) {
             return Ok(&mut self.files);
@@ -113,6 +131,55 @@ impl<V: Copy + Default> ModuleMap<V> {
             .get_or_insert_default()
             .get_or_put(namespace)?
             .value_ptr)
+    }
+
+    /// For a value without a default: on a miss, returns what puts the value.
+    pub(crate) fn get_or_vacant_keyed(
+        &mut self,
+        path: &impl PathLike,
+        key_loader: Option<Loader>,
+    ) -> Result<&mut V, impl FnOnce(V)> {
+        self.table_mut(path.path_namespace())
+            .expect("oom")
+            .map(key_loader)
+            .get_or_vacant(path.path_text())
+    }
+
+    pub(crate) fn reserve(&mut self, additional: usize) {
+        self.files.by_path.reserve(additional);
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.files.by_path.clear();
+        self.files.by_loader = None;
+        self.namespaces = None;
+    }
+
+    /// (namespace, text, key loader, value). The namespace of a file is empty.
+    pub(crate) fn iter_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (&[u8], &[u8], Option<Loader>, &mut V)> {
+        let files = self
+            .files
+            .iter_mut()
+            .map(|(text, loader, value)| (&b""[..], text, loader, value));
+        let others = self.namespaces.iter_mut().flat_map(|namespaces| {
+            namespaces.iter_mut().flat_map(|(namespace, table)| {
+                table
+                    .iter_mut()
+                    .map(move |(text, loader, value)| (&**namespace, text, loader, value))
+            })
+        });
+        files.chain(others)
+    }
+}
+
+impl<V: Copy + Default> ModuleMap<V> {
+    fn table(&self, namespace: &[u8]) -> Option<&Table<V>> {
+        if is_file_namespace(namespace) {
+            return Some(&self.files);
+        }
+        self.namespaces.as_ref()?.get(namespace)
     }
 
     pub(crate) fn get(&self, text: impl AsRef<[u8]>) -> Option<V> {
@@ -184,7 +251,7 @@ impl<V: Copy + Default> ModuleMap<V> {
         self.get_or_put_key(path.path_namespace(), path.path_text(), key_loader)
     }
 
-    /// The parts of a key that `iter` gave.
+    /// The parts of a key that `iter_mut` gave.
     pub(crate) fn get_or_put_key(
         &mut self,
         namespace: &[u8],
@@ -192,31 +259,5 @@ impl<V: Copy + Default> ModuleMap<V> {
         key_loader: Option<Loader>,
     ) -> Result<GetOrPutResult<'_, V>, bun_alloc::AllocError> {
         self.table_mut(namespace)?.get_or_put(text, key_loader)
-    }
-
-    pub(crate) fn reserve(&mut self, additional: usize) {
-        self.files.by_path.reserve(additional);
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.files.by_path.clear();
-        self.files.by_loader = None;
-        self.namespaces = None;
-    }
-
-    /// (namespace, text, key loader, value). The namespace of a file is empty.
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8], Option<Loader>, V)> {
-        let files = self
-            .files
-            .iter()
-            .map(|(text, loader, value)| (&b""[..], text, loader, value));
-        let others = self.namespaces.iter().flat_map(|namespaces| {
-            namespaces.iter().flat_map(|(namespace, table)| {
-                table
-                    .iter()
-                    .map(move |(text, loader, value)| (&**namespace, text, loader, value))
-            })
-        });
-        files.chain(others)
     }
 }

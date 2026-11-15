@@ -21,7 +21,7 @@ use super::convert_stmts_for_chunk::convert_stmts_for_chunk;
 use super::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
 
 #[allow(clippy::too_many_arguments)]
-pub fn generate_code_for_file_in_chunk_js(
+pub(crate) fn generate_code_for_file_in_chunk_js(
     c: &LinkerContext,
     writer: &mut js_printer::BufferWriter,
     r: renamer::Renamer,

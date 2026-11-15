@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot } from "harness";
+import { join } from "node:path";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
 
@@ -1152,3 +1153,35 @@ test("lowering many decorated instance fields into a large constructor body stay
   const { tSmall, tLarge } = JSON.parse(stdout);
   expect(tLarge).toBeLessThan(tSmall * 3);
 }, 90_000);
+
+test.skipIf(!isASAN)("the metadata of a dotted type does not leak", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        // Out of the module loader's stack, whose leaks are suppressed.
+        await new Promise(resolve => setImmediate(resolve));
+        const compilerOptions = { experimentalDecorators: true, emitDecoratorMetadata: true };
+        const t = new Bun.Transpiler({ loader: "ts", tsconfig: { compilerOptions } });
+        for (const type of ["a.b", "a.b.c.d", "a.b<T>.c", "(a.b).c", "a.b!.c"]) {
+          const out = t.transformSync("class A { @d p: " + type + " }");
+          console.log(out.match(/"design:type", .* Object : (.*)\\)/)[1]);
+        }
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+      LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../leaksan.supp")}`,
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+    },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "a.b\na.b.c.d\na.b.c\na.b.c\na.b.c\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

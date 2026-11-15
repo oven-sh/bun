@@ -549,7 +549,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let mut props = G::PropertyList::init_capacity(
                                 object.properties.len() + usize::from(!e_.children.is_empty()),
                             );
-                            props.extend(object.properties.iter().map(G::Property::shallow_clone));
+                            props.extend_from_slice(&object.properties);
                             props
                         }
                         None => bun_alloc::AstAlloc::take(&mut e_.properties),

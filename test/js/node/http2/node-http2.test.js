@@ -6792,14 +6792,16 @@ for (const secure of [true, false]) {
         { eval: true, workerData: { port: server.address().port, secure, bytes, clientsAreGone } },
       );
       const exited = once(clients, "exit");
-      await once(clients, "message");
+      // Rejects with an error of the worker. An exit that comes first answers with its code.
+      expect(await Promise.race([once(clients, "message"), exited])).toEqual(["connected"]);
       clients.postMessage("write and leave");
       // This loop reads nothing meanwhile, so each client is gone by the time it answers.
-      if (Atomics.wait(clientsAreGone, 0, 0, 30_000) === "timed-out") {
+      const waited = Atomics.wait(clientsAreGone, 0, 0, 30_000);
+      if (waited === "timed-out") {
         server.close();
         await clients.terminate();
-        throw new Error("The clients did not leave within 30 seconds");
       }
+      expect(["ok", "not-equal"]).toContain(waited);
       await allStreams.promise;
       const [exitCode] = await exited;
       // Calls back only once every session is closed.

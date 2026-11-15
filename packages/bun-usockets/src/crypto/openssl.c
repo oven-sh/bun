@@ -1353,25 +1353,6 @@ void us_socket_set_first_flight_before_fin(struct us_socket_t *s) {
   s->ssl_first_flight_before_fin = 1;
 }
 
-/* Drop the strdup'd passphrase. Called as soon as private-key load completes
- * (the only consumer of the passwd_cb), so the secret never outlives ctx
- * construction and SSL_CTX_free() is sufficient on every later path. Also
- * called on the build-error path before SSL_CTX_free. */
-static void ssl_ctx_drop_passphrase(SSL_CTX *ctx) {
-  void *password = SSL_CTX_get_default_passwd_cb_userdata(ctx);
-  if (password) {
-    us_free(password);
-    SSL_CTX_set_default_passwd_cb_userdata(ctx, NULL);
-  }
-}
-
-static void ssl_ctx_build_fail(SSL_CTX *ctx) {
-  ssl_ctx_drop_passphrase(ctx);
-  /* ex_data slot already set right after SSL_CTX_new, so the free_func will
-   * decrement ssl_ctx_live on this SSL_CTX_free. */
-  SSL_CTX_free(ctx);
-}
-
 /* BoringSSL's kVerifySignatureAlgorithms (ssl/extensions.cc) plus the two it leaves out and Node.js accepts. */
 int us_ssl_ctx_set_verify_signature_algorithms(SSL_CTX *ctx) {
   static const uint16_t algorithms[] = {
@@ -1395,8 +1376,8 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
    * an old binary; a user bundle can carry both generations) is treated as absent rather than left to shadow the
    * currently-valid certificate for the same issuer. */
   X509_VERIFY_PARAM_set_flags(SSL_CTX_get0_param(ssl_context), X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
-  /* Register the live-count free_func first thing so every exit (including
-   * build_fail) balances. The packed reneg policy reuses the same slot. */
+  /* Register the live-count free_func first thing so every exit balances.
+   * The packed reneg policy reuses the same slot. */
   SSL_CTX_set_ex_data(ssl_context, us_ssl_ctx_ex_idx(), NULL);
 
   /* Default options we rely on — changing these breaks the BIO logic. */
@@ -1417,9 +1398,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     SSL_CTX_set_mode(ssl_context, SSL_MODE_RELEASE_BUFFERS);
   }
 
-  if (options.passphrase) {
-    SSL_CTX_set_default_passwd_cb_userdata(ssl_context, (void *)us_strdup(options.passphrase));
-  }
+  SSL_CTX_set_default_passwd_cb_userdata(ssl_context, (void *)options.passphrase);
   /* Installed unconditionally: with no userdata it supplies an empty password
    * (see passphrase_cb), matching Node's key-decryption error shape. */
   SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
@@ -1429,13 +1408,13 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   if (!several_identities) {
     if (options.cert_file_name) {
       if (SSL_CTX_use_certificate_chain_file(ssl_context, options.cert_file_name) != 1) {
-        ssl_ctx_build_fail(ssl_context);
+        SSL_CTX_free(ssl_context);
         return NULL;
       }
     } else if (options.cert && options.cert_count > 0) {
       for (unsigned int i = 0; i < options.cert_count; i++) {
         if (us_ssl_ctx_use_certificate_chain(ssl_context, options.cert[i]) != 1) {
-          ssl_ctx_build_fail(ssl_context);
+          SSL_CTX_free(ssl_context);
           return NULL;
         }
       }
@@ -1443,13 +1422,13 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
 
     if (options.key_file_name) {
       if (SSL_CTX_use_PrivateKey_file(ssl_context, options.key_file_name, SSL_FILETYPE_PEM) != 1) {
-        ssl_ctx_build_fail(ssl_context);
+        SSL_CTX_free(ssl_context);
         return NULL;
       }
     } else if (options.key && options.key_count > 0) {
       for (unsigned int i = 0; i < options.key_count; i++) {
         if (us_ssl_ctx_use_privatekey_content(ssl_context, options.key[i], SSL_FILETYPE_PEM) != 1) {
-          ssl_ctx_build_fail(ssl_context);
+          SSL_CTX_free(ssl_context);
           return NULL;
         }
       }
@@ -1464,7 +1443,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     STACK_OF(X509_NAME) *ca_list = SSL_load_client_CA_file(options.ca_file_name);
     if (ca_list == NULL) {
       *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
-      ssl_ctx_build_fail(ssl_context);
+      SSL_CTX_free(ssl_context);
       return NULL;
     }
     SSL_CTX_set_client_CA_list(ssl_context, ca_list);
@@ -1472,7 +1451,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_ex_idx, (void *)1);
     if (SSL_CTX_load_verify_locations(ssl_context, options.ca_file_name, NULL) != 1) {
       *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
-      ssl_ctx_build_fail(ssl_context);
+      SSL_CTX_free(ssl_context);
       return NULL;
     }
   } else if (options.ca && options.ca_count > 0) {
@@ -1491,7 +1470,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     }
     if (ca_certs == NULL || !us_install_ca_buffers(ssl_context, cert_store, ca_certs)) {
       *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
-      ssl_ctx_build_fail(ssl_context);
+      SSL_CTX_free(ssl_context);
       return NULL;
     }
     ERR_clear_error();
@@ -1506,13 +1485,11 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   /* After the store is filled: it completes their chains. */
   if (several_identities &&
       !us_ssl_ctx_use_identities(ssl_context, options.cert, options.cert_count, options.key, options.key_count)) {
-    ssl_ctx_build_fail(ssl_context);
+    SSL_CTX_free(ssl_context);
     return NULL;
   }
-  /* passwd_cb is only consulted by SSL_CTX_use_PrivateKey* above; the secret
-   * is dead now. Dropping it here means SSL_CTX_free() is sufficient cleanup
-   * everywhere downstream — no special "owner" path. */
-  ssl_ctx_drop_passphrase(ssl_context);
+  /* The passphrase is borrowed for this call, and the context outlives it. */
+  SSL_CTX_set_default_passwd_cb_userdata(ssl_context, NULL);
 
   /* The callback is set at SSL_VERIFY_NONE too: lsquic's SNI switch calls SSL_set_verify(ssl, mode, NULL), which keeps it. */
   SSL_CTX_set_verify(ssl_context,
@@ -1528,21 +1505,21 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
       dh_2048 = PEM_read_DHparams(paramfile, NULL, NULL, NULL);
       fclose(paramfile);
     } else {
-      ssl_ctx_build_fail(ssl_context);
+      SSL_CTX_free(ssl_context);
       return NULL;
     }
     if (dh_2048 == NULL) {
-      ssl_ctx_build_fail(ssl_context);
+      SSL_CTX_free(ssl_context);
       return NULL;
     }
     const long set_tmp_dh = SSL_CTX_set_tmp_dh(ssl_context, dh_2048);
     DH_free(dh_2048);
     if (set_tmp_dh != 1) {
-      ssl_ctx_build_fail(ssl_context);
+      SSL_CTX_free(ssl_context);
       return NULL;
     }
     if (!SSL_CTX_set_cipher_list(ssl_context, DEFAULT_CIPHER_LIST)) {
-      ssl_ctx_build_fail(ssl_context);
+      SSL_CTX_free(ssl_context);
       return NULL;
     }
   }
@@ -1554,7 +1531,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
       unsigned long ssl_err = ERR_peek_error();
       if (!(strlen(options.ssl_ciphers) == 0 && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
         *err = CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS;
-        ssl_ctx_build_fail(ssl_context);
+        SSL_CTX_free(ssl_context);
         return NULL;
       }
       ERR_clear_error();
@@ -1572,28 +1549,28 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     X509_STORE *crl_store = us_ssl_ctx_get_own_cert_store(ssl_context);
     if (!crl_store) {
       *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
-      ssl_ctx_build_fail(ssl_context);
+      SSL_CTX_free(ssl_context);
       return NULL;
     }
     for (unsigned int i = 0; i < options.crl_count; i++) {
       BIO *crl_bio = BIO_new_mem_buf(options.crl[i], -1);
       if (!crl_bio) {
         *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
-        ssl_ctx_build_fail(ssl_context);
+        SSL_CTX_free(ssl_context);
         return NULL;
       }
       X509_CRL *crl = PEM_read_bio_X509_CRL(crl_bio, NULL, NULL, NULL);
       BIO_free(crl_bio);
       if (!crl) {
         *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
-        ssl_ctx_build_fail(ssl_context);
+        SSL_CTX_free(ssl_context);
         return NULL;
       }
       int added = X509_STORE_add_crl(crl_store, crl);
       X509_CRL_free(crl);
       if (!added) {
         *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
-        ssl_ctx_build_fail(ssl_context);
+        SSL_CTX_free(ssl_context);
         return NULL;
       }
     }
@@ -1612,7 +1589,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
      * fails context creation: the user explicitly asked for the option. */
     X509_STORE *partial_store = us_ssl_ctx_get_own_cert_store(ssl_context);
     if (!partial_store) {
-      ssl_ctx_build_fail(ssl_context);
+      SSL_CTX_free(ssl_context);
       return NULL;
     }
     X509_STORE_set_flags(partial_store, X509_V_FLAG_PARTIAL_CHAIN);
@@ -1620,14 +1597,14 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
 
   if (options.sigalgs ? !SSL_CTX_set1_sigalgs_list(ssl_context, options.sigalgs)
                       : !us_ssl_ctx_set_verify_signature_algorithms(ssl_context)) {
-    ssl_ctx_build_fail(ssl_context);
+    SSL_CTX_free(ssl_context);
     return NULL;
   }
 
   if (options.ecdh_curve) {
     if (!SSL_CTX_set1_groups_list(ssl_context, options.ecdh_curve)) {
       *err = CREATE_BUN_SOCKET_ERROR_INVALID_ECDH_CURVE;
-      ssl_ctx_build_fail(ssl_context);
+      SSL_CTX_free(ssl_context);
       return NULL;
     }
   }

@@ -1,9 +1,10 @@
 #![warn(unused_must_use)]
 
 use core::ffi::c_int;
+use core::ptr::{self, NonNull};
 use std::io::Write as _;
 
-use bun_core::String as BunString;
+use bun_core::{String as BunString, ZStr};
 // `bun_wyhash` exports `Wyhash11` (iterative init/update/final_ surface).
 // Hash is in-memory dedupe only — algorithm identity is not load-bearing.
 use bun_wyhash::Wyhash11 as Wyhash;
@@ -13,19 +14,19 @@ use bun_wyhash::Wyhash11 as Wyhash;
 // the body of this crate stays cfg-free.
 #[cfg(not(windows))]
 mod sock {
-    // `addrinfo`/`freeaddrinfo` are re-exported from the crate root below;
-    // the rest are crate-internal.
+    pub use libc::addrinfo;
     pub(crate) use libc::{
-        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, sockaddr_un,
+        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM,
+        freeaddrinfo, getaddrinfo, sockaddr_un,
     };
-    pub use libc::{addrinfo, freeaddrinfo};
 }
 #[cfg(windows)]
 mod sock {
+    pub use bun_windows_sys::ws2_32::addrinfo;
     pub(crate) use bun_windows_sys::ws2_32::{
         AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM,
+        freeaddrinfo, getaddrinfo,
     };
-    pub use bun_windows_sys::ws2_32::{addrinfo, freeaddrinfo};
     // Windows SDK ships <afunix.h> (SOCKADDR_UN) since win10_rs4 but neither
     // windows-sys nor bun_windows_sys export it. Mirror the on-the-wire layout
     // (`{ family: u16, path: [108]u8 }`) here so address_to_string stays
@@ -37,9 +38,50 @@ mod sock {
     }
 }
 
-// Re-export the cfg-dispatched addrinfo type + matching free so callers don't
-// duplicate the POSIX/Windows split (see dns_jsc::dns).
-pub use sock::{addrinfo, freeaddrinfo};
+pub use sock::addrinfo;
+
+/// What `getaddrinfo` returns.
+pub struct AddrInfoList(NonNull<addrinfo>);
+
+impl AddrInfoList {
+    /// `Err` is the `EAI_*` status, or 0 for an empty list.
+    pub fn lookup(
+        host: Option<&ZStr>,
+        service: Option<&ZStr>,
+        hints: Option<&addrinfo>,
+    ) -> Result<Self, c_int> {
+        let mut list = ptr::null_mut();
+        // SAFETY: each argument is null or valid for the call.
+        let status = unsafe {
+            sock::getaddrinfo(
+                host.map_or(ptr::null(), ZStr::as_ptr),
+                service.map_or(ptr::null(), ZStr::as_ptr),
+                hints.map_or(ptr::null(), ptr::from_ref),
+                &raw mut list,
+            )
+        };
+        // `list` is unspecified on failure.
+        match NonNull::new(list) {
+            Some(list) if status == 0 => Ok(Self(list)),
+            _ => Err(status),
+        }
+    }
+}
+
+impl core::ops::Deref for AddrInfoList {
+    type Target = addrinfo;
+    fn deref(&self) -> &addrinfo {
+        // SAFETY: live until `drop`.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl Drop for AddrInfoList {
+    fn drop(&mut self) {
+        // SAFETY: from `getaddrinfo`.
+        unsafe { sock::freeaddrinfo(self.0.as_ptr()) }
+    }
+}
 
 #[cfg(windows)]
 pub const AI_V4MAPPED: c_int = 2048;
@@ -64,14 +106,6 @@ pub struct GetAddrInfo {
 }
 
 impl GetAddrInfo {
-    pub fn clone(&self) -> GetAddrInfo {
-        GetAddrInfo {
-            name: Box::<[u8]>::from(&*self.name),
-            port: self.port,
-            options: self.options,
-        }
-    }
-
     pub fn to_cares(&self) -> bun_cares_sys::c_ares_draft::AddrInfo_hints {
         let mut hints: bun_cares_sys::c_ares_draft::AddrInfo_hints = bun_core::ffi::zeroed();
 
@@ -296,27 +330,6 @@ pub struct GetAddrInfoResult {
 
 pub type ResultList = Vec<GetAddrInfoResult>;
 
-pub enum ResultAny {
-    Addrinfo(*mut sock::addrinfo),
-    List(ResultList),
-}
-
-impl Drop for ResultAny {
-    fn drop(&mut self) {
-        match self {
-            ResultAny::Addrinfo(addrinfo) => {
-                if !addrinfo.is_null() {
-                    // SAFETY: addrinfo was allocated by C getaddrinfo (see LIFETIMES.tsv)
-                    unsafe { sock::freeaddrinfo(*addrinfo) };
-                }
-            }
-            ResultAny::List(_list) => {
-                // Vec drops itself
-            }
-        }
-    }
-}
-
 impl GetAddrInfoResult {
     pub fn to_list(addrinfo: &sock::addrinfo) -> ResultList {
         let mut list = ResultList::with_capacity(addr_info_count(addrinfo) as usize);
@@ -334,7 +347,7 @@ impl GetAddrInfoResult {
         list
     }
 
-    pub fn from_addr_info(addrinfo: &sock::addrinfo) -> Option<GetAddrInfoResult> {
+    fn from_addr_info(addrinfo: &sock::addrinfo) -> Option<GetAddrInfoResult> {
         let sockaddr = addrinfo.ai_addr;
         if sockaddr.is_null() {
             return None;
@@ -400,7 +413,7 @@ pub fn address_to_string(address: &Address) -> BunString {
     }
 }
 
-pub fn addr_info_count(addrinfo: &sock::addrinfo) -> u32 {
+fn addr_info_count(addrinfo: &sock::addrinfo) -> u32 {
     let mut count: u32 = 1;
     let mut current: *mut sock::addrinfo = addrinfo.ai_next;
     while !current.is_null() {

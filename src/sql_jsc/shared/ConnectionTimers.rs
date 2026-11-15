@@ -4,15 +4,15 @@ use core::fmt::Arguments;
 use bun_core::fmt::{ConnTimeoutKind, fmt_conn_timeout};
 use bun_core::{Timespec, TimespecMockMode};
 
-use crate::jsc::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, VirtualMachine};
+use crate::jsc::{EventLoopTimerState, EventLoopTimerTag, OwnedTimer, VirtualMachine};
 
 pub struct ConnectionTimers {
     idle_timeout_ms: u32,
     pub(crate) connection_timeout_ms: u32,
     max_lifetime_ms: u32,
     /// The connection timeout until the connection is established, the idle timeout after.
-    pub(crate) timer: EventLoopTimer,
-    pub(crate) max_lifetime_timer: EventLoopTimer,
+    pub(crate) timer: OwnedTimer,
+    pub(crate) max_lifetime_timer: OwnedTimer,
     /// `maxLifetime` ran out while busy; the connection closes when it stops being busy.
     lifetime_exceeded: Cell<bool>,
     /// The pool handed it to a reservation or a transaction: busy even when nothing is on the wire.
@@ -31,8 +31,8 @@ impl ConnectionTimers {
             idle_timeout_ms,
             connection_timeout_ms,
             max_lifetime_ms,
-            timer: EventLoopTimer::init_paused(timer_tag),
-            max_lifetime_timer: EventLoopTimer::init_paused(max_lifetime_tag),
+            timer: OwnedTimer::init_paused(timer_tag),
+            max_lifetime_timer: OwnedTimer::init_paused(max_lifetime_tag),
             lifetime_exceeded: Cell::new(false),
             checked_out: Cell::new(false),
         }
@@ -43,23 +43,18 @@ impl ConnectionTimers {
     }
 
     pub(crate) fn stop(&self) {
-        stop(&self.timer);
-        stop(&self.max_lifetime_timer);
+        self.timer.disarm();
+        self.max_lifetime_timer.disarm();
     }
 }
 
-fn start(timer: &EventLoopTimer, ms: u32) {
+fn start(timer: &OwnedTimer, ms: u32) {
     timer.next.set(Timespec::ms_from_now(
         TimespecMockMode::ForceRealTime,
         ms.into(),
     ));
-    // SAFETY: an unlinked field (both callers see to it) of a boxed connection, which stops its
-    // timers before it is freed.
-    unsafe { VirtualMachine::get().timer_insert(timer) };
-}
-
-fn stop(timer: &EventLoopTimer) {
-    VirtualMachine::get().timer_remove(timer);
+    // SAFETY: an unlinked field (both callers see to it) of a boxed connection.
+    unsafe { VirtualMachine::get().timer_insert(OwnedTimer::node(timer)) };
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -106,7 +101,7 @@ pub trait TimedConnection {
             return;
         }
         let timer = &self.timers().timer;
-        stop(timer);
+        timer.disarm();
         let (_, ms, _) = self.timeout();
         if ms != 0 {
             start(timer, ms);

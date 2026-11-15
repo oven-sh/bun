@@ -61,11 +61,11 @@ fn parse(
             NonNull::from(known),
         )
     });
-    let mut worker = scopeguard::guard(Worker::get(context.bundle()), |worker| worker.unget());
+    let mut worker = Worker::get(context.bundle());
     with_ast_scope(|arena| {
         // A bundle keeps every AST until it finishes. This one is dead once the parser returns.
         let arena_of_bundle = std::mem::replace(&mut worker.arena, BackRef::new(arena));
-        let mut worker = scopeguard::guard(&mut **worker, |worker| {
+        let mut worker = scopeguard::guard(&mut *worker, |worker| {
             worker.arena = arena_of_bundle;
             set_known_answers(context, worker, None);
             let inlines_main = context.options().inline_entrypoint_import_meta_main;

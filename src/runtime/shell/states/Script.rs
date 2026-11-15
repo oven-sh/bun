@@ -1,20 +1,17 @@
 //! State node for a shell script. Used for the top-level script as well as
 //! command-substitution and subshell bodies.
 
-use bun_ptr::AliasableBox;
-
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, log};
 use crate::shell::io::IO;
-use crate::shell::states::base::Base;
+use crate::shell::states::base::{Base, Env};
 use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
 
 pub(crate) struct Script {
     pub(crate) base: Base,
-    /// What `base.shell` points to, in a command substitution.
-    _env: Option<AliasableBox<ShellExecEnv>>,
+    pub(crate) shell: Env,
     /// Back-reference into the bumpalo-allocated AST (`ShellArgs::__arena`).
     /// The arena outlives every state node (it's dropped only when the
     /// interpreter is finalized), so the BackRef invariant holds. Stored
@@ -37,36 +34,14 @@ impl Default for ScriptState {
 impl Script {
     pub(crate) fn init(
         interp: &Interpreter,
-        shell: *mut ShellExecEnv,
+        shell: Env,
         node: &ast::Script,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
-        Self::alloc(interp, Base::new(parent, shell), None, node, io)
-    }
-
-    pub(crate) fn init_cmd_subst(
-        interp: &Interpreter,
-        env: AliasableBox<ShellExecEnv>,
-        node: &ast::Script,
-        parent: NodeId,
-        io: IO,
-    ) -> NodeId {
-        let base = Base::new(parent, env.as_ptr());
-        Self::alloc(interp, base, Some(env), node, io)
-    }
-
-    fn alloc(
-        interp: &Interpreter,
-        base: Base,
-        env: Option<AliasableBox<ShellExecEnv>>,
-        node: &ast::Script,
-        io: IO,
-    ) -> NodeId {
-        let parent = base.parent;
         let id = interp.alloc_node(Node::Script(Script {
-            base,
-            _env: env,
+            base: Base::new(parent),
+            shell,
             node: bun_ptr::BackRef::new(node),
             io,
             state: ScriptState::default(),
@@ -92,7 +67,7 @@ impl Script {
             }
             let i = *idx;
             *idx += 1;
-            (i, me.base.shell)
+            (i, me.shell.as_ptr())
         };
         let stmt_node = Self::stmt_at(interp, this, idx);
         let io = interp.as_script(this).io.clone();
@@ -121,10 +96,6 @@ impl Script {
             return Self::finish(interp, this, exit_code);
         }
         Self::next(interp, this)
-    }
-
-    pub(crate) fn deinit(_interp: &Interpreter, this: NodeId) {
-        log!("Script {} deinit", this);
     }
 
     // ── AST helpers ────────────────────────────────────────────────────────

@@ -63,7 +63,7 @@ impl BuildContext {
         &self,
         work: impl FnOnce(&mut Transpiler<'static>, &Arena) -> R,
     ) -> R {
-        let mut worker = scopeguard::guard(Worker::get(self.bundle()), |worker| worker.unget());
+        let mut worker = Worker::get(self.bundle());
         let data = worker.data.as_mut().expect("Worker::get creates it");
         with_ast_scope(|arena| work(&mut data.transpiler, arena))
     }
@@ -88,7 +88,7 @@ impl FileFinder {
     ///
     /// # Safety
     /// `transpiler` outlives what is returned and is not written in the meantime.
-    pub unsafe fn new(transpiler: &Transpiler<'_>, conditions: &[Vec<u8>]) -> FileFinder {
+    pub unsafe fn new(transpiler: &Transpiler<'static>, conditions: &[Vec<u8>]) -> FileFinder {
         let mut options = crate::transpiler::resolver_bundle_options_subset(&transpiler.options);
         // Whoever asks has taken out what is external and the modules of Bun's own that it has.
         options.mark_builtins_as_external = false;
@@ -106,8 +106,7 @@ impl FileFinder {
             options.conditions.require.insert(condition, ());
         }
         let resolver = &transpiler.resolver;
-        // SAFETY: the caller's.
-        FileFinder(unsafe { Resolver::for_worker(resolver, resolver.log, options) })
+        FileFinder(Resolver::for_worker(resolver, resolver.log, options))
     }
 
     pub fn find(&mut self, search: &FileSearch<'_>) -> FoundCode {
@@ -142,7 +141,7 @@ impl FileFinder {
         let failure = resolver.esm_failure.take();
         let result = match result {
             ResultUnion::Success(result) => result,
-            ResultUnion::Failure(_) | ResultUnion::Pending(_) | ResultUnion::NotFound => {
+            ResultUnion::Failure(_) | ResultUnion::NotFound => {
                 return failure.map_or_else(FoundCode::not_found, describe_failure);
             }
         };
@@ -213,17 +212,12 @@ pub(crate) fn with_test_context<R>(
         false,
         None,
         &arena,
-    )
-    .expect("the carrier starts");
+    );
     let context = BuildContext {
         bundle: NonNull::from(&mut *bundle).cast(),
         module_prefix: Box::from(&b"/$bunfs/root/"[..]),
     };
-    let result = then(&context);
-    drop(context);
-    bundle.deinit_without_freeing_arena();
-    drop(bundle);
-    result
+    then(&context)
 }
 
 pub(crate) struct BundlerServices {
@@ -896,7 +890,7 @@ impl SourceProvider for BundlerServices {
             Some(known) => known.value.into_owned(),
             None => written.to_ascii_lowercase(),
         };
-        let kept = MimeType::MimeType::init(&kept, false, None);
+        let kept = MimeType::MimeType::init(&kept);
         Some(Loader::from_mime_type(kept))
     }
 

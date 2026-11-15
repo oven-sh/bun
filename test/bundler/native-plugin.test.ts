@@ -516,6 +516,30 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     expect.unreachable("Should have caught an error");
   });
 
+  it("frees the context of a plugin that leaves the source as it is", async () => {
+    await Bun.write(path.join(tempdir, "untouched.ts"), `export const ok = 1;\n`);
+    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    const external = napiModule.createExternal();
+
+    const result = await Bun.build({
+      entrypoints: [path.join(tempdir, "untouched.ts")],
+      plugins: [
+        {
+          name: "xXx123_foo_counter_321xXx",
+          setup(build) {
+            build.onBeforeParse(
+              { filter: /untouched\.ts$/ },
+              { napiModule, symbol: "plugin_impl_context_without_source", external },
+            );
+          },
+        },
+      ],
+    });
+
+    expect(await result.outputs[0].text()).toEndWith("untouched.ts\nvar ok = 1;\nexport {\n  ok\n};\n");
+    expect(napiModule.getCompilationCtxFreedCount(external)).toBe(1);
+  });
+
   it("should fail gracefully when passing something that is NOT a bunler plugin", async () => {
     const not_plugins = [require(path.join(tempdir, "build/Release/not_a_plugin.node")), 420, "hi", {}];
 

@@ -88,13 +88,13 @@ impl ExtractTarball {
 
 pub(crate) fn build_url(
     registry_: &[u8],
-    full_name_: &StringOrTinyString,
+    full_name: &[u8],
     version: Version,
     string_buf: &[u8],
 ) -> Result<&'static [u8], bun_alloc::AllocError> {
     build_url_with_printer(
         registry_,
-        full_name_,
+        full_name,
         version,
         string_buf,
         // Format directly into the store's tail; no intermediate `String`.
@@ -105,13 +105,12 @@ pub(crate) fn build_url(
 /// Generic URL builder; the closure carries its own context.
 pub fn build_url_with_printer<R, E>(
     registry_: &[u8],
-    full_name_: &StringOrTinyString,
+    full_name: &[u8],
     version: Version,
     string_buf: &[u8],
     mut print: impl FnMut(fmt::Arguments<'_>) -> Result<R, E>,
 ) -> Result<R, E> {
     let registry = strings::trim_right(registry_, b"/");
-    let full_name = full_name_.slice();
 
     let mut name = full_name;
     if name[0] == b'@' {
@@ -230,6 +229,17 @@ impl ExtractTarball {
             break 'brk tmp;
         };
         (name, basename)
+    }
+
+    pub(crate) fn warn_about_skipped_header(&self, log: &mut bun_ast::Log) {
+        log.add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "Skipped entries with an invalid header in the tarball for \"{}\"",
+                bun_fmt::for_terminal(bstr::BStr::new(self.name_and_basename().0)),
+            ),
+        );
     }
 
     fn extract(
@@ -431,11 +441,19 @@ impl ExtractTarball {
                     }
                 }
                 _ => {
+                    struct SkippedHeader(bool);
+                    impl ArchiveAppender for SkippedHeader {
+                        fn on_skipped_header(&mut self) {
+                            self.0 = true;
+                        }
+                    }
+                    let mut skipped_header = SkippedHeader(false);
+
                     let _ = Archiver::extract_to_dir(
                         tar_input,
                         extract_destination.fd(),
                         None,
-                        &mut (),
+                        &mut skipped_header,
                         ExtractOptions {
                             // packages usually have root directory `package/`, and scoped packages usually have root `<scopename>/`
                             // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L442
@@ -446,6 +464,10 @@ impl ExtractTarball {
                             ..Default::default()
                         },
                     )?;
+
+                    if skipped_header.0 {
+                        self.warn_about_skipped_header(log);
+                    }
                 }
             }
 
@@ -730,9 +752,6 @@ impl ExtractTarball {
 
             let ret_json_path = FileSystem::get().dirname_store().append(json_path)?;
 
-            // Lands in `Task.data.*` (untagged `ManuallyDrop` union); freed by
-            // `Task::deinit_payload()` at the `runTasks.rs` re-pool site, which
-            // calls it before `preallocated_resolve_tasks.put()`.
             Ok(ExtractData {
                 url: url.into(),
                 resolved: resolved.into(),

@@ -16,12 +16,8 @@ use bun_ast::Index;
 pub(crate) use crate::IndexInt;
 
 pub struct Graph<'a> {
-    // `BundleV2::init` allocates this from the `self.heap` arena and
-    // `BundleV2::deinit` calls `pool.deinit()`, so this is arena-owned but self-referential
-    // (sibling field). `BackRef` (not raw `NonNull`) so the read accessor `pool()` is
-    // safe — the BACKREF invariant (pointee outlives holder) holds for the entire
-    // bundle pass.
-    pub pool: bun_ptr::BackRef<ThreadPool, bun_ptr::Mut>,
+    /// First, to drop first. Boxed: its threads use it while the bundle thread changes the graph.
+    pool: Box<ThreadPool>,
     pub(crate) heap: &'a ThreadLocalArena,
 
     /// Mapping user-specified entry points to their Source Index
@@ -71,18 +67,16 @@ pub struct Graph<'a> {
     pub server_component_boundaries: server_component_boundary::List,
 
     /// Track HTML imports from server-side code
-    /// Each entry represents a server file importing an HTML file that needs a client build
+    /// Each entry is the source index of the generated module that stands for an imported HTML file
     ///
     /// OutputPiece.Kind.HTMLManifest corresponds to indices into the array.
-    pub(crate) html_imports: HtmlImports,
+    pub(crate) html_imports: Vec<IndexInt>,
 
     pub(crate) estimated_file_loader_count: usize,
 
     /// For Bake, a count of the CSS asts is used to make precise
     /// pre-allocations without re-iterating the file listing.
     pub(crate) css_file_count: usize,
-
-    pub(crate) additional_output_files: Vec<options::OutputFile>,
 
     pub(crate) kit_referenced_server_data: bool,
     pub(crate) kit_referenced_client_data: bool,
@@ -91,14 +85,6 @@ pub struct Graph<'a> {
     ///
     /// Helps skip a loop.
     pub(crate) has_any_secondary_paths: bool,
-}
-
-#[derive(Default)]
-pub struct HtmlImports {
-    /// Source index of the server file doing the import
-    pub(crate) server_source_indices: Vec<IndexInt>,
-    /// Source index of the HTML file being imported
-    pub(crate) html_source_indices: Vec<IndexInt>,
 }
 
 pub struct InputFile<'a> {
@@ -129,7 +115,7 @@ impl Default for InputFile<'_> {
     }
 }
 
-// SoA column accessors on `MultiArrayList<InputFile>` and `Slice<InputFile>`.
+// SoA column accessors on `MultiArrayList<InputFile>`.
 // Field name + type are checked against `InputFile`'s reflected layout at
 // compile time by the underlying `items::<"name", T>()`.
 bun_collections::multi_array_columns! {
@@ -156,11 +142,9 @@ bitflags::bitflags! {
 }
 
 impl<'a> Graph<'a> {
-    pub(crate) fn new(heap: &'a ThreadLocalArena) -> Self {
+    pub(crate) fn new(heap: &'a ThreadLocalArena, pool: ThreadPool) -> Self {
         Self {
-            // Self-referential arena pointer; real value wired in
-            // `BundleV2::init` before any use.
-            pool: bun_ptr::BackRef::dangling(),
+            pool: Box::new(pool),
             heap,
             entry_points: Vec::new(),
             entry_point_original_names: IndexStringMap::default(),
@@ -172,10 +156,9 @@ impl<'a> Graph<'a> {
             cancelled: false,
             build_graphs: EnumMap::default(),
             server_component_boundaries: server_component_boundary::List::default(),
-            html_imports: HtmlImports::default(),
+            html_imports: Vec::new(),
             estimated_file_loader_count: 0,
             css_file_count: 0,
-            additional_output_files: Vec::new(),
             kit_referenced_server_data: false,
             kit_referenced_client_data: false,
             has_any_secondary_paths: false,
@@ -184,33 +167,9 @@ impl<'a> Graph<'a> {
 }
 
 impl<'a> Graph<'a> {
-    /// Shared borrow of the bundler `ThreadPool`.
-    ///
-    /// `pool` is arena-allocated in `BundleV2::init` and
-    /// torn down in `BundleV2::deinit`. It is non-null
-    /// and valid for the entire bundle pass; see LIFETIMES.tsv row 170
-    /// (BACKREF). All `ThreadPool` driver methods (`schedule`, `start`,
-    /// `worker_pool`, `schedule_inside_thread_pool`) take `&self`, so callers
-    /// can use this in place of the prior open-coded
-    /// `unsafe { self.pool.as_ref() }` / `as_mut()`.
     #[inline]
     pub(crate) fn pool(&self) -> &ThreadPool {
-        // BackRef invariant: `pool` is set in `BundleV2::init` to an
-        // arena-owned `ThreadPool` and remains valid until `BundleV2::deinit`;
-        // no `&mut ThreadPool` is live across any `pool()` borrow (the only
-        // `&mut` site is `deinit`, called after all schedule/worker activity
-        // has drained).
-        self.pool.get()
-    }
-
-    /// Exclusive borrow of the bundler `ThreadPool`. Only needed for
-    /// `ThreadPool::deinit` during teardown; prefer [`Self::pool`] for
-    /// scheduling.
-    #[inline]
-    pub(crate) fn pool_mut(&mut self) -> &mut ThreadPool {
-        // SAFETY: see `pool()`. `&mut self` excludes other safe borrows of
-        // `Graph`, so no aliasing `&ThreadPool` is live.
-        unsafe { self.pool.get_mut() }
+        &self.pool
     }
 
     #[inline]

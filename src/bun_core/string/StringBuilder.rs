@@ -20,13 +20,6 @@ pub struct StringBuilder {
 }
 
 impl StringBuilder {
-    pub fn init_capacity(cap: usize) -> StringBuilder {
-        // allocator.alloc(u8, cap)
-        let buf = Box::<[u8]>::new_uninit_slice(cap);
-        let ptr = NonNull::new(crate::heap::into_raw(buf).cast::<u8>());
-        StringBuilder { cap, len: 0, ptr }
-    }
-
     pub fn count_z(&mut self, slice: &[u8]) {
         self.cap += slice.len() + 1;
     }
@@ -211,7 +204,7 @@ impl StringBuilder {
     pub fn written_slice(&self) -> &[u8] {
         let Some(ptr) = self.ptr else { return &[] };
         // SAFETY: `ptr` came from `Box::<[u8]>::new_uninit_slice(self.cap)` in
-        // `allocate()`/`init_capacity()`; `self.len <= self.cap` is upheld by
+        // `allocate()`; `self.len <= self.cap` is upheld by
         // every `append*` (debug-asserted there), and bytes `[0, len)` were
         // initialized by those appends. The borrow is tied to `&self`.
         unsafe { slice::from_raw_parts(ptr.as_ptr(), self.len) }
@@ -229,7 +222,7 @@ impl StringBuilder {
     /// After calling this, you are responsible for freeing the underlying memory.
     /// This StringBuilder should not be used after calling this function.
     pub fn move_to_slice(&mut self) -> Box<[u8]> {
-        // Reconstruct the Box (allocated in init_capacity/allocate) and hand
+        // Reconstruct the Box (allocated in allocate) and hand
         // it back.
         //
         // `take()` first: `*self = Self::default()` drops the old value, and
@@ -255,7 +248,7 @@ impl Drop for StringBuilder {
             return;
         }
         // SAFETY: ptr came from Box::<[MaybeUninit<u8>]>::new_uninit_slice(self.cap)
-        // leaked in init_capacity/allocate; reconstruct to free via global allocator.
+        // leaked in allocate; reconstruct to free via global allocator.
         unsafe {
             crate::heap::destroy::<[core::mem::MaybeUninit<u8>]>(
                 std::ptr::slice_from_raw_parts_mut(ptr.as_ptr().cast(), self.cap),
@@ -283,10 +276,5 @@ mod tests {
         builder.count(b"");
         builder.allocate().unwrap();
         assert_views_are_empty(&mut builder);
-    }
-
-    #[test]
-    fn views_are_empty_after_init_capacity_zero() {
-        assert_views_are_empty(&mut StringBuilder::init_capacity(0));
     }
 }

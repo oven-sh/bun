@@ -15,7 +15,9 @@ use bun_uws::{AnyRequest, AnyResponse};
 use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
 use crate::server::file_route::{status_for_preconditions, write_any_status, write_content_range};
 use crate::server::jsc::{JSGlobalObject, JsResult};
-use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest};
+use crate::server::{
+    AnyServer, FileResponseStream, HTTPStatusText, PendingRequest, RangeRequest, Served,
+};
 
 bun_output::declare_scope!(DirectoryRoute, hidden);
 
@@ -111,14 +113,8 @@ impl DirectoryRoute {
 
     fn on(this: ThisPtr<DirectoryRoute>, mut req: AnyRequest, resp: AnyResponse, method: Method) {
         debug_assert!(this.server.get().is_some());
-        // Held until the response completes; a reload can drop the route
-        // table's ref while a `FileResponseStream` is still streaming.
-        let guard = ResponseGuard {
-            route: Some(RefPtr::from_this(this)),
-            resp,
-        };
+        let route = PendingRequest::new(RefPtr::from_this(this));
         if let Some(server) = this.server.get() {
-            server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
 
@@ -241,8 +237,7 @@ impl DirectoryRoute {
 
         let server = this.server.get().unwrap();
         FileResponseStream::start(FileResponseStreamOptions {
-            fd: file.into_raw(),
-            auto_close: true,
+            fd: file.into(),
             resp,
             vm: bun_ptr::BackRef::new(server.vm()),
             file_type: FileType::File,
@@ -250,7 +245,7 @@ impl DirectoryRoute {
             offset: body_offset,
             length: Some(body_len),
             idle_timeout: server.config().idle_timeout,
-            owner: StreamOwner::DirectoryRoute(guard.into_route()),
+            owner: StreamOwner::DirectoryRoute(route),
         });
     }
 
@@ -351,38 +346,11 @@ impl DirectoryRoute {
         slot.set(entry);
         (ms, buf, len)
     }
-
-    /// The last thing a response does with the route; callers then release
-    /// the ref `on()` took for it.
-    pub(crate) fn on_response_complete(&self, resp: AnyResponse) {
-        resp.clear_aborted();
-        resp.clear_on_writable();
-        resp.clear_timeout();
-        if let Some(server) = self.server.get() {
-            server.on_static_request_complete();
-        }
-    }
 }
 
-/// Completes the response and releases its route ref (closing the file, if
-/// any, as it drops) on every non-streaming return.
-struct ResponseGuard {
-    route: Option<RefPtr<DirectoryRoute>>,
-    resp: AnyResponse,
-}
-
-impl ResponseGuard {
-    /// Hand the ref to the `FileResponseStream` instead.
-    fn into_route(mut self) -> RefPtr<DirectoryRoute> {
-        self.route.take().expect("taken once")
-    }
-}
-
-impl Drop for ResponseGuard {
-    fn drop(&mut self) {
-        if let Some(route) = self.route.take() {
-            route.on_response_complete(self.resp);
-        }
+impl Served for RefPtr<DirectoryRoute> {
+    fn served_by(&self) -> Option<AnyServer> {
+        self.server.get()
     }
 }
 

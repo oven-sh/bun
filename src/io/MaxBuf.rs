@@ -1,35 +1,23 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-/// Tracks remaining byte budget for a subprocess stdout/stderr pipe.
-/// Dual-owned by the `Subprocess` and the pipe reader; freed when both disown it.
-///
-/// All mutable state is `Cell<T>` so the struct is only ever accessed via
-/// `&MaxBuf` (shared, `SharedReadOnly` provenance). This is required because
-/// the overflow callback fired from `on_read_bytes` re-enters via a sibling
-/// `NonNull<MaxBuf>` and writes `owned_by_subprocess` — a `&mut MaxBuf` on the
-/// caller's stack would be a Stacked-Borrows violation. With `Cell` the whole
-/// re-entrancy path is `&MaxBuf`-only and the aliasing question disappears.
+use bun_ptr::RefPtr;
+
+/// The bytes that a subprocess may still write to its stdout or stderr pipe.
+#[derive(bun_ptr::CellRefCounted)]
 pub struct MaxBuf {
-    /// Direct link to the owning `Subprocess` so overflow dispatch does not
-    /// depend on the pipe reader's parent vtable (which changes to `FileReader`
-    /// once the `.stdout`/`.stderr` stream getter is touched). `None` after
-    /// subprocess finalize or once the overflow callback has fired.
-    pub(crate) owned_by_subprocess: Cell<Option<Owner>>,
-    /// `false` after pipereader finalize.
-    pub(crate) owned_by_reader: Cell<bool>,
-    /// If this goes negative, `on_max_buffer` is called on the subprocess.
-    pub(crate) remaining_bytes: Cell<i64>,
-    // (once both are cleared, it is freed)
+    ref_count: Cell<u32>,
+    kind: Kind,
+    /// Not the reader's parent, which is a `FileReader` once script has asked for the stream.
+    owner: Cell<Option<Owner>>,
+    remaining_bytes: Cell<i64>,
 }
 
-/// Erased back-pointer to the owning `Subprocess` plus its overflow handler.
-/// `on_overflow` must call [`MaxBuf::remove_from_subprocess`] on the matching
-/// slot (so the callback fires at most once) and then kill the child.
+/// The `Subprocess`, and how it is told that the budget is gone.
 #[derive(Copy, Clone)]
 pub struct Owner {
     pub ptr: NonNull<()>,
-    pub on_overflow: unsafe fn(NonNull<()>, NonNull<MaxBuf>),
+    pub on_overflow: unsafe fn(NonNull<()>, Kind),
 }
 
 /// How far the read that crosses `maxBuffer` may overshoot it: one Node-sized
@@ -37,141 +25,56 @@ pub struct Owner {
 /// exceeding `maxBuffer` by up to one read.
 const OVERREAD_ALLOWANCE: u64 = 64 * 1024;
 
-// TODO(refactor): LIFETIMES.tsv classifies the caller fields (Subprocess.{stdout,stderr}_maxbuf,
-// {Posix,Windows}BufferedReader.maxbuf) as SHARED → Option<Arc<MaxBuf>>. The fn params below
-// (`ptr: &mut Option<NonNull<MaxBuf>>`, `value: Option<NonNull<MaxBuf>>`) and the hand-rolled
-// heap::alloc/disowned()/destroy() refcount will not typecheck against those field types —
-// reconcile by retyping to Option<Arc<MaxBuf>> and dropping destroy()/disowned().
+/// The owner's ref. The owner is not called once this is dropped.
+pub struct OwnerRef(RefPtr<MaxBuf>);
+
+impl OwnerRef {
+    /// SAFETY: `owner.on_overflow` can be called with `owner.ptr` until the returned ref is dropped.
+    pub unsafe fn new(bytes: i64, kind: Kind, owner: Owner) -> OwnerRef {
+        OwnerRef(RefPtr::new(MaxBuf {
+            ref_count: Cell::new(1),
+            kind,
+            owner: Cell::new(Some(owner)),
+            remaining_bytes: Cell::new(bytes),
+        }))
+    }
+
+    pub fn for_reader(&self) -> RefPtr<MaxBuf> {
+        self.0.clone()
+    }
+}
+
+impl Drop for OwnerRef {
+    fn drop(&mut self) {
+        self.0.owner.set(None);
+    }
+}
+
 impl MaxBuf {
-    /// Single nonnull-asref projection for the dual-owner back-pointer.
-    ///
-    /// Type invariant: every `NonNull<MaxBuf>` reachable from a subprocess or
-    /// pipe-reader slot was created by `create_for_subprocess` and stays live
-    /// until both owners have disowned it and `destroy` runs. All fields are
-    /// `Cell<_>`, so the shared `&MaxBuf` returned here is sufficient for every
-    /// mutation path and re-entrancy through the overflow callback is sound.
-    #[inline]
-    fn live<'a>(this: &'a NonNull<MaxBuf>) -> &'a MaxBuf {
-        // SAFETY: type invariant — see doc comment above.
-        unsafe { this.as_ref() }
-    }
-
-    pub fn create_for_subprocess(
-        ptr: &mut Option<NonNull<MaxBuf>>,
-        initial: Option<i64>,
-        owner: Owner,
-    ) {
-        let Some(initial) = initial else {
-            *ptr = None;
-            return;
-        };
-        *ptr = Some(bun_core::heap::into_raw_nn(Box::new(MaxBuf {
-            owned_by_subprocess: Cell::new(Some(owner)),
-            owned_by_reader: Cell::new(false),
-            remaining_bytes: Cell::new(initial),
-        })));
-    }
-
-    fn disowned(&self) -> bool {
-        self.owned_by_subprocess.get().is_none() && !self.owned_by_reader.get()
-    }
-
-    /// Module-private teardown. Safe `fn` because the precondition is the
-    /// module-level type invariant already documented on [`live`]: every
-    /// `NonNull<MaxBuf>` reachable here was allocated by
-    /// `create_for_subprocess`, and both call sites have just established
-    /// `disowned()` (asserted below). The single `unsafe` op — reclaiming the
-    /// `Box` — is wrapped at its use.
-    fn destroy(this: NonNull<MaxBuf>) {
-        debug_assert!(Self::live(&this).disowned());
-        // SAFETY: type invariant — `this` was produced by
-        // `bun_core::heap::into_raw_nn` in `create_for_subprocess` and is
-        // freed exactly once (both owner flags now `false`).
-        drop(unsafe { bun_core::heap::take(this.as_ptr()) });
-    }
-
-    pub fn remove_from_subprocess(ptr: &mut Option<NonNull<MaxBuf>>) {
-        let Some(this_nn) = *ptr else { return };
-        let this = Self::live(&this_nn);
-        debug_assert!(this.owned_by_subprocess.get().is_some());
-        this.owned_by_subprocess.set(None);
-        *ptr = None;
-        if this.disowned() {
-            MaxBuf::destroy(this_nn);
-        }
-    }
-
-    pub fn add_to_pipereader(value: Option<NonNull<MaxBuf>>, ptr: &mut Option<NonNull<MaxBuf>>) {
-        let Some(value_nn) = value else { return };
-        debug_assert!(ptr.is_none());
-        *ptr = Some(value_nn);
-        let v = Self::live(&value_nn);
-        debug_assert!(!v.owned_by_reader.get());
-        v.owned_by_reader.set(true);
-    }
-
-    pub(crate) fn remove_from_pipereader(ptr: &mut Option<NonNull<MaxBuf>>) {
-        let Some(this_nn) = *ptr else { return };
-        let this = Self::live(&this_nn);
-        debug_assert!(this.owned_by_reader.get());
-        this.owned_by_reader.set(false);
-        *ptr = None;
-        if this.disowned() {
-            MaxBuf::destroy(this_nn);
-        }
-    }
-
-    pub(crate) fn transfer_to_pipereader(
-        prev: &mut Option<NonNull<MaxBuf>>,
-        next: &mut Option<NonNull<MaxBuf>>,
-    ) {
-        if prev.is_none() {
-            return;
-        }
-        *next = *prev;
-        *prev = None;
-    }
-
-    /// Returns `true` if this read pushed the budget negative *and* the
-    /// subprocess still owns it, in which case the owner's overflow callback
-    /// has already been fired (so the caller only needs to stop reading).
-    ///
-    /// Takes `NonNull` (not `&mut self`) because the overflow callback is
-    /// contractually required to call `remove_from_subprocess`, which writes
-    /// `owned_by_subprocess` through a sibling pointer to this same
-    /// allocation. With `Cell` fields a shared `&MaxBuf` is sufficient and the
-    /// re-entrancy is sound; the single `unsafe` is the `NonNull → &MaxBuf`
-    /// projection (the back-ref invariant: `this` is live while
-    /// `owned_by_reader` is set, which every caller has just checked via
-    /// `Some(maxbuf)`).
-    pub(crate) fn on_read_bytes(this: NonNull<MaxBuf>, bytes: u64) -> bool {
-        let mb = Self::live(&this);
+    /// `true` if the budget is gone and the owner has just been told, which happens once.
+    pub(crate) fn on_read_bytes(&self, bytes: u64) -> bool {
         let delta = i64::try_from(bytes).unwrap_or(0);
-        let remaining = mb.remaining_bytes.get().checked_sub(delta).unwrap_or(-1);
-        mb.remaining_bytes.set(remaining);
+        let remaining = self.remaining_bytes.get().checked_sub(delta).unwrap_or(-1);
+        self.remaining_bytes.set(remaining);
         if remaining >= 0 {
             return false;
         }
-        let Some(owner) = mb.owned_by_subprocess.get() else {
+        let Some(owner) = self.owner.take() else {
             return false;
         };
-        // SAFETY: `owner.ptr` is the `Subprocess` that called
-        // `create_for_subprocess`; it stays live while `owned_by_subprocess`
-        // is `Some` (cleared in `remove_from_subprocess`, called from
-        // `Subprocess::finalize` and from the callback itself). The callback
-        // never frees `this` — `owned_by_reader` is set on every caller path.
-        unsafe { (owner.on_overflow)(owner.ptr, this) };
+        // SAFETY: `OwnerRef::new`'s contract. Its drop would have cleared `self.owner`.
+        unsafe { (owner.on_overflow)(owner.ptr, self.kind) };
         true
     }
 
     /// Trims `buf` to the remaining budget plus `OVERREAD_ALLOWANCE`: unclamped,
     /// a 256 KB scratch read off a socketpair overshoots `maxBuffer` by hundreds
     /// of KB. Never empties a non-empty `buf` (that would read as EOF).
-    pub(crate) fn clamp_read_buf(this: Option<NonNull<MaxBuf>>, buf: &mut [u8]) -> &mut [u8] {
+    pub(crate) fn clamp_read_buf<'a>(this: Option<&MaxBuf>, buf: &'a mut [u8]) -> &'a mut [u8] {
         let Some(this) = this else {
             return buf;
         };
-        let remaining = u64::try_from(Self::live(&this).remaining_bytes.get()).unwrap_or(0);
+        let remaining = u64::try_from(this.remaining_bytes.get()).unwrap_or(0);
         let limit =
             usize::try_from(remaining.saturating_add(OVERREAD_ALLOWANCE)).unwrap_or(usize::MAX);
         let len = buf.len().min(limit);
@@ -183,4 +86,45 @@ impl MaxBuf {
 pub enum Kind {
     Stdout,
     Stderr,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn budget(bytes: i64, overflows: &Cell<u32>) -> OwnerRef {
+        unsafe fn count(overflows: NonNull<()>, _: Kind) {
+            // SAFETY: the cell that `budget` was given.
+            unsafe { overflows.cast::<Cell<u32>>().as_ref() }.update(|n| n + 1);
+        }
+        let owner = Owner {
+            ptr: NonNull::from(overflows).cast(),
+            on_overflow: count,
+        };
+        // SAFETY: every test declares the cell first.
+        unsafe { OwnerRef::new(bytes, Kind::Stdout, owner) }
+    }
+
+    #[test]
+    fn two_readers_outlive_the_owner() {
+        let overflows = Cell::new(0);
+        let owner = budget(1, &overflows);
+        let (a, b) = (owner.for_reader(), owner.for_reader());
+        drop(owner);
+        drop(a);
+        assert!(!b.on_read_bytes(2));
+        assert_eq!(overflows.get(), 0);
+    }
+
+    #[test]
+    fn two_readers_share_the_budget_and_overflow_once() {
+        let overflows = Cell::new(0);
+        let owner = budget(1, &overflows);
+        let (a, b) = (owner.for_reader(), owner.for_reader());
+        assert!(!a.on_read_bytes(1));
+        assert!(b.on_read_bytes(1));
+        assert!(!a.on_read_bytes(1));
+        drop((a, b));
+        assert_eq!(overflows.get(), 1);
+    }
 }

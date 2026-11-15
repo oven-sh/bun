@@ -532,8 +532,7 @@ impl Entry {
                 self.metadata.sourcemap_byte_offset,
             )?;
 
-            // `InternalSourceMap::find` trusts these header offsets.
-            if !bun_sourcemap::InternalSourceMap::is_valid_blob(&sourcemap) {
+            if bun_sourcemap::InternalSourceMap::new(&sourcemap).is_none() {
                 return Err(crate::CrateError::InvalidSourceMap);
             }
 
@@ -582,27 +581,14 @@ pub(crate) fn hash(bytes: &[u8]) -> u64 {
     Wyhash::hash(SEED, bytes)
 }
 
-/// Allocate `len` bytes and fill them via `pread_all` at `offset`, returning
-/// `MissingData` on a short read.
-///
-/// Uses `Box::new_uninit_slice` instead of `vec![0u8; len]` so the cache hot
-/// path (lint/create-next benches) skips the redundant zero-memset — the kernel
-/// is about to overwrite every byte anyway.
+/// Reads `len` bytes at `offset`, or returns `MissingData` on a short read.
 fn pread_box(file: &sys::File, len: usize, offset: u64) -> crate::CrateResult<Box<[u8]>> {
-    let mut buf = Box::<[u8]>::new_uninit_slice(len);
-    // SAFETY: `MaybeUninit<u8>` and `u8` have identical size/align, and
-    // `pread_all` only ever *writes* into the slice (the syscall fills it) —
-    // it never reads the uninitialized bytes. Standard read-into-uninit-buffer
-    // pattern; the slice is not exposed past this point until proven full.
-    let dst: &mut [u8] =
-        unsafe { core::slice::from_raw_parts_mut(buf.as_mut_ptr().cast::<u8>(), len) };
-    let read = file.pread_all(dst, offset)?;
-    if read != len {
+    let mut buf = Vec::with_capacity(len);
+    bun_core::vec::append_with(&mut buf, len, |spare| file.pread_all_buf(spare, offset))?;
+    if buf.len() != len {
         return Err(crate::CrateError::MissingData);
     }
-    // SAFETY: `pread_all` reported `len` bytes written, so every element is
-    // initialized.
-    Ok(unsafe { buf.assume_init() })
+    Ok(buf.into_boxed_slice())
 }
 
 impl RuntimeTranspilerCache {

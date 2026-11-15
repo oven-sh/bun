@@ -1,5 +1,5 @@
 use super::any_mysql_error::Error as AnyMySQLError;
-use super::stack_reader::PacketReader;
+use super::new_reader::PacketReader;
 
 #[derive(Default)]
 pub struct ResultSetHeader {

@@ -44,11 +44,8 @@ pub struct Stream {
 }
 
 impl Stream {
-    /// Heap-allocates a `Stream` and returns the raw pointer; ownership is held
-    /// by `ClientSession.pending` until `ClientSession::detach` reclaims it via
-    /// `heap::take`.
-    pub(crate) fn new(session: &mut ClientSession, client: &mut HttpClient<'_>) -> *mut Stream {
-        bun_core::heap::into_raw(Box::new(Stream {
+    pub(crate) fn new(session: &mut ClientSession, client: &mut HttpClient<'_>) -> Stream {
+        Stream {
             session: bun_ptr::BackRef::new_mut(session),
             client: Some(client.as_erased_ptr()),
             qstream: None,
@@ -62,7 +59,7 @@ impl Stream {
             headers_delivered: false,
             read_paused: false,
             peer_rejected: false,
-        }))
+        }
     }
 
     /// Mutable access to the bound lsquic stream handle.
@@ -97,7 +94,6 @@ impl Stream {
 
 impl Drop for Stream {
     fn drop(&mut self) {
-        // `decoded_headers` / `body_buffer` are Vec — freed automatically.
         h3::LIVE_STREAMS.fetch_sub(1, Ordering::Relaxed);
     }
 }

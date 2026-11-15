@@ -268,7 +268,7 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
 | `b.undefined`                                    | `()`                             | `undefined`; only in a union                                  |
 | `b.promisePtr("crate::T")`                       | `*mut T`                         | the context of a promise reaction; see below                  |
-| `b.nativePromiseContext("crate::T")`             | `Option<NonNull<T>>`             | the same, when it is a `NativePromiseContext` cell            |
+| `b.nativePromiseContext("crate::T")`             | `Option<RefPtr<T>>`              | the same, when it is a `NativePromiseContext` cell            |
 | `b.array(T)`                                     | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
 | `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
 | `b.dictionary(members)`                          | `&` a generated `struct`         | an object that is not an array                                |

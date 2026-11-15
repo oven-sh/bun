@@ -280,7 +280,7 @@ Explain why a package is installed
 
         let lockfile: &Lockfile = &pm.lockfile;
         let string_bytes = lockfile.buffers.string_bytes.as_slice();
-        let packages = lockfile.packages.slice();
+        let packages = &lockfile.packages;
         let dependencies_items = lockfile.buffers.dependencies.as_slice();
         let resolutions_items = lockfile.buffers.resolutions.as_slice();
 

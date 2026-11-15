@@ -206,7 +206,12 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
             vm.on_exit();
             vm.global_exit();
         }
-        Err(e) => return Err(e),
+        Err(e) => {
+            // Lookups can still be in flight, and `destroy` frees what their channel closes into.
+            vm.forbid_script();
+            let _ = crate::jsc_hooks::stop_dns_for_vm_teardown();
+            return Err(e);
+        }
     }
     Ok(())
 }
@@ -220,7 +225,7 @@ fn fail_with_build_error(vm: &VirtualMachine) -> ! {
     // `vm.log` is the process-lifetime ctx.log set in build_command;
     // `log_ref()` is the safe accessor encapsulating the NonNull deref.
     if let Some(log) = vm.log_ref() {
-        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        let _ = log.print(Output::error_writer());
     }
     Global::exit(1);
 }
@@ -468,9 +473,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         }
         bun_core::err_generic!("Failed to resolve all imports required by the framework");
         Output::flush();
-        let _ = server_transpiler
-            .log()
-            .print(std::ptr::from_mut(Output::error_writer()));
+        let _ = server_transpiler.log().print(Output::error_writer());
         Global::crash();
     }
 
@@ -572,12 +575,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let bundler_framework = framework.as_bundler_view();
 
     let bundled_outputs_list: Vec<OutputFile> = {
-        // Without a separate SSR graph, the bundler never dereferences `ssr_transpiler`.
-        let ssr_transpiler = match ssr_transpiler {
-            Some(ssr_transpiler) => NonNull::from(ssr_transpiler),
-            None => NonNull::from(&mut *server_transpiler),
-        };
-
         // Construct the `AnyEventLoop` enum
         // value (NOT a pointer-cast: the bundler matches on its discriminant).
         // Lives in this block's stack frame, outliving the bundle call.
@@ -592,9 +589,10 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             server_transpiler,
             bun_bundler::bundle_v2::BakeOptions {
                 framework: bundler_framework,
-                client_transpiler: NonNull::from(client_transpiler),
+                client_transpiler,
                 ssr_transpiler,
-                plugins: options.bundler_options.plugin,
+                plugins: (options.bundler_options.plugin.as_ref())
+                    .map(|plugin| plugin.as_non_null()),
             },
             &options.arena,
             Some(NonNull::from(&any_loop)),
@@ -631,7 +629,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 "src_index={:?} side={} src={} dest={} - {:?}\n",
                 file.source_index,
                 file.side.map(side_name).unwrap_or("null"),
-                BStr::new(&file.src_path.text),
+                BStr::new(&file.src_path),
                 BStr::new(&file.dest_path),
                 file.entry_point_index,
             );
@@ -755,7 +753,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     if let Some(runtime_file_index) = maybe_runtime_file_index {
         let any_client_chunks = bundled_outputs_list.iter().any(|file| {
             file.side == Some(bun_bundler::options::Side::Client)
-                && file.src_path.text != b"bun-framework-react/client.tsx"
+                && &*file.src_path != b"bun-framework-react/client.tsx"
         });
         if any_client_chunks {
             let runtime_file: &OutputFile = &bundled_outputs_list[runtime_file_index as usize];

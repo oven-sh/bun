@@ -13,8 +13,7 @@ use std::borrow::Cow;
 
 use crate::api::socket::{TCPSocket, TLSSocket};
 use crate::node::{Encoding, StringOrBuffer};
-use crate::socket::NativeCallbacks;
-use crate::webcore::AutoFlusher;
+use crate::socket::{NativeCallbacks, NewSocket};
 use bstr::BStr;
 use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
 use bun_core::strings;
@@ -28,7 +27,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult, StrongOptional,
 };
-use bun_ptr::RefPtr;
+use bun_ptr::{AliasableBox, RefPtr};
 
 use crate::generated_bindgen::h2_frame_parser::js_H2FrameParser as js;
 
@@ -43,28 +42,58 @@ type GetCached = fn(JSValue) -> Option<JSValue>;
 
 const MAX_PAYLOAD_SIZE_WITHOUT_FRAME: usize = 16384 - FrameHeader::BYTE_SIZE - 1;
 
-/// `Copy` view of [`NativeSocket`] for call sites to snapshot across
-/// re-entrant writes. BACKREF — the socket strictly outlives the attachment:
-/// `Tls`/`Tcp` are kept alive by the `RefPtr<H2FrameParser>` stored in the
-/// socket's `native_callback` slot, `*Writeonly` by the ref [`NativeSocket`]
-/// holds on them.
-#[derive(Default, Clone, Copy)]
+/// `Copy` view of [`NativeSocket`] for call sites to snapshot across re-entrant writes.
+#[derive(Clone, Copy)]
 enum BunSocket {
-    #[default]
     None,
     Tls(bun_ptr::BackRef<TLSSocket>),
-    TlsWriteonly(bun_ptr::BackRef<TLSSocket>),
     Tcp(bun_ptr::BackRef<TCPSocket>),
-    TcpWriteonly(bun_ptr::BackRef<TCPSocket>),
 }
 
-/// The parser's attachment to a native socket, and its owner: attaching either
-/// installs the parser as the socket's native callback (`Tls`/`Tcp`) or, when
-/// that slot is taken, takes a ref on the socket (`*Writeonly`); `detach` /
-/// `Drop` undo whichever one it was. Readers take a [`BunSocket`] snapshot.
+/// What ties the parser to a socket.
+enum Link<const SSL: bool> {
+    /// The parser is the socket's native callback: the socket detaches it before it is freed.
+    Callback(bun_ptr::BackRef<NewSocket<SSL>>),
+    /// That slot was taken, so the parser only writes.
+    WriteOnly(RefPtr<NewSocket<SSL>>),
+}
+
+impl<const SSL: bool> Link<SSL> {
+    fn new(socket: *mut NewSocket<SSL>, h2: RefPtr<H2FrameParser>) -> Self {
+        // BACKREF: the caller's JS socket holds a ref on it.
+        let socket = bun_ptr::BackRef::from(NonNull::new(socket).expect("non-null socket"));
+        if socket.attach_native_callback(NativeCallbacks::H2(h2)) {
+            Self::Callback(socket)
+        } else {
+            Self::WriteOnly(socket.ref_guard())
+        }
+    }
+
+    fn socket(&self) -> bun_ptr::BackRef<NewSocket<SSL>> {
+        match self {
+            Self::Callback(socket) => *socket,
+            Self::WriteOnly(socket) => bun_ptr::BackRef::new(socket),
+        }
+    }
+}
+
+impl<const SSL: bool> Drop for Link<SSL> {
+    fn drop(&mut self) {
+        if let Self::Callback(socket) = self {
+            socket.detach_native_callback();
+        }
+    }
+}
+
+enum Attachment {
+    Tls(Link<true>),
+    Tcp(Link<false>),
+}
+
+/// The parser's attachment to a native socket. Readers take a [`BunSocket`] snapshot.
 #[derive(Default)]
 struct NativeSocket {
-    socket: Cell<BunSocket>,
+    attachment: JsCell<Option<Attachment>>,
     /// The attached socket closed. Sticky until `attach`; `onWrite` tells the session.
     closed: Cell<bool>,
 }
@@ -72,63 +101,28 @@ struct NativeSocket {
 impl NativeSocket {
     #[inline]
     fn get(&self) -> BunSocket {
-        self.socket.get()
+        match self.attachment.get() {
+            Some(Attachment::Tls(link)) => BunSocket::Tls(link.socket()),
+            Some(Attachment::Tcp(link)) => BunSocket::Tcp(link.socket()),
+            None => BunSocket::None,
+        }
     }
 
-    /// `attach_native_callback` stores `h2` (a ref on the parser) in the
-    /// socket, dropped in `NewSocket::detach_native_callback` (or inside
-    /// `attach_native_callback` when rejected); when rejected we fall back to
-    /// write-only mode and hold a ref on the socket instead.
-    fn attach<const SSL: bool>(
-        &self,
-        socket: *mut crate::socket::NewSocket<SSL>,
-        h2: RefPtr<H2FrameParser>,
-    ) {
-        debug_assert!(matches!(self.socket.get(), BunSocket::None));
+    fn attach(&self, attachment: Attachment) {
+        debug_assert!(self.attachment.get().is_none());
         self.closed.set(false);
-        // BACKREF: the caller's JS socket holds a ref on it.
-        let socket_nn = NonNull::new(socket).expect("non-null socket");
-        let socket = bun_ptr::BackRef::from(socket_nn);
-        self.socket
-            .set(if socket.attach_native_callback(NativeCallbacks::H2(h2)) {
-                if SSL {
-                    BunSocket::Tls(bun_ptr::BackRef::from(socket_nn.cast::<TLSSocket>()))
-                } else {
-                    BunSocket::Tcp(bun_ptr::BackRef::from(socket_nn.cast::<TCPSocket>()))
-                }
-            } else {
-                // The ref `detach` releases.
-                socket.ref_();
-                if SSL {
-                    BunSocket::TlsWriteonly(bun_ptr::BackRef::from(socket_nn.cast::<TLSSocket>()))
-                } else {
-                    BunSocket::TcpWriteonly(bun_ptr::BackRef::from(socket_nn.cast::<TCPSocket>()))
-                }
-            });
+        self.attachment.set(Some(attachment));
     }
 
     fn detach(&self) {
-        match self.socket.replace(BunSocket::None) {
-            BunSocket::Tcp(socket) => socket.detach_native_callback(),
-            BunSocket::Tls(socket) => socket.detach_native_callback(),
-            // The ref `attach` took.
-            BunSocket::TcpWriteonly(socket) => TCPSocket::deref(socket.get()),
-            BunSocket::TlsWriteonly(socket) => TLSSocket::deref(socket.get()),
-            BunSocket::None => {}
-        }
+        self.attachment.set(None);
     }
 
     /// The socket released the parser. `detach` gets here too, but with nothing attached.
     fn note_socket_closed(&self) {
-        if !matches!(self.socket.get(), BunSocket::None) {
+        if self.attachment.get().is_some() {
             self.closed.set(true);
         }
-    }
-}
-
-impl Drop for NativeSocket {
-    fn drop(&mut self) {
-        self.detach();
     }
 }
 
@@ -966,17 +960,13 @@ impl TxFrameTracker {
 /// dispatch, a write that re-enters JS). Live guards are counted in
 /// `H2FrameParser::native_keepalives` so `finalize` can release the ones whose frame will never
 /// return — see `release_refs_stranded_by_exit`.
-struct Keepalive<'a>(&'a H2FrameParser);
+struct Keepalive(RefPtr<H2FrameParser>);
 
-impl Drop for Keepalive<'_> {
+impl Drop for Keepalive {
     fn drop(&mut self) {
-        let parser = self.0;
-        debug_assert!(parser.native_keepalives.get() > 0);
-        // Decrement first: this `deref()` can be the last one and free `parser`.
-        parser
-            .native_keepalives
-            .set(parser.native_keepalives.get() - 1);
-        parser.deref();
+        let live = &self.0.native_keepalives;
+        debug_assert!(live.get() > 0);
+        live.set(live.get() - 1);
     }
 }
 
@@ -1109,7 +1099,7 @@ pub(crate) struct H2FrameParser {
     // TODO: this will be removed when I re-add header and data priorization
     outbound_queue_size: Cell<usize>,
 
-    streams: JsCell<BunHashMap<u32, *mut Stream>>,
+    streams: JsCell<BunHashMap<u32, AliasableBox<Stream>>>,
 
     hpack: JsCell<Option<lshpack::HpackHandle>>,
 
@@ -1136,7 +1126,8 @@ pub(crate) struct H2FrameParser {
     /// Read only by `release_refs_stranded_by_exit()`.
     native_keepalives: Cell<u32>,
 
-    auto_flusher: JsCell<AutoFlusher>,
+    /// Held while the deferred flush is registered.
+    auto_flush_ref: JsCell<Option<RefPtr<Self>>>,
     padding_strategy: Cell<PaddingStrategy>,
 
     // ---- from-scratch rewrite engine (src/runtime/api/bun/h2) ----
@@ -1195,18 +1186,21 @@ impl H2FrameParser {
 
     /// Hold a `+1` for the extent of a native frame that can re-enter JS (and therefore free the
     /// parser). Counted, so `finalize` can release it if `process.exit()` strands the frame.
-    fn keepalive(&self) -> Keepalive<'_> {
-        self.ref_();
+    fn keepalive(&self) -> Keepalive {
         self.native_keepalives.set(self.native_keepalives.get() + 1);
-        Keepalive(self)
+        Keepalive(self.ref_guard())
     }
 
-    /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
+    /// Valid while the map entry exists.
+    fn stream(&self, id: u32) -> Option<*mut Stream> {
+        self.streams.get().get(&id).map(AliasableBox::as_ptr)
+    }
+
     #[inline]
     fn abort_stream_for_signal(&self, stream_id: u32, reason: JSValue) {
         bun_output::scoped_log!(H2FrameParser, "abortListener");
         reason.ensure_still_alive();
-        let Some(stream) = self.streams.get().get(&stream_id).copied() else {
+        let Some(stream) = self.stream(stream_id) else {
             return;
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
@@ -1217,25 +1211,10 @@ impl H2FrameParser {
         }
     }
 
+    /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
     pub(crate) fn ref_guard(&self) -> RefPtr<Self> {
         // SAFETY: `self` is the live heap allocation.
         unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
-    }
-
-    pub(crate) fn ref_(&self) {
-        // SAFETY: `self` is live; `RefCount::ref_` only reads/writes the
-        // embedded `ref_count` Cell (interior-mutable), so `&self`→`*mut`
-        // is sound for that single field access.
-        unsafe { bun_ptr::RefCount::<Self>::ref_(self.as_ctx_ptr()) };
-    }
-    // R-2: `&self` — `RefCount` is `Cell`-backed and every other field is
-    // `Cell`/`JsCell`, so `Drop` writes only through `UnsafeCell`-derived
-    // pointers; the `*mut` cast is signature-only.
-    pub(crate) fn deref(&self) {
-        // SAFETY: `self` is live; `deref` decrements the intrusive count and,
-        // on zero, drops and releases the slot. The caller must not touch
-        // `self` after this returns when count was 1.
-        unsafe { bun_ptr::RefCount::<Self>::deref(self.as_ctx_ptr()) };
     }
 }
 
@@ -1274,8 +1253,8 @@ impl StreamResumableIterator {
         let streams = self.parser.streams.get();
         while let Some(&id) = self.ids.get(self.index) {
             self.index += 1;
-            if let Some(&stream) = streams.get(&id) {
-                return Some(stream);
+            if let Some(stream) = streams.get(&id) {
+                return Some(stream.as_ptr());
             }
         }
         None
@@ -1316,7 +1295,7 @@ pub(crate) struct Stream {
     remote_window_size: u64,
     // remote used window size for the stream
     remote_used_window_size: u64,
-    signal: Option<Box<SignalRef>>,
+    signal: Option<AliasableBox<SignalRef>>,
     // The JS readable for this stream is paused (setStreamReading(id, false)): the engine defers
     // replenishing the stream's receive window until reading resumes, backpressuring the peer.
     reading_paused: bool,
@@ -1634,7 +1613,7 @@ impl Stream {
                         identifier.ensure_still_alive();
                         if self.state == StreamState::HALF_CLOSED_REMOTE {
                             self.state = StreamState::CLOSED;
-                            self.free_resources::<false>(client);
+                            self.free_resources(client);
                         } else {
                             self.state = StreamState::HALF_CLOSED_LOCAL;
                         }
@@ -1860,24 +1839,17 @@ impl Stream {
     }
 
     pub(crate) fn attach_signal(&mut self, parser: &H2FrameParser, signal: &mut AbortSignal) {
-        let signal_ref = bun_core::heap::into_raw(Box::new(SignalRef {
+        let signal_ref = AliasableBox::new(SignalRef {
             abort_handle: bun_jsc::AbortHandle::for_owner::<SignalRef>(),
             parser: parser.ref_guard(),
             stream_id: self.id,
-        }));
-        // SAFETY: `signal_ref` is a live heap allocation; both calls keep its provenance.
-        let signal_ref = unsafe {
-            bun_jsc::AbortHandle::follow_owner(signal_ref, signal.ref_());
-            bun_core::heap::take(signal_ref)
-        };
+        });
+        // SAFETY: on the heap until it drops.
+        unsafe { bun_jsc::AbortHandle::follow_owner(signal_ref.as_ptr(), signal.ref_()) };
         self.signal = Some(signal_ref);
     }
 
-    pub(crate) fn detach_context(&mut self) {
-        self.js_context.deinit();
-    }
-
-    fn clean_queue<const FINALIZING: bool>(&mut self, client: &H2FrameParser) {
+    fn clean_queue(&mut self, client: &H2FrameParser) {
         bun_output::scoped_log!(
             H2FrameParser,
             "cleanQueue len: {} front: {} outboundQueueSize: {}",
@@ -1887,9 +1859,8 @@ impl Stream {
         );
 
         // dispatch_write_callback re-enters JS; a destroy there can drop the
-        // socket's ref and free `client` between iterations. Not during
-        // finalize: refcount is already 0 and a ref/deref would re-destroy.
-        let _keepalive = (!FINALIZING).then(|| client.keepalive());
+        // socket's ref and free `client` between iterations.
+        let _keepalive = client.keepalive();
         let mut queue = core::mem::take(&mut self.data_frame_queue);
         while let Some(item) = queue.dequeue() {
             let frame = item;
@@ -1898,10 +1869,8 @@ impl Stream {
             client
                 .queued_data_size
                 .set(client.queued_data_size.get() - len as u64);
-            if !FINALIZING {
-                if let Some(callback_value) = frame.callback.get() {
-                    client.dispatch_write_callback(callback_value);
-                }
+            if let Some(callback_value) = frame.callback.get() {
+                client.dispatch_write_callback(callback_value);
             }
             drop(frame);
             client
@@ -1912,28 +1881,23 @@ impl Stream {
     }
 
     /// this can be called multiple times
-    pub(crate) fn free_resources<const FINALIZING: bool>(&mut self, client: &H2FrameParser) {
+    pub(crate) fn free_resources(&mut self, client: &H2FrameParser) {
         // The rewrite engine only sees inbound traffic, so a completed request would leave
         // its engine entry as HalfClosedRemote and its legacy slot + Box behind forever —
         // one entry per request. Queue the id; the next rewrite_read batch evicts the engine
         // entry and frees the legacy slot. Always deferred: every caller still holds
         // `&mut Stream` into the map entry, and the engine cell may be mutably borrowed
         // (stream completing synchronously inside receive()).
-        if !FINALIZING {
-            client
-                .pending_engine_stream_closes
-                .with_mut(|v| v.push(self.id));
-            // Release the engine-dispatch context root too; without this the Strong JS
-            // stream object lives until the session dies.
-            client.sctx.with_mut(|m| {
-                m.remove(&self.id);
-            });
-        }
-        self.detach_context();
-        self.clean_queue::<FINALIZING>(client);
-        if let Some(signal) = self.signal.take() {
-            drop(signal);
-        }
+        client
+            .pending_engine_stream_closes
+            .with_mut(|v| v.push(self.id));
+        // Without this, the Strong JS stream object lives until the session dies.
+        client.sctx.with_mut(|m| {
+            m.remove(&self.id);
+        });
+        self.js_context = StrongOptional::empty();
+        self.clean_queue(client);
+        drop(self.signal.take());
     }
 }
 
@@ -2105,7 +2069,7 @@ impl H2FrameParser {
         stream.state = StreamState::CLOSED;
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
-        stream.free_resources::<false>(self);
+        stream.free_resources(self);
         self.dispatch_with_2_extra(
             js::on_aborted_get_cached,
             identifier,
@@ -2143,7 +2107,7 @@ impl H2FrameParser {
         stream.state = StreamState::CLOSED;
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
-        stream.free_resources::<false>(self);
+        stream.free_resources(self);
         if rst_code == ErrorCode::NO_ERROR {
             self.dispatch_with_extra(
                 js::on_stream_end_get_cached,
@@ -2488,7 +2452,7 @@ impl H2FrameParser {
                 return;
             }
             // force uncork
-            // SAFETY: CORKED_H2 holds a ref()'d *mut H2FrameParser; valid until matching deref() in uncork
+            // SAFETY: CORKED_H2 holds a ref until `uncork` releases it.
             unsafe { (*corked.cast_const()).uncork() };
         }
         // cork
@@ -2726,12 +2690,8 @@ impl H2FrameParser {
 
         let mut written = self.uncork();
         written += match self.native_socket.get() {
-            BunSocket::TlsWriteonly(socket) | BunSocket::Tls(socket) => {
-                self.generic_flush(socket.get())
-            }
-            BunSocket::TcpWriteonly(socket) | BunSocket::Tcp(socket) => {
-                self.generic_flush(socket.get())
-            }
+            BunSocket::Tls(socket) => self.generic_flush(socket.get()),
+            BunSocket::Tcp(socket) => self.generic_flush(socket.get()),
             BunSocket::None => {
                 // consider that backpressure is gone and flush data queue
                 self.has_nonnative_backpressure.set(false);
@@ -2801,12 +2761,8 @@ impl H2FrameParser {
     pub(crate) fn _write(&self, bytes: &[u8]) -> bool {
         let _keepalive = self.keepalive();
         match self.native_socket.get() {
-            BunSocket::TlsWriteonly(socket) | BunSocket::Tls(socket) => {
-                self.generic_write(socket.get(), bytes)
-            }
-            BunSocket::TcpWriteonly(socket) | BunSocket::Tcp(socket) => {
-                self.generic_write(socket.get(), bytes)
-            }
+            BunSocket::Tls(socket) => self.generic_write(socket.get(), bytes),
+            BunSocket::Tcp(socket) => self.generic_write(socket.get(), bytes),
             BunSocket::None => {
                 let global = self.global();
                 if self.has_nonnative_backpressure.get() {
@@ -2867,11 +2823,11 @@ impl H2FrameParser {
     fn transport_write_runs_js(&self) -> bool {
         match self.native_socket.get() {
             BunSocket::None => true,
-            BunSocket::Tls(s) | BunSocket::TlsWriteonly(s) => matches!(
+            BunSocket::Tls(s) => matches!(
                 s.get().socket.get().socket,
                 bun_uws::InternalSocket::UpgradedDuplex(_)
             ),
-            BunSocket::Tcp(s) | BunSocket::TcpWriteonly(s) => matches!(
+            BunSocket::Tcp(s) => matches!(
                 s.get().socket.get().socket,
                 bun_uws::InternalSocket::UpgradedDuplex(_)
             ),
@@ -2936,14 +2892,10 @@ impl H2FrameParser {
     }
 
     fn register_auto_flush(&self) {
-        if self.auto_flusher.get().registered.get() {
+        if self.auto_flush_ref.get().is_some() {
             return;
         }
-        self.ref_();
-        // R-2: inlined so the path is `&self` + extra `self.ref_()` (matches
-        // NodeHTTPResponse f1e506c8). `HasAutoFlusher` is now `&self` too.
-        debug_assert!(!self.auto_flusher.get().registered.get());
-        self.auto_flusher.get().registered.set(true);
+        self.auto_flush_ref.set(Some(self.ref_guard()));
         let ctx = NonNull::new(self.as_ctx_ptr().cast::<c_void>());
         let found_existing = self
             .global_this
@@ -2955,7 +2907,7 @@ impl H2FrameParser {
     }
 
     fn unregister_auto_flush(&self) {
-        if !self.auto_flusher.get().registered.get() {
+        if self.auto_flush_ref.get().is_none() {
             return;
         }
         // A write that drains the buffer must not cancel the deferred tick that a pending session
@@ -2964,7 +2916,6 @@ impl H2FrameParser {
         if self.pending_header_compression_error.get() || self.transport_write_fatal.get() {
             return;
         }
-        debug_assert!(self.auto_flusher.get().registered.get());
         let ctx = NonNull::new(self.as_ctx_ptr().cast::<c_void>());
         let removed = self
             .global_this
@@ -2973,8 +2924,7 @@ impl H2FrameParser {
             .deferred_tasks
             .unregister_task(ctx);
         debug_assert!(removed);
-        self.auto_flusher.get().registered.set(false);
-        self.deref();
+        self.auto_flush_ref.set(None);
     }
 
     /// A `write_maybe_corked` in `generic_write`/`generic_flush` returned a fatal
@@ -3019,10 +2969,10 @@ impl H2FrameParser {
     /// alone entirely - the connect-error path owns their failure delivery.
     fn close_transport_after_fatal_write(&self) {
         match self.native_socket.get() {
-            BunSocket::Tls(socket) | BunSocket::TlsWriteonly(socket) => {
+            BunSocket::Tls(socket) => {
                 Self::close_socket_for_dead_transport::<true>(socket.get());
             }
-            BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) => {
+            BunSocket::Tcp(socket) => {
                 Self::close_socket_for_dead_transport::<false>(socket.get());
             }
             BunSocket::None => {}
@@ -3033,9 +2983,7 @@ impl H2FrameParser {
     /// once it has read what the peer sent before.
     fn transport_send_rejected(&self) -> bool {
         match self.native_socket.get() {
-            BunSocket::Tls(socket) | BunSocket::TlsWriteonly(socket) => {
-                socket.get().socket.get().ssl_send_rejected()
-            }
+            BunSocket::Tls(socket) => socket.get().socket.get().ssl_send_rejected(),
             // A plain socket is closed at once, which ends its streams before the error is reported.
             _ => false,
         }
@@ -3060,13 +3008,11 @@ impl H2FrameParser {
         }
         if self.transport_write_fatal.get() {
             // Returning `false` makes DeferredTaskQueue::run remove the entry
-            // itself, so only the registration's flag and ref are released here
-            // - never a re-entrant map mutation from inside run(). The flag is
+            // itself, so only the registration's ref is released here. It is
             // cleared before the close so the teardown paths the close re-enters
             // (detach -> unregister_auto_flush) see an unregistered flusher and
             // early-return instead of removing a map entry run() still owns.
-            self.auto_flusher.get().registered.set(false);
-            self.deref();
+            self.auto_flush_ref.set(None);
             self.close_transport_after_fatal_write();
             return false;
         }
@@ -3082,13 +3028,10 @@ impl H2FrameParser {
             );
             let _ = self.flush();
             self.pending_header_compression_error.set(false);
-            // Terminal: release the registration's flag+ref so the retained
+            // Terminal: release the registration's ref so the retained
             // parser ref does not persist. Returning false lets run() drop the
             // map entry it owns.
-            if self.auto_flusher.get().registered.get() {
-                self.auto_flusher.get().registered.set(false);
-                self.deref();
-            }
+            self.auto_flush_ref.set(None);
             return false;
         }
         let _ = self.flush();
@@ -3158,27 +3101,26 @@ impl H2FrameParser {
     fn flush_batch_vectored(&self, batch: &[u8], segments: &[BatchSegment]) {
         let mut total: usize = 0;
         let total_written = match self.native_socket.get() {
-            BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) => BATCH_IOVECS
-                .with_borrow_mut(|iov| {
-                    iov.clear();
-                    iov.reserve(segments.len());
-                    for seg in segments {
-                        let (ptr, len) = seg.raw_parts(batch);
-                        if len == 0 {
-                            continue;
-                        }
-                        total += len;
-                        iov.push(bun_uws_sys::UsIoVec {
-                            base: ptr.cast(),
-                            len,
-                        });
+            BunSocket::Tcp(socket) => BATCH_IOVECS.with_borrow_mut(|iov| {
+                iov.clear();
+                iov.reserve(segments.len());
+                for seg in segments {
+                    let (ptr, len) = seg.raw_parts(batch);
+                    if len == 0 {
+                        continue;
                     }
-                    if total == 0 {
-                        return 0usize;
-                    }
-                    let w = socket.get().write_vectored_raw(iov);
-                    if w < 0 { 0 } else { w as usize }
-                }),
+                    total += len;
+                    iov.push(bun_uws_sys::UsIoVec {
+                        base: ptr.cast(),
+                        len,
+                    });
+                }
+                if total == 0 {
+                    return 0usize;
+                }
+                let w = socket.get().write_vectored_raw(iov);
+                if w < 0 { 0 } else { w as usize }
+            }),
             _ => {
                 // Socket changed under us (detach mid-call): degrade to the copy path
                 // to preserve order.
@@ -3359,14 +3301,6 @@ impl NativeSocketWrite for &TCPSocket {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// R-2: `HasAutoFlusher` (which requires `fn auto_flusher(&mut self)`) is no
-// longer implemented here — the deferred-task registration is inlined in
-// `register_auto_flush` / `unregister_auto_flush` so the whole path is `&self`.
-// The `DeferredRepeatingTask` trampoline that the trait would have generated.
-// Body discharges its own preconditions; a safe `extern "C" fn` coerces to the
-// `DeferredRepeatingTask` pointer at `post_task` (matches NodeHTTPResponse.rs).
-// ──────────────────────────────────────────────────────────────────────────
 extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
     // SAFETY: `ctx` is the `*const H2FrameParser` registered by
     // `register_auto_flush`; `DeferredTaskQueue::run` feeds it back unchanged
@@ -3419,7 +3353,7 @@ impl H2FrameParser {
         }
 
         // already exists
-        if let Some(stream) = self.streams.get().get(&stream_identifier).copied() {
+        if let Some(stream) = self.stream(stream_identifier) {
             return Some(stream);
         }
 
@@ -3452,9 +3386,10 @@ impl H2FrameParser {
         if self.is_server.get() && stream_identifier.is_multiple_of(2) {
             new_stream.state = StreamState::HALF_CLOSED_REMOTE;
         }
-        let stream = bun_core::heap::into_raw(Box::new(new_stream));
+        let owned = AliasableBox::new(new_stream);
+        let stream = owned.as_ptr();
         self.streams
-            .with_mut(|s| s.insert(stream_identifier, stream));
+            .with_mut(|s| s.insert(stream_identifier, owned));
 
         let Some(this_value) = self.strong_this.get().try_get() else {
             return Some(stream);
@@ -3567,7 +3502,7 @@ impl H2FrameParser {
         if let Some(ctx) = self.sctx.get().get(&stream_id).and_then(|s| s.get()) {
             return ctx;
         }
-        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+        if let Some(stream) = self.stream(stream_id) {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             return unsafe { (*stream).get_identifier() };
         }
@@ -3675,21 +3610,12 @@ impl H2FrameParser {
             // Streams whose legacy lifecycle finished since the last batch: evict the engine
             // entry and free the legacy slot. free_resources already ran for these (it is the
             // only producer of this queue); duplicate ids are fine — remove() yields None.
+            // At depth 0 no caller holds a `&mut Stream`: those that run JS arm `enter_dispatch`.
             if self.dispatch_depth.get() == 0 {
                 self.pending_engine_stream_closes.with_mut(|v| {
                     for id in v.drain(..) {
                         engine.close_stream(id);
-                        if let Some(stream) = self.streams.with_mut(|m| m.remove(&id)) {
-                            // SAFETY: stream is the heap::alloc'd *mut Stream owned by the
-                            // map entry just removed; free_resources ran when it was queued,
-                            // dispatch_depth == 0 means no caller below us on the stack holds
-                            // a `&mut Stream` across anything that can run user JS (every
-                            // such site arms enter_dispatch), ids never repeat within a
-                            // session, so this frees exactly once.
-                            unsafe {
-                                drop(bun_core::heap::take(stream));
-                            }
-                        }
+                        drop(self.streams.with_mut(|m| m.remove(&id)));
                     }
                 });
             }
@@ -3886,8 +3812,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         // typically sent before the server's SETTINGS lands), then resume queued sends.
         let mut window_grew = false;
         for (_, item) in self.streams.get().iter() {
-            // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
-            let stream = unsafe { &mut **item };
+            // SAFETY: the map entry outlives the iteration.
+            let stream = unsafe { &mut *item.as_ptr() };
             if (settings.initial_window_size as u64) > stream.remote_window_size {
                 stream.remote_window_size = settings.initial_window_size as u64;
                 window_grew = true;
@@ -3979,7 +3905,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         if stream_id == 0 {
             self.remote_window_size
                 .set(self.remote_window_size.get() + increment as u64);
-        } else if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+        } else if let Some(stream) = self.stream(stream_id) {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             unsafe { (*stream).remote_window_size += increment as u64 };
         }
@@ -4027,7 +3953,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn is_stream_reading(&self, stream_id: u32) -> bool {
-        match self.streams.get().get(&stream_id).copied() {
+        match self.stream(stream_id) {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             Some(stream) => unsafe { !(*stream).reading_paused },
             None => true,
@@ -4116,7 +4042,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
 
     fn on_headers_complete(&self, stream_id: u32, end_stream: bool, flags: u8) {
         // Bridge: the JS endAfterHeaders getter reads the legacy stream's end_after_headers flag.
-        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+        if let Some(stream) = self.stream(stream_id) {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             unsafe { (*stream).end_after_headers = end_stream };
         }
@@ -4178,7 +4104,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         // state: remote-closed (6) on a stream whose local half is closed (5/7) is fully CLOSED (7),
         // mirroring the legacy handle_data/headers END_STREAM logic.
         let mut effective = state;
-        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+        if let Some(stream) = self.stream(stream_id) {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             let legacy_state = unsafe { (*stream).state };
             if state == 6
@@ -4210,9 +4136,9 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             // local side during the HEADERS dispatch, so the legacy send-close branch saw
             // OPEN and skipped its teardown — free the legacy context here or it (its Strong
             // JS stream root, and the engine's map entry) leaks per request.
-            if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+            if let Some(stream) = self.stream(stream_id) {
                 // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-                unsafe { (*stream).free_resources::<false>(self) };
+                unsafe { (*stream).free_resources(self) };
             }
             // Release the per-stream JS context root so it can be collected (also done by
             // free_resources, but a stream may have no legacy entry).
@@ -4250,7 +4176,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         // Bridge: mark the legacy stream closed with the rst code (capturing the prior state for
         // the aborted dispatch below).
         let mut old_state: u8 = StreamState::OPEN as u8;
-        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+        if let Some(stream) = self.stream(stream_id) {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             unsafe {
                 old_state = (*stream).state as u8;
@@ -4277,9 +4203,9 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         }
         // The reset closes the stream; free the legacy slot (queueing the engine eviction)
         // and release its JS context root, mirroring the on_stream_end full-close path.
-        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+        if let Some(stream) = self.stream(stream_id) {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-            unsafe { (*stream).free_resources::<false>(self) };
+            unsafe { (*stream).free_resources(self) };
         }
         self.sctx.with_mut(|m| {
             m.remove(&stream_id);
@@ -4641,8 +4567,8 @@ impl H2FrameParser {
             }
         }
         for (_, item) in self.streams.get().iter() {
-            // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
-            let stream = unsafe { &mut **item };
+            // SAFETY: the map entry outlives the iteration.
+            let stream = unsafe { &mut *item.as_ptr() };
             if stream.used_window_size > window_size_value as u64 {
                 continue;
             }
@@ -4959,7 +4885,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         }
 
-        let Some(stream) = self.streams.get().get(&stream_id).copied() else {
+        let Some(stream) = self.stream(stream_id) else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
 
@@ -4983,7 +4909,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         }
 
-        let Some(stream) = self.streams.get().get(&stream_id).copied() else {
+        let Some(stream) = self.stream(stream_id) else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
@@ -5068,7 +4994,7 @@ impl H2FrameParser {
             }
         }
 
-        let Some(stream) = self.streams.get().get(&stream_id).copied() else {
+        let Some(stream) = self.stream(stream_id) else {
             // Streams the legacy bookkeeping never registered (e.g. peer-initiated pushed streams
             // surfaced by the rewrite engine) get the RST_STREAM written directly. The frame is
             // built here rather than through the engine so this stays callable from inside an
@@ -5277,10 +5203,8 @@ impl H2FrameParser {
                         // records payload slices by reference and flushes with writev —
                         // TLS cannot vectorize (SSL_write must consume the bytes to seal
                         // records), so it keeps the contiguous copy.
-                        let vectorize = matches!(
-                            self.native_socket.get(),
-                            BunSocket::Tcp(_) | BunSocket::TcpWriteonly(_)
-                        ) && !self.has_backpressure();
+                        let vectorize = matches!(self.native_socket.get(), BunSocket::Tcp(_))
+                            && !self.has_backpressure();
                         BATCH_BUFFER.with_borrow_mut(|batch| {
                             if batch.is_empty() {
                                 batch.reserve(if vectorize {
@@ -5351,7 +5275,7 @@ impl H2FrameParser {
                     identifier.ensure_still_alive();
                     if stream.state == StreamState::HALF_CLOSED_REMOTE {
                         stream.state = StreamState::CLOSED;
-                        stream.free_resources::<false>(self);
+                        stream.free_resources(self);
                     } else {
                         stream.state = StreamState::HALF_CLOSED_LOCAL;
                     }
@@ -5385,7 +5309,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         }
 
-        let Some(stream) = self.streams.get().get(&stream_id).copied() else {
+        let Some(stream) = self.stream(stream_id) else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         Ok(stream)
@@ -5436,7 +5360,7 @@ impl H2FrameParser {
         }
         let stream_id = stream_id.to_u32();
         let reading = reading.to_boolean();
-        let Some(stream) = self.streams.get().get(&stream_id).copied() else {
+        let Some(stream) = self.stream(stream_id) else {
             // The stream already finished (or never reached the wire); nothing to backpressure.
             return;
         };
@@ -5827,7 +5751,7 @@ impl H2FrameParser {
         identifier.ensure_still_alive();
         if stream.state == StreamState::HALF_CLOSED_REMOTE {
             stream.state = StreamState::CLOSED;
-            stream.free_resources::<false>(self);
+            stream.free_resources(self);
         } else {
             stream.state = StreamState::HALF_CLOSED_LOCAL;
         }
@@ -6251,7 +6175,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected stream_id to be a number")));
         }
 
-        let Some(stream) = self.streams.get().get(&stream_id.to_u32()).copied() else {
+        let Some(stream) = self.stream(stream_id.to_u32()) else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
 
@@ -6291,7 +6215,7 @@ impl H2FrameParser {
         });
 
         // Legacy path: also set on the legacy stream if it still exists (best-effort).
-        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+        if let Some(stream) = self.stream(stream_id) {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             unsafe { (*stream).set_context(context, global_object) };
         }
@@ -6348,7 +6272,7 @@ impl H2FrameParser {
                 stream.rst_code = ErrorCode::CANCEL.0;
                 let identifier = stream.get_identifier();
                 identifier.ensure_still_alive();
-                stream.free_resources::<false>(self);
+                stream.free_resources(self);
                 self.dispatch_with_2_extra(
                     js::on_aborted_get_cached,
                     identifier,
@@ -6385,7 +6309,7 @@ impl H2FrameParser {
                 stream.rst_code = rst_code;
                 let identifier = stream.get_identifier();
                 identifier.ensure_still_alive();
-                stream.free_resources::<false>(self);
+                stream.free_resources(self);
                 self.dispatch_with_extra(js::on_stream_error_get_cached, identifier, code);
             }
         }
@@ -7209,7 +7133,7 @@ impl H2FrameParser {
             identifier.ensure_still_alive();
             if stream.state == StreamState::HALF_CLOSED_REMOTE {
                 stream.state = StreamState::CLOSED;
-                stream.free_resources::<false>(self);
+                stream.free_resources(self);
             } else {
                 stream.state = StreamState::HALF_CLOSED_LOCAL;
             }
@@ -7282,7 +7206,7 @@ impl H2FrameParser {
 
     pub(crate) fn on_native_close(&self) {
         bun_output::scoped_log!(H2FrameParser, "onNativeClose");
-        // detach_native_socket can drop the socket's last ref (Writeonly deref),
+        // detach_native_socket can drop the socket's last ref (`Link::WriteOnly`),
         // so match on_native_read/on_native_writable and hold our own +1.
         let _keepalive = self.keepalive();
         self.native_socket.note_socket_closed();
@@ -7294,13 +7218,15 @@ impl H2FrameParser {
         self.detach_native_socket();
         if let Some(socket) = TLSSocket::from_js(socket) {
             bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
-            self.native_socket.attach::<true>(socket, self.ref_guard());
+            self.native_socket
+                .attach(Attachment::Tls(Link::new(socket, self.ref_guard())));
             // if we started with non native and go to native we now control the backpressure internally
             self.has_nonnative_backpressure.set(false);
             let _ = self.flush();
         } else if let Some(socket) = TCPSocket::from_js(socket) {
             bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
-            self.native_socket.attach::<false>(socket, self.ref_guard());
+            self.native_socket
+                .attach(Attachment::Tcp(Link::new(socket, self.ref_guard())));
             // if we started with non native and go to native we now control the backpressure internally
             self.has_nonnative_backpressure.set(false);
             let _ = self.flush();
@@ -7400,7 +7326,7 @@ impl H2FrameParser {
             engine_frames_received: Cell::new(0),
             engine_frames_sent: Cell::new(0),
             tx_tracker: Cell::new(TxFrameTracker::default()),
-            auto_flusher: JsCell::new(AutoFlusher::default()),
+            auto_flush_ref: JsCell::new(None),
             padding_strategy: Cell::new(PaddingStrategy::None),
             engine: core::cell::RefCell::new(None),
             rewrite_tail: JsCell::new(Vec::new()),
@@ -7446,13 +7372,13 @@ impl H2FrameParser {
                 bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
                 this_ref
                     .native_socket
-                    .attach::<true>(socket, this_ref.ref_guard());
+                    .attach(Attachment::Tls(Link::new(socket, this_ref.ref_guard())));
                 let _ = this_ref.flush();
             } else if let Some(socket) = TCPSocket::from_js(socket_js) {
                 bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
                 this_ref
                     .native_socket
-                    .attach::<false>(socket, this_ref.ref_guard());
+                    .attach(Attachment::Tcp(Link::new(socket, this_ref.ref_guard())));
                 let _ = this_ref.flush();
             }
         }
@@ -7622,7 +7548,7 @@ impl H2FrameParser {
         while let Some(stream) = it.next() {
             // SAFETY: stream is *mut Stream from self.streams; valid until freed below / map
             // cleared. `stream` points into a disjoint Box.
-            unsafe { (*stream).free_resources::<false>(this) };
+            unsafe { (*stream).free_resources(this) };
         }
         this.detach();
         if let Some(this_value) = this.strong_this.get().try_get() {
@@ -7676,7 +7602,8 @@ impl H2FrameParser {
         self.unregister_auto_flush();
         let stranded = self.native_keepalives.replace(0);
         for _ in 0..stranded {
-            self.deref();
+            // SAFETY: the ref of a `Keepalive` that will not drop. The wrapper still holds one.
+            unsafe { bun_ptr::RefCount::<Self>::deref(self.as_ctx_ptr()) };
         }
     }
 }
@@ -7692,18 +7619,6 @@ impl Drop for H2FrameParser {
         bun_output::scoped_log!(H2FrameParser, "deinit");
 
         self.detach();
-        // Note: take the map out first so `self` is free for
-        // `free_resources(self)` while we walk the entries.
-        let streams = self.streams.replace(BunHashMap::default());
-        for (_, item) in streams.iter() {
-            let stream = *item;
-            // SAFETY: stream is *mut Stream from self.streams; this is final teardown, freed exactly once via heap::take
-            unsafe {
-                (*stream).free_resources::<true>(self);
-                drop(bun_core::heap::take(stream));
-            }
-        }
-        drop(streams);
     }
 }
 
@@ -7712,18 +7627,8 @@ impl H2FrameParser {
         bun_output::scoped_log!(H2FrameParser, "finalize");
         self.strong_this.set(JsRef::empty());
         if VirtualMachine::get().is_shutting_down() {
-            // Free the streams first: `free_resources` releases the refs their signals hold.
-            // The map is emptied so a later `Drop` won't double-free.
-            let streams = self.streams.replace(BunHashMap::default());
-            for (_, item) in streams.iter() {
-                let stream = *item;
-                // SAFETY: map has been emptied; each entry is freed exactly once.
-                unsafe {
-                    (*stream).free_resources::<true>(self);
-                    drop(bun_core::heap::take(stream));
-                }
-            }
-            drop(streams);
+            // Free the streams first: their signals hold refs.
+            self.streams.set(BunHashMap::default());
             // Then the refs of frames/tasks that will never run again, so the
             // wrapper's deref can actually reach zero and run `Drop`.
             self.release_refs_stranded_by_exit();

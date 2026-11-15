@@ -7,7 +7,6 @@
 //! This is sometimes abbreviated as SCB
 
 use bun_collections::array_hash_map::ArrayHashAdapter;
-use bun_collections::multi_array_list;
 use bun_collections::{ArrayHashMap, DynamicBitSetUnmanaged, MultiArrayList};
 
 use super::base::IndexInt;
@@ -87,22 +86,6 @@ impl List {
         Ok(())
     }
 
-    /// Use this to improve speed of accessing fields at the cost of
-    /// storing more pointers. Invalidated when input is mutated.
-    pub fn slice(&self) -> Slice<'_> {
-        Slice {
-            list: self.list.slice(),
-            map: &self.map,
-        }
-    }
-}
-
-pub struct Slice<'a> {
-    pub list: multi_array_list::Slice<ServerComponentBoundary>,
-    pub map: &'a Map,
-}
-
-impl<'a> Slice<'a> {
     pub fn get_index(&self, real_source_index: IndexInt) -> Option<usize> {
         self.map.get_index_adapted(
             &real_source_index,
@@ -134,8 +117,6 @@ impl<'a> Slice<'a> {
     }
 }
 
-// Caches just the `source_index` column the adapter actually needs
-// (`Slice<T>` is not `Copy`).
 pub(crate) struct Adapter<'a> {
     pub source_indices: &'a [IndexInt],
 }

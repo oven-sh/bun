@@ -213,7 +213,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let first_decorator_loc = p.lexer.loc();
             let property_scope_index = p.scopes_in_order.len();
             if opts.allow_ts_decorators {
-                opts.ts_decorators = p.parse_type_script_decorators()?;
+                opts.ts_decorators = p.parse_type_script_decorators()?.into();
                 opts.has_class_decorators = class_opts.ts_decorators.len() > 0;
                 has_decorators = has_decorators || opts.ts_decorators.len() > 0;
             }
@@ -222,13 +222,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if let Some(property) =
                 p.parse_property(js_ast::g::PropertyKind::Normal, &mut opts, None)?
             {
-                // read fields before move (G::Property is not Copy).
-                let prop_kind = property.kind;
-                let prop_key = property.key;
                 if let Some(starts) = &mut p.starts_for_parse_only {
                     let named_at = match property.class_static_block_ref() {
                         Some(block) => Some(block.loc),
-                        None => prop_key.map(|key| key.loc),
+                        None => property.key.map(|key| key.loc),
                     };
                     if let Some(named_at) = named_at {
                         starts
@@ -238,11 +235,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 properties.push(property);
                 has_auto_accessor =
-                    has_auto_accessor || prop_kind == js_ast::g::PropertyKind::AutoAccessor;
+                    has_auto_accessor || property.kind == js_ast::g::PropertyKind::AutoAccessor;
 
                 // Forbid decorators on class constructors
                 if opts.ts_decorators.len() > 0 {
-                    if let Some(key) = prop_key {
+                    if let Some(key) = property.key {
                         if let js_ast::expr::Data::EString(str_) = &key.data {
                             if str_.eql_comptime(b"constructor") {
                                 p.log().add_error(
@@ -277,13 +274,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect(T::TCloseBrace)?;
 
         let has_any_decorators = has_decorators || class_opts.ts_decorators.len() > 0;
-        // `Expr: Copy` — safe arena-slice → owned Vec (one memcpy, no double-drop).
-        let ts_decorators = ExprNodeList::from_arena_slice(class_opts.ts_decorators);
         Ok(G::Class {
             class_name: name,
             extends,
             close_brace_loc,
-            ts_decorators,
+            // A copy: the visit pass writes to it, and the options only share their list.
+            ts_decorators: ExprNodeList::from_arena_slice(class_opts.ts_decorators)
+                .leak()
+                .into(),
             class_keyword,
             body_loc,
             properties: bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut()),

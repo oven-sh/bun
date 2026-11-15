@@ -243,7 +243,7 @@ impl InstallCompletionsCommand {
             }
 
             let mut completions_dir: &[u8];
-            let output_dir: bun_sys::Fd = 'found: {
+            let output_dir = bun_sys::Dir::from_fd('found: {
                 let argv = bun_core::argv();
                 for (i, arg) in argv.iter().enumerate() {
                     if arg == b"completions" {
@@ -426,11 +426,11 @@ impl InstallCompletionsCommand {
                     "Please either pipe it:\n   bun completions > /to/a/file\n\n Or pass a directory:\n\n   bun completions /my/completions/dir\n",
                 );
                 Global::exit(fail_exit_code);
-            };
+            });
 
             debug_assert!(!completions_dir.is_empty());
 
-            let output_file: File = match File::create(output_dir, filename, true) {
+            let output_file: File = match File::create(&output_dir, filename, true) {
                 Ok(f) => f,
                 Err(err) => {
                     pretty_errorln!(
@@ -451,7 +451,7 @@ impl InstallCompletionsCommand {
                 Global::exit(fail_exit_code);
             }
 
-            let _ = bun_sys::close(output_dir);
+            drop(output_dir);
 
             // Check if they need to load the zsh completions file into their .zshrc
             if shell == Shell::Zsh {

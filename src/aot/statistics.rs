@@ -121,8 +121,6 @@ mod instructions {
     use core::ffi::{c_int, c_long, c_void};
     use std::sync::OnceLock;
 
-    use bun_sys::Fd;
-
     use super::Instructions;
 
     unsafe extern "C" {
@@ -161,13 +159,10 @@ mod instructions {
     }
 
     fn open_counters(inherit: u64) -> Vec<c_int> {
-        let flags = bun_sys::O::RDONLY | bun_sys::O::DIRECTORY;
-        let name = bun_core::ZBox::from_bytes(b"/proc/self/task");
-        let Ok(folder) = bun_sys::openat(Fd::cwd(), &name, flags, 0) else {
+        let Ok(folder) = bun_sys::Dir::open(b"/proc/self/task") else {
             return Vec::new();
         };
-        let _close = bun_sys::CloseOnDrop::new(folder);
-        let mut entries = bun_sys::dir_iterator::iterate(folder);
+        let mut entries = bun_sys::dir_iterator::iterate(folder.fd());
         let mut counters = Vec::new();
         while let Ok(Some(entry)) = entries.next() {
             let thread = bun_core::fmt::parse_int::<c_int>(entry.name.slice_u8(), 10).ok();

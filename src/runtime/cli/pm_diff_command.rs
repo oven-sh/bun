@@ -9,7 +9,7 @@ use bun_archive::tar;
 use bun_collections::VecExt as _;
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
-use bun_core::strings::{self, StringOrTinyString};
+use bun_core::strings;
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_http as http;
 use bun_install::dependency::{self, TagExt as _};
@@ -416,7 +416,7 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<(Vec<u8>, V
         LoadResult::NotFound => false,
         // A lockfile that exists but will not load is reported as that, not as "package not installed".
         broken @ LoadResult::Err(_) => {
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print(Output::error_writer());
             crate::cli::package_manager_command::PackageManagerCommand::handle_load_lockfile_errors_for(
                 &broken, log_level, "",
             );
@@ -550,16 +550,11 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         }
         let perm = (entry.perm() & 0o777) as bun_sys::Mode;
         let size = usize::try_from(entry.size().max(0)).expect("int cast");
-        let path = bun_archive::display_path(entry)?;
-        // npm tarballs root everything under one folder (usually `package/`). What is beside it is not installed.
-        let Some((_, rel)) = strings::split_once_char(&path, b'/') else {
-            continue;
-        };
-        let rel = strings::trim_leading_char(rel, b'/');
-        let mut normalized = vec![0; rel.len() + 1];
-        let rel = bun_archive::normalize_npm_entry_path(rel, &mut normalized);
+        let mut normalized = vec![0; entry.path().len() + 1];
+        let rel =
+            bun_archive::normalize_npm_entry_path(entry, &mut normalized)?.unwrap_or_default();
         bun_paths::resolve_path::platform_to_posix_in_place(rel);
-        if matches!(&*rel, b"" | b".") {
+        if rel.is_empty() {
             continue;
         }
         let rel = rel.to_vec();
@@ -942,7 +937,7 @@ fn fetch_registry_tree(
     if tarball_url.is_empty() {
         tarball_url = bun_install::extract_tarball::build_url_with_printer(
             scope.url.href(),
-            &StringOrTinyString::init_append_if_needed(name, &mut BumpAppender(&bump))?,
+            name,
             found.version,
             &manifest.string_buf,
             |args| -> Result<Vec<u8>, bun_alloc::AllocError> {
@@ -982,13 +977,6 @@ fn fetch_registry_tree(
     Ok(tree)
 }
 
-struct BumpAppender<'a>(&'a Bump);
-impl bun_core::strings::Appender for BumpAppender<'_> {
-    fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
-        Ok(self.0.alloc_slice_copy(s))
-    }
-}
-
 fn registry_get(
     pm: &PackageManager,
     scope: &npm::registry::Scope,
@@ -1023,19 +1011,19 @@ fn registry_get(
     }
 
     let mut response_buf = MutableString::init(64 * 1024)?;
-    let display_url = url.href.to_vec();
-    let mut req = pm.registry_request(
+    let display_url = url.href;
+    let req = pm.registry_request(
         http::Method::GET,
         url,
         headers.entries,
         headers.content.written_slice(),
         b"",
     );
-    let res = match pm.send_with_retries(&mut req, &mut response_buf) {
+    let res = match pm.send_with_retries(req, &mut response_buf) {
         Ok(r) => r,
         Err(err) => {
             Status::clear();
-            let url = bun_core::fmt::redacted_npm_url(&display_url);
+            let url = bun_core::fmt::redacted_npm_url(display_url);
             Output::err(
                 err,
                 "GET {} failed",
@@ -1046,7 +1034,7 @@ fn registry_get(
     };
     if res.status_code() >= 400 {
         Status::clear();
-        npm::response_error::<false>(&req, &res, for_error, &mut response_buf)?;
+        npm::response_error::<false>(display_url, &res, for_error, &mut response_buf)?;
     }
     Ok(response_buf)
 }

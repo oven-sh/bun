@@ -25,11 +25,11 @@ struct Layer {
 }
 
 impl Layer {
-    fn new() -> Result<Self> {
+    fn new(dialect: Dialect) -> Result<Self> {
         let mut out = Vec::new();
         out.try_reserve_exact(BLOCK)?;
         Ok(Self {
-            gzip: gzip::Decoder::new()?,
+            gzip: gzip::Decoder::new(dialect)?,
             out,
             pos: 0,
             done: false,
@@ -53,7 +53,7 @@ impl Decoder {
     pub fn new(options: Options, gzip: bool) -> Result<Self> {
         let mut layers = Vec::new();
         if gzip {
-            layers.push(Layer::new()?);
+            layers.push(Layer::new(options.dialect)?);
         }
         Ok(Self {
             layers,
@@ -63,6 +63,11 @@ impl Decoder {
 
     pub fn entry(&self) -> &Entry {
         self.tar.entry()
+    }
+
+    /// See [`Reader::skipped_header`].
+    pub fn skipped_header(&self) -> bool {
+        self.tar.skipped_header()
     }
 
     /// See [`Reader::skip_entry`].
@@ -217,6 +222,11 @@ impl Decoder {
                         len,
                     };
                 }
+                Poll::EndOfArchive
+                    if layer.gzip.left_data_for_npm() && !self.tar.found_end_marker() =>
+                {
+                    return Err(Error::DataBehindGzip);
+                }
                 other => break other,
             }
             let (used, ready) = self.refill(
@@ -272,7 +282,7 @@ impl<'a> MemoryDecoder<'a> {
             if !gzip::starts_like_header(layers.last().map_or(rest, Layer::unread)) {
                 break;
             }
-            layers.push(Layer::new()?);
+            layers.push(Layer::new(options.dialect)?);
             let top = layers.len().saturating_sub(1);
             let (used, is_gzip) = this.decoder.read_first_header(top, rest)?;
             this.pos = this.pos.saturating_add(used);
@@ -298,6 +308,10 @@ impl<'a> MemoryDecoder<'a> {
 
     pub fn entry(&self) -> &Entry {
         self.decoder.entry()
+    }
+
+    pub fn skipped_header(&self) -> bool {
+        self.decoder.skipped_header()
     }
 
     pub fn skip_entry(&mut self) {

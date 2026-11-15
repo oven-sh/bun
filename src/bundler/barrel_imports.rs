@@ -105,7 +105,7 @@ fn apply_barrel_optimization_impl<'a>(
     this: &mut BundleV2<'a>,
     parse_result: &mut parse_task::Result<'a>,
 ) -> Result<(), AllocError> {
-    let parse_task::ResultValue::Success(result) = &mut parse_result.value else {
+    let parse_task::ResultValue::Success(result) = &mut *parse_result.value else {
         return Ok(());
     };
     let source_index = result.source.index.0;
@@ -389,7 +389,7 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
 
     this.graph.input_files.items_source_mut()[idx] = source;
 
-    let scheduled = this.process_resolve_queue(&resolve_result.resolve_queue, target, barrel_idx);
+    let scheduled = this.process_resolve_queue(resolve_result.resolve_queue, target, barrel_idx);
 
     this.patch_import_record_source_indices(
         &mut barrel_ir,

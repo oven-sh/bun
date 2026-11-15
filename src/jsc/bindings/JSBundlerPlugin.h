@@ -12,8 +12,8 @@
 #include <wtf/HashMap.h>
 
 typedef void (*JSBundlerPluginAddErrorCallback)(void*, void*, JSC::EncodedJSValue, uint8_t);
-typedef void (*JSBundlerPluginOnLoadAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
-typedef void (*JSBundlerPluginOnResolveAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
+typedef void (*JSBundlerPluginOnLoadAsyncCallback)(void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
+typedef void (*JSBundlerPluginOnResolveAsyncCallback)(void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 typedef void (*JSBundlerPluginNativeOnBeforeParseCallback)(const OnBeforeParseArguments*, OnBeforeParseResult*);
 
 namespace Bun {
@@ -156,13 +156,12 @@ public:
     // and whatever its JS side delivers later is dropped.
     void tombstone();
 
-    BundlerPlugin(void* config, BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
+    BundlerPlugin(BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
         : addError(addError)
         , onLoadAsync(onLoadAsync)
         , onResolveAsync(onResolveAsync)
     {
         this->target = target;
-        this->config = config;
     }
 
     NamespaceList onLoad = {};
@@ -178,7 +177,6 @@ public:
     JSBundlerPluginAddErrorCallback addError;
     JSBundlerPluginOnLoadAsyncCallback onLoadAsync;
     JSBundlerPluginOnResolveAsyncCallback onResolveAsync;
-    void* config { nullptr };
     bool tombstoned { false };
     // Set on the JS thread before a bundle pass. After that, other threads read the filter lists without a lock.
     bool filtersFrozen { false };

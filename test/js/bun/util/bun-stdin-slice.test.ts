@@ -41,6 +41,26 @@ test.skipIf(isWindows)("Bun.stdin.slice(0, N).text() caps reads at N bytes", asy
   expect(exitCode).toBe(0);
 });
 
+test.skipIf(isWindows)("Bun.stdin.slice(0, N).bytes() caps the total when it takes several reads", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `console.log((await Bun.stdin.slice(0, 100_000).bytes()).length, (await Bun.stdin.bytes()).length);`,
+    ],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  proc.stdin.write(Buffer.alloc(300_000, "x"));
+  await proc.stdin.end();
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "100000 200000\n", stderr: "", exitCode: 0 });
+});
+
 // Streaming a slice of a pipe is the POSIX path where the chunk that ends the
 // slice is handed to a read that is already waiting (FileReader::on_read_chunk
 // with a parked read); a regular file is read straight into the pull buffer

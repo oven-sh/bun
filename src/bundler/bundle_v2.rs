@@ -711,6 +711,7 @@ pub mod bv2_impl {
         }
     }
     use self::api as jsc_api;
+    use self::api::JSBundler::{LoadAnswered, ResolveAnswered};
 
     /// CYCLEBREAK(b0) TYPE_ONLY: data-only halves of `jsc::api::JSBundler` and
     /// `jsc::api::BuildArtifact` that the bundler reads/constructs without touching
@@ -728,6 +729,7 @@ pub mod bv2_impl {
             use bun_ast::ImportKind;
             use bun_core::String as BunString;
             use bun_resolver::fs::PathResolverExt as _;
+            use core::mem::transmute;
 
             // `Plugin = opaque {}` — backed by C++ `BunPlugin`. The bundler calls
             // `has_any_matches` / `match_on_load` / `match_on_resolve` directly
@@ -1112,37 +1114,33 @@ pub mod bv2_impl {
                 /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue.
                 pub(crate) task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
             }
-            impl bun_event_loop::Taskable for Resolve<'_> {
+            impl bun_event_loop::BoxedTask for Resolve<'static> {
                 const TAG: bun_event_loop::TaskTag =
                     bun_event_loop::task_tag::BundleV2PluginResolve;
                 /// The hop to the plugins' VM was released unrun by that VM's teardown (its thread): the
                 /// plugins will never see the request, so it is answered here — as cancelled — and handed
                 /// back to the bundle thread, which is waiting for it.
-                unsafe fn release_unrun(this: *mut Self) {
-                    // SAFETY: fn contract — the box that `dispatch` queued.
-                    unsafe { bun_core::heap::take(this) }.answer_cancelled();
+                fn release_unrun(self: Box<Self>) {
+                    self.answer_cancelled();
                 }
                 /// The plugins' callbacks continue the script that started the build.
-                unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
-                    // SAFETY: fn contract; `bv2` is the live bundle waiting for this request, and the
+                fn context(&self) -> bun_event_loop::ContextId {
+                    // SAFETY: `bv2` is the live bundle waiting for this request, and the
                     // field is set before any request is dispatched.
-                    unsafe { (*(*this).bv2).plugin_context }
+                    unsafe { (*self.bv2).plugin_context }
                 }
             }
             /// The plugins answered a [`Resolve`]: the hop back to the loop that runs the bundle, when
             /// that is a JS loop. Same pointer as the request, its own tag.
             #[repr(transparent)]
             pub struct ResolveAnswered(Resolve<'static>);
-            impl bun_event_loop::Taskable for ResolveAnswered {
+            impl bun_event_loop::BoxedTask for ResolveAnswered {
                 const TAG: bun_event_loop::TaskTag =
                     bun_event_loop::task_tag::BundleV2PluginResolveAnswered;
                 /// The VM that runs the bundle is going: the answer goes to nobody.
-                unsafe fn release_unrun(this: *mut Self) {
-                    // SAFETY: fn contract — the box that `on_resolve_async` queued.
-                    unsafe { bun_core::heap::destroy(this) };
-                }
+                fn release_unrun(self: Box<Self>) {}
                 /// A step of the bundle.
-                unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+                fn context(&self) -> bun_event_loop::ContextId {
                     bun_event_loop::ContextId::NONE
                 }
             }
@@ -1171,7 +1169,9 @@ pub mod bv2_impl {
                     if bv2.graph.cancelled {
                         return self.answer_cancelled();
                     }
-                    bv2.enqueue_plugin_request(self);
+                    // SAFETY: the pass cannot finish before this is answered, so `'a` outlasts it.
+                    let request = unsafe { transmute::<Box<Self>, Box<Resolve<'static>>>(self) };
+                    bv2.enqueue_plugin_request(request);
                 }
                 /// The plugins can no longer answer this request (their VM is shutting down, or the pass
                 /// was cancelled before it was handed over): answer it as cancelled, from whichever thread
@@ -1266,7 +1266,9 @@ pub mod bv2_impl {
                     if bv2.graph.cancelled {
                         return self.answer_cancelled();
                     }
-                    bv2.enqueue_plugin_request(self);
+                    // SAFETY: as `Resolve::dispatch`.
+                    let request = unsafe { transmute::<Box<Self>, Box<Load<'static>>>(self) };
+                    bv2.enqueue_plugin_request(request);
                 }
                 /// As `Resolve::answer_cancelled`.
                 pub fn answer_cancelled(mut self: Box<Self>) {
@@ -1280,32 +1282,28 @@ pub mod bv2_impl {
                     plugins.expect("plugins").match_on_load(self);
                 }
             }
-            impl bun_event_loop::Taskable for Load<'_> {
+            impl bun_event_loop::BoxedTask for Load<'static> {
                 const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BundleV2PluginLoad;
                 /// As `Resolve::release_unrun`.
-                unsafe fn release_unrun(this: *mut Self) {
-                    // SAFETY: as `Resolve::release_unrun`.
-                    unsafe { bun_core::heap::take(this) }.answer_cancelled();
+                fn release_unrun(self: Box<Self>) {
+                    self.answer_cancelled();
                 }
                 /// As `Resolve::context`.
-                unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
+                fn context(&self) -> bun_event_loop::ContextId {
                     // SAFETY: as `Resolve::context`.
-                    unsafe { (*(*this).bv2).plugin_context }
+                    unsafe { (*self.bv2).plugin_context }
                 }
             }
             /// The plugins answered a [`Load`]: as [`ResolveAnswered`].
             #[repr(transparent)]
             pub struct LoadAnswered(Load<'static>);
-            impl bun_event_loop::Taskable for LoadAnswered {
+            impl bun_event_loop::BoxedTask for LoadAnswered {
                 const TAG: bun_event_loop::TaskTag =
                     bun_event_loop::task_tag::BundleV2PluginLoadAnswered;
                 /// As `ResolveAnswered::release_unrun`.
-                unsafe fn release_unrun(this: *mut Self) {
-                    // SAFETY: fn contract — the box that `on_load_async` queued.
-                    unsafe { bun_core::heap::destroy(this) };
-                }
+                fn release_unrun(self: Box<Self>) {}
                 /// A step of the bundle.
-                unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+                fn context(&self) -> bun_event_loop::ContextId {
                     bun_event_loop::ContextId::NONE
                 }
             }
@@ -1769,12 +1767,11 @@ pub mod bv2_impl {
             poster.post(task)
         }
 
-        fn enqueue_plugin_request<T: bun_event_loop::Taskable>(&mut self, request: Box<T>) {
-            let request = bun_core::heap::into_raw(request);
-            let task = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(request);
-            if let bun_event_loop::Posted::Refused(_) = self.enqueue_on_js_loop_for_plugins(task) {
-                // SAFETY: refused ⇒ we own the request.
-                unsafe { bun_core::heap::destroy(request) };
+        fn enqueue_plugin_request<T: bun_event_loop::BoxedTask>(&mut self, request: Box<T>) {
+            let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_boxed(request);
+            if let bun_event_loop::Posted::Refused(ct) = self.enqueue_on_js_loop_for_plugins(ct) {
+                // SAFETY: the task made above.
+                drop(unsafe { ct.task.into_boxed::<T>() });
             }
         }
 
@@ -4345,15 +4342,16 @@ pub mod bv2_impl {
             // mutate `graph` / allocate from `graph.heap` off-thread.
             match self.any_loop() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
-                    let answered = load.cast::<jsc_api::JSBundler::LoadAnswered>();
-                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(answered);
+                    // SAFETY: `repr(transparent)`, and the pass cannot finish before it has run.
+                    let answered = unsafe { bun_core::heap::take(load.cast::<LoadAnswered>()) };
+                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_boxed(answered);
                     let poster = self
                         .js_poster
                         .as_ref()
                         .expect("JS-owned bundle has a poster");
-                    if let bun_event_loop::Posted::Refused(_) = poster.post(ct) {
-                        // SAFETY: refused ⇒ we own the request.
-                        unsafe { bun_event_loop::Taskable::release_unrun(answered) };
+                    if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
+                        // SAFETY: the task made above.
+                        drop(unsafe { ct.task.into_boxed::<LoadAnswered>() });
                     }
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
@@ -4379,15 +4377,17 @@ pub mod bv2_impl {
             // See `on_load_async` — must dispatch on the bundler's own loop.
             match self.any_loop() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
-                    let answered = resolve.cast::<jsc_api::JSBundler::ResolveAnswered>();
-                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(answered);
+                    // SAFETY: as in `on_load_async`.
+                    let answered =
+                        unsafe { bun_core::heap::take(resolve.cast::<ResolveAnswered>()) };
+                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_boxed(answered);
                     let poster = self
                         .js_poster
                         .as_ref()
                         .expect("JS-owned bundle has a poster");
-                    if let bun_event_loop::Posted::Refused(_) = poster.post(ct) {
-                        // SAFETY: refused ⇒ we own the request.
-                        unsafe { bun_event_loop::Taskable::release_unrun(answered) };
+                    if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
+                        // SAFETY: the task made above.
+                        drop(unsafe { ct.task.into_boxed::<ResolveAnswered>() });
                     }
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {

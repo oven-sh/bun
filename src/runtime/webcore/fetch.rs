@@ -1231,8 +1231,7 @@ fn fetch_impl(
     if body.needs_to_read_file() {
         'prepare_body: {
             // A local `PathBuffer` serves as NUL-termination scratch for
-            // `path.slice_z()` (the `vm.node_fs()` accessor is gated behind a
-            // jsc↔runtime cycle).
+            // `path.slice_z()`.
             let mut open_path_buf = bun_paths::path_buffer_pool::get();
             let opened_fd_res: bun_sys::Result<bun_sys::Fd> = {
                 let store = body.store().expect("needs_to_read_file implies store");
@@ -1337,9 +1336,6 @@ fn fetch_impl(
             // TODO: make this async + lazy
             let blob_offset = body.blob().offset.get();
             let blob_size = body.blob().size.get();
-            // The `vm.node_fs()` accessor is a jsc↔runtime cycle. `read_file`
-            // with an `Fd` path only touches `self.sync_error_buf` for
-            // path-variant inputs, so a fresh `NodeFS` is sufficient here.
             let mut node_fs = node::fs::NodeFS::default();
             let rf_args = node::fs::args::ReadFile {
                 encoding: Encoding::Buffer,

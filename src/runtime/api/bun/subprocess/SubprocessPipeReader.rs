@@ -75,9 +75,7 @@ impl PipeReader {
             process: Some(ParentRef::from(process)),
             reader: IOReader::init::<PipeReader>(),
             event_loop: bun_ptr::BackRef::new(event_loop),
-            event_loop_handle: bun_jsc::EventLoopHandle::init(
-                core::ptr::from_ref(event_loop).cast_mut().cast(),
-            ),
+            event_loop_handle: bun_jsc::EventLoopHandle::init(event_loop.as_erased_ptr()),
             stdio_result: result,
             state: State::Pending,
         });
@@ -115,8 +113,7 @@ impl PipeReader {
         this.start_ref = Some(start_ref);
         this.process = Some(ParentRef::from(process));
         this.event_loop = bun_ptr::BackRef::new(event_loop);
-        this.event_loop_handle =
-            bun_jsc::EventLoopHandle::init(core::ptr::from_ref(event_loop).cast_mut().cast());
+        this.event_loop_handle = bun_jsc::EventLoopHandle::init(event_loop.as_erased_ptr());
         #[cfg(windows)]
         {
             if lazy {

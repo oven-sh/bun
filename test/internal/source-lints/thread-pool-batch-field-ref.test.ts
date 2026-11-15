@@ -4,13 +4,13 @@ import { realpathSync } from "fs";
 import path from "path";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
 
-// The `*mut Task` a `Batch::from(..)` hands to the thread pool must be
+// The `*mut Task` a `Batch::from_raw(..)` hands to the thread pool must be
 // projected out of a pointer to the object that embeds the task, never out of
 // a reference to the task field itself:
 //
-//   Batch::from(ptr::from_mut((*task).task()))   // accessor returns &mut Task
-//   Batch::from(this.task())
-//   Batch::from(&mut self.task)                   // coerces to *mut Task
+//   Batch::from_raw(ptr::from_mut((*task).task()))   // accessor returns &mut Task
+//   Batch::from_raw(this.task())
+//   Batch::from_raw(&mut self.task)                   // coerces to *mut Task
 //
 // are banned; `&raw mut (*p).task`, `addr_of_mut!((*p).task)`, `&raw mut
 // self.task`, `T::field_of(p)` (an associated fn given the object's pointer)
@@ -30,9 +30,9 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // `Batch::from_owned` (src/threading/work_pool.rs) does via
 // `IntrusiveField::field_of`.
 //
-// Scope: the argument expression of every `Batch::from(` call, which is the
-// one way a task enters a `ThreadPool` batch (`.schedule(Batch::from(..))`,
-// `batch.push(Batch::from(..))`). A
+// Scope: the argument expression of every `Batch::from_raw(` call, which is the
+// one way a raw task enters a `ThreadPool` batch (`.schedule(Batch::from_raw(..))`,
+// `batch.push(Batch::from_raw(..))`). A
 // pointer projected the wrong way somewhere else and passed in through a local
 // is the same bug and is not caught here. This lint is about the range of the
 // pointer the pool gets; `&raw mut self.task` has the whole object's range and
@@ -57,10 +57,9 @@ const tracked: Set<string> | null = (() => {
   return new Set(r.stdout.toString().split("\0").filter(Boolean));
 })();
 
-// `Batch::from(`, however the type is reached: `thread_pool::Batch::from(`,
-// `ThreadPoolLib::Batch::from(`, and the `use .. Batch as PoolBatch` /
-// `ThreadPoolBatch` aliases in the tree.
-const BATCH_FROM = /\b\w*Batch::from\s*\(/g;
+// `Batch::from_raw(`, however the type is reached: `thread_pool::Batch::from_raw(`,
+// `ThreadPoolLib::Batch::from_raw(`, and the `use .. Batch as PoolBatch` alias in the tree.
+const BATCH_FROM = /\b\w*Batch::from_raw\s*\(/g;
 
 // A method-call chain rooted at a receiver (`(*task).task()`, `this.task()`,
 // `self.task.as_ptr()`, `self.task_mut()`): an accessor auto-refs the field or
@@ -100,7 +99,7 @@ function isBanned(argument: string): boolean {
   return METHOD_CHAIN.test(arg) || REFERENCE.test(arg) || FROM_REF.test(arg);
 }
 
-/** Byte offsets (into `stripped`) of every banned `Batch::from` call in one file. */
+/** Byte offsets (into `stripped`) of every banned `Batch::from_raw` call in one file. */
 function findBannedBatches(stripped: string): number[] {
   const hits: number[] = [];
   for (const m of stripped.matchAll(BATCH_FROM)) {
@@ -143,7 +142,7 @@ for (const abs of rustSources) {
   }
 }
 
-test("scans a non-empty set of tracked Rust sources containing Batch::from calls", () => {
+test("scans a non-empty set of tracked Rust sources containing Batch::from_raw calls", () => {
   // Guards against the tracked/realpath filters (or the call pattern) failing
   // to match anything, which would make the ban below pass vacuously.
   expect(scanned).toBeGreaterThan(0);
@@ -196,22 +195,22 @@ test("the classifier recognizes the spellings it claims to", () => {
 test("the call matcher finds every spelling of the call and takes its whole argument", () => {
   const source = [
     "unsafe fn push(&self, task: *mut TaskType) {",
-    "    self.thread_pool.schedule(Batch::from(unsafe {",
+    "    self.thread_pool.schedule(Batch::from_raw(unsafe {",
     "        std::ptr::from_mut::<WorkPoolTask>((*task).task())",
     "    }));",
-    "    batch.push(ThreadPoolLib::Batch::from(&mut task.task));",
-    "    let batch = PoolBatch::from(",
+    "    batch.push(ThreadPoolLib::Batch::from_raw(&mut task.task));",
+    "    let batch = PoolBatch::from_raw(",
     "        this.task(),",
     "    );",
-    "    manager.task_batch.push(ThreadPoolBatch::from(queued));",
-    "    self.thread_pool.schedule(Batch::from(unsafe { TaskType::field_of(task) }));",
-    "    batch.push(thread_pool::Batch::from(&raw mut task.task));",
+    "    manager.task_batch.push(PoolBatch::from_raw(queued));",
+    "    self.thread_pool.schedule(Batch::from_raw(unsafe { TaskType::field_of(task) }));",
+    "    batch.push(thread_pool::Batch::from_raw(&raw mut task.task));",
     "}",
   ].join("\n");
   expect(findBannedBatches(source).map(offset => lineOf(source, offset))).toEqual([2, 5, 6]);
 });
 
-test("no Batch::from call projects the task out of a reference to the field", () => {
+test("no Batch::from_raw call projects the task out of a reference to the field", () => {
   expect(offenders).toEqual([]);
 });
 

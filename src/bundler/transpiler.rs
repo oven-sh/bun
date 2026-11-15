@@ -476,7 +476,7 @@ impl<'a> Transpiler<'a> {
                 let dir = {
                     let _entries_lock = bun_resolver::fs::FileSystem::get()
                         .fs
-                        .entries_mutex
+                        .entries_mutex()
                         .lock_guard();
                     match dir_info.get_entries_ref_locked(self.resolver.generation) {
                         Some(entries) => dot_env::DirEntryKeys(

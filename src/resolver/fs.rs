@@ -430,7 +430,7 @@ impl DirEntry {
         debug_assert!(
             crate::fs::FileSystem::get()
                 .fs
-                .entries_mutex
+                .entries_mutex()
                 .is_held_by_current_thread(),
             "DirEntry.data probed without entries_mutex; a concurrent \
              stale-generation re-read frees the map's buckets in place"

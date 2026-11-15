@@ -32,7 +32,7 @@ impl Semaphore {
         let mut permits = self.permits.lock();
 
         while *permits == 0 {
-            self.cond.wait_guarded(&mut permits);
+            self.cond.wait(&mut permits);
         }
 
         *permits -= 1;

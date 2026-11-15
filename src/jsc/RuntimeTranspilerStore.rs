@@ -277,7 +277,8 @@ impl RuntimeTranspilerStore {
     ) {
         while let Some(unrun) = NonNull::new(job) {
             job = iter.next();
-            self.queue.push(unrun);
+            // SAFETY: `unrun` was popped from this queue, and its slot was not released.
+            unsafe { self.queue.push(unrun) };
         }
     }
 
@@ -359,8 +360,8 @@ impl RuntimeTranspilerStore {
             );
         }
         self.jobs_scheduled.update(|n| n + 1);
-        // SAFETY: job fully initialized above
-        WorkPool::schedule(unsafe { &raw mut (*job).work_task });
+        // SAFETY: a new slot, which is released after the job comes back through `queue`.
+        unsafe { WorkPool::schedule(&raw mut (*job).work_task) };
         promise.cast::<c_void>()
     }
 }

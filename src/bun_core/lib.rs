@@ -1,5 +1,6 @@
 #![feature(allocator_api)]
 #![feature(adt_const_params)]
+#![feature(atomic_volatile)]
 #![feature(core_io, core_io_borrowed_buf)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
 #![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time
@@ -29,15 +30,94 @@ pub mod util;
 pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
 pub use c_str_list::{CStrList, CStrRef, CStringList};
 
-/// Shared state-machine tag for the streaming (de)compressors in
+/// Shared by the streaming (de)compressors in
 /// `bun_brotli` / `bun_zlib` / `bun_zstd`.
 pub mod compress {
+    use crate::vec::BorrowedCursor;
+    use core::sync::atomic::{AtomicU8, Ordering};
+
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum State {
         Uninitialized,
         Inflating,
         End,
         Error,
+    }
+
+    /// The input and the output of one call to a C codec.
+    ///
+    /// SAFETY: until `advance`, the input of `parts` is valid for reads and its output for writes. They do not overlap.
+    pub unsafe trait Buffers {
+        fn parts(&mut self) -> (*const [u8], *mut [u8]);
+        /// SAFETY: neither count exceeds its range, and the first `written` bytes of the output are initialized.
+        unsafe fn advance(&mut self, consumed: usize, written: usize);
+    }
+
+    // SAFETY: a shared and an exclusive borrow.
+    unsafe impl Buffers for (&[u8], BorrowedCursor<'_, u8>) {
+        fn parts(&mut self) -> (*const [u8], *mut [u8]) {
+            // SAFETY: nothing is written here.
+            (self.0, unsafe { &raw mut *self.1.as_mut() } as *mut [u8])
+        }
+        unsafe fn advance(&mut self, _: usize, written: usize) {
+            // SAFETY: fn contract.
+            unsafe { self.1.advance(written) };
+        }
+    }
+
+    /// What is left of an input and of an output. Not slices, because script may write to either meanwhile.
+    pub struct Ranges<'a> {
+        input: *const [u8],
+        out: *mut [u8],
+        _borrow: core::marker::PhantomData<&'a mut [u8]>,
+    }
+
+    impl<'a> Ranges<'a> {
+        pub fn new(input: &'a [u8], out: &'a mut [u8]) -> Self {
+            // SAFETY: a shared and an exclusive borrow.
+            unsafe { Self::from_raw(input, out) }
+        }
+
+        /// SAFETY: for `'a`, `input` is valid for reads and `out` for writes. Neither is null, and they do not overlap.
+        pub unsafe fn from_raw(input: *const [u8], out: *mut [u8]) -> Self {
+            Self {
+                input,
+                out,
+                _borrow: core::marker::PhantomData,
+            }
+        }
+
+        pub fn input_len(&self) -> usize {
+            self.input.len()
+        }
+
+        pub fn out_len(&self) -> usize {
+            self.out.len()
+        }
+
+        pub fn input_byte(&self, index: usize) -> Option<u8> {
+            let input = self.input.cast::<AtomicU8>();
+            // SAFETY: in bounds. The load is atomic because script may be storing to the byte.
+            (index < self.input.len())
+                .then(|| unsafe { input.add(index).load_volatile(Ordering::Relaxed) })
+        }
+    }
+
+    // SAFETY: the contracts of `from_raw` and of `advance`.
+    unsafe impl Buffers for &mut Ranges<'_> {
+        fn parts(&mut self) -> (*const [u8], *mut [u8]) {
+            (self.input, self.out)
+        }
+        unsafe fn advance(&mut self, consumed: usize, written: usize) {
+            self.input = core::ptr::slice_from_raw_parts(
+                self.input.cast::<u8>().wrapping_add(consumed),
+                self.input.len() - consumed,
+            );
+            self.out = core::ptr::slice_from_raw_parts_mut(
+                self.out.cast::<u8>().wrapping_add(written),
+                self.out.len() - written,
+            );
+        }
     }
 }
 pub mod heap;

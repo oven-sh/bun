@@ -2161,6 +2161,24 @@ describe("tsconfig paths skip `.d.ts` substitutions", () => {
   });
 });
 
+test.concurrent("a tsconfig `paths` target whose own tsconfig has `extends` wins over node_modules", async () => {
+  using dir = tempDir("tsconfig-paths-target-extends", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { foo: ["./packages/foo"] } } }),
+    "tsconfig.base.json": `{}`,
+    "packages/foo/tsconfig.json": JSON.stringify({ extends: "../../tsconfig.base.json" }),
+    "packages/foo/package.json": JSON.stringify({ name: "foo", main: "./src/entry.ts" }),
+    "packages/foo/src/entry.ts": `export default "paths";`,
+    "node_modules/foo/package.json": JSON.stringify({ name: "foo", main: "index.js" }),
+    "node_modules/foo/index.js": `module.exports = "node_modules";`,
+    "entry.ts": `
+      import foo from "foo";
+      console.log(foo);
+    `,
+  });
+
+  expect(await runWildcardScript(String(dir), "entry.ts")).toEqual({ stdout: "paths", stderr: "", exitCode: 0 });
+});
+
 it.skipIf(isWindows)("runs a script from a working directory nested 256 directories deep", async () => {
   using dir = tempDir("resolver-deep-cwd", { ".keep": "" });
   const base = realpathSync(String(dir));

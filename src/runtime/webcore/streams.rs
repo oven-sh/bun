@@ -423,15 +423,16 @@ impl Default for Pending {
 }
 
 impl Pending {
-    pub(crate) fn promise(&mut self, cx: &bun_jsc::JsThread<'_>) -> *mut JSPromise {
-        let prom = std::ptr::from_mut::<JSPromise>(JSPromise::create(cx.global()));
+    pub(crate) fn promise(&mut self, cx: &bun_jsc::JsThread<'_>) -> JSValue {
+        let promise = JSPromiseStrong::init(cx.global());
+        let value = promise.value();
         self.future = PendingFuture::Promise {
-            promise: prom,
+            promise,
             global_this: BackRef::new(cx.global()),
             context: cx.context().id(),
         };
         self.state = PendingState::Pending;
-        prom
+        value
     }
 
     pub(crate) fn run_on_next_tick(&mut self) {
@@ -458,18 +459,6 @@ impl Pending {
         let mut boxed = unsafe { bun_core::heap::take(this) };
         boxed.run();
     }
-
-    /// The loop refused the deferred fulfilment (VM teardown): nobody awaits
-    /// the read any more, so drop the promise's root and the parked result.
-    pub(crate) fn release_without_running(this: *mut Pending) {
-        // SAFETY: heap-allocated in run_on_next_tick; refused, so we own it.
-        let mut boxed = unsafe { bun_core::heap::take(this) };
-        boxed.state = PendingState::Used;
-        if let PendingFuture::Promise { promise, .. } = &boxed.future {
-            JSPromise::opaque_ref(*promise).to_js().unprotect();
-        }
-        drop(boxed);
-    }
 }
 
 impl bun_event_loop::Taskable for Pending {
@@ -477,7 +466,8 @@ impl bun_event_loop::Taskable for Pending {
     /// Deferred out of a finalizer or a late completion: do the script-free
     /// part of what the dispatch would have done.
     unsafe fn release_unrun(this: *mut Self) {
-        Pending::release_without_running(this);
+        // SAFETY: fn contract — the box `run_on_next_tick` queued.
+        unsafe { bun_core::heap::destroy(this) };
     }
     /// `Pending::run` checks the context whose script is reading: most sources call it from their
     /// own completion, not through this task.
@@ -488,9 +478,7 @@ impl bun_event_loop::Taskable for Pending {
 
 pub(crate) enum PendingFuture {
     Promise {
-        // JSC_BORROW: raw `*mut JSPromise`, GC-rooted via protect/unprotect (protected when
-        // stored, unprotected when the future is fulfilled or deinitialized).
-        promise: *mut JSPromise,
+        promise: JSPromiseStrong,
         // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
         global_this: BackRef<JSGlobalObject>,
         /// The context whose script is reading (it asked for this promise).
@@ -533,7 +521,7 @@ impl Pending {
             return;
         }
         self.state = PendingState::Used;
-        match &self.future {
+        match &mut self.future {
             PendingFuture::Promise {
                 promise,
                 global_this,
@@ -544,7 +532,7 @@ impl Pending {
                 let entered = global_this.bun_vm().enter_context(*context);
                 StreamResult::fulfill_promise(
                     &mut self.result,
-                    *promise,
+                    core::mem::take(promise),
                     &global_this.js_thread(entered.context()),
                 )
             }
@@ -575,13 +563,10 @@ impl StreamResult {
     /// Terminal: see [`Pending::run`].
     pub(crate) fn fulfill_promise(
         result: &mut StreamResult,
-        promise: *mut JSPromise,
+        mut promise: JSPromiseStrong,
         cx: &bun_jsc::JsThread<'_>,
     ) {
         let vm = cx.vm();
-        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-        // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
-        let _unprotect = jsc::js_value::Protected::adopt(JSPromise::opaque_ref(promise).to_js());
 
         // A completion for a VM that no longer runs script settles nothing.
         if !vm.script_allowed() {
@@ -591,28 +576,23 @@ impl StreamResult {
 
         let _exit = vm.enter_event_loop_scope();
 
-        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-        // Each settle forms a fresh temp `&mut`, the sole borrow across that
-        // re-entrant call (no long-lived `&mut JSPromise` held).
         let settled = match result {
             StreamResult::Err(err) => {
                 let value = err.to_js(cx.global());
                 value.ensure_still_alive();
                 *result = StreamResult::Temporary(RawSlice::EMPTY);
-                JSPromise::opaque_mut(promise).reject_with_async_stack(cx.global(), Ok(value))
+                promise.reject_with_async_stack(cx.global(), Ok(value))
             }
-            StreamResult::Done => {
-                JSPromise::opaque_mut(promise).resolve(cx.global(), JSValue::FALSE)
-            }
+            StreamResult::Done => promise.resolve(cx.global(), JSValue::FALSE),
             _ => {
                 let value = result.to_js(cx);
                 *result = StreamResult::Temporary(RawSlice::EMPTY);
                 match value {
                     Ok(value) => {
                         value.ensure_still_alive();
-                        JSPromise::opaque_mut(promise).resolve(cx.global(), value)
+                        promise.resolve(cx.global(), value)
                     }
-                    Err(err) => JSPromise::opaque_mut(promise).reject(cx.global(), Err(err)),
+                    Err(err) => promise.reject(cx.global(), Err(err)),
                 }
             }
         };
@@ -654,11 +634,7 @@ impl StreamResult {
             StreamResult::Pending(pending) => {
                 // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM
                 // classification; exclusive borrow scoped to the call.
-                let promise = unsafe { (**pending).promise(cx) };
-                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-                let promise_js = JSPromise::opaque_ref(promise).to_js();
-                promise_js.protect();
-                Ok(promise_js)
+                Ok(unsafe { (**pending).promise(cx) })
             }
             StreamResult::Err(err) => {
                 let js_err = err.to_js(cx.global());

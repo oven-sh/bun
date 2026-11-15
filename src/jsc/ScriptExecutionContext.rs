@@ -40,7 +40,6 @@ pub enum AbortCause {
 /// [`AbortCause::ContextStopped`].
 type AbortFn = unsafe fn(handle: *mut AbortHandle, cause: AbortCause);
 
-/// Zero-valid.
 pub struct ScriptExecutionContext {
     id: JsCell<ContextId>,
     /// Armed handles, oldest first.
@@ -523,16 +522,11 @@ macro_rules! impl_abort_handle_owner {
 // `WebCore::ScriptExecutionContext` owns the context of a `Bun.ModuleGraph`.
 
 /// A global's `WebCore::ScriptExecutionContext` is made with this as its Rust half.
-///
-/// # Safety
-/// `vm` is this thread's VM, whose `root_context` is written (the first global is made while
-/// the rest of the VM is still being initialised).
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__VirtualMachine__rootContext(
-    vm: *mut crate::VirtualMachineRef,
+extern "C" fn Bun__VirtualMachine__rootContext(
+    vm: &crate::VirtualMachineRef,
 ) -> *const ScriptExecutionContext {
-    // SAFETY: fn contract; no reference to the VM is formed.
-    unsafe { ptr::addr_of!((*vm).root_context) }
+    &raw const vm.root_context
 }
 
 /// ModuleGraph.cpp's `ErrorHandlerContextScope`: the context native code entered becomes

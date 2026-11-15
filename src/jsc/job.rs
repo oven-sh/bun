@@ -231,7 +231,8 @@ pub struct JobHeader {
 }
 
 /// A VM's live [cancellable](JobContext::CANCELLABLE) jobs (JS thread only;
-/// zero-valid), so its stop phase can [`cancel`](JobContext::cancel) them.
+/// empty by default), so its stop phase can [`cancel`](JobContext::cancel) them.
+#[derive(Default)]
 pub struct JobList {
     head: *mut JobHeader,
 }

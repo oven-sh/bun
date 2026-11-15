@@ -972,11 +972,11 @@ pub fn set_default_ca(certs: Vec<bun_core::Utf8Bytes<'static>>) {
 
 impl Drop for RareData {
     fn drop(&mut self) {
-        // pipe_read_scratch / spawn_sync_event_loop_ /
-        // s3_default_client / default_csrf_secret / cleanup_hooks / path_buf /
-        // tls_default_ciphers / stdio:
-        // all dropped automatically via field Drop.
-
+        // Paired with `VirtualMachine::init_rare_data`.
+        bun_core::asan::unregister_root_region(
+            core::ptr::from_ref(self).cast(),
+            core::mem::size_of::<Self>(),
+        );
         self.default_client_ssl_ctx.set(None);
         // After the default-ctx free so the tombstone callback still finds a live
         // map; ssl_ctx_cache itself lives in `RuntimeState` and is dropped there.

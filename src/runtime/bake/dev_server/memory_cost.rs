@@ -74,8 +74,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             generation: _,
             bundles_since_last_error: _,
             framework: _,
-            bundler_framework_views: _,
-            bundler_options: _,
             server_transpiler: _,
             client_transpiler: _,
             ssr_transpiler: _,
@@ -121,7 +119,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .ssr_transpiler
     //   .log
     //   .framework
-    //   .bundler_options
     //   .broadcast_console_log_from_browser_to_server
 
     // to be counted.
@@ -133,9 +130,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     for bundle in dev.route_bundles.iter() {
         other_bytes += bundle.memory_cost();
     }
-    // .bundler_framework_views (the pointed-to Frameworks are owned elsewhere;
-    // count the Vec's own backing store)
-    other_bytes += memory_cost_array_list(&dev.bundler_framework_views);
     // .graphs.server
     {
         let cost = dev.graphs.server.memory_cost_detailed();

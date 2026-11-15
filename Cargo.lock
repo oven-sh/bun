@@ -982,6 +982,7 @@ dependencies = [
  "bun_js_parser",
  "bun_jsc",
  "bun_parsers",
+ "bun_ptr",
  "bun_resolver",
  "strum",
  "thiserror",

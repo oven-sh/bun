@@ -737,9 +737,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
     // Set up the transpiler/environment
     let _ = bun_resolver::fs::FileSystem::init(None)?;
-    // Out-param init pattern.
-    let mut this_transpiler_slot =
-        ::core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
+    let mut this_transpiler_slot = None;
     let (this_transpiler, _) = RunCommand::configure_env_for_run(
         ctx,
         &mut this_transpiler_slot,

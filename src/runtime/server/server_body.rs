@@ -64,7 +64,7 @@ pub(super) use super::any_request_context::AnyRequestContext;
 pub(super) use super::file_route::FileRoute;
 pub(super) use super::node_http_response::NodeHTTPResponse;
 pub(super) use super::request_context::{
-    Dispatch, RequestContext as NewRequestContext, UpgradeState,
+    Dispatch, RequestContext as NewRequestContext, RequestContextStackAllocator, UpgradeState,
 };
 pub(super) use super::server_config::{self as server_config, ServerConfig};
 pub(super) use super::server_web_socket::ServerWebSocket;
@@ -107,17 +107,18 @@ where
 /// type. Implemented via blanket impl below for every `NewRequestContext<..>`.
 trait RequestCtxOps: RequestCtx {
     type Server;
-    type Dispatch;
+    type Pool;
+    type Dispatch: core::ops::Deref<Target = Self>;
     /// # Safety
     /// As [`NewRequestContext::create`].
     unsafe fn create_in(
-        slot: *mut Self,
+        pool: &Self::Pool,
         server: &Self::Server,
         req: &mut Self::Req,
         resp: uws::AnyResponse,
         method: Option<http::Method>,
-    );
-    fn dispatch(&self) -> Self::Dispatch;
+    ) -> Self::Dispatch;
+    fn ctx_ptr(&self) -> *mut Self;
     fn respond(
         dispatch: Self::Dispatch,
         server: &Self::Server,
@@ -158,22 +159,23 @@ where
     ThisServer: super::ServerLike + 'static,
 {
     type Server = ThisServer;
+    type Pool = RequestContextStackAllocator<ThisServer, SSL, DBG, MUX>;
     type Dispatch = Dispatch<ThisServer, SSL, DBG, MUX>;
     #[inline]
     unsafe fn create_in(
-        slot: *mut Self,
+        pool: &Self::Pool,
         server: &ThisServer,
         req: &mut Self::Req,
         any_resp: uws::AnyResponse,
         method: Option<http::Method>,
-    ) {
+    ) -> Self::Dispatch {
         let req = std::ptr::from_mut(req).cast();
         // SAFETY: fn contract.
-        unsafe { Self::create(slot, server, req, any_resp, method) };
+        unsafe { Self::create(pool, server, req, any_resp, method) }
     }
     #[inline]
-    fn dispatch(&self) -> Self::Dispatch {
-        Dispatch::new(self)
+    fn ctx_ptr(&self) -> *mut Self {
+        self.as_ctx_ptr()
     }
     #[inline]
     fn respond(
@@ -2473,36 +2475,20 @@ where
         }
 
         let any_resp = RespLike::to_any_response(resp);
-        // SAFETY: both allocators hand out `*mut RequestContext<_, SSL, DEBUG, _>`; the
-        // const-bool MUX parameter only affects associated consts/types, not layout, so
-        // reinterpreting the slot pointer as the caller's `Ctx` monomorphization is sound.
-        //
-        // `claim()` reserves the slot as a `HiveSlot`; `create_in` does
-        // placement-new through the slot's stable
-        // address, after which `assume_init()` consumes the token.
-        // `RequestContext` carries the heaviest drop glue in the codebase, so
-        // a panic inside `create_in` now releases the slot via
-        // `HiveSlot::drop` without running `RequestContext::drop` on garbage.
-        let ctx_slot: *mut Ctx = unsafe {
-            if Ctx::IS_MUX {
-                debug_assert!(
-                    !self.mux_request_pool.get().is_null(),
-                    "HTTP/2 or HTTP/3 request dispatched but mux_request_pool was never allocated"
-                );
-                let slot = (*self.mux_request_pool.get()).claim();
-                Ctx::create_in(slot.addr().as_ptr().cast(), self, req, any_resp, method);
-                // SAFETY: `create_in` fully initialized the slot.
-                slot.assume_init().as_ptr().cast()
-            } else {
-                let slot = self.request_pool.claim();
-                Ctx::create_in(slot.addr().as_ptr().cast(), self, req, any_resp, method);
-                // SAFETY: `create_in` fully initialized the slot.
-                slot.assume_init().as_ptr().cast()
-            }
+        let pool: *const Ctx::Pool = if Ctx::IS_MUX {
+            debug_assert!(
+                !self.mux_request_pool.get().is_null(),
+                "HTTP/2 or HTTP/3 request dispatched but mux_request_pool was never allocated"
+            );
+            self.mux_request_pool.get().cast()
+        } else {
+            self.request_pool.as_const_ptr().cast()
         };
-        // SAFETY: ctx_slot was just initialized by create_in.
-        let ctx = unsafe { &*ctx_slot };
-        let dispatch = ctx.dispatch();
+        // SAFETY: `Ctx` is `RequestContext<Self, SSL, DEBUG, IS_MUX>`, so `pool` points to the
+        // `Ctx::Pool` that it is released to. The VM owns the pools, which outlive its servers.
+        let dispatch = unsafe { Ctx::create_in(&*pool, self, req, any_resp, method) };
+        let ctx: &Ctx = &dispatch;
+        let ctx_slot = ctx.ctx_ptr();
 
         self.vm()
             .jsc_vm()
@@ -2705,19 +2691,16 @@ where
         resp.send_when_complete();
         let _entered = this.vm().enter_event_loop_scope_without_checkpoint();
         req.set_yield(false);
-        // `claim()` reserves a fresh slot whose `Drop` releases it on panic before init.
-        let ctx_slot = this.request_pool.claim();
-        // SAFETY: just claimed, and fully initialized by `create_in`.
-        let ctx = Dispatch::new(unsafe {
+        // SAFETY: a context that is not `MUX` is released to `request_pool`.
+        let ctx = unsafe {
             <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
-                ctx_slot.addr().as_ptr(),
+                &this.request_pool,
                 this,
                 req,
                 RespLike::to_any_response(resp),
                 None,
-            );
-            ctx_slot.assume_init().as_ref()
-        });
+            )
+        };
 
         // Pooled body slot, ref_count = 1.
         let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);

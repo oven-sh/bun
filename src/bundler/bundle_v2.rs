@@ -3374,7 +3374,9 @@ pub mod bv2_impl {
             let _trace = crate::perf::trace("Bundler.cloneAST");
             let ast_arena = self.graph.ast_arena();
             let mut linker_graph = LinkerGraph::new(ast_arena);
-            linker_graph.ast = self.graph.ast.clone()?;
+            // SAFETY: neither list drops its elements. From here on `graph.ast` only follows
+            // `url_for_css`, a borrow, and `import_records`, which the linker never reallocates.
+            linker_graph.ast = unsafe { self.graph.ast.shallow_clone() }?;
 
             for module_scope in linker_graph.ast.items_module_scope_mut() {
                 // `children` are arena-allocated `StoreRef<Scope>`s; we re-point

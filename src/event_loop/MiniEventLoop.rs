@@ -127,33 +127,11 @@ impl MiniEventLoop {
         }
 
         let mut iter = concurrent.iterator();
-        // `ensure_unused_capacity` early-returns without realigning when
-        // capacity is already sufficient, and `writable_slice(0)` only yields
-        // the first contiguous segment `buf[head+count..]` — so an empty fifo
-        // with `head > 0` would yield a short slice and the loop would `break`
-        // early, silently dropping tasks already popped from `concurrent`. Use
-        // `writable_with_size`, which realigns when the contiguous slice is
-        // too short, so the returned slice is always `>= count` long.
-        //
-        // Fill the writable slice first, track items written in a local, then
-        // commit via `update()` after the borrow ends.
-        let mut written: usize = 0;
-        {
-            let mut writable = tasks.writable_with_size(count).expect("unreachable");
-            loop {
-                let task = iter.next();
-                if task.is_null() {
-                    break;
-                }
-                writable[0] = task;
-                writable = &mut writable[1..];
-                written += 1;
-                if writable.is_empty() {
-                    break;
-                }
+        bun_core::handle_oom(tasks.write_with(count, |mut cursor| {
+            while cursor.capacity() > 0 {
+                cursor.append(&[iter.next()]);
             }
-        }
-        tasks.update(written);
+        }));
 
         tasks.readable_length()
     }

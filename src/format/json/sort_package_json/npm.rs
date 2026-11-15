@@ -378,41 +378,35 @@ fn min_version(range: &[u8]) -> Option<Lowest> {
         return Some(zero);
     }
     let mut lowest: Option<Lowest> = None;
-    let mut alternative = Some(&group.head);
-    while let Some(all) = alternative {
+    for all in group.alternatives() {
         // A version that satisfies all comparators is at least the highest of their lower bounds.
         let mut highest: Option<Lowest> = None;
-        let mut next = Some(&all.head);
-        while let Some(it) = next {
-            for comparator in [it.range.left, it.range.right] {
-                if !matches!(comparator.op, Op::Eql | Op::Gte | Op::Gt) {
-                    continue;
-                }
-                let (version, is_above) = (comparator.version, comparator.op == Op::Gt);
-                let prerelease = version.tag.pre.slice(&raw);
-                let patch = match is_above && prerelease.is_empty() {
-                    true => version.patch.saturating_add(1),
-                    false => version.patch,
-                };
-                let mut text = format!("{}.{}.{patch}", version.major, version.minor).into_bytes();
-                if !prerelease.is_empty() {
-                    text.push(b'-');
-                    text.extend_from_slice(prerelease);
-                    text.extend_from_slice(if is_above { &b".0"[..] } else { b"" });
-                }
-                let end = Lowest::parse(text)?;
-                if highest.as_ref().is_none_or(|it| end.order(it).is_gt()) {
-                    highest = Some(end);
-                }
+        for comparator in all.comparators() {
+            if !matches!(comparator.op, Op::Eql | Op::Gte | Op::Gt) {
+                continue;
             }
-            next = it.next.as_deref();
+            let (version, is_above) = (comparator.version, comparator.op == Op::Gt);
+            let prerelease = version.tag.pre.slice(&raw);
+            let patch = match is_above && prerelease.is_empty() {
+                true => version.patch.saturating_add(1),
+                false => version.patch,
+            };
+            let mut text = format!("{}.{}.{patch}", version.major, version.minor).into_bytes();
+            if !prerelease.is_empty() {
+                text.push(b'-');
+                text.extend_from_slice(prerelease);
+                text.extend_from_slice(if is_above { &b".0"[..] } else { b"" });
+            }
+            let end = Lowest::parse(text)?;
+            if highest.as_ref().is_none_or(|it| end.order(it).is_gt()) {
+                highest = Some(end);
+            }
         }
         if let Some(highest) = highest
             && lowest.as_ref().is_none_or(|it| it.order(&highest).is_gt())
         {
             lowest = Some(highest);
         }
-        alternative = all.next.as_deref();
     }
     lowest.filter(satisfies)
 }

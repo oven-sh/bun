@@ -34,7 +34,7 @@ use core::fmt;
 use core::ops::ControlFlow;
 use std::sync::atomic::Ordering;
 
-use bun_sys::{self, Fd};
+use bun_sys::{self, Fd, File};
 
 pub(crate) use crate::generated_bindgen::interpreter::js_ShellInterpreter as js;
 pub(crate) use crate::shell::env_map::EnvMap;
@@ -229,7 +229,6 @@ node_accessors! {
 // ────────────────────────────────────────────────────────────────────────────
 
 pub(crate) type ExitCode = u16;
-pub(crate) type Pipe = [Fd; 2];
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
@@ -798,7 +797,7 @@ impl Interpreter {
         })
     }
 
-    /// Drop the node and recycle its slot. The node's own `deinit` must run first.
+    /// Drop the node and recycle its slot. A `deinit` of the node's own must run first.
     pub(crate) fn free_node(&self, id: NodeId) {
         // Guard: callers may have stored `NodeId::NONE` in `currently_executing`
         // when `spawn_expr` failed (Subshell init error path). Nothing
@@ -988,17 +987,17 @@ impl Interpreter {
         }
         // NOTE: keep in sync with shell_state_dispatch! table (irregular Async/Free arms keep this hand-rolled for v1).
         match self.nodes.get()[id.idx()].kind() {
-            StateKind::Script => Script::deinit(self, id),
             StateKind::Stmt => Stmt::deinit(self, id),
             StateKind::Binary => Binary::deinit(self, id),
             StateKind::Pipeline => Pipeline::deinit(self, id),
             StateKind::Cmd => Cmd::deinit(self, id),
-            StateKind::Assign => Assigns::deinit(self, id),
             StateKind::Expansion => Expansion::deinit(self, id),
-            StateKind::IfClause => If::deinit(self, id),
-            StateKind::Condexpr => CondExpr::deinit(self, id),
             StateKind::Async => return, // Async deinit is purposefully empty; freed later by async_cmd_done → actually_deinit.
-            StateKind::Subshell => Subshell::deinit(self, id),
+            StateKind::Script
+            | StateKind::Assign
+            | StateKind::IfClause
+            | StateKind::Condexpr
+            | StateKind::Subshell => {}
             StateKind::Free => return,
         }
         self.free_node(id);
@@ -1115,27 +1114,21 @@ impl Interpreter {
 
         // ── dup stdout ─────────────────────────────────────────────────────
         log!("Duping stdout");
-        let stdout_fd = if bun_core::output::stdio::is_stdout_null() {
+        let stdout = File::from_fd(if bun_core::output::stdio::is_stdout_null() {
             open_null_device()?
         } else {
             shell_dup(Fd::stdout())?
-        };
+        });
 
-        // ── dup stderr (errdefer closes stdout on failure) ────────────────
+        // ── dup stderr ─────────────────────────────────────────────────────
         log!("Duping stderr");
-        let stderr_fd_res = if bun_core::output::stdio::is_stderr_null() {
-            open_null_device()
+        let stderr_fd = if bun_core::output::stdio::is_stderr_null() {
+            open_null_device()?
         } else {
-            shell_dup(Fd::stderr())
-        };
-        let stderr_fd = match stderr_fd_res {
-            Ok(fd) => fd,
-            Err(e) => {
-                closefd(stdout_fd);
-                return Err(e);
-            }
+            shell_dup(Fd::stderr())?
         };
 
+        let stdout_fd = stdout.into_raw();
         let stdout_writer = IOWriter::init(
             stdout_fd,
             crate::shell::io_writer::Flags {
@@ -2023,15 +2016,8 @@ pub(crate) fn is_pollable_from_mode(mode: bun_sys::Mode) -> bool {
     }
 }
 
-/// Tolerates EBADF (already-closed) so cleanup paths that may double-close
-/// don't panic; skips stdin/stdout/stderr.
-pub(crate) fn closefd(fd: Fd) {
-    use bun_sys::FdExt;
-    let _ = fd.close_allowing_bad_file_descriptor(None);
-}
-
-/// Closes with [`closefd`], which, unlike `Dir`, leaves a descriptor that landed on 0-2 open.
-pub(crate) struct OwnedFd(Fd);
+/// Unlike `Dir`, leaves a descriptor that landed on 0-2 open. Unlike `File`, tolerates EBADF.
+pub(crate) struct OwnedFd(pub(crate) Fd);
 
 impl OwnedFd {
     pub(crate) fn fd(&self) -> Fd {
@@ -2041,8 +2027,9 @@ impl OwnedFd {
 
 impl Drop for OwnedFd {
     fn drop(&mut self) {
+        use bun_sys::FdExt;
         if self.0.is_valid() {
-            closefd(self.0);
+            let _ = self.0.close_allowing_bad_file_descriptor(None);
         }
     }
 }
@@ -2291,7 +2278,7 @@ pub(crate) fn parse_flags<'a, O: FlagParser>(
     let mut idx = 0usize;
     while idx < args.len() {
         // SAFETY: argv entries are NUL-terminated C strings (see Builtin::init) that stay
-        // put until `Cmd::deinit`; every caller is done with `'a` inside the builtin's `start`.
+        // put until the node is freed; every caller is done with `'a` inside the builtin's `start`.
         let flag = unsafe { bun_core::ffi::cstr(args[idx]) }.to_bytes();
         match parse_one_flag(opts, flag) {
             ParseFlagResult::Done => return Ok(Some(&args[idx..])),

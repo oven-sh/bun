@@ -263,10 +263,6 @@ impl HTTPRequestBody {
         body_value.to_blob_if_in_memory();
         if let BodyValue::Locked(locked) = &mut body_value {
             if locked.readable.has() {
-                // `BodyValue` now has `Drop` (H3), so we cannot move
-                // `l.readable` out by value (E0509). `mem::take` leaves a default
-                // readable; `Value::drop` on the residual `Locked` then runs
-                // `readable.deinit()` on that default — a no-op.
                 return Ok(HTTPRequestBody::ReadableStream(core::mem::take(
                     &mut locked.readable,
                 )));
@@ -277,7 +273,6 @@ impl HTTPRequestBody {
             if !readable.is_empty_or_undefined_or_null() {
                 if let BodyValue::Locked(l) = &mut body_value {
                     if l.readable.has() {
-                        // See note above re: E0509 and `Value::drop`.
                         return Ok(HTTPRequestBody::ReadableStream(core::mem::take(
                             &mut l.readable,
                         )));
@@ -1027,7 +1022,7 @@ impl FetchTasklet {
 
                 promise_value.ensure_still_alive();
                 let r = promise.reject_with_async_stack(&global_this, result.to_js(&global_this));
-                result.reset();
+                drop(result);
 
                 tracker.did_dispatch(&global_this);
                 self.promise = jsc::JSPromiseStrong::empty();
@@ -1088,7 +1083,7 @@ impl FetchTasklet {
             let mut err = self.get_abort_error().unwrap();
             promise_value.ensure_still_alive();
             let r = promise.reject_with_async_stack(&global_this, err.to_js(&global_this));
-            err.reset();
+            drop(err);
             tracker.did_dispatch(&global_this);
             self.promise = jsc::JSPromiseStrong::empty();
             cleanup(self);
@@ -1112,7 +1107,6 @@ impl FetchTasklet {
                 let err_js = err.to_js(&global_this);
                 err_js.ensure_still_alive();
                 self.cancel_request_body_sink(err_js);
-                err.reset();
             }
             StrongOptional::create(resolved, &global_this)
         } else {
@@ -1120,9 +1114,9 @@ impl FetchTasklet {
             let mut value = self.on_reject();
             let err_js = value.to_js(&global_this);
             self.cancel_request_body_sink(err_js);
-            // `to_js` leaves `value` in the `JSValue(Strong)` state (Body.rs:547). Move
+            // `to_js` leaves `value` in the `JSValue(Strong)` state. Move
             // that Strong out instead of allocating a
-            // second one — `ValueError` has no `Drop`, so the inner Strong would leak.
+            // second one.
             let BodyValueError::JSValue(strong) = value else {
                 unreachable!("ValueError::to_js leaves self in JSValue state");
             };

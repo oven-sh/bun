@@ -327,6 +327,99 @@ impl Drop for OwnedSslCtx {
     }
 }
 
+/// Owns one `SSL_SESSION` reference.
+pub struct OwnedSslSession(core::ptr::NonNull<SSL_SESSION>);
+
+impl OwnedSslSession {
+    pub fn retain(session: &SSL_SESSION) -> Self {
+        SSL_SESSION_up_ref(session);
+        Self(session.into())
+    }
+
+    pub fn as_ptr(&self) -> *mut SSL_SESSION {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for OwnedSslSession {
+    fn drop(&mut self) {
+        // SAFETY: we own exactly one reference, released once.
+        unsafe { SSL_SESSION_free(self.0.as_ptr()) }
+    }
+}
+
+/// Owns one `X509` reference.
+#[repr(transparent)]
+pub struct OwnedX509(core::ptr::NonNull<X509>);
+
+impl OwnedX509 {
+    pub fn retain(cert: &X509) -> Self {
+        X509_up_ref(cert);
+        Self(cert.into())
+    }
+}
+
+impl core::ops::Deref for OwnedX509 {
+    type Target = X509;
+    fn deref(&self) -> &X509 {
+        X509::opaque_ref(self.0.as_ptr())
+    }
+}
+
+impl core::ops::DerefMut for OwnedX509 {
+    fn deref_mut(&mut self) -> &mut X509 {
+        X509::opaque_mut(self.0.as_ptr())
+    }
+}
+
+impl Drop for OwnedX509 {
+    fn drop(&mut self) {
+        // SAFETY: we own exactly one reference, released once.
+        unsafe { X509_free(self.0.as_ptr()) }
+    }
+}
+
+/// Owns one `CRYPTO_BUFFER` reference. A slice of them is a `CRYPTO_BUFFER **`.
+#[repr(transparent)]
+pub struct OwnedCryptoBuffer(core::ptr::NonNull<CRYPTO_BUFFER>);
+
+impl OwnedCryptoBuffer {
+    pub fn new(data: &[u8]) -> Option<Self> {
+        // SAFETY: BoringSSL copies `data`, and no pool is asked for.
+        let buf = unsafe { CRYPTO_BUFFER_new(data.as_ptr(), data.len(), core::ptr::null_mut()) };
+        core::ptr::NonNull::new(buf).map(Self)
+    }
+}
+
+impl Drop for OwnedCryptoBuffer {
+    fn drop(&mut self) {
+        // SAFETY: we own exactly one reference, released once.
+        unsafe { CRYPTO_BUFFER_free(self.0.as_ptr()) }
+    }
+}
+
+/// A `BIO` that reads from a slice.
+pub struct MemBio<'a>(core::ptr::NonNull<BIO>, core::marker::PhantomData<&'a [u8]>);
+
+impl<'a> MemBio<'a> {
+    pub fn new(data: &'a [u8]) -> Option<Self> {
+        // SAFETY: the `BIO` only reads `data`, which outlives it.
+        let bio = unsafe { BIO_new_mem_buf(data.as_ptr().cast(), data.len() as ossl_ssize_t) };
+        core::ptr::NonNull::new(bio).map(|bio| Self(bio, core::marker::PhantomData))
+    }
+
+    pub fn as_ptr(&self) -> *mut BIO {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for MemBio<'_> {
+    fn drop(&mut self) {
+        // SAFETY: we own the `BIO`, freed once.
+        unsafe { BIO_free(self.0.as_ptr()) };
+    }
+}
+
 /// Owns the `STACK_OF(GENERAL_NAME)` that `X509V3_EXT_d2i` returns for a
 /// subjectAltName extension. Frees every `GENERAL_NAME` and then the stack.
 pub struct GeneralNames(core::ptr::NonNull<struct_stack_st_GENERAL_NAME>);
@@ -506,6 +599,15 @@ impl X509 {
         digest_nid
     }
 
+    pub fn to_der(&self) -> Option<OpensslBytes> {
+        let mut der: *mut u8 = core::ptr::null_mut();
+        // SAFETY: `self` is live. Given null, `i2d_X509` allocates `len` bytes or leaves it null.
+        unsafe {
+            let len = i2d_X509(self, &raw mut der);
+            OpensslBytes::from_raw(der, len as usize)
+        }
+    }
+
     /// Iterates this certificate's Subject Common Names in order.
     pub fn common_names(&mut self) -> CommonNames<'_> {
         CommonNames {
@@ -516,24 +618,30 @@ impl X509 {
     }
 }
 
-/// An `ASN1_STRING_to_UTF8`-transcoded name. `OPENSSL_free`s on drop.
-pub struct Utf8Name {
+/// Bytes that BoringSSL has allocated. `OPENSSL_free`s on drop.
+pub struct OpensslBytes {
     ptr: core::ptr::NonNull<u8>,
     len: usize,
 }
 
-impl core::ops::Deref for Utf8Name {
+impl OpensslBytes {
+    /// SAFETY: `ptr` is null, or `len` bytes from `OPENSSL_malloc` that the caller gives up.
+    pub unsafe fn from_raw(ptr: *mut u8, len: usize) -> Option<Self> {
+        core::ptr::NonNull::new(ptr).map(|ptr| Self { ptr, len })
+    }
+}
+
+impl core::ops::Deref for OpensslBytes {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
-        // SAFETY: `ASN1_STRING_to_UTF8` allocated `len` readable bytes at `ptr`
-        // and this struct owns them until `Drop`.
+        // SAFETY: this struct owns `len` readable bytes at `ptr` until `Drop`.
         unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 }
 
-impl Drop for Utf8Name {
+impl Drop for OpensslBytes {
     fn drop(&mut self) {
-        // SAFETY: `ptr` was returned by `ASN1_STRING_to_UTF8` (OPENSSL_malloc).
+        // SAFETY: `ptr` is from `OPENSSL_malloc`, freed once.
         unsafe { OPENSSL_free(self.ptr.as_ptr().cast()) }
     }
 }
@@ -548,16 +656,15 @@ pub struct CommonNames<'a> {
 }
 
 impl Iterator for CommonNames<'_> {
-    type Item = Utf8Name;
+    type Item = OpensslBytes;
 
-    fn next(&mut self) -> Option<Utf8Name> {
+    fn next(&mut self) -> Option<OpensslBytes> {
         if self.subject.is_null() {
             return None;
         }
         // SAFETY: the subject and its entries are owned by the certificate
         // borrowed for `'a`; every accessor is guarded against null returns
-        // and non-positive lengths. `ASN1_STRING_to_UTF8` allocates a fresh
-        // buffer that `Utf8Name` owns.
+        // and `ASN1_STRING_to_UTF8` allocates `len` bytes or leaves `out` null.
         unsafe {
             loop {
                 let entry_idx = X509_NAME_get_index_by_NID(self.subject, NID_commonName, self.last);
@@ -575,14 +682,9 @@ impl Iterator for CommonNames<'_> {
                 }
                 let mut out: *mut u8 = core::ptr::null_mut();
                 let len = ASN1_STRING_to_UTF8(&raw mut out, data);
-                let Some(ptr) = core::ptr::NonNull::new(out) else {
-                    continue;
-                };
-                let Ok(len) = usize::try_from(len) else {
-                    OPENSSL_free(ptr.as_ptr().cast());
-                    continue;
-                };
-                return Some(Utf8Name { ptr, len });
+                if let Some(name) = OpensslBytes::from_raw(out, len as usize) {
+                    return Some(name);
+                }
             }
         }
     }
@@ -608,6 +710,12 @@ impl SSL {
     pub fn set_servername(&mut self, hostname: &core::ffi::CStr) -> bool {
         // SAFETY: `self` is a live SSL; BoringSSL copies `hostname`.
         unsafe { SSL_set_tlsext_host_name(self, hostname.as_ptr()) == 1 }
+    }
+
+    /// The peer's leaf certificate. A server's cert chain leaves it out.
+    pub fn peer_certificate(&self) -> Option<OwnedX509> {
+        // SAFETY: `self` is a live SSL; the result is null or a new reference.
+        core::ptr::NonNull::new(unsafe { SSL_get_peer_certificate(self) }).map(OwnedX509)
     }
 
     /// The peer's leaf certificate, borrowed from this SSL's cert chain.
@@ -749,7 +857,8 @@ unsafe extern "C" {
 
     // ── X509 ─────────────────────────────────────────────────────────────
     pub fn d2i_X509(out: *mut *mut X509, inp: *mut *const u8, len: c_long) -> *mut X509;
-    pub fn i2d_X509(x: *mut X509, outp: *mut *mut u8) -> c_int;
+    pub fn i2d_X509(x: *const X509, outp: *mut *mut u8) -> c_int;
+    safe fn X509_up_ref(x: &X509) -> c_int;
     pub fn X509_free(x509: *mut X509);
     fn X509_get_signature_nid(x509: *const X509) -> c_int;
     fn X509_get0_signature(
@@ -969,7 +1078,7 @@ unsafe extern "C" {
         cb: Option<pem_password_cb>,
         u: *mut c_void,
     ) -> *mut X509;
-    pub fn OPENSSL_free(ptr: *mut c_void);
+    fn OPENSSL_free(ptr: *mut c_void);
     pub fn SSL_CTX_get0_param(ctx: *mut SSL_CTX) -> *mut c_void;
     pub fn SSL_get_group_id(ssl: *const SSL) -> u16;
     /// Returns a static NUL-terminated string, or NULL if unknown.
@@ -1173,12 +1282,12 @@ unsafe extern "C" {
         cb: Option<pem_password_cb>,
         userdata: *mut c_void,
     ) -> c_int;
-    pub fn CRYPTO_BUFFER_new(
+    fn CRYPTO_BUFFER_new(
         data: *const u8,
         len: usize,
         pool: *mut CRYPTO_BUFFER_POOL,
     ) -> *mut CRYPTO_BUFFER;
-    pub fn CRYPTO_BUFFER_free(buf: *mut CRYPTO_BUFFER);
+    fn CRYPTO_BUFFER_free(buf: *mut CRYPTO_BUFFER);
     /// oven-sh/boringssl: a set of DER certificates indexed by subject and parsed on first use. Takes a reference to
     /// each buffer; NULL if any cannot be indexed (see `X509_LAZY_CERT_SET_can_index`).
     pub fn X509_LAZY_CERT_SET_new(
@@ -1219,10 +1328,11 @@ unsafe extern "C" {
 
     /// Returns a NEW reference (caller frees) or null when the peer sent no
     /// certificate.
-    pub fn SSL_get_peer_certificate(ssl: *const SSL) -> *mut X509;
+    fn SSL_get_peer_certificate(ssl: *const SSL) -> *mut X509;
     /// Returns a BORROWED reference to the context's leaf certificate, or null.
     pub fn SSL_CTX_get0_certificate(ctx: *const SSL_CTX) -> *mut X509;
 
     pub fn SSL_set_session(ssl: *mut SSL, session: *mut SSL_SESSION) -> c_int;
+    safe fn SSL_SESSION_up_ref(session: &SSL_SESSION) -> c_int;
     pub fn SSL_SESSION_free(session: *mut SSL_SESSION);
 }

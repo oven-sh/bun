@@ -263,6 +263,27 @@ it.skipIf(!isPosix)("a backpressured write() resolves to the chunk's byte count"
 
 // Strings are buffered as UTF-8, so the count the Promise reports is the
 // encoded byte count, which is what a non-pending write() returns too.
+// `bun repl -e` protects the value of the script until the event loop is empty.
+it.skipIf(!isPosix)("settling a backpressured write() leaves another holder's protection of its promise", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "repl",
+      "-e",
+      `const [readFd, writeFd] = require("bun:internal-for-testing").createSocketPair();
+       const write = Bun.file(writeFd).writer().write(Buffer.alloc(4 * 1024 * 1024));
+       write.catch(() => console.log(require("bun:jsc").heapStats().protectedObjectTypeCounts.Promise));
+       require("fs").closeSync(readFd);
+       write`,
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("1\n");
+  expect(exitCode).toBe(0);
+});
+
 it.skipIf(!isPosix)("a backpressured string write() resolves to its encoded byte count", async () => {
   const [readFd, writeFd] = createSocketPair();
   const sink = Bun.file(writeFd).writer();

@@ -1140,7 +1140,7 @@ impl Listener {
                     let named_pipe = match named_pipe_result {
                         Ok(p) => p,
                         Err(_) => {
-                            // The context's guard already ran `handle_connect_error`
+                            // The context already ran `handle_connect_error`
                             // on the still-detached socket, which releases nothing.
                             // Balance the attempt `tls_ref.ref_()` above.
                             TLSSocket::deref(&tls_ref);
@@ -1668,23 +1668,14 @@ impl WindowsNamedPipeListeningContext {
             socket,
         );
 
-        // SAFETY: `client` was just heap-allocated by `create()`; exclusive
-        // here. The `&mut` to `uv_pipe` comes from the root pointer, scoped to
-        // this call — `this_ref` (shared) never touches `uv_pipe`.
-        let result = unsafe {
-            (*client)
-                .named_pipe
-                .get_accepted_by(&mut (*this).uv_pipe, ssl_ctx.as_ref())
-        };
-        if result.is_err() {
+        // SAFETY: from the root pointer, and `this_ref` (shared) never touches `uv_pipe`.
+        let server = unsafe { &mut (*this).uv_pipe };
+        if (client.named_pipe)
+            .get_accepted_by(server, ssl_ctx.as_ref())
+            .is_err()
+        {
             // connection dropped
-            // Release the only ref, which goes 1→0 → schedule_deinit → next-tick free. The
-            // deferred path is required because `get_accepted_by` may have already `uv_pipe_init`'d
-            // the client's inner handle on the loop; freeing the backing storage in-callback
-            // before `uv_close` completes is the exact pattern libuv forbids.
-            // SAFETY: `client` was just allocated via `WindowsNamedPipeContext::create`
-            // with refcount==1; releasing the only ref schedules deinit.
-            unsafe { WindowsNamedPipeContext::deref(client) };
+            client.self_ref.set(None);
         }
     }
 

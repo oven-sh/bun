@@ -1517,11 +1517,11 @@ fn run_on_entry_point(
         node,
     };
 
-    let fetcher = bun_bundler::bundle_v2::DependenciesScanner::new(
-        &mut analyzer,
-        vec![Box::<[u8]>::from(entry_point)].into_boxed_slice(),
-    );
-    crate::cli::build_command::BuildCommand::exec(ctx, Some(&fetcher))
+    let mut fetcher = bun_bundler::bundle_v2::DependenciesScanner {
+        analyzer: &mut analyzer,
+        entry_points: vec![Box::<[u8]>::from(entry_point)].into_boxed_slice(),
+    };
+    crate::cli::build_command::BuildCommand::exec(ctx, Some(&mut fetcher))
 }
 
 pub(crate) struct Example {

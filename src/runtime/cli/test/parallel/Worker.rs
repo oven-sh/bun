@@ -196,29 +196,29 @@ impl Worker {
                 Output::err(e, "spawnProcess failed for test worker", ());
                 crate::Error::SpawnFailed
             })?;
-            let stdout = spawned.stdout;
-            let stderr = spawned.stderr;
+            let stdout = spawned.stdout.take();
+            let stderr = spawned.stderr.take();
             let extra_pipes = core::mem::take(&mut spawned.extra_pipes);
             this.process = Some(
                 spawned.to_process_handle(bun_event_loop::EventLoopHandle::init(
                     coord.vm.event_loop_ptr(),
                 )),
             );
-            if let Some(fd) = stdout {
+            if let Some(fd) = stdout.map(bun_sys::File::into_raw) {
                 this.out
                     .reader
                     .start(fd, true)
                     .map_err(|_| crate::Error::PipeStartFailed)?;
             }
-            if let Some(fd) = stderr {
+            if let Some(fd) = stderr.map(bun_sys::File::into_raw) {
                 this.err
                     .reader
                     .start(fd, true)
                     .map_err(|_| crate::Error::PipeStartFailed)?;
             }
-            if !extra_pipes.is_empty() {
+            if let Some(pipe) = extra_pipes.into_iter().next() {
                 // adopt() mutates the loop's socket context via interior mutability on the C side.
-                if !Channel::adopt(&raw mut this.ipc, coord.vm, extra_pipes[0].fd()) {
+                if !Channel::adopt(&raw mut this.ipc, coord.vm, pipe.into_raw()) {
                     return Err(crate::Error::ChannelAdoptFailed);
                 }
             } else {
@@ -234,29 +234,11 @@ impl Worker {
             // CRT fd 3 with uv_pipe_init(ipc=1) + uv_pipe_open in Channel.adopt.
             // Both ends agreeing on the libuv IPC framing is what matters; our
             // own [u32 len][u8 kind] frames ride inside it unchanged.
-            use bun_sys::windows::libuv as uv;
-
-            let ipc_pipe = bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
-            // The guard owns the raw Box ptr; `close_and_destroy` handles both
-            // never-initialized (loop_ null → free directly) and initialized
-            // (uv_close + free in callback). Disarmed only after `adopt_pipe`
-            // succeeds and the Channel takes ownership. The guard captures only
-            // the raw ptr, so it nests cleanly under the outer `this` guard.
-            let ipc_pipe_guard = scopeguard::guard(ipc_pipe, |p| {
-                // SAFETY: `p` is the live Box-allocated uv_pipe_t; sole owner
-                // on every error path (extra_pipes is drained back to raw below).
-                unsafe { uv::Pipe::close_and_destroy(p) };
-            });
-
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
-                stdout: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
-                    uv::Pipe,
-                >()))),
-                stderr: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
-                    uv::Pipe,
-                >()))),
-                extra_fds: vec![Stdio::Ipc(ipc_pipe)].into_boxed_slice(),
+                stdout: Stdio::Buffer,
+                stderr: Stdio::Buffer,
+                extra_fds: Box::new([Stdio::Ipc]),
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 windows: spawn::WindowsOptions {
                     loop_: jsc::EventLoopHandle::init(coord.vm.event_loop_ptr()),
@@ -278,53 +260,26 @@ impl Worker {
                 Output::err(e, "spawnProcess failed for test worker", ());
                 crate::Error::SpawnFailed
             })?;
-            // `WindowsStdioResult::Buffer` holds `Box<uv::Pipe>`, and
-            // `spawn_process_windows` does `heap::take(ipc_pipe)` into it — so
-            // `extra_pipes` holds a second `Box` to the SAME heap address that
-            // `ipc_pipe_guard` / `adopt_pipe` claim. Drain the Vec and release
-            // each Box back to a raw ptr so the Vec drop is inert and
-            // `ipc_pipe_guard` remains the sole owner across the
-            // `start_with_pipe` error window below.
-            for item in core::mem::take(&mut spawned.extra_pipes) {
-                if let spawn::WindowsStdioResult::Buffer(p) = item {
-                    let raw = bun_core::heap::into_raw(p);
-                    debug_assert_eq!(raw, ipc_pipe, "extra_pipes Box must wrap ipc_pipe");
-                }
-            }
             this.process = Some(spawned.to_process_handle(coord.vm.event_loop()));
 
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
-                // SAFETY: `pipe` is a Box<uv::Pipe> just produced by spawn_process;
-                // ownership transfers into the reader's `Source` (heap::take inside).
-                unsafe {
-                    this.out
-                        .reader
-                        .start_with_pipe(bun_core::heap::into_raw(pipe))
-                }
-                .map_err(|_| crate::Error::PipeStartFailed)?;
+                this.out
+                    .reader
+                    .start_with_pipe(pipe)
+                    .map_err(|_| crate::Error::PipeStartFailed)?;
             }
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
-                // SAFETY: see stdout above.
-                unsafe {
-                    this.err
-                        .reader
-                        .start_with_pipe(bun_core::heap::into_raw(pipe))
-                }
-                .map_err(|_| crate::Error::PipeStartFailed)?;
+                this.err
+                    .reader
+                    .start_with_pipe(pipe)
+                    .map_err(|_| crate::Error::PipeStartFailed)?;
             }
-            // `ipc_pipe` was Box-allocated via heap::into_raw above and
-            // initialised by spawn_process; ownership of the *mut Pipe transfers
-            // to the Channel on success (it does the Box::from_raw internally).
-            // On failure the caller still owns it (Channel.rs:294) and the
-            // `ipc_pipe_guard` errdefer performs `close_and_destroy`.
-            if !Channel::adopt_pipe(&raw mut this.ipc, coord.vm, ipc_pipe) {
+            let spawn::WindowsStdioResult::Buffer(ipc_pipe) = spawned.extra_pipes[0].take() else {
+                unreachable!("Stdio::Ipc makes a pipe");
+            };
+            if !Channel::adopt_pipe(&raw mut this.ipc, ipc_pipe) {
                 return Err(crate::Error::ChannelAdoptFailed);
             }
-            // Channel now owns the Box; disarm the errdefer so end-of-block
-            // doesn't double-close. Any later error (watch_or_reap) is handled
-            // by the outer `this` guard, whose `Channel::default()` assignment
-            // drops the old Channel and `close_and_destroy`s the pipe via Drop.
-            let _ = scopeguard::ScopeGuard::into_inner(ipc_pipe_guard);
         }
 
         let process = this.process.as_ref().expect("set above").this_ptr();

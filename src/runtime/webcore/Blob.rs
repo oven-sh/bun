@@ -33,13 +33,16 @@ bun_core::define_scoped_log!(debug, Blob, visible);
 pub(crate) mod store;
 use crate::node::types::{PathLikeExt as _, PathOrFdExt as _};
 pub(crate) use store::Store;
-use store::{BytesExt as _, FileExt as _, S3Ext as _, StoreExt as _};
+use store::{FileExt as _, S3Ext as _, StoreExt as _};
 
 #[path = "blob/copy_file.rs"]
 pub(crate) mod copy_file;
 #[cfg(not(windows))]
 #[path = "blob/io_parking.rs"]
 pub(crate) mod io_parking;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[path = "blob/memfd.rs"]
+mod memfd;
 #[path = "blob/read_file.rs"]
 pub(crate) mod read_file;
 #[path = "blob/write_file.rs"]
@@ -117,7 +120,9 @@ impl<H: ReadBytesHandler> read_file::ReadFileCompletion for H {
 // This crate layers behaviour via the `BlobExt` extension trait below.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) use bun_jsc::webcore_types::{Blob, BlobContentType, ClosingState, MAX_SIZE, SizeType};
+#[cfg(not(windows))]
+pub(crate) use bun_jsc::webcore_types::ClosingState;
+pub(crate) use bun_jsc::webcore_types::{Blob, BlobContentType, MAX_SIZE, SizeType};
 
 /// 1: Initial
 /// 2: Added byte for whether it's a dom file, length and bytes for `stored_name`,
@@ -139,7 +144,7 @@ use crate::generated_bindgen::blob::{
 
 // ──────────────────────────────────────────────────────────────────────────
 // BlobExt — `bun_runtime`-tier behaviour layered on the `bun_jsc` data type.
-// Inherent methods (`new`/`init`/`shared_view`/`dupe`/`detach`/`deinit`/…)
+// Inherent methods (`new`/`init`/`shared_view`/`dupe`/`detach`/…)
 // live on `bun_jsc::webcore_types::Blob`; everything that touches the event
 // loop / S3 / fs / `VirtualMachine` is here.
 // ──────────────────────────────────────────────────────────────────────────
@@ -168,9 +173,9 @@ pub(crate) trait BlobExt {
         cx: &mut JsScope<'_>,
         options: JsLocal<'_>,
     ) -> JsResult<JSValue>;
-    fn do_read_file_internal<C: read_file::ReadFileCompletion + 'static>(
+    fn do_read_file_internal(
         &self,
-        ctx: Box<C>,
+        ctx: Box<dyn read_file::ReadFileCompletion>,
         cx: &bun_jsc::JsThread<'_>,
     );
     fn get_content_type(&self) -> Option<Utf8Bytes<'_>>;
@@ -432,7 +437,7 @@ impl BlobExt for Blob {
             let promise_value = handler.promise.value();
             promise_value.ensure_still_alive();
 
-            read_file::ReadFileUV::start(self, read_file::ReadFileCompletionFns::of(handler), cx);
+            read_file::ReadFileUV::start(self, handler, cx);
             return promise_value;
         }
 
@@ -444,11 +449,7 @@ impl BlobExt for Blob {
             let promise_value = handler.promise.value();
             promise_value.ensure_still_alive();
 
-            read_file::ReadFile::schedule(
-                file_read,
-                read_file::ReadFileCompletionFns::of(handler),
-                cx,
-            );
+            read_file::ReadFile::schedule(file_read, handler, cx);
 
             debug!("doReadFile: read_file_task scheduled");
             promise_value
@@ -490,9 +491,8 @@ impl BlobExt for Blob {
                 poll: bun_io::KeepAlive,
             }
             impl<H: ReadBytesHandler> Task<H> {
-                fn done(mut self: Box<Self>, r: ReadBytesResult) -> JsResult<()> {
+                fn done(self: Box<Self>, r: ReadBytesResult) -> JsResult<()> {
                     self.poll.unref(bun_io::js_vm_ctx());
-                    self.blob.deinit();
                     // The braces move the box: the rest of the `Task` is freed here.
                     let ctx = { self }.ctx;
                     ctx.on_read_bytes(r)
@@ -588,19 +588,19 @@ impl BlobExt for Blob {
         Image::from_blob_js(cx.global(), this_value.to_js(), options.to_js())
     }
 
-    fn do_read_file_internal<C: read_file::ReadFileCompletion + 'static>(
+    fn do_read_file_internal(
         &self,
-        ctx: Box<C>,
+        ctx: Box<dyn read_file::ReadFileCompletion>,
         cx: &bun_jsc::JsThread<'_>,
     ) {
         #[cfg(windows)]
         {
-            read_file::ReadFileUV::start(self, read_file::ReadFileCompletionFns::of(ctx), cx);
+            read_file::ReadFileUV::start(self, ctx, cx);
         }
         #[cfg(not(windows))]
         {
             let file_read = read_file::ReadFile::create(self);
-            read_file::ReadFile::schedule(file_read, read_file::ReadFileCompletionFns::of(ctx), cx);
+            read_file::ReadFile::schedule(file_read, ctx, cx);
         }
     }
     fn get_content_type(&self) -> Option<Utf8Bytes<'_>> {
@@ -2099,10 +2099,8 @@ impl BlobExt for Blob {
     ) -> Result<Blob, bun_alloc::AllocError> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            if crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator::should_use(bytes_) {
-                if let Ok(result) =
-                    crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator::create(bytes_)
-                {
+            if memfd::should_use(bytes_) {
+                if let Ok(result) = memfd::create(bytes_) {
                     let store = RefPtr::new(Store {
                         data: store::Data::Bytes(result),
                         mime_type: bun_http_types::MimeType::NONE,
@@ -2141,9 +2139,10 @@ impl BlobExt for Blob {
     /// read-only provenance and make the downstream `&mut *buf` retag UB).
     ///
     /// Returns a dangling-empty slice when there is no byte store.
+    /// The bytes of an embedded file are read-only. Its store never has one reference only.
     ///
     /// # Aliasing
-    /// The returned pointer aliases the Store's `Vec<u8>` payload. Callers must
+    /// The returned pointer aliases the Store's payload. Callers must
     /// not hold a live `&`/`&mut` into the same Store across uses of this
     /// pointer, and must keep a `RefPtr<Store>` alive for the pointer's lifetime.
     fn shared_view_raw(&self) -> *mut [u8] {
@@ -2164,7 +2163,7 @@ impl BlobExt for Blob {
         // single-threaded).
         match Store::data_mut(store_ref) {
             store::Data::Bytes(bytes) => {
-                let v: &mut [u8] = bytes.as_array_list_leak();
+                let v = bytes.as_mut_ptr();
                 let len = v.len();
                 if len == 0 {
                     return empty();
@@ -2172,10 +2171,7 @@ impl BlobExt for Blob {
                 // Defensive: `offset` may originate from untrusted structured-clone data.
                 let off = (self.offset.get() as usize).min(len);
                 let clamped = (len - off).min(self.size.get() as usize);
-                // `v` already carries mutable provenance (derived through
-                // `Store::data_mut`); safe sub-slicing then raw-ptr coercion
-                // preserves it without `from_raw_parts_mut`/`ptr::add`.
-                core::ptr::from_mut::<[u8]>(&mut v[off..off + clamped])
+                core::ptr::slice_from_raw_parts_mut(v.cast::<u8>().wrapping_add(off), clamped)
             }
             _ => empty(),
         }
@@ -2543,25 +2539,18 @@ impl BlobExt for Blob {
 
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 {
-                    use crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator;
                     // If we can use a copy-on-write clone of the buffer, do so.
                     if let Some(store) = self.store.get() {
                         if let store::Data::Bytes(bytes) = &store.data {
-                            let allocated = bytes.allocated_slice();
+                            let allocated = bytes.slice();
                             // SAFETY: `Clone` arm reads only; `buf` is store-backed.
                             if bun::is_slice_in_buffer(unsafe { &*buf }, allocated) {
-                                if let Some(memfd) = LinuxMemFdAllocator::from(bytes.allocator()) {
-                                    // A ref across the FFI call so a concurrent
-                                    // store-deref cannot close the fd mid-mmap.
-                                    // SAFETY: `memfd` is the live Box-allocated ptr
-                                    // smuggled through `StdAllocator.ptr` by
-                                    // `LinuxMemFdAllocator::allocator`.
-                                    let memfd = unsafe { bun_ptr::RefPtr::init_ref(memfd) };
+                                if let Some(memfd) = bytes.memfd() {
                                     let byte_offset = (buf.cast::<u8>() as usize)
                                         .saturating_sub(allocated.as_ptr() as usize);
                                     let result =
                                         jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
-                                            memfd.fd.native() as i64,
+                                            memfd.native() as i64,
                                             global,
                                             byte_offset,
                                             buf_len,
@@ -3409,12 +3398,13 @@ impl<'a> FormDataContext<'a> {
                             // `NodeFS` (it is stateless aside from a path scratch
                             // buffer; a per-VM cache would be purely a perf reuse).
                             let mut node_fs = crate::node::fs::NodeFS::default();
-                            // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
-                            let mut rf_args = crate::node::fs::args::ReadFile::default();
-                            rf_args.encoding = crate::node::types::Encoding::Buffer;
-                            rf_args.path = file.pathlike.clone();
-                            rf_args.offset = blob.offset.get();
-                            rf_args.max_size = Some(blob.size.get());
+                            let rf_args = crate::node::fs::args::ReadFile {
+                                encoding: crate::node::types::Encoding::Buffer,
+                                path: file.pathlike.clone(),
+                                offset: blob.offset.get(),
+                                max_size: Some(blob.size.get()),
+                                ..Default::default()
+                            };
                             let res = node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
                             match res {
                                 Err(err) => {
@@ -3422,16 +3412,7 @@ impl<'a> FormDataContext<'a> {
                                     let js_err = err.to_js(global_this);
                                     let _ = global_this.throw_value(js_err);
                                 }
-                                Ok(mut result) => {
-                                    joiner.push_cloned(result.slice());
-                                    // StringOrBuffer::Drop is a no-op for Buffer; release
-                                    // the readFile allocation explicitly.
-                                    if let crate::node::types::StringOrBuffer::Buffer(buf) =
-                                        &mut result
-                                    {
-                                        buf.destroy();
-                                    }
-                                }
+                                Ok(result) => joiner.push_cloned(result.slice()),
                             }
                         }
                         store::Data::Bytes(_) => joiner.push(blob.shared_view()),
@@ -3552,8 +3533,6 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
 
                 if let Some(store) = blob.store() {
                     if let store::Data::Bytes(bytes_store) = &mut Store::data_mut(store) {
-                        // Transfer ownership of the local `name: Vec<u8>` into
-                        // `stored_name` (a `Box<[u8]>`); freed by `Bytes::Drop`.
                         bytes_store.stored_name = name.into_boxed_slice();
                     }
                 }
@@ -3846,12 +3825,7 @@ fn write_file_with_empty_source_to_destination(
     destination_blob: &Blob,
     options: &WriteFileOptions,
 ) -> JsResult<JSValue> {
-    // SAFETY: null-checked by caller
-    let destination_store = destination_blob
-        .store()
-        .expect("infallible: store present")
-        .clone();
-    let _detach = scopeguard::guard(destination_blob, |blob| blob.detach());
+    let destination_store = destination_blob.store().expect("infallible: store present");
 
     match &destination_store.data {
         store::Data::File(file) => {
@@ -4058,7 +4032,7 @@ pub(crate) fn write_file_with_source_destination(
             promise_value.ensure_still_alive();
             let mut promise = jsc::JSPromiseStrong::default();
             promise.set(cx.global(), promise_value);
-            match write_file::WriteFileWindows::create(
+            write_file::WriteFileWindows::create(
                 cx.global().bun_vm().event_loop(),
                 cx.context(),
                 destination_blob.borrowed_view(),
@@ -4066,11 +4040,7 @@ pub(crate) fn write_file_with_source_destination(
                 promise,
                 cx.global(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
-            ) {
-                Err(write_file::WriteFileWindowsError::WriteFileWindowsDeinitialized) => {}
-                Err(write_file::WriteFileWindowsError::Js(err)) => return Err(err),
-                Ok(_) => {}
-            }
+            )?;
             return Ok(promise_value);
         }
 
@@ -4341,14 +4311,6 @@ pub(crate) fn write_file_internal(
         }
     }
 
-    let input_store: Option<RefPtr<Store>> = if let PathOrBlob::Blob(ref b) = *path_or_blob {
-        b.store.get().clone()
-    } else {
-        None
-    };
-    // RefPtr<Store> clone+drop keeps the store alive for the duration of this call.
-    let _input_store_hold = input_store;
-
     let destination: Option<&PathOrFileDescriptor> = match &*path_or_blob {
         PathOrBlob::Path(path) => Some(path),
         PathOrBlob::Blob(blob) => match blob.store.get().as_ref().map(|store| &store.data) {
@@ -4511,7 +4473,6 @@ pub(crate) fn write_file_internal(
             });
             if let Some(readable) = existing {
                 if readable.is_locked(cx.global()) || readable.is_disturbed(cx.global()) {
-                    destination_blob.detach();
                     return Ok(ControlFlow::Break(body_used_rejection(cx.global())));
                 }
             }
@@ -4523,7 +4484,6 @@ pub(crate) fn write_file_internal(
                 BodyValue::Error(_) => BodyTag::Error,
                 BodyValue::Locked(locked) if !locked.has_consumer() => BodyTag::Locked,
                 BodyValue::Locked(_) | BodyValue::Used => {
-                    destination_blob.detach();
                     return Ok(ControlFlow::Break(body_used_rejection(cx.global())));
                 }
                 _ => BodyTag::Use,
@@ -4541,7 +4501,6 @@ pub(crate) fn write_file_internal(
                         };
                         err_ref.to_js(cx.global())
                     };
-                    destination_blob.detach();
                     // SAFETY: exclusive borrow scoped to the call; no other
                     // borrow of the body value is live.
                     let _ = unsafe { (*body_value).use_() };
@@ -4569,7 +4528,6 @@ pub(crate) fn write_file_internal(
                         });
                         if let Some(readable) = readable_opt {
                             if readable.is_disturbed(cx.global()) {
-                                destination_blob.detach();
                                 return Err(cx.global().throw_invalid_arguments(format_args!(
                                     "ReadableStream has already been used"
                                 )));
@@ -4595,7 +4553,6 @@ pub(crate) fn write_file_internal(
                                 core::ptr::null_mut(),
                             )?));
                         }
-                        destination_blob.detach();
                         return Err(cx.global().throw_invalid_arguments(format_args!(
                             "ReadableStream has already been used"
                         )));
@@ -4642,7 +4599,6 @@ pub(crate) fn write_file_internal(
                             BodyValue::Locked(_) => {}
                             BodyValue::Error(err) => {
                                 let err_js = err.to_js(cx.global());
-                                destination_blob.detach();
                                 // SAFETY: `err` is not used after `to_js`, so this is the only
                                 // live borrow of the value.
                                 let _ = unsafe { (*body_value).use_() };
@@ -4709,7 +4665,6 @@ pub(crate) fn write_file_internal(
 
         if let Some(readable) = ReadableStream::from_js_direct(data) {
             if readable.is_locked(cx.global()) || readable.is_disturbed(cx.global()) {
-                destination_blob.detach();
                 return Ok(body_used_rejection(cx.global()));
             }
             return destination_blob.pipe_readable_stream_to_blob(cx, readable, &options);
@@ -4719,10 +4674,6 @@ pub(crate) fn write_file_internal(
     };
     // Detach the source blob on scope exit.
     let mut source_blob = scopeguard::guard(source_blob, |b| b.detach());
-
-    let destination_store = destination_blob.store.get().clone();
-    // RefPtr<Store> clone+drop keeps the destination store alive across the call.
-    let _dest_hold = destination_store;
 
     write_file_with_source_destination(cx, &mut *source_blob, &mut destination_blob, &options)
 }
@@ -5262,7 +5213,7 @@ impl S3BlobDownloadTask {
                 // tied to the Blob/JS view and freed via the store's finalizer.
                 let store = Store::init(response.body.list);
                 let bytes: *mut [u8] = match Store::data_mut(&store) {
-                    store::Data::Bytes(b) => std::ptr::from_mut(b.as_array_list()),
+                    store::Data::Bytes(b) => b.as_mut_ptr(),
                     _ => unreachable!(),
                 };
                 this.blob.store.set(Some(store));
@@ -5367,7 +5318,6 @@ impl S3BlobDownloadTask {
 
 impl Drop for S3BlobDownloadTask {
     fn drop(&mut self) {
-        Blob::deinit(&mut self.blob);
         self.poll_ref.unref(bun_io::js_vm_ctx());
         // promise: Drop handles deinit.
     }
@@ -5462,9 +5412,7 @@ pub(crate) unsafe extern "C" fn Blob__fromBytesWithType(
     blob
 }
 
-/// Adopts an mmap'd region — no copy. The Blob's store holds the mapping;
-/// when the store's refcount drops to zero, deinit calls allocator.free
-/// which munmap's.
+/// Adopts an mmap'd region — no copy. The Blob's store unmaps it when dropped.
 ///
 /// # Safety
 /// `[ptr, ptr+len)` must be a valid page-aligned mmap'd region whose ownership
@@ -5487,7 +5435,14 @@ pub(crate) unsafe extern "C" fn Blob__fromMmapWithType(
     {
         // SAFETY: caller (C++ WebKit screenshot path) guarantees `[ptr, ptr+len)`
         // is a valid page-aligned mmap'd region we now own.
-        let store = Store::init_mmap(unsafe { core::slice::from_raw_parts_mut(ptr, len) });
+        let bytes =
+            unsafe { store::Bytes::from_mapping(core::ptr::slice_from_raw_parts_mut(ptr, len)) };
+        let store = RefPtr::new(Store {
+            data: store::Data::Bytes(bytes),
+            mime_type: bun_http_types::MimeType::NONE,
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            is_all_ascii: store::IsAllAscii::default(),
+        });
         let blob = Blob::init_with_store(store, global_this);
         // SAFETY: caller (C++) passes a valid NUL-terminated C string.
         let mime_slice = unsafe { bun_core::ffi::cstr(mime) }.to_bytes();
@@ -5831,8 +5786,7 @@ impl Any {
         if !s.has_one_ref() || !views_whole_store {
             return;
         }
-        let internal = Store::data_mut(s).as_bytes_mut().to_internal_blob();
-        *self = Any::InternalBlob(internal);
+        *self = Any::from_owned_slice(Store::data_mut(s).as_bytes_mut().take_vec());
     }
 
     pub(crate) fn to_action_value(
@@ -6103,20 +6057,7 @@ impl Any {
     }
 
     pub(crate) fn detach(&mut self) {
-        match self {
-            Any::Blob(b) => {
-                b.detach();
-                *self = Any::Blob(Blob::default());
-            }
-            Any::InternalBlob(ib) => {
-                ib.bytes.clear();
-                ib.bytes.shrink_to_fit();
-                *self = Any::Blob(Blob::default());
-            }
-            Any::WTFStringImpl(_) => {
-                *self = Any::Blob(Blob::default());
-            }
-        }
+        *self = Any::Blob(Blob::default());
     }
 }
 
@@ -6211,6 +6152,7 @@ bun_jsc::jsc_host_abi! {
 // TODO: move to bun_sys?
 /// Generic file-open helper used by ReadFile/WriteFile/CopyFile state machines,
 /// modeled as a trait the target implements.
+#[cfg(not(windows))]
 pub(crate) trait FileOpener: Sized {
     /// Override if you need different open flags; defaults to RDONLY.
     const OPEN_FLAGS: i32 = bun_sys::O::RDONLY;
@@ -6226,7 +6168,6 @@ pub(crate) trait FileOpener: Sized {
     /// `CopyFile`) override this to call [`mkdir_if_not_exists`]; everyone else
     /// (e.g. `ReadFile`) keeps the default `Retry::No`, so the open path falls
     /// straight through to the error branch.
-    #[cfg(not(windows))]
     fn try_mkdirp(
         &mut self,
         _err: bun_sys::Error,
@@ -6235,17 +6176,6 @@ pub(crate) trait FileOpener: Sized {
     ) -> Retry {
         Retry::No
     }
-    #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t;
-    #[cfg(windows)]
-    fn req(&mut self) -> &mut bun_libuv_sys::uv_fs_t;
-    /// Stash/retrieve the open completion callback across the libuv async hop.
-    /// Rust can't const-generic over fn
-    /// pointers, so the implementor stores it on `self` (e.g. next to `req`).
-    #[cfg(windows)]
-    fn set_open_callback(&mut self, cb: fn(&mut Self, Fd));
-    #[cfg(windows)]
-    fn open_callback(&self) -> fn(&mut Self, Fd);
 
     fn get_fd_by_opening(&mut self, callback: fn(&mut Self, Fd)) {
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -6255,132 +6185,41 @@ pub(crate) trait FileOpener: Sized {
         };
         let path = path_string.slice_z(&mut buf);
 
-        #[cfg(windows)]
-        {
-            use bun_sys::ReturnCodeExt as _;
-            // Monomorphic libuv completion thunk — recovers `*mut Self` from
-            // `req.data`.
-            extern "C" fn wrapped_callback<S: FileOpener>(req: *mut bun_libuv_sys::uv_fs_t) {
-                use bun_sys::ReturnCodeExt as _;
-                // SAFETY: `req.data` was set to `self as *mut Self` below before
-                // `uv_fs_open` was queued; libuv guarantees `req` is valid here.
-                let self_: &mut S = unsafe { bun_ptr::callback_ctx::<S>((*req).data) };
-                {
-                    // SAFETY: req points into self_.req(); cleanup before reuse.
-                    scopeguard::defer! { unsafe { bun_libuv_sys::uv_fs_req_cleanup(req); } }
-                    // SAFETY: req is the live uv_fs_t from the open request.
-                    let result = unsafe { (*req).result };
-                    if let Some(err_enum) = result.errno() {
-                        let path_string_2 = match self_.pathlike() {
-                            PathOrFileDescriptor::Path(p) => p.clone(),
-                            PathOrFileDescriptor::Fd(_) => unreachable!(),
-                        };
-                        self_.set_errno(bun_errno::from_errno(err_enum as i32).into());
-                        self_.set_system_error(
-                            node::fs::error_for_caller(
-                                [Some(&path_string_2), None],
-                                bun_sys::Error::from_code(err_enum, bun_sys::Tag::open)
-                                    .with_path(path_string_2.slice()),
-                            )
-                            .to_system_error()
-                            .into(),
-                        );
-                        self_.set_opened_fd(bun_sys::Fd::INVALID);
-                    } else {
-                        self_.set_opened_fd(Fd::from_uv(result.to_fd()));
-                    }
+        loop {
+            match bun_sys::open(
+                path,
+                Self::OPEN_FLAGS | Self::OPENER_FLAGS,
+                crate::node::fs::DEFAULT_PERMISSION,
+            ) {
+                bun_sys::Result::Ok(fd) => {
+                    self.set_opened_fd(fd);
+                    break;
                 }
-                let cb = self_.open_callback();
-                cb(self_, self_.opened_fd());
-            }
-
-            self.set_open_callback(callback);
-            let loop_ = self.loop_();
-            let self_ptr: *mut Self = core::ptr::from_mut(self);
-            // Derive `req` THROUGH `self_ptr` rather than via a fresh `self.req()`
-            // reborrow. Under Stacked Borrows, a direct `self.req()` here would
-            // create a sibling `&mut` that pops `self_ptr`'s tag, making the
-            // later deref in `wrapped_callback` (via `req.data`) UB. Going
-            // through the raw pointer keeps the reborrow as a child of
-            // `self_ptr`, so its provenance survives until the callback fires.
-            // SAFETY: `self_ptr` was just derived from a live `&mut self`.
-            let req = unsafe { (*self_ptr).req() };
-            // Stash `self` on the request BEFORE dispatch. libuv never touches
-            // `req.data`, so pre-setting is safe; doing it after `uv_fs_open`
-            // is a UAF when the call fails synchronously and `callback` frees
-            // `self` (ReadFileUV::on_finish → finalize → heap::take).
-            req.data = self_ptr.cast();
-            // SAFETY: loop_/req are live for the duration of the async open;
-            // req.data is consumed by `wrapped_callback::<Self>` above.
-            let rc = unsafe {
-                bun_libuv_sys::uv_fs_open(
-                    loop_,
-                    req,
-                    path.as_ptr(),
-                    Self::OPEN_FLAGS | Self::OPENER_FLAGS,
-                    node::fs::DEFAULT_PERMISSION as i32,
-                    Some(wrapped_callback::<Self>),
-                )
-            };
-            if let Some(errno) = rc.errno() {
-                self.set_errno(bun_errno::from_errno(errno as i32).into());
-                self.set_system_error(
-                    node::fs::error_for_caller(
-                        [Some(&path_string), None],
-                        bun_sys::Error::from_code(errno, bun_sys::Tag::open)
-                            .with_path(path_string.slice()),
-                    )
-                    .to_system_error()
-                    .into(),
-                );
-                self.set_opened_fd(bun_sys::Fd::INVALID);
-                // `callback` may free `self` (see comment above) — must be the
-                // last thing we touch on this path.
-                callback(self, bun_sys::Fd::INVALID);
-                return;
-            }
-            return;
-        }
-
-        #[cfg(not(windows))]
-        {
-            loop {
-                match bun_sys::open(
-                    path,
-                    Self::OPEN_FLAGS | Self::OPENER_FLAGS,
-                    crate::node::fs::DEFAULT_PERMISSION,
-                ) {
-                    bun_sys::Result::Ok(fd) => {
-                        self.set_opened_fd(fd);
-                        break;
-                    }
-                    bun_sys::Result::Err(err) => {
-                        if err.get_errno() == bun_sys::E::ENOENT {
-                            match self.try_mkdirp(err.clone(), path, path_string.slice()) {
-                                Retry::Continue => continue,
-                                Retry::Fail => {
-                                    // `mkdir_if_not_exists` already populated
-                                    // `errno`/`system_error` on the impl.
-                                    self.set_opened_fd(Fd::INVALID);
-                                    break;
-                                }
-                                Retry::No => {}
+                bun_sys::Result::Err(err) => {
+                    if err.get_errno() == bun_sys::E::ENOENT {
+                        match self.try_mkdirp(err.clone(), path, path_string.slice()) {
+                            Retry::Continue => continue,
+                            Retry::Fail => {
+                                // `mkdir_if_not_exists` has set `errno` and `system_error`.
+                                self.set_opened_fd(Fd::INVALID);
+                                break;
                             }
+                            Retry::No => {}
                         }
-                        let err = node::fs::error_for_caller(
-                            [Some(&path_string), None],
-                            err.with_path(path_string.slice()),
-                        );
-                        self.set_errno(bun_errno::from_errno(err.errno as i32).into());
-                        self.set_system_error(jsc::SysErrorJsc::to_system_error(&err));
-                        self.set_opened_fd(Fd::INVALID);
-                        break;
                     }
+                    let err = node::fs::error_for_caller(
+                        [Some(&path_string), None],
+                        err.with_path(path_string.slice()),
+                    );
+                    self.set_errno(bun_errno::from_errno(err.errno as i32).into());
+                    self.set_system_error(jsc::SysErrorJsc::to_system_error(&err));
+                    self.set_opened_fd(Fd::INVALID);
+                    break;
                 }
             }
-
-            callback(self, self.opened_fd());
         }
+
+        callback(self, self.opened_fd());
     }
 
     fn get_fd(&mut self, callback: fn(&mut Self, Fd)) {
@@ -6404,6 +6243,7 @@ pub(crate) trait FileOpener: Sized {
 pub(crate) use io_parking::IoParking;
 
 // TODO: move to bun_sys?
+#[cfg(not(windows))]
 pub(crate) trait FileCloser: Sized {
     const IO_TAG: bun_io::Tag;
 
@@ -6411,11 +6251,9 @@ pub(crate) trait FileCloser: Sized {
     fn set_opened_fd(&mut self, fd: Fd);
     fn close_after_io(&self) -> bool;
     fn state(&self) -> &core::sync::atomic::AtomicU8;
-    fn io_request(&mut self) -> Option<&mut bun_io::Request>;
+    fn io_request(&mut self) -> &mut bun_io::Request;
     fn io_poll(&mut self) -> &mut bun_io::Poll;
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask;
-    #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t;
 
     /// Intrusive backref: Rust `offset_of!` cannot name
     /// fields on a trait `Self`, so each concrete impl supplies its own
@@ -6442,38 +6280,26 @@ pub(crate) trait FileCloser: Sized {
     fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask);
 
     fn do_close(&mut self, is_allowed_to_close_fd: bool) -> bool {
-        // Check `close_after_io()` before `io_request()` so the immutable
-        // `self` reads finish before
-        // taking the `&mut self` borrow via `io_request()`.
         if self.close_after_io() {
             self.state().store(
                 ClosingState::Closing as u8,
                 core::sync::atomic::Ordering::SeqCst,
             );
-            if let Some(io_request) = self.io_request() {
-                // The io thread reads `callback` after popping from its MPSC
-                // queue; a plain store here is a data race. `bun_io::Request::
-                // store_callback_seq_cst` lowers to a volatile write + SeqCst
-                // fence (Rust has no `AtomicFnPtr`).
-                io_request.store_callback_seq_cst(Self::schedule_close);
-                if !io_request.scheduled {
-                    bun_io::IoRequestLoop::schedule(io_request);
-                }
-                return true;
+            let io_request = self.io_request();
+            // The io thread reads `callback` after popping the request: a plain store would race.
+            io_request.store_callback_seq_cst(Self::schedule_close);
+            if !io_request.scheduled {
+                bun_io::IoRequestLoop::schedule(io_request);
             }
+            return true;
         }
 
         if is_allowed_to_close_fd
             && self.opened_fd() != Fd::INVALID
             && self.opened_fd().stdio_tag().is_none()
         {
-            #[cfg(windows)]
-            bun_io::Closer::close(self.opened_fd(), self.loop_());
-            #[cfg(not(windows))]
-            {
-                use bun_sys::FdExt as _;
-                let _ = self.opened_fd().close_allowing_bad_file_descriptor(None);
-            }
+            use bun_sys::FdExt as _;
+            let _ = self.opened_fd().close_allowing_bad_file_descriptor(None);
             self.set_opened_fd(Fd::INVALID);
         }
 
@@ -6487,6 +6313,7 @@ pub(crate) trait FileCloser: Sized {
 /// The type must also carry `bun_threading::intrusive_work_task!` and
 /// `bun_io::intrusive_io_request!`, which provide the parent-pointer recovery
 /// used by the two trampolines.
+#[cfg(not(windows))]
 macro_rules! impl_file_closer {
     ($T:ident) => {
         impl crate::webcore::blob::FileCloser for $T {
@@ -6503,18 +6330,14 @@ macro_rules! impl_file_closer {
             fn state(&self) -> &::core::sync::atomic::AtomicU8 {
                 &self.state
             }
-            fn io_request(&mut self) -> Option<&mut ::bun_io::Request> {
-                Some(&mut self.io_request)
+            fn io_request(&mut self) -> &mut ::bun_io::Request {
+                &mut self.io_request
             }
             fn io_poll(&mut self) -> &mut ::bun_io::Poll {
                 &mut self.io_poll
             }
             fn task(&mut self) -> &mut ::bun_jsc::WorkPoolTask {
                 &mut self.task
-            }
-            #[cfg(windows)]
-            fn loop_(&self) -> *mut ::bun_libuv_sys::uv_loop_t {
-                unreachable!()
             }
 
             fn schedule_close(request: &mut ::bun_io::Request) -> ::bun_io::Action<'_> {
@@ -6558,4 +6381,5 @@ macro_rules! impl_file_closer {
         }
     };
 }
+#[cfg(not(windows))]
 pub(crate) use impl_file_closer;

@@ -174,7 +174,7 @@ fn read_headers(pe: &[u8]) -> Result<Headers, pe::Error> {
     let layout = PEFile::layout_of(pe)?;
     Ok(Headers {
         layout,
-        file_header: read_struct(&pe[layout.pe_header_offset..]),
+        file_header: read_struct(&pe[layout.pe_header_offset as usize..]),
         optional: read_struct(&pe[layout.optional_header_offset..]),
         sections: pe[layout.section_headers_offset..]
             .as_chunks::<{ size_of::<SectionHeader>() }>()
@@ -688,7 +688,7 @@ fn write_image(
         number_of_sections: new_sections.len() as u16,
         ..headers.file_header
     };
-    write_struct(&mut bytes[layout.pe_header_offset..], &file_header);
+    write_struct(&mut bytes[layout.pe_header_offset as usize..], &file_header);
     let optional = OptionalHeader64 {
         size_of_headers,
         ..headers.optional

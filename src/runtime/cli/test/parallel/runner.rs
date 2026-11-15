@@ -219,8 +219,10 @@ pub(crate) fn run_as_coordinator(
         aborted: None,
         stop_reason: None,
         last_printed_dot: false,
+        // Open until this process ends.
         #[cfg(windows)]
-        windows_job: Coordinator::create_windows_kill_on_close_job(),
+        windows_job: bun_sys::windows::create_kill_on_close_job()
+            .map(std::os::windows::io::IntoRawHandle::into_raw_handle),
     };
 
     let _abort_guard = abort_handler::install();

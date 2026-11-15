@@ -34,8 +34,6 @@ pub(crate) struct ServerConfig {
     pub(crate) base_uri: Box<[u8]>,
 
     pub(crate) ssl_config: Option<SSLConfig>,
-    // Vec drop runs each element's `Drop`, and `SSLConfig: Drop` calls
-    // `deinit()` (frees the owned C strings).
     pub(crate) sni: Option<Vec<SSLConfig>>,
     pub(crate) max_request_body_size: usize,
     pub(crate) development: DevelopmentOption,

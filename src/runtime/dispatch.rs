@@ -312,8 +312,8 @@ pub(crate) fn run_task(
         }
         #[cfg(windows)]
         task_tag::GetAddrInfoLibuvComplete => {
-            // SAFETY: boxed in `on_raw_libuv_complete`; the arm consumes it.
-            unsafe { bun_core::heap::take(cast_ptr!(crate::dns_jsc::LibuvCompleteHolder)) }.run();
+            // SAFETY: the box `on_raw_libuv_complete` queued; the arm consumes it.
+            unsafe { bun_core::heap::take(cast_ptr!(crate::dns_jsc::LibuvRequest)) }.run();
         }
         #[cfg(windows)]
         task_tag::UvDnsPollFree => {
@@ -503,17 +503,17 @@ pub(crate) fn run_task(
         #[cfg(windows)]
         task_tag::CopyFileWindowsMkdirp => feature_arm!(
             [Bodies],
-            |copy: crate::webcore::blob::copy_file::CopyFileWindowsMkdirp| {
-                // SAFETY: the live copy `on_mkdirp_complete_concurrent` posted.
-                unsafe { crate::webcore::blob::copy_file::CopyFileWindowsMkdirp::run(copy) };
+            |copy: crate::webcore::blob::copy_file::CopyFileWindows| {
+                // SAFETY: the box that `on_mkdirp_complete_concurrent` posted.
+                unsafe { bun_core::heap::take(copy) }.on_mkdirp_complete();
             }
         ),
         #[cfg(windows)]
         task_tag::WriteFileWindowsMkdirp => feature_arm!(
             [Bodies],
-            |write: crate::webcore::blob::write_file::WriteFileWindowsMkdirp| {
-                // SAFETY: the live write `on_mkdirp_complete_concurrent` posted.
-                unsafe { crate::webcore::blob::write_file::WriteFileWindowsMkdirp::run(write) };
+            |write: crate::webcore::blob::write_file::WriteFileWindows| {
+                // SAFETY: the box that `on_mkdirp_complete_concurrent` posted.
+                unsafe { bun_core::heap::take(write) }.on_mkdirp_complete();
             }
         ),
         #[cfg(windows)]
@@ -678,16 +678,8 @@ pub(crate) fn run_task(
             unsafe { BakeHotReloadEvent::run(cast_ptr!(BakeHotReloadEvent)) };
         }
         task_tag::FSWatchTask => feature_arm!([NodeFs], |watch: FSWatchTask| -> JsResult<()> {
-            // The task is heap-allocated
-            // (cloned from `FSWatcher.current_task` at enqueue). `deinit` is
-            // explicit (not `Drop`) so the embedded `current_task` field never
-            // runs it.
-            // SAFETY: tag identifies pointee; paired with heap::alloc in `FSWatchTask::enqueue`.
-            let mut watch = unsafe { bun_core::heap::take(watch) };
-            let ran = watch.run();
-            watch.deinit();
-            ran?;
-            Ok(())
+            // SAFETY: tag identifies pointee; the box that `FSWatcher` queued.
+            unsafe { bun_core::heap::take(watch) }.run()
         })?,
 
         // ── node:fs libuv-request ops (Windows) ──────────────────────────
@@ -1098,7 +1090,9 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
 // io::Poll dispatch
 // ════════════════════════════════════════════════════════════════════════════
 
+#[cfg(not(windows))]
 use crate::webcore::blob::read_file::ReadFile;
+#[cfg(not(windows))]
 use crate::webcore::blob::write_file::WriteFile;
 
 /// `bun_io::__bun_io_pollable_on_ready` body — declared `extern "Rust"` in
@@ -1106,6 +1100,7 @@ use crate::webcore::blob::write_file::WriteFile;
 ///
 /// # Safety
 /// `poll` is the `io_poll` field of a live owner of type `tag`.
+#[cfg(not(windows))]
 #[unsafe(no_mangle)]
 unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io::Poll) {
     match tag {
@@ -1131,6 +1126,7 @@ unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io
 ///
 /// # Safety
 /// `poll` is the `io_poll` field of a live owner of type `tag`.
+#[cfg(not(windows))]
 #[unsafe(no_mangle)]
 unsafe fn __bun_io_pollable_on_io_error(
     tag: bun_io::PollableTag,
@@ -1171,17 +1167,13 @@ unsafe fn __bun_io_pollable_on_io_error(
 ///
 /// # Safety
 /// `task` was produced by `enqueue_immediate_task` from a live
-/// `timer::ImmediateObject`.
+/// `timer::ImmediateObject`, and the queue's ref comes with it.
 #[unsafe(no_mangle)]
 unsafe fn __bun_run_immediate_task(task: *mut (), vm: &VirtualMachine) -> bool {
     // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
     // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
-    unsafe {
-        crate::timer::ImmediateObject::run_immediate_task(
-            task.cast::<crate::timer::ImmediateObject>(),
-            vm,
-        )
-    }
+    let queued = unsafe { bun_ptr::RefPtr::from_raw(task.cast::<crate::timer::ImmediateObject>()) };
+    crate::timer::TimerObjectInternals::run_immediate_task(queued, vm)
 }
 
 /// `__bun_cancel_pending_immediate` body — VM-teardown release of the event
@@ -1196,12 +1188,8 @@ unsafe fn __bun_run_immediate_task(task: *mut (), vm: &VirtualMachine) -> bool {
 unsafe fn __bun_cancel_pending_immediate(task: *mut (), vm: &VirtualMachine) {
     // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
     // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
-    unsafe {
-        crate::timer::ImmediateObject::cancel_pending(
-            task.cast::<crate::timer::ImmediateObject>(),
-            vm,
-        );
-    }
+    let queued = unsafe { bun_ptr::RefPtr::from_raw(task.cast::<crate::timer::ImmediateObject>()) };
+    queued.internals.cancel_pending_immediate(vm);
 }
 
 /// `__bun_run_wtf_timer` body — cast the low-tier erased `*mut ()` to the real
@@ -1242,7 +1230,7 @@ pub(crate) unsafe fn fire_timer(
     now: &ElTimespec,
     vm: &VirtualMachine,
 ) -> bun_event_loop::JsResult<()> {
-    use crate::timer::{ImmediateObject, TimeoutObject, TimerObjectInternals, WTFTimer};
+    use crate::timer::{Popped, TimerObjectInternals, WTFTimer};
 
     /// Recover the embedding container from `t` (the popped timer slot).
     macro_rules! owner {
@@ -1287,25 +1275,13 @@ pub(crate) unsafe fn fire_timer(
         };
     }
     let fired: JsResult<()> = match tag {
-        // ── JS-exposed timers (TimerObjectInternals::fire) ───────────────
+        // ── JS-exposed timers (TimerObjectInternals::fire_catching) ──────
         // `Bun__JSTimeout__call` reports the callback's exception itself.
-        EventLoopTimerTag::TimeoutObject => {
-            let container = owner!(TimeoutObject, event_loop_timer);
-            // SAFETY: container derived from a live `TimeoutObject`; do NOT
-            // form `&mut *container` — `internals.fire` may `deref()` and free.
-            let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
+        EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject => {
             // SAFETY: per fn contract.
-            // `fire` may free the container; `t` is dead after.
-            // `fire` takes `*mut Self` (noalias re-entrancy — see its doc).
-            unsafe { TimerObjectInternals::fire(internals, now, vm) };
-            Ok(())
-        }
-        EventLoopTimerTag::ImmediateObject => {
-            let container = owner!(ImmediateObject, event_loop_timer);
-            // SAFETY: see TimeoutObject arm.
-            let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
-            // SAFETY: see TimeoutObject arm.
-            unsafe { TimerObjectInternals::fire(internals, now, vm) };
+            unsafe {
+                TimerObjectInternals::fire_catching(Popped::new(t), vm, core::ptr::null_mut())
+            };
             Ok(())
         }
         EventLoopTimerTag::WTFTimer => {
@@ -1803,7 +1779,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         // ── Windows-only producers ───────────────────────────────────────
         task_tag::GetAddrInfoLibuvComplete => {
             #[cfg(windows)]
-            release!(crate::dns_jsc::LibuvCompleteHolder);
+            release!(crate::dns_jsc::LibuvRequest);
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }
@@ -1821,19 +1797,13 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::CopyFileWindowsMkdirp => {
             #[cfg(windows)]
-            release_in!(
-                [Bodies],
-                crate::webcore::blob::copy_file::CopyFileWindowsMkdirp
-            );
+            release_in!([Bodies], crate::webcore::blob::copy_file::CopyFileWindows);
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }
         task_tag::WriteFileWindowsMkdirp => {
             #[cfg(windows)]
-            release_in!(
-                [Bodies],
-                crate::webcore::blob::write_file::WriteFileWindowsMkdirp
-            );
+            release_in!([Bodies], crate::webcore::blob::write_file::WriteFileWindows);
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }

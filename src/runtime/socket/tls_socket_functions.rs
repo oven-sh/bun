@@ -144,7 +144,6 @@ pub(super) mod ffi {
         pub(crate) safe fn SSL_CIPHER_get_kx_nid(cipher: &SSL_CIPHER) -> c_int;
 
         // ── X509 ─────────────────────────────────────────────────────────
-        pub(crate) safe fn X509_up_ref(x: &X509) -> c_int;
         // ffi-safe-fn: BoringSSL's `sk_value` takes `const OPENSSL_STACK *` and
         // returns the element at `i` (or NULL if out-of-range — see
         // `crypto/stack/stack.cc`); it never dereferences past the header it
@@ -333,11 +332,10 @@ impl TLSSocket {
         let Some(ssl_ptr) = self.socket.get().ssl() else {
             return Ok(JSValue::UNDEFINED);
         };
-        let cert = ffi::SSL_get_peer_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
-        if !cert.is_null() {
-            return X509::to_js_object(boringssl::X509::opaque_mut(cert), cx.global());
+        match boringssl::SSL::opaque_ref(ssl_ptr).peer_certificate() {
+            Some(cert) => X509::to_js_object(cert, cx.global()),
+            None => Ok(JSValue::UNDEFINED),
         }
-        Ok(JSValue::UNDEFINED)
     }
 
     pub(crate) fn get_x509_certificate(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -346,9 +344,8 @@ impl TLSSocket {
         };
         let cert = ffi::SSL_get_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
         if !cert.is_null() {
-            // X509_up_ref bumps the refcount before handing to JS.
-            ffi::X509_up_ref(boringssl::X509::opaque_ref(cert));
-            return X509::to_js_object(boringssl::X509::opaque_mut(cert), cx.global());
+            let cert = boringssl::OwnedX509::retain(boringssl::X509::opaque_ref(cert));
+            return X509::to_js_object(cert, cx.global());
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -423,15 +420,10 @@ impl TLSSocket {
         let is_server_ssl = ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) != 0;
 
         if abbreviated {
-            if is_server_ssl {
-                // SSL_get_peer_certificate returns a +1 reference; we must free it.
-                // X509::to_js only borrows the pointer (X509View is non-owning).
-                let cert = ffi::SSL_get_peer_certificate(boringssl::SSL::opaque_ref(ssl_ptr));
-                if !cert.is_null() {
-                    // SAFETY: `c` is the +1 X509 reference returned by SSL_get_peer_certificate; we own it.
-                    let _guard = scopeguard::guard(cert, |c| unsafe { boringssl::X509_free(c) });
-                    return X509::to_js(boringssl::X509::opaque_mut(cert), global);
-                }
+            if is_server_ssl
+                && let Some(mut cert) = boringssl::SSL::opaque_ref(ssl_ptr).peer_certificate()
+            {
+                return X509::to_js(&mut cert, global);
             }
 
             let cert_chain = ffi::SSL_get_peer_cert_chain(boringssl::SSL::opaque_ref(ssl_ptr));

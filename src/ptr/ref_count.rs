@@ -146,14 +146,8 @@ pub struct RefCount<T: RefCounted> {
 
 impl<T: RefCounted> RefCount<T> {
     pub fn init() -> Self {
-        Self::init_exact_refs(1)
-    }
-
-    /// Caller will have to call `deref()` exactly `count` times to destroy.
-    pub fn init_exact_refs(count: u32) -> Self {
-        debug_assert!(count > 0);
         Self {
-            raw_count: Cell::new(count),
+            raw_count: Cell::new(1),
             thread: ThreadLock::init_locked_if_non_comptime(),
             #[cfg(debug_assertions)]
             debug: DebugData::empty(),
@@ -756,24 +750,6 @@ mod tests {
             assert!((*RefCounted::get_ref_count(t)).has_one_ref());
             assert_eq!(*(*t).payload, 7);
             // Last ref: runs `destructor`, freeing the allocation.
-            RefCount::<Thing>::deref(t);
-        }
-        assert_eq!(drops(), before + 1);
-    }
-
-    #[test]
-    fn ref_count_init_exact_refs() {
-        let _serial = serial();
-        let before = drops();
-        let t = bun_core::heap::into_raw(Box::new(Thing {
-            ref_count: RefCount::init_exact_refs(3),
-            payload: Box::new(1),
-        }));
-        // SAFETY: `t` is live with three refs; exactly three derefs destroy it.
-        unsafe {
-            RefCount::<Thing>::deref(t);
-            RefCount::<Thing>::deref(t);
-            assert_eq!(drops(), before);
             RefCount::<Thing>::deref(t);
         }
         assert_eq!(drops(), before + 1);

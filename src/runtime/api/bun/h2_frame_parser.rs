@@ -2103,9 +2103,8 @@ impl H2FrameParser {
         let Some(ctx_value) = js::context_get_cached(this_value) else {
             return;
         };
-        let _ = self
-            .handlers
-            .call_event_handler(event, this_value, ctx_value, &[ctx_value, value]);
+        let handlers = &self.handlers;
+        let _ = handlers.call_event_handler(event, this_value, ctx_value, &[ctx_value, value]);
     }
 
     /// `onWrite(context, bytes, transportClosed)`. The flag is true once the native socket closed.
@@ -2184,9 +2183,8 @@ impl H2FrameParser {
         for value in values {
             value.ensure_still_alive();
         }
-        let _ = self
-            .handlers
-            .call_event_handler(event, this_value, ctx_value, &args[..=N]);
+        let handlers = &self.handlers;
+        let _ = handlers.call_event_handler(event, this_value, ctx_value, &args[..=N]);
     }
 
     /// A header block the HPACK encoder cannot emit fails the whole session in nghttp2, so node

@@ -1,7 +1,7 @@
 //! Valkey/Redis client — JSC bindings.
 //!
 //! Module layout: the protocol
-//! state machine lives in [`valkey`] (`ValkeyClient`), the `valkey.bind.ts`
+//! state machine lives in [`valkey`], the `valkey.bind.ts`
 //! wrapper in [`js_valkey`] (`JSValkeyClient`), and the ~200 prototype
 //! methods in [`js_valkey_functions`]. RESP wire-format parsing is in the
 //! lower `bun_valkey` crate; this module owns the JSC-touching half.
@@ -9,7 +9,7 @@
 // ─── submodules ──────────────────────────────────────────────────────────────
 
 #[path = "valkey.rs"]
-pub(crate) mod valkey; // ValkeyClient state machine, fail/reject paths, auto-flush
+pub(crate) mod valkey; // state machine, fail/reject paths, auto-flush
 
 #[path = "js_valkey.rs"]
 pub(crate) mod js_valkey; // JSValkeyClient host fns, SocketHandler, constructor
@@ -32,5 +32,5 @@ pub(crate) use self::js_valkey as js_valkey_body;
 pub(crate) use js_valkey::JSValkeyClient;
 
 pub(crate) mod valkey_command {
-    pub(crate) use super::valkey_command_body::{Entry, PromisePair};
+    pub(crate) use super::valkey_command_body::PromisePair;
 }

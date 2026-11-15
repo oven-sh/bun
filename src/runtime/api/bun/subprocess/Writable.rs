@@ -1,5 +1,6 @@
 use core::ptr::NonNull;
 
+use bun_io::{Owner, PollTag};
 #[cfg(not(windows))]
 use bun_jsc::SysErrorJsc as _;
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult, event_loop::EventLoop};
@@ -13,10 +14,10 @@ use crate::webcore::streams::SourceHandle;
 
 use super::{Flags, StaticPipeWriter, StdioResult, Subprocess, js};
 
-pub(crate) enum Writable<'a> {
+pub(crate) enum Writable {
     Pipe(RefPtr<FileSink>),
     Fd(Fd),
-    Buffer(RefPtr<StaticPipeWriter<'a>>),
+    Buffer(StaticPipeWriter),
     #[cfg(any(target_os = "linux", target_os = "android"))]
     Memfd {
         _file: bun_sys::File,
@@ -25,22 +26,7 @@ pub(crate) enum Writable<'a> {
     Ignore,
 }
 
-impl<'a> Writable<'a> {
-    /// Mutable borrow of the `Buffer` payload's `StaticPipeWriter`.
-    ///
-    /// `RefPtr` deliberately has no `DerefMut`; what makes `&mut` sound here
-    /// is that `Writable::Buffer` holds a ref for the variant's lifetime, the
-    /// writer lives in its own heap allocation disjoint from
-    /// `Writable`/`Subprocess`, and access is single-JS-mutator-thread.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(in crate::api) fn buffer_writer_mut<'b>(
-        buffer: &'b RefPtr<StaticPipeWriter<'a>>,
-    ) -> &'b mut StaticPipeWriter<'a> {
-        // SAFETY: see fn doc.
-        unsafe { &mut *buffer.as_ptr() }
-    }
-
+impl Writable {
     pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Writable::Pipe(pipe) => pipe.memory_cost(),
@@ -66,7 +52,7 @@ impl<'a> Writable<'a> {
                 pipe.update_ref(true);
             }
             Writable::Buffer(buffer) => {
-                Self::buffer_writer_mut(buffer).update_ref(true);
+                buffer.update_ref(true);
             }
             _ => {}
         }
@@ -78,7 +64,7 @@ impl<'a> Writable<'a> {
                 pipe.update_ref(false);
             }
             Writable::Buffer(buffer) => {
-                Self::buffer_writer_mut(buffer).update_ref(false);
+                buffer.update_ref(false);
             }
             _ => {}
         }
@@ -89,7 +75,7 @@ impl<'a> Writable<'a> {
     //
     // Parent comes via `SourceHandle::Subprocess` (the whole `*mut Subprocess`), not `&mut self`
     // on the `stdin` field; accesses are disjoint so `&Subprocess` suffices.
-    pub(crate) fn on_close(process: &Subprocess<'a>, _: Option<bun_sys::Error>) {
+    pub(crate) fn on_close(process: &Subprocess<'_>, _: Option<bun_sys::Error>) {
         if let Some(this_jsvalue) = process.this_value.get().try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 file_sink::JSSink::forget_subprocess(existing_value);
@@ -100,7 +86,7 @@ impl<'a> Writable<'a> {
         // `on_stdin_destroyed` — writing afterwards would follow a `deref()`
         // that may free `process`, a write-after-free. The only observable
         // difference is `has_pending_activity_stdio()` seeing `Ignore`
-        // (== false) instead of a just-deref'd `Buffer` (== true) inside
+        // (== false) instead of a `Buffer` (== true) inside
         // `update_has_pending_activity`, which is the state it converges to
         // immediately after anyway.
         process.stdin.set(Writable::Ignore);
@@ -114,7 +100,7 @@ impl<'a> Writable<'a> {
     fn attach_stream(
         pipe: &RefPtr<FileSink>,
         stream: &mut crate::webcore::ReadableStream,
-        subprocess: &Subprocess<'a>,
+        subprocess: &Subprocess<'_>,
         global: &JSGlobalObject,
     ) -> JsResult<JSValue> {
         FileSink::assign_to_stream(pipe, stream, global).inspect_err(|_| {
@@ -123,16 +109,21 @@ impl<'a> Writable<'a> {
         })
     }
 
-    pub(crate) fn init(
+    /// # Safety
+    /// The result becomes `subprocess.stdin`.
+    pub(crate) unsafe fn init(
         mut stdio: Stdio,
         event_loop: &EventLoop,
-        subprocess: &mut Subprocess<'a>,
+        subprocess: &RefPtr<Subprocess<'_>>,
         result: StdioResult,
         promise_for_stream: &mut JSValue,
-    ) -> JsResult<Writable<'a>> {
+    ) -> JsResult<Writable> {
         let global = event_loop.global_ref();
 
         let evtloop = event_loop.as_handle();
+        let owner = Owner::new(PollTag::SubprocessStdinWriter, subprocess.as_ptr().cast());
+        // SAFETY: fn contract.
+        let create_writer = |result, blob| unsafe { StaticPipeWriter::create(owner, result, blob) };
 
         #[cfg(windows)]
         {
@@ -157,12 +148,7 @@ impl<'a> Writable<'a> {
                 }
 
                 Stdio::Blob(blob) => {
-                    return Ok(Writable::Buffer(StaticPipeWriter::create(
-                        evtloop,
-                        subprocess as *mut Subprocess<'a>,
-                        result,
-                        blob,
-                    )));
+                    return Ok(Writable::Buffer(create_writer(result, blob)));
                 }
                 Stdio::Fd(fd) => {
                     return Ok(Writable::Fd(fd));
@@ -226,12 +212,7 @@ impl<'a> Writable<'a> {
                 Ok(Writable::Pipe(pipe_ref))
             }
 
-            Stdio::Blob(blob) => Ok(Writable::Buffer(StaticPipeWriter::create(
-                evtloop,
-                std::ptr::from_mut::<Subprocess<'a>>(subprocess),
-                result,
-                blob,
-            ))),
+            Stdio::Blob(blob) => Ok(Writable::Buffer(create_writer(result, blob))),
             #[cfg(any(target_os = "linux", target_os = "android"))]
             Stdio::Memfd(_file) => Ok(Writable::Memfd { _file }),
             Stdio::Fd(fd) => Ok(Writable::Fd(fd)),
@@ -243,7 +224,7 @@ impl<'a> Writable<'a> {
         }
     }
 
-    pub(crate) fn to_js(subprocess: &Subprocess<'a>, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(subprocess: &Subprocess<'_>, global_this: &JSGlobalObject) -> JSValue {
         // Take only the parent and project `stdin` here so no two `&mut`
         // overlap at any point.
         match subprocess.stdin.replace(Writable::Ignore) {
@@ -311,7 +292,7 @@ impl<'a> Writable<'a> {
 
     // Note: see `on_close` — the caller passes the parent; deriving it from
     // `&mut self` on `Writable` would be out-of-provenance.
-    pub(crate) fn finalize(subprocess: &Subprocess<'a>) {
+    pub(crate) fn finalize(subprocess: &Subprocess<'_>) {
         if let Some(this_jsvalue) = subprocess.this_value.get().try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 file_sink::JSSink::forget_subprocess(existing_value);
@@ -327,12 +308,9 @@ impl<'a> Writable<'a> {
                     pipe.source.set(SourceHandle::None);
                 }
             }
-            Writable::Buffer(buffer) => {
-                Self::buffer_writer_mut(&buffer).update_ref(false);
-            }
             #[cfg(any(target_os = "linux", target_os = "android"))]
             Writable::Memfd { .. } => {}
-            Writable::Ignore => {}
+            Writable::Buffer(_) | Writable::Ignore => {}
             Writable::Fd(fd) => {
                 subprocess.stdin.set(Writable::Fd(fd));
             }
@@ -349,10 +327,7 @@ impl<'a> Writable<'a> {
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
             Writable::Memfd { .. } => this.set(Writable::Ignore),
-            Writable::Fd(_) => this.set(Writable::Ignore),
-            Writable::Buffer(buffer) => {
-                Self::buffer_writer_mut(&buffer.clone()).close();
-            }
+            Writable::Fd(_) | Writable::Buffer(_) => this.set(Writable::Ignore),
             Writable::Ignore => {}
             Writable::Inherit => {}
         }

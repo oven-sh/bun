@@ -9490,7 +9490,8 @@ __attribute__((minsize)) static bool isLoadedByOriginalOfFile(Zig::GlobalObject*
     return loadedByOriginal.size() == modules.size();
 }
 
-__attribute__((minsize)) String keyOfModuleMockAtRequirePath(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
+// keyOfModuleMockAtRequirePath() where no running factory of the mock is the asker.
+__attribute__((minsize)) static String keyAtRequirePathUnlessFactoryAsks(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
 {
     ASSERT(!globalObject->onLoadPlugins.moduleMockKeysByRequirePath.isEmpty());
     auto* mock = Zig::moduleMockOfRequirePath(globalObject, key);
@@ -9585,6 +9586,86 @@ __attribute__((minsize)) static bool haveUnfinishedImporterInCommon(Zig::GlobalO
     return false;
 }
 
+// A module that is still loading can't be running import(), so an importer that is one is exactly that module and not a factory's copy of it.
+static bool isModuleBeingLoaded(Zig::GlobalObject* globalObject, const String& key)
+{
+    auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), key));
+    auto* record = entry ? dynamicDowncast<JSC::CyclicModuleRecord>(entry->record()) : nullptr;
+    return record && record->status() == JSC::CyclicModuleRecord::Status::New;
+}
+
+// The factories that an ask of `importer` for a module comes from, while module mocks run.
+__attribute__((minsize)) static Vector<JSObject*, 2> callingFactories(Zig::GlobalObject* globalObject, const String& importer)
+{
+    // The innermost one is asking. The ones that called it are waiting for it.
+    Vector<JSObject*, 2> callers = Zig::factoriesInAsyncContext(globalObject);
+    // The loader resolves static imports outside that context, so a module in a factory's import chain counts as that factory asking.
+    for (auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
+        if (running.importChain.contains(importer) && !callers.contains(running.mock.get()))
+            callers.append(running.mock.get());
+    }
+    // Plus the factories that imported one of those factories' modules. They may be waiting for it, so it must not wait for theirs.
+    for (bool grew = !callers.isEmpty(); std::exchange(grew, false);) {
+        for (auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
+            if (callers.contains(running.mock.get()))
+                continue;
+            grew = callers.containsIf([&](JSObject* caller) { return running.importChain.contains(uncheckedDowncast<Zig::JSModuleMock>(caller)->specifier->tryGetValue().data); });
+            if (grew) {
+                callers.append(running.mock.get());
+                break;
+            }
+        }
+    }
+    return callers;
+}
+
+// Whether that ask counts as an ask of the factory of `running`. `callers` is callingFactories() of `importer`, and `isImporterBeingLoaded` is isModuleBeingLoaded() of it.
+__attribute__((minsize)) static bool asksAsFactory(Zig::GlobalObject* globalObject, const Zig::BunPlugin::OnLoad::RunningModuleMock& running, const String& importer, bool isESM, const Vector<JSObject*, 2>& callers, bool isImporterBeingLoaded)
+{
+    bool isInChain = running.importChain.contains(importer);
+    String mocked = uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())->specifier->tryGetValue().data;
+    // Once another mock has replaced it, imports from its file are no longer attributed to the factory.
+    bool isFactory = importer == running.file && (!Zig::registeredModuleMock(globalObject, mocked) || Zig::isStillRegisteredModuleMock(globalObject, mocked, uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())));
+    // The file alone can't tell which of its factories called import(). The async context can.
+    if (!callers.isEmpty() && !callers.contains(running.mock.get()))
+        isFactory = isFactory && !haveUnfinishedImporterInCommon(globalObject, mocked, uncheckedDowncast<Zig::JSModuleMock>(callers[0])->specifier->tryGetValue().data);
+    else if (!callers.isEmpty())
+        isFactory = true;
+    if (!isInChain && !isFactory && (isImporterBeingLoaded || !running.importChainWithoutQuery.contains(importer)))
+        return false;
+    // A module that was linked as itself is patched in place: nothing waits for this factory, and the patch reaches whatever imports it meanwhile.
+    if (auto* entry = isESM ? Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), mocked)) : nullptr; entry && entry->record()) {
+        auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
+        if (!cyclic || cyclic->isSCCEvaluated() || (!cyclic->hasLiveExports() && cyclic->status() >= JSC::CyclicModuleRecord::Status::Linked))
+            return false;
+    }
+#if ENABLE(AOT)
+    // The loader has no entry for a compiled module: the runtime knows whether an import has loaded it. The file of a compiled factory is only known if mock.module() itself
+    // called it and will patch. If a load called the factory, importers do wait.
+    JSObject* runningFactory = uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())->factory ? uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())->factory.get().getObject() : nullptr;
+    bool willPatch = isESM && !running.file.isEmpty() && runningFactory && globalObject->vm().hasCompiledCode() && JSC::AOT::CompiledCallee::isCompiledCallee(runningFactory);
+    if (auto module = willPatch ? Bun::compiledModuleForPath(mocked) : std::nullopt; module && JSC::AOT::hasImportStartedLoading(globalObject, *module) && !JSC::AOT::isEvicted(globalObject, *module)
+        && (JSC::AOT::isESModule(*module) && JSC::AOT::hasActiveMock(globalObject, *module) ? JSC::AOT::wasImportedUnderActiveMock(globalObject, *module) : JSC::AOT::wasLoadedByImport(globalObject, *module)))
+        return false;
+#endif
+    return true;
+}
+
+// Whether a module is loaded under `path`, the path that require() resolves the name of a mock to. That module is the file itself, and so the original of it: see originalKeyOfRequirePath().
+static bool isFileLoadedAtRequirePath(Zig::GlobalObject* globalObject, const String& path)
+{
+    auto* mock = Zig::moduleMockOfRequirePath(globalObject, path);
+    if (!mock)
+        return false;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+    String original = Zig::originalKeyOfRequirePath(globalObject, mock);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return false;
+    }
+    return original == path;
+}
+
 __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
 {
     // It imports nothing, so it waits for no mock, and only its own key is served.
@@ -9626,69 +9707,34 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
     if (importer.isNull())
         return key;
 
-    // A module that is still loading can't be running import(), so `importer` is exactly that module and not a factory's copy of it.
-    auto* importerEntry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), importer));
-    auto* importerRecord = importerEntry ? dynamicDowncast<JSC::CyclicModuleRecord>(importerEntry->record()) : nullptr;
-    bool isImporterBeingLoaded = importerRecord && importerRecord->status() == JSC::CyclicModuleRecord::Status::New;
-
-    // The innermost one is asking. The ones that called it are waiting for it.
-    Vector<JSObject*, 2> callers = Zig::factoriesInAsyncContext(globalObject);
-    // The loader resolves static imports outside that context, so a module in a factory's import chain counts as that factory asking.
-    for (auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
-        if (running.importChain.contains(importer) && !callers.contains(running.mock.get()))
-            callers.append(running.mock.get());
-    }
-    // Plus the factories that imported one of those factories' modules. They may be waiting for it, so it must not wait for theirs.
-    for (bool grew = !callers.isEmpty(); std::exchange(grew, false);) {
-        for (auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
-            if (callers.contains(running.mock.get()))
-                continue;
-            grew = callers.containsIf([&](JSObject* caller) { return running.importChain.contains(uncheckedDowncast<Zig::JSModuleMock>(caller)->specifier->tryGetValue().data); });
-            if (grew) {
-                callers.append(running.mock.get());
-                break;
-            }
-        }
-    }
+    bool isImporterBeingLoaded = isModuleBeingLoaded(globalObject, importer);
+    Vector<JSObject*, 2> callers = callingFactories(globalObject, importer);
 
     // Iterate to a fixed point: the key picked for one running factory must not wait for another running factory's mock either.
     String given = key;
     String requested;
     while (std::exchange(requested, given) != given) {
         for (auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
+            if (!asksAsFactory(globalObject, running, importer, isESM, callers, isImporterBeingLoaded))
+                continue;
             bool isInChain = running.importChain.contains(importer);
             String mocked = uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())->specifier->tryGetValue().data;
-            // Once another mock has replaced it, imports from its file are no longer attributed to the factory.
-            bool isFactory = importer == running.file && (!Zig::registeredModuleMock(globalObject, mocked) || Zig::isStillRegisteredModuleMock(globalObject, mocked, uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())));
-            // The file alone can't tell which of its factories called import(). The async context can.
-            if (!callers.isEmpty() && !callers.contains(running.mock.get()))
-                isFactory = isFactory && !haveUnfinishedImporterInCommon(globalObject, mocked, uncheckedDowncast<Zig::JSModuleMock>(callers[0])->specifier->tryGetValue().data);
-            else if (!callers.isEmpty())
-                isFactory = true;
-            if (!isInChain && !isFactory && (isImporterBeingLoaded || !running.importChainWithoutQuery.contains(importer)))
-                continue;
-            // A module that was linked as itself is patched in place: nothing waits for this factory, and the patch reaches whatever imports it meanwhile.
-            if (auto* entry = isESM ? Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), mocked)) : nullptr; entry && entry->record()) {
-                auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
-                if (!cyclic || cyclic->isSCCEvaluated() || (!cyclic->hasLiveExports() && cyclic->status() >= JSC::CyclicModuleRecord::Status::Linked))
-                    continue;
+            String instead = given == mocked ? Zig::originalModuleKey(given) : given;
+            // The require path gets its original too, but only where this asker would get the mock for it: an asker that keyOfModuleMockAtRequirePath() leaves on the file
+            // keeps that file, or the original would be split over two instances. A module that is loaded under the path is the original, so the path stays, and
+            // keyOfModuleMockAtRequirePath() makes no turn for this asker. Otherwise the original is a copy, as for the mock's own key.
+            bool isLeftToLoadedFile = false;
+            if (given != mocked && isRequirePathOfMockAt(given, mocked) && keyAtRequirePathUnlessFactoryAsks(globalObject, given, importer, isESM) != given) {
+                isLeftToLoadedFile = isFileLoadedAtRequirePath(globalObject, given);
+                if (!isLeftToLoadedFile)
+                    instead = Zig::originalModuleKey(given);
             }
-#if ENABLE(AOT)
-            // The loader has no entry for a compiled module: the runtime knows whether an import has loaded it. The file of a compiled factory is only known if mock.module() itself
-            // called it and will patch. If a load called the factory, importers do wait.
-            JSObject* runningFactory = uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())->factory ? uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())->factory.get().getObject() : nullptr;
-            bool willPatch = isESM && !running.file.isEmpty() && runningFactory && globalObject->vm().hasCompiledCode() && JSC::AOT::CompiledCallee::isCompiledCallee(runningFactory);
-            if (auto module = willPatch ? Bun::compiledModuleForPath(mocked) : std::nullopt; module && JSC::AOT::hasImportStartedLoading(globalObject, *module) && !JSC::AOT::isEvicted(globalObject, *module)
-                && (JSC::AOT::isESModule(*module) && JSC::AOT::hasActiveMock(globalObject, *module) ? JSC::AOT::wasImportedUnderActiveMock(globalObject, *module) : JSC::AOT::wasLoadedByImport(globalObject, *module)))
-                continue;
-#endif
-            String instead = given == mocked || isRequirePathOfMockAt(given, mocked) ? Zig::originalModuleKey(given) : given;
             String copy = Zig::redirectedModuleKey(globalObject, running, instead, mocked);
             if (isESM)
                 instead = copy;
             else
                 Zig::addToImportChain(globalObject, running, instead);
-            if (instead != given && isInChain && !importer.contains("?actual"_s) && !importer.contains("&actual"_s))
+            if ((instead != given || isLeftToLoadedFile) && isInChain && !importer.contains("?actual"_s) && !importer.contains("&actual"_s))
                 running.givenTheOriginal.append(importer);
             given = instead;
         }
@@ -9699,6 +9745,23 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
     else
         globalObject->onLoadPlugins.loadRootsDuringFactories.remove(given);
     return given;
+}
+
+__attribute__((minsize)) String keyOfModuleMockAtRequirePath(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
+{
+    String turned = keyAtRequirePathUnlessFactoryAsks(globalObject, key, importer, isESM);
+    // What asks as a running factory of the mock gets the original of the file, not the mock. keyOfImportWhileModuleMocksRun(), which callers ask first, gives such an
+    // asker the key of a copy, but leaves the path where a module is loaded under it: that module is the original. So the path stays here for the same asker.
+    auto& runningModuleMocks = globalObject->onLoadPlugins.runningModuleMocks;
+    if (turned == key || importer.isNull() || runningModuleMocks.isEmpty() || !isFileLoadedAtRequirePath(globalObject, key))
+        return turned;
+    Vector<JSObject*, 2> callers = callingFactories(globalObject, importer);
+    bool isImporterBeingLoaded = isModuleBeingLoaded(globalObject, importer);
+    for (auto& running : runningModuleMocks) {
+        if (uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())->specifier->tryGetValue().data == turned && asksAsFactory(globalObject, running, importer, isESM, callers, isImporterBeingLoaded))
+            return key;
+    }
+    return turned;
 }
 
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject* globalObject, JSC::JSModuleNamespaceObject* moduleNamespace, const JSC::Identifier& name)

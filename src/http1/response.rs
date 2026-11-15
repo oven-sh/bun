@@ -200,23 +200,25 @@ impl Lines {
             return Err(Stop::Malformed);
         };
         // From the start of the line, which leaves a short head enough bytes for a block.
-        let (line, end) = split_content(head);
-        let next = skip_line_end(end)?;
+        let line_len = content_len(head);
+        let next = skip_line_end(head.get(line_len..).unwrap_or_default())?;
         let text_offset = head.len() - skip_spaces(rest).len();
+        let text = head.get(text_offset..line_len).unwrap_or_default();
 
         self.response.minor_version = minor - b'0';
         self.response.status_code = code
             .iter()
             .fold(0, |code, digit| code * 10 + u32::from(digit - b'0'));
-        self.response.status_text =
-            pointer(text_offset, line.get(text_offset..).unwrap_or_default());
+        self.response.status_text = pointer(text_offset, text);
         Ok(next)
     }
 
     /// `rest` is what follows the complete lines.
     #[inline(always)]
     fn parse_field_line<'a>(&mut self, rest: &'a [u8]) -> Result<&'a [u8], Stop> {
-        let (line, end) = split_content(rest);
+        let (line, end) = rest
+            .split_at_checked(content_len(rest))
+            .unwrap_or((rest, &[]));
         let (name, value) = match line.split_at_checked(token_len(rest)) {
             Some((name @ [_, ..], [b':', value @ ..])) => (name, value),
             Some((_, [])) if end.is_empty() => return Err(Stop::Short(Some(Run::Token))),
@@ -251,13 +253,6 @@ fn skip_spaces(mut bytes: &[u8]) -> &[u8] {
         bytes = rest;
     }
     bytes
-}
-
-#[inline(always)]
-fn split_content(bytes: &[u8]) -> (&[u8], &[u8]) {
-    bytes
-        .split_at_checked(content_len(bytes))
-        .unwrap_or((bytes, &[]))
 }
 
 /// For what follows a run of content. RFC 9112 §2.2 allows a lone LF.

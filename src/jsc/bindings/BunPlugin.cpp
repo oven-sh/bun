@@ -61,6 +61,7 @@ extern "C" bool Bun__AOT__runsTestFilesAgain();
 
 namespace Bun {
 static bool haveUnfinishedImporterInCommon(Zig::GlobalObject*, const String& earlier, const String& later);
+static bool isLoadedByOriginalOfFile(Zig::GlobalObject*, const String& file, const String& importer);
 #if ENABLE(AOT)
 void recordRepeatedFileRun(JSC::JSGlobalObject*, const String& path, ASCIILiteral why);
 #endif
@@ -3434,9 +3435,10 @@ struct ModulesToEvict {
     // Packages that vi.mock() is about to mock.
     Vector<String> packagesToStash;
     bool onlyImportersFromEarlierTestFiles { false };
-    // Listed as patched, though no mock patches it: the file that require() resolves the name of a mock to. It stays as it ran, and its importers go to get the mock.
-    // This is the key of that mock. The module under it has the file as it is on disk (see keyOfModuleMockAtRequirePath()), so it is none of those importers.
-    String keyOfMockOfRequireFile;
+    // Listed as patched, though no mock patches them: the files that require() resolves the names of mocks to, each with the key of its mock. Such a file stays as it ran,
+    // and its importers go to get the mock. The module under that key and what the original of it alone has loaded are none of those importers: they have the file as it
+    // is on disk (see keyOfModuleMockAtRequirePath()).
+    UncheckedKeyHashMap<String, String> keysOfMocksOfRequireFiles;
     // Forces a pass even with nothing listed, to sweep the modules that failed to load or threw.
     bool isEndOfTestFile { false };
     bool hasLoadSettled { false };
@@ -3824,7 +3826,8 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
                 continue;
             if (!testFile || importer == key || (stays && evict.onlyImportersFromEarlierTestFiles && testFile == plugins.testFile))
                 continue;
-            if (stays && importer == evict.keyOfMockOfRequireFile)
+            // As where require() of such a file is asked for, in keyOfModuleMockAtRequirePath(): the mock's own file and what its original alone has loaded keep the file.
+            if (String keyOfMock = stays ? evict.keysOfMocksOfRequireFiles.get(key) : String(); !keyOfMock.isNull() && Bun::isLoadedByOriginalOfFile(globalObject, keyOfMock, importer))
                 continue;
             bool stayed = staysInRegistry.remove(importer);
             stayed |= staysInRequireCache.remove(importer);
@@ -5982,7 +5985,7 @@ static void evictImportersOfRequireFileFromEarlierTestFiles(Zig::GlobalObject* g
     evict.onlyImportersFromEarlierTestFiles = true;
     evict.patchedESModules.append(path);
     evict.patchedCommonJSModules.append(path);
-    evict.keyOfMockOfRequireFile = mock->specifier->tryGetValue().data;
+    evict.keysOfMocksOfRequireFiles.add(path, mock->specifier->tryGetValue().data);
     RELEASE_AND_RETURN(scope, evictModulesAndTheirImporters(globalObject, WTF::move(evict)));
 }
 
@@ -7780,12 +7783,16 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
         return;
 
     MarkedArgumentBuffer mocks;
+    // The mocks of the preloads that answer require() of their paths while the mocks of the test file still stand.
+    MarkedArgumentBuffer answeringPreloadMocks;
 #if ENABLE(AOT)
     MarkedArgumentBuffer restoredPreloadMocks;
 #endif
     if (plugins.virtualModules) {
         for (auto& value : plugins.virtualModules->values()) {
             auto* mock = dynamicDowncast<JSModuleMock>(value.get());
+            if (mock && mock->isFromPreload && mock->requirePath && moduleMockOfRequirePath(globalObject, mock->requirePath->tryGetValue().data) == mock)
+                answeringPreloadMocks.append(mock);
             if (mock && !mock->isFromPreload)
                 mocks.append(mock);
 #if ENABLE(AOT)
@@ -7961,6 +7968,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
             (void)scope.tryClearException();
     }
 
+    for (auto& module : plugins.moduleMocksBeingLoaded.keys())
+        evict.modules.append(module);
+
     // The mocks of the test file have ended, and one of them may have had the path that require() resolves a name to which a preload mocks. The mocks of the preloads answer
     // require() of their paths again: the one laid last where several share a path, whichever addModuleMock() wrote for above, and none while something stands under the path itself.
     if (plugins.virtualModules) {
@@ -7976,10 +7986,31 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
         }
         for (auto* mock : inOrderOfLay)
             letModuleMockAnswerRequirePath(globalObject, mock->specifier->tryGetValue().data, mock);
+
+        // One of them may not have answered while the test file ran: a mock of the test file had its path, or the test file had ended the mock itself. The file under that path
+        // stays as it ran, and what the test files loaded of its importers goes to get the mock, as at the lay (evictImportersOfRequireFileFromEarlierTestFiles()).
+        // A path that is listed already loses its importers to this pass as it is: what stood under it has ended.
+        for (auto* mock : inOrderOfLay) {
+            String path = mock->requirePath->tryGetValue().data;
+            bool answeredBefore = false;
+            for (size_t i = 0; i < answeringPreloadMocks.size(); ++i)
+                answeredBefore |= uncheckedDowncast<JSModuleMock>(answeringPreloadMocks.at(i)) == mock;
+            bool isListed = evict.modules.contains(path) || evict.patchedESModules.contains(path) || evict.patchedCommonJSModules.contains(path) || evict.packagesToRestore.contains(path) || plugins.modulesToEvictOnceLoaded.contains(path);
+            if (answeredBefore || isListed || moduleMockOfRequirePath(globalObject, path) != mock)
+                continue;
+            LoadedModule loaded = findLoadedModule(globalObject, mock->requirePath.get());
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+                continue;
+            }
+            if (!loaded.esmNamespace && !loaded.commonJSModule)
+                continue;
+            evict.patchedESModules.append(path);
+            evict.patchedCommonJSModules.append(path);
+            evict.keysOfMocksOfRequireFiles.add(path, mock->specifier->tryGetValue().data);
+        }
     }
 
-    for (auto& module : plugins.moduleMocksBeingLoaded.keys())
-        evict.modules.append(module);
     evict.isEndOfTestFile = plugins.hasVirtualModules();
     evictModulesAndTheirImporters(globalObject, WTF::move(evict));
     if (scope.exception()) [[unlikely]]

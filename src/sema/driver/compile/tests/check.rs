@@ -1009,14 +1009,19 @@ fn untyped_package_stops_only_a_project_with_bun_types_installed() {
         let files = [
             (
                 "main.ts",
-                "import { x } from \"untyped\";\nexport const one: number = x;\n\
-                 x((a, b) => {});\nx([c => {}]);\n",
+                "import { z } from \"unused\";\nimport { x } from \"untyped\";\n\
+                 export const one: number = x;\nx((a, b) => {});\nx([c => {}]);\n",
             ),
             (
                 "node_modules/untyped/package.json",
                 "{ \"name\": \"untyped\", \"version\": \"1.0.0\", \"main\": \"index.js\" }",
             ),
             ("node_modules/untyped/index.js", "exports.x = () => 1;\n"),
+            (
+                "node_modules/unused/package.json",
+                "{ \"name\": \"unused\", \"version\": \"1.0.0\", \"main\": \"index.js\" }",
+            ),
+            ("node_modules/unused/index.js", "exports.z = 1;\n"),
             (
                 &manifest[..],
                 "{ \"name\": \"@types/bun\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }",
@@ -1030,7 +1035,7 @@ fn untyped_package_stops_only_a_project_with_bun_types_installed() {
             assert_eq!(is_brought, !is_installed);
             let build = check_only(program);
             let codes: &[u32] = match is_installed {
-                true => &[7016, 7006, 7006, 7006],
+                true => &[7016, 7016, 7006, 7006, 7006],
                 false => &[],
             };
             assert_eq!(build.codes(), codes);

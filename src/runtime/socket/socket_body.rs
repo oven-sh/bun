@@ -2966,18 +2966,21 @@ impl<const SSL: bool> NewSocket<SSL> {
             && self.socket.get().socket == socket.socket
         {
             // JS that ran during the write may have detached or shrunk `data`.
-            let current = (SSL || !is_us_socket).then(|| data.as_array_buffer(global));
+            let current = if SSL || !is_us_socket {
+                data.as_array_buffer(global)
+            } else {
+                None
+            };
             let remaining = match &current {
-                Some(Some(current)) => current
+                Some(current) => current
                     .byte_slice()
                     .get(byte_offset + uwrote..byte_offset + byte_length)
                     .unwrap_or_default(),
-                _ => &bytes[uwrote..],
+                None => &bytes[uwrote..],
             };
-            let mut unwritten = Vec::new();
-            unwritten.append_slice(remaining);
-            unwritten.append_slice(&buffered.bytes.take());
-            buffered.bytes.set(unwritten);
+            buffered
+                .bytes
+                .set([remaining, &buffered.bytes.take()].concat());
             if needs_flush && wrote >= 0 {
                 wrote = self.flush_after_write(wrote, byte_length);
             }

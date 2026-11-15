@@ -1235,9 +1235,10 @@ fn spawn_maybe_sync(
     #[cfg(windows)]
     if !is_sync {
         if let Some(ipc_mode) = maybe_ipc_mode {
-            subprocess.ipc_data.get_or_init(|| {
-                IPC::SendQueue::new(ipc_mode, subprocess_ipc_owner(subprocess_ptr))
-            });
+            let _ = subprocess.ipc_data.set(IPC::SendQueue::new(
+                ipc_mode,
+                subprocess_ipc_owner(subprocess_ptr),
+            ));
         }
     }
 
@@ -1349,9 +1350,10 @@ fn spawn_maybe_sync(
             );
             if !raw_socket.is_null() {
                 let socket = raw_socket;
-                subprocess.ipc_data.get_or_init(|| {
-                    IPC::SendQueue::new(mode, subprocess_ipc_owner(subprocess_ptr))
-                });
+                let _ = subprocess.ipc_data.set(IPC::SendQueue::new(
+                    mode,
+                    subprocess_ipc_owner(subprocess_ptr),
+                ));
                 posix_ipc_info = Some(IPC::Socket::from(socket));
             }
         }

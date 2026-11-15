@@ -170,7 +170,7 @@ pub fn install_with_manager(
                 let mut lockfile = Lockfile::default();
                 let mut maybe_root = lockfile::Package::default();
 
-                let source_copy = root_package_json_source(manager, root_package_json_path, true)?;
+                let source = root_package_json_source(manager, root_package_json_path, true)?;
 
                 let mut resolver: () = ();
                 let log = manager.log();
@@ -178,7 +178,7 @@ pub fn install_with_manager(
                     &mut lockfile,
                     &mut ParseFields::new(manager),
                     log,
-                    &source_copy,
+                    source,
                     &mut resolver,
                     Features::main(),
                 )?;
@@ -1994,7 +1994,7 @@ fn root_package_json_source(
     manager: &mut PackageManager,
     root_package_json_path: &ZStr,
     has_lockfile: bool,
-) -> crate::Result<Source<'static>> {
+) -> crate::Result<&'static Source<'static>> {
     let log = manager.log();
     let (verb, err) = match manager.workspace_package_json_cache.get_with_path(
         log,
@@ -2007,7 +2007,7 @@ fn root_package_json_source(
             if has_lockfile && entry.source.contents.is_empty() {
                 exit_on_empty_package_json(root_package_json_path.as_bytes());
             }
-            return Ok(entry.source.clone());
+            return Ok(entry.source);
         }
         WorkspacePackageJsonCacheResult::ReadErr(err) => ("read", err),
         WorkspacePackageJsonCacheResult::ParseErr(err) => ("parse", err),
@@ -2077,7 +2077,7 @@ fn create_new_lockfile_and_enqueue(
         crate::pnpm::migrate_pnpm_workspace_config(manager)?;
     }
 
-    let source_copy = root_package_json_source(
+    let source = root_package_json_source(
         manager,
         root_package_json_path,
         !matches!(load_result, lockfile::LoadResult::NotFound),
@@ -2090,7 +2090,7 @@ fn create_new_lockfile_and_enqueue(
         lockfile,
         &mut fields,
         log,
-        &source_copy,
+        source,
         &mut resolver,
         Features::main(),
     )?;

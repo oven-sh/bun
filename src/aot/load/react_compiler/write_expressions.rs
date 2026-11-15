@@ -859,7 +859,7 @@ fn operator_of(code: OpCode) -> Operator {
     }
 }
 
-fn string_text(text: &E::EString) -> Cow<'_, [u8]> {
+fn string_text<'a>(text: &'a E::EString<'_>) -> Cow<'a, [u8]> {
     if text.is_utf16 {
         return Cow::Owned(wtf16_to_wtf8(text.slice16()));
     }

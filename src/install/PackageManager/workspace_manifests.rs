@@ -49,17 +49,16 @@ impl ScratchManifests {
         manager: &mut PackageManager,
         features: Features,
     ) -> crate::Result<()> {
-        // Cloned because the `workspaces` walk below may grow the cache holding this entry.
         let (root_source, root_json) = {
             let entry = fetch_entry(manager, &WorkspaceTarget::root());
-            (entry.source.clone(), entry.root)
+            (entry.source, entry.root)
         };
         let mut resolver: () = ();
         self.root.parse_with_json(
             &mut self.lockfile,
             &mut ParseFields::new(manager),
             &self.log,
-            &root_source,
+            root_source,
             bun_ast::JsonView::from(&root_json),
             &mut resolver,
             features,
@@ -150,7 +149,7 @@ impl ScratchManifests {
             &mut self.lockfile,
             &mut ParseFields::for_package(&manager.options, &mut manager.project),
             &self.log,
-            &entry.source,
+            entry.source,
             bun_ast::JsonView::from(&entry.root),
             &mut resolver,
             features,

@@ -120,11 +120,11 @@ impl<'a> core::ops::Index<usize> for CssAsts<'a> {
 
 pub struct InputFile<'a> {
     pub(crate) source: bun_ast::Source<'a>,
-    pub(crate) secondary_path: AstVec<u8>,
+    pub(crate) secondary_path: AstVec<'a, u8>,
     pub(crate) loader: options::Loader,
     pub side_effects: SideEffects,
-    pub additional_files: AstVec<AdditionalFile>,
-    pub unique_key_for_additional_file: StoreStr,
+    pub additional_files: AstVec<'a, AdditionalFile>,
+    pub unique_key_for_additional_file: StoreStr<'a>,
     pub content_hash_for_additional_file: u64,
     pub flags: InputFileFlags,
 }
@@ -148,11 +148,11 @@ impl Default for InputFile<'_> {
 bun_collections::multi_array_columns! {
     pub trait InputFileColumns ['a] for InputFile<'a> {
         source: bun_ast::Source<'a>,
-        secondary_path: AstVec<u8>,
+        secondary_path: AstVec<'a, u8>,
         loader: options::Loader,
         side_effects: SideEffects,
-        additional_files: AstVec<AdditionalFile>,
-        unique_key_for_additional_file: StoreStr,
+        additional_files: AstVec<'a, AdditionalFile>,
+        unique_key_for_additional_file: StoreStr<'a>,
         content_hash_for_additional_file: u64,
         flags: InputFileFlags,
     }

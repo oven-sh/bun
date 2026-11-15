@@ -49,6 +49,8 @@ pub mod visitors;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use bun_ast::E;
+
 use crate::collections::IndexMap;
 use crate::collections::IndexSet;
 pub use crate::diagnostics::CompilerDiagnostic;
@@ -71,7 +73,12 @@ pub use reactive::*;
 /// leaks per parse. Use [`StoreStr`] / [`HirVec`] instead.
 pub type HirVec<T> = Vec<T, HirAlloc>;
 /// Arena-owned (or `'static`) byte string. Copy; no Drop. See [`HirVec`].
-pub use bun_ast::StoreStr;
+/// HIR has no lifetime parameter: `'static` stands for the lifetime of the AST, see [`hir_alloc::with_arena`].
+pub type StoreStr = bun_ast::StoreStr<'static>;
+pub(crate) type Expr = bun_ast::Expr<'static>;
+pub(crate) type Stmt = bun_ast::Stmt<'static>;
+pub(crate) type Binding = bun_ast::Binding<'static>;
+pub(crate) type Scope = bun_ast::Scope<'static>;
 pub use hir_alloc::HirAlloc;
 
 /// `vec![..]` for [`HirVec`]. `Vec<T, A>` has no `Default`/`From<[T; N]>` for
@@ -1102,7 +1109,7 @@ pub enum IdentifierName {
 }
 
 impl IdentifierName {
-    pub fn value(&self) -> &[u8] {
+    pub fn value(&self) -> &'static [u8] {
         match self {
             IdentifierName::Named(v) | IdentifierName::Promoted(v) => v.slice(),
         }
@@ -1340,29 +1347,29 @@ pub enum BindingKind {
 }
 
 #[derive(Debug, Clone)]
-pub enum VariableBinding {
+pub enum VariableBinding<'a> {
     Identifier {
         identifier: IdentifierId,
         binding_kind: BindingKind,
     },
     Global {
-        name: StoreStr,
+        name: E::Str<'a>,
     },
     ImportDefault {
-        name: StoreStr,
-        module: StoreStr,
+        name: E::Str<'a>,
+        module: E::Str<'a>,
     },
     ImportSpecifier {
-        name: StoreStr,
-        module: StoreStr,
-        imported: StoreStr,
+        name: E::Str<'a>,
+        module: E::Str<'a>,
+        imported: E::Str<'a>,
     },
     ImportNamespace {
-        name: StoreStr,
-        module: StoreStr,
+        name: E::Str<'a>,
+        module: E::Str<'a>,
     },
     ModuleLocal {
-        name: StoreStr,
+        name: E::Str<'a>,
     },
 }
 
@@ -1400,7 +1407,7 @@ pub enum NonLocalKind {
     /// constant. The original `Expr` is carried whole so codegen emits it
     /// unchanged and the bundler keeps any `import_record_index` / `Ref` /
     /// variant tag it holds.
-    BunOpaque(bun_ast::Expr),
+    BunOpaque(Expr),
 }
 
 impl std::fmt::Debug for NonLocalKind {
@@ -1437,7 +1444,7 @@ impl std::fmt::Debug for NonLocalKind {
 
 impl NonLocalBinding {
     /// Returns the `name` field common to all variants.
-    pub fn name(&self) -> &[u8] {
+    pub fn name(&self) -> &'static [u8] {
         match &self.kind {
             NonLocalKind::ImportDefault { name, .. }
             | NonLocalKind::ImportSpecifier { name, .. }

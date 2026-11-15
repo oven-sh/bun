@@ -12,15 +12,14 @@ fn with_scope(test: impl for<'s> FnOnce(&Interner<'s>, &'s Arena, &AstArena)) {
     test(&atoms, session.arena(), &AstArena::new());
 }
 
-fn parse_tape(text: &'static [u8], scratch: &AstArena) -> Expr {
-    let source = Source::init_path_string(b"/value.json", text);
-    parse_json_into_arena(&source, &Log::default(), scratch)
-        .unwrap_or_else(|_| panic!("valid JSON"))
+fn parse_tape<'a>(text: &'static [u8], scratch: &'a AstArena) -> Expr<'a> {
+    let source = scratch.alloc(Source::init_path_string(b"/value.json", text));
+    parse_json_into_arena(source, &Log::default(), scratch).unwrap_or_else(|_| panic!("valid JSON"))
 }
 
-fn parse_tree(text: &'static [u8], scratch: &AstArena) -> Expr {
-    let source = Source::init_path_string(b"/value.json", text);
-    parse_utf8(&source, &Log::default(), scratch).unwrap_or_else(|_| panic!("valid JSON"))
+fn parse_tree<'a>(text: &'static [u8], scratch: &'a AstArena) -> Expr<'a> {
+    let source = scratch.alloc(Source::init_path_string(b"/value.json", text));
+    parse_utf8(source, &Log::default(), scratch).unwrap_or_else(|_| panic!("valid JSON"))
 }
 
 fn write_error(root: &Expr, scratch: &AstArena) -> NotData {
@@ -30,15 +29,15 @@ fn write_error(root: &Expr, scratch: &AstArena) -> NotData {
     }
 }
 
-fn string_expr(scratch: &AstArena, text: &'static [u8]) -> Expr {
+fn string_expr<'a>(scratch: &'a AstArena, text: &'static [u8]) -> Expr<'a> {
     Expr::allocate(scratch, E::EString::init(text), Loc::EMPTY)
 }
 
-fn number_expr(value: f64) -> Expr {
+fn number_expr<'a>(value: f64) -> Expr<'a> {
     Expr::init(E::Number::new(value), Loc::EMPTY)
 }
 
-fn object_with(scratch: &AstArena, property: G::Property) -> Expr {
+fn object_with<'a>(scratch: &'a AstArena, property: G::Property<'a>) -> Expr<'a> {
     let properties = G::PropertyList::from_slice_in(&[property], scratch);
     let object = E::Object {
         properties,
@@ -47,7 +46,7 @@ fn object_with(scratch: &AstArena, property: G::Property) -> Expr {
     Expr::allocate(scratch, object, Loc::EMPTY)
 }
 
-fn object_with_keys(scratch: &AstArena, keys: &[Expr]) -> Expr {
+fn object_with_keys<'a>(scratch: &'a AstArena, keys: &[Expr<'a>]) -> Expr<'a> {
     let properties = G::PropertyList::from_iter_in(
         keys.iter().enumerate().map(|(index, key)| G::Property {
             key: Some(*key),
@@ -63,7 +62,7 @@ fn object_with_keys(scratch: &AstArena, keys: &[Expr]) -> Expr {
     Expr::allocate(scratch, object, Loc::EMPTY)
 }
 
-fn array_from(scratch: &AstArena, elements: &[Expr]) -> Expr {
+fn array_from<'a>(scratch: &'a AstArena, elements: &[Expr<'a>]) -> Expr<'a> {
     let items = ExprNodeList::from_slice_in(elements, scratch);
     let array = E::Array {
         items,
@@ -72,11 +71,11 @@ fn array_from(scratch: &AstArena, elements: &[Expr]) -> Expr {
     Expr::allocate(scratch, array, Loc::EMPTY)
 }
 
-fn array_of(scratch: &AstArena, first: Expr, second: Expr) -> Expr {
+fn array_of<'a>(scratch: &'a AstArena, first: Expr<'a>, second: Expr<'a>) -> Expr<'a> {
     array_from(scratch, &[first, second])
 }
 
-fn object_from(scratch: &AstArena, values: &[Expr]) -> Expr {
+fn object_from<'a>(scratch: &'a AstArena, values: &[Expr<'a>]) -> Expr<'a> {
     let properties = G::PropertyList::from_iter_in(
         values.iter().enumerate().map(|(index, value)| G::Property {
             key: Some(number_expr(index as f64)),
@@ -92,7 +91,7 @@ fn object_from(scratch: &AstArena, values: &[Expr]) -> Expr {
     Expr::allocate(scratch, object, Loc::EMPTY)
 }
 
-fn object_with_value_count(scratch: &AstArena, value_count: usize) -> Expr {
+fn object_with_value_count(scratch: &AstArena, value_count: usize) -> Expr<'_> {
     let mut shared_values = vec![(number_expr(1.0), 1)];
     while let Some(&(value, count)) = shared_values.last()
         && 2 * count + 1 < value_count
@@ -158,7 +157,7 @@ impl ValueSink for ValueCounter {
     }
 }
 
-fn big_int_expr(scratch: &AstArena, digits: &'static [u8]) -> Expr {
+fn big_int_expr<'a>(scratch: &'a AstArena, digits: &'static [u8]) -> Expr<'a> {
     let value = E::Str::new(digits);
     Expr::allocate(scratch, E::BigInt { value }, Loc::EMPTY)
 }

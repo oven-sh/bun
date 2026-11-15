@@ -488,8 +488,6 @@ pub(crate) fn install_pool() -> &'static ThreadPool {
 
 pub struct PackageManager {
     pub root_dir: &'static fs::DirEntry,
-    /// Holds the nodes that edits add to a package.json. Never reset: the manager is a leaked singleton.
-    pub(crate) ast_arena: bun_ast::AstArena,
     pub(crate) timestamp_for_manifest_cache_control: u32,
     pub(crate) summary: Package::DiffSummary,
 
@@ -558,7 +556,7 @@ pub struct PackageManager {
     // workspace is adding/removing packages
     pub workspace_name_hash: Option<PackageNameHash>,
 
-    pub workspace_package_json_cache: WorkspacePackageJSONCache,
+    pub workspace_package_json_cache: WorkspacePackageJSONCache<'static>,
 
     // normally we have `UpdateRequests` to work with for adding/deleting/updating packages, but
     // if `bun update` is used without any package names we need a way to keep information for
@@ -659,7 +657,7 @@ pub struct InstallState {
 
     // During `installPackages` we learn exactly what dependencies from --trust
     // actually have scripts to run, and we add them to this list
-    pub(crate) trusted_deps_to_add_to_package_json: Vec<Box<[u8]>>,
+    pub(crate) trusted_deps_to_add_to_package_json: Vec<&'static [u8]>,
 
     pub any_failed_to_install: bool,
 
@@ -689,6 +687,7 @@ pub struct InstallFields<'a> {
     pub(crate) update_requests: &'a mut [UpdateRequest],
     pub(crate) pending_filtered_write: Option<&'a add_remove_with_filter::PendingWrite>,
     pub(crate) workspace_name_hash: Option<PackageNameHash>,
+    pub(crate) package_json_arena: &'static bun_ast::AstArena,
 }
 
 /// `PackageManager::install_fields` that does not borrow the other fields.
@@ -702,6 +701,7 @@ macro_rules! install_fields {
             update_requests: &mut $manager.update_requests,
             pending_filtered_write: $manager.pending_filtered_write.as_deref(),
             workspace_name_hash: $manager.workspace_name_hash,
+            package_json_arena: $manager.workspace_package_json_cache.arena,
         }
     };
 }
@@ -803,7 +803,8 @@ impl InstallFields<'_> {
                 locked.map_or_else(Default::default, |set| bun_core::handle_oom(set.clone()))
             })
             .insert(name_hash, Box::from(name));
-        (self.state.trusted_deps_to_add_to_package_json).push(Box::from(name));
+        (self.state.trusted_deps_to_add_to_package_json)
+            .push(self.package_json_arena.dupe_str(name).slice());
     }
 
     pub(crate) fn crash(&self) -> ! {
@@ -1496,6 +1497,13 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
 // allocate
 // ──────────────────────────────────────────────────────────────────────────
 
+/// The arena is leaked, as the manager that gets the cache is.
+fn allocate_package_json_cache() -> WorkspacePackageJSONCache<'static> {
+    let arena = Box::leak(Box::new(bun_ast::AstArena::borrowing_default()));
+    bun_core::asan::ignore_object(core::ptr::from_mut(arena).cast());
+    WorkspacePackageJSONCache::new(arena)
+}
+
 fn allocate_package_manager(
     options: Options,
     log: &'static bun_ast::Log,
@@ -1504,7 +1512,7 @@ fn allocate_package_manager(
     // NUL-terminated
     original_package_json_path: Vec<u8>,
     root_package_json_path: &'static ZStr,
-    workspace_package_json_cache: WorkspacePackageJSONCache,
+    workspace_package_json_cache: WorkspacePackageJSONCache<'static>,
     workspace_name_hash: Option<PackageNameHash>,
     subcommand: Subcommand,
     root_package_json_name_at_time_of_init: Box<[u8]>,
@@ -1558,7 +1566,6 @@ fn allocate_package_manager(
             pending_lockfile_changes: PendingLockfileChanges::default(),
         },
         root_dir,
-        ast_arena: bun_ast::AstArena::new(),
         lockfile: Box::new(Lockfile::default()),
         original_package_json_path: ZBox::from_vec_with_nul(original_package_json_path),
         root_package_json_path,
@@ -2165,7 +2172,7 @@ fn find_project<'a>(
 pub fn project_directory(cwd: &[u8]) -> Option<&[u8]> {
     find_project(
         without_trailing_slash_windows_path(cwd),
-        &mut WorkspacePackageJSONCache::default(),
+        &mut WorkspacePackageJSONCache::new(&bun_ast::AstArena::borrowing_default()),
         &mut None,
     )
     .map(|(project, _)| project)
@@ -2243,7 +2250,7 @@ pub fn init(
     let original_cwd: &[u8] = &original_cwd_clone;
 
     let mut workspace_names = Package::WorkspaceMap::WorkspaceMap::init();
-    let mut workspace_package_json_cache = WorkspacePackageJSONCache::default();
+    let mut workspace_package_json_cache = allocate_package_json_cache();
 
     let mut workspace_name_hash: Option<PackageNameHash> = None;
     let mut root_package_json_name_at_time_of_init: Box<[u8]> = Box::default();
@@ -2713,7 +2720,7 @@ fn init_with_runtime_once(
         None => importer_dir,
     };
     let importer_dir = without_trailing_slash_windows_path(importer_dir);
-    let mut workspace_package_json_cache = WorkspacePackageJSONCache::default();
+    let mut workspace_package_json_cache = allocate_package_json_cache();
     let mut unreadable = None;
     let project = find_project(
         importer_dir,
@@ -2924,13 +2931,12 @@ fn parse_runtime_root(
     push_package_json(&mut path);
     // The messages in this log point into `source`.
     let parse_log = bun_ast::Log::init();
-    // Cloned because the `workspaces` walk below may grow the cache holding this entry.
     let (source, json) = {
         let entry = manager
             .workspace_package_json_cache
             .get_with_path(&parse_log, &path[..path.len() - 1], Default::default())
             .unwrap()?;
-        (entry.source.clone(), entry.root)
+        (entry.source, entry.root)
     };
     let mut root = lockfile::Package::default();
     let (lockfile, mut fields) = Package::ParseFields::split_lockfile(manager);
@@ -2939,7 +2945,7 @@ fn parse_runtime_root(
             lockfile,
             &mut fields,
             &parse_log,
-            &source,
+            source,
             bun_ast::JsonView::from(&json),
             &mut (),
             bun_install::Features {

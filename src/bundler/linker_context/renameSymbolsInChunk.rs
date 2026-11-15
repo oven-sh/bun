@@ -19,7 +19,7 @@ use crate::{Chunk, LinkerContext, StableRef, ThreadPool, WrapKind};
 // callback) — runs on worker threads, one task per chunk.
 pub(crate) fn rename_symbols_in_chunk<'a>(
     c: &LinkerContext<'_, 'a>,
-    chunk: &mut Chunk,
+    chunk: &mut Chunk<'a>,
 ) -> Result<ChunkRenamer<'a>, crate::Error> {
     let _trace = bun_core::perf::trace("Bundler.renameSymbolsInChunk");
 
@@ -209,7 +209,13 @@ pub(crate) fn rename_symbols_in_chunk<'a>(
         return Ok(ChunkRenamer::Minify(minify_renamer));
     }
 
-    let mut r = NumberRenamer::init(symbols, &reserved_names, files_in_order, c.renamer_rows)?;
+    let mut r = NumberRenamer::init(
+        symbols,
+        &reserved_names,
+        files_in_order,
+        c.renamer_rows,
+        ThreadPool::Worker::get(c.bundle).arena(),
+    )?;
     // Bindings that cross chunks carry one bundle-wide name
     // (`assign_cross_chunk_names`); everything else is numbered around them.
     for &ref_ in js.exports_to_other_chunks.keys() {
@@ -345,10 +351,8 @@ pub(crate) fn rename_symbols_in_chunk<'a>(
             // `part.scopes` lists every scope visited for the part; the walk
             // below recurses, so only the module scope's children go in.
             for &scope in part.scopes.iter() {
-                // SAFETY: live arena-allocated scope (see below).
-                let parent = unsafe { (*scope).parent };
-                if parent.is_some_and(|parent| parent.parent.is_none()) {
-                    nested_scopes.push((source_index, scope.cast_const()));
+                if scope.parent.is_some_and(|parent| parent.parent.is_none()) {
+                    nested_scopes.push((source_index, scope.get()));
                 }
             }
         }
@@ -405,14 +409,14 @@ pub(crate) fn log_renamer_tables(chunks: &[Chunk]) {
 }
 
 /// One `NestedRenamer` task: the nested scopes of one file of one chunk.
-pub(crate) struct NestedRenameTask {
+pub(crate) struct NestedRenameTask<'a> {
     pub chunk_index: u32,
     /// Range into `chunk.nested_scopes_to_rename`.
     pub scopes: core::ops::Range<u32>,
-    pub names: Option<renamer::NestedNames>,
+    pub names: Option<renamer::NestedNames<'a>>,
 }
 
-pub(crate) fn nested_rename_tasks(chunks: &[Chunk]) -> Vec<NestedRenameTask> {
+pub(crate) fn nested_rename_tasks<'a>(chunks: &[Chunk<'a>]) -> Vec<NestedRenameTask<'a>> {
     let mut tasks = Vec::new();
     for (chunk_index, chunk) in chunks.iter().enumerate() {
         let scopes = &chunk.nested_scopes_to_rename;
@@ -434,9 +438,9 @@ pub(crate) fn nested_rename_tasks(chunks: &[Chunk]) -> Vec<NestedRenameTask> {
 // chunk's `NumberRenamer` (complete for top-level symbols; not written until
 // every task has finished) and `graph.{ast,symbols,parts_live}`; writes only
 // `task.names`.
-pub(crate) fn run_nested_rename_task(
-    &(c, chunks): &(&LinkerContext, &[Chunk]),
-    task: &mut NestedRenameTask,
+pub(crate) fn run_nested_rename_task<'a>(
+    &(c, chunks): &(&LinkerContext<'_, 'a>, &[Chunk<'a>]),
+    task: &mut NestedRenameTask<'a>,
     _task_index: usize,
 ) {
     let (chunk_index, scope_range) = (task.chunk_index, task.scopes.clone());

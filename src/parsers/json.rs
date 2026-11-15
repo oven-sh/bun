@@ -1,8 +1,6 @@
 //! JSON / JSONC parser: a SIMD structural indexer ([`crate::json_index`]) plus a
 //! recursive-descent stage 2 ([`crate::json_stage2`]) over the resulting index.
 
-use core::marker::PhantomData;
-
 use bun_ast::G;
 
 use bun_ast as js_ast;
@@ -65,45 +63,46 @@ pub const PACKAGE_JSON_OPTS: JSONOptions = JSONOptions {
 };
 
 #[inline]
-fn empty_object_expr(arena: &AstArena) -> Expr {
+fn empty_object_expr(arena: &AstArena) -> Expr<'_> {
     Expr::allocate(arena, E::Object::default(), bun_ast::Loc { start: 0 })
 }
 
 /// A parsed immutable-AST JSON document: the root value plus the [`E::JsonTape`] it borrows.
 pub struct ParsedJson<'a> {
-    root: E::JsonValue,
+    root: E::JsonValue<'a>,
     root_loc: bun_ast::Loc,
-    tape: Option<Box<E::JsonTape>>,
-    /// The source text, and the arena of the `E::ObjectJSON` and `E::ArrayJSON` values.
-    _marker: PhantomData<(&'a [u8], &'a AstArena)>,
+    tape: Option<Box<E::JsonTape<'a>>>,
 }
 
-struct ParseOutput {
-    root: Expr,
-    tape: Option<Box<E::JsonTape>>,
+/// `root` is only valid until `tape` is dropped.
+struct ParseOutput<'a> {
+    root: Expr<'a>,
+    tape: Option<Box<E::JsonTape<'a>>>,
     indentation: Indentation,
 }
 
-fn parse_impl(
+/// `contents` is the text of `source`, here and below: the tree borrows the text and can outlive `source`.
+fn parse_impl<'a>(
     source: &bun_ast::Source,
+    contents: &'a [u8],
     log: &bun_ast::Log,
-    arena: &AstArena,
+    arena: &'a AstArena,
     opts: JSONOptions,
     check_len: bool,
-) -> crate::Result<ParseOutput> {
-    parse_impl_in(source, log, arena, opts, check_len, E::TapeAlloc::Global)
+) -> crate::Result<ParseOutput<'a>> {
+    let tape_alloc = E::TapeAlloc::Global;
+    parse_impl_in(source, contents, log, arena, opts, check_len, tape_alloc)
 }
 
-fn parse_impl_in(
+fn parse_impl_in<'a>(
     source: &bun_ast::Source,
+    contents: &'a [u8],
     log: &bun_ast::Log,
-    arena: &AstArena,
+    arena: &'a AstArena,
     opts: JSONOptions,
     check_len: bool,
-    tape_alloc: E::TapeAlloc,
-) -> crate::Result<ParseOutput> {
-    let contents: &[u8] = &source.contents;
-
+    tape_alloc: E::TapeAlloc<'a>,
+) -> crate::Result<ParseOutput<'a>> {
     let mut opts = opts;
     if opts.json_warn_duplicate_keys && source.path.is_node_module() {
         opts.json_warn_duplicate_keys = false;
@@ -114,7 +113,9 @@ fn parse_impl_in(
         return Err(report_index_error(e, source, log));
     }
     let log_mark = (log.errors.get(), log.msgs_len());
-    let result = run_stage2(source, log, arena, &mut sidx, opts, check_len, tape_alloc);
+    let result = run_stage2(
+        source, contents, log, arena, &mut sidx, opts, check_len, tape_alloc,
+    );
 
     let drop_stage2_errors = |log: &bun_ast::Log| {
         log.with_msgs(|msgs| {
@@ -188,16 +189,17 @@ fn parse_impl_in(
     result
 }
 
-fn run_stage2<'s>(
-    source: &'s bun_ast::Source<'s>,
+fn run_stage2<'a>(
+    source: &bun_ast::Source,
+    contents: &'a [u8],
     log: &bun_ast::Log,
-    arena: &AstArena,
-    sidx: &mut StructuralIndex<'s>,
+    arena: &'a AstArena,
+    sidx: &mut StructuralIndex<'a>,
     opts: JSONOptions,
     check_len: bool,
-    tape_alloc: E::TapeAlloc,
-) -> crate::Result<ParseOutput> {
-    let mut parser = Parser::new(source, log, arena, sidx, opts, tape_alloc);
+    tape_alloc: E::TapeAlloc<'a>,
+) -> crate::Result<ParseOutput<'a>> {
+    let mut parser = Parser::new(source, contents, log, arena, sidx, opts, tape_alloc);
     let root = parser.parse_value()?;
     if check_len && !parser.at_trailing_end() {
         return Err(parser.unexpected_here());
@@ -208,7 +210,7 @@ fn run_stage2<'s>(
         root,
         tape,
         indentation: if opts.guess_indentation {
-            guess_indentation(&source.contents)
+            guess_indentation(contents)
         } else {
             Indentation::default()
         },
@@ -313,39 +315,45 @@ pub fn guess_indentation(s: &[u8]) -> Indentation {
 }
 
 /// Parse JSON into the classic `E::Object` / `E::Array` AST, with every string stored as UTF-8.
-pub fn parse_utf8(
-    source: &bun_ast::Source,
+pub fn parse_utf8<'a>(
+    source: &'a bun_ast::Source<'_>,
     log: &bun_ast::Log,
-    bump: &AstArena,
-) -> crate::Result<Expr> {
-    parse_utf8_impl::<false>(source, log, bump)
-}
-
-#[inline]
-pub fn parse_utf8_impl<const CHECK_LEN: bool>(
-    source: &bun_ast::Source,
-    log: &bun_ast::Log,
-    bump: &AstArena,
-) -> crate::Result<Expr> {
+    bump: &'a AstArena,
+) -> crate::Result<Expr<'a>> {
     if source.contents.is_empty() {
         return Ok(empty_object_expr(bump));
     }
-    Ok(parse_classic(source, log, bump, JSON_OPTS, CHECK_LEN)?.root)
+    Ok(parse_classic(source, &source.contents, log, bump, JSON_OPTS, false)?.root)
 }
 
-fn parse_classic(
-    source: &bun_ast::Source,
+/// [`parse_utf8`], with nothing but whitespace after the value.
+pub fn parse_utf8_document<'a>(
+    path: &[u8],
+    contents: &'a [u8],
     log: &bun_ast::Log,
-    bump: &AstArena,
+    bump: &'a AstArena,
+) -> crate::Result<Expr<'a>> {
+    if contents.is_empty() {
+        return Ok(empty_object_expr(bump));
+    }
+    let source = bun_ast::Source::init_path_string(path, contents);
+    Ok(parse_classic(&source, contents, log, bump, JSON_OPTS, true)?.root)
+}
+
+fn parse_classic<'a>(
+    source: &bun_ast::Source,
+    contents: &'a [u8],
+    log: &bun_ast::Log,
+    bump: &'a AstArena,
     opts: JSONOptions,
     check_len: bool,
-) -> crate::Result<ParseOutput> {
+) -> crate::Result<ParseOutput<'a>> {
     let opts = JSONOptions {
         record_value_locs: true,
         ..opts
     };
-    let mut out = parse_impl(source, log, bump, opts, check_len)?;
-    out.root = match materialize_impl(&out.root, source, bump, opts.was_originally_macro) {
+    let mut out = parse_impl(source, contents, log, bump, opts, check_len)?;
+    out.root = match materialize_impl(&out.root, contents, bump, opts.was_originally_macro) {
         Ok(root) => root,
         Err(e) => {
             log.add_error_fmt_opts(
@@ -363,20 +371,22 @@ fn parse_classic(
     Ok(out)
 }
 
-impl ParsedJson<'_> {
-    pub fn root(&self) -> JsonView<'_> {
+impl<'a> ParsedJson<'a> {
+    pub fn root(&self) -> JsonView<'_, '_> {
         JsonView::from_json_value(&self.root, self.root_loc)
     }
 
-    pub fn root_expr(&self, arena: &AstArena) -> Expr {
+    pub fn root_expr<'s>(&'s self, arena: &'s AstArena) -> Expr<'s> {
         Expr::from_json_value(arena, &self.root, self.root_loc)
     }
 
     /// Its strings point into the source text or the tape, and its objects and arrays into the arena.
-    pub fn into_tape(self) -> Option<Box<E::JsonTape>> {
+    pub fn into_tape(self) -> Option<Box<E::JsonTape<'a>>> {
         self.tape
     }
+}
 
+impl ParsedJson<'_> {
     /// Strict JSON.
     pub fn parse_json<'a>(
         source: &'a bun_ast::Source,
@@ -428,20 +438,20 @@ impl ParsedJson<'_> {
 }
 
 /// [`ParsedJson::parse_json`], with the whole document (tape included) allocated in `arena`.
-pub fn parse_json_into_arena(
-    source: &bun_ast::Source,
+pub fn parse_json_into_arena<'a>(
+    source: &'a bun_ast::Source<'_>,
     log: &bun_ast::Log,
-    arena: &AstArena,
-) -> crate::Result<Expr> {
+    arena: &'a AstArena,
+) -> crate::Result<Expr<'a>> {
     parse_to_rows_in(source, log, JSON_OPTS, arena)
 }
 
 /// [`parse_json_into_arena`] for the JSONC dialect (comments, trailing commas).
-pub fn parse_jsonc_into_arena(
-    source: &bun_ast::Source,
+pub fn parse_jsonc_into_arena<'a>(
+    source: &'a bun_ast::Source<'_>,
     log: &bun_ast::Log,
-    arena: &AstArena,
-) -> crate::Result<Expr> {
+    arena: &'a AstArena,
+) -> crate::Result<Expr<'a>> {
     parse_to_rows_in(source, log, TSCONFIG_OPTS, arena)
 }
 
@@ -460,28 +470,26 @@ fn parse_to_rows<'a>(
             unsafe { E::ObjectJSON::new(tape.root_ptr(), 0, 0, true, bun_ast::Loc::EMPTY) },
         );
         return Ok(ParsedJson {
-            root: E::JsonValue::Object(root),
+            root: E::JsonValue::Object(root.into()),
             root_loc: bun_ast::Loc { start: 0 },
             tape: Some(tape),
-            _marker: PhantomData,
         });
     }
-    let out = parse_impl(source, log, arena, opts, check_len)?;
+    let out = parse_impl(source, &source.contents, log, arena, opts, check_len)?;
     Ok(ParsedJson {
         root: to_json_value(out.root.data),
         root_loc: out.root.loc,
         tape: out.tape,
-        _marker: PhantomData,
     })
 }
 
-fn parse_to_rows_in(
-    source: &bun_ast::Source,
+fn parse_to_rows_in<'a>(
+    source: &'a bun_ast::Source<'_>,
     log: &bun_ast::Log,
     opts: JSONOptions,
-    arena: &AstArena,
-) -> crate::Result<Expr> {
-    let tape_alloc = E::TapeAlloc::Arena(core::ptr::NonNull::from(arena.heap()));
+    arena: &'a AstArena,
+) -> crate::Result<Expr<'a>> {
+    let tape_alloc = E::TapeAlloc::Arena(arena.heap());
     if source.contents.is_empty() {
         let tape = arena.alloc(E::JsonTape::empty_in(tape_alloc));
         return Ok(Expr::allocate(
@@ -492,41 +500,58 @@ fn parse_to_rows_in(
             bun_ast::Loc { start: 0 },
         ));
     }
-    Ok(parse_impl_in(source, log, arena, opts, false, tape_alloc)?.root)
+    Ok(parse_impl_in(
+        source,
+        &source.contents,
+        log,
+        arena,
+        opts,
+        false,
+        tape_alloc,
+    )?
+    .root)
 }
 
 /// Parse package.json (comments & trailing commas allowed) into the classic `E::Object` AST.
-pub fn parse_package_json_utf8(
-    source: &bun_ast::Source,
+pub fn parse_package_json_utf8<'a>(
+    source: &'a bun_ast::Source<'_>,
     log: &bun_ast::Log,
-    bump: &AstArena,
-) -> crate::Result<Expr> {
+    bump: &'a AstArena,
+) -> crate::Result<Expr<'a>> {
     if source.contents.is_empty() {
         return Ok(empty_object_expr(bump));
     }
-    Ok(parse_classic(source, log, bump, PACKAGE_JSON_OPTS, false)?.root)
+    Ok(parse_classic(
+        source,
+        &source.contents,
+        log,
+        bump,
+        PACKAGE_JSON_OPTS,
+        false,
+    )?
+    .root)
 }
 
 #[derive(Default)]
-pub struct JsonResult {
-    pub root: Expr,
+pub struct JsonResult<'a> {
+    pub root: Expr<'a>,
     pub indentation: Indentation,
 }
 
 /// package.json with runtime options, into the classic AST plus the document's guessed indentation.
-pub fn parse_package_json_utf8_with_opts(
+pub fn parse_package_json_utf8_with_opts<'a>(
     opts: JSONOptions,
-    source: &bun_ast::Source,
+    source: &'a bun_ast::Source<'_>,
     log: &bun_ast::Log,
-    bump: &AstArena,
-) -> crate::Result<JsonResult> {
+    bump: &'a AstArena,
+) -> crate::Result<JsonResult<'a>> {
     if source.contents.is_empty() {
         return Ok(JsonResult {
             root: empty_object_expr(bump),
             ..Default::default()
         });
     }
-    let out = parse_classic(source, log, bump, opts, false)?;
+    let out = parse_classic(source, &source.contents, log, bump, opts, false)?;
     Ok(JsonResult {
         root: out.root,
         indentation: out.indentation,
@@ -534,34 +559,38 @@ pub fn parse_package_json_utf8_with_opts(
 }
 
 /// The strings of the result are in `bump`: `json` belongs to an object that the next macro can free.
-pub fn parse_for_macro(json: &[u8], log: &bun_ast::Log, bump: &AstArena) -> crate::Result<Expr> {
+pub fn parse_for_macro<'a>(
+    json: &[u8],
+    log: &bun_ast::Log,
+    bump: &'a AstArena,
+) -> crate::Result<Expr<'a>> {
     if json.is_empty() {
         return Ok(empty_object_expr(bump));
     }
-    let source = bun_ast::Source::init_path_string(b"fetch.json", bump.alloc_slice_copy(json));
-    Ok(parse_classic(&source, log, bump, MACRO_JSON_OPTS, false)?.root)
+    let contents: &[u8] = bump.alloc_slice_copy(json);
+    let source = bun_ast::Source::init_path_string(b"fetch.json", contents);
+    Ok(parse_classic(&source, contents, log, bump, MACRO_JSON_OPTS, false)?.root)
 }
 
 /// `tsconfig.json` / `.jsonc` (comments, trailing commas) into the classic `E::Object` AST.
 #[inline]
-pub fn parse_ts_config(
-    source: &bun_ast::Source,
+pub fn parse_ts_config<'a>(
+    source: &'a bun_ast::Source<'_>,
     log: &bun_ast::Log,
-    bump: &AstArena,
-) -> crate::Result<Expr> {
+    bump: &'a AstArena,
+) -> crate::Result<Expr<'a>> {
     if source.contents.is_empty() {
         return Ok(empty_object_expr(bump));
     }
-    Ok(parse_classic(source, log, bump, TSCONFIG_OPTS, false)?.root)
+    Ok(parse_classic(source, &source.contents, log, bump, TSCONFIG_OPTS, false)?.root)
 }
 
 /// `.env` / `--define` values: JSON, keywords, or an implicitly-quoted string.
-pub fn parse_env_json(
-    source: &bun_ast::Source,
+pub fn parse_env_json<'a>(
+    contents: &'a [u8],
     log: &bun_ast::Log,
-    bump: &AstArena,
-) -> crate::Result<Expr> {
-    let contents: &[u8] = &source.contents;
+    bump: &'a AstArena,
+) -> crate::Result<Expr<'a>> {
     if contents.is_empty() {
         return Ok(empty_object_expr(bump));
     }
@@ -577,15 +606,18 @@ pub fn parse_env_json(
         }
         let rewritten: &[u8] = bump.alloc_slice_copy(&unescaped);
         let rw_source = bun_ast::Source::init_path_string("", rewritten);
-        return Ok(parse_classic(&rw_source, log, bump, DOTENV_JSON_OPTS, false)?.root);
+        return Ok(parse_classic(&rw_source, rewritten, log, bump, DOTENV_JSON_OPTS, false)?.root);
     }
 
+    let mut source = bun_ast::Source::init_path_string(b"defines.json", contents);
+    source.path.namespace = b"internal";
+    let source = &source;
     match contents[0] {
         b'{' | b'[' | b'0'..=b'9' | b'"' | b'\'' => {
-            Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
+            Ok(parse_classic(source, contents, log, bump, DOTENV_JSON_OPTS, false)?.root)
         }
         b'-' | b'.' if leads_a_number(contents) => {
-            Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
+            Ok(parse_classic(source, contents, log, bump, DOTENV_JSON_OPTS, false)?.root)
         }
         _ => {
             let word_len = contents
@@ -619,7 +651,7 @@ pub fn parse_env_json(
                 }
                 _ => {}
             }
-            parse_auto_quoted_string(source, log, bump)
+            parse_auto_quoted_string(source, contents, log, bump)
         }
     }
 }
@@ -640,12 +672,12 @@ fn leads_a_number(contents: &[u8]) -> bool {
     }
 }
 
-fn parse_auto_quoted_string(
+fn parse_auto_quoted_string<'a>(
     source: &bun_ast::Source,
+    contents: &'a [u8],
     log: &bun_ast::Log,
-    bump: &AstArena,
-) -> crate::Result<Expr> {
-    let contents: &[u8] = &source.contents;
+    bump: &'a AstArena,
+) -> crate::Result<Expr<'a>> {
     let loc = bun_ast::Loc { start: 0 };
 
     let mut needs_decode = false;
@@ -953,13 +985,13 @@ fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
 }
 
 /// Deep-convert an immutable-AST document into the classic `E::Object` / `E::Array` tree.
-pub fn materialize(
-    root: &Expr,
-    source: &bun_ast::Source,
+pub fn materialize<'a>(
+    root: &Expr<'a>,
+    source: &'a bun_ast::Source<'_>,
     log: &bun_ast::Log,
-    bump: &AstArena,
-) -> crate::Result<Expr> {
-    materialize_impl(root, source, bump, false).inspect_err(|_| {
+    bump: &'a AstArena,
+) -> crate::Result<Expr<'a>> {
+    materialize_impl(root, &source.contents, bump, false).inspect_err(|_| {
         log.add_error_fmt_opts(
             format_args!("Document is too deeply nested"),
             bun_ast::AddErrorOptions {
@@ -971,14 +1003,14 @@ pub fn materialize(
     })
 }
 
-fn materialize_impl(
-    root: &Expr,
-    source: &bun_ast::Source,
-    bump: &AstArena,
+fn materialize_impl<'a>(
+    root: &Expr<'a>,
+    contents: &'a [u8],
+    bump: &'a AstArena,
     was_originally_macro: bool,
-) -> crate::Result<Expr> {
+) -> crate::Result<Expr<'a>> {
     let m = Materializer {
-        contents: &source.contents,
+        contents,
         bump,
         was_originally_macro,
         stack_check: bun_core::StackCheck::init(),
@@ -999,8 +1031,8 @@ struct Materializer<'a> {
     overflowed: core::cell::Cell<bool>,
 }
 
-impl Materializer<'_> {
-    fn expr(&self, e: &Expr, loc: bun_ast::Loc) -> Expr {
+impl<'a> Materializer<'a> {
+    fn expr(&self, e: &Expr<'a>, loc: bun_ast::Loc) -> Expr<'a> {
         match &e.data {
             js_ast::expr::Data::EObjectJSON(o) => {
                 Expr::allocate(self.bump, self.object(o.get()), loc)
@@ -1017,7 +1049,7 @@ impl Materializer<'_> {
         }
     }
 
-    fn object(&self, o: &E::ObjectJSON) -> E::Object {
+    fn object(&self, o: &E::ObjectJSON<'a>) -> E::Object<'a> {
         if !self.stack_check.is_safe_to_recurse() {
             self.overflowed.set(true);
             return E::Object::default();
@@ -1059,7 +1091,7 @@ impl Materializer<'_> {
         }
     }
 
-    fn array(&self, a: &E::ArrayJSON, loc: bun_ast::Loc) -> E::Array {
+    fn array(&self, a: &E::ArrayJSON<'a>, loc: bun_ast::Loc) -> E::Array<'a> {
         if !self.stack_check.is_safe_to_recurse() {
             self.overflowed.set(true);
             return E::Array::default();
@@ -1092,7 +1124,7 @@ impl Materializer<'_> {
         }
     }
 
-    fn json_value(&self, value: &E::JsonValue, loc: bun_ast::Loc) -> Expr {
+    fn json_value(&self, value: &E::JsonValue<'a>, loc: bun_ast::Loc) -> Expr<'a> {
         match value {
             E::JsonValue::Object(o) => Expr::allocate(self.bump, self.object(o.get()), loc),
             E::JsonValue::Array(a) => Expr::allocate(self.bump, self.array(a.get(), loc), loc),
@@ -1103,7 +1135,7 @@ impl Materializer<'_> {
         }
     }
 
-    fn rehome(&self, bytes: E::Str) -> E::Str {
+    fn rehome(&self, bytes: E::Str<'a>) -> E::Str<'a> {
         let source = self.contents.as_ptr_range();
         let p = bytes.slice().as_ptr();
         if source.contains(&p) {
@@ -1118,36 +1150,45 @@ mod tests {
     use super::*;
     use bun_ast::expr::Data;
 
+    /// `'static` stands for the life of the value and of the text.
     struct Parsed {
-        root: Option<Expr>,
+        root: Option<Expr<'static>>,
         errors: usize,
         warnings: usize,
         first_msg: String,
         _bump: AstArena,
-        _tape: Option<Box<E::JsonTape>>,
+        _tape: Option<Box<E::JsonTape<'static>>>,
     }
 
     fn run(contents: &[u8], which: Which) -> Parsed {
         let log = bun_ast::Log::init();
-        let bump = AstArena::new();
+        let arena = AstArena::new();
         let source = bun_ast::Source::init_path_string("fixture.json", contents);
+        // SAFETY: `root` points into the chunks of `arena`, into the tape and into `contents`. The
+        // result keeps the first two, and the tests that read `root` keep the last.
+        let (bump, source) = unsafe {
+            core::mem::transmute::<
+                (&AstArena, &bun_ast::Source<'_>),
+                (&'static AstArena, &'static bun_ast::Source<'static>),
+            >((&arena, &source))
+        };
         let mut tape = None;
-        let mut keep_tape = |p: ParsedJson<'_>| {
-            let root = p.root_expr(&bump);
+        let mut keep_tape = |p: ParsedJson<'static>| {
+            let root = Expr::from_json_value(bump, &p.root, p.root_loc);
             tape = p.into_tape();
             root
         };
         let r = match which {
-            Which::Utf8 => parse_utf8(&source, &log, &bump),
-            Which::TsConfig => parse_ts_config(&source, &log, &bump),
-            Which::Env => parse_env_json(&source, &log, &bump),
-            Which::PackageJson => parse_package_json_utf8(&source, &log, &bump),
-            Which::Jsonc => ParsedJson::parse_jsonc(&source, &log, &bump).map(&mut keep_tape),
+            Which::Utf8 => parse_utf8(source, &log, bump),
+            Which::TsConfig => parse_ts_config(source, &log, bump),
+            Which::Env => parse_env_json(&source.contents, &log, bump),
+            Which::PackageJson => parse_package_json_utf8(source, &log, bump),
+            Which::Jsonc => ParsedJson::parse_jsonc(source, &log, bump).map(&mut keep_tape),
             Which::JsoncDocument => {
-                ParsedJson::parse_jsonc_document(&source, &log, &bump).map(&mut keep_tape)
+                ParsedJson::parse_jsonc_document(source, &log, bump).map(&mut keep_tape)
             }
             Which::Immutable => {
-                parse_to_rows(&source, &log, &bump, JSONOptions::DEFAULT, false).map(&mut keep_tape)
+                parse_to_rows(source, &log, bump, JSONOptions::DEFAULT, false).map(&mut keep_tape)
             }
         };
         let first_msg = log
@@ -1161,7 +1202,7 @@ mod tests {
             errors: log.errors.get() as usize,
             warnings: log.warnings.get() as usize,
             first_msg,
-            _bump: bump,
+            _bump: arena,
             _tape: tape,
         }
     }
@@ -1802,7 +1843,10 @@ mod tests {
                 let source = bun_ast::Source::init_path_string("fixture.json", doc.as_bytes());
                 let bump = AstArena::new();
                 let mlog = bun_ast::Log::init();
-                let root = materialize(p.root.as_ref().unwrap(), &source, &mlog, &bump).unwrap();
+                // SAFETY: `materialize` does not write to the document.
+                let rows =
+                    unsafe { core::mem::transmute::<Expr<'static>, Expr<'_>>(p.root.unwrap()) };
+                let root = materialize(&rows, &source, &mlog, &bump).unwrap();
                 (root.loc, canon_full(&root))
             };
             assert_eq!(full, materialized, "materialized tree differs for {doc:?}");
@@ -1881,7 +1925,7 @@ mod tests {
             "empty_arr": []
         }"#;
 
-        fn describe(e: JsonView<'_>, bump: &AstArena, out: &mut std::string::String) {
+        fn describe(e: JsonView<'_, '_>, bump: &AstArena, out: &mut std::string::String) {
             use std::fmt::Write;
             match e.tag_name() {
                 "null" => out.push_str("null"),

@@ -5,14 +5,11 @@ use crate::base::Ref;
 use crate::g as G;
 use crate::{AstBox, ImportItemStatus};
 
-pub struct Symbol {
+pub struct Symbol<'a> {
     /// This is the name that came from the parser. Printed names may be renamed
     /// during minification or to avoid name collisions. Do not use the original
     /// name during printing.
-    // Arena-owned slice (parser/AST crate). `StoreStr` is the lifetime-erased
-    // `[u8]` wrapper used uniformly across AST string fields; it derefs to
-    // `[u8]` and is valid until the owning arena resets.
-    pub original_name: crate::StoreStr,
+    pub original_name: crate::StoreStr<'a>,
 
     /// This is used for symbols that represent items in the import clause of an
     /// ES6 import statement. These should always be referenced by EImportIdentifier
@@ -28,7 +25,7 @@ pub struct Symbol {
     ///
     /// Boxed: this is `None` for the overwhelming majority of symbols, so we
     /// pay 8 bytes inline instead of ~32.
-    pub namespace_alias: Option<AstBox<G::NamespaceAlias>>,
+    pub namespace_alias: Option<AstBox<'a, G::NamespaceAlias<'a>>>,
 
     /// Used by the parser for single pass parsing.
     ///
@@ -133,7 +130,7 @@ bitflags::bitflags! {
 
 macro_rules! symbol_flag_accessors {
     ($($getter:ident, $setter:ident => $flag:ident;)*) => {
-        impl Symbol {
+        impl Symbol<'_> {
             $(
                 #[inline]
                 pub fn $getter(&self) -> bool {
@@ -164,7 +161,7 @@ const _: () = assert!(core::mem::size_of::<Symbol>() <= 48);
 const INVALID_CHUNK_INDEX: u32 = u32::MAX;
 pub const INVALID_NESTED_SCOPE_SLOT: u32 = u32::MAX;
 
-impl Default for Symbol {
+impl Default for Symbol<'_> {
     fn default() -> Self {
         Self {
             original_name: crate::StoreStr::EMPTY,
@@ -192,7 +189,7 @@ pub enum SlotNamespace {
 // Inherent associated types are nightly-only; expose as a free alias.
 pub(crate) type SlotNamespaceCountsArray = enum_map::EnumMap<SlotNamespace, u32>;
 
-impl Symbol {
+impl Symbol<'_> {
     /// This is for generating cross-chunk imports and exports for code splitting.
     #[inline]
     pub fn chunk_index(&self) -> Option<u32> {
@@ -407,12 +404,12 @@ impl Use {
     }
 }
 
-pub type List<'a> = bun_alloc::ArenaVec<'a, Symbol>;
+pub type List<'a> = bun_alloc::ArenaVec<'a, Symbol<'a>>;
 /// `Map.symbols_for_source` storage. Decoupled from [`List`] (which is
 /// arena-backed): the linker clones every per-source symbol table here so it
 /// can mutate them independently of the parsed `BundledAst.symbols`, and those
 /// clones are owned for the link lifetime — global allocator, no arena tag.
-pub type NestedList = Vec<Vec<Symbol>>;
+pub type NestedList<'a> = Vec<Vec<Symbol<'a>>>;
 
 /// Like [`Map::follow`], including path compression, but for the parser's flat per-file symbol table.
 pub fn follow_symbols(symbols: &[Symbol], ref_: Ref) -> Ref {
@@ -432,7 +429,7 @@ pub fn follow_symbols(symbols: &[Symbol], ref_: Ref) -> Ref {
 }
 
 #[derive(Default)]
-pub struct Map {
+pub struct Map<'a> {
     // This could be represented as a "map[Ref]Symbol" but a two-level array was
     // more efficient in profiles. This appears to be because it doesn't involve
     // a hash. This representation also makes it trivial to quickly merge symbol
@@ -440,10 +437,10 @@ pub struct Map {
     // single inner array, so you can join the maps together by just make a
     // single outer array containing all of the inner arrays. See the comment on
     // "Ref" for more detail.
-    pub symbols_for_source: NestedList,
+    pub symbols_for_source: NestedList<'a>,
 }
 
-impl Map {
+impl<'a> Map<'a> {
     // Debug-only dump of the symbol table.
     #[cfg(debug_assertions)]
     pub fn dump(&self) {
@@ -459,8 +456,6 @@ impl Map {
                         crate::base::RefTag::Symbol,
                     )
                 };
-                // SAFETY: original_name is an arena-owned slice valid for the lifetime of
-                // symbols_for_source (the parser/AST arena outlives this Map).
                 let name = symbol.original_name.slice();
                 bun_core::prettyln!(
                     " name: {}\n  tag: {}\n       {}",
@@ -485,7 +480,7 @@ impl Map {
     pub fn assign_chunk_index(&self, decls_: &crate::DeclaredSymbolList, chunk_index: u32) {
         use crate::DeclaredSymbol;
         struct Iterator<'a> {
-            map: &'a Map,
+            map: &'a Map<'a>,
             chunk_index: u32,
         }
 
@@ -560,7 +555,7 @@ impl Map {
         new
     }
 
-    pub fn get_const(&self, ref_: Ref) -> Option<&Symbol> {
+    pub fn get_const(&self, ref_: Ref) -> Option<&Symbol<'a>> {
         if ref_.is_source_contents_slice() {
             return None;
         }
@@ -573,17 +568,17 @@ impl Map {
     // Takes ownership of `list` and boxes it into a one-element NestedList.
     // PERF: one extra allocation — profile if needed (single caller is the
     // printer one-shot, cold).
-    pub fn init_with_one_list(list: Vec<Symbol>) -> Map {
+    pub fn init_with_one_list(list: Vec<Symbol<'a>>) -> Self {
         Self::init_list(vec![list])
     }
 
-    pub fn init_list(list: NestedList) -> Map {
+    pub fn init_list(list: NestedList<'a>) -> Self {
         Map {
             symbols_for_source: list,
         }
     }
 
-    pub fn get_mut(&mut self, ref_: Ref) -> Option<&mut Symbol> {
+    pub fn get_mut(&mut self, ref_: Ref) -> Option<&mut Symbol<'a>> {
         if Ref::is_source_index_null(ref_.source_index()) || ref_.is_source_contents_slice() {
             return None;
         }
@@ -693,7 +688,7 @@ impl Map {
     }
 }
 
-impl Symbol {
+impl Symbol<'_> {
     #[inline]
     pub fn is_hoisted(&self) -> bool {
         Symbol::is_kind_hoisted(self.kind)

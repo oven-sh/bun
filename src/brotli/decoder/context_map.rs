@@ -89,9 +89,7 @@ impl ContextMap {
         let tree = forest.tree(forest.len().wrapping_sub(1))?;
         while let Some(slot) = self.trees.get_mut(self.next) {
             // A code and its extra bits.
-            if reader.bits.count() < 32 {
-                reader.refill();
-            }
+            reader.refill_for(32);
             let mut bits = reader.bits;
             let code = read_symbol(tree, &mut bits)?;
             if code > self.max_run_length_code {

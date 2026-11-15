@@ -1,13 +1,11 @@
 //! The data of a compressed meta-block (RFC 7932 section 9.3).
 
-use core::ops::ControlFlow;
-
 use super::bit_reader::{BitReader, FastReader, REFILLED};
 use super::huffman::{
     Forest, Ranges, RangesRoot, Root, Symbol, SymbolLists, SymbolTree, peek_symbol,
 };
 use super::transform::Transform;
-use super::{Blocks, Category, Decoder, Resume, State, Stop, ring_buffer};
+use super::{Blocks, Decoder, Resume, State, Stop, ring_buffer};
 use crate::DecodeError;
 use crate::context::{
     ContextLut, ContextMode, DISTANCE_CONTEXTS, LITERAL_CONTEXTS, distance_context,
@@ -16,7 +14,7 @@ use crate::dictionary;
 use crate::format::{
     COMMAND_SYMBOLS, COPY_LENGTH_CODES, CommandCodes, DISTANCE_SHORT_CODES, DistanceParams,
     FIRST_COMMAND_WITH_DISTANCE, INITIAL_DISTANCES, INSERT_LENGTH_CODES, MAX_ALLOWED_DISTANCE,
-    MAX_CODE_LENGTH, SHORT_CODE_BASES, SHORT_CODE_DELTAS,
+    MAX_BLOCK_TYPES, MAX_CODE_LENGTH, SHORT_CODE_BASES, SHORT_CODE_DELTAS,
 };
 
 /// In place of a distance context.
@@ -100,7 +98,7 @@ fn bits_in(bits: u64, start: u32, end: u32) -> u32 {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct RecentDistances {
+struct RecentDistances {
     distances: [u32; 4],
     last: u32,
 }
@@ -132,10 +130,9 @@ impl RecentDistances {
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub(super) enum Phase {
+enum Phase {
     #[default]
-    InsertLength,
-    CopyLength,
+    Lengths,
     Literals,
     Distance,
 }
@@ -143,32 +140,20 @@ pub(super) enum Phase {
 /// How far the current command got.
 #[derive(Clone, Copy, Default)]
 pub(super) struct Command {
-    pub(super) phase: Phase,
-    ranges: Ranges,
-    insert_length: usize,
-    copy_length: usize,
-}
-
-/// What there is to choose from for a block.
-struct Trees<'a> {
-    symbols: &'a Forest<Symbol>,
-    ranges: &'a Forest<Ranges>,
-    first: [usize; 3],
-    literal_map: &'a [u8],
-    distance_map: &'a [u8],
-    context_modes: &'a [ContextMode],
+    phase: Phase,
+    distance_context: u32,
+    pub(super) unwritten_literals: u32,
+    copy_length: u32,
 }
 
 struct Tables<'a> {
-    trees: Trees<'a>,
-    ranges: &'a [Ranges],
-    command_root: &'a RangesRoot,
-    literal_trees: [&'a SymbolTree; LITERAL_CONTEXTS],
+    symbols: &'a Forest<Symbol>,
+    ranges: &'a Forest<Ranges>,
+    first_trees: [usize; 3],
     literal_root: Root,
-    /// Only the first of `literal_trees` counts.
-    ignores_context: bool,
-    context_lut: &'static ContextLut,
-    distance_roots: [&'a RangesRoot; DISTANCE_CONTEXTS],
+    literal_map: &'a [u8],
+    distance_map: &'a [u8],
+    context_modes: &'a [Option<ContextMode>; MAX_BLOCK_TYPES],
     /// What the extra bits of a distance are multiplied by.
     distance_step: u32,
     ring_size: usize,
@@ -179,195 +164,261 @@ struct Tables<'a> {
     meta_block_end: usize,
 }
 
-impl Tables<'_> {
-    fn select(&mut self, category: Category, block_type: usize) -> Result<(), Stop> {
-        let (trees, [literals, commands, distances]) = (&self.trees, self.trees.first);
-        match category {
-            Category::Literal => {
-                let map = slice_for::<LITERAL_CONTEXTS>(trees.literal_map, block_type)?;
-                self.ignores_context = *map == [map[0]; LITERAL_CONTEXTS];
-                let used = if self.ignores_context { 1 } else { map.len() };
-                for (tree, &index) in self.literal_trees.iter_mut().zip(map).take(used) {
-                    *tree = trees.symbols.tree(literals + usize::from(index))?;
-                }
-                let mode = trees.context_modes.get(block_type);
-                self.context_lut = mode.ok_or(Stop::UNREACHABLE)?.lut();
-            }
-            Category::Command => self.command_root = trees.ranges.tree(commands + block_type)?,
-            Category::Distance => {
-                let map = slice_for::<DISTANCE_CONTEXTS>(trees.distance_map, block_type)?;
-                for (root, &index) in self.distance_roots.iter_mut().zip(map) {
-                    *root = trees.ranges.tree(distances + usize::from(index))?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Returns the length of the next block.
-    #[inline(never)]
-    fn switch(
-        &mut self,
-        category: Category,
-        blocks: &mut [Blocks; 3],
-        reader: &mut BitReader<'_>,
-    ) -> Result<u32, Stop> {
-        let blocks = category.of(blocks);
-        blocks.switch(self.trees.symbols, reader)?;
-        self.select(category, blocks.current())?;
-        Ok(blocks.remaining)
-    }
-
-    /// And the length of its code.
+impl<'a> Tables<'a> {
     #[inline(always)]
-    fn peek_literal<const IN_CONTEXT: bool>(
-        &self,
-        [last, second_last]: [u8; 2],
-        bits: u64,
-    ) -> Option<(u8, u32)> {
-        let context = self.context_lut.context(last, second_last);
-        let tree = self
-            .literal_trees
-            .get(if IN_CONTEXT { context } else { 0 })?;
-        Some(peek_symbol(tree, self.literal_root, bits).literal())
+    fn literal_contexts(&self, block_type: usize) -> Result<LiteralContexts<'a>, Stop> {
+        let mode = self.context_modes.get(block_type);
+        let map = slice_for(self.literal_map, block_type)?;
+        Ok(LiteralContexts {
+            block_type,
+            lut: mode.ok_or(Stop::UNREACHABLE)?.map(ContextMode::lut),
+            map,
+            first: self.literal_tree(map[0])?,
+        })
+    }
+
+    #[inline(always)]
+    fn literal_tree(&self, index: u8) -> Result<&'a SymbolTree, Stop> {
+        self.symbols.tree(self.first_trees[0] + usize::from(index))
+    }
+
+    #[inline(always)]
+    fn command_root(&self, block_type: usize) -> Result<&'a RangesRoot, Stop> {
+        self.ranges.tree(self.first_trees[1] + block_type)
+    }
+
+    #[inline(always)]
+    fn distance_root(&self, index: u8) -> Result<&'a RangesRoot, Stop> {
+        self.ranges.tree(self.first_trees[2] + usize::from(index))
+    }
+
+    /// Where neither the ring nor the meta-block gets in the way.
+    #[inline(always)]
+    fn clear_end(&self) -> usize {
+        (self.ring_limit.min(self.max_backward_distance)).min(self.meta_block_end)
     }
 }
 
-struct Cursor<'a, 'b> {
-    reader: BitReader<'a>,
-    command: Command,
-    blocks: &'b mut [Blocks; 3],
-    block_remaining: [u32; 3],
-    position: usize,
-    recent: RecentDistances,
+#[derive(Clone, Copy)]
+struct LiteralContexts<'a> {
+    block_type: usize,
+    /// `None` if all of them have the same tree.
+    lut: Option<&'static ContextLut>,
+    map: &'a [u8; LITERAL_CONTEXTS],
+    first: &'a SymbolTree,
 }
 
-impl Command {
-    pub(super) fn unwritten_literals(&self) -> usize {
-        match self.phase {
-            Phase::Literals => self.insert_length,
-            _ => 0,
+trait LiteralTrees {
+    const IN_CONTEXT: bool;
+    fn after(&self, last: u8, second_last: u8) -> &SymbolTree;
+}
+
+impl LiteralTrees for SymbolTree {
+    const IN_CONTEXT: bool = false;
+
+    #[inline(always)]
+    fn after(&self, _: u8, _: u8) -> &SymbolTree {
+        self
+    }
+}
+
+/// Looked up in advance, which only pays for many literals.
+struct TreesByContext<'a> {
+    block_type: usize,
+    lut: &'static ContextLut,
+    trees: [&'a SymbolTree; LITERAL_CONTEXTS],
+}
+
+impl LiteralTrees for TreesByContext<'_> {
+    const IN_CONTEXT: bool = true;
+
+    #[inline(always)]
+    #[allow(clippy::indexing_slicing)] // Reduced to the size of the table.
+    fn after(&self, last: u8, second_last: u8) -> &SymbolTree {
+        self.trees[self.lut.context(last, second_last) % LITERAL_CONTEXTS]
+    }
+}
+
+impl<'a> TreesByContext<'a> {
+    #[inline(never)]
+    fn select<'b>(
+        selected: &'b mut Option<Self>,
+        tables: &Tables<'a>,
+        contexts: &LiteralContexts<'a>,
+        lut: &'static ContextLut,
+    ) -> Result<&'b Self, Stop> {
+        selected.take_if(|trees| trees.block_type != contexts.block_type);
+        match selected {
+            Some(trees) => Ok(trees),
+            none => {
+                let selected = none.insert(Self {
+                    block_type: contexts.block_type,
+                    lut,
+                    trees: [contexts.first; _],
+                });
+                for (tree, &index) in selected.trees.iter_mut().zip(contexts.map) {
+                    *tree = tables.literal_tree(index)?;
+                }
+                Ok(selected)
+            }
         }
     }
+}
+
+/// What commands change, other than the ring.
+pub(super) struct Cursor {
+    pub(super) command: Command,
+    pub(super) blocks: [Blocks; 3],
+    recent: RecentDistances,
+    /// That of the ring, while commands are decoded.
+    position: usize,
+}
+
+impl Default for Cursor {
+    fn default() -> Self {
+        Self {
+            command: Command::default(),
+            blocks: [Blocks::SINGLE; 3],
+            recent: RecentDistances::default(),
+            position: 0,
+        }
+    }
+}
+
+/// What it takes for the fast loops to make up for getting ready.
+const MANY_BYTES: usize = 32;
+/// The same for [`Cursor::work_left`].
+const MUCH_WORK: u32 = 32;
+/// Until the fast loop gets another try, however often it did not get far.
+const MAX_CAREFUL_COMMANDS: u32 = 64;
+
+#[inline(always)]
+fn is_clear(tables: &Tables<'_>, reader: &BitReader<'_>, position: usize) -> bool {
+    reader.input_len() >= MANY_BYTES
+        && (2..tables.clear_end().saturating_sub(MANY_BYTES)).contains(&position)
 }
 
 impl Decoder {
     #[inline(never)]
     pub(super) fn decode_commands(&mut self, reader: &mut BitReader<'_>) -> Result<State, Stop> {
-        let [first_literal_tree, ..] = self.first_trees;
-        let any_root = self.ranges.tree(0)?;
-        let mut tables = Tables {
-            trees: Trees {
-                symbols: &self.symbols,
-                ranges: &self.ranges,
-                first: self.first_trees,
-                literal_map: &self.literal_map.trees,
-                distance_map: &self.distance_map.trees,
-                context_modes: &self.context_modes,
-            },
-            ranges: self.ranges.entries(),
-            command_root: any_root,
-            literal_trees: [self.symbols.tree(first_literal_tree)?; LITERAL_CONTEXTS],
+        let tables = Tables {
+            symbols: &self.symbols,
+            ranges: &self.ranges,
+            first_trees: self.first_trees,
             literal_root: self.literal_root,
-            ignores_context: true,
-            context_lut: ContextMode::Lsb6.lut(),
-            distance_roots: [any_root; DISTANCE_CONTEXTS],
+            literal_map: &self.literal_map.trees,
+            distance_map: &self.distance_map.trees,
+            context_modes: &self.context_modes,
             distance_step: 1 << self.distance_params.postfix_bits,
             ring_size: self.ring.size(),
             ring_limit: self.ring.limit(),
             earlier_laps: self.ring.earlier_laps(),
             max_backward_distance: self.max_backward_distance,
             dictionary: &self.dictionary,
-            meta_block_end: (self.ring.position + self.command.unwritten_literals())
+            meta_block_end: (self.ring.position + self.cursor.command.unwritten_literals as usize)
                 .wrapping_add_signed(self.remaining),
         };
-        for category in [Category::Literal, Category::Command, Category::Distance] {
-            tables.select(category, category.of(&mut self.blocks).current())?;
-        }
-        let mut cursor = Cursor {
-            reader: *reader,
-            command: self.command,
-            block_remaining: self.blocks.map(|blocks| blocks.remaining),
-            blocks: &mut self.blocks,
-            position: self.ring.position,
-            recent: self.recent_distances,
-        };
+        let cursor = &mut self.cursor;
+        cursor.position = self.ring.position;
         let ring = self.ring.bytes_mut();
+        let mut trees = None;
+        let mut careful_commands = 1;
+        let mut is_fast =
+            cursor.command.phase == Phase::Lengths && is_clear(&tables, reader, cursor.position);
         let next = loop {
-            let stopped = match (cursor.command.phase, tables.ignores_context) {
-                (Phase::InsertLength, true) => run_fast::<false>(&tables, &mut cursor, ring),
-                (Phase::InsertLength, false) => run_fast::<true>(&tables, &mut cursor, ring),
-                _ => None,
+            let stopped = if is_fast {
+                let before = cursor.work_left();
+                let stopped = run_fast_in_block(&tables, &mut trees, cursor, reader, ring);
+                careful_commands = match before - cursor.work_left() {
+                    ..MUCH_WORK => (2 * careful_commands).min(MAX_CAREFUL_COMMANDS),
+                    _ => 1,
+                };
+                stopped.unwrap_or_else(|stop| Some(Err(stop)))
+            } else {
+                run_carefully(&tables, &mut trees, careful_commands, cursor, reader, ring)
             };
-            if let Some(next) = stopped.or_else(|| run_carefully(&mut tables, &mut cursor, ring)) {
+            if let Some(next) = stopped {
                 break next;
             }
+            is_fast = !is_fast;
         };
-        *reader = cursor.reader;
-        self.command = cursor.command;
         self.ring.position = cursor.position;
         let unwritten = match next {
             Ok(State::Copy { length, .. } | State::CopyFromDictionary { length, .. }) => length,
-            _ => cursor.command.unwritten_literals(),
+            _ => cursor.command.unwritten_literals as usize,
         };
         self.remaining = tables.meta_block_end as isize - (cursor.position + unwritten) as isize;
-        self.recent_distances = cursor.recent;
-        for (blocks, remaining) in cursor.blocks.iter_mut().zip(cursor.block_remaining) {
-            blocks.remaining = remaining;
-        }
         next
     }
 }
 
+#[inline(always)]
 fn slice_for<const N: usize>(map: &[u8], block_type: usize) -> Result<&[u8; N], Stop> {
     map.as_chunks().0.get(block_type).ok_or(Stop::UNREACHABLE)
 }
 
-/// `None` if decoding goes on in the same blocks.
+/// `None` if decoding goes on.
 type Stopped = Option<Result<State, Stop>>;
+
+#[inline(always)]
+fn run_fast_in_block<'a>(
+    tables: &Tables<'a>,
+    trees: &mut Option<TreesByContext<'a>>,
+    cursor: &mut Cursor,
+    reader: &mut BitReader<'_>,
+    ring: &mut [u8],
+) -> Result<Stopped, Stop> {
+    let contexts = tables.literal_contexts(cursor.blocks[0].current())?;
+    Ok(match contexts.lut {
+        None => run_fast(tables, contexts.first, cursor, reader, ring),
+        Some(lut) => {
+            let trees = TreesByContext::select(trees, tables, &contexts, lut)?;
+            run_fast(tables, trees, cursor, reader, ring)
+        }
+    })
+}
 
 /// Decodes the commands that are clear of the ends of the input, the blocks, the meta-block and the ring.
 #[inline(never)]
-fn run_fast<const IN_CONTEXT: bool>(
+fn run_fast(
     tables: &Tables<'_>,
-    cursor: &mut Cursor<'_, '_>,
+    trees: &impl LiteralTrees,
+    cursor: &mut Cursor,
+    whole_input: &mut BitReader<'_>,
     whole_ring: &mut [u8],
 ) -> Stopped {
     /// Looking a symbol up does not wait for a refill, so each step leaves enough bits for that.
     const MAX_STEP: u32 = REFILLED - MAX_CODE_LENGTH as u32;
 
-    let limit = (tables.ring_limit.min(tables.max_backward_distance)).min(tables.meta_block_end);
-    let limit = limit as u32;
-    let mut reader = cursor.reader.begin_fast()?;
-    if cursor.position < 2 || !reader.refill() {
-        return None;
-    }
+    let [literals, commands, distances] = &mut cursor.blocks;
+    let command_root = tables.command_root(commands.current()).ok()?;
+    let [a, b, c, d] = *slice_for(tables.distance_map, distances.current()).ok()?;
+    let root = |index| tables.distance_root(index).ok();
+    let distance_roots = [root(a)?, root(b)?, root(c)?, root(d)?];
+    let all_ranges = tables.ranges.entries();
+    let limit = tables.clear_end() as u32;
+    let mut reader = whole_input.begin_fast()?;
     let mut position = cursor.position as u32;
-    let [mut literals_left, commands_left, distances_left] = cursor.block_remaining;
-    // One countdown for both. A command that reads no distance gives that one back.
-    let mut left = commands_left.min(distances_left);
-    cursor.block_remaining = [0, commands_left - left, distances_left - left];
-    let distance_roots = tables.distance_roots;
+    let mut literals_left = literals.remaining;
+    let mut left = commands.remaining;
 
     let stopped = loop {
         let Some(ring) = whole_ring.get_mut(..limit as usize + ring_buffer::SLACK) else {
             break None;
         };
-        let mut command = in_root(tables.command_root, reader.bits.peek());
+        let mut command = in_root(command_root, reader.bits.peek());
         if left == 0 || !reader.refill() {
             break None;
         }
         let bits = reader.bits.peek();
         if command.total_length() > MAX_STEP {
-            match command.resolve(tables.ranges, bits) {
+            match command.resolve(all_ranges, bits) {
                 Some(resolved) if resolved.total_length() <= MAX_STEP => command = resolved,
                 _ => break None,
             }
         }
-        let [insert_end, context] = command.small();
-        let [_, shortest_copy] = command.halves_of_large();
-        let insert = insert_length(command, bits);
-        let copy = shortest_copy + bits_in(bits, insert_end, command.total_length());
+        let [_, context] = command.small();
+        let [insert, copy] = lengths_of(command, bits);
         let copy_start = position + insert;
         if copy_start + copy >= limit || insert > literals_left {
             break None;
@@ -376,17 +427,17 @@ fn run_fast<const IN_CONTEXT: bool>(
         left -= 1;
 
         let mut interrupt = |phase, position| {
-            cursor.block_remaining[2] += 1;
             cursor.command = Command {
                 phase,
-                ranges: *command,
-                insert_length: (copy_start - position) as usize,
-                copy_length: copy as usize,
+                distance_context: context,
+                unwritten_literals: copy_start - position,
+                copy_length: copy,
             };
         };
         if insert != 0 {
             literals_left -= insert;
-            position = read_literals::<IN_CONTEXT>(tables, &mut reader, ring, position, copy_start);
+            let root = tables.literal_root;
+            position = read_literals(trees, root, &mut reader, ring, position, copy_start);
             if position != copy_start {
                 literals_left += copy_start - position;
                 interrupt(Phase::Literals, position);
@@ -395,15 +446,16 @@ fn run_fast<const IN_CONTEXT: bool>(
         }
 
         let (distance, is_repeat) = match distance_roots.get(context as usize) {
-            None => {
-                cursor.block_remaining[2] += 1;
-                (cursor.recent.resolve(0), true)
-            }
+            None => (cursor.recent.resolve(0), true),
             Some(root) => {
+                let Some(distances_left) = cursor.blocks[2].remaining.checked_sub(1) else {
+                    interrupt(Phase::Distance, position);
+                    break None;
+                };
                 let mut bits = reader.bits.peek();
                 let mut ranges = in_root(root, bits);
                 if ranges.total_length() + MAX_CODE_LENGTH as u32 > reader.bits.count() {
-                    match ranges.resolve(tables.ranges, bits) {
+                    match ranges.resolve(all_ranges, bits) {
                         Some(resolved)
                             if resolved.total_length() <= MAX_STEP && reader.refill() =>
                         {
@@ -416,6 +468,7 @@ fn run_fast<const IN_CONTEXT: bool>(
                     }
                 }
                 reader.bits.skip_known(ranges.total_length());
+                cursor.blocks[2].remaining = distances_left;
                 distance_of(ranges, bits, tables, &cursor.recent)
             }
         };
@@ -437,18 +490,21 @@ fn run_fast<const IN_CONTEXT: bool>(
         }
     };
     cursor.position = position as usize;
-    let [literals, commands, distances] = &mut cursor.block_remaining;
-    *literals = literals_left;
-    *commands += left;
-    *distances += left;
-    cursor.reader.end_fast(&reader);
+    let [literals, commands, _] = &mut cursor.blocks;
+    literals.remaining = literals_left;
+    commands.remaining = left;
+    whole_input.end_fast(&reader);
     stopped
 }
 
+/// Of the insert and of the copy.
 #[inline(always)]
-fn insert_length(command: &Ranges, bits: u64) -> u32 {
-    let ([insert_end, _], [shortest, _]) = (command.small(), command.halves_of_large());
-    shortest + bits_in(bits, command.code_length(), insert_end)
+fn lengths_of(command: &Ranges, bits: u64) -> [u32; 2] {
+    let ([insert_end, _], [insert, copy]) = (command.small(), command.halves_of_large());
+    [
+        insert + bits_in(bits, command.code_length(), insert_end),
+        copy + bits_in(bits, insert_end, command.total_length()),
+    ]
 }
 
 /// And whether it is the last one again.
@@ -469,136 +525,162 @@ fn distance_of(
 
 /// From `position`, which is in `2..end`. Returns `end` unless the input ends soon.
 #[inline(always)]
-fn read_literals<const IN_CONTEXT: bool>(
-    tables: &Tables<'_>,
+fn read_literals<T: LiteralTrees>(
+    trees: &T,
+    root: Root,
     reader: &mut FastReader<'_>,
     ring: &mut [u8],
-    mut position: u32,
+    position: u32,
     end: u32,
 ) -> u32 {
     let mut before = [0; 2];
-    if IN_CONTEXT {
+    if T::IN_CONTEXT {
         let at = position.wrapping_sub(2) as usize;
         let Some(&[second_last, last]) = ring.get(at..at + 2) else {
             return position;
         };
         before = [last, second_last];
     }
+    let Some([first, rest @ ..]) = ring.get_mut(position as usize..end as usize) else {
+        return position;
+    };
+    let (mut slot, mut rest) = (first, rest.iter_mut());
     loop {
         // That leaves a fourth code to look at, even if not all of it counts yet.
         for needs_refill in [true, false, false] {
-            let literal = tables.peek_literal::<IN_CONTEXT>(before, reader.bits.peek());
-            let slot = ring.get_mut(position as usize);
-            let (Some((literal, length)), Some(slot)) = (literal, slot) else {
-                return position;
-            };
+            let tree = trees.after(before[0], before[1]);
+            let (literal, length) = peek_symbol(tree, root, reader.bits.peek()).literal();
             if needs_refill && !reader.refill() {
-                return position;
+                return end - 1 - rest.len() as u32;
             }
             reader.bits.skip_known(length);
             *slot = literal;
             before = [literal, before[0]];
-            position += 1;
-            if position == end {
-                return position;
-            }
+            let Some(next) = rest.next() else {
+                return end;
+            };
+            slot = next;
         }
     }
 }
 
-/// From where the current command was interrupted, whatever gets in its way, and then up to the end of a short input.
+/// From where the current command was interrupted, whatever gets in its way, for `min_commands` and until [`is_clear`].
 #[inline(never)]
-fn run_carefully(tables: &mut Tables<'_>, cursor: &mut Cursor<'_, '_>, ring: &mut [u8]) -> Stopped {
-    loop {
-        let stopped = match read_up_to_copy(tables, cursor, ring) {
-            Ok(ControlFlow::Continue((distance, is_repeat))) => {
-                cursor.command.phase = Phase::InsertLength;
-                let length = cursor.command.copy_length;
-                cursor.copy(tables, ring, distance, is_repeat, length)
-            }
-            Ok(ControlFlow::Break(state)) => Some(Ok(state)),
-            Err(stop) => Some(Err(stop)),
-        };
-        let [.., distances_left] = cursor.block_remaining;
-        if stopped.is_some() || (distances_left != 0 && cursor.reader.begin_fast().is_some()) {
-            return stopped;
-        }
-    }
-}
-
-/// Returns the distance, and whether it is the last one again.
-#[inline(always)]
-fn read_up_to_copy(
-    tables: &mut Tables<'_>,
-    cursor: &mut Cursor<'_, '_>,
+fn run_carefully<'a>(
+    tables: &Tables<'a>,
+    trees: &mut Option<TreesByContext<'a>>,
+    mut min_commands: u32,
+    cursor: &mut Cursor,
+    shared_reader: &mut BitReader<'_>,
     ring: &mut [u8],
-) -> Result<ControlFlow<State, (u32, bool)>, Stop> {
-    let Cursor {
-        reader,
-        command,
-        blocks,
-        block_remaining: [literals_left, commands_left, distances_left],
-        position,
-        recent,
-    } = cursor;
-    if command.phase == Phase::InsertLength {
-        if *commands_left == 0 {
-            *commands_left = tables.switch(Category::Command, blocks, reader)?;
-        }
-        reader.refill();
-        let bits = reader.bits.peek();
-        let ranges = look_up(tables.command_root, tables.ranges, bits)?;
-        let [insert_end, _] = ranges.small();
-        reader.bits.skip(insert_end)?;
-        command.ranges = *ranges;
-        command.insert_length = insert_length(ranges, bits) as usize;
-        command.phase = Phase::CopyLength;
-    }
-    let [insert_end, context] = command.ranges.small();
-
-    if command.phase == Phase::CopyLength {
-        let extra = reader.read(command.ranges.total_length() - insert_end)?;
-        let [_, shortest] = command.ranges.halves_of_large();
-        command.copy_length = (shortest + extra) as usize;
-        *commands_left -= 1;
-        command.phase = Phase::Literals;
-    }
-
-    if command.phase == Phase::Literals {
-        while command.insert_length != 0 {
-            if *literals_left == 0 {
-                *literals_left = tables.switch(Category::Literal, blocks, reader)?;
+) -> Stopped {
+    let (mut reader, mut command, mut position) = (*shared_reader, cursor.command, cursor.position);
+    let mut run = || {
+        let [literals, commands, distances] = &cursor.blocks;
+        let mut contexts = tables.literal_contexts(literals.current())?;
+        let mut command_root = tables.command_root(commands.current())?;
+        let mut distance_map =
+            slice_for::<DISTANCE_CONTEXTS>(tables.distance_map, distances.current())?;
+        let copy_limit = tables.ring_limit.min(tables.meta_block_end);
+        loop {
+            let [literals, commands, distances] = &mut cursor.blocks;
+            if command.phase == Phase::Lengths {
+                if commands.remaining == 0 {
+                    commands.switch(tables.symbols, &mut reader)?;
+                    command_root = tables.command_root(commands.current())?;
+                }
+                reader.refill();
+                let bits = reader.bits.peek();
+                let ranges = look_up(command_root, tables.ranges.entries(), bits)?;
+                reader.skip_peeked(ranges.total_length())?;
+                [_, command.distance_context] = ranges.small();
+                [command.unwritten_literals, command.copy_length] = lengths_of(ranges, bits);
+                commands.remaining -= 1;
+                command.phase = Phase::Literals;
             }
-            let start = *position;
-            let end = start + command.insert_length.min(*literals_left as usize);
-            let end = end.min(tables.ring_limit);
-            let result = read_some_literals(tables, reader, ring, position, end);
-            command.insert_length -= *position - start;
-            *literals_left -= (*position - start) as u32;
-            result?;
-            if *position == tables.ring_limit {
-                return Ok(ControlFlow::Break(State::RingLimit(Resume::Commands)));
+
+            if command.phase == Phase::Literals {
+                while command.unwritten_literals != 0 {
+                    if literals.remaining == 0 {
+                        literals.switch(tables.symbols, &mut reader)?;
+                        contexts = tables.literal_contexts(literals.current())?;
+                    }
+                    let start = position;
+                    let end = start + command.unwritten_literals.min(literals.remaining) as usize;
+                    let mut end = end.min(tables.ring_limit);
+                    if end - start >= MANY_BYTES && reader.input_len() >= MANY_BYTES {
+                        core::hint::cold_path();
+                        if start < 2 {
+                            end = 2;
+                        } else {
+                            // Lending a copy lets `reader` stay in registers.
+                            let mut lent = reader;
+                            position = read_many_literals(
+                                tables, contexts, trees, &mut lent, ring, start, end,
+                            )?;
+                            reader = lent;
+                        }
+                    }
+                    let result =
+                        read_few_literals(tables, contexts, &mut reader, ring, &mut position, end);
+                    command.unwritten_literals -= (position - start) as u32;
+                    literals.remaining -= (position - start) as u32;
+                    result?;
+                    if position == tables.ring_limit {
+                        return Ok(Some(State::RingLimit(Resume::Commands)));
+                    }
+                }
+                if position >= tables.meta_block_end {
+                    return Ok(Some(State::MetaBlockDone));
+                }
+                command.phase = Phase::Distance;
+            }
+
+            let (distance, is_repeat) = if command.distance_context == LAST_DISTANCE {
+                (cursor.recent.resolve(0), true)
+            } else {
+                if distances.remaining == 0 {
+                    distances.switch(tables.symbols, &mut reader)?;
+                    distance_map = slice_for(tables.distance_map, distances.current())?;
+                }
+                reader.refill();
+                let bits = reader.bits.peek();
+                #[allow(clippy::indexing_slicing)] // Reduced to the size of the table.
+                let index = distance_map[command.distance_context as usize % DISTANCE_CONTEXTS];
+                let ranges = look_up(tables.distance_root(index)?, tables.ranges.entries(), bits)?;
+                reader.bits.skip(ranges.total_length())?;
+                distances.remaining -= 1;
+                distance_of(ranges, bits, tables, &cursor.recent)
+            };
+            command.phase = Phase::Lengths;
+
+            let (back, length) = (distance as usize, command.copy_length as usize);
+            if back.wrapping_sub(1) < position.min(tables.max_backward_distance)
+                && position + length < copy_limit
+            {
+                cursor.recent.push(distance, is_repeat);
+                ring_buffer::copy(ring, position - back, position, back, length)
+                    .ok_or(Stop::UNREACHABLE)?;
+                position += length;
+            } else {
+                core::hint::cold_path();
+                cursor.position = position;
+                let stopped = cursor.copy(tables, ring, distance, is_repeat, length);
+                position = cursor.position;
+                if let Some(stopped) = stopped {
+                    return stopped.map(Some);
+                }
+            }
+            if min_commands > 1 {
+                min_commands -= 1;
+            } else if is_clear(tables, &reader, position) {
+                return Ok(None);
             }
         }
-        if *position >= tables.meta_block_end {
-            return Ok(ControlFlow::Break(State::MetaBlockDone));
-        }
-        command.phase = Phase::Distance;
-    }
-
-    if *distances_left == 0 && context != LAST_DISTANCE {
-        *distances_left = tables.switch(Category::Distance, blocks, reader)?;
-    }
-    let Some(root) = tables.distance_roots.get(context as usize) else {
-        return Ok(ControlFlow::Continue((recent.resolve(0), true)));
     };
-    reader.refill();
-    let bits = reader.bits.peek();
-    let ranges = look_up(root, tables.ranges, bits)?;
-    reader.bits.skip(ranges.total_length())?;
-    *distances_left -= 1;
-    let distance = distance_of(ranges, bits, tables, recent);
-    Ok(ControlFlow::Continue(distance))
+    let stopped = run().transpose();
+    (*shared_reader, cursor.command, cursor.position) = (reader, command, position);
+    stopped
 }
 
 #[inline(always)]
@@ -612,64 +694,71 @@ fn look_up<'a>(root: &'a RangesRoot, entries: &'a [Ranges], bits: u64) -> Result
     (in_root(root, bits).resolve(entries, bits)).ok_or(Stop::UNREACHABLE)
 }
 
+/// See [`read_literals`].
+#[inline(never)]
+fn read_many_literals<'a>(
+    tables: &Tables<'a>,
+    contexts: LiteralContexts<'a>,
+    trees: &mut Option<TreesByContext<'a>>,
+    reader: &mut BitReader<'_>,
+    ring: &mut [u8],
+    start: usize,
+    end: usize,
+) -> Result<usize, Stop> {
+    let Some(mut fast) = reader.begin_fast() else {
+        return Ok(start);
+    };
+    let (root, start, end) = (tables.literal_root, start as u32, end as u32);
+    let position = match contexts.lut {
+        None => read_literals(contexts.first, root, &mut fast, ring, start, end),
+        Some(lut) => {
+            let trees = TreesByContext::select(trees, tables, &contexts, lut)?;
+            read_literals(trees, root, &mut fast, ring, start, end)
+        }
+    };
+    reader.end_fast(&fast);
+    Ok(position as usize)
+}
+
 #[inline(always)]
-fn read_some_literals(
+fn read_few_literals(
     tables: &Tables<'_>,
+    contexts: LiteralContexts<'_>,
     reader: &mut BitReader<'_>,
     ring: &mut [u8],
     position: &mut usize,
     end: usize,
 ) -> Result<(), Stop> {
-    if tables.ignores_context {
-        read_some_literals_with::<false>(tables, reader, ring, position, end)
-    } else {
-        read_some_literals_with::<true>(tables, reader, ring, position, end)
-    }
-}
-
-#[inline(never)]
-fn read_some_literals_with<const IN_CONTEXT: bool>(
-    tables: &Tables<'_>,
-    reader: &mut BitReader<'_>,
-    ring: &mut [u8],
-    position: &mut usize,
-    mut end: usize,
-) -> Result<(), Stop> {
-    if *position < 2 {
-        end = end.min(2);
-    } else if let Some(mut fast) = reader.begin_fast()
-        && fast.refill()
-    {
-        let (start, end) = (*position as u32, end as u32);
-        *position = read_literals::<IN_CONTEXT>(tables, &mut fast, ring, start, end) as usize;
-        reader.end_fast(&fast);
-    }
     let before = |n: usize| {
         let at = position.wrapping_sub(n) & (tables.ring_size - 1);
         ring.get(at).copied().unwrap_or(0)
     };
-    let mut before = [before(1), before(2)];
-    let (mut local, mut count, mut result) = (*reader, 0, Ok(()));
+    let (mut last, mut second_last) = (contexts.lut).map_or((0, 0), |_| (before(1), before(2)));
+    let mut tree = contexts.first;
     for slot in ring.get_mut(*position..end).ok_or(Stop::UNREACHABLE)? {
-        if local.bits.count() < MAX_CODE_LENGTH as u32 {
-            local.refill();
+        reader.refill_for(MAX_CODE_LENGTH as u32);
+        if let Some(lut) = contexts.lut {
+            #[allow(clippy::indexing_slicing)] // Reduced to the size of the table.
+            let index = contexts.map[lut.context(last, second_last) % LITERAL_CONTEXTS];
+            tree = tables.literal_tree(index)?;
         }
-        let literal = tables.peek_literal::<IN_CONTEXT>(before, local.bits.peek());
-        let (literal, length) = literal.ok_or(Stop::UNREACHABLE)?;
-        result = local.bits.skip(length);
-        if result.is_err() {
-            break;
-        }
+        let (literal, length) =
+            peek_symbol(tree, tables.literal_root, reader.bits.peek()).literal();
+        reader.bits.skip(length)?;
         *slot = literal;
-        before = [literal, before[0]];
-        count += 1;
+        (last, second_last) = (literal, last);
+        *position += 1;
     }
-    *reader = local;
-    *position += count;
-    result
+    Ok(())
 }
 
-impl Cursor<'_, '_> {
+impl Cursor {
+    /// In the current blocks, as the number of literals that take as long.
+    fn work_left(&self) -> u32 {
+        let [literals, commands, _] = &self.blocks;
+        literals.remaining + 8 * commands.remaining
+    }
+
     #[inline(never)]
     fn copy(
         &mut self,

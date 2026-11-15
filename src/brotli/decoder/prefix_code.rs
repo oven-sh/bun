@@ -21,14 +21,15 @@ enum Phase {
 
 pub(super) struct PrefixCodeReader {
     phase: Phase,
-    symbols: SymbolLists,
+    /// Not for streams without codes.
+    symbols: Option<SymbolLists>,
 }
 
 impl PrefixCodeReader {
     pub(super) fn new() -> Self {
         Self {
             phase: Phase::Start,
-            symbols: SymbolLists::new(),
+            symbols: None,
         }
     }
 
@@ -38,28 +39,32 @@ impl PrefixCodeReader {
         alphabet: Alphabet,
         reader: &mut BitReader<'_>,
     ) -> Result<&SymbolLists, Stop> {
+        let symbols = match &mut self.symbols {
+            Some(symbols) => symbols,
+            none => none.insert(SymbolLists::new()?),
+        };
         loop {
             match &mut self.phase {
                 Phase::Start => {
                     let skipped = reader.step(|bits| match bits.read(2)? {
-                        1 => read_simple_code(alphabet, bits, &mut self.symbols).map(|()| None),
+                        1 => read_simple_code(alphabet, bits, symbols).map(|()| None),
                         skipped => Ok(Some(skipped)),
                     })?;
                     let Some(skipped) = skipped else {
-                        return Ok(&self.symbols);
+                        return Ok(symbols);
                     };
                     self.phase = Phase::CodeLengthCode(CodeLengthCode::new(skipped));
                 }
                 Phase::CodeLengthCode(code) => {
                     code.read(reader)?;
                     let table = CodeLengthTable::new(code)?;
-                    self.symbols.clear();
+                    symbols.clear();
                     self.phase = Phase::SymbolLengths(table, SymbolLengths::new());
                 }
                 Phase::SymbolLengths(table, lengths) => {
-                    lengths.read(alphabet.size, table, reader, &mut self.symbols)?;
+                    lengths.read(alphabet.size, table, reader, symbols)?;
                     self.phase = Phase::Start;
-                    return Ok(&self.symbols);
+                    return Ok(symbols);
                 }
             }
         }
@@ -142,9 +147,7 @@ impl CodeLengthCode {
         while space > 0
             && let Some(&symbol) = CODE_LENGTH_CODE_ORDER.get(next)
         {
-            if local.bits.count() < 4 {
-                local.refill();
-            }
+            local.refill_for(4);
             let [bits, length, share, _] = LENGTHS[local.bits.peek() as usize % 16];
             result = local.bits.skip(u32::from(bits));
             if result.is_err() {
@@ -243,9 +246,7 @@ impl SymbolLengths {
         #[allow(clippy::indexing_slicing)] // Reduced to the size of the table.
         let share = |length: u32| i32::from(SHARES[length as usize % 16]);
         while self.symbol < alphabet_size && self.space != 0 {
-            if reader.bits.count() < 8 {
-                reader.refill();
-            }
+            reader.refill_for(8);
             let peek = reader.bits.peek() as u32;
             #[allow(clippy::indexing_slicing)] // Reduced to the size of the table.
             let entry = u32::from(table.0[peek as usize % 32]);

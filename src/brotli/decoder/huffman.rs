@@ -2,8 +2,8 @@
 
 use super::Stop;
 use super::bit_reader::Bits;
-use crate::DecodeError;
 use crate::format::{COMMAND_SYMBOLS, MAX_CODE_LENGTH};
+use crate::{DecodeError, memory};
 use std::collections::TryReserveError;
 
 const LENGTHS: usize = MAX_CODE_LENGTH + 1;
@@ -11,7 +11,7 @@ const LENGTHS: usize = MAX_CODE_LENGTH + 1;
 /// The symbols of a code, in one list for each length. The one for no length does not matter.
 pub(super) struct SymbolLists {
     /// For each symbol, the next one. The first ones are at the end.
-    next: [u16; Self::SIZE],
+    next: Box<[u16; Self::SIZE]>,
     last: [u16; LENGTHS],
     counts: [u16; LENGTHS],
 }
@@ -21,12 +21,12 @@ impl SymbolLists {
     const SIZE: usize = (COMMAND_SYMBOLS + LENGTHS).next_power_of_two();
     const HEADS: usize = Self::SIZE - LENGTHS;
 
-    pub(super) fn new() -> Self {
-        Self {
-            next: [0; _],
+    pub(super) fn new() -> Result<Self, Stop> {
+        Ok(Self {
+            next: memory::zeroed_array().map_err(|_| DecodeError::AllocTreeGroups)?,
             last: [0; _],
             counts: [0; _],
-        }
+        })
     }
 
     pub(super) fn clear(&mut self) {
@@ -112,12 +112,17 @@ impl Root {
 
 const NARROW_SIZE: usize = 1 << Root::Narrow.bits();
 
+/// Only a table with codes of several lengths has more entries than codes, and no two have the same size.
+const MAX_EXCESS: usize = 256;
+
 /// The trees of a meta-block.
 #[derive(Default)]
 pub(super) struct Forest<E> {
-    /// Does not shrink, so that it is only zeroed once.
+    /// Keeps its length from one meta-block to the next, so that it is not zeroed again.
     entries: Vec<E>,
     used: usize,
+    /// What the trees that there is room for come to at most. Growing goes straight there, so that they only move once.
+    max_len: usize,
     starts: Vec<u32>,
 }
 
@@ -135,10 +140,19 @@ impl<E: Entry> Forest<E> {
         self.used = self.starts.pop().map_or(0, |start| start as usize);
     }
 
-    pub(super) fn try_reserve(&mut self, trees: usize, root: Root) -> Result<(), TryReserveError> {
+    /// For trees whose alphabets have `symbols` symbols in all.
+    pub(super) fn try_reserve(
+        &mut self,
+        trees: usize,
+        symbols: usize,
+        root: Root,
+    ) -> Result<(), TryReserveError> {
+        const USUAL_FOR_LONG_CODES: usize = 64;
         self.starts.try_reserve(trees)?;
-        let entries = self.used + trees * ((1 << root.bits()) + 64) + E::REACH;
-        (self.entries).try_reserve(entries.saturating_sub(self.entries.len()))
+        let for_roots = self.used + (trees << root.bits()) + E::REACH;
+        self.max_len = for_roots + trees * MAX_EXCESS + symbols;
+        let usual_len = for_roots + trees * USUAL_FOR_LONG_CODES;
+        (self.entries).try_reserve_exact(usual_len.saturating_sub(self.entries.len()))
     }
 
     /// `N` is no more than [`Entry::REACH`].
@@ -159,9 +173,11 @@ impl<E: Entry> Forest<E> {
 
     #[cold]
     fn extend_to(&mut self, len: usize) -> Result<(), Stop> {
-        self.entries
-            .try_reserve(len - self.entries.len())
-            .map_err(|_| DecodeError::AllocTreeGroups)?;
+        if len > self.entries.capacity() {
+            (self.entries)
+                .try_reserve_exact(len.max(self.max_len) - self.entries.len())
+                .map_err(|_| DecodeError::AllocTreeGroups)?;
+        }
         self.entries.resize(len, E::default());
         Ok(())
     }
@@ -175,7 +191,7 @@ impl<E: Entry> Forest<E> {
         entry_for: impl Fn(u32, u32) -> E,
     ) -> Result<(), Stop> {
         if self.starts.len() == self.starts.capacity() {
-            (self.try_reserve(4, root)).map_err(|_| DecodeError::AllocTreeGroups)?;
+            (self.try_reserve(4, 0, root)).map_err(|_| DecodeError::AllocTreeGroups)?;
         }
         let (start, root_bits) = (self.used, root.bits());
         self.starts.push(start as u32);
@@ -183,10 +199,10 @@ impl<E: Entry> Forest<E> {
         let reach = self.range_mut(start, E::REACH)?;
         let narrow = reach.first_chunk_mut::<NARROW_SIZE>();
         let narrow = narrow.ok_or(Stop::UNREACHABLE)?;
-        let mut next_code = fill_root(narrow, |length| code.of_length(length), &entry_for);
-        if let Some(only) = code.only_symbol() {
-            narrow.fill(entry_for(only, 0));
-            next_code = COMPLETE;
+        let mut next_code = COMPLETE;
+        match code.only_symbol() {
+            Some(only) => narrow.fill(entry_for(only, 0)),
+            None => next_code = fill_root(narrow, |length| code.of_length(length), &entry_for),
         }
         if let Root::Wide = root {
             reach.copy_within(..NARROW_SIZE, NARROW_SIZE);
@@ -200,9 +216,8 @@ impl<E: Entry> Forest<E> {
             return Ok(());
         }
 
-        // Only a table with codes of several lengths has more entries than codes, and no two have the same size.
         let long_counts = code.counts.iter().skip(root_bits as usize + 1);
-        let max_size = (1 << root_bits) + usize::from(long_counts.sum::<u16>()) + 256;
+        let max_size = (1 << root_bits) + usize::from(long_counts.sum::<u16>()) + MAX_EXCESS;
         let tree = self.range_mut(start, max_size)?;
         let (mut table, mut table_end) = (0, 1 << root_bits);
         for length in root_bits + 1..=MAX_CODE_LENGTH as u32 {

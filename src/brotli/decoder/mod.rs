@@ -16,7 +16,7 @@ use crate::format::{
 use crate::{DecodeError, memory};
 use bit_reader::{BitReader, Bits};
 use bun_core::vec::BorrowedCursor;
-use commands::{Command, Phase, RecentDistances, push_command_tree, push_distance_tree};
+use commands::{Command, Cursor, push_command_tree, push_distance_tree};
 use context_map::ContextMap;
 use huffman::{Forest, Ranges, Root, Symbol, read_symbol};
 use prefix_code::PrefixCodeReader;
@@ -128,6 +128,7 @@ impl Blocks {
         self.last_types[1] as usize
     }
 
+    #[inline(always)]
     fn read_length(&self, forest: &Forest<Symbol>, bits: &mut Bits) -> Result<u32, Stop> {
         let symbol = read_symbol(forest.tree(self.first_tree + 1)?, bits)?;
         let code = BLOCK_LENGTH_CODES
@@ -136,14 +137,24 @@ impl Blocks {
         Ok(u32::from(code.base) + bits.read(u32::from(code.extra_bits))?)
     }
 
+    #[inline(always)]
     fn switch(&mut self, forest: &Forest<Symbol>, reader: &mut BitReader<'_>) -> Result<(), Stop> {
+        core::hint::cold_path();
+        reader.refill();
+        let taken = self.switch_with(forest, reader.bits)?;
+        reader.bits.skip_known(taken);
+        Ok(())
+    }
+
+    /// Returns how many of `bits` it took.
+    #[inline(never)]
+    fn switch_with(&mut self, forest: &Forest<Symbol>, bits: Bits) -> Result<u32, Stop> {
         if self.type_count == 1 {
             return Err(DecodeError::BlockSwitch.into());
         }
-        let (symbol, length) = reader.step(|bits| {
-            let symbol = read_symbol(forest.tree(self.first_tree)?, bits)?;
-            Ok((symbol, self.read_length(forest, bits)?))
-        })?;
+        let mut rest = bits;
+        let symbol = read_symbol(forest.tree(self.first_tree)?, &mut rest)?;
+        let length = self.read_length(forest, &mut rest)?;
         let [second_last, last] = self.last_types;
         let mut next = match symbol {
             0 => second_last,
@@ -155,7 +166,7 @@ impl Blocks {
         }
         self.last_types = [last, next];
         self.remaining = length;
-        Ok(())
+        Ok(bits.count() - rest.count())
     }
 }
 
@@ -170,14 +181,14 @@ pub struct Decoder {
     dictionary: Vec<u8>,
     max_backward_distance: usize,
     ring: RingBuffer,
-    recent_distances: RecentDistances,
+    cursor: Cursor,
 
     is_last: bool,
     /// Of the meta-block, less the whole of what the current command began to write.
     remaining: isize,
-    blocks: [Blocks; 3],
     distance_params: DistanceParams,
-    context_modes: [ContextMode; MAX_BLOCK_TYPES],
+    /// `None` for the block types that have one tree for all contexts.
+    context_modes: [Option<ContextMode>; MAX_BLOCK_TYPES],
     literal_map: ContextMap,
     distance_map: ContextMap,
     codes: PrefixCodeReader,
@@ -187,7 +198,6 @@ pub struct Decoder {
     symbols: Forest<Symbol>,
     first_trees: [usize; 3],
     literal_root: Root,
-    command: Command,
 }
 
 impl Default for Decoder {
@@ -200,12 +210,11 @@ impl Default for Decoder {
             dictionary: Vec::new(),
             max_backward_distance: 0,
             ring: RingBuffer::default(),
-            recent_distances: RecentDistances::default(),
+            cursor: Cursor::default(),
             is_last: false,
             remaining: 0,
-            blocks: [Blocks::SINGLE; 3],
             distance_params: DistanceParams::new(0, 0, false),
-            context_modes: [ContextMode::Lsb6; MAX_BLOCK_TYPES],
+            context_modes: [None; MAX_BLOCK_TYPES],
             literal_map: ContextMap::default(),
             distance_map: ContextMap::default(),
             codes: PrefixCodeReader::new(),
@@ -213,7 +222,6 @@ impl Default for Decoder {
             symbols: Forest::default(),
             first_trees: [0; 3],
             literal_root: Root::Narrow,
-            command: Command::default(),
         }
     }
 }
@@ -288,6 +296,23 @@ impl Decoder {
         reader: &mut BitReader<'_>,
         output: &mut BorrowedCursor<'_, u8>,
     ) -> Result<(), Stop> {
+        // With short buffers, calls tend to end in the state that they begin in.
+        match self.state {
+            State::Commands => self.state = self.decode_commands(reader)?,
+            State::Uncompressed => self.state = self.copy_uncompressed(reader)?,
+            State::RingLimit(resume) => self.state = self.move_ring_limit(resume, output)?,
+            State::Done => return self.flush(output),
+            _ => {}
+        }
+        self.run_on(reader, output)
+    }
+
+    #[inline(never)]
+    fn run_on(
+        &mut self,
+        reader: &mut BitReader<'_>,
+        output: &mut BorrowedCursor<'_, u8>,
+    ) -> Result<(), Stop> {
         loop {
             self.state = match self.state {
                 State::StreamHeader => {
@@ -300,9 +325,8 @@ impl Decoder {
                 }
                 State::MetaBlockHeader => self.read_meta_block_header(reader)?,
                 State::Metadata => {
-                    while self.remaining != 0 && reader.take_buffered_byte().is_some() {
-                        self.remaining -= 1;
-                    }
+                    self.remaining -=
+                        reader.take_buffered_bytes(self.remaining as usize).1 as isize;
                     if self.remaining != 0 {
                         self.remaining -= reader.take_bytes(self.remaining as usize).len() as isize;
                         if self.remaining != 0 {
@@ -314,7 +338,7 @@ impl Decoder {
                 State::Uncompressed => self.copy_uncompressed(reader)?,
                 State::BlockTypeCount(category) => {
                     let type_count = reader.step(read_count)?;
-                    *category.of(&mut self.blocks) = Blocks {
+                    *category.of(&mut self.cursor.blocks) = Blocks {
                         type_count,
                         first_tree: self.symbols.len(),
                         ..Blocks::SINGLE
@@ -337,7 +361,7 @@ impl Decoder {
                     State::FirstBlockLength(category)
                 }
                 State::FirstBlockLength(category) => {
-                    let blocks = category.of(&mut self.blocks);
+                    let blocks = category.of(&mut self.cursor.blocks);
                     blocks.remaining =
                         reader.step(|bits| blocks.read_length(&self.symbols, bits))?;
                     after_blocks_of(category)
@@ -355,7 +379,8 @@ impl Decoder {
                     let modes = self.context_modes.iter_mut().enumerate();
                     for (index, mode) in modes.take(count).skip(next) {
                         self.state = State::ContextModes(index);
-                        *mode = ContextMode::from_bits(reader.read(2)?);
+                        reader.refill_for(2);
+                        *mode = Some(ContextMode::from_bits(reader.bits.read(2)?));
                     }
                     State::LiteralContextMap
                 }
@@ -363,6 +388,11 @@ impl Decoder {
                     let size = self.type_count(Category::Literal) * LITERAL_CONTEXTS;
                     self.literal_map
                         .read(size, reader, &mut self.codes, &mut self.symbols)?;
+                    let maps = self.literal_map.trees.as_chunks::<LITERAL_CONTEXTS>().0;
+                    let has_one_tree = self.literal_map.tree_count == 1;
+                    for (mode, map) in self.context_modes.iter_mut().zip(maps) {
+                        mode.take_if(|_| has_one_tree || *map == [map[0]; _]);
+                    }
                     State::DistanceContextMap
                 }
                 State::DistanceContextMap => {
@@ -378,8 +408,13 @@ impl Decoder {
                     } else {
                         Root::Narrow
                     };
-                    (self.symbols.try_reserve(literals, self.literal_root))
-                        .and_then(|()| self.ranges.try_reserve(commands + distances, Root::Narrow))
+                    let bytes = literals * Alphabet::LITERALS.size as usize;
+                    let ranges = commands * Alphabet::COMMANDS.size as usize
+                        + distances * self.distance_params.alphabet.size as usize;
+                    (self.symbols.try_reserve(literals, bytes, self.literal_root))
+                        .and_then(|()| {
+                            (self.ranges).try_reserve(commands + distances, ranges, Root::Narrow)
+                        })
                         .map_err(|_| DecodeError::AllocTreeGroups)?;
                     self.first_trees = [self.symbols.len(), 0, commands];
                     State::Trees(Category::Literal)
@@ -393,7 +428,7 @@ impl Decoder {
                                 .begin_meta_block(self.remaining as usize, self.whole_window)
                                 .map_err(|_| DecodeError::AllocRingBuffer2)?;
                             self.ring.grow();
-                            self.command.phase = Phase::InsertLength;
+                            self.cursor.command = Command::default();
                             State::Commands
                         }
                     }
@@ -414,17 +449,7 @@ impl Decoder {
                         length: length - copied,
                     })
                 }
-                State::RingLimit(resume) => {
-                    if self.ring.position >= self.ring.size() {
-                        match self.flush(output) {
-                            // A ring that can still grow does not have to be emptied.
-                            Err(Stop::NeedsOutput) if !self.ring.is_at_window_end() => {}
-                            result => result?,
-                        }
-                    }
-                    self.ring.grow();
-                    self.resume(resume)
-                }
+                State::RingLimit(resume) => self.move_ring_limit(resume, output)?,
                 State::MetaBlockDone => {
                     if self.remaining < 0 {
                         return Err(DecodeError::BlockLength2.into());
@@ -444,7 +469,7 @@ impl Decoder {
     }
 
     fn type_count(&mut self, category: Category) -> usize {
-        category.of(&mut self.blocks).type_count as usize
+        category.of(&mut self.cursor.blocks).type_count as usize
     }
 
     fn read_meta_block_header(&mut self, reader: &mut BitReader<'_>) -> Result<State, Stop> {
@@ -509,15 +534,15 @@ impl Decoder {
         Ok(())
     }
 
+    #[inline(always)]
     fn copy_uncompressed(&mut self, reader: &mut BitReader<'_>) -> Result<State, Stop> {
         let room = self.ring.size() - self.ring.position;
         let mut wanted = room.min(self.remaining as usize);
-        while wanted != 0
-            && let Some(byte) = reader.take_buffered_byte()
-        {
-            self.ring.append(&[byte])?;
-            self.remaining -= 1;
-            wanted -= 1;
+        let (buffered, count) = reader.take_buffered_bytes(wanted);
+        if count != 0 {
+            self.ring.append(buffered.split_at(count).0)?;
+            self.remaining -= count as isize;
+            wanted -= count;
         }
         if wanted != 0 {
             let copied = self.ring.append(reader.take_bytes(wanted))?;
@@ -531,6 +556,23 @@ impl Decoder {
         } else {
             State::MetaBlockDone
         })
+    }
+
+    #[inline(always)]
+    fn move_ring_limit(
+        &mut self,
+        resume: Resume,
+        output: &mut BorrowedCursor<'_, u8>,
+    ) -> Result<State, Stop> {
+        if self.ring.position >= self.ring.size() {
+            match self.flush(output) {
+                // A ring that can still grow does not have to be emptied.
+                Err(Stop::NeedsOutput) if !self.ring.is_at_window_end() => {}
+                result => result?,
+            }
+        }
+        self.ring.grow();
+        Ok(self.resume(resume))
     }
 
     fn flush(&mut self, output: &mut BorrowedCursor<'_, u8>) -> Result<(), Stop> {
@@ -551,7 +593,7 @@ impl Decoder {
     fn resume(&self, resume: Resume) -> State {
         match resume {
             Resume::Uncompressed => State::Uncompressed,
-            Resume::Commands if self.command.unwritten_literals() != 0 => State::Commands,
+            Resume::Commands if self.cursor.command.unwritten_literals != 0 => State::Commands,
             Resume::Copy { distance, length } if length != 0 => State::Copy { distance, length },
             Resume::CopyFromDictionary { offset, length } if length != 0 => {
                 State::CopyFromDictionary { offset, length }

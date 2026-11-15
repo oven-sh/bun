@@ -55,11 +55,6 @@ impl Bits {
 
 const WORD: usize = size_of::<u64>();
 
-#[inline(never)]
-fn short_word(bytes: &[u8]) -> u64 {
-    (bytes.iter()).rfold(0, |word, &byte| (word << 8) | u64::from(byte))
-}
-
 /// With positions of 32 bits, checking one takes a single comparison.
 pub(super) struct FastReader<'a> {
     pub(super) bits: Bits,
@@ -86,22 +81,38 @@ impl FastReader<'_> {
 pub(super) struct BitReader<'a> {
     pub(super) bits: Bits,
     input: &'a [u8],
+    /// The end of the input, in the high bits.
+    last_word: u64,
 }
 
 impl<'a> BitReader<'a> {
     pub(super) fn new(bits: Bits, input: &'a [u8]) -> Self {
-        Self { bits, input }
+        let last_word = match input.last_chunk() {
+            Some(word) => u64::from_le_bytes(*word),
+            None => (input.iter()).fold(0, |word, &byte| (word >> 8) | (u64::from(byte) << 56)),
+        };
+        Self {
+            bits,
+            input,
+            last_word,
+        }
     }
 
-    /// For a loop that refills as long as there are eight bytes left.
+    #[inline(always)]
+    pub(super) fn input_len(&self) -> usize {
+        self.input.len()
+    }
+
+    /// Refilled, for a loop that refills as long as there are eight bytes left.
     #[inline(always)]
     pub(super) fn begin_fast(&self) -> Option<FastReader<'a>> {
         let last = self.input.len().checked_sub(WORD)?.min(1 << 30) as u32;
-        Some(FastReader {
+        let mut fast = FastReader {
             bits: self.bits,
             input: self.input.get(..last as usize + WORD)?,
             used: 0,
-        })
+        };
+        fast.refill().then_some(fast)
     }
 
     #[inline(always)]
@@ -115,13 +126,37 @@ impl<'a> BitReader<'a> {
         let word = match self.input.first_chunk() {
             Some(word) => u64::from_le_bytes(*word),
             None if self.input.is_empty() => return,
-            None => short_word(self.input),
+            None => self.last_word >> (8 * (WORD - self.input.len())),
         };
         let count = self.bits.count % u64::BITS;
         let (taken, rest) = (self.input).split_at(self.input.len().min((63 - count as usize) / 8));
         self.bits.value |= word << count;
         self.bits.count = count + 8 * taken.len() as u32;
         self.input = rest;
+    }
+
+    #[inline(always)]
+    pub(super) fn refill_for(&mut self, bits: u32) {
+        if self.bits.count < bits {
+            self.refill();
+        }
+    }
+
+    /// After a refill: up to 63 bits, which may reach into the next byte of the input.
+    #[inline(always)]
+    pub(super) fn skip_peeked(&mut self, mut n: u32) -> Result<(), Stop> {
+        if n > self.bits.count {
+            if self.input.is_empty() {
+                return Err(Stop::NeedsInput);
+            }
+            core::hint::cold_path();
+            debug_assert!(self.bits.count >= REFILLED && n < u64::BITS);
+            n -= self.bits.count;
+            self.bits = Bits::default();
+            self.refill();
+        }
+        self.bits.skip_known(n);
+        Ok(())
     }
 
     /// Runs `step`, which takes up to [`REFILLED`] bits, and forgets what it took if it fails.
@@ -147,9 +182,14 @@ impl<'a> BitReader<'a> {
         matches!(self.bits.read(self.bits.count % 8), Ok(0))
     }
 
-    /// At a byte boundary: the next byte, if a refill took it from the input.
-    pub(super) fn take_buffered_byte(&mut self) -> Option<u8> {
-        self.bits.read(8).ok().map(|byte| byte as u8)
+    /// At a byte boundary: what refills took from the input, and how many bytes of it count, which is up to `n`.
+    pub(super) fn take_buffered_bytes(&mut self, n: usize) -> ([u8; WORD], usize) {
+        let (bytes, count) = (
+            self.bits.value.to_le_bytes(),
+            n.min(self.bits.count as usize / 8),
+        );
+        self.bits.skip_known(8 * count as u32);
+        (bytes, count)
     }
 
     /// With no buffered byte left: up to `n` bytes of the input.

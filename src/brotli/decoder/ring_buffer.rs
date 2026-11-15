@@ -117,7 +117,7 @@ impl RingBuffer {
 
     /// Wraps around once everything up to the end of the window is out.
     pub(super) fn flush(&mut self, output: &mut BorrowedCursor<'_, u8>) -> Result<(), Stop> {
-        if self.size == 0 {
+        if !self.has_unflushed() {
             return Ok(());
         }
         let end = self.position.min(self.size);
@@ -153,8 +153,11 @@ pub(super) fn copy(
     distance: usize,
     length: usize,
 ) -> Option<()> {
-    if distance < CHUNK && distance < length {
-        return repeat(bytes, source, target, distance, length);
+    if distance < length {
+        core::hint::cold_path();
+        if distance < CHUNK || length > 2 * CHUNK {
+            return repeat(bytes, source, target, distance, length);
+        }
     }
     copy_chunk(bytes, source, target)?;
     if length > CHUNK {
@@ -187,14 +190,8 @@ pub(super) fn copy_from(
 
 #[inline(never)]
 fn copy_long(bytes: &mut [u8], source: usize, target: usize, length: usize) -> Option<()> {
-    if source > target || target - source >= length {
-        bytes.get(source.max(target)..)?.get(..length)?;
-        bytes.copy_within(source..source + length, target);
-    } else {
-        for offset in (0..length).step_by(CHUNK) {
-            copy_chunk(bytes, source + offset, target + offset)?;
-        }
-    }
+    bytes.get(source.max(target)..)?.get(..length)?;
+    bytes.copy_within(source..source + length, target);
     Some(())
 }
 
@@ -222,7 +219,11 @@ fn repeat(
         }
         all
     };
-    let &(mask, multiplier, step) = BY_PERIOD.get(period)?;
+    let Some(&(mask, multiplier, step)) = BY_PERIOD.get(period) else {
+        return (0..length)
+            .step_by(CHUNK)
+            .try_for_each(|offset| copy_chunk(bytes, source + offset, target + offset));
+    };
     let chunk = u128::from_le_bytes(*bytes.get(source..)?.first_chunk()?);
     let pattern = (chunk & mask).wrapping_mul(multiplier).to_le_bytes();
     let mut at = target;

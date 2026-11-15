@@ -580,6 +580,7 @@ struct ResolutionGraph<'a> {
     nodes: &'a NameNodes,
     /// Names that fail in a file that may be mocked: only a mock has them.
     resolved_by_mocks: &'a FxHashSet<u32>,
+    mocked: &'a MockedModules,
     starts: Vec<Summary>,
     edges: Vec<Vec<u32>>,
     statements_ahead_of_stars: Vec<(NodeKey, Resolution)>,
@@ -689,7 +690,10 @@ impl ResolutionGraph<'_> {
         let (nodes, modules) = (self.nodes, self.modules);
         let mut end = Summary::EMPTY;
         match (find_table(self.files, target), kind) {
-            (None, NodeKind::Indirect) => end.binding = captured_resolution(modules, target, name),
+            (None, NodeKind::Indirect) => {
+                end.binding = captured_resolution(modules, target, name);
+                end.ends_in_file_that_may_be_mocked = self.mocked.contains(target);
+            }
             (None, NodeKind::Star) => {
                 end.provider = captured_resolution(modules, target, name);
                 end.has_unmocked_provider = true;
@@ -996,7 +1000,7 @@ pub(super) fn resolve_exports(
     mocked: &MockedModules,
 ) -> ExportTables {
     let begun = begin_exports(input, scans, modules, entries, mocked);
-    finish_begun_exports(input.files, scans, modules, begun, commonjs)
+    finish_begun_exports(input.files, scans, modules, begun, commonjs, mocked)
 }
 
 #[cfg(test)]
@@ -1009,7 +1013,7 @@ pub(super) fn resolve_every_export(
     mocked: &MockedModules,
 ) -> ExportTables {
     let begun = begin_exports_for(scans, modules, entries, mocked, None);
-    finish_begun_exports(files, scans, modules, begun, commonjs)
+    finish_begun_exports(files, scans, modules, begun, commonjs, mocked)
 }
 
 #[cfg(any(test, debug_assertions))]
@@ -1019,8 +1023,10 @@ fn finish_begun_exports(
     modules: &ModuleSet,
     begun: BegunExports,
     commonjs: &CommonJsTexts,
+    mocked: &MockedModules,
 ) -> ExportTables {
-    let (mut tables, imports) = resolve_begun_exports(files, scans, modules, begun, commonjs);
+    let (mut tables, imports) =
+        resolve_begun_exports(files, scans, modules, begun, commonjs, mocked);
     let found = tables.find_imports_from_commonjs_modules(modules, imports);
     tables.keep_imports_from_commonjs_modules(found);
     tables
@@ -1102,11 +1108,12 @@ pub(super) fn resolve_begun_exports(
     modules: &ModuleSet,
     begun: BegunExports,
     commonjs: &CommonJsTexts,
+    mocked: &MockedModules,
 ) -> (ExportTables, ImportsFromCommonJs) {
     #[cfg(debug_assertions)]
     let with_every_name = begun
         .with_every_name
-        .map(|begun| finish_begun_exports(files, scans, modules, *begun, commonjs));
+        .map(|begun| finish_begun_exports(files, scans, modules, *begun, commonjs, mocked));
     let BegunExports {
         entries,
         commonjs_imports,
@@ -1126,6 +1133,7 @@ pub(super) fn resolve_begun_exports(
             files: &table_files,
             nodes: &nodes,
             resolved_by_mocks,
+            mocked,
             starts: vec![Summary::EMPTY; nodes.keys.len()],
             edges: vec![Vec::new(); nodes.keys.len()],
             statements_ahead_of_stars: Vec::new(),

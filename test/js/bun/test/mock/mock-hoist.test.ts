@@ -1142,18 +1142,16 @@ describe.concurrent("errors", () => {
   });
 
   test("a factory that two modules wait for is named once", async () => {
-    const importer = `
-      import { value } from "./mod";
-      vi.mock("./unrelated", () => ({}));
-      export default value;
-    `;
     expect(
       await loadError({
-        "first.ts": importer,
-        "second.ts": importer,
+        "first.ts": `
+          void import("./second");
+          export const { value } = await import("./mod");
+        `,
+        "second.ts": `export const { value } = await import("./mod");`,
         "hoist.test.ts": `
           vi.mock("./mod", () => new Promise(() => {}));
-          await Promise.all([import("./first"), import("./second")]);
+          await import("./first");
           test("unreachable", () => {});
         `,
       }),
@@ -1164,6 +1162,18 @@ describe.concurrent("errors", () => {
       unsettled("second.ts"),
       neverSettled("mod.ts"),
     ]);
+  });
+
+  test("a factory that takes importOriginal is named, not the top-level await of its module", async () => {
+    expect(
+      await loadError({
+        "hoist.test.ts": `
+          import { value } from "./mod";
+          vi.mock("./mod", importOriginal => new Promise(() => {}));
+          test("unreachable", () => { value; });
+        `,
+      }),
+    ).toEqual([...neverFinished, unsettled("hoist.test.ts"), neverSettled("mod.ts")]);
   });
 
   test("a factory for a builtin module is named too", async () => {
@@ -1212,6 +1222,49 @@ describe.concurrent("errors", () => {
         `,
       }),
     ).toEqual([...neverFinished, unsettled("hoist.test.ts")]);
+  });
+
+  // The mock patches stuck.ts in place, so the import() waits for the body of stuck.ts.
+  test("a factory for a module that is suspended in its own body is not named", async () => {
+    expect(
+      await loadError({
+        "stuck.ts": `
+          globalThis.began();
+          await new Promise(() => {});
+          export const value = "real";
+        `,
+        "hoist.test.ts": `
+          import { mock } from "bun:test";
+          const { promise, resolve } = Promise.withResolvers();
+          globalThis.began = resolve;
+          void import("./stuck");
+          await promise;
+          mock.module("./stuck", () => new Promise(() => {}));
+          await import("./stuck");
+          test("unreachable", () => {});
+        `,
+      }),
+    ).toEqual([...neverFinished, unsettled("hoist.test.ts"), unsettled("stuck.ts")]);
+  });
+
+  // vi.importActual() resolves ./mod. The import() after it is of ./stuck.
+  test("a factory is not named for an import() of another module", async () => {
+    expect(
+      await loadError({
+        "stuck.ts": `
+          await new Promise(() => {});
+          export const value = "stuck";
+        `,
+        "hoist.test.ts": `
+          await vi.importActual("./mod");
+          const stuck = import("./stuck");
+          vi.doMock("./mod", () => new Promise(() => {}));
+          void import("./mod");
+          await stuck;
+          test("unreachable", () => {});
+        `,
+      }),
+    ).toEqual([...neverFinished, unsettled("hoist.test.ts"), unsettled("stuck.ts")]);
   });
 
   // The mock of node:fs is the file in __mocks__, which never finishes. No factory runs.

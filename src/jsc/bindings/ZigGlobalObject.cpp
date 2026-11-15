@@ -1003,9 +1003,11 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
         auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
         if (cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::EvaluatingAsync)
             evaluating.append(cyclic);
-        if (!entry->record())
+        bool isSuspended = cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::EvaluatingAsync && cyclic->hasTLA() && !cyclic->pendingAsyncDependencies().value_or(0);
+        // The module of a mock is suspended where it awaits its factory.
+        if (!entry->record() || (isSuspended && cyclic->hasLiveExports() && Bun::isModuleMockFactoryRunning(globalObject, key.string())))
             fetching.append(key.string());
-        else if (cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::EvaluatingAsync && cyclic->hasTLA() && !cyclic->pendingAsyncDependencies().value_or(0)) {
+        else if (isSuspended) {
             int64_t order = loader->asyncEvaluationOrderForKey(key);
             size_t index = awaiting.size();
             while (index && awaiting[index - 1].first > order)

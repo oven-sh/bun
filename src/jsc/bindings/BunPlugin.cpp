@@ -968,6 +968,8 @@ static JSC::JSPromise* importModuleFrom(Zig::GlobalObject* globalObject, const S
     globalObject->onResolvePlugins.isResolvingImportCall = true;
     JSC::JSPromise* promise = Bun::testFileModuleLoader(globalObject)->requestImportModule(globalObject, JSC::Identifier::fromString(vm, specifier), JSC::Identifier::fromString(vm, Bun::uncompiledImportReferrer(from)), nullptr, nullptr);
     globalObject->onResolvePlugins.isResolvingImportCall = false;
+    // The resolution has left its key for an import() call of the program. The next such call would take it for its own.
+    globalObject->onLoadPlugins.keyOfImportCall = {};
     if (scope.exception()) [[unlikely]]
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
 #if ENABLE(AOT)
@@ -8978,6 +8980,7 @@ bool isModuleMockFactoryRunning(Zig::GlobalObject* globalObject, const String& k
 }
 
 // The loader has no entry for a mocked module while an import() of it waits for the factory. Adds those that a module of `evaluating` awaits.
+// With an entry, the import() waits for what the loader has: the fetch, the original that is patched in place, or the module of the mock.
 __attribute__((minsize)) void appendModuleMocksWhoseFactoryAnImportAwaits(Zig::GlobalObject* globalObject, std::span<JSC::CyclicModuleRecord* const> evaluating, Vector<String>& keys)
 {
     JSValue dynamicImports = globalObject->mockModule.dynamicImports.get();
@@ -8985,8 +8988,9 @@ __attribute__((minsize)) void appendModuleMocksWhoseFactoryAnImportAwaits(Zig::G
         return;
 
     auto& vm = JSC::getVM(globalObject);
+    auto* loader = testFileModuleLoader(globalObject);
     // Each step walks the reactions of one import(). A program with very many of them is not searched to the end.
-    size_t stepsLeft = 1 << 16;
+    size_t stepsLeft = 4096;
     auto* iterator = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), uncheckedDowncast<JSC::JSMap>(dynamicImports), JSC::IterationKind::Entries);
     while (true) {
         auto [import, key] = iterator->nextWithAdvance(vm);
@@ -8995,7 +8999,7 @@ __attribute__((minsize)) void appendModuleMocksWhoseFactoryAnImportAwaits(Zig::G
         if (!key.isString())
             continue;
         String mocked = asString(key)->tryGetValue();
-        if (keys.contains(mocked) || !isModuleMockFactoryRunning(globalObject, mocked))
+        if (keys.contains(mocked) || !isModuleMockFactoryRunning(globalObject, mocked) || loader->registryEntry(JSC::Identifier::fromString(vm, mocked)))
             continue;
         for (auto* record : evaluating) {
             if (!stepsLeft)

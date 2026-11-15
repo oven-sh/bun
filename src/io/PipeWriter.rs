@@ -1184,13 +1184,13 @@ pub trait BaseWindowsPipeWriter: Sized {
         };
         let mut _write_ref = None;
         match source {
-            Source::SyncFile(mut file) | Source::File(mut file) => {
+            Source::SyncFile(file) | Source::File(file) => {
                 if file.is_busy() {
                     // The write still reads the payload, and its callback will not get back here.
-                    file.buffer = self.take_write_payload();
+                    file.buffer.set(self.take_write_payload());
                     _write_ref = self.take_write_ref();
                 }
-                file.close_on_drop = self.owns_fd();
+                file.close_on_drop.set(self.owns_fd());
                 if cancel_inflight_write {
                     file.stop();
                 }
@@ -1336,7 +1336,7 @@ pub trait BaseWindowsPipeWriter: Sized {
 pub trait WindowsWriterParent: WriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
-    unsafe fn loop_(this: *mut Self) -> *mut uv::Loop;
+    unsafe fn loop_(this: *mut Self) -> &'static bun_uws_sys::Loop;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1629,12 +1629,12 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
 
         if !file_raw.is_null() {
             // SAFETY: see raw-ptr break note above.
-            let file = unsafe { &mut *file_raw };
+            let file = unsafe { &*file_raw };
             // BufferedWriter ensures pending_payload_size blocks concurrent writes
             debug_assert!(file.can_start());
 
             self.pending_payload_size = buffer_len;
-            file.fs.data = core::ptr::from_mut(self).cast::<c_void>();
+            file.parent.set(core::ptr::from_mut(self).cast::<c_void>());
             file.prepare();
             self.write_buffer = write_buf;
 
@@ -1642,8 +1642,8 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             // it on the event loop. parent BACKREF valid.
             if let Some(err) = unsafe {
                 uv::uv_fs_write(
-                    Parent::loop_(self.parent()),
-                    &mut file.fs,
+                    Parent::loop_(self.parent()).uv_loop(),
+                    file_raw.cast(),
                     file.file,
                     &self.write_buffer,
                     1,
@@ -1653,7 +1653,8 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             }
             .to_error(sys::Tag::write)
             {
-                file.complete(false);
+                // SAFETY: refused.
+                unsafe { file.complete(false) };
                 self.close();
                 self.parent_on_error(err);
             } else {
@@ -2230,11 +2231,11 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
         if !file_raw.is_null() {
             // SAFETY: see raw-ptr break note above.
-            let file = unsafe { &mut *file_raw };
+            let file = unsafe { &*file_raw };
             // StreamingWriter ensures current_payload blocks concurrent writes
             debug_assert!(file.can_start());
 
-            file.fs.data = this.cast::<c_void>();
+            file.parent.set(this.cast::<c_void>());
             file.prepare();
             Self::r(this).write_buffer = write_buf;
 
@@ -2244,8 +2245,8 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             // sibling Unique tag from the `parent()` arg under Stacked Borrows.
             if let Some(err) = unsafe {
                 uv::uv_fs_write(
-                    Parent::loop_((*this).parent()),
-                    &mut file.fs,
+                    Parent::loop_((*this).parent()).uv_loop(),
+                    file_raw.cast(),
                     file.file,
                     &(*this).write_buffer,
                     1,
@@ -2255,7 +2256,8 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             }
             .to_error(sys::Tag::write)
             {
-                file.complete(false);
+                // SAFETY: refused.
+                unsafe { file.complete(false) };
                 Self::r(this).last_write_result = WriteResult::Err(err.clone());
                 Self::r_on_error(this, err);
                 core::hint::black_box(this);
@@ -2519,7 +2521,7 @@ pub type StreamingWriter<P> = WindowsStreamingWriter<P>;
 pub mod __parent_macro {
     pub use ::bun_sys::Error as SysError;
     #[cfg(windows)]
-    pub use ::bun_sys::windows::libuv::Loop as UvLoop;
+    pub use ::bun_uws_sys::Loop as UwsLoop;
 }
 
 /// Stamp `WriterParent` + `PosixStreamingWriterParent` + `WindowsWriterParent` +
@@ -2541,7 +2543,7 @@ macro_rules! impl_streaming_writer_parent {
         on_ready   = $on_ready:ident,
         on_close   = $on_close:ident,
         event_loop = |$el_this:ident| $el:expr,
-        uv_loop    = |$uv_this:ident| $uv:expr,
+        uws_loop   = |$uws_this:ident| $uws:expr,
         ref_       = |$ref_this:ident| $ref_:expr,
         deref      = |$deref_this:ident| $deref:expr,
     ) => {
@@ -2596,11 +2598,11 @@ macro_rules! impl_streaming_writer_parent {
         #[cfg(windows)]
         impl $($gen)* $crate::pipe_writer::WindowsWriterParent for $Ty {
             #[inline]
-            unsafe fn loop_(this: *mut Self) -> *mut $crate::pipe_writer::__parent_macro::UvLoop {
+            unsafe fn loop_(this: *mut Self) -> &'static $crate::pipe_writer::__parent_macro::UwsLoop {
                 // SAFETY: BACKREF set via `set_parent`; shared-only read.
-                let $uv_this = this;
+                let $uws_this = this;
                 #[allow(unused_unsafe)]
-                unsafe { $uv }
+                unsafe { $uws }
             }
         }
 
@@ -2665,7 +2667,7 @@ macro_rules! impl_buffered_writer_parent {
         on_close   = $on_close:ident,
         get_buffer = |$gb_this:ident| $gb:expr,
         event_loop = |$el_this:ident| $el:expr,
-        uv_loop    = |$uv_this:ident| $uv:expr,
+        uws_loop   = |$uws_this:ident| $uws:expr,
         ref_       = |$ref_this:ident| $ref_:expr,
         deref      = |$deref_this:ident| $deref:expr,
     ) => {
@@ -2726,11 +2728,11 @@ macro_rules! impl_buffered_writer_parent {
         #[cfg(windows)]
         impl $($gen)* $crate::pipe_writer::WindowsWriterParent for $Ty {
             #[inline]
-            unsafe fn loop_(this: *mut Self) -> *mut $crate::pipe_writer::__parent_macro::UvLoop {
+            unsafe fn loop_(this: *mut Self) -> &'static $crate::pipe_writer::__parent_macro::UwsLoop {
                 // SAFETY: BACKREF set via `set_parent`; shared-only read.
-                let $uv_this = this;
+                let $uws_this = this;
                 #[allow(unused_unsafe)]
-                unsafe { $uv }
+                unsafe { $uws }
             }
         }
 

@@ -323,12 +323,6 @@ impl ShellSubprocess {
             StdioKind::Stdin => unreachable!("stdin closes through on_stdin_writer_close"),
         };
         if let Readable::Pipe(pipe) = core::mem::replace(out, Readable::Ignore) {
-            // The only callers reach here from inside
-            // `PipeReader::on_reader_done`/`on_reader_error`, which still
-            // hold a raw `*mut PipeReader` to this same allocation.
-            // Route every read/write through `Rc::as_ptr` (no `Deref`)
-            // so we never materialise a `&PipeReader` that would alias
-            // those callers' access; see `PipeReader::take_done_buffer`.
             let pp = Rc::as_ptr(&pipe).cast_mut();
             // SAFETY: `pp` projects from the Rc allocation's NonNull;
             // raw place read of the discriminant + raw-ptr write
@@ -1447,7 +1441,7 @@ impl PipeReader {
         rc.reader.set_source(match result {
             StdioResult::Buffer(buf) => bun_io::Source::Pipe(buf),
             StdioResult::BufferFd(fd) => {
-                bun_io::Source::File(bun_io::Source::open_file(event_loop.native_loop(), fd))
+                bun_io::Source::File(bun_io::Source::open_file(event_loop.loop_(), fd))
             }
             StdioResult::UnownedFd(_) | StdioResult::Unavailable => panic!("Shouldn't happen."),
         });

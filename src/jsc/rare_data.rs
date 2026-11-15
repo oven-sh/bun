@@ -6,7 +6,7 @@ use core::sync::atomic::Ordering;
 use crate::bindgen::JsHeap;
 use crate::node_path::PathOrFileDescriptor;
 use crate::spawn_sync_event_loop::SpawnSyncEventLoop;
-use crate::strong::Optional as Strong;
+use crate::strong::StrongCell;
 use crate::virtual_machine::VirtualMachine;
 use crate::webcore_types::store::{Data, File, Store};
 use crate::{JSGlobalObject, JsCell};
@@ -232,9 +232,9 @@ pub struct RareData {
     // was always reached via the main-thread VM, so it was a singleton in
     // practice). Hosting it in the consumer crate removes the upward
     // `s3_signing → jsc` hook.
-    pub s3_default_client: JsCell<Strong>,
+    pub s3_default_client: StrongCell,
     /// Per-VM, like Node's quic `BindingData` (node/src/quic/bindingdata.h).
-    pub node_quic_callbacks: JsCell<Strong>,
+    pub node_quic_callbacks: StrongCell,
     default_csrf_secret: OnceCell<[u8; 16]>,
 
     /// Owned NUL-terminated buffer. `len()` includes the trailing 0;
@@ -269,8 +269,8 @@ impl Default for RareData {
             compression_scratch: JsCell::new(None),
             websocket_inflate_scratch: JsCell::new(None),
             libdeflate_decompressor: OnceCell::new(),
-            s3_default_client: JsCell::new(Strong::empty()),
-            node_quic_callbacks: JsCell::new(Strong::empty()),
+            s3_default_client: StrongCell::default(),
+            node_quic_callbacks: StrongCell::default(),
             default_csrf_secret: OnceCell::new(),
             tls_default_ciphers: JsCell::new(None),
             spawn_sync_event_loop_: OnceCell::new(),
@@ -465,8 +465,8 @@ impl SocketGroups {
 
 impl RareData {
     pub(crate) fn release_js_handles(&self) {
-        self.s3_default_client.set(Default::default());
-        self.node_quic_callbacks.set(Default::default());
+        self.s3_default_client.clear();
+        self.node_quic_callbacks.clear();
     }
 
     // ── lazy-init: hot_map ─────────────────────────────────────────────────

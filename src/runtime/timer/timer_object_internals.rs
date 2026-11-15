@@ -12,7 +12,6 @@ use bun_core::{Timespec, TimespecMockMode};
 use bun_ptr::RefPtr;
 
 use crate::generated_bindgen::timer::{js_Immediate as JSImmediate, js_Timeout as JSTimeout};
-use crate::jsc::JsCell;
 use crate::jsc::{Debugger, JSGlobalObject, JSValue, JsRef, JsResult, ScriptExecutionStatus};
 use core::cell::Cell;
 // Note: `bun_jsc::VirtualMachine` is a *module* alias; the struct lives at
@@ -30,7 +29,7 @@ use super::{
 pub(crate) struct TimerObjectInternals {
     /// Identifier for this timer that is exposed to JavaScript (by `+timer`).
     pub(crate) id: u64,
-    pub this_value: JsCell<JsRef>,
+    pub this_value: JsRef,
     pub(crate) interval: Cell<u32>,
     pub(crate) flags: Cell<Flags>,
     /// The context whose script created the timer.
@@ -58,7 +57,7 @@ impl Default for TimerObjectInternals {
     fn default() -> Self {
         Self {
             id: 0,
-            this_value: JsCell::new(JsRef::empty()),
+            this_value: JsRef::empty(),
             interval: Cell::new(0),
             flags: Cell::new(Flags::default()),
             context: bun_jsc::ContextId::default(),
@@ -237,7 +236,7 @@ impl TimerObjectInternals {
     /// With `&mut self` here, LLVM's `noalias` lets it keep `self.flags` in a
     /// register across the FFI call, so `set_in_callback(false)`'s RMW
     /// clobbers the `has_cleared_timer` bit that `cancel()` set — the interval
-    /// re-fires forever. The fields they write are `Cell`/`JsCell`, so `&self`
+    /// re-fires forever. The fields they write are `Cell`/`JsRef`, so `&self`
     /// carries no such guarantee.
     ///
     /// # Safety
@@ -354,8 +353,7 @@ impl TimerObjectInternals {
             self.reschedule(timer, vm, cx.global());
         }
 
-        self.this_value
-            .with_mut(|r| r.set_strong(timer, cx.global()));
+        self.this_value.set_strong(timer, cx.global());
     }
 
     /// Returns `true` if an
@@ -374,11 +372,11 @@ impl TimerObjectInternals {
                 && !vm.is_event_loop_alive_excluding_immediates());
         if cleared {
             s.set_enable_keeping_event_loop_alive(vm, false);
-            s.this_value.with_mut(|r| r.downgrade());
+            s.this_value.downgrade();
             return false;
         }
 
-        let Some(timer) = s.this_value.get().try_get() else {
+        let Some(timer) = s.this_value.try_get() else {
             #[cfg(debug_assertions)]
             panic!("TimerObjectInternals.runImmediateTask: this_object is null");
             #[cfg(not(debug_assertions))]
@@ -388,7 +386,7 @@ impl TimerObjectInternals {
             }
         };
         let global_this = vm.global();
-        s.this_value.with_mut(|r| r.downgrade());
+        s.this_value.downgrade();
         s.node().state.set(EventLoopTimerState::FIRED);
         s.set_enable_keeping_event_loop_alive(vm, false);
         timer.ensure_still_alive();
@@ -426,7 +424,7 @@ impl TimerObjectInternals {
 
     pub(crate) fn cancel_pending_immediate(&self, vm: &VirtualMachine) {
         self.set_enable_keeping_event_loop_alive(vm, false);
-        self.this_value.with_mut(|r| r.downgrade());
+        self.this_value.downgrade();
     }
 
     /// `dispatch::fire_timer`
@@ -449,10 +447,10 @@ impl TimerObjectInternals {
         s.node().state.set(EventLoopTimerState::FIRED);
 
         let global_this = vm.global();
-        let Some(this_object) = s.this_value.get().try_get() else {
+        let Some(this_object) = s.this_value.try_get() else {
             s.set_enable_keeping_event_loop_alive(vm, false);
             s.update_flags(|f| f.set_has_cleared_timer(true));
-            s.this_value.with_mut(|r| r.downgrade());
+            s.this_value.downgrade();
             return;
         };
 
@@ -489,7 +487,7 @@ impl TimerObjectInternals {
             }
             s.set_enable_keeping_event_loop_alive(vm, false);
             s.update_flags(|f| f.set_has_cleared_timer(true));
-            s.this_value.with_mut(|r| r.downgrade());
+            s.this_value.downgrade();
             return;
         }
 
@@ -497,7 +495,7 @@ impl TimerObjectInternals {
         let mut time_before_call = Timespec::EPOCH;
 
         if kind != KindBig::SetInterval {
-            s.this_value.with_mut(|r| r.downgrade());
+            s.this_value.downgrade();
         } else {
             time_before_call = s.clock_now().add_ms(i64::from(s.interval.get()));
         }
@@ -600,7 +598,7 @@ impl TimerObjectInternals {
     /// `t._repeat` was assigned promotes itself to a `setInterval` after its
     /// first fire (Node `lib/internal/timers.js:613`).
     ///
-    /// `&self` (not `&mut`) — all writes go through `Cell`/`JsCell`; the sole
+    /// `&self` (not `&mut`) — all writes go through `Cell`/`JsRef`; the sole
     /// caller (`fire_catching()`) holds only a `&Self`.
     fn convert_to_interval(
         &self,
@@ -623,7 +621,7 @@ impl TimerObjectInternals {
 
         // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L613
         JSTimeout::idle_timeout_set_cached(timer, global, repeat);
-        self.this_value.with_mut(|r| r.set_strong(timer, global));
+        self.this_value.set_strong(timer, global);
         self.update_flags(|f| f.set_kind(Kind::SetInterval));
         self.interval.set(new_interval);
         self.node().is_due_when_idle.set(false);
@@ -824,8 +822,7 @@ impl TimerObjectInternals {
             return this_value;
         }
 
-        self.this_value
-            .with_mut(|r| r.set_strong(this_value, global_object));
+        self.this_value.set_strong(this_value, global_object);
         self.reschedule(this_value, VirtualMachine::get(), global_object);
 
         this_value
@@ -867,7 +864,7 @@ impl TimerObjectInternals {
     /// Runs on the mutator thread during lazy sweep; do not touch any
     /// `JSValue`/`Strong` content here.
     pub(crate) fn finalize(&self) {
-        self.this_value.with_mut(|r| r.finalize());
+        self.this_value.finalize();
     }
 
     /// `clearTimeout`/`clearInterval`
@@ -880,13 +877,13 @@ impl TimerObjectInternals {
             // Release the strong reference so the GC can collect the JS object.
             // The immediate task is still in the event loop queue and will be skipped
             // by runImmediateTask when it sees has_cleared_timer == true.
-            self.this_value.with_mut(|r| r.downgrade());
+            self.this_value.downgrade();
             return;
         }
 
         let was_active = self.node().state.get() == EventLoopTimerState::ACTIVE;
         self.node().state.set(EventLoopTimerState::CANCELLED);
-        self.this_value.with_mut(|r| r.downgrade());
+        self.this_value.downgrade();
 
         if was_active {
             timer_all().remove(self.node());

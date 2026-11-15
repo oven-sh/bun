@@ -23,7 +23,7 @@ use core::ptr::NonNull;
 pub use bun_jsc::{
     ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef, JSArrayIterator, JSGlobalObject,
     JSObject, JSType, JSValue, JsCell, JsError, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
-    Strong, StrongOptional, bun_string_jsc,
+    Strong, StrongCell, StrongOptional, bun_string_jsc,
 };
 
 pub use bun_jsc::IntegerRange;
@@ -196,8 +196,8 @@ fn hooks() -> &'static SqlRuntimeHooks {
 #[repr(C)]
 #[derive(Default)]
 pub struct RareData {
-    pub mysql_context: JsCell<crate::mysql::MySQLContext>,
-    pub postgresql_context: JsCell<crate::postgres::PostgresSQLContext>,
+    pub mysql_context: crate::mysql::MySQLContext,
+    pub postgresql_context: crate::postgres::PostgresSQLContext,
     _not_send: PhantomData<*mut ()>,
 }
 
@@ -205,9 +205,8 @@ impl RareData {
     /// The functions that the `bun:sql` of a realm handed over are functions of that realm, and
     /// keep it alive. The next realm that loads `bun:sql` hands over its own.
     pub fn forget_callbacks(&self) {
-        self.mysql_context.with_mut(|c| *c = Default::default());
-        self.postgresql_context
-            .with_mut(|c| *c = Default::default());
+        self.mysql_context.clear();
+        self.postgresql_context.clear();
     }
 }
 

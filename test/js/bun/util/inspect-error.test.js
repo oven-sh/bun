@@ -708,3 +708,13 @@ code();`;
   expect(stderr).toMatch(/error: boom\n +at code \(.*:3:9\)\n/);
   expect(exitCode).toBe(1);
 });
+
+test("a long source line that is cut inside a character is printed as valid UTF-8", async () => {
+  const text = Buffer.alloc(1600, "é").toString();
+  // The two lines are one byte apart, so one of them has a character across the cut.
+  using dir = tempDir("inspect-error-long-line", { "index.js": `//${text}\n// ${text}\nthrow new Error("boom");` });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "index.js"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.bytes(), proc.exited]);
+  expect(new TextDecoder("utf-8", { fatal: true }).decode(stderr)).toContain("error: boom");
+  expect(exitCode).toBe(1);
+});

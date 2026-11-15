@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper, StrongWrapper};
 use bun_jsc::{ArrayBuffer, JSGlobalObject, JSType, JSValue, JsResult, StringJsc, Strong};
 use bun_lsquic_sys as lsquic;
-use bun_ptr::CellExt as _;
+use bun_ptr::{CellExt as _, VecCellExt as _, VecDequeCellExt as _};
 
 use super::aliased_struct::{AliasedStruct, all_atomic_struct, put_state_and_stats};
 use super::engine::StrongCtx;
@@ -113,7 +113,7 @@ impl Outbound {
         self.data.with_taken(|data| data.extend(bytes));
     }
     fn len(&self) -> usize {
-        self.data.with_taken(|data| data.len())
+        self.data.len()
     }
     fn is_empty(&self) -> bool {
         self.len() == 0
@@ -323,9 +323,7 @@ impl QuicStream {
             return;
         }
         if !data.is_empty() {
-            self.inbound
-                .chunks
-                .with_taken(|chunks| chunks.push_back(data.to_vec()));
+            self.inbound.chunks.push_back(data.to_vec());
             self.add_stat(IDX_STATS_BYTES_RECEIVED, data.len() as u64);
             self.write_stat(IDX_STATS_RECEIVED_AT, super::now_ns());
             self.add_stat(IDX_STATS_BYTES_ACCUMULATED, data.len() as u64);
@@ -529,7 +527,7 @@ impl QuicStream {
         }
         let (status, buffer) = if self.inbound.errored.get() {
             (PULL_STATUS_ERROR, None)
-        } else if let Some(chunk) = self.inbound.chunks.with_taken(VecDeque::pop_front) {
+        } else if let Some(chunk) = self.inbound.chunks.pop_front() {
             (PULL_STATUS_DATA, Some(chunk))
         } else if self.inbound.ended.get() {
             (PULL_STATUS_EOS, None)
@@ -810,8 +808,7 @@ impl QuicStream {
             || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
         let s = &self.raw;
         if s.is_null() {
-            self.pending_headers
-                .with_taken(|q| q.push((bytes, header_count, eos)));
+            self.pending_headers.push((bytes, header_count, eos));
             self.state().has_outbound.store(1, Relaxed);
             return Ok(JSValue::js_boolean(true));
         }

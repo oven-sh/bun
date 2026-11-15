@@ -42,22 +42,16 @@ use bun_options_types::schema::api;
 /// `Transpiler`, declared in `Transpiler.bind.ts`.
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct JSTranspiler {
+    /// Writes to the log of its VM, which each call redirects.
     pub(crate) transpiler: JsCell<Transpiler::Transpiler<'static>>,
     pub(crate) config: Config,
     /// Empty between calls: kept for its capacity.
     pub(crate) scan_pass_result: JsCell<ScanPassResult<'static>>,
     pub(crate) buffer_writer: JsCell<Option<JSPrinter::BufferWriter>>,
-    borrowed: bun_ptr::AliasableBox<Borrowed>,
-    /// Of `borrowed.log`, which has another one while it is redirected.
+    /// Bulk-frees the config strings.
+    _arena: bun_ptr::AliasableBox<Arena>,
     log_level: bun_ast::Level,
     pub(crate) ref_count: bun_ptr::RefCount<JSTranspiler>,
-}
-
-/// What `JSTranspiler::transpiler` borrows.
-struct Borrowed {
-    /// Bulk-frees the config strings.
-    arena: Arena,
-    log: bun_ast::Log,
 }
 
 fn default_transform_options() -> api::TransformOptions {
@@ -883,16 +877,14 @@ impl JSTranspiler {
         config_arg: Option<&TranspilerOptions<'_>>,
     ) -> JsResult<*mut JSTranspiler> {
         let global = cx.global();
-        let borrowed = bun_ptr::AliasableBox::new(Borrowed {
-            arena: Arena::new(),
-            log: bun_ast::Log::init(),
-        });
+        let owned_arena = bun_ptr::AliasableBox::new(Arena::new());
         // SAFETY: `'static` for `Transpiler<'static>`. `config` and `transpiler` drop before
-        // `borrowed`, here and as fields of the `JSTranspiler` that all three move into.
-        let Borrowed { arena, log } = unsafe { bun_ptr::detach_lifetime_ref(&*borrowed) };
+        // `owned_arena`, here and as fields of the `JSTranspiler` that all three move into.
+        let arena = unsafe { bun_ptr::detach_lifetime_ref(&*owned_arena) };
+        let mut log = bun_ast::Log::init();
         let mut config = Config::default();
 
-        config.from_js(global, config_arg, arena, log)?;
+        config.from_js(global, config_arg, arena, &log)?;
 
         if (log.warnings.get() + log.errors.get()) > 0 {
             return Err(
@@ -901,6 +893,8 @@ impl JSTranspiler {
         }
 
         let vm = VirtualMachine::get();
+        let _redirect = vm.log.redirect(&mut log);
+        let log = vm.log;
         let transpiler = match Transpiler::Transpiler::init(
             arena,
             log,
@@ -920,7 +914,7 @@ impl JSTranspiler {
 
         let mut this: Box<JSTranspiler> = Box::new(JSTranspiler {
             config,
-            borrowed,
+            _arena: owned_arena,
             log_level: log.level.get(),
             transpiler: JsCell::new(transpiler),
             scan_pass_result: JsCell::new(ScanPassResult::init()),
@@ -1087,7 +1081,7 @@ impl JSTranspiler {
             allow_bytecode_cache: false,
         };
 
-        let _redirect = self.borrowed.log.redirect(log);
+        let _redirect = VirtualMachine::get().log.redirect(log);
         // SAFETY: see `transpiler_mut` — `parse` may re-enter JS via macros.
         unsafe { self.transpiler_mut() }.parse(parse_options, None)
     }

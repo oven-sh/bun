@@ -123,7 +123,7 @@ use bun_collections::index_sort;
 declare_scope!(S3MultiPartUpload, hidden);
 
 #[derive(bun_ptr::CellRefCounted)]
-pub struct MultiPartUpload {
+pub(crate) struct MultiPartUpload {
     /// Taken on the move to `State::Finished`.
     pub(crate) self_ref: Cell<Option<RefPtr<MultiPartUpload>>>,
     pub(crate) queue: OnceCell<Box<[UploadPart]>>,

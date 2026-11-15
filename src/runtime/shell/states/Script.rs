@@ -9,14 +9,10 @@ use crate::shell::states::base::{Base, Env};
 use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
 
-pub(crate) struct Script {
+pub(crate) struct Script<'a> {
     pub(crate) base: Base,
     pub(crate) shell: Env,
-    /// Back-reference into the bumpalo-allocated AST (`ShellArgs::__arena`).
-    /// The arena outlives every state node (it's dropped only when the
-    /// interpreter is finalized), so the BackRef invariant holds. Stored
-    /// lifetime-erased to keep `Node` lifetime-free.
-    pub node: bun_ptr::BackRef<ast::Script>,
+    pub node: ast::Script<'a>,
     pub(crate) io: IO,
     pub(crate) state: ScriptState,
 }
@@ -31,18 +27,18 @@ impl Default for ScriptState {
     }
 }
 
-impl Script {
+impl<'a> Script<'a> {
     pub(crate) fn init(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'a>,
         shell: Env,
-        node: &ast::Script,
+        node: ast::Script<'a>,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         let id = interp.alloc_node(Node::Script(Script {
             base: Base::new(parent),
             shell,
-            node: bun_ptr::BackRef::new(node),
+            node,
             io,
             state: ScriptState::default(),
         }));
@@ -50,14 +46,14 @@ impl Script {
         id
     }
 
-    pub(crate) fn start(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(interp: &mut Interpreter<'a>, this: NodeId) -> Yield {
         if Self::stmt_count(interp, this) == 0 {
             return Self::finish(interp, this, 0);
         }
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &mut Interpreter<'a>, this: NodeId) -> Yield {
         let (idx, shell) = {
             let me = interp.as_script_mut(this);
             let len = Self::stmt_count_of(me);
@@ -67,21 +63,21 @@ impl Script {
             }
             let i = *idx;
             *idx += 1;
-            (i, me.shell.as_ptr())
+            (i, me.shell.id())
         };
         let stmt_node = Self::stmt_at(interp, this, idx);
-        let io = interp.as_script(this).io.clone();
+        let io = interp.as_script(this).io;
         let stmt = Stmt::init(interp, shell, stmt_node, this, io);
         Stmt::start(interp, stmt)
     }
 
-    fn finish(interp: &Interpreter, this: NodeId, exit_code: ExitCode) -> Yield {
+    fn finish(interp: &mut Interpreter<'a>, this: NodeId, exit_code: ExitCode) -> Yield {
         let parent = interp.as_script(this).base.parent;
         interp.child_done(parent, this, exit_code)
     }
 
     pub(crate) fn child_done(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'a>,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
@@ -101,17 +97,17 @@ impl Script {
     // ── AST helpers ────────────────────────────────────────────────────────
 
     #[inline]
-    fn stmt_count(interp: &Interpreter, this: NodeId) -> usize {
+    fn stmt_count(interp: &Interpreter<'a>, this: NodeId) -> usize {
         Self::stmt_count_of(interp.as_script(this))
     }
 
     #[inline]
-    fn stmt_count_of(me: &Script) -> usize {
+    fn stmt_count_of(me: &Script<'a>) -> usize {
         me.node.stmts.len()
     }
 
     #[inline]
-    fn stmt_at(interp: &Interpreter, this: NodeId, idx: usize) -> &ast::Stmt {
+    fn stmt_at(interp: &Interpreter<'a>, this: NodeId, idx: usize) -> &'a ast::Stmt<'a> {
         let me = interp.as_script(this);
         &me.node.stmts[idx]
     }

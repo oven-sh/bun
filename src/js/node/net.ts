@@ -532,6 +532,12 @@ function adoptTLSPair(self, connection, pair) {
   raw.connecting = false;
   self._handle = pair[1];
 }
+// A second connect() has replaced the fd that was to be adopted.
+function destroyIfReconnecting(connection, handle) {
+  if (!connection.connecting || handle.readyState !== 2) return false;
+  connection.destroy(new ErrnoException(uv().UV_EISCONN, "connect"));
+  return true;
+}
 function attachClientTLS(self, connection, tls, upgradeDuplex) {
   const handle = connection._handle;
   if (self.destroyed || (!upgradeDuplex && !handle)) return;
@@ -539,7 +545,7 @@ function attachClientTLS(self, connection, tls, upgradeDuplex) {
   try {
     if (upgradeDuplex || isNamedPipeSocket(handle) || hasUnflushedWrites(connection)) {
       attachTLSEngine(self, connection, options);
-    } else {
+    } else if (!destroyIfReconnecting(connection, handle)) {
       adoptTLSPair(self, connection, upgradeTLSDeferred(handle, options));
     }
   } catch (error) {
@@ -557,6 +563,8 @@ function adoptServerTLS(self, connection, options) {
     // A user 'connection' listener that ran after the wrap may have queued plain writes, which must flush first.
     if (hasUnflushedWrites(connection)) {
       attachTLSEngine(self, connection, options);
+    } else if (destroyIfReconnecting(connection, handle)) {
+      return;
     } else {
       // What was read off the fd before the wrap sits in the connection's readable buffer.
       options.initialData = connection.read(connection.readableLength) || undefined;

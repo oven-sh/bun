@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "child_process";
 import { once } from "events";
-import { bunEnv, bunExe, bunRun, tls as certs, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, tls as certs, isLinux, isWindows, tempDir } from "harness";
 import net from "net";
 import { Duplex } from "stream";
 import tls from "tls";
@@ -566,38 +566,64 @@ describe.concurrent("tls.connect({ socket: duplex }): duplex.write()", () => {
 });
 
 describe.concurrent("upgradeTLS() on a socket that is still connecting", () => {
-  // With a synchronous lookup the native connect starts inside connect().
-  const withReconnect = (target: string, script: string) => `
+  const withServer = (script: string) => `
     // A process that cannot exit must not outlive the test.
     setTimeout(() => process.exit(3), 10_000).unref();
-    const server = tls.createServer(JSON.parse(process.env.CERTS), peer => peer.on("error", () => {}).resume());
-    const closed = net.createServer();
-    for (const listener of [server, closed]) await new Promise(resolve => listener.listen(0, "127.0.0.1", resolve));
-    const ports = { open: server.address().port, closed: closed.address().port };
-    await new Promise(resolve => closed.close(resolve));
-    const socket = net.connect(ports.open, "127.0.0.1");
-    const lookup = (host, options, callback) => callback(null, "127.0.0.1", 4);
-    const reconnect = () => socket.connect({ host: "localhost", port: ports.${target}, autoSelectFamily: false, lookup });
+    const certs = JSON.parse(process.env.CERTS);
+    const server = tls.createServer(certs, peer => peer.on("error", () => {}).resume());
     ${script}`;
+  // The native connect starts inside connect() with a synchronous lookup, and in the next tick with an IP address.
+  const withReconnect = (target: string, script: string) =>
+    withServer(`
+      const closed = net.createServer();
+      for (const listener of [server, closed]) await new Promise(resolve => listener.listen(0, "127.0.0.1", resolve));
+      const ports = { open: server.address().port, closed: closed.address().port };
+      await new Promise(resolve => closed.close(resolve));
+      const socket = net.connect(ports.open, "127.0.0.1");
+      const lookup = (host, options, callback) => callback(null, "127.0.0.1", 4);
+      const reconnect = () => socket.connect({ host: "localhost", port: ports.${target}, autoSelectFamily: false, lookup });
+      const reconnectToIP = () => socket.connect(ports.${target}, "127.0.0.1");
+      ${script}`);
 
-  // Outside Linux, connect() itself can report the refusal.
-  test.each(isLinux ? ["open", "closed"] : ["open"])(
-    "tls.connect({ socket }) fails if 'connect' reconnects to the %s port",
-    async target => {
+  describe.each([
+    ["tls.connect({ socket })", "tls.connect({ socket, rejectUnauthorized: false })", "error", "reconnect"],
+    [
+      "new TLSSocket(socket, { isServer: true })",
+      "new tls.TLSSocket(socket, { isServer: true, ...certs })",
+      "_tlsError",
+      "reconnectToIP",
+    ],
+  ])("%s", (_name, wrap, errorEvent, listener) => {
+    const wrapAndLogErrors = `
+      const tlsSocket = ${wrap};
+      tlsSocket.on("secureConnect", () => tlsSocket.destroy());
+      tlsSocket.on("${errorEvent}", error => console.log("tlsSocket", error.syscall, error.code));
+      socket.on("error", error => console.log("socket", error.syscall, error.code));
+      // After the loop iteration that frees a native socket whose connect failed.
+      tlsSocket.on("close", () => setImmediate(() => setImmediate(() => (socket.destroy(), server.close()))));`;
+
+    // Outside Linux, connect() itself can report the refusal.
+    test.each(isLinux ? ["open", "closed"] : ["open"])(
+      "reports EISCONN if 'connect' reconnects to the %s port",
+      async target => {
+        const result = await run(withReconnect(target, `socket.once("connect", ${listener}); ${wrapAndLogErrors}`));
+        expect(result).toSpawn("tlsSocket connect EISCONN\nsocket connect EISCONN");
+      },
+    );
+
+    test.skipIf(isWindows)("reports EISCONN if 'connect' reconnects to a Unix socket", async () => {
+      using dir = tempDir("tls-upgrade-reconnect", {});
       const result = await run(
-        withReconnect(
-          target,
-          `socket.once("connect", reconnect);
-        const tlsSocket = tls.connect({ socket, rejectUnauthorized: false });
-        tlsSocket.on("secureConnect", () => tlsSocket.destroy());
-        tlsSocket.on("error", error => console.log(error.message));
-        // After the loop iteration that frees a native socket whose connect failed.
-        tlsSocket.on("close", () => setImmediate(() => setImmediate(() => (socket.destroy(), server.close()))));`,
-        ),
+        withServer(`
+          process.chdir(${JSON.stringify(String(dir))});
+          await new Promise(resolve => server.listen("tls.sock", resolve));
+          const socket = net.connect("tls.sock");
+          socket.once("connect", () => socket.connect("tls.sock"));
+          ${wrapAndLogErrors}`),
       );
-      expect(result).toSpawn("upgradeTLS requires an established socket");
-    },
-  );
+      expect(result).toSpawn("tlsSocket connect EISCONN\nsocket connect EISCONN");
+    });
+  });
 
   test("throws if an option getter reconnects the socket", async () => {
     const result = await run(

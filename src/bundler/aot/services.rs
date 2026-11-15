@@ -105,8 +105,7 @@ impl FileFinder {
             options.conditions.import.insert(condition, ());
             options.conditions.require.insert(condition, ());
         }
-        let resolver = &transpiler.resolver;
-        FileFinder(Resolver::for_worker(resolver, resolver.log, options))
+        FileFinder(Resolver::for_worker(&transpiler.resolver, None, options))
     }
 
     pub fn find(&mut self, search: &FileSearch<'_>) -> FoundCode {
@@ -121,10 +120,6 @@ impl FileFinder {
             CodeImportKind::Import => bun_ast::ImportKind::Stmt,
             CodeImportKind::Require => bun_ast::ImportKind::Require,
         };
-        let unread_log = Log::init();
-        // SAFETY: the resolver and `unread_log` outlive the guard.
-        let _log_scope =
-            unsafe { Resolver::scoped_log(&raw mut *resolver, NonNull::from(&unread_log)) };
         resolver.prefer_module_field = search.prefers_module_field;
         resolver.esm_failure = None;
         let mut directory = to_native(search.directory).to_vec();
@@ -200,8 +195,7 @@ pub(crate) fn with_test_context<R>(
         ..Default::default()
     };
     let transpiler = arena.alloc(
-        Transpiler::init(&arena, &raw const log, transform_options, None)
-            .expect("default options are valid"),
+        Transpiler::init(&arena, &log, transform_options, None).expect("default options are valid"),
     );
     configure(&mut transpiler.options);
     let mut bundle = BundleV2::init(

@@ -478,7 +478,7 @@ impl S3HttpSimpleTask {
     /// owned by the HTTP thread for the duration of this call.
     pub(crate) fn http_callback(
         this: *mut Self,
-        finished: bun_http::Finished,
+        finished: Option<bun_http::FinishedRequest>,
         result: HTTPClientResult<'_>,
     ) {
         drop(finished);

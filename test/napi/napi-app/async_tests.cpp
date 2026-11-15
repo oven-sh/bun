@@ -982,7 +982,11 @@ static napi_value queue_held_async_work(const Napi::CallbackInfo &info) {
   NODE_API_CALL(env, napi_create_async_work(
                          env, nullptr, Napi::String::New(env, "held"),
                          [](napi_env, void *) {
-                           while (!held_work_released) {
+                           const auto deadline =
+                               std::chrono::steady_clock::now() +
+                               std::chrono::seconds(30);
+                           while (!held_work_released &&
+                                  std::chrono::steady_clock::now() < deadline) {
                              std::this_thread::yield();
                            }
                          },

@@ -7,6 +7,7 @@ use crate::webcore::jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 // `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
 use crate::webcore::jsc as bun_jsc;
+use bun_ptr::OptionCellExt as _;
 use bun_sys as syscall;
 
 use crate::webcore::streams;
@@ -319,20 +320,20 @@ impl ReadableStream {
     pub(crate) fn wire_native_sink(
         &self,
         global: &JSGlobalObject,
-        sink: webcore::SinkHandle,
+        sink: &webcore::SinkHandle,
         owner_cell: JSValue,
         set_source: impl FnOnce(streams::SourceHandle),
     ) -> NativeWireResult {
         use streams::{SourceHandle, Start, StreamError, StreamResult, Writable};
 
         if let Some(byte_stream) = self.ptr.bytes() {
-            if byte_stream.sink.get().is_none() {
+            if byte_stream.sink.is_none() {
                 if !self.try_lock_native(global) {
                     return NativeWireResult::NotNative;
                 }
                 set_source(SourceHandle::ByteStream(byte_stream));
                 byte_stream.parent_const().set_sink_owner(owner_cell);
-                byte_stream.sink.set(sink);
+                byte_stream.sink.set(Some(sink.clone()));
                 byte_stream.sink_paused.set(false);
                 byte_stream.signal_consumer_attached();
 
@@ -372,7 +373,7 @@ impl ReadableStream {
         }
 
         if let Some(file_reader) = self.ptr.file() {
-            if !file_reader.done.get() && file_reader.sink.get().is_none() {
+            if !file_reader.done.get() && file_reader.sink.is_none() {
                 if !self.try_lock_native(global) {
                     return NativeWireResult::NotNative;
                 }
@@ -395,7 +396,7 @@ impl ReadableStream {
                 }
                 set_source(SourceHandle::FileReader(file_reader));
                 file_reader.parent_const().set_sink_owner(owner_cell);
-                file_reader.sink.set(sink);
+                file_reader.sink.set(Some(sink.clone()));
                 file_reader.sink_paused.set(true);
                 file_reader.pull_into_sink();
                 return NativeWireResult::Wired;
@@ -978,7 +979,7 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     /// Same as [`Self::set_owner`] for the `sinkOwner` slot: roots the peer
-    /// this source pipes into (its `sink` backref).
+    /// this source pipes into.
     pub fn set_sink_owner(&self, value: JSValue) {
         if let Some(this) = self.this_jsvalue.try_get() {
             C::js_sink_owner_set_cached(this, self.global_this(), value);
@@ -1028,8 +1029,7 @@ impl<C: SourceContext> NewSource<C> {
         }
         self.cancelled.set(true);
         self.context.on_cancel();
-        let mut p = self.producer.replace(streams::SourceHandle::None);
-        p.close(None);
+        self.producer.take().close(None);
     }
 
     fn is_reader_live(&self) -> bool {

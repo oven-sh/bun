@@ -1902,6 +1902,8 @@ pub enum PathOrFileDescriptor<'a> {
 pub mod waker {
     #[cfg(not(windows))]
     use bun_sys::Fd;
+    #[cfg(windows)]
+    use core::sync::atomic::{AtomicPtr, Ordering};
 
     #[cfg(target_os = "macos")]
     pub type Waker = KEventWaker;
@@ -1920,13 +1922,6 @@ pub mod waker {
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     impl LinuxWaker {
-        /// Stand-in until `init()` runs (e.g. a `BundleThread` allocated before
-        /// its real waker is created). `Fd::INVALID` is sentinel-only; never
-        /// poll/wake through it.
-        pub const fn placeholder() -> Self {
-            Self { fd: Fd::INVALID }
-        }
-
         pub fn init() -> crate::error::Result<Self> {
             match bun_sys::eventfd(0, 0) {
                 Ok(fd) => Ok(Self::init_with_file_descriptor(fd)),
@@ -1991,17 +1986,6 @@ pub mod waker {
         // SAFETY: all-zero is a valid kevent64_s array (POD).
         const ZEROED: [Kevent64; 16] = bun_core::ffi::zeroed();
 
-        /// Stand-in until `init()` runs. To be overwritten via `ptr::write`
-        /// (no `Drop` of the empty `machport_buf` is required, but dropping
-        /// it is also harmless).
-        pub fn placeholder() -> Self {
-            Self {
-                kq: -1,
-                machport: 0,
-                machport_buf: Box::default(),
-            }
-        }
-
         pub fn wake(&self) {
             let _ = io_darwin_schedule_wakeup(self.machport);
         }
@@ -2012,9 +1996,6 @@ pub mod waker {
         }
 
         pub fn wait(&self) {
-            if !Fd::from_native(self.kq).is_valid() {
-                return;
-            }
             let mut events = Self::ZEROED;
             // SAFETY: FFI syscall; pointers reference a stack-local array valid for the call.
             unsafe {
@@ -2065,65 +2046,30 @@ pub mod waker {
 
     #[cfg(windows)]
     pub struct WindowsWaker {
-        /// Process-global `WindowsLoop` singleton. `BackRef` invariant (pointee
-        /// outlives holder) holds trivially: the loop is never freed. `None`
-        /// only between [`placeholder`] and [`init`]; every dispatch path
-        /// (`wake`/`wait`/`uv_loop`) unwraps and would have UB-derefed the old
-        /// raw null anyway.
-        ///
-        /// [`placeholder`]: Self::placeholder
-        /// [`init`]: Self::init
-        pub loop_: Option<bun_ptr::BackRef<bun_uws_sys::WindowsLoop>>,
+        /// The loop of the thread that called `init`. Other threads only wake it. `AtomicPtr` only to be `Sync`.
+        loop_: AtomicPtr<bun_uws_sys::WindowsLoop>,
     }
 
     #[cfg(windows)]
     impl WindowsWaker {
-        /// Stand-in until `init()` runs (e.g. a `BundleThread` allocated before
-        /// its real waker is created). `loop_` is `None` and must never be
-        /// dereferenced — overwrite via `ptr::write` before first
-        /// `wake()`/`wait()`/`uv_loop()`. Mirrors `LinuxWaker::placeholder` /
-        /// `KEventWaker::placeholder` so cross-platform call sites don't fall
-        /// back to `mem::zeroed()` (UB for the niche-optimised `Option<BackRef>`).
-        pub const fn placeholder() -> Self {
-            Self { loop_: None }
-        }
-
         pub fn init() -> crate::error::Result<Self> {
+            let loop_: &bun_uws_sys::WindowsLoop = bun_uws_sys::WindowsLoop::get();
             Ok(Self {
-                loop_: Some(bun_ptr::BackRef::new(bun_uws_sys::WindowsLoop::get())),
+                loop_: AtomicPtr::new(core::ptr::from_ref(loop_).cast_mut()),
             })
         }
 
-        /// Unwrap the back-reference. Panics on a `placeholder()` waker, which
-        /// is the same precondition the previous raw-pointer deref carried
-        /// (just loud instead of UB).
-        #[inline]
-        fn loop_ref(&self) -> bun_ptr::BackRef<bun_uws_sys::WindowsLoop> {
-            self.loop_.expect("WindowsWaker used before init()")
-        }
-
+        /// On the thread that called `init`.
         pub fn wait(&self) {
-            self.loop_ref().run();
+            bun_uws_sys::WindowsLoop::get().run();
         }
 
         pub fn wake(&self) {
-            // The cross-thread wake path: `WindowsLoop` is `!Sync`, so pass the raw
-            // pointer to the thread-safe C wake (`uv_async_send`).
-            // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton;
+            // Relaxed: only `init` writes it, before the waker is shared.
+            let loop_ = self.loop_.load(Ordering::Relaxed);
+            // SAFETY: `loop_` came from `WindowsLoop::get()`, which is `&'static`;
             // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
-            unsafe { bun_uws_sys::loop_::us_wakeup_loop(self.loop_ref().as_const_ptr()) };
-        }
-
-        /// Raw libuv `uv_loop_t*` underlying this waker's `WindowsLoop`.
-        ///
-        /// `loop_` is the process-global singleton from `WindowsLoop::get()`
-        /// (set in [`init`]), so the returned pointer has process lifetime —
-        /// safe to hand to `uv::Timer::init` and friends without an `unsafe`
-        /// block at the call site.
-        #[inline]
-        pub fn uv_loop(&self) -> *mut bun_sys::windows::libuv::Loop {
-            // `BackRef` deref is safe (process-lifetime singleton).
-            self.loop_ref().uv_loop()
+            unsafe { bun_uws_sys::loop_::us_wakeup_loop(loop_) };
         }
     }
 }

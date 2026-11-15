@@ -251,7 +251,7 @@ pub use self::patch_package::PatchCommitResult;
 
 pub use self::run_tasks::{
     flush_dependency_queue, flush_network_queue, flush_patch_task_queue,
-    generate_network_task_for_tarball, get_network_task, run_tasks, schedule_tasks,
+    generate_network_task_for_tarball, get_network_task, schedule_tasks,
 };
 
 pub use self::update_package_json_and_install::{
@@ -535,8 +535,8 @@ pub struct PackageManager {
     ///
     /// TODO: Does this need to be atomic? It seems to be accessed only from the main thread.
     pub(crate) pending_pre_calc_hashes: AtomicU32,
-    pub pending_tasks: AtomicU32,
-    pub total_tasks: u32,
+    pub(crate) pending_tasks: AtomicU32,
+    pub(crate) total_tasks: u32,
     pub(crate) preallocated_network_tasks: PreallocatedNetworkTasks,
     pub(crate) preallocated_resolve_tasks: PreallocatedTaskStore,
 
@@ -558,8 +558,6 @@ pub struct PackageManager {
     pub(crate) global_link_dir: Option<bun_sys::Dir>,
     pub global_dir: Option<bun_sys::Dir>,
     pub(crate) global_link_dir_path: &'static [u8],
-
-    pub(crate) on_wake: WakeHandler,
 
     pub(crate) peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
 
@@ -853,12 +851,6 @@ pub enum TrackInstalledBin {
     Basename(Box<[u8]>),
 }
 
-// MOVE_DOWN: the data struct lives in `bun_install_types::WakeHandler`
-// (single definition the resolver also stores). The `handler` second arg is
-// erased to `*mut c_void` there because that crate cannot name
-// `PackageManager`; `wake_raw()` casts it back at the call site.
-pub use bun_install_types::resolver_hooks::WakeHandler;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Globals / statics
 // ──────────────────────────────────────────────────────────────────────────
@@ -1108,8 +1100,7 @@ impl PackageManager {
     /// Raw-pointer wake for concurrent task-thread callers (see
     /// `isolated_install::Installer::Task::callback`). Never materializes
     /// `&mut PackageManager`, so two task threads finishing simultaneously do
-    /// not hold aliased exclusive borrows. `on_wake` is read-only; the handler
-    /// receives the raw `*mut`;
+    /// not hold aliased exclusive borrows.
     /// `event_loop.wakeup()` is the cross-thread signal and is
     /// internally synchronized; the borrow covers only the event-loop field.
     ///
@@ -1120,10 +1111,6 @@ impl PackageManager {
         // only form field pointers via `addr_of!` (no whole-struct
         // borrow) and `wakeup()` is internally synchronized for cross-thread use.
         unsafe {
-            if let Some(wake) = (*core::ptr::addr_of!((*this).on_wake)).0 {
-                // `bun_install_types` cannot name `PackageManager`: the second arg is erased.
-                (wake.handler)(wake.context.as_ptr(), this.cast::<c_void>());
-            }
             (*core::ptr::addr_of!((*this).event_loop)).wakeup();
             if *core::ptr::addr_of!((*this).options.runtime_auto_install) {
                 crate::auto_installer::Parked::wake_all();
@@ -1564,7 +1551,6 @@ fn allocate_package_manager(
         wr!(global_link_dir, None);
         wr!(global_dir, None);
         wr!(global_link_dir_path, b"");
-        wr!(on_wake, WakeHandler::default());
         wr!(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()

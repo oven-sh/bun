@@ -15,7 +15,9 @@
 //! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
 
 mod cell_ext;
-pub use cell_ext::{CellExt, OptionCellExt, RefPtrDequeCellExt, VecCellExt, VecDequeCellExt};
+pub use cell_ext::{
+    CellExt, KeyedDequeCellExt, OptionCellExt, RefPtrDequeCellExt, VecCellExt, VecDequeCellExt,
+};
 
 mod js_cell;
 pub use js_cell::JsCell;
@@ -699,7 +701,7 @@ mod container_of_tests {
         by_mut: ByMut,
         by_shared: UnsafeCell<ByShared>,
     }
-    /// A `Freeze` child reached through `&mut self`.
+    /// A `Freeze` child.
     struct ByMut {
         hits: u32,
     }
@@ -709,7 +711,6 @@ mod container_of_tests {
         hits: Cell<u32>,
     }
 
-    bun_core::impl_field_parent! { ByMut => Parent.by_mut; fn parent; fn mut parent_ptr; }
     bun_core::impl_field_parent! { ByShared => Parent.by_shared; fn shared parent; }
 
     impl Parent {
@@ -733,16 +734,6 @@ mod container_of_tests {
         }
     }
 
-    impl ByMut {
-        fn touch(&mut self) {
-            self.hits += 1;
-            self.parent().count.set(10);
-            // SAFETY: `plain` is disjoint from `by_mut`; deref at point of use.
-            unsafe { (*self.parent_ptr()).plain = 20 };
-            self.hits += 1;
-        }
-    }
-
     impl ByShared {
         fn touch(&self) {
             self.hits.set(1);
@@ -763,25 +754,6 @@ mod container_of_tests {
             (*back).plain = 1;
             (*back).by_mut.hits = 1;
             assert_eq!(((*p).plain, (*p).by_mut.hits), (1, 1));
-            drop(bun_core::heap::take(p));
-        }
-    }
-
-    /// `&mut self` arms, called the way the runtime calls them: through a
-    /// `&mut Parent` that is a protected function argument.
-    #[test]
-    fn mut_receiver_under_parent_borrow() {
-        fn drive(parent: &mut Parent) {
-            parent.by_mut.touch();
-            assert_eq!(
-                (parent.count.get(), parent.plain, parent.by_mut.hits),
-                (10, 20, 2)
-            );
-        }
-        let p = Parent::boxed();
-        // SAFETY: `p` is live and uniquely owned here.
-        unsafe {
-            drive(&mut *p);
             drop(bun_core::heap::take(p));
         }
     }

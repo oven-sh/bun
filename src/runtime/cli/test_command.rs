@@ -2820,7 +2820,7 @@ impl TestCommand {
             graph: run_compiled::graph(),
             ..Default::default()
         })?;
-        crate::jsc_hooks::state_of(vm)
+        crate::jsc_hooks::runtime_state_of(vm)
             .test_runner
             .set(Some(&reporter.jest));
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.

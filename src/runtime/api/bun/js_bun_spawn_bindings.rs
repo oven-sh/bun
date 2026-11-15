@@ -12,8 +12,8 @@ use bun_io::max_buf;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::spawn_sync_event_loop::TickState;
 use bun_jsc::{
-    self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
-    JsResult, SystemError,
+    self as jsc, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError, JsResult,
+    SystemError,
 };
 use bun_jsc::{JsCell, SysErrorJsc as _};
 #[cfg(unix)]
@@ -999,7 +999,7 @@ fn spawn_maybe_sync(
         None => jsc_vm.event_loop(),
     };
 
-    let loop_handle = EventLoopHandle::init(event_loop.as_erased_ptr());
+    let loop_handle = event_loop.as_handle();
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let cgroup_dir = match &cgroup {

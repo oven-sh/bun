@@ -307,7 +307,7 @@ pub(crate) struct Interpreter<'a> {
     script_ast: ast::Script<'a>,
 
     /// Back-ref to the owner of this interpreter.
-    pub(crate) shell_interp: NonNull<ShellInterpreter>,
+    shell_interp: NonNull<ShellInterpreter>,
     /// Same as [`ShellInterpreter::context`].
     pub(crate) context: Option<bun_jsc::ContextId>,
 
@@ -746,6 +746,10 @@ macro_rules! shell_state_dispatch {
 }
 
 impl<'a> Interpreter<'a> {
+    pub(crate) fn shell_interp(&self) -> NonNull<ShellInterpreter> {
+        self.shell_interp
+    }
+
     // ── arena management ───────────────────────────────────────────────────
 
     /// Allocate a fresh slot in the node arena and return its id. Reuses

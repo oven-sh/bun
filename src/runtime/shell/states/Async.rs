@@ -50,7 +50,7 @@ impl<'a> Async<'a> {
             state: AsyncState::Idle,
             event_loop: evtloop,
             task: bun_ptr::AliasableBox::new(crate::shell::dispatch_tasks::ShellAsyncTask {
-                interp: interp.shell_interp,
+                interp: interp.shell_interp(),
                 node: core::cell::Cell::new(NodeId::NONE),
             }),
         }));

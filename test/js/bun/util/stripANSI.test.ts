@@ -8,16 +8,15 @@ describe("Bun.stripANSI", () => {
   test("returns same string object when no ANSI sequences present", () => {
     var input = "hello world";
     const stripANSI = Bun.stripANSI;
-    // A collection between the two counts takes strings of earlier tests away and lowers the second count.
-    // Collect first, so that it finds none.
+    // A collection between the two counts takes the strings of earlier tests away and lowers the second
+    // count. Collect first, so that it finds none.
     Bun.gc(true);
-    const before = heapStats().objectTypeCounts.string;
+    const numStrings = heapStats().objectTypeCounts.string;
     const result = stripANSI(input);
-    const after = heapStats().objectTypeCounts.string;
     // Make sure the string wasn't modified
     expect(result).toBe(input);
-    // Verify it's the same object, not a copy: `result` would keep a copy alive, and `after` above `before`.
-    expect(after).toBeLessThanOrEqual(before);
+    // Verify it's the same object, not a copy
+    expect(heapStats().objectTypeCounts.string).toBe(numStrings);
   });
 
   test("returns new string when ANSI sequences are removed", () => {
@@ -525,15 +524,14 @@ describe("Bun.stripANSI", () => {
       const input = Buffer.alloc(16 * 1024, "a").toString();
       Bun.stripANSI(input);
       heapStats();
+      // A collection between the two counts lowers the second one. Collect first, so that it finds nothing.
       Bun.gc(true);
 
       const before = heapStats().objectTypeCounts.string;
       const result = Bun.stripANSI(input);
       const after = heapStats().objectTypeCounts.string;
       expect(result).toBe(input);
-      // No copy made: `result` would hold a copy, and `after` above `before`. A collection between the two
-      // counts only lowers `after`, so the check is one-sided.
-      expect(after).toBeLessThanOrEqual(before);
+      expect(after).toBe(before); // no copy made
     });
 
     // A standalone C1 ST (0x9C) stops the escape scan but introduces

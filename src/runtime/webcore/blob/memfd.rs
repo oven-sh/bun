@@ -31,9 +31,7 @@ pub(super) fn create(bytes: &[u8]) -> sys::Result<Bytes> {
         match write!(cursor, "memfd-num-{}", n) {
             Ok(()) => {
                 let written = cursor.position() as usize;
-                label_buf[written] = 0;
-                // `written` ASCII bytes (no interior NUL) + NUL at `label_buf[written]`.
-                bun_core::ZStr::from_buf(&label_buf, written).as_cstr()
+                bun_core::ZStr::nul_terminate(&mut label_buf, written).to_cstr()
             }
             Err(_) => c"",
         }

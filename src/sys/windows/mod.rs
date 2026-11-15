@@ -807,8 +807,7 @@ fn system_volume_device() -> Option<&'static (Vec<u16>, u16)> {
             {
                 return None;
             }
-            sysdir.0[n] = 0;
-            let h = attr_only_open(WStr::from_buf(&sysdir.0, n))?;
+            let h = attr_only_open(WStr::nul_terminate(&mut sysdir, n))?;
             let mut nt = bun_paths::w_path_buffer_pool::get();
             let mut none = bun_paths::w_path_buffer_pool::get();
             let nt_len = final_name_raw(
@@ -1411,17 +1410,7 @@ pub mod rescle {
 
         // Icon is a path, so use toWPathNormalized with proper buffer handling
         let mut icon_buf = bun_paths::w_path_buffer_pool::get();
-        let icon_w: Option<&bun_core::WStr> = if let Some(i) = icon {
-            let path_w = bun_paths::string_paths::to_w_path_normalized(&mut icon_buf, i);
-            // toWPathNormalized returns a slice into icon_buf, need to null-terminate it
-            let len = path_w.len();
-            let buf_u16 = icon_buf.as_mut_slice();
-            buf_u16[len] = 0;
-            // SAFETY: buf_u16[len] == 0 written above; pointer + len form a valid NUL-terminated wide slice
-            Some(bun_core::WStr::from_buf(&buf_u16[..], len))
-        } else {
-            None
-        };
+        let icon_w = icon.map(|i| bun_paths::string_paths::to_w_path_normalized(&mut icon_buf, i));
 
         let title_w = title
             .map(|t| bun_core::strings::to_utf16_alloc_for_real(t, false, true))
@@ -1707,10 +1696,8 @@ fn spawn_watcher_child(job: HANDLE) -> Result<OwnedHandle, Win32Error> {
     let image_path = exe_path_w();
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
     wbuf.as_mut_slice()[0..image_path.len()].copy_from_slice(image_path.as_slice());
-    wbuf.as_mut_slice()[image_path.len()] = 0;
 
-    // SAFETY: NUL written at [len]
-    let image_path_z = bun_core::WStr::from_buf(&wbuf[..], image_path.len());
+    let image_path_z = bun_core::WStr::nul_terminate(&mut wbuf, image_path.len());
 
     let environment = EnvironmentStrings::get();
     let kernelenv = environment

@@ -3267,7 +3267,6 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
     this: &mut T,
     err: &bun_sys::Error,
     path_string: &bun_core::ZStr,
-    err_path: &[u8],
 ) -> Retry {
     if err.get_errno() == bun_sys::E::ENOENT && this.mkdirp_if_not_exists() {
         match mkdirp_parent(path_string.as_bytes()) {
@@ -3277,7 +3276,7 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
             }
             bun_sys::Result::Err(err2) => {
                 this.set_errno_if_present(bun_errno::from_errno(err2.errno as i32).into());
-                this.set_system_error(err.with_path(err_path).to_system_error());
+                this.set_system_error(err.with_path(path_string.as_bytes()).to_system_error());
                 this.set_opened_fd_if_present(Fd::INVALID);
                 return Retry::Fail;
             }
@@ -5621,22 +5620,13 @@ pub(crate) trait FileOpener: Sized {
     /// `CopyFile`) override this to call [`mkdir_if_not_exists`]; everyone else
     /// (e.g. `ReadFile`) keeps the default `Retry::No`, so the open path falls
     /// straight through to the error branch.
-    fn try_mkdirp(
-        &mut self,
-        _err: bun_sys::Error,
-        _path: &bun_core::ZStr,
-        _display_path: &[u8],
-    ) -> Retry {
+    fn try_mkdirp(&mut self, _err: bun_sys::Error, _path: &bun_core::ZStr) -> Retry {
         Retry::No
     }
 
     fn get_fd_by_opening(&mut self, callback: fn(&mut Self, Fd)) {
         let mut buf = bun_paths::path_buffer_pool::get();
-        let path_string = match self.pathlike() {
-            PathOrFileDescriptor::Path(p) => p.clone(),
-            PathOrFileDescriptor::Fd(_) => unreachable!(),
-        };
-        let path = path_string.slice_z(&mut buf);
+        let path = self.pathlike().path().slice_z(&mut buf);
 
         loop {
             match bun_sys::open(
@@ -5650,7 +5640,7 @@ pub(crate) trait FileOpener: Sized {
                 }
                 bun_sys::Result::Err(err) => {
                     if err.get_errno() == bun_sys::E::ENOENT {
-                        match self.try_mkdirp(err.clone(), path, path_string.slice()) {
+                        match self.try_mkdirp(err.clone(), path) {
                             Retry::Continue => continue,
                             Retry::Fail => {
                                 // `mkdir_if_not_exists` has set `errno` and `system_error`.
@@ -5660,10 +5650,7 @@ pub(crate) trait FileOpener: Sized {
                             Retry::No => {}
                         }
                     }
-                    let err = node::fs::error_for_caller(
-                        [Some(&path_string), None],
-                        err.with_path(path_string.slice()),
-                    );
+                    let err = sys_error_with_path_like(&err, self.pathlike());
                     self.set_errno(bun_errno::from_errno(err.errno as i32).into());
                     self.set_system_error(jsc::SysErrorJsc::to_system_error(&err));
                     self.set_opened_fd(Fd::INVALID);

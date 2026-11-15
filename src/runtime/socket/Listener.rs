@@ -620,7 +620,7 @@ impl Listener {
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-            twin: JsCell::new(None),
+            twin: Cell::new(None),
             verify_error: JsCell::new(None),
             latest_session: JsCell::new(None),
         });
@@ -666,7 +666,7 @@ impl Listener {
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-            twin: JsCell::new(None),
+            twin: Cell::new(None),
             verify_error: JsCell::new(None),
             latest_session: JsCell::new(None),
         });
@@ -1062,7 +1062,7 @@ impl Listener {
                             buffered_data_for_node_net: Default::default(),
                             bytes_written: Cell::new(0),
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-                            twin: JsCell::new(None),
+                            twin: Cell::new(None),
                             verify_error: JsCell::new(None),
                             latest_session: JsCell::new(None),
                         })
@@ -1148,7 +1148,7 @@ impl Listener {
                             buffered_data_for_node_net: Default::default(),
                             bytes_written: Cell::new(0),
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-                            twin: JsCell::new(None),
+                            twin: Cell::new(None),
                             verify_error: JsCell::new(None),
                             latest_session: JsCell::new(None),
                         })
@@ -1407,7 +1407,7 @@ fn connect_finish<const IS_SSL: bool>(
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-            twin: JsCell::new(None),
+            twin: Cell::new(None),
             verify_error: JsCell::new(None),
             latest_session: JsCell::new(None),
         })

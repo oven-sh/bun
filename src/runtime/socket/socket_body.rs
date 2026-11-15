@@ -340,7 +340,7 @@ pub(crate) struct NewSocket<const SSL: bool> {
     /// expects at index 0). The encrypted half holds a ref on the raw half
     /// here so a single `onClose` can retire both — no `Handlers.clone()`,
     /// no second context.
-    pub(crate) twin: JsCell<Option<RefPtr<Self>>>,
+    pub(crate) twin: Cell<Option<RefPtr<Self>>>,
     /// Owned copy of the handshake verify error, so `getAuthorizationError()`
     /// keeps its verdict after detach (the live error borrows the `SSL`, and
     /// EPROTO reasons are stack-copied in uSockets).
@@ -1250,24 +1250,32 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// ext slot keeps pointing at `self` while `do_connect` overwrites
     /// `self.socket`, aliasing two native sockets onto one wrapper. The ext
     /// slot is nulled before closing so the synchronous `on_close` /
-    /// `on_connecting_error` dispatch early-returns and no JS callback fires;
+    /// `on_connecting_error` dispatch early-returns and no JS callback of this
+    /// socket fires (the other half of an `upgradeTLS` pair does see the close);
     /// the caller must hold an independent +1 across this call. Only
     /// handles Connected/Connecting; Pipe/UpgradedDuplex back-pointers do
     /// not live in the ext slot so those are left for the caller's existing
     /// `debug_assert!` to catch.
     pub(crate) fn detach_for_reconnect(&self) {
+        if let Some(raw) = self.take_twin() {
+            let code = uws::CloseCode::Failure as c_int;
+            crate::dispatch::fold(Self::on_close(raw, self.socket.get(), code, None));
+        }
         let old = self.socket.get();
+        let is_raw_twin = self.is_raw_twin();
         let slot = match old.socket {
-            uws::InternalSocket::Connected(s) => NativeRef::<SSL>::of(s),
-            uws::InternalSocket::Connecting(c) => NativeRef::<SSL>::of_connecting(c),
+            // The slot belongs to the TLS half.
+            _ if is_raw_twin => None,
+            uws::InternalSocket::Connected(s) => Some(NativeRef::<SSL>::of(s)),
+            uws::InternalSocket::Connecting(c) => Some(NativeRef::<SSL>::of_connecting(c)),
             _ => return,
         };
         // SAFETY: the slot of our own socket, which is never a losing candidate.
-        let _native_ref = unsafe { slot.take() };
+        let _native_ref = slot.and_then(|slot| unsafe { slot.take() });
+        self.update_flags(|f| f.remove(Flags::BYPASS_TLS));
         self.socket.set(SocketHandler::<SSL>::DETACHED);
         self.buffered_data_for_node_net.set(Vec::new());
         self.detach_native_callback();
-        old.close(uws::CloseCode::Failure);
         self.poll_ref.unref(js_loop_ctx());
         if self.flags.get().contains(Flags::IS_ACTIVE) {
             self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
@@ -1277,6 +1285,29 @@ impl<const SSL: bool> NewSocket<SSL> {
                 }
             }
         }
+        old.close(uws::CloseCode::Failure);
+        if is_raw_twin {
+            // The handlers of the TLS half can have connected this socket.
+            self.detach_for_reconnect();
+        }
+    }
+
+    /// False again once either half has left the pair.
+    fn is_raw_twin(&self) -> bool {
+        self.flags.get().contains(Flags::BYPASS_TLS)
+    }
+
+    pub(crate) fn twin(&self) -> Option<bun_ptr::ThisPtr<Self>> {
+        self.twin.with_taken(|twin| {
+            let raw = twin.as_ref().filter(|raw| raw.is_raw_twin())?;
+            Some(raw.this_ptr())
+        })
+    }
+
+    fn take_twin(&self) -> Option<RefPtr<Self>> {
+        let raw = self.twin.take().filter(|raw| raw.is_raw_twin())?;
+        raw.update_flags(|f| f.remove(Flags::BYPASS_TLS));
+        Some(raw)
     }
 
     pub(crate) fn mark_inactive(&self) {
@@ -1756,7 +1787,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             f.set(Flags::REJECTED, transport_unusable);
         });
         if transport_unusable {
-            if let Some(twin) = this.twin.get().as_ref() {
+            if let Some(twin) = this.twin() {
                 twin.update_flags(|f| f.insert(Flags::REJECTED));
             }
         } else if SSL {
@@ -2079,7 +2110,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // The upgradeTLS raw twin shares the same us_socket_t so it never
         // gets its own dispatch — fire its (pre-upgrade) close handler
         // here, then retire it. `raw.twin == None` so this doesn't recurse.
-        let _pair_scope = this.twin.with_mut(|t| t.take()).map(|raw| {
+        let _pair_scope = this.take_twin().map(|raw| {
             // No tick checkpoint between the twin's close handler and this socket's own.
             let scope = handlers.vm.enter_event_loop_scope();
             // This frame is the twin's trampoline for
@@ -3324,7 +3355,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             buffered_data_for_node_net: Cell::new(Vec::new()),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
-            twin: JsCell::new(None),
+            twin: Cell::new(None),
             verify_error: JsCell::new(None),
             latest_session: JsCell::new(None),
         });
@@ -3439,7 +3470,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             buffered_data_for_node_net: Cell::new(Vec::new()),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
-            twin: JsCell::new(None),
+            twin: Cell::new(None),
             verify_error: JsCell::new(None),
             latest_session: JsCell::new(None),
         });
@@ -4283,7 +4314,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
         buffered_data_for_node_net: Cell::new(Vec::new()),
         bytes_written: Cell::new(0),
         native_callback: JsCell::new(NativeCallbacks::None),
-        twin: JsCell::new(None),
+        twin: Cell::new(None),
         verify_error: JsCell::new(None),
         latest_session: JsCell::new(None),
     });

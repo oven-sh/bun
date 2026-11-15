@@ -40,17 +40,17 @@ impl JsonCache {
     #[inline]
     fn parse(
         &mut self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &bun_ast::Source,
         func: fn(
             &bun_ast::Source,
-            &mut bun_ast::Log,
+            &bun_ast::Log,
             &bun_alloc::Arena,
         ) -> Result<bun_ast::Expr, bun_parsers::Error>,
     ) -> Result<Option<bun_ast::Expr>, crate::Error> {
-        let mut temp_log = bun_ast::Log::init();
+        let temp_log = bun_ast::Log::init();
         let bump = self.bump.get_or_insert_with(bun_alloc::Arena::new);
-        let result = func(source, &mut temp_log, bump).ok();
+        let result = func(source, &temp_log, bump).ok();
         temp_log.append_to(log);
         Ok(result)
     }
@@ -58,15 +58,15 @@ impl JsonCache {
     #[inline]
     fn parse_rows(
         &mut self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &bun_ast::Source,
         func: fn(
             &bun_ast::Source,
-            &mut bun_ast::Log,
+            &bun_ast::Log,
         ) -> Result<json_parser::ParsedJson, bun_parsers::Error>,
     ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
-        let mut temp_log = bun_ast::Log::init();
-        let result = func(source, &mut temp_log).ok();
+        let temp_log = bun_ast::Log::init();
+        let result = func(source, &temp_log).ok();
         temp_log.append_to(log);
         Ok(result)
     }
@@ -75,7 +75,7 @@ impl JsonCache {
     #[inline]
     pub(crate) fn parse_tsconfig(
         &mut self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &bun_ast::Source,
     ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
         self.parse_rows(log, source, json_parser::ParsedJson::parse_jsonc)
@@ -85,7 +85,7 @@ impl JsonCache {
     #[inline]
     pub(crate) fn parse_package_json(
         &mut self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &bun_ast::Source,
     ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
         self.parse_rows(log, source, json_parser::ParsedJson::parse_package_json)
@@ -96,7 +96,7 @@ impl JsonCache {
     #[inline]
     pub fn parse_json(
         &mut self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &bun_ast::Source,
         mode: JsonMode,
     ) -> Result<Option<bun_ast::Expr>, crate::Error> {
@@ -359,7 +359,7 @@ impl TSConfigJSON {
 
     #[inline(never)]
     pub fn parse(
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &bun_ast::Source,
         json_cache: &mut JsonCache,
     ) -> Result<Option<Box<TSConfigJSON>>, crate::Error> {
@@ -723,7 +723,7 @@ impl TSConfigJSON {
 
     pub(crate) fn is_valid_tsconfig_path_pattern(
         text: &[u8],
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &bun_ast::Source,
         loc: bun_ast::Loc,
     ) -> bool {
@@ -753,7 +753,7 @@ impl TSConfigJSON {
     /// a warning, unless `text` is empty) when `text` is not a dotted chain
     /// of identifiers.
     pub(crate) fn parse_member_expression_for_jsx(
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &bun_ast::Source,
         loc: bun_ast::Loc,
         text: &[u8],
@@ -788,7 +788,7 @@ impl TSConfigJSON {
 
     pub(crate) fn is_valid_tsconfig_path_no_base_url_pattern(
         text: &[u8],
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &bun_ast::Source,
         loc: bun_ast::Loc,
     ) -> bool {

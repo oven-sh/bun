@@ -60,7 +60,7 @@ pub(crate) fn add_package_files(
     ctx: &ContextData,
     root_directory: &[u8],
     compiler_options: &CompilerOptions,
-    log: &mut Log,
+    log: &Log,
     output_files: &mut Vec<OutputFile>,
 ) {
     let working_directory = ctx.args.absolute_working_dir.as_deref().unwrap_or_default();
@@ -221,7 +221,7 @@ impl JsonBuilder<'_> {
 }
 
 struct Warnings<'a> {
-    log: &'a mut Log,
+    log: &'a Log,
     package_json: Vec<u8>,
 }
 
@@ -506,7 +506,7 @@ pub(super) fn valid_package_name(folder: &[u8]) -> Vec<u8> {
 pub(super) fn write_package_json(
     request: &PackageRequest<'_>,
     output_files: &[OutputFile],
-    log: &mut Log,
+    log: &Log,
 ) -> Result<Vec<u8>, bun_js_printer::Error> {
     bun_ast::initialize_store();
     let arena = Arena::new();

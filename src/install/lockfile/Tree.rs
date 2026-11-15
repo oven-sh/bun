@@ -498,7 +498,7 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) dependencies: &'a [Dependency],
     pub(crate) resolution_lists: &'a [DependencyIDSlice],
     pub(crate) queue: TreeFiller,
-    pub(crate) log: &'a mut bun_ast::Log,
+    pub(crate) log: &'a bun_ast::Log,
     /// Stored as `ParentRef` (raw
     /// non-null backref) so the construction site (`Lockfile::hoist`) can
     /// split-borrow `resolutions` mutably without borrowck rejecting the

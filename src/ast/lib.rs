@@ -8,6 +8,7 @@
 #![feature(thread_local)]
 //! A [`Source`] borrows for `'a`. A diagnostic owns its bytes, so a [`Log`] may outlive the `Source`.
 
+use core::cell::Cell;
 use core::fmt;
 use std::borrow::Cow;
 
@@ -973,7 +974,7 @@ impl Default for Msg {
 }
 
 impl Msg {
-    pub(crate) fn memory_cost(&self) -> usize {
+    pub fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
         cost += self.data.memory_cost();
         for note in self.notes.iter() {
@@ -1163,10 +1164,10 @@ impl Range {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct Log {
-    pub warnings: u32,
-    pub errors: u32,
-    pub msgs: Vec<Msg>,
-    pub level: Level,
+    pub warnings: Cell<u32>,
+    pub errors: Cell<u32>,
+    pub msgs: Cell<Vec<Msg>>,
+    pub level: Cell<Level>,
 
     /// Incremental line/column scanner for the messages this log creates, so
     /// a flood of diagnostics against one source doesn't rescan it from byte
@@ -1174,21 +1175,21 @@ pub struct Log {
     /// lazily by the first located diagnostic: most logs never report
     /// anything, and `Log` is embedded by value in types that are sensitive
     /// to its size (e.g. `TaskError` in the isolated installer).
-    pub line_column_tracker: Option<Box<LineColumnTracker>>,
+    pub line_column_tracker: Cell<Option<Box<LineColumnTracker>>>,
 }
 
 impl Default for Log {
     fn default() -> Self {
         Log {
-            warnings: 0,
-            errors: 0,
-            msgs: Vec::new(),
-            level: if cfg!(debug_assertions) {
+            warnings: Cell::new(0),
+            errors: Cell::new(0),
+            msgs: Cell::new(Vec::new()),
+            level: Cell::new(if cfg!(debug_assertions) {
                 Level::Info
             } else {
                 Level::Warn
-            },
-            line_column_tracker: None,
+            }),
+            line_column_tracker: Cell::new(None),
         }
     }
 }
@@ -1237,18 +1238,12 @@ impl Log {
     /// [`range_data`], but with the line/column computed through this log's
     /// [`LineColumnTracker`] so successive diagnostics against the same
     /// source resume the previous scan instead of restarting from byte 0.
-    fn tracked_range_data(
-        &mut self,
-        source: Option<&Source>,
-        r: Range,
-        text: impl IntoText,
-    ) -> Data {
+    fn tracked_range_data(&self, source: Option<&Source>, r: Range, text: impl IntoText) -> Data {
         let location = if source.is_some() {
-            Location::init_or_null_tracked(
-                source,
-                r,
-                self.line_column_tracker.get_or_insert_default(),
-            )
+            let mut tracker = self.line_column_tracker.take().unwrap_or_default();
+            let location = Location::init_or_null_tracked(source, r, &mut tracker);
+            self.line_column_tracker.set(Some(tracker));
+            location
         } else {
             Location::init_or_null(source, r)
         };
@@ -1258,38 +1253,49 @@ impl Log {
         }
     }
 
-    pub fn memory_cost(&self) -> usize {
-        let mut cost: usize = 0;
-        for msg in &self.msgs {
-            cost += msg.memory_cost();
-        }
-        cost
+    /// Lends `f` the messages. What is logged while `f` runs comes after them.
+    pub fn with_msgs<R>(&self, f: impl FnOnce(&mut Vec<Msg>) -> R) -> R {
+        let mut msgs = self.msgs.take();
+        let result = f(&mut msgs);
+        self.prepend_msgs(msgs);
+        result
+    }
+
+    fn prepend_msgs(&self, mut msgs: Vec<Msg>) {
+        msgs.append(&mut self.msgs.take());
+        self.msgs.set(msgs);
+    }
+
+    pub fn msgs_len(&self) -> usize {
+        let msgs = self.msgs.take();
+        let len = msgs.len();
+        self.msgs.set(msgs);
+        len
     }
 
     #[inline]
     pub fn has_errors(&self) -> bool {
-        self.errors > 0
+        self.errors.get() > 0
     }
 
-    pub fn reset(&mut self) {
-        self.msgs.clear();
-        self.warnings = 0;
-        self.errors = 0;
+    pub fn reset(&self) {
+        self.with_msgs(Vec::clear);
+        self.warnings.set(0);
+        self.errors.set(0);
         // Drop the per-source scan cache with the messages it was built for;
         // its identity check is pointer-based, so don't let it outlive the
         // logical reuse boundary.
-        self.line_column_tracker = None;
+        self.line_column_tracker.set(None);
     }
 
     pub fn has_any(&self) -> bool {
-        (self.warnings + self.errors) > 0
+        (self.warnings.get() + self.errors.get()) > 0
     }
 
     pub fn init() -> Log {
         let level = DEFAULT_LOG_LEVEL.load();
         Log {
-            msgs: Vec::new(),
-            level,
+            level: Cell::new(level),
             ..Default::default()
         }
     }
@@ -1301,8 +1307,8 @@ impl Log {
     }
 
     #[inline]
-    pub fn add_debug_fmt(&mut self, source: Option<&Source>, l: Loc, args: fmt::Arguments<'_>) {
-        if !Kind::Debug.should_print(self.level) {
+    pub fn add_debug_fmt(&self, source: Option<&Source>, l: Loc, args: fmt::Arguments<'_>) {
+        if !Kind::Debug.should_print(self.level.get()) {
             return;
         }
         let text = alloc_print(args);
@@ -1322,22 +1328,22 @@ impl Log {
     // `to_js`/`to_js_aggregate_error`/`to_js_array` live in `bun_logger_jsc`.
 
     /// Moves the messages and the counts of `self` to the end of `other`.
-    pub fn append_to(&mut self, other: &mut Log) {
-        other.msgs.append(&mut self.msgs);
-        other.warnings += core::mem::take(&mut self.warnings);
-        other.errors += core::mem::take(&mut self.errors);
+    pub fn append_to(&self, other: &Log) {
+        self.with_msgs(|msgs| other.with_msgs(|other| other.append(msgs)));
+        let (warnings, errors) = (self.warnings.take(), self.errors.take());
+        other.warnings.update(|n| n + warnings);
+        other.errors.update(|n| n + errors);
         // See `reset` — the scan cache goes with the messages.
-        self.line_column_tracker = None;
+        self.line_column_tracker.set(None);
     }
 
     // TODO: remove `deinit` because it does not de-initialize the log; it clears it
-    pub fn clear_and_free(&mut self) {
-        self.msgs.clear();
-        self.msgs.shrink_to_fit();
+    pub fn clear_and_free(&self) {
+        self.msgs.set(Vec::new());
         // self.warnings = 0;
         // self.errors = 0;
         // See `reset` — the scan cache goes with the messages.
-        self.line_column_tracker = None;
+        self.line_column_tracker.set(None);
     }
 }
 
@@ -1353,7 +1359,7 @@ impl Log {
     #[cold]
     #[inline(never)]
     fn add_formatted_msg(
-        &mut self,
+        &self,
         kind: Kind,
         source: Option<&Source>,
         r: Range,
@@ -1362,8 +1368,8 @@ impl Log {
         redact_sensitive_information: bool,
     ) {
         match kind {
-            Kind::Err => self.errors += 1,
-            Kind::Warn => self.warnings += 1,
+            Kind::Err => self.errors.update(|n| n + 1),
+            Kind::Warn => self.warnings.update(|n| n + 1),
             _ => {}
         }
         let data = self.tracked_range_data(source, r, text);
@@ -1378,7 +1384,7 @@ impl Log {
 
     #[cold]
     pub fn add_resolve_error(
-        &mut self,
+        &self,
         source: Option<&Source>,
         r: Range,
         args: fmt::Arguments<'_>,
@@ -1391,7 +1397,7 @@ impl Log {
         // `alloc_print`. `fmt::Arguments` is opaque, so callers must pass
         // `specifier_arg` explicitly.
         let specifier = BabyString::r#in(&text, specifier_arg);
-        self.errors += 1;
+        self.errors.update(|n| n + 1);
 
         let data = self.tracked_range_data(source, r, text);
 
@@ -1411,7 +1417,7 @@ impl Log {
 
     #[cold]
     pub fn add_resolve_error_with_text_dupe(
-        &mut self,
+        &self,
         source: Option<&Source>,
         r: Range,
         args: fmt::Arguments<'_>,
@@ -1429,8 +1435,8 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_range_error(&mut self, source: Option<&Source>, r: Range, text: &'static [u8]) {
-        self.errors += 1;
+    pub fn add_range_error(&self, source: Option<&Source>, r: Range, text: &'static [u8]) {
+        self.errors.update(|n| n + 1);
         let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
             kind: Kind::Err,
@@ -1440,19 +1446,14 @@ impl Log {
     }
 
     #[inline]
-    pub fn add_range_error_fmt(
-        &mut self,
-        source: Option<&Source>,
-        r: Range,
-        args: fmt::Arguments<'_>,
-    ) {
+    pub fn add_range_error_fmt(&self, source: Option<&Source>, r: Range, args: fmt::Arguments<'_>) {
         let text = alloc_print(args);
         self.add_formatted_msg(Kind::Err, source, r, text, Box::default(), false)
     }
 
     #[inline]
     pub fn add_range_error_fmt_with_notes(
-        &mut self,
+        &self,
         source: Option<&Source>,
         r: Range,
         notes: Box<[Data]>,
@@ -1464,7 +1465,7 @@ impl Log {
 
     #[inline]
     pub fn add_error_fmt<'a>(
-        &mut self,
+        &self,
         source: impl Into<Option<&'a Source<'a>>>,
         l: Loc,
         args: fmt::Arguments<'_>,
@@ -1485,7 +1486,7 @@ impl Log {
 
     // TODO(dylan-conway): rename and replace `addErrorFmt`
     #[inline]
-    pub fn add_error_fmt_opts(&mut self, args: fmt::Arguments<'_>, opts: AddErrorOptions<'_>) {
+    pub fn add_error_fmt_opts(&self, args: fmt::Arguments<'_>, opts: AddErrorOptions<'_>) {
         let text = alloc_print(args);
         self.add_formatted_msg(
             Kind::Err,
@@ -1501,7 +1502,7 @@ impl Log {
     }
 
     /// Use a bun.sys.Error's message in addition to some extra context.
-    pub fn add_sys_error(&mut self, e: &bun_sys::Error, args: fmt::Arguments<'_>) {
+    pub fn add_sys_error(&self, e: &bun_sys::Error, args: fmt::Arguments<'_>) {
         let Some((tag_name, sys_errno)) = e.get_error_code_tag_name() else {
             return self.add_error_fmt(None, Loc::EMPTY, args);
         };
@@ -1510,12 +1511,8 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_zig_error_with_note(
-        &mut self,
-        err_name: &'static str,
-        note_args: fmt::Arguments<'_>,
-    ) {
-        self.errors += 1;
+    pub fn add_zig_error_with_note(&self, err_name: &'static str, note_args: fmt::Arguments<'_>) {
+        self.errors.update(|n| n + 1);
 
         let notes: Box<[Data]> = Box::new([range_data(None, Range::NONE, alloc_print(note_args))]);
 
@@ -1529,11 +1526,11 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_range_warning(&mut self, source: Option<&Source>, r: Range, text: &'static [u8]) {
-        if !Kind::Warn.should_print(self.level) {
+    pub fn add_range_warning(&self, source: Option<&Source>, r: Range, text: &'static [u8]) {
+        if !Kind::Warn.should_print(self.level.get()) {
             return;
         }
-        self.warnings += 1;
+        self.warnings.update(|n| n + 1);
         let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
             kind: Kind::Warn,
@@ -1543,8 +1540,8 @@ impl Log {
     }
 
     #[inline]
-    pub fn add_warning_fmt(&mut self, source: Option<&Source>, l: Loc, args: fmt::Arguments<'_>) {
-        if !Kind::Warn.should_print(self.level) {
+    pub fn add_warning_fmt(&self, source: Option<&Source>, l: Loc, args: fmt::Arguments<'_>) {
+        if !Kind::Warn.should_print(self.level.get()) {
             return;
         }
         let text = alloc_print(args);
@@ -1563,26 +1560,23 @@ impl Log {
 
     /// A warning at `loc` that never prints the source line, which may hold a secret the redactor cannot recognise.
     #[cold]
-    pub fn add_warning_fmt_no_excerpt(
-        &mut self,
-        source: &Source,
-        loc: Loc,
-        args: fmt::Arguments<'_>,
-    ) {
-        if !Kind::Warn.should_print(self.level) {
+    pub fn add_warning_fmt_no_excerpt(&self, source: &Source, loc: Loc, args: fmt::Arguments<'_>) {
+        if !Kind::Warn.should_print(self.level.get()) {
             return;
         }
         let range = Range { loc, len: 1 };
         let text = alloc_print(args);
         self.add_formatted_msg(Kind::Warn, Some(source), range, text, Box::default(), false);
-        if let Some(location) = self.msgs.last_mut().and_then(|m| m.data.location.as_mut()) {
-            location.line_text = None;
-        }
+        self.with_msgs(|msgs| {
+            if let Some(location) = msgs.last_mut().and_then(|m| m.data.location.as_mut()) {
+                location.line_text = None;
+            }
+        })
     }
 
     #[cold]
     pub fn add_warning_fmt_line_col(
-        &mut self,
+        &self,
         filepath: &[u8],
         line: u32,
         col: u32,
@@ -1593,17 +1587,17 @@ impl Log {
 
     #[cold]
     pub fn add_warning_fmt_line_col_with_notes(
-        &mut self,
+        &self,
         filepath: &[u8],
         line: u32,
         col: u32,
         args: fmt::Arguments<'_>,
         notes: Box<[Data]>,
     ) {
-        if !Kind::Warn.should_print(self.level) {
+        if !Kind::Warn.should_print(self.level.get()) {
             return;
         }
-        self.warnings += 1;
+        self.warnings.update(|n| n + 1);
 
         // TODO: do this properly
 
@@ -1627,12 +1621,12 @@ impl Log {
 
     #[inline]
     pub fn add_range_warning_fmt(
-        &mut self,
+        &self,
         source: Option<&Source>,
         r: Range,
         args: fmt::Arguments<'_>,
     ) {
-        if !Kind::Warn.should_print(self.level) {
+        if !Kind::Warn.should_print(self.level.get()) {
             return;
         }
         let text = alloc_print(args);
@@ -1641,17 +1635,17 @@ impl Log {
 
     #[cold]
     pub fn add_range_warning_fmt_with_note(
-        &mut self,
+        &self,
         source: Option<&Source>,
         r: Range,
         args: fmt::Arguments<'_>,
         note_args: fmt::Arguments<'_>,
         note_range: Range,
     ) {
-        if !Kind::Warn.should_print(self.level) {
+        if !Kind::Warn.should_print(self.level.get()) {
             return;
         }
-        self.warnings += 1;
+        self.warnings.update(|n| n + 1);
 
         let notes: Box<[Data]> =
             Box::new([self.tracked_range_data(source, note_range, alloc_print(note_args))]);
@@ -1667,7 +1661,7 @@ impl Log {
 
     #[inline]
     pub fn add_range_warning_fmt_with_notes(
-        &mut self,
+        &self,
         source: Option<&Source>,
         r: Range,
         notes: Box<[Data]>,
@@ -1679,17 +1673,17 @@ impl Log {
 
     #[cold]
     pub fn add_range_error_fmt_with_note(
-        &mut self,
+        &self,
         source: Option<&Source>,
         r: Range,
         args: fmt::Arguments<'_>,
         note_args: fmt::Arguments<'_>,
         note_range: Range,
     ) {
-        if !Kind::Err.should_print(self.level) {
+        if !Kind::Err.should_print(self.level.get()) {
             return;
         }
-        self.errors += 1;
+        self.errors.update(|n| n + 1);
 
         let notes: Box<[Data]> =
             Box::new([self.tracked_range_data(source, note_range, alloc_print(note_args))]);
@@ -1704,11 +1698,11 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_warning(&mut self, source: Option<&Source>, l: Loc, text: &'static [u8]) {
-        if !Kind::Warn.should_print(self.level) {
+    pub fn add_warning(&self, source: Option<&Source>, l: Loc, text: &'static [u8]) {
+        if !Kind::Warn.should_print(self.level.get()) {
             return;
         }
-        self.warnings += 1;
+        self.warnings.update(|n| n + 1);
         let data = self.tracked_range_data(
             source,
             Range {
@@ -1726,16 +1720,16 @@ impl Log {
 
     #[cold]
     pub fn add_warning_with_note(
-        &mut self,
+        &self,
         source: Option<&Source>,
         l: Loc,
         warn: &'static [u8],
         note_args: fmt::Arguments<'_>,
     ) {
-        if !Kind::Warn.should_print(self.level) {
+        if !Kind::Warn.should_print(self.level.get()) {
             return;
         }
-        self.warnings += 1;
+        self.warnings.update(|n| n + 1);
 
         let notes: Box<[Data]> = Box::new([self.tracked_range_data(
             source,
@@ -1756,8 +1750,8 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_range_debug(&mut self, source: Option<&Source>, r: Range, text: &'static [u8]) {
-        if !Kind::Debug.should_print(self.level) {
+    pub fn add_range_debug(&self, source: Option<&Source>, r: Range, text: &'static [u8]) {
+        if !Kind::Debug.should_print(self.level.get()) {
             return;
         }
         let data = self.tracked_range_data(source, r, text);
@@ -1770,7 +1764,7 @@ impl Log {
 
     #[inline]
     pub fn add_range_error_with_notes(
-        &mut self,
+        &self,
         source: Option<&Source>,
         r: Range,
         text: impl IntoText,
@@ -1781,13 +1775,13 @@ impl Log {
 
     #[cold]
     fn add_range_error_with_notes_text(
-        &mut self,
+        &self,
         source: Option<&Source>,
         r: Range,
         text: Cow<'static, [u8]>,
         notes: Box<[Data]>,
     ) {
-        self.errors += 1;
+        self.errors.update(|n| n + 1);
         let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
             kind: Kind::Err,
@@ -1797,20 +1791,22 @@ impl Log {
         })
     }
 
-    pub fn add_msg(&mut self, msg: Msg) {
-        self.msgs.push(msg);
+    pub fn add_msg(&self, msg: Msg) {
+        let mut msgs = self.msgs.take();
+        msgs.push(msg);
+        self.msgs.set(msgs);
     }
 
     /// Generic only over the text conversion; the body is shared so each
     /// `&[u8; N]` literal length does not get its own copy.
     #[inline]
-    pub fn add_error(&mut self, source: Option<&Source>, loc: Loc, text: impl IntoText) {
+    pub fn add_error(&self, source: Option<&Source>, loc: Loc, text: impl IntoText) {
         self.add_error_text(source, loc, text.into_text());
     }
 
     #[cold]
-    fn add_error_text(&mut self, _source: Option<&Source>, loc: Loc, text: Cow<'static, [u8]>) {
-        self.errors += 1;
+    fn add_error_text(&self, _source: Option<&Source>, loc: Loc, text: Cow<'static, [u8]>) {
+        self.errors.update(|n| n + 1);
         let data = self.tracked_range_data(
             _source,
             Range {
@@ -1828,8 +1824,8 @@ impl Log {
 
     // TODO(dylan-conway): rename and replace `addError`
     #[cold]
-    pub fn add_error_opts(&mut self, text: &'static [u8], opts: AddErrorOptions<'_>) {
-        self.errors += 1;
+    pub fn add_error_opts(&self, text: &'static [u8], opts: AddErrorOptions<'_>) {
+        self.errors.update(|n| n + 1);
         let data = self.tracked_range_data(
             opts.source,
             Range {
@@ -1847,7 +1843,7 @@ impl Log {
     }
 
     pub fn add_symbol_already_declared_error(
-        &mut self,
+        &self,
         source: &Source,
         name: &[u8],
         new_loc: Loc,
@@ -1873,27 +1869,30 @@ impl Log {
 
     pub fn print<W: IntoLogWrite>(&self, to: W) -> fmt::Result {
         let mut w = to.into_log_write();
-        if Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed) {
-            self.print_with_enable_ansi_colors::<true>(&mut w)
-        } else {
-            self.print_with_enable_ansi_colors::<false>(&mut w)
-        }
+        self.with_msgs(|msgs| {
+            if Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed) {
+                self.print_with_enable_ansi_colors::<true>(msgs, &mut w)
+            } else {
+                self.print_with_enable_ansi_colors::<false>(msgs, &mut w)
+            }
+        })
     }
 
-    pub(crate) fn print_with_enable_ansi_colors<const ENABLE_ANSI_COLORS: bool>(
+    fn print_with_enable_ansi_colors<const ENABLE_ANSI_COLORS: bool>(
         &self,
+        msgs: &[Msg],
         to: &mut impl fmt::Write,
     ) -> fmt::Result {
         let mut needs_newline = false;
-        if self.warnings > 0 && self.errors > 0 {
+        if self.warnings.get() > 0 && self.errors.get() > 0 {
             // Print warnings at the top
             // errors at the bottom
             // This is so if you're reading from a terminal
             // and there are a bunch of warnings
             // You can more easily see where the errors are
-            for msg in &self.msgs {
+            for msg in msgs {
                 if msg.kind != Kind::Err {
-                    if msg.kind.should_print(self.level) {
+                    if msg.kind.should_print(self.level.get()) {
                         if needs_newline {
                             to.write_str("\n\n")?;
                         }
@@ -1903,9 +1902,9 @@ impl Log {
                 }
             }
 
-            for msg in &self.msgs {
+            for msg in msgs {
                 if msg.kind == Kind::Err {
-                    if msg.kind.should_print(self.level) {
+                    if msg.kind.should_print(self.level.get()) {
                         if needs_newline {
                             to.write_str("\n\n")?;
                         }
@@ -1915,8 +1914,8 @@ impl Log {
                 }
             }
         } else {
-            for msg in &self.msgs {
-                if msg.kind.should_print(self.level) {
+            for msg in msgs {
+                if msg.kind.should_print(self.level.get()) {
                     if needs_newline {
                         to.write_str("\n\n")?;
                     }
@@ -2299,7 +2298,7 @@ impl<'a> Source<'a> {
     pub const MAX_PARSEABLE_LEN: usize = i32::MAX as usize;
 
     /// Parsers call this before reading a source, whichever way it reached them.
-    pub fn check_parseable_len(&self, log: &mut Log, what: &str) -> Result<(), SourceTooLarge> {
+    pub fn check_parseable_len(&self, log: &Log, what: &str) -> Result<(), SourceTooLarge> {
         if self.contents.len() <= Self::MAX_PARSEABLE_LEN {
             return Ok(());
         }
@@ -3050,7 +3049,7 @@ mod location_tests {
             ..Default::default()
         };
 
-        let mut log = Log::init();
+        let log = Log::init();
         log.add_error(Some(&source), Loc { start: 3 }, b"with a range");
         log.add_error(Some(&source), Loc::EMPTY, b"without a range");
         let note = range_data(Some(&source), Range::NONE, b"a note");
@@ -3060,6 +3059,7 @@ mod location_tests {
 
         let lines: Vec<i32> = log
             .msgs
+            .take()
             .iter()
             .map(|msg| &msg.data)
             .chain([&note])

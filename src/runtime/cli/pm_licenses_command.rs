@@ -204,7 +204,7 @@ impl PmLicensesCommand {
         let pkg_resolution = packages.items_resolution();
         let buf = lockfile.buffers.string_bytes.as_slice();
 
-        let mut log = Log::init();
+        let log = Log::init();
         let mut store = BunStore::init();
         let mut disk = DiskIndex { entries: None };
         let mut entries: Vec<Entry> = Vec::new();
@@ -232,14 +232,7 @@ impl PmLicensesCommand {
             let is_npm = resolution.tag == ResolutionTag::Npm;
 
             let mut info = if isolated {
-                store.read_info(
-                    &mut path,
-                    top_len,
-                    pkg_names[pkg_id],
-                    resolution,
-                    buf,
-                    &mut log,
-                )
+                store.read_info(&mut path, top_len, pkg_names[pkg_id], resolution, buf, &log)
             } else {
                 None
             };
@@ -248,7 +241,7 @@ impl PmLicensesCommand {
             if info.is_none() {
                 if let Some(location) = &locations[pkg_id] {
                     let segments: [&[u8]; 1] = [location];
-                    info = read_package_info_at(&mut path, top_len, &segments, &mut log);
+                    info = read_package_info_at(&mut path, top_len, &segments, &log);
                 }
                 if is_npm {
                     other_version = info.take_if(|info| match &info.version {
@@ -259,21 +252,15 @@ impl PmLicensesCommand {
             }
 
             if info.is_none() && !isolated {
-                info = store.read_info(
-                    &mut path,
-                    top_len,
-                    pkg_names[pkg_id],
-                    resolution,
-                    buf,
-                    &mut log,
-                );
+                info =
+                    store.read_info(&mut path, top_len, pkg_names[pkg_id], resolution, buf, &log);
             }
 
             if info.is_none() && is_npm {
                 info = disk.take(
                     &mut path,
                     top_len,
-                    &mut log,
+                    &log,
                     pkg_names[pkg_id].slice(buf),
                     &version,
                 );
@@ -399,7 +386,7 @@ fn read_package_info_at(
     path: &mut AutoAbsPath,
     base_len: usize,
     segments: &[&[u8]],
-    log: &mut Log,
+    log: &Log,
 ) -> Option<PackageInfo> {
     path.set_length(base_len);
     for &segment in segments {
@@ -413,7 +400,7 @@ fn read_package_info_at(
     info
 }
 
-fn read_package_info(path: &[u8], dir: &[u8], log: &mut Log) -> Option<PackageInfo> {
+fn read_package_info(path: &[u8], dir: &[u8], log: &Log) -> Option<PackageInfo> {
     let contents = File::read_from(Fd::cwd(), path).ok()?;
     bun_ast::initialize_store_or_reset();
     let source = Source::init_path_string(path, contents.as_slice());
@@ -545,7 +532,7 @@ impl BunStore {
         pkg_name: bun_semver::String,
         resolution: &Resolution,
         buf: &[u8],
-        log: &mut Log,
+        log: &Log,
     ) -> Option<PackageInfo> {
         let entry = self.lookup(path, top_len, pkg_name, resolution, buf)?;
         let segments: [&[u8]; 5] = [
@@ -618,7 +605,7 @@ impl DiskIndex {
         &mut self,
         path: &mut AutoAbsPath,
         top_len: usize,
-        log: &mut Log,
+        log: &Log,
         name: &[u8],
         version: &[u8],
     ) -> Option<PackageInfo> {
@@ -636,7 +623,7 @@ impl DiskIndex {
     fn scan_node_modules(
         path: &mut AutoAbsPath,
         depth: usize,
-        log: &mut Log,
+        log: &Log,
         out: &mut StringHashMap<PackageInfo>,
     ) {
         let nm_len = path.len();
@@ -670,7 +657,7 @@ impl DiskIndex {
     fn scan_package(
         path: &mut AutoAbsPath,
         depth: usize,
-        log: &mut Log,
+        log: &Log,
         out: &mut StringHashMap<PackageInfo>,
     ) {
         let pkg_len = path.len();

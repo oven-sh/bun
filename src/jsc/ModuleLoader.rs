@@ -100,7 +100,7 @@ pub struct TranspileArgs<'a> {
     pub specifier: &'a [u8],
     pub referrer: &'a [u8],
     pub input_specifier: &'a bun_core::String,
-    pub log: *mut bun_ast::Log,
+    pub log: *const bun_ast::Log,
     pub virtual_source: Option<&'a bun_ast::Source<'a>>,
     pub global_object: &'a JSGlobalObject,
     pub flags: FetchFlags,

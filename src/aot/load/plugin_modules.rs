@@ -291,11 +291,11 @@ impl<'a> PluginModules<'a> {
                 default_loader,
                 read_file: &read_file,
             };
-            let mut log = Log::init();
-            let loaded = self.provider.load(&request, &mut log);
+            let log = Log::init();
+            let loaded = self.provider.load(&request, &log);
             match loaded.is_err() && self.holds_failures.load(atomic::Ordering::Relaxed) {
                 true => self.failed_loads.lock().push((path.to_vec(), log)),
-                false => self.messages.say(&mut log),
+                false => self.messages.say(&log),
             }
             match loaded {
                 Ok(Loaded::Source {
@@ -493,15 +493,18 @@ impl<'a> PluginModules<'a> {
 }
 
 pub(crate) fn first_error_of(log: &Log) -> Vec<u8> {
-    let first = log.msgs.iter().find(|it| it.kind == Kind::Err);
-    first.map_or_else(Vec::new, |it| it.data.text.to_vec())
+    log.with_msgs(|msgs| {
+        let first = msgs.iter().find(|it| it.kind == Kind::Err);
+        first.map_or_else(Vec::new, |it| it.data.text.to_vec())
+    })
 }
 
 pub(crate) fn warn_instead_of_errors(log: &mut Log) {
-    for message in log.msgs.iter_mut().filter(|it| it.kind == Kind::Err) {
+    let msgs = log.msgs.get_mut();
+    for message in msgs.iter_mut().filter(|it| it.kind == Kind::Err) {
         message.kind = Kind::Warn;
-        log.errors -= 1;
-        log.warnings += 1;
+        log.errors.update(|n| n - 1);
+        log.warnings.update(|n| n + 1);
     }
 }
 

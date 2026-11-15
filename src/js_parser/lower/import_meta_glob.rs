@@ -472,7 +472,7 @@ fn find_files(
 
 /// Kept out of `P` so this code isn't monomorphized for every parser configuration.
 struct Arguments<'a, 'log> {
-    log: &'log mut bun_ast::Log,
+    log: &'log bun_ast::Log,
     source: &'a bun_ast::Source<'a>,
     arena: &'a Arena,
 }

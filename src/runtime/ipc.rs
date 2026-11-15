@@ -1399,8 +1399,8 @@ impl SendQueue {
         let _ = global;
         // Note: KeepAlive::{ref_,unref} take an `EventLoopCtx` (aio cycle-
         // break vtable), not `&VirtualMachine`; dispatch is
-        // routed through `bun_io::get_vm_ctx` which `bun_runtime` registers.
-        let ctx = bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js);
+        // routed through `bun_io::js_vm_ctx` which `bun_runtime` registers.
+        let ctx = bun_io::js_vm_ctx();
         let should_ref = self.should_ref();
         if should_ref {
             self.keep_alive.ref_(ctx);

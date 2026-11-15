@@ -408,18 +408,17 @@ impl IOWriter {
             // above re-enter `__start()` and mutate `writer.handle`, which
             // invalidates `s` under Stacked Borrows.
             let s = self.state();
-            if let Some(poll) = s.writer.get_poll() {
-                if s.flags.nonblock {
-                    poll.set_flag(FilePollFlag::Nonblocking);
-                }
-                // On macOS `sendto` with MSG_DONTWAIT can still block, so
-                // only mark as socket there if the fd is already O_NONBLOCK.
-                let sendto_msg_nowait_blocks = cfg!(target_os = "macos");
-                if s.flags.is_socket && (!sendto_msg_nowait_blocks || s.flags.nonblock) {
-                    poll.set_flag(FilePollFlag::Socket);
-                } else if s.flags.pollable {
-                    poll.set_flag(FilePollFlag::Fifo);
-                }
+            let handle = &s.writer.handle;
+            if s.flags.nonblock {
+                handle.set_poll_flag(FilePollFlag::Nonblocking);
+            }
+            // On macOS `sendto` with MSG_DONTWAIT can still block, so
+            // only mark as socket there if the fd is already O_NONBLOCK.
+            let sendto_msg_nowait_blocks = cfg!(target_os = "macos");
+            if s.flags.is_socket && (!sendto_msg_nowait_blocks || s.flags.nonblock) {
+                handle.set_poll_flag(FilePollFlag::Socket);
+            } else if s.flags.pollable {
+                handle.set_poll_flag(FilePollFlag::Fifo);
             }
         }
         Ok(())
@@ -450,9 +449,9 @@ impl IOWriter {
                 // `writer.handle` on the EINVAL/EPERM fallback paths), which
                 // invalidates the `s` borrow under Stacked Borrows. Re-derive.
                 let s = self.state();
-                // if `handle == .fd` it means it's a file which does not
+                // no poll means it's a file which does not
                 // support polling for writeability and we should just write to it
-                if matches!(s.writer.handle, bun_io::pipes::PollOrFd::Fd(_)) {
+                if !s.writer.handle.has_poll() {
                     debug_assert!(!s.flags.pollable);
                     return WriteOutcome::IsActuallyFile;
                 }
@@ -477,16 +476,14 @@ impl IOWriter {
 
         #[cfg(not(windows))]
         {
-            debug_assert!(matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)));
-            if let Some(poll) = s.writer.get_poll() {
-                // `is_watching()` = `is_registered() && !needs_rearm`.
-                // NOT `is_registered()`: after a one-shot fire that drains
-                // everything (no `register_poll()`), `PollWritable` stays set
-                // but `NeedsRearm` is set → `is_registered()` would return
-                // Suspended without re-arming and stall the queue forever.
-                if poll.is_watching() {
-                    return WriteOutcome::Suspended;
-                }
+            debug_assert!(s.writer.handle.has_poll());
+            // `is_watching()` = `is_registered() && !needs_rearm`.
+            // NOT `is_registered()`: after a one-shot fire that drains
+            // everything (no `register_poll()`), `PollWritable` stays set
+            // but `NeedsRearm` is set → `is_registered()` would return
+            // Suspended without re-arming and stall the queue forever.
+            if s.writer.handle.is_watching() {
+                return WriteOutcome::Suspended;
             }
             if let Err(e) = s.writer.start(s.fd, s.flags.pollable) {
                 return WriteOutcome::Failed(e);
@@ -767,7 +764,7 @@ impl IOWriter {
             }
             #[cfg(not(windows))]
             {
-                debug_assert!(matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)));
+                debug_assert!(s.writer.handle.has_poll());
                 s.writer.register_poll();
             }
         }
@@ -1128,7 +1125,7 @@ impl Drop for IOWriter {
         #[cfg(not(windows))]
         {
             // The poll goes before its fd.
-            s.writer.handle = bun_io::pipes::PollOrFd::Closed;
+            s.writer.handle.set_fd(Fd::INVALID);
         }
         #[cfg(windows)]
         {
@@ -1137,8 +1134,7 @@ impl Drop for IOWriter {
         if s.fd != Fd::INVALID {
             let _ = sys::close(s.fd);
         }
-        s.writer
-            .disable_keeping_process_alive(s.evtloop.as_event_loop_ctx());
+        s.writer.update_ref(false);
     }
 }
 

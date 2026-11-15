@@ -662,15 +662,12 @@ pub fn read_file_contents<'buf>(
 /// round-tripping through the worker thread's *default* mimalloc heap (which
 /// is never destroyed and retains the segment for the process lifetime).
 ///
-/// Returns `(ptr, len)` into `arena`-owned memory; a sentinel NUL is written
-/// at `ptr[len]` (not counted in `len`).
-pub fn read_file_contents_in_arena(
+/// A sentinel NUL is written after the last byte.
+pub fn read_file_contents_in_arena<'a>(
     file: &bun_sys::File,
-    path: &[u8],
-    arena: &bun_alloc::Arena,
+    arena: &'a bun_alloc::Arena,
     byte_order_mark: ByteOrderMark,
-) -> crate::CrateResult<(core::ptr::NonNull<u8>, usize)> {
-    let _ = path;
+) -> crate::CrateResult<&'a [u8]> {
     crate::fs::FileSystem::set_max_fd(file.handle().native());
 
     let mut initial_buf = [const { MaybeUninit::uninit() }; 16384];
@@ -685,42 +682,47 @@ pub fn read_file_contents_in_arena(
         let size = file.get_end_pos()?;
         debug!("stat({}) = {}", file.handle(), size);
         if size == 0 {
-            return Ok((core::ptr::NonNull::dangling(), 0));
+            return Ok(b"");
         }
         // A hot reload can write the file between `stat` and `read`. What it grew by is cut off.
         size.max(initial_len)
     };
 
     let slot = arena.alloc_uninit_slice::<u8>(cap + 1);
+    slot[cap].write(0);
     let mut buf = BorrowedBuf::from(&mut slot[..cap]);
     buf.unfilled().append(initial_buf.filled());
     file.read_all_buf(buf.unfilled())?;
-    debug!("read({}, {}) = {}", file.handle(), cap, buf.len());
+    let mut total = buf.len();
+    debug!("read({}, {}) = {}", file.handle(), cap, total);
+    if total < cap {
+        buf.unfilled().append(&[0]);
+    }
 
     let contents = buf.into_filled_mut();
-    let mut total = contents.len();
     let is_converted = byte_order_mark == ByteOrderMark::Converted;
-    if let Some(bom) = BOM::detect(contents).filter(|_| is_converted) {
+    if let Some(bom) = BOM::detect(&contents[..total]).filter(|_| is_converted) {
         debug!("Convert {} BOM", bom.tag_name());
         match bom {
             BOM::Utf8 => {
                 let n = BOM::UTF8_BYTES.len();
-                contents.copy_within(n.., 0);
+                contents.copy_within(n..total, 0);
                 total -= n;
+                contents[total] = 0;
             }
             other => {
                 // Rare path (UTF-16 source on the concurrent transpiler) —
                 // re-encode via the global-heap helper, then copy into the
                 // arena so the *retained* bytes still land there.
-                let converted = other.remove_and_convert_to_utf8_and_free(contents.to_vec());
+                let converted =
+                    other.remove_and_convert_to_utf8_and_free(contents[..total].to_vec());
                 let dst = arena.alloc_slice_fill_copy::<u8>(converted.len() + 1, 0);
                 dst[..converted.len()].copy_from_slice(&converted);
-                return Ok((core::ptr::NonNull::from_mut(dst).cast(), converted.len()));
+                return Ok(&dst[..converted.len()]);
             }
         }
     }
-    slot[total].write(0);
-    Ok((core::ptr::NonNull::from_mut(slot).cast(), total))
+    Ok(&contents[..total])
 }
 
 /// What becomes of a byte order mark at the start of a file that is read.

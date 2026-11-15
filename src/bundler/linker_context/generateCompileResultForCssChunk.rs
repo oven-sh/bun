@@ -25,17 +25,9 @@ pub(crate) fn generate_compile_result_for_css_chunk(
     let _trace = bun_core::perf::trace("Bundler.generateCodeForFileInChunkCss");
     // `defer trace.end()` — RAII; Drop ends the trace.
 
-    // `worker.arena` (= `BackRef` to `worker.heap`) is a disjoint field from
-    // `worker.temporary_arena` borrowed `&mut` below, so a direct shared
-    // borrow via `BackRef::get` is fine. The heap is pinned for the worker's
-    // lifetime; see `Worker::arena`.
-    let arena = worker.arena.get();
-    let _arena_reset = scopeguard::guard(&mut worker.temporary_arena, |arena| {
-        // temporary_arena is initialized in Worker::create before any task runs.
-        if let Some(a) = arena.as_mut() {
-            a.reset();
-        }
-    });
+    // Frees what JS part ranges retained; CSS does not allocate here.
+    worker.temporary_arena.reset();
+    let arena = worker.arena();
     let mut allocating_writer: Vec<u8> = Vec::new();
 
     let Content::Css(css_content) = &chunk.content else {
@@ -99,7 +91,7 @@ pub(crate) fn generate_compile_result_for_css_chunk(
             Index::INVALID
         }
         &CssImportOrderKind::SourceIndex(idx) => {
-            let sheet = c.graph.ast.items_css()[idx.get() as usize]
+            let sheet = c.parse_graph().css_asts[idx.get() as usize]
                 .as_deref()
                 .expect("css ast present");
             let runs = rules_to_bundle(sheet);

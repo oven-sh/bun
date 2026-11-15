@@ -24,7 +24,6 @@ use crate::bun_fs;
 use crate::BundleV2;
 #[cfg(debug_assertions)]
 use crate::LinkerContext;
-use crate::bundled_ast::CssAstRef;
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::{
@@ -112,7 +111,7 @@ impl Default for Content<'_> {
 // SAFETY: `Chunk` is processed across the bundler thread pool (see
 // `computeCrossChunkDependencies`, `generateChunksInParallel`). Raw-pointer
 // fields (`CssAstRef`, `ChunkRenamer` arena)
-// point into bundler-arena storage that outlives the
+// point into the bundle's storage, which outlives the
 // pool join and is only mutated by the owning task; this mirrors
 // `InputFile`'s blanket impls (bundle_v2.rs).
 unsafe impl Send for Chunk<'_> {}
@@ -1186,6 +1185,9 @@ pub struct JavaScriptChunk {
 pub struct CssChunk<'a> {
     pub(crate) imports_in_chunk_in_order: Vec<CssImportOrder<'a>>,
 }
+
+/// Borrows from `Graph::css_asts`.
+pub(crate) type CssAstRef<'a> = bun_ptr::BackRef<bun_css::BundlerStyleSheet<'a>>;
 
 /// The conditions of an `@import` rule, found through the stylesheet that owns them.
 #[derive(Copy, Clone)]

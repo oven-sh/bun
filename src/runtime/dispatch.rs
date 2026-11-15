@@ -267,32 +267,24 @@ pub(crate) fn run_task(
         task_tag::BundleV2PluginResolve => in_features!(
             [Bundler],
             (
-                resolve: *mut bun_bundler::bundle_v2::api::JSBundler::Resolve =
-                    cast_ptr!(bun_bundler::bundle_v2::api::JSBundler::Resolve),
+                resolve: Box<bun_bundler::bundle_v2::api::JSBundler::Resolve<'static>> =
+                    boxed!(task, bun_bundler::bundle_v2::api::JSBundler::Resolve),
                 global: &JSGlobalObject = global,
             ) -> JsResult<()> {
                 // `bun_bundler` is JSC-free; the C++ hop it calls answers the request itself when the plugin throws, but can return early with an exception pending (argument conversion), so check the scope here.
-                bun_jsc::call_check_slow(global, || {
-                    // SAFETY: tag identifies pointee — a live `Resolve` owned by the
-                    // plugin dispatch chain.
-                    unsafe { &mut *resolve }.run_on_js_thread()
-                })?;
+                bun_jsc::call_check_slow(global, || resolve.run_on_js_thread())?;
                 Ok(())
             }
         )?,
         task_tag::BundleV2PluginLoad => in_features!(
             [Bundler],
             (
-                load: *mut bun_bundler::bundle_v2::api::JSBundler::Load =
-                    cast_ptr!(bun_bundler::bundle_v2::api::JSBundler::Load),
+                load: Box<bun_bundler::bundle_v2::api::JSBundler::Load<'static>> =
+                    boxed!(task, bun_bundler::bundle_v2::api::JSBundler::Load),
                 global: &JSGlobalObject = global,
             ) -> JsResult<()> {
                 // As `BundleV2PluginResolve`.
-                bun_jsc::call_check_slow(global, || {
-                    // SAFETY: tag identifies pointee — a live `Load` owned by the plugin
-                    // dispatch chain.
-                    unsafe { &mut *load }.run_on_js_thread()
-                })?;
+                bun_jsc::call_check_slow(global, || load.run_on_js_thread())?;
                 Ok(())
             }
         )?,
@@ -370,19 +362,15 @@ pub(crate) fn run_task(
                 Ok(())
             }
         )?,
-        task_tag::BundleV2PluginResolveAnswered => feature_arm!(
+        task_tag::BundleV2PluginResolveAnswered => boxed_arm!(
+            task,
             [Bundler],
-            |answered: bun_bundler::bundle_v2::api::JSBundler::ResolveAnswered| {
-                // SAFETY: §Dispatch — tag identifies pointee; live for this dispatch.
-                unsafe { &mut *answered }.run();
-            }
+            |answered: bun_bundler::bundle_v2::api::JSBundler::ResolveAnswered| { answered.run() }
         ),
-        task_tag::BundleV2PluginLoadAnswered => feature_arm!(
+        task_tag::BundleV2PluginLoadAnswered => boxed_arm!(
+            task,
             [Bundler],
-            |answered: bun_bundler::bundle_v2::api::JSBundler::LoadAnswered| {
-                // SAFETY: §Dispatch — tag identifies pointee; live for this dispatch.
-                unsafe { &mut *answered }.run();
-            }
+            |answered: bun_bundler::bundle_v2::api::JSBundler::LoadAnswered| { answered.run() }
         ),
         task_tag::BundleV2PluginLoadDeferred => {
             cast!(bun_bundler::bundle_v2::api::JSBundler::LoadDeferred).run();
@@ -1579,10 +1567,16 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::BakeHotReloadEvent => release_in!([Bundler], BakeHotReloadEvent),
         task_tag::BundleV2DeferredBatchTask => release_in!([Bundler], BundleV2DeferredBatchTask),
         task_tag::BundleV2PluginResolve => {
-            release_in!([Bundler], bun_bundler::bundle_v2::api::JSBundler::Resolve)
+            release_boxed_in!(
+                [Bundler],
+                bun_bundler::bundle_v2::api::JSBundler::Resolve<'static>
+            )
         }
         task_tag::BundleV2PluginLoad => {
-            release_in!([Bundler], bun_bundler::bundle_v2::api::JSBundler::Load)
+            release_boxed_in!(
+                [Bundler],
+                bun_bundler::bundle_v2::api::JSBundler::Load<'static>
+            )
         }
         task_tag::ShellYesTask => release_in!([Shell], ShellYesTask),
         task_tag::CppTask => release!(CppTask),
@@ -1605,13 +1599,13 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::JSBundleCompletionTask => release_boxed_in!([Bundler], JSBundleCompletionTask),
         task_tag::JSCDeferredWorkTask => release!(JSCDeferredWorkTask),
         task_tag::BundleV2PluginResolveAnswered => {
-            release_in!(
+            release_boxed_in!(
                 [Bundler],
                 bun_bundler::bundle_v2::api::JSBundler::ResolveAnswered
             )
         }
         task_tag::BundleV2PluginLoadAnswered => {
-            release_in!(
+            release_boxed_in!(
                 [Bundler],
                 bun_bundler::bundle_v2::api::JSBundler::LoadAnswered
             )

@@ -275,9 +275,28 @@ static JSC::EncodedJSValue keyOfRequireUnderModuleMocks(Zig::GlobalObject* globa
     return JSC::JSValue::encode(given == key ? resolved : JSC::JSValue(jsString(vm, given)));
 }
 
+// Whether a mock that OnLoad::moduleMockKeysByRequirePath names is being made: one of the running mocks stands under a key that the map leads to.
+static bool isModuleMockAtRequirePathRunning(Zig::GlobalObject* globalObject)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    if (!plugins.virtualModules)
+        return false;
+    for (auto& key : plugins.moduleMockKeysByRequirePath.values()) {
+        auto standing = plugins.virtualModules->find(key);
+        if (standing == plugins.virtualModules->end())
+            continue;
+        JSC::JSObject* mock = standing->value.get();
+        if (plugins.runningModuleMocks.containsIf([&](auto& running) { return running.mock.get() == mock; }))
+            return true;
+    }
+    return false;
+}
+
 // Where require() has its path from a replaced Module._resolveFilename or with options.paths, module mocks are not asked about it. Only a mock that
-// OnLoad::moduleMockKeysByRequirePath names gives the path another key there (Bun::keyOfModuleMockAtRequirePath()), and a running factory is asked only about a path
-// that the map has as a key, so that its own require() of its name gets the original. A mock of a name with one file has no say there, nor has `bun test --aot`, which leaves the map empty.
+// OnLoad::moduleMockKeysByRequirePath names gives the path another key there (Bun::keyOfModuleMockAtRequirePath()). The running factories are asked about a path that
+// the map has as a key, so that a factory's own require() of its name gets the original, and about every path while such a mock is being made: what its load requires
+// joins its import chain then, as at the other exits, so a module of that load which requires the name gets the original too and is loaded again once the mock is made.
+// A mock of a name with one file has no say there while no such mock is being made, nor has `bun test --aot`, which leaves the map empty.
 static JSC::EncodedJSValue keyOfRequireUnderModuleMocksAtRequirePaths(Zig::GlobalObject* globalObject, JSC::JSValue resolved, JSC::JSValue from)
 {
     auto& plugins = globalObject->onLoadPlugins;
@@ -290,7 +309,7 @@ static JSC::EncodedJSValue keyOfRequireUnderModuleMocksAtRequirePaths(Zig::Globa
     auto fromString = from.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     String given = key;
-    if (!plugins.runningModuleMocks.isEmpty() && plugins.moduleMockKeysByRequirePath.contains(key))
+    if (!plugins.runningModuleMocks.isEmpty() && (plugins.moduleMockKeysByRequirePath.contains(key) || isModuleMockAtRequirePathRunning(globalObject)))
         given = Bun::keyOfImportWhileModuleMocksRun(globalObject, key, fromString, false);
     if (!plugins.moduleMockKeysByRequirePath.isEmpty())
         given = Bun::keyOfModuleMockAtRequirePath(globalObject, given, fromString, false);

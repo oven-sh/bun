@@ -1925,7 +1925,7 @@ pub(crate) fn rename_at_w(
     new_path_w: &[u16],
     replace_if_exists: bool,
 ) -> bun_sys::Result<()> {
-    let src_fd = 'brk: {
+    let src = bun_sys::CloseOnDrop::new('brk: {
         match bun_sys::open_file_at_windows(
             old_dir_fd,
             old_path_w,
@@ -1958,10 +1958,9 @@ pub(crate) fn rename_at_w(
             }
             bun_sys::Result::Ok(fd) => break 'brk fd,
         }
-    };
-    let _close = bun_sys::CloseOnDrop::new(src_fd);
+    });
 
-    move_opened_file_at(src_fd, new_dir_fd, new_path_w, replace_if_exists)
+    move_opened_file_at(src.fd(), new_dir_fd, new_path_w, replace_if_exists)
 }
 
 mod kernel32_2 {

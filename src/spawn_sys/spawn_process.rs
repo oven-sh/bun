@@ -33,9 +33,6 @@ pub type PidT = bun_libuv_sys::uv_pid_t;
 #[cfg(unix)]
 pub type FdT = libc::c_int;
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
-pub type PidFdType = FdT;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Rusage — platform-uniform resource-usage struct
 //
@@ -417,7 +414,7 @@ pub enum PosixStdio {
 pub struct PosixSpawnResult {
     pub pid: PidT,
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub pidfd: Option<PidFdType>,
+    pub pidfd: Option<File>,
     /// The parent's end of a [`PosixStdio::Buffer`].
     pub stdin: Option<File>,
     pub stdout: Option<File>,
@@ -488,7 +485,7 @@ impl PosixSpawnResult {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
+    pub(crate) fn pifd_from_pid(&mut self) -> bun_sys::Result<File> {
         if crate::waiter_thread_flag::get() {
             return Err(bun_sys::Error::from_code(
                 bun_sys::E::ENOSYS,
@@ -537,7 +534,7 @@ impl PosixSpawnResult {
                 }
                 Err(err)
             }
-            Ok(fd) => Ok(fd.native()),
+            Ok(fd) => Ok(File::from_fd(fd)),
         }
     }
 }

@@ -20,7 +20,7 @@ use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{BufferedReader, ReadState};
 use bun_jsc::{self as jsc, EventLoopHandle};
 use bun_ptr::RefPtr;
-use bun_sys::{self, Fd, SystemError};
+use bun_sys::{self, SystemError};
 use enumset::EnumSet;
 
 use crate::api::bun_spawn::stdio::{self, Stdio};
@@ -790,7 +790,7 @@ pub enum WritableInitError {
 
 pub enum Writable {
     Pipe(RefPtr<FileSink>),
-    Fd(Fd),
+    Fd,
     Buffer(RefPtr<StaticPipeWriter>),
     Inherit,
     Ignore,
@@ -843,11 +843,8 @@ impl Writable {
                         event_loop, subprocess, result, blob,
                     )));
                 }
-                Stdio::Fd(fd) => {
-                    return Ok(Writable::Fd(fd));
-                }
-                Stdio::Dup2(dup2) => {
-                    return Ok(Writable::Fd(dup2.to.to_fd()));
+                Stdio::Fd(_) | Stdio::Dup2(_) => {
+                    return Ok(Writable::Fd);
                 }
                 Stdio::Inherit => {
                     return Ok(Writable::Inherit);
@@ -881,7 +878,7 @@ impl Writable {
                 ))),
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 Stdio::Memfd(_) => unreachable!("the shell makes no memfd"),
-                Stdio::Fd(fd) => Ok(Writable::Fd(fd)),
+                Stdio::Fd(_) => Ok(Writable::Fd),
                 Stdio::Inherit => Ok(Writable::Inherit),
                 Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
                 Stdio::Ipc | Stdio::Capture => Ok(Writable::Ignore),
@@ -916,7 +913,7 @@ impl Writable {
                 // re-entrant `on_stdin_writer_close` from the writer's drop is a no-op.
             }
             Writable::Ignore => {}
-            Writable::Fd(_) | Writable::Inherit => {}
+            Writable::Fd | Writable::Inherit => {}
         }
     }
 }
@@ -1089,8 +1086,6 @@ impl Readable {
 
     pub(crate) fn finalize(&mut self) {
         match core::mem::replace(self, Readable::Closed) {
-            // .fd is borrowed from the shell's IOWriter (see IO.OutKind.to_subproc_stdio) or
-            // the `Cmd`'s `redirection_fd`; the owner closes it.
             Readable::Fd => {
                 *self = Readable::Closed;
             }

@@ -236,8 +236,7 @@ pub(crate) fn preconnect(cx: &mut JsScope<'_>, url: &BunString) -> JsResult<()> 
     }
 
     let href = url_str.to_owned_slice();
-    // SAFETY: `href` goes where `url` goes.
-    let url = ZigURL::parse(unsafe { bun_ptr::detach_lifetime(&href) });
+    let url = ZigURL::parse(&href);
 
     if !url.is_http() && !url.is_https() && !url.is_s3() {
         return Err(
@@ -263,7 +262,7 @@ pub(crate) fn preconnect(cx: &mut JsScope<'_>, url: &BunString) -> JsResult<()> 
     if vm.env_loader().get_http_proxy_for(&url).is_some() || vm.tls_default_ciphers().is_some() {
         return Ok(());
     }
-    http::async_http::preconnect(url, href);
+    http::async_http::preconnect(href.into());
     Ok(())
 }
 
@@ -1526,7 +1525,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     // `http::SendFile` fields are `usize`; blob sizes/offsets
                     // are `blob::SizeType` (u64) — hence the `as usize` casts.
                     let mut sf = http::SendFile {
-                        fd: opened_file.fd(),
+                        file: opened_file,
                         remain: (blob_offset + original_size) as usize,
                         offset: blob_offset as usize,
                         content_size: original_size.min(stat_size) as usize,
@@ -1544,10 +1543,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         // window clamped to the file); that is the Content-Length.
                         sf.content_size = sf.remain;
                     }
-                    body = HTTPRequestBody::Sendfile {
-                        window: sf,
-                        _file: opened_file,
-                    };
+                    body = HTTPRequestBody::Sendfile(sf);
 
                     break 'prepare_body;
                 }

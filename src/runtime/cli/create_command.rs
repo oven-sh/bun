@@ -1394,21 +1394,20 @@ fn file_copier_copy(
                 }
                 open_outfile()
             }) {
-                Ok(f) => f,
+                Ok(fd) => bun_sys::CloseOnDrop::new(fd),
                 Err(err) => exit_copy_failed(err, entry.path.as_bytes(), progress),
             };
-            let _close_out = bun_sys::CloseOnDrop::new(outfile);
             scopeguard::defer! { progress.complete_one(NodeId::Root) }
 
-            let infile = bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0)?;
-            let _close_in = bun_sys::CloseOnDrop::new(infile);
+            let infile = bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0)
+                .map(bun_sys::CloseOnDrop::new)?;
 
             // What was executable stays executable.
-            if let Ok(stat) = bun_sys::fstat(infile) {
-                let _ = bun_sys::fchmod(outfile, stat.st_mode as bun_core::Mode);
+            if let Ok(stat) = infile.stat() {
+                let _ = bun_sys::fchmod(outfile.fd(), stat.st_mode as bun_core::Mode);
             }
 
-            if let Err(err) = CopyFile::copy_file(infile, outfile) {
+            if let Err(err) = CopyFile::copy_file(infile.fd(), outfile.fd()) {
                 exit_copy_failed(err, entry.path.as_bytes(), progress);
             }
         }

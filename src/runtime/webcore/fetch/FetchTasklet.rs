@@ -215,11 +215,7 @@ pub struct FetchTasklet {
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum HTTPRequestBody {
     AnyBlob(AnyBlob),
-    Sendfile {
-        window: http::SendFile,
-        /// Owns `window.fd`.
-        _file: bun_sys::File,
-    },
+    Sendfile(http::SendFile),
     ReadableStream(ReadableStreamStrong),
 }
 
@@ -244,6 +240,15 @@ impl HTTPRequestBody {
             HTTPRequestBody::AnyBlob(blob) => blob.slice(),
             _ => b"",
         }
+    }
+
+    fn take_sendfile(&mut self) -> Option<http::SendFile> {
+        if let HTTPRequestBody::Sendfile(_) = self
+            && let HTTPRequestBody::Sendfile(sendfile) = core::mem::take(self)
+        {
+            return Some(sendfile);
+        }
+        None
     }
 
     pub(crate) fn from_js(cx: &bun_jsc::JsThread<'_>, value: JSValue) -> JsResult<HTTPRequestBody> {
@@ -314,7 +319,7 @@ impl HTTPRequestBody {
         match self {
             HTTPRequestBody::AnyBlob(blob) => blob.size() > 0,
             HTTPRequestBody::ReadableStream(stream) => stream.has(),
-            HTTPRequestBody::Sendfile { .. } => true,
+            HTTPRequestBody::Sendfile(_) => true,
         }
     }
 }
@@ -1874,6 +1879,8 @@ impl FetchTasklet {
             fetch_tasklet.signals.cert_errors = None;
         }
 
+        let sendfile = fetch_tasklet.request_body.take_sendfile();
+
         let fetch_tasklet_ptr = bun_core::heap::into_raw(fetch_tasklet);
         // SAFETY: just allocated, and `fetch_tasklet` is not used once `fetch_tasklet_ptr` is
         // dereferenced. `'static`: `http` is an `AsyncHTTP<'static>` that borrows (headers_buf,
@@ -1966,10 +1973,10 @@ impl FetchTasklet {
             .header_progress
             .store(true, Ordering::Relaxed);
 
-        if let HTTPRequestBody::Sendfile { window, .. } = fetch_tasklet.request_body {
+        if let Some(sendfile) = sendfile {
             debug_assert!(url_is_http);
             debug_assert!(!matches!(fetch_options.proxy, ProxyPolicy::Explicit { .. }));
-            http.request_body = http::HTTPRequestBody::Sendfile(window);
+            http.request_body = http::HTTPRequestBody::Sendfile(sendfile);
         }
 
         if let Some(signal) = fetch_options.signal {

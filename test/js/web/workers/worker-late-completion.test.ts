@@ -139,6 +139,12 @@ const ROWS: Row[] = [
     ticket: "node_fs.rs",
     files: { "src/a/b/c.txt": "x", "src/d.txt": "y", "src/e/f.txt": "z" },
   },
+  {
+    // The input and the output are JS buffers.
+    name: "zlib.gzip",
+    worker: `require("node:zlib").gzip(Buffer.alloc(1 << 20, 3), () => {});`,
+    ticket: "node_zlib_binding.rs",
+  },
   // ── thread pool: Bun.$ builtins (interpreter state a JS wrapper owns) ────
   {
     // Subtasks created on the pool inherit the parent's ticket (new_child).
@@ -163,13 +169,7 @@ const ROWS: Row[] = [
     ticket: "rm.rs",
     files: { "gone/a/b/c.txt": "x", "gone/d.txt": "y", "gone/e/f/g.txt": "z" },
   },
-  // ── thread pool: storage inside a JS-owned object ────────────────────────
-  {
-    // The input and the output are JS buffers.
-    name: "zlib.gzip",
-    worker: `require("node:zlib").gzip(Buffer.alloc(1 << 20, 3), () => {});`,
-    ticket: "node_zlib_binding.rs",
-  },
+  // ── thread pool: storage inside the VM ───────────────────────────────────
   {
     // The transpile job is a slot inside the VM itself.
     name: "import() of a TypeScript module",

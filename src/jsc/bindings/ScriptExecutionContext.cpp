@@ -177,12 +177,15 @@ ScriptExecutionContext* ScriptExecutionContext::getScriptExecutionContext(Script
 
 JSGlobalObject* ScriptExecutionContext::globalObject()
 {
-    return realm().m_globalObject;
+    auto& realm = this->realm();
+    if (realm.m_collectableGlobalObject && !*realm.m_collectableGlobalObject) [[unlikely]]
+        return nullptr;
+    return realm.m_globalObject;
 }
 
 JSGlobalObject* ScriptExecutionContext::jsGlobalObject()
 {
-    return realm().m_globalObject;
+    return globalObject();
 }
 
 extern "C" void Bun__VM__queueTaskAfterYield(void* bunVM, EventLoopTask*);
@@ -255,7 +258,8 @@ void ScriptExecutionContext::stopActiveDOMObjects()
     });
 
     if (isForModuleGraph()) {
-        if (auto* performance = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject())->existingPerformance())
+        auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject());
+        if (auto* performance = globalObject ? globalObject->existingPerformance() : nullptr)
             performance->disconnectObserversOf(*this);
     }
 }
@@ -358,7 +362,13 @@ void ScriptExecutionContext::globalObjectDestroyed()
     removeAllEventListeners();
     removeFromContextsMap();
     m_globalObject = nullptr;
+    m_collectableGlobalObject.reset();
     m_vm = nullptr;
+}
+
+void ScriptExecutionContext::globalObjectCanBeCollected()
+{
+    m_collectableGlobalObject.emplace(m_globalObject);
 }
 
 bool ScriptExecutionContext::isContextThread()

@@ -971,8 +971,9 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
                 this.on_io(event)
             })
         }
+        // `bun run` and `bun exec` print through it too.
         PollTag::ShellBufferedWriter => {
-            io_arm!([Shell], clone_rc, ShellIoWriter, |this, _, event| {
+            io_arm!([Shell, Tools], clone_rc, ShellIoWriter, |this, _, event| {
                 this.on_io(event)
             })
         }

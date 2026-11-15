@@ -136,6 +136,15 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionIndexesOfChangedObjects, __at
     return JSC::JSValue::encode(JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), changed));
 }
 
+// A dictionary has no shape that jsFunctionShapesOfObjects() can keep. Inline caches flatten a prototype the same way before they cache a read through it.
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionFlattenDictionary, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* object = asObject(callFrame->uncheckedArgument(0));
+    if (object->structure()->isDictionary())
+        object->flattenDictionaryObject(JSC::getVM(globalObject));
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionDeleteOwnProperty, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

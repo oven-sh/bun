@@ -186,6 +186,10 @@ impl<K, V, C> HashMap<K, V, C> {
             inner: self.iter_mut(),
         }
     }
+    /// Slots `0..capacity()` are in iteration order.
+    pub(crate) fn value_in_slot(&self, slot: usize) -> Option<&V> {
+        self.slots.get(slot)?.as_ref().map(|(_, v)| v)
+    }
 }
 
 impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
@@ -433,6 +437,15 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         } else {
             self.slots[idx] = Some((key, value));
             None
+        }
+    }
+
+    /// The value stored under `key`, and `value` back if one was already there.
+    pub(crate) fn get_or_insert(&mut self, key: K, value: V) -> (&V, Option<V>) {
+        let (idx, _) = self.get_or_put_slot(&key);
+        match &mut self.slots[idx] {
+            Some((_, existing)) => (existing, Some(value)),
+            vacant => (&vacant.insert((key, value)).1, None),
         }
     }
 

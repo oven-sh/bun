@@ -728,8 +728,7 @@ impl TranspilerJob {
         if this.has_plugins {
             transpiler.options.no_macros = true;
         }
-        // The one in the copy is the VM's.
-        let mut macro_context = None;
+        let loaded_macros = transpiler::LoadedMacros::default();
 
         let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
@@ -795,7 +794,7 @@ impl TranspilerJob {
             opened_file: Some(&mut input_file),
             macro_remappings,
             macro_js_ctx: transpiler::default_macro_js_value(),
-            macro_context: Some(&mut macro_context),
+            loaded_macros: &loaded_macros,
             jsx: transpiler.options.jsx.clone(),
             emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
             experimental_decorators: transpiler.options.experimental_decorators,

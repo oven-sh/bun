@@ -52,7 +52,6 @@ fn create_page_outputs(
     with_ast_scope(|heap| {
         let mut page_log = Log::init();
         let mut transpiler = create_page_transpiler(context, heap, &raw mut page_log);
-        transpiler.wire_after_move();
         let any_loop = AnyEventLoop::default();
         let carrier = context.bundle();
 

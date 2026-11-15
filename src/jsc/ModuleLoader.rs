@@ -24,6 +24,7 @@ pub struct ModuleLoader {
     pub eval_source: core::cell::OnceCell<Box<bun_ast::Source<'static>>>,
     /// User's `-e` bytes under `--interactive` (see `Eval::interactive_script`).
     pub interactive_eval_script: core::cell::Cell<Option<&'static [u8]>>,
+    pub loaded_macros: bun_js_parser::Macro::LoadedMacros,
 }
 
 static IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS: core::sync::atomic::AtomicBool =

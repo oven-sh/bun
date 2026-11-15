@@ -2278,7 +2278,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     remove_cjs_module_wrapper: is_main
                         && jsc_vm.module_loader.eval_source.get().is_some(),
                     macro_js_ctx: bun_bundler::transpiler::default_macro_js_value(),
-                    macro_context: None,
+                    loaded_macros: &jsc_vm.module_loader.loaded_macros,
                     replace_exports: Default::default(),
                 };
                 let own = (jsc_vm.transpiler)

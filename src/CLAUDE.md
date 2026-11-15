@@ -402,12 +402,8 @@ If a callback may free `self` (close, error, GC finalize), do **not**
 materialize `&self`/`&mut self` at the boundary — a `&self`-derived raw
 pointer carries `SharedReadOnly` provenance, and `Box::from_raw`/dealloc
 through it is UB. Pass and dispatch off `*mut Self` until the body proves
-ownership. `src/io/PipeWriter.rs`'s `impl_streaming_writer_parent!` macro
-encodes the three modes:
-
-- `borrow = mut` — body forms `&mut *this`; safe when nothing re-enters
-- `borrow = shared` — body forms `&*this`; safe when re-entrant code only needs `&Self`
-- `borrow = ptr` — body calls `Self::method(this, ..)` with `this: *mut Self`; required when the callback may free `self`
+ownership. For a refcounted type, take a ref at the boundary and borrow `&Self`
+from it, as the arms of `__bun_run_io` (`src/runtime/dispatch.rs`) do.
 
 ### `Strong` / `Weak` JS handles
 

@@ -15,7 +15,7 @@ use bun_jsc::{
     JSFunction, JSGlobalObject, JSHostFn, JSPromiseStrong, JSValue, JsError, JsResult, Strong,
     StrongCell, StrongOptional,
 };
-use bun_ptr::CellExt as _;
+use bun_ptr::{CellExt as _, VecCellExt as _, VecDequeCellExt as _};
 
 // JSMock C++ bindings (fake timers are only used by bun:test, so these stay local).
 unsafe extern "C" {
@@ -759,11 +759,11 @@ impl FakeTimers {
     }
 
     fn count(&self) -> usize {
-        self.timers.count() + self.ticks.with_taken(|ticks| ticks.len())
+        self.timers.count() + self.ticks.len()
     }
 
     fn is_empty(&self) -> bool {
-        self.timers.peek().is_none() && self.ticks.with_taken(|ticks| ticks.is_empty())
+        self.timers.peek().is_none() && self.ticks.is_empty()
     }
 
     fn first_due(&self, until: &Timespec) -> Option<Timespec> {
@@ -971,7 +971,7 @@ impl FakeTimers {
         let this = &timer_all().fake_timers;
         let limit = this.loop_limit.get();
         let mut ran: u32 = 0;
-        while let Some(tick) = this.ticks.with_taken(VecDeque::pop_front) {
+        while let Some(tick) = this.ticks.pop_front() {
             if ran == limit {
                 this.ticks.with_taken(|ticks| ticks.push_front(tick));
                 return Err(Stop::Ticks(loop_limit_error(global, limit)?));
@@ -1100,7 +1100,7 @@ impl FakeTimers {
             thrown: StrongOptional::empty(),
             during_tick: false,
         };
-        this.drives.with_taken(|drives| drives.push(drive));
+        this.drives.push(drive);
         bun_jsc::cpp::Bun__FakeTimers__postStep(global, id);
         promise_value
     }
@@ -1317,7 +1317,7 @@ impl FakeTimers {
 
     /// sinon's `pauseAutoTickUntilFinished()`.
     fn is_auto_step_paused(&self) -> bool {
-        self.drives.with_taken(|drives| !drives.is_empty())
+        !self.drives.is_empty()
     }
 
     pub(crate) fn post_auto_step(&self) {
@@ -1367,7 +1367,7 @@ impl FakeTimers {
             callback: Strong::create(callback, global),
             arguments: Strong::create(arguments, global),
         };
-        self.ticks.with_taken(|ticks| ticks.push_back(tick));
+        self.ticks.push_back(tick);
         self.post_auto_step();
     }
 }

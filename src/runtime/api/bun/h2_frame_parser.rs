@@ -27,7 +27,7 @@ use bun_jsc::{
     AbortSignal, AbortSignalRef, GlobalRef, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
     Strong, StrongCell, StrongOptional,
 };
-use bun_ptr::{AliasableBox, CellExt as _, OptionCellExt as _, RefPtr};
+use bun_ptr::{AliasableBox, CellExt as _, OptionCellExt as _, RefPtr, VecCellExt as _};
 use bun_uws_sys::UsIoVec;
 
 use crate::generated_bindgen::h2_frame_parser::js_H2FrameParser as js;
@@ -1661,9 +1661,7 @@ impl Stream {
         // The rewrite engine only sees inbound traffic, so a completed request would leave
         // its engine entry as HalfClosedRemote and its legacy slot + Box behind forever —
         // one entry per request. Queue the id for `evict_closed_streams`.
-        client
-            .pending_engine_stream_closes
-            .with_taken(|v| v.push(self.id));
+        client.pending_engine_stream_closes.push(self.id);
         // Without this, the Strong JS stream object lives until the session dies.
         client.sctx.borrow_mut().remove(&self.id);
         self.js_context.clear();
@@ -1807,11 +1805,11 @@ impl H2FrameParser {
 
         // Remember which values this submission carries so the engine can attribute the peer's
         // ACK to it (§6.5.3 - ACKs apply to outstanding SETTINGS in order).
-        self.pending_settings_window_submissions.with_taken(|v| {
-            v.push(crate::api::h2::connection::PendingLocalSettings {
+        self.pending_settings_window_submissions.push(
+            crate::api::h2::connection::PendingLocalSettings {
                 settings: settings.to_engine_settings(),
-            })
-        });
+            },
+        );
         let _ = self.write(&buffer[..FrameHeader::BYTE_SIZE + payload_len]);
         true
     }
@@ -2039,11 +2037,11 @@ impl H2FrameParser {
         };
         self.outstanding_settings
             .set(self.outstanding_settings.get() + 1);
-        self.pending_settings_window_submissions.with_taken(|v| {
-            v.push(crate::api::h2::connection::PendingLocalSettings {
+        self.pending_settings_window_submissions.push(
+            crate::api::h2::connection::PendingLocalSettings {
                 settings: self.local_settings.get().to_engine_settings(),
-            })
-        });
+            },
+        );
         let _ = settings_header.write(&mut preface_stream, &self.frames_sent_legacy);
         let _ = preface_stream.write_all(&payload[..payload_len]);
         let _ = self.write(&preface_buffer[..24 + FrameHeader::BYTE_SIZE + payload_len]);
@@ -2208,11 +2206,11 @@ impl H2FrameParser {
 
     /// Bytes in `write_buffer` that were not handed to the transport yet.
     fn buffered_len(&self) -> usize {
-        self.write_buffer.with_taken(|wb| wb.len()) - self.write_buffer_offset.get()
+        self.write_buffer.len() - self.write_buffer_offset.get()
     }
 
     fn append_to_write_buffer(&self, bytes: &[u8]) {
-        let _ = self.write_buffer.with_taken(|wb| wb.write(bytes));
+        self.write_buffer.extend_from_slice(bytes);
         self.global()
             .vm()
             .deprecated_report_extra_memory(bytes.len());
@@ -2479,7 +2477,7 @@ impl H2FrameParser {
     }
 
     fn has_backpressure(&self) -> bool {
-        !self.write_buffer.with_taken(|wb| wb.is_empty()) || self.has_nonnative_backpressure.get()
+        !self.write_buffer.is_empty() || self.has_nonnative_backpressure.get()
     }
 
     /// Whether a write to this session's transport synchronously runs user JS: a JS-backed
@@ -2808,7 +2806,7 @@ impl H2FrameParser {
                 }
                 let rest = &bytes[skip..];
                 skip = 0;
-                let _ = self.write_buffer.with_taken(|wb| wb.write(rest));
+                self.write_buffer.extend_from_slice(rest);
                 buffered += rest.len();
             }
             if buffered > 0 {
@@ -3185,10 +3183,7 @@ impl H2FrameParser {
 
     /// Frees the streams in `pending_engine_stream_closes` (ids can repeat) and their engine entries.
     fn evict_closed_streams(&self, engine: &mut crate::api::h2::connection::Connection) {
-        if self
-            .pending_engine_stream_closes
-            .with_taken(|v| v.is_empty())
-        {
+        if self.pending_engine_stream_closes.is_empty() {
             return;
         }
         let Ok(mut streams) = self.streams.try_borrow_mut() else {
@@ -3213,7 +3208,7 @@ impl H2FrameParser {
         // borrowed across the outer receive(), so queue the bytes for the outer call to drain
         // rather than panicking on a second borrow.
         if self.engine.try_borrow_mut().is_err() {
-            self.rewrite_tail.with_taken(|t| t.extend_from_slice(bytes));
+            self.rewrite_tail.extend_from_slice(bytes);
             return;
         }
         self.ensure_engine();
@@ -3273,7 +3268,7 @@ impl H2FrameParser {
             });
             self.evict_closed_streams(engine);
         }
-        if self.rewrite_tail.with_taken(|t| t.is_empty()) {
+        if self.rewrite_tail.is_empty() {
             let feed = {
                 let mut guard = self.engine.borrow_mut();
                 guard.as_mut().unwrap().receive(self, bytes)
@@ -3315,7 +3310,7 @@ impl H2FrameParser {
         // Drain bytes queued by reentrant reads during the dispatches above. Stop when the engine
         // makes no progress (an incomplete frame waiting for more input stays in the tail).
         loop {
-            if self.rewrite_tail.with_taken(|t| t.is_empty()) {
+            if self.rewrite_tail.is_empty() {
                 break;
             }
             let pending = self.rewrite_tail.take();
@@ -4632,7 +4627,7 @@ impl H2FrameParser {
     // get memory usage in bytes
     fn get_session_memory_usage_bytes(&self) -> usize {
         let stream_count = self.streams.borrow().len();
-        self.write_buffer.with_taken(|wb| wb.len())
+        self.write_buffer.len()
             + self.queued_data_size.get() as usize
             + stream_count * core::mem::size_of::<Stream>()
     }
@@ -4645,7 +4640,7 @@ impl H2FrameParser {
 
     // get memory in bytes
     pub(crate) fn buffer_size(&self) -> f64 {
-        (self.write_buffer.with_taken(|wb| wb.len()) as u64 + self.queued_data_size.get()) as f64
+        (self.write_buffer.len() as u64 + self.queued_data_size.get()) as f64
     }
 
     /// Returns `(settled_state, callback_deferred)`: the state the close tail settled on (5 =

@@ -8,7 +8,7 @@ use std::borrow::Cow;
 // `bun_alloc::AllocError` removed — the `add_*` / `clone` family is now
 // infallible (`Vec::push` / `io::Write` on `Vec<u8>` cannot fail in Rust).
 use bun_core::Output;
-use bun_ptr::CellExt as _;
+use bun_ptr::{CellExt as _, VecCellExt as _};
 
 // Discriminants are wire-stable for serialization.
 #[repr(u8)]
@@ -1201,7 +1201,7 @@ impl Log {
     }
 
     pub fn msgs_len(&self) -> usize {
-        self.msgs.with_taken(|msgs| msgs.len())
+        self.msgs.len()
     }
 
     pub fn has_msgs(&self) -> bool {
@@ -1775,7 +1775,7 @@ impl Log {
     }
 
     pub fn add_msg(&self, msg: Msg) {
-        self.msgs.with_taken(|msgs| msgs.push(msg));
+        self.msgs.push(msg);
     }
 
     /// [`Self::add_msg`] that also counts `msg` in `errors` or `warnings`.

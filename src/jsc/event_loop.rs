@@ -14,6 +14,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU64, Ordering};
 
 use bun_io as Async;
+use bun_ptr::VecCellExt as _;
 use bun_uws as uws;
 
 use crate::js_promise::Status as PromiseStatus;
@@ -989,14 +990,12 @@ impl EventLoop {
     /// Note (§Dispatch): `task` is an erased
     /// `*mut bun_runtime::timer::ImmediateObject` — see [`RunImmediateFn`].
     pub fn enqueue_immediate_task(&self, task: *mut ()) {
-        // SAFETY: `push` only allocates.
-        unsafe { &mut *self.immediate_tasks.as_ptr() }.push(task);
+        self.immediate_tasks.push(task);
     }
 
     /// How many immediates wait for the next [`tick_immediate_tasks`](Self::tick_immediate_tasks).
     pub fn immediate_task_count(&self) -> usize {
-        // SAFETY: a read of the length.
-        unsafe { &*self.immediate_tasks.as_ptr() }.len()
+        self.immediate_tasks.len()
     }
 
     /// See [`EventLoop::yield_tasks`].
@@ -1004,13 +1003,11 @@ impl EventLoop {
         if self.closed_for_tasks.get() {
             return self.enqueue_task(task);
         }
-        // SAFETY: `push` only allocates.
-        unsafe { &mut *self.yield_tasks.as_ptr() }.push(task);
+        self.yield_tasks.push(task);
     }
 
     pub(crate) fn has_yield_tasks(&self) -> bool {
-        // SAFETY: a read of the length.
-        !unsafe { &*self.yield_tasks.as_ptr() }.is_empty()
+        !self.yield_tasks.is_empty()
     }
 
     /// `auto_tick`, before it polls: last iteration's yielded tasks become

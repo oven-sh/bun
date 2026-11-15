@@ -9,7 +9,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsClass as _, JsResult, Strong, StrongCell};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
-use bun_ptr::{CellExt as _, OptionCellExt as _, RefPtr};
+use bun_ptr::{CellExt as _, OptionCellExt as _, RefPtr, VecCellExt as _, VecDequeCellExt as _};
 use bun_sema::util::SmallLocalVec;
 use super::jest::{File, Jest};
 use crate::jsc_hooks::timer_all;
@@ -783,7 +783,7 @@ impl BunTest {
         let child = DescribeScope::create(id, BaseScope::init(base, name_not_owned, Some(parent), false), inherited);
         self.propagate(&child.base);
         self.scopes.push(child);
-        parent.entries.with_taken(|entries| entries.push(TestScheduleEntry::Describe(id)));
+        parent.entries.push(TestScheduleEntry::Describe(id));
         id
     }
 
@@ -802,7 +802,7 @@ impl BunTest {
         entry.base.has_callback.set(entry.callback.is_some());
         self.propagate(&entry.base);
         let id = entry.push_to(&self.entries);
-        parent.entries.with_taken(|entries| entries.push(TestScheduleEntry::TestCallback(id)));
+        parent.entries.push(TestScheduleEntry::TestCallback(id));
     }
 
     /// Must be called before the order is generated, or `file_end` never runs.
@@ -1064,11 +1064,11 @@ impl BunTest {
     }
 
     pub(crate) fn add_result(&self, result: RefDataValue) {
-        self.result_queue.with_taken(|queue| queue.push_back(result));
+        self.result_queue.push_back(result);
     }
 
     pub(crate) fn has_queued_results(&self) -> bool {
-        self.result_queue.with_taken(|queue| !queue.is_empty())
+        !self.result_queue.is_empty()
     }
 
     pub(crate) fn run(this: &BunTestPtr, global_this: &JSGlobalObject) -> JsResult<()> {
@@ -1081,7 +1081,7 @@ impl BunTest {
 
         let mut min_timeout = Timespec::EPOCH;
 
-        while let Some(result) = this.result_queue.with_taken(VecDeque::pop_front) {
+        while let Some(result) = this.result_queue.pop_front() {
             global_this.clear_termination_exception();
             let step_result: StepResult = match this.phase.get() {
                 Phase::Collection => Collection::step(this, global_this, &result)?,
@@ -1324,7 +1324,7 @@ impl BunTest {
                             .unwrap_or_else(|| Self::ref_(this, cfg_data));
                         let key = this_ref.as_ptr();
                         let root = &this.reporter.jest.bun_test_root;
-                        root.pending_then_refs.with_taken(|pending_then_refs| pending_then_refs.push(this_ref));
+                        root.pending_then_refs.push(this_ref);
                         let _ = result.then(
                             global_this,
                             key,

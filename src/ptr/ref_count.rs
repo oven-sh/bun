@@ -270,7 +270,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
     }
 
     /// Caller will have to call `deref()` exactly `count` times to destroy.
-    pub fn init_exact_refs(count: u32) -> Self {
+    fn init_exact_refs(count: u32) -> Self {
         debug_assert!(count > 0);
         Self {
             raw_count: AtomicU32::new(count),

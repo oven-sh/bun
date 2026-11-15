@@ -70,7 +70,7 @@ fn module_preload_registration(
     write!(
         &mut code,
         "{}(import.meta.url,[",
-        bstr::BStr::new(chunk.renamer.as_renamer().name_for_symbol(chunks_ref))
+        bstr::BStr::new(c.renamer_for_chunk(chunk).name_for_symbol(chunks_ref))
     )
     .unwrap();
     for (i, &chunk_index) in reached.iter().enumerate() {
@@ -120,21 +120,13 @@ pub(crate) fn post_process_js_chunk(
     // embedded `Vec<Property>`/`Vec<Expr>` buffers leak from the global heap.
     let _ast_alloc_heap = js_ast::StoreAstAllocHeap::new();
 
-    // The renamer is
-    // not used after this function, so it is reset to `None` before returning
-    // (success path below). `ChunkRenamer`'s variants free their owned storage
-    // via Drop; the `symbols` view inside is `ManuallyDrop` (non-owning), so
-    // graph storage is never freed.
-
     let arena = Arena::new();
 
     // Also generate the cross-chunk binding code
     let mut cross_chunk_prefix: PrintResult;
     let mut cross_chunk_suffix: PrintResult;
 
-    let runtime_input_file =
-        c.graph.files.items_input_file()[Index::RUNTIME.value() as usize].get() as usize;
-    let runtime_scope: &Scope = &c.graph.ast.items_module_scope()[runtime_input_file];
+    let runtime_scope: &Scope = &c.graph.ast.items_module_scope()[Index::RUNTIME.get() as usize];
     let runtime_members = &runtime_scope.members;
     let to_common_js_ref = c
         .graph
@@ -232,17 +224,8 @@ pub(crate) fn post_process_js_chunk(
             });
         }
 
-        // `MultiArrayList::get` returns `ManuallyDrop<BundledAst>` —
-        // the storage retains ownership of every Drop field (`named_imports`,
-        // `parts`, `top_level_symbols_to_parts`, …), so the gathered struct
-        // must NOT run Drop. `to_ast` consumes by value, so unwrap, convert,
-        // and re-wrap the result (which carries the same heap pointers).
-        let ast_view = core::mem::ManuallyDrop::new(
-            core::mem::ManuallyDrop::into_inner(
-                c.graph.ast.get(chunk.entry_point.source_index() as usize),
-            )
-            .to_ast(),
-        );
+        let ast = c.graph.ast.get(chunk.entry_point.source_index() as usize);
+        let ast_view = ast.for_printer();
         let source = c.get_source(chunk.entry_point.source_index());
         let target = c.resolver.opts.target;
 
@@ -277,7 +260,7 @@ pub(crate) fn post_process_js_chunk(
                 stmts: prefix_stmts,
                 ..Default::default()
             }],
-            chunk.renamer.as_renamer(),
+            c.renamer_for_chunk(chunk),
         );
         if let Some(mi) = module_info.as_deref_mut() {
             // One result per entry of `parts_in_chunk_in_order`, in that order.
@@ -305,7 +288,7 @@ pub(crate) fn post_process_js_chunk(
                 stmts: suffix_stmts,
                 ..Default::default()
             }],
-            chunk.renamer.as_renamer(),
+            c.renamer_for_chunk(chunk),
         );
     }
 
@@ -350,7 +333,7 @@ pub(crate) fn post_process_js_chunk(
                 chunk.entry_point.source_index(),
                 worker_arena,
                 &arena,
-                chunk.renamer.as_renamer(),
+                c.renamer_for_chunk(chunk),
                 module_info.as_deref_mut(),
                 cross_chunk_exports,
             );
@@ -819,9 +802,6 @@ pub(crate) fn generate_entry_point_tail_js(
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
     let mut stmts: Vec<Stmt> = Vec::new();
-    // `MultiArrayList::get` returns `ManuallyDrop<BundledAst>`; the
-    // storage retains ownership of every Drop field, so neither this
-    // `BundledAst` nor the `ast_view: Ast` derived from it below may run Drop.
     let ast = c.graph.ast.get(source_index as usize);
 
     match c.options.output_format {
@@ -947,15 +927,11 @@ pub(crate) fn generate_entry_point_tail_js(
 
                             // Exports of imports need EImportIdentifier in case they need to be re-
                             // written to a property access later on
-                            // SAFETY: symbol::Map::get returns a non-null `*mut Symbol` for a valid ref.
-                            if unsafe {
-                                (*c.graph
-                                    .symbols
-                                    .get(resolved_export_data.import_ref)
-                                    .unwrap())
+                            if c.graph
+                                .symbol(resolved_export_data.import_ref)
                                 .namespace_alias
                                 .is_some()
-                            } {
+                            {
                                 let temp_ref = cjs_export_copies[i];
 
                                 // Create both a local variable and an export clause for that variable.
@@ -1267,16 +1243,14 @@ pub(crate) fn generate_entry_point_tail_js(
         ..Default::default()
     };
 
-    let ast_view = core::mem::ManuallyDrop::new(core::mem::ManuallyDrop::into_inner(ast).to_ast());
-
     CompileResult::Javascript {
         result: js_printer::print::<false>(
             arena,
             c.resolver.opts.target,
-            &ast_view,
+            &ast.for_printer(),
             c.get_source(source_index),
             print_options,
-            ast_view.import_records.as_slice(),
+            ast.import_records.as_slice(),
             &[Part {
                 stmts: bun_ast::StoreSlice::new_mut(stmts.as_mut_slice()),
                 ..Default::default()

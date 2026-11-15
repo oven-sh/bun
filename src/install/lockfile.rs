@@ -86,10 +86,8 @@ pub use self::bun_lockb as Serializer;
 pub use self::catalog_map::CatalogMap;
 pub use self::override_map::OverrideMap;
 pub use self::package::Package;
-pub use self::tree::Tree;
-// Bring the derive-generated `items_*` column accessors (`PackageColumns` for
-// `MultiArrayList<Package>`, `PackageColumns` for `Slice<Package>`) into scope.
 use self::package::PackageColumns as _;
+pub use self::tree::Tree;
 
 // Local aliases for module-level types.
 type DependencyVersion = dependency::Version;
@@ -720,7 +718,7 @@ impl Lockfile {
     /// The stored literal is relative to the package. `Package::parse` also rebases the
     /// dependencies of local packages.
     pub(crate) fn rebase_folder_dependencies(&mut self) -> Result<(), AllocError> {
-        let pkgs = self.packages.slice();
+        let pkgs = &self.packages;
         let mut path_buf = bun_paths::path_buffer_pool::get();
         for (pkg_resolution, pkg_dependencies) in
             (pkgs.items_resolution().iter()).zip(pkgs.items_dependencies())
@@ -920,7 +918,7 @@ impl Lockfile {
     }
 
     pub(crate) fn get_workspace_pkg_if_workspace_dep(&self, id: DependencyID) -> PackageID {
-        let packages = self.packages.slice();
+        let packages = &self.packages;
         (packages.items_resolution().iter())
             .zip(packages.items_dependencies())
             .position(|(resolution, dependencies)| {
@@ -942,7 +940,7 @@ impl Lockfile {
             return Vec::new();
         }
         let mut out = Vec::new();
-        let pkgs = self.packages.slice();
+        let pkgs = &self.packages;
         for (i, res) in pkgs.items_resolution().iter().enumerate() {
             if res.tag == crate::resolution::Tag::Workspace
                 && self
@@ -988,7 +986,7 @@ impl Lockfile {
 
     /// Does the root or a workspace depend on package `id` directly?
     pub(crate) fn is_workspace_declared_package(&self, id: PackageID) -> bool {
-        let packages = self.packages.slice();
+        let packages = &self.packages;
         let resolutions = self.buffers.resolutions.as_slice();
         (packages.items_resolution().iter())
             .zip(packages.items_resolutions())
@@ -1035,7 +1033,7 @@ impl Lockfile {
     pub(crate) fn is_tarball_url_of_project(&self, url: &[u8]) -> bool {
         let buf = self.buffers.string_bytes.as_slice();
         let dependencies = self.buffers.dependencies.as_slice();
-        let packages = self.packages.slice();
+        let packages = &self.packages;
         let names_url = |declared: &Dependency| {
             declared.version.tag == dependency::version::Tag::Tarball
                 && matches!(
@@ -1132,7 +1130,7 @@ impl Lockfile {
         let dependency_id = self.buffers.trees[id as usize].dependency_id;
         let package_id = self.buffers.resolutions[dependency_id as usize];
         (package_id != invalid_package_id)
-            .then(|| self.packages.slice().items_resolution()[package_id as usize].tag)
+            .then(|| self.packages.items_resolution()[package_id as usize].tag)
     }
 
     /// A folder's `node_modules` isn't copied, so the linkers link these to
@@ -1167,7 +1165,7 @@ impl Lockfile {
         let Some(workspace_name_hash) = workspace_name_hash else {
             return 0;
         };
-        let packages = self.packages.slice();
+        let packages = &self.packages;
         (packages.items_resolution().iter())
             .zip(packages.items_name_hash())
             .position(|(res, name_hash)| {
@@ -1202,15 +1200,14 @@ impl Lockfile {
         // `version_buf` is a raw (ptr, len) into `self.buffers.string_bytes`, finalized by now and outliving every `UpdateRequest`.
         let string_buf = self.buffers.string_bytes.as_slice();
         let string_buf_ptr = bun_ptr::RawSlice::new(string_buf);
-        let slice = self.packages.slice();
 
         'request_updated: for update in updates.iter_mut() {
             update.e_string = None;
             let workspace_ids =
                 self.workspaces_of_update_request(pending, workspace_name_hash, update);
             for &workspace_package_id in &workspace_ids {
-                let dep_list = slice.items_dependencies()[workspace_package_id as usize];
-                let res_list = slice.items_resolutions()[workspace_package_id as usize];
+                let dep_list = self.packages.items_dependencies()[workspace_package_id as usize];
+                let res_list = self.packages.items_resolutions()[workspace_package_id as usize];
                 let workspace_deps: &[Dependency] =
                     dep_list.get(self.buffers.dependencies.as_slice());
                 let resolved_ids: &[PackageID] = res_list.get(self.buffers.resolutions.as_slice());
@@ -1666,8 +1663,6 @@ impl Lockfile {
         packages_to_install: Option<&[PackageID]>,
         layout: tree::Layout,
     ) -> Result<tree::Hoisted, tree::SubtreeError> {
-        let slice = self.packages.slice();
-
         // Only the install applies the barrier, so the saved tree does not depend on it.
         let self_contained = if METHOD == tree::BuilderMethod::Filter {
             self.self_contained_workspace_ids()
@@ -1680,7 +1675,7 @@ impl Lockfile {
         let mut builder = tree::Builder::<METHOD> {
             self_contained,
             queue: tree::TreeFiller::init(),
-            resolution_lists: slice.items_resolutions(),
+            resolution_lists: self.packages.items_resolutions(),
             resolutions: self.buffers.resolutions.as_mut_slice(),
             dependencies: self.buffers.dependencies.as_slice(),
             log,
@@ -1692,13 +1687,13 @@ impl Lockfile {
             pending_peers: Default::default(),
             late_bound_peer: false,
             bundle_placed: false,
-            walked: DynamicBitSet::init_empty(slice.len())?,
+            walked: DynamicBitSet::init_empty(self.packages.len())?,
             served: Default::default(),
             list: Default::default(),
             sort_buf: Default::default(),
             peer_probes: Default::default(),
             // Most lookups find nothing, and a miss is cheap in a table that is at most half full.
-            placed: tree::Placed::with_capacity(slice.len() * 2),
+            placed: tree::Placed::with_capacity(self.packages.len() * 2),
             replaced_row: false,
             shipped_rows: Default::default(),
             in_shipped_folder: false,
@@ -1806,8 +1801,7 @@ impl Lockfile {
         // Lockfile fields are taken from `self` (== `manager.lockfile`), never via `manager`.
         let options = &manager.options;
         let manifests = &mut manager.manifests;
-        let mut pkgs = self.packages.slice();
-        let len = pkgs.len();
+        let len = self.packages.len();
         let mut added_by_extensions: Vec<(PackageID, PackageNameHash, bool)> = Vec::new();
 
         let self::package::PackageColumnsMut {
@@ -1817,7 +1811,7 @@ impl Lockfile {
             bin: pkg_bins,
             meta: pkg_metas,
             ..
-        } = pkgs.split_mut();
+        } = self.packages.split_mut();
 
         for i in 0..len {
             let pkg_name = pkg_names[i];
@@ -3380,8 +3374,8 @@ impl Lockfile {
             return Ok(false);
         }
 
-        let l_pkgs = l.packages.slice();
-        let r_pkgs = r.packages.slice();
+        let l_pkgs = &l.packages;
+        let r_pkgs = &r.packages;
         let l_pkg_names = l_pkgs.items_name();
         let r_pkg_names = r_pkgs.items_name();
         let l_pkg_name_hashes = l_pkgs.items_name_hash();
@@ -3828,7 +3822,7 @@ impl Lockfile {
 
     fn declared_by_root_or_workspace(&self, alias: &[u8], resolution: &Resolution) -> bool {
         let buf = self.buffers.string_bytes.as_slice();
-        let packages = self.packages.slice();
+        let packages = &self.packages;
         let resolutions = packages.items_resolution();
         let dependencies_lists = packages.items_dependencies();
         for (pkg_resolution, dependencies) in resolutions.iter().zip(dependencies_lists.iter()) {

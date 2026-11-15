@@ -40,6 +40,11 @@ const server = Bun.serve({ port: 0, fetch: () => new Response(Bun.file("served.t
 console.log(await (await fetch(server.url)).text());
 server.stop(true);
 //// a-fetched-body-is-written-to-a-file
+const server = Bun.serve({ port: 0, fetch: () => new Response("from a server") });
+await Bun.write("written.txt", await fetch(server.url));
+console.log(await Bun.file("written.txt").text());
+server.stop(true);
+//// a-fetched-stream-is-written-to-a-file
 let finish;
 const server = Bun.serve({ port: 0, fetch: () => new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode("from a ")); finish = () => { controller.enqueue(new TextEncoder().encode("server")); controller.close(); }; } })) });
 const written = Bun.write("written.txt", await fetch(server.url));

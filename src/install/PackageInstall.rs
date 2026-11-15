@@ -3,6 +3,7 @@ use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use bun_collections::{ArrayHashMap, DynamicBitSet};
 use bun_core::{MutableString, ZStr};
+use bun_paths::resolve_path::SpillBuf;
 use bun_paths::strings;
 use bun_paths::{self as path, OSPathChar, OSPathSlice};
 use bun_semver::String as SemverString;
@@ -1097,31 +1098,21 @@ impl<'a> PackageInstall<'a> {
         let mut buf: BuntagHashBuf = BuntagHashBuf::default();
         let bunhashtag = buntaghashbuf_make(&mut buf, patchfile_contents_hash);
 
-        let patch_tag_path = path::resolve_path::join_z::<path::platform::Posix>(&[
-            self.destination_dir_subpath.as_bytes(),
-            bunhashtag,
-        ]);
-
         let Ok(destination_dir) = self.node_modules.open_dir(root_node_modules_dir) else {
             return false;
         };
-        #[cfg(unix)]
-        {
-            if sys::fstatat(&destination_dir, patch_tag_path).is_err() {
-                return false;
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            if sys::openat(&destination_dir, patch_tag_path, sys::O::RDONLY, 0)
-                .map(sys::File::from_fd)
-                .is_err()
-            {
-                return false;
-            }
-        }
-
-        true
+        SpillBuf::with_scratch(|buf| {
+            let patch_tag_path = path::resolve_path::join_z_spill::<path::platform::Posix>(
+                buf,
+                &[self.destination_dir_subpath.as_bytes(), bunhashtag],
+            );
+            #[cfg(unix)]
+            let found = sys::fstatat(&destination_dir, patch_tag_path);
+            #[cfg(not(unix))]
+            let found = sys::openat(&destination_dir, patch_tag_path, sys::O::RDONLY, 0)
+                .map(sys::File::from_fd);
+            found.is_ok()
+        })
     }
 
     // 1. verify that .bun-tag exists (was it installed from bun?)
@@ -1131,16 +1122,14 @@ impl<'a> PackageInstall<'a> {
         matches: &dyn Fn(&[u8]) -> bool,
         root_node_modules_dir: &Dir,
     ) -> bool {
-        let mut spill = Vec::new();
-        let bun_tag_path = path::resolve_path::join_z_spill::<path::platform::Posix>(
-            &mut spill,
-            &[self.destination_dir_subpath.as_bytes(), BUN_TAG],
-        );
-
-        let Ok(bun_tag_file) = self
-            .node_modules
-            .read_small_file(root_node_modules_dir, bun_tag_path)
-        else {
+        let Ok(bun_tag_file) = SpillBuf::with_scratch(|buf| {
+            let bun_tag_path = path::resolve_path::join_z_spill::<path::platform::Posix>(
+                buf,
+                &[self.destination_dir_subpath.as_bytes(), BUN_TAG],
+            );
+            self.node_modules
+                .read_small_file(root_node_modules_dir, bun_tag_path)
+        }) else {
             return false;
         };
         matches(&bun_tag_file.bytes)
@@ -1233,16 +1222,15 @@ impl<'a> PackageInstall<'a> {
     ) -> Option<&'m [u8]> {
         mutable.reset();
 
-        let mut spill = Vec::new();
-        let package_json_path = path::resolve_path::join_z_spill::<path::platform::Posix>(
-            &mut spill,
-            &[self.destination_dir_subpath.as_bytes(), b"package.json"],
-        );
-
-        let package_json_file = self
-            .node_modules
-            .open_file(root_node_modules_dir, package_json_path)
-            .ok()?;
+        let package_json_file = SpillBuf::with_scratch(|buf| {
+            let package_json_path = path::resolve_path::join_z_spill::<path::platform::Posix>(
+                buf,
+                &[self.destination_dir_subpath.as_bytes(), b"package.json"],
+            );
+            self.node_modules
+                .open_file(root_node_modules_dir, package_json_path)
+        })
+        .ok()?;
 
         // Heuristic: most package.jsons will be less than 2048 bytes.
         loop {
@@ -2014,12 +2002,12 @@ impl<'a> PackageInstall<'a> {
         }
         // Deleting a large tree takes a while. Now that it has a random name, another thread can
         // delete it.
-        let absolute_path = path::resolve_path::join_abs_string::<path::platform::Auto>(
+        let absolute_path = path::resolve_path::join_abs_string_vec::<path::platform::Auto>(
             bun_fs::FileSystem::get().top_level_dir(),
             &[&self.node_modules.path, temp_path.as_bytes()],
         );
         let task = Box::new(UninstallTask {
-            absolute_path: absolute_path.to_vec().into_boxed_slice(),
+            absolute_path: absolute_path.into_boxed_slice(),
             task: WorkPoolTask::default(),
         });
         self.total_tasks.update(|total| total + 1);

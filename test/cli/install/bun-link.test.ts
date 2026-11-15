@@ -506,8 +506,7 @@ it("should link dependency without crashing", async () => {
 });
 
 // A `link:` target is normalized and joined onto the global link directory in
-// fixed-size buffers (the normalizer's is 1024 bytes, the others are a path
-// buffer). These used to be written without a length check, so a long enough
+// fixed-size buffers. These used to be written without a length check, so a long enough
 // specifier aborted `bun install` instead of failing the dependency.
 // https://github.com/oven-sh/bun/issues/29273
 // `C:` is the current directory of drive C, it is not the root `C:\`.

@@ -30,7 +30,7 @@ use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult,
     StringJsc as _,
 };
-use bun_paths::resolve_path::{self, platform};
+use bun_paths::resolve_path::{self, SpillBuf, platform};
 use bun_resolver as resolver;
 
 use crate::cli::command::{Context, HotReload};
@@ -778,7 +778,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             bun_core::err_generic!("Framework does not support static site generation");
             bun_core::note!(
                 "The file {} is missing the \"prerender\" export, which defines how to generate static files.",
-                bun_core::fmt::quote(resolve_path::relative(
+                bun_core::fmt::quote(resolve_path::relative_spill(
+                    &mut SpillBuf::default(),
                     cwd,
                     pt.input_file(server_file).abs_path()
                 ))
@@ -793,7 +794,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 bun_core::err_generic!("Framework does not support static site generation");
                 bun_core::note!(
                     "The file {} is missing the \"getParams\" export, which defines how to generate static files.",
-                    bun_core::fmt::quote(resolve_path::relative(
+                    bun_core::fmt::quote(resolve_path::relative_spill(
+                        &mut SpillBuf::default(),
                         cwd,
                         pt.input_file(server_file).abs_path()
                     ))
@@ -1001,10 +1003,13 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             )
             .map_err(js_err)?;
 
-        let src_path = BunString::clone_utf8(resolve_path::relative(
-            cwd,
-            pt.input_file(main_file_route_index).abs_path(),
-        ));
+        let src_path = SpillBuf::with_scratch(|buf| {
+            BunString::clone_utf8(resolve_path::relative_spill(
+                buf,
+                cwd,
+                pt.input_file(main_file_route_index).abs_path(),
+            ))
+        });
         route_source_files
             .put_index(
                 global,

@@ -5,6 +5,7 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::StackCheck;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
+use bun_paths::resolve_path::{SpillBuf, join_spill};
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, SEP_STR};
 use bun_semver as Semver;
 use bun_semver::String as SemverString;
@@ -287,21 +288,8 @@ impl SideEffects {
     }
 }
 
-// ── Local extension shims so `parse` can call shapes that live in higher-tier
-//    crates (full FileSystem). Bodies forward to bun_paths. ────────────────
-
-/// Thin extension trait that delegates to `bun_paths::resolve_path`.
-trait FileSystemPackageJsonExt {
-    /// Returns a slice of `spill` if the result is too long for the thread-local join buffer.
-    fn join<'a>(&self, spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> &'a [u8];
-}
-impl FileSystemPackageJsonExt for crate::fs::FileSystem {
-    fn join<'a>(&self, spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> &'a [u8] {
-        resolve_path::resolve_path::join_spill::<resolve_path::resolve_path::platform::Auto>(
-            spill, parts,
-        )
-    }
-}
+/// Not `MAX_PATH_BYTES`: the file opens through `dirname_fd`.
+const MAX_PACKAGE_JSON_PATH_LEN: usize = 4096;
 
 impl PackageJSON {
     pub fn parse_macros_json(
@@ -401,7 +389,9 @@ impl PackageJSON {
 
         // TODO: remove this extra copy
         let parts: [&[u8]; 2] = [input_path, b"package.json"];
-        let Ok(package_json_path_) = r_fs.abs_checked(&parts) else {
+        let mut path_buf = SpillBuf::default();
+        let package_json_path_ = r_fs.abs_spill(&parts, &mut path_buf);
+        if package_json_path_.len() > MAX_PACKAGE_JSON_PATH_LEN {
             r_log.add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
@@ -411,7 +401,7 @@ impl PackageJSON {
                 ),
             );
             return None;
-        };
+        }
         let package_json_path = r_fs
             .dirname_store
             .append_slice(package_json_path_)
@@ -595,7 +585,6 @@ impl PackageJSON {
                     // The value is an object
 
                     // Remap all files in the browser field
-                    let mut key_spill: Vec<u8> = Vec::new();
                     for prop in obj.properties() {
                         // Normalize the path so we can compare against it without getting
                         // confused by "./". There is no distinction between package paths and
@@ -609,7 +598,7 @@ impl PackageJSON {
                         let key: &[u8] = resolve_path::resolve_path::normalize_string_spill::<
                             true,
                             resolve_path::platform::Auto,
-                        >(&mut key_spill, prop.key.slice());
+                        >(&mut path_buf, prop.key.slice());
 
                         match &prop.value {
                             js_ast::E::JsonValue::String(str) => {
@@ -692,8 +681,6 @@ impl PackageJSON {
                     }
                 }
 
-                let mut spill: Vec<u8> = Vec::new();
-
                 // If the array is empty, treat it as false (no side effects)
                 if !has_globs && !has_exact {
                     package_json.side_effects = SideEffects::False;
@@ -710,10 +697,10 @@ impl PackageJSON {
                             }
 
                             // Store the pattern relative to the package directory
-                            let joined: [&[u8]; 2] =
-                                [json_source.path.name().dir_with_trailing_slash(), name];
+                            let joined: [&[u8]; 2] = [json_source.path.source_dir(), name];
 
-                            let pattern = r_fs.join(&mut spill, &joined);
+                            let pattern =
+                                join_spill::<resolve_path::platform::Auto>(&mut path_buf, &joined);
 
                             if strings::contains_char(name, b'*')
                                 || strings::contains_char(name, b'?')
@@ -747,10 +734,10 @@ impl PackageJSON {
                             }
 
                             // Store the pattern relative to the package directory
-                            let joined: [&[u8]; 2] =
-                                [json_source.path.name().dir_with_trailing_slash(), name];
+                            let joined: [&[u8]; 2] = [json_source.path.source_dir(), name];
 
-                            let pattern = r_fs.join(&mut spill, &joined);
+                            let pattern =
+                                join_spill::<resolve_path::platform::Auto>(&mut path_buf, &joined);
                             // Normalize pattern to use forward slashes for cross-platform compatibility
                             let normalized_pattern = Self::normalize_path_for_glob(pattern)
                                 .unwrap_or_else(|_| pattern.to_vec());
@@ -764,10 +751,10 @@ impl PackageJSON {
                     map.reserve(items.len());
                     for item in items {
                         if let Some(name) = item.as_str() {
-                            let joined: [&[u8]; 2] =
-                                [json_source.path.name().dir_with_trailing_slash(), name];
+                            let joined: [&[u8]; 2] = [json_source.path.source_dir(), name];
 
-                            let pattern = r_fs.join(&mut spill, &joined);
+                            let pattern =
+                                join_spill::<resolve_path::platform::Auto>(&mut path_buf, &joined);
                             let _ = map.insert(StringHashMapUnownedKey::init(pattern), ());
                         }
                     }

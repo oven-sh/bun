@@ -15,24 +15,19 @@ pub(crate) fn get_public_path_with_asset_prefix(
     platform: bun_paths::Platform,
 ) {
     use bun_core::strings;
-    use bun_paths::{Platform, resolve_path};
+    use bun_paths::Platform;
+    use bun_paths::platform::{Loose, Nt, Posix, Windows};
+    use bun_paths::resolve_path::{SpillBuf, relative_platform_spill};
 
+    let mut buf = SpillBuf::default();
     let relative_path: &[u8] = if strings::has_prefix(to, dir) {
         strings::without_trailing_slash(&to[dir.len()..])
     } else {
         match platform {
-            Platform::Posix => {
-                resolve_path::relative_platform::<resolve_path::platform::Posix, false>(dir, to)
-            }
-            Platform::Windows => {
-                resolve_path::relative_platform::<resolve_path::platform::Windows, false>(dir, to)
-            }
-            Platform::Loose => {
-                resolve_path::relative_platform::<resolve_path::platform::Loose, false>(dir, to)
-            }
-            Platform::Nt => {
-                resolve_path::relative_platform::<resolve_path::platform::Nt, false>(dir, to)
-            }
+            Platform::Posix => relative_platform_spill::<Posix>(&mut buf, dir, to),
+            Platform::Windows => relative_platform_spill::<Windows>(&mut buf, dir, to),
+            Platform::Loose => relative_platform_spill::<Loose>(&mut buf, dir, to),
+            Platform::Nt => relative_platform_spill::<Nt>(&mut buf, dir, to),
         }
     };
     if !origin.is_absolute() {
@@ -43,7 +38,7 @@ pub(crate) fn get_public_path_with_asset_prefix(
         let abs_path = if bun_paths::is_absolute(to) {
             to
         } else {
-            VirtualMachine::get().fs().abs(&[to])
+            VirtualMachine::get().fs().abs_spill(&[to], &mut buf)
         };
         out.reserve(origin.origin.len() + b"/abs:".len() + abs_path.len());
         out.extend_from_slice(origin.origin);

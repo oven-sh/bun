@@ -15,6 +15,7 @@ use bun_core::{FeatureFlags, Output};
 // it from parser-side indices; all consumers only call `.get()`.
 use bun_ast::Index;
 use bun_core::{string_joiner::StringJoiner, strings};
+use bun_paths::resolve_path::SpillBuf;
 use bun_sourcemap as source_map;
 
 use crate::analyze_transpiled_module;
@@ -554,6 +555,7 @@ impl IntermediateOutput {
         let unique_key_for_additional_files =
             graph.input_files.items_unique_key_for_additional_file();
         let mut file_path_posix: Vec<u8> = Vec::new();
+        let mut relative_buf = SpillBuf::default();
         match self {
             IntermediateOutput::Pieces(pieces) => {
                 let entry_point_chunks_for_scb = linker_graph.files.items_entry_point_chunk_index();
@@ -680,10 +682,11 @@ impl IntermediateOutput {
                                 if use_outdir_relative_path {
                                     file_path
                                 } else {
-                                    bun_paths::resolve_path::relative_platform::<
+                                    bun_paths::resolve_path::relative_platform_spill::<
                                         bun_paths::platform::Posix,
-                                        false,
-                                    >(from_chunk_dir, file_path)
+                                    >(
+                                        &mut relative_buf, from_chunk_dir, file_path
+                                    )
                                 },
                             );
                             count += cheap_normalizer[0].len() + cheap_normalizer[1].len();
@@ -859,10 +862,11 @@ impl IntermediateOutput {
                                 if use_outdir_relative_path {
                                     file_path
                                 } else {
-                                    bun_paths::resolve_path::relative_platform::<
+                                    bun_paths::resolve_path::relative_platform_spill::<
                                         bun_paths::platform::Posix,
-                                        false,
-                                    >(from_chunk_dir, file_path)
+                                    >(
+                                        &mut relative_buf, from_chunk_dir, file_path
+                                    )
                                 },
                             );
 

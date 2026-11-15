@@ -6,6 +6,7 @@ use bun_collections::{DynamicBitSet, HiveBox};
 use bun_core::{Output, UnwrapOrOom, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, strings};
 use bun_paths as Path;
+use bun_paths::resolve_path::SpillBuf;
 use bun_semver::{self as Semver, String as SemverString};
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPool;
@@ -2891,10 +2892,13 @@ fn enqueue_local_tarball(
     {
         None => (stored_string(path), true),
         Some(base_dir) => (
-            stored_string(Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-                FileSystem::get().top_level_dir(),
-                &[base_dir, path],
-            )),
+            SpillBuf::with_scratch(|buf| {
+                stored_string(Path::resolve_path::join_abs_string_spill::<
+                    Path::platform::Auto,
+                >(
+                    FileSystem::get().top_level_dir(), buf, &[base_dir, path]
+                ))
+            }),
             false,
         ),
     };

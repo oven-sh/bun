@@ -3,6 +3,7 @@
 //! updating for DevServer, or serializing to a binary for use in production.
 
 use bun_alloc::ArenaVecExt as _;
+use bun_paths::resolve_path::SpillBuf;
 use bun_paths::strings;
 use core::mem::size_of;
 
@@ -555,7 +556,8 @@ impl FrameworkRouter {
             return Ok(());
         };
         let mut arena_state = Arena::new();
-        self.scan_inner(ty, r, root_info, &mut arena_state, ctx)
+        let mut abs_path_buf = SpillBuf::default();
+        self.scan_inner(ty, r, root_info, &mut arena_state, &mut abs_path_buf, ctx)
     }
 
     fn scan_inner(
@@ -564,6 +566,7 @@ impl FrameworkRouter {
         r: &mut Resolver,
         dir_info: &DirInfo,
         arena_state: &mut Arena,
+        abs_path_buf: &mut SpillBuf<'_>,
         ctx: &mut dyn InsertionHandler,
     ) -> Result<(), AllocError> {
         let fs_ref = bun_resolver::fs::FileSystem::get();
@@ -611,10 +614,17 @@ impl FrameworkRouter {
                             }
                         }
 
-                        if let Some(child_info) =
-                            r.read_dir_info_ignore_error(fs_ref.abs(&[file.dir, file.base()]))
-                        {
-                            self.scan_inner(t_index, r, child_info, arena_state, ctx)?;
+                        if let Some(child_info) = r.read_dir_info_ignore_error(
+                            fs_ref.abs_spill(&[file.dir, file.base()], abs_path_buf),
+                        ) {
+                            self.scan_inner(
+                                t_index,
+                                r,
+                                child_info,
+                                arena_state,
+                                abs_path_buf,
+                                ctx,
+                            )?;
                         }
                     }
                     bun_resolver::fs::EntryKind::File => {
@@ -637,7 +647,7 @@ impl FrameworkRouter {
                         }
 
                         let t = &self.types[t_index.get() as usize];
-                        let abs_path = fs_ref.abs(&[file.dir, file.base()]);
+                        let abs_path = fs_ref.abs_spill(&[file.dir, file.base()], abs_path_buf);
 
                         // Parse the pattern from the path relative to this type's root, which can be outside `self.root`.
                         let mut rel_path_buf = bun_paths::path_buffer_pool::get();
@@ -775,7 +785,7 @@ impl FrameworkRouter {
                                 t_index,
                                 InsertPattern::Dynamic(pattern),
                                 file_kind,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                abs_path,
                                 ctx,
                                 &mut out_colliding_file_id,
                             )
@@ -806,7 +816,7 @@ impl FrameworkRouter {
                                 t_index,
                                 InsertPattern::Static(pattern),
                                 file_kind,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                abs_path,
                                 ctx,
                                 &mut out_colliding_file_id,
                             )

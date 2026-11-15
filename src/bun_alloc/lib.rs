@@ -347,9 +347,9 @@ pub fn buf_print_len(
 // LAYERING: `bun_alloc` is below `bun_threading` in the crate graph, so the
 // futex-backed `bun_threading::Mutex` is unavailable here; `std::sync` (itself
 // futex-backed since Rust 1.62) is the dependency-free stand-in.
-pub struct Mutex<T = ()>(std::sync::Mutex<T>);
+pub(crate) struct Mutex<T = ()>(std::sync::Mutex<T>);
 impl<T> Mutex<T> {
-    pub const fn new(value: T) -> Self {
+    pub(crate) const fn new(value: T) -> Self {
         Self(std::sync::Mutex::new(value))
     }
     #[inline]
@@ -944,8 +944,8 @@ pub(crate) fn bss_lazy_bytes(size: usize, align: usize) -> NonNull<u8> {
     NonNull::new(ptr).expect("OOM")
 }
 
-/// Size of the shared demand-zero arena backing every `bss_*!` singleton on
-/// unix, which take ≈2.3 MiB. `MAP_NORESERVE` means the unused tail costs only address space.
+/// Size of the demand-zero arena behind [`bss_lazy_bytes`] on unix, whose callers take
+/// ≈2.3 MiB. `MAP_NORESERVE` means the unused tail costs only address space.
 #[cfg(unix)]
 const BSS_ARENA_SIZE: usize = 4 * 1024 * 1024;
 
@@ -1065,13 +1065,13 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
 /// Reserve `count` elements of `T` as a lazy-faulted slice. See [`bss_lazy_bytes`].
 fn bss_lazy_slice<T>(count: usize) -> &'static mut [MaybeUninit<T>] {
     const { assert!(align_of::<T>() <= 4096) };
-    let layout = core::alloc::Layout::array::<T>(count).expect("OOM");
+    let layout = core::alloc::Layout::array::<T>(count).unwrap_or_else(|_| crate::out_of_memory());
     let p = bss_lazy_bytes(layout.size(), layout.align());
     // SAFETY: `p` is aligned storage for `count` values, given to this call alone and never freed.
     unsafe { core::slice::from_raw_parts_mut(p.as_ptr().cast(), count) }
 }
 
-/// Where a store goes on once its lazy-faulted slice is used up.
+/// Heap storage, never freed, for a store whose `bss_lazy_slice` is used up.
 #[cold]
 fn bss_overflow_slice<T>(
     count: usize,
@@ -1146,7 +1146,7 @@ impl core::hash::Hasher for IdentityU64Hasher {
         self.0
     }
 }
-pub type IndexMapHasher = core::hash::BuildHasherDefault<IdentityU64Hasher>;
+type IndexMapHasher = core::hash::BuildHasherDefault<IdentityU64Hasher>;
 
 type IndexMap = HashMap<HashKeyType, IndexType, IndexMapHasher>;
 
@@ -1354,9 +1354,8 @@ impl<T, const OVERFLOW_COUNT: usize> BSSList<T, OVERFLOW_COUNT> {
     #[inline(always)]
     pub fn append_uninit(&mut self) -> &'static mut MaybeUninit<T> {
         if self.unused.is_empty() {
-            self.unused = bss_overflow_slice(OVERFLOW_COUNT).unwrap_or_else(|_| {
-                std::alloc::handle_alloc_error(core::alloc::Layout::new::<[T; OVERFLOW_COUNT]>())
-            });
+            self.unused =
+                bss_overflow_slice(OVERFLOW_COUNT).unwrap_or_else(|_| crate::out_of_memory());
         }
         self.unused.split_off_first_mut().expect("not empty")
     }
@@ -1422,19 +1421,21 @@ impl BSSStringList {
 
     #[inline]
     pub fn append(&self, value: &[u8]) -> core::result::Result<&'static [u8], AllocError> {
-        Ok(self.append_with(value.len(), |mut to| to.append(value))?)
+        Ok(self.append_with(value.len(), |mut cursor| cursor.append(value))?)
     }
 
     pub fn append_parts(&self, parts: &[&[u8]]) -> core::result::Result<&'static [u8], AllocError> {
         let len = parts.iter().map(|part| part.len()).sum();
-        Ok(self.append_with(len, |mut to| parts.iter().for_each(|part| to.append(part)))?)
+        Ok(self.append_with(len, |mut cursor| {
+            parts.iter().for_each(|part| cursor.append(part))
+        })?)
     }
 
     pub fn append_lower_case(
         &self,
         value: &[u8],
     ) -> core::result::Result<&'static [u8], AllocError> {
-        let stored = self.append_with(value.len(), |mut to| to.append(value))?;
+        let stored = self.append_with(value.len(), |mut cursor| cursor.append(value))?;
         stored.make_ascii_lowercase();
         Ok(stored)
     }
@@ -1449,17 +1450,17 @@ impl BSSStringList {
         if core::fmt::write(&mut CursorWriter(scratch.unfilled()), args).is_ok() {
             return self.append(scratch.filled());
         }
-        Ok(self.append_with(fmt_count(args), |to| {
-            core::fmt::write(&mut CursorWriter(to), args).expect("counted length")
+        Ok(self.append_with(fmt_count(args), |cursor| {
+            core::fmt::write(&mut CursorWriter(cursor), args).expect("counted length")
         })?)
     }
 }
 
-const BSS_OVERFLOW_BLOCK_SIZE: usize = 2048;
-
 // ──────────────────────────────────────────────────────────────────────────
 // BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES>
 // ──────────────────────────────────────────────────────────────────────────
+
+const BSS_OVERFLOW_BLOCK_SIZE: usize = 2048;
 
 pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool> {
     pub(crate) index: IndexMap,

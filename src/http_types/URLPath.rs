@@ -6,13 +6,14 @@ pub struct URLPath<'a> {
     pub query_string: &'a [u8],
 }
 
+const MAX_ENCODED_LEN: usize = 16384;
+
 /// `None` if nothing is percent-encoded.
 pub fn decode(possibly_encoded_pathname: &[u8]) -> Result<Option<Vec<u8>>, bun_url::DecodeError> {
     if !strings::contains_char(possibly_encoded_pathname, b'%') {
         return Ok(None);
     }
-    // The in-place decode buffer is capped at 16384 bytes of input.
-    let capped = &possibly_encoded_pathname[..possibly_encoded_pathname.len().min(16384)];
+    let capped = &possibly_encoded_pathname[..possibly_encoded_pathname.len().min(MAX_ENCODED_LEN)];
 
     let mut buf: Vec<u8> = Vec::with_capacity(capped.len());
     PercentEncoding::decode_fault_tolerant::<_, true>(&mut buf, capped)?;

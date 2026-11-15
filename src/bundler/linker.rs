@@ -67,7 +67,7 @@ mod hardcoded_module {
 /// `BSSStringList` singleton.
 #[inline]
 pub(crate) fn dupe(src: &[u8]) -> &'static [u8] {
-    RELATIVE_PATHS_LIST.append(src).expect("OOM")
+    bun_core::handle_oom(RELATIVE_PATHS_LIST.append(src))
 }
 impl Linker {
     /// Exclusive borrow of the owning `Transpiler.log`.

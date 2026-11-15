@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/type-errors-that-several-projects-are-asked-about.test.ts": {
+    "default": 30000,
+    "asan": 120000
+  },
   "aot/order-file.test.ts": {
     "default": 60000,
     "asan": 240000

@@ -3057,9 +3057,12 @@ describe.each([
     near(afterGC.arrayBuffers, immediate.arrayBuffers);
     near(afterGC.external, immediate.external);
 
-    // Reading .buffer moves the bytes into an ArrayBuffer. They must not be counted twice.
+    // Reading .buffer moves the bytes into an ArrayBuffer. They must not be counted twice, before or after the next
+    // collection.
     near(afterBuffer.arrayBuffers, afterGC.arrayBuffers);
     near(afterBuffer.external, afterGC.external);
+    near(afterBufferGC.arrayBuffers, afterBuffer.arrayBuffers);
+    near(afterBufferGC.external, afterBuffer.external);
 
     // Dropping the typed arrays gives the bytes back, through the ArrayBuffer for the ones that have one and through
     // the typed array's own finalizer for the others.
@@ -3067,7 +3070,9 @@ describe.each([
     expect(afterRelease.external).toBeLessThanOrEqual(before.external + slack);
 
     // v8.getHeapStatistics().external_memory is the same number, as in Node.
-    for (const step of [before, immediate, afterGC, afterBuffer, afterRelease]) near(step.v8External, step.external);
+    for (const step of [before, immediate, afterGC, afterBuffer, afterBufferGC, afterRelease]) {
+      near(step.v8External, step.external);
+    }
 
     // The number that paces collections counts the vectors from the collection that visits them, and never twice.
     expect(afterGC.paced).toBeGreaterThanOrEqual(before.paced + payload - slack);

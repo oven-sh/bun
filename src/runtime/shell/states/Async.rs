@@ -157,12 +157,10 @@ impl<'a> Async<'a> {
             }
             EventLoopHandle::Mini(mini) => {
                 // The mini arm heap-allocates an auto-deinit wrapper per bounce.
-                let any = bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from_callback_auto_deinit(
-                    task,
+                mini.enqueue_callback_concurrent(task, |task, _| {
                     // SAFETY: the loop of the script calls this.
-                    |task, _| unsafe { task.run_from_main_thread() },
-                );
-                mini.enqueue_task_concurrent(core::ptr::NonNull::new(any).expect("heap task"));
+                    unsafe { task.run_from_main_thread() }
+                });
             }
         }
     }

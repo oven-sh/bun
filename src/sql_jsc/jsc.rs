@@ -275,7 +275,10 @@ pub use bun_event_loop::EventLoopTimer::{
 };
 
 /// A connection that writes what one turn of JS queued on it in one flush, at the end of the turn.
-pub(crate) trait AutoFlush: Sized {
+///
+/// # Safety
+/// A value does not move while it is registered, and unregisters before it is freed.
+pub(crate) unsafe trait AutoFlush: Sized {
     fn vm(&self) -> &VirtualMachine;
     fn auto_flush_registered(&self) -> &Cell<bool>;
     /// Connected, without backpressure, and with something to write.
@@ -290,7 +293,8 @@ pub(crate) trait AutoFlush: Sized {
         }
         if !self.auto_flush_registered().get() && self.can_flush() {
             let tasks = &self.vm().event_loop().deferred_tasks;
-            tasks.post_task(Some(NonNull::from(self).cast()), run::<Self>);
+            // SAFETY: trait contract.
+            unsafe { tasks.post_task(Some(NonNull::from(self).cast()), run::<Self>) };
             self.auto_flush_registered().set(true);
         }
     }

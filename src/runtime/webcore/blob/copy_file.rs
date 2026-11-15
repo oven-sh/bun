@@ -1626,8 +1626,9 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
     this.resolve_promise(written);
 }
 
+// SAFETY: the path of a store does not change, and `err` owns its bytes.
 #[cfg(windows)]
-impl node_fs::async_::AsyncMkdirpTarget for CopyFileWindows {
+unsafe impl node_fs::async_::AsyncMkdirpTarget for CopyFileWindows {
     fn directory(&self) -> &[u8] {
         let destination = self.destination_file_store.data.as_file();
         let path = destination.pathlike.path().slice();

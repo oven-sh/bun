@@ -32,7 +32,7 @@ pub struct AsyncHTTP<'a> {
     url: URL<'a>,
     /// Set by the first attempt.
     original: Option<OriginalClientState<'a>>,
-    /// Intrusive link for `UnboundedQueue(AsyncHTTP, .next)` in HTTPThread.
+    /// Intrusive link for `OwnedQueue<Box<AsyncHTTP>>` in HTTPThread.
     /// Lifetime-erased (`'static`) — the queue mixes requests with unrelated
     /// borrow scopes; consumers never read borrowed fields through `next`.
     pub(crate) next: bun_threading::Link<AsyncHTTP<'static>>,
@@ -58,7 +58,7 @@ struct OriginalClientState<'a> {
     unix_socket_path: &'a [u8],
 }
 
-// SAFETY: `next` is the sole intrusive link for `UnboundedQueue(AsyncHTTP, .next)`.
+// SAFETY: `next` is the sole intrusive link for `OwnedQueue<Box<AsyncHTTP>>`.
 // Only implemented for the lifetime-erased form — the queue is heterogeneous
 // over borrow scopes and `next` is always stored as `Link<AsyncHTTP<'static>>`.
 unsafe impl bun_threading::Linked for AsyncHTTP<'static> {
@@ -68,6 +68,12 @@ unsafe impl bun_threading::Linked for AsyncHTTP<'static> {
         unsafe { core::ptr::addr_of!((*item).next) }
     }
 }
+
+// SAFETY: what belongs to the HTTP thread (sockets, HTTP/2 and HTTP/3 streams, contexts and their
+// reference counts) is not set before `on_start`, and is released before the last result. `signals`
+// points to atomics, and only the HTTP thread passes the callback its context. The buffer of a
+// streamed `request_body` has an atomic count and a lock.
+unsafe impl Send for AsyncHTTP<'static> {}
 
 pub(crate) static ACTIVE_REQUESTS_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub static MAX_SIMULTANEOUS_REQUESTS: AtomicUsize = AtomicUsize::new(256);
@@ -433,12 +439,6 @@ impl<'a> AsyncHTTP<'a> {
 /// A `GET` request that owns its URL and its headers.
 pub struct OwnedRequest(Box<AsyncHTTP<'static>>);
 
-// SAFETY: `schedule` takes the request and the last result gives it back, so a value of this type
-// is not in flight. What belongs to the HTTP thread (sockets, streams, contexts and their reference
-// counts) is not set before `on_start`, and is released before the last result. `signals` points to
-// a static, there is no body, and the handler is `Send`.
-unsafe impl Send for OwnedRequest {}
-
 /// Gets the results of an [`OwnedRequest`] on the HTTP thread.
 pub trait HTTPClientResultHandler<P>: Sized
 where
@@ -579,7 +579,7 @@ impl SyncResultSlot {
     fn wait(&self) {
         let mut slot = self.slot.lock();
         while slot.is_none() {
-            self.cv.wait_guarded(&mut slot);
+            self.cv.wait(&mut slot);
         }
     }
 

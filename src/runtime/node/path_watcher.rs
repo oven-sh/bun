@@ -982,7 +982,7 @@ fn start_fsevents() -> sys::Result<()> {
 #[cfg(target_os = "macos")]
 impl PathWatcherManager {
     /// Lock order: `FSEventsLoop::mutex`, then this.
-    pub(super) fn lock() -> bun_threading::guarded::GuardedLock<'static, Self, Mutex> {
+    pub(super) fn lock() -> bun_threading::guarded::GuardedLock<'static, Self> {
         DEFAULT_MANAGER.wait().lock()
     }
 

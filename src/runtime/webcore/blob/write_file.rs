@@ -66,7 +66,7 @@ impl bun_jsc::JobContext for WriteFile {
         // SAFETY: fn contract; see `ReadFile::cancel`.
         unsafe {
             if (*this).io_parking.cancel() {
-                io::IoRequestLoop::schedule(&mut (*this).io_request);
+                io::IoRequestLoop::schedule(&raw mut (*this).io_request);
             }
         }
     }
@@ -176,32 +176,43 @@ crate::webcore::blob::impl_file_closer!(WriteFile);
 impl WriteFile {
     pub(crate) const IO_TAG: io::Tag = io::Tag::WriteFile;
 
-    pub(crate) fn on_ready(&mut self) {
+    /// # Safety
+    /// As `ReadFile::on_ready`.
+    pub(crate) unsafe fn on_ready(this: *mut Self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onReady()");
-        if !self.io_parking.fire() {
-            return;
+        // SAFETY: fn contract.
+        unsafe {
+            if (*this).io_parking.fire() {
+                Self::schedule_write_loop(this);
+            }
         }
-        self.task = WorkPoolTask {
-            node: Default::default(),
-            callback: Self::do_write_loop_task,
-        };
-        WorkPool::schedule(&raw mut self.task);
     }
 
     pub(crate) fn on_io_error(this: *mut (), err: &sys::Error) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onIOError()");
-        // SAFETY: ctx was set to `self as *mut WriteFile` in `on_request_writable`.
-        let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(this.cast()) };
-        if !this.io_parking.fire() {
-            return;
+        let this = this.cast::<Self>();
+        // SAFETY: ctx was set to `self as *mut WriteFile` in `on_request_writable`. After `fire`
+        // no other thread uses these fields.
+        unsafe {
+            if (*this).io_parking.fire() {
+                (*this).errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                (*this).system_error = Some(err.to_system_error().into());
+                Self::schedule_write_loop(this);
+            }
         }
-        this.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-        this.system_error = Some(err.to_system_error().into());
-        this.task = WorkPoolTask {
-            node: Default::default(),
-            callback: Self::do_write_loop_task,
-        };
-        WorkPool::schedule(&raw mut this.task);
+    }
+
+    /// # Safety
+    /// `fire` gave `this` to this thread.
+    unsafe fn schedule_write_loop(this: *mut Self) {
+        // SAFETY: fn contract. The `Job` that holds `this` is freed after `io_task` finishes.
+        unsafe {
+            (*this).task = WorkPoolTask {
+                node: Default::default(),
+                callback: Self::do_write_loop_task,
+            };
+            WorkPool::schedule(&raw mut (*this).task);
+        }
     }
 
     pub(crate) fn on_request_writable(request: &mut io::Request) -> io::Action<'_> {
@@ -254,7 +265,9 @@ impl WriteFile {
         self.close_after_io = true;
         self.io_request
             .store_callback_seq_cst(Self::on_request_writable);
-        io::IoRequestLoop::schedule(&mut self.io_request);
+        // SAFETY: the `Job` that holds `self` is freed after `io_task` finishes, and `park` gave the request to this thread.
+        // Not upheld: `self` is still borrowed when the io thread gets the request.
+        unsafe { io::IoRequestLoop::schedule(&raw mut self.io_request) };
     }
 
     pub(crate) fn create(
@@ -535,7 +548,8 @@ mod windows_impl {
 
     bun_io::intrusive_uv_fs!(WriteFileWindows, io_request);
 
-    impl crate::node::fs::async_::AsyncMkdirpTarget for WriteFileWindows {
+    // SAFETY: the path of a store does not change, and `err` owns its bytes.
+    unsafe impl crate::node::fs::async_::AsyncMkdirpTarget for WriteFileWindows {
         fn directory(&self) -> &[u8] {
             let path = self.path();
             bun_core::dirname(path).unwrap_or(path)

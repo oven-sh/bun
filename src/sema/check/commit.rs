@@ -691,7 +691,7 @@ impl<'s> Program<'s> {
                     return VarianceClaim::Mine;
                 }
             }
-            claims.has_changed.wait_guarded(&mut table);
+            claims.has_changed.wait(&mut table);
         }
     }
 

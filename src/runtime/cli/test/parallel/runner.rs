@@ -169,6 +169,10 @@ pub(crate) fn run_as_coordinator(
             .filter(|file| t.is_heavy(file.as_bytes()))
             .count() as u32
     });
+    // Open until this process ends.
+    #[cfg(windows)]
+    let windows_job =
+        bun_sys::windows::create_kill_on_close_job().map(core::mem::ManuallyDrop::new);
     let mut coord = Coordinator {
         vm,
         reporter,
@@ -214,10 +218,8 @@ pub(crate) fn run_as_coordinator(
         aborted: None,
         stop_reason: None,
         last_printed_dot: false,
-        // Open until this process ends.
         #[cfg(windows)]
-        windows_job: bun_sys::windows::create_kill_on_close_job()
-            .map(std::os::windows::io::IntoRawHandle::into_raw_handle),
+        windows_job: windows_job.as_deref(),
         abort_guard: Some(abort_handler::install()),
     };
 

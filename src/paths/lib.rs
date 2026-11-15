@@ -184,13 +184,8 @@ macro_rules! os_path_literal {
                 }
                 out
             };
-            // Explicit `&__W` borrow so rvalue static promotion is guaranteed
-            // (mirrors `wstr!`): relying on the implicit autoref inside
-            // `__W.as_ptr()` to promote is not spec-guaranteed in all
-            // contexts, and a non-promoted `__W` would dangle immediately.
-            const __WREF: &[u16; __N + 1] = &__W;
-            // SAFETY: __WREF[__N] == 0 (NUL terminator); len excludes it.
-            unsafe { ::bun_core::WStr::from_raw(__WREF.as_ptr(), __N) }
+            const __Z: &::bun_core::WStr = ::bun_core::WStr::from_slice_with_nul(&__W);
+            __Z
         }
     }};
 }

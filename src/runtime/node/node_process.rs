@@ -210,14 +210,6 @@ mod _impl {
         EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker,
     };
 
-    #[cfg(windows)]
-    unsafe extern "C" {
-        // SAFETY precondition: `name` must point to a NUL-terminated wide string;
-        // `value` must be either null (delete) or a NUL-terminated wide string.
-        // Raw-pointer contract — cannot be `safe fn`.
-        fn SetEnvironmentVariableW(name: *const u16, value: *const u16) -> i32;
-    }
-
     // ───────────────────────────── title ─────────────────────────────
 
     // Windows `process.title` getter support: the C++ getter needs to know
@@ -666,6 +658,7 @@ mod _impl {
     #[cfg(windows)]
     #[unsafe(export_name = "Bun__Process__editWindowsEnvVar")]
     extern "C" fn bun_process_edit_windows_env_var(k: &BunString, v: &BunString) {
+        use bun_core::WStr;
         const _: () = assert!(cfg!(windows));
         if k.tag() == bun_core::Tag::Empty {
             return;
@@ -683,11 +676,10 @@ mod _impl {
         };
         buf1[len1] = 0;
 
-        static EMPTY_W: [u16; 1] = [0];
-        let str2: Option<*const u16> = if v.tag() != bun_core::Tag::Dead {
+        let str2: Option<&WStr> = if v.tag() != bun_core::Tag::Dead {
             Some('str_: {
                 if v.tag() == bun_core::Tag::Empty {
-                    break 'str_ EMPTY_W.as_ptr();
+                    break 'str_ WStr::EMPTY;
                 }
                 let len2: usize = if v.is_8bit() {
                     strings::copy_latin1_into_utf16(&mut buf2, v.latin1()).written
@@ -696,14 +688,11 @@ mod _impl {
                     v.length()
                 };
                 buf2[len2] = 0;
-                buf2.as_ptr()
+                WStr::from_buf(&buf2, len2)
             })
         } else {
             None
         };
-        // SAFETY: buf1[len1] == 0; str2 is either null or NUL-terminated
-        unsafe {
-            let _ = SetEnvironmentVariableW(buf1.as_ptr(), str2.unwrap_or(core::ptr::null()));
-        }
+        let _ = bun_sys::windows::SetEnvironmentVariableW(WStr::from_buf(&buf1, len1), str2);
     }
 } // mod _impl

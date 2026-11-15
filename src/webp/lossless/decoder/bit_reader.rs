@@ -43,7 +43,12 @@ impl<'a> BitReader<'a> {
                 self.unread = self.unread.get(whole_bytes as usize..).unwrap_or_default();
                 self.len |= Self::REFILLED;
             }
-            None => *self = self.refilled_near_end(),
+            None => {
+                core::hint::cold_path();
+                if self.len < Self::REFILLED {
+                    *self = self.refilled_near_end();
+                }
+            }
         }
     }
 

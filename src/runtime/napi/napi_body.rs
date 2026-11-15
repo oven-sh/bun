@@ -1,11 +1,14 @@
 //! Node-API (N-API) implementation.
 
+use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU32, AtomicUsize, Ordering};
 
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
+use bun_core::Unaligned;
 use bun_event_loop::{BoxedTask, TaskTag, Taskable, task_tag};
 use bun_io::{JsKeepAlive, KeepAlive};
 use bun_jsc::StringJsc;
@@ -371,6 +374,9 @@ pub(crate) struct Deferred {
 }
 type napi_deferred = *mut Deferred;
 
+/// A box that the addon hands back. It stays the addon's if the call is refused.
+type Returned<T> = Option<ManuallyDrop<Box<T>>>;
+
 // ──────────────────────────────────────────────────────────────────────────
 // napi_value
 // ──────────────────────────────────────────────────────────────────────────
@@ -382,11 +388,6 @@ type napi_deferred = *mut Deferred;
 pub(crate) struct napi_value(i64);
 
 impl napi_value {
-    pub(crate) fn set(&mut self, env: &NapiEnv, val: JSValue) {
-        NapiHandleScope::append(env, val);
-        self.0 = val.encoded() as i64;
-    }
-
     pub(crate) fn get(self) -> JSValue {
         JSValue::from_encoded(self.0 as usize)
     }
@@ -577,37 +578,36 @@ macro_rules! ungated {
     };
 }
 
+/// Where an addon wants a result. It can be uninitialized, and it can alias another argument.
+#[repr(transparent)]
+struct Out<T>(Cell<MaybeUninit<T>>);
+
+impl<T> Out<T> {
+    fn write(&self, value: T) {
+        self.0.set(MaybeUninit::new(value));
+    }
+}
+
+impl Out<napi_value> {
+    fn set(&self, env: &NapiEnv, val: JSValue) {
+        self.write(napi_value::create(env, val));
+    }
+}
+
 macro_rules! get_out {
-    ($env:expr, $ptr:expr) => {
-        // SAFETY: caller passes raw out pointer; we treat non-null as &mut borrow.
-        match unsafe { $ptr.as_mut() } {
+    ($env:expr, $out:expr) => {
+        match $out {
             Some(r) => r,
             None => return $env.invalid_arg(),
         }
     };
 }
 
-/// Write `v` through an optional N-API out-param pointer.
-///
-/// N-API "info" entry points take a family of nullable `*mut T` out-params where
-/// `NULL` means "caller doesn't want this field". This helper centralizes the
-/// `if let Some(r) = ptr.as_mut() { *r = v }` pattern so the per-site `unsafe`
-/// blocks collapse into one audited location.
-///
-/// # Safety
-/// The caller (the native addon) must pass either `NULL` or a pointer that is:
-/// - valid for a single write of `T`,
-/// - properly aligned for `T`,
-/// - not aliased by any other live `&`/`&mut` borrow for the duration of the call.
-///
-/// These are exactly the N-API ABI guarantees for out-params, so call sites in
-/// `extern "C" fn napi_*` bodies need no additional justification.
+/// For the "info" entry points, where `NULL` means that the addon does not want this field.
 #[inline]
-fn write_out<T>(p: *mut T, v: T) {
-    // SAFETY: see doc comment — `p` is either null (skipped) or a valid,
-    // exclusively-owned out-param per the N-API contract.
-    if let Some(r) = unsafe { p.as_mut() } {
-        *r = v;
+fn write_out<T>(out: Option<&Out<T>>, v: T) {
+    if let Some(out) = out {
+        out.write(v);
     }
 }
 
@@ -624,7 +624,10 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_get_undefined(env_: Option<&NapiEnv>, result_: *mut napi_value) -> napi_status {
+extern "C" fn napi_get_undefined(
+    env_: Option<&NapiEnv>,
+    result_: Option<&Out<napi_value>>,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_undefined");
     ungated!(env, env_);
     env.check_gc();
@@ -634,7 +637,10 @@ extern "C" fn napi_get_undefined(env_: Option<&NapiEnv>, result_: *mut napi_valu
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_get_null(env_: Option<&NapiEnv>, result_: *mut napi_value) -> napi_status {
+extern "C" fn napi_get_null(
+    env_: Option<&NapiEnv>,
+    result_: Option<&Out<napi_value>>,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_null");
     ungated!(env, env_);
     env.check_gc();
@@ -650,19 +656,22 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 extern "C" fn napi_get_boolean(
     env_: Option<&NapiEnv>,
-    value: bool,
-    result_: *mut napi_value,
+    value: u8,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_boolean");
     ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
-    result.set(env, JSValue::from(value));
+    result.set(env, JSValue::from(value != 0));
     env.ok()
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_create_array(env_: Option<&NapiEnv>, result_: *mut napi_value) -> napi_status {
+extern "C" fn napi_create_array(
+    env_: Option<&NapiEnv>,
+    result_: Option<&Out<napi_value>>,
+) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_array");
     ungated!(env, env_);
     env.check_gc();
@@ -679,7 +688,7 @@ extern "C" fn napi_create_array(env_: Option<&NapiEnv>, result_: *mut napi_value
 extern "C" fn napi_create_array_with_length(
     env_: Option<&NapiEnv>,
     length: usize,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_array_with_length");
     ungated!(env, env_);
@@ -714,7 +723,7 @@ unsafe extern "C" {
 extern "C" fn napi_create_int32(
     env_: Option<&NapiEnv>,
     value: i32,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_int32");
     ungated!(env, env_);
@@ -728,7 +737,7 @@ extern "C" fn napi_create_int32(
 extern "C" fn napi_create_uint32(
     env_: Option<&NapiEnv>,
     value: u32,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_uint32");
     ungated!(env, env_);
@@ -742,7 +751,7 @@ extern "C" fn napi_create_uint32(
 extern "C" fn napi_create_int64(
     env_: Option<&NapiEnv>,
     value: i64,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_int64");
     ungated!(env, env_);
@@ -752,12 +761,13 @@ extern "C" fn napi_create_int64(
     env.ok()
 }
 
+/// SAFETY: `str_` is null, or points to `length` bytes, or to a C string for `NAPI_AUTO_LENGTH`.
 #[unsafe(no_mangle)]
-extern "C" fn napi_create_string_latin1(
+unsafe extern "C" fn napi_create_string_latin1(
     env_: Option<&NapiEnv>,
     str_: *const u8,
     length: usize,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     ungated!(env, env_);
     let result = get_out!(env, result_);
@@ -804,12 +814,13 @@ extern "C" fn napi_create_string_latin1(
     env.ok()
 }
 
+/// SAFETY: `str_` is null, or points to `length` bytes, or to a C string for `NAPI_AUTO_LENGTH`.
 #[unsafe(no_mangle)]
-extern "C" fn napi_create_string_utf8(
+unsafe extern "C" fn napi_create_string_utf8(
     env_: Option<&NapiEnv>,
     str_: *const u8,
     length: usize,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     ungated!(env, env_);
     let result = get_out!(env, result_);
@@ -845,22 +856,30 @@ extern "C" fn napi_create_string_utf8(
     env.ok()
 }
 
+/// SAFETY: as [`napi_create_string_utf8`], in units of two bytes.
 #[unsafe(no_mangle)]
-extern "C" fn napi_create_string_utf16(
+unsafe extern "C" fn napi_create_string_utf16(
     env_: Option<&NapiEnv>,
-    str_: *const char16_t,
+    // Addons pass the bytes of a `Buffer`, which can start anywhere.
+    str_: *const Unaligned<char16_t>,
     length: usize,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     ungated!(env, env_);
     let result = get_out!(env, result_);
 
-    let slice: &[u16] = 'brk: {
+    let slice: &[Unaligned<char16_t>] = 'brk: {
         if !str_.is_null() {
             if NAPI_AUTO_LENGTH == length {
                 // SAFETY: caller guarantees ptr is NUL-terminated when length == NAPI_AUTO_LENGTH.
                 // Scan to the NUL u16 terminator.
-                break 'brk unsafe { bun_core::ffi::wstr_units(str_) };
+                break 'brk unsafe {
+                    let mut length = 0;
+                    while (*str_.add(length)).get() != 0 {
+                        length += 1;
+                    }
+                    bun_core::ffi::slice(str_, length)
+                };
             } else if length > i32::MAX as usize {
                 return env.invalid_arg();
             } else {
@@ -876,22 +895,22 @@ extern "C" fn napi_create_string_utf16(
         }
     };
 
-    if cfg!(debug_assertions) {
-        bun_output::scoped_log!(
-            napi,
-            "napi_create_string_utf16: {} {}",
-            slice.len(),
-            bun_core::fmt::utf16(&slice[..slice.len().min(512)])
-        );
-    }
-
     if slice.is_empty() {
         result.set(env, JSValue::js_empty_string(env.to_js()));
         return env.ok();
     }
 
     let (string, chars) = bun_core::String::create_uninitialized_utf16(slice.len());
-    chars.copy_from_slice(slice);
+    bun_core::slice_as_bytes_mut(chars).copy_from_slice(bun_core::slice_as_bytes(slice));
+
+    if cfg!(debug_assertions) {
+        bun_output::scoped_log!(
+            napi,
+            "napi_create_string_utf16: {} {}",
+            chars.len(),
+            bun_core::fmt::utf16(&chars[..chars.len().min(512)])
+        );
+    }
 
     let js = match string.into_js(env.to_js()) {
         Ok(v) => v,
@@ -1006,7 +1025,7 @@ unsafe extern "C" {
 extern "C" fn napi_get_prototype(
     env_: Option<&NapiEnv>,
     object_: napi_value,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_prototype");
     let env = preamble!(env_);
@@ -1083,7 +1102,7 @@ unsafe extern "C" {
 extern "C" fn napi_is_array(
     env_: Option<&NapiEnv>,
     value_: napi_value,
-    result_: *mut bool,
+    result_: Option<&Out<bool>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_array");
     ungated!(env, env_);
@@ -1093,7 +1112,7 @@ extern "C" fn napi_is_array(
     if value.is_empty() {
         return env.invalid_arg();
     }
-    *result = value.js_type().is_array();
+    result.write(value.js_type().is_array());
     env.ok()
 }
 
@@ -1101,7 +1120,7 @@ extern "C" fn napi_is_array(
 extern "C" fn napi_get_array_length(
     env_: Option<&NapiEnv>,
     value_: napi_value,
-    result_: *mut u32,
+    result_: Option<&Out<u32>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_array_length");
     let env = preamble!(env_);
@@ -1115,10 +1134,10 @@ extern "C" fn napi_get_array_length(
         return NapiEnv::set_last_error(Some(env), NapiStatus::array_expected);
     }
 
-    *result = match value.get_length(env.to_js()) {
+    result.write(match value.get_length(env.to_js()) {
         Ok(len) => len as u32, // intentional truncation
         Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
-    };
+    });
     env.ok()
 }
 
@@ -1127,7 +1146,7 @@ extern "C" fn napi_strict_equals(
     env_: Option<&NapiEnv>,
     lhs_: napi_value,
     rhs_: napi_value,
-    result_: *mut bool,
+    result_: Option<&Out<bool>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_strict_equals");
     let env = preamble!(env_);
@@ -1136,10 +1155,10 @@ extern "C" fn napi_strict_equals(
     if lhs.is_empty() || rhs.is_empty() {
         return env.invalid_arg();
     }
-    *result = match lhs.is_strict_equal(rhs, env.to_js()) {
+    result.write(match lhs.is_strict_equal(rhs, env.to_js()) {
         Ok(b) => b,
         Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
-    };
+    });
     env.ok()
 }
 
@@ -1246,13 +1265,13 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 extern "C" fn napi_open_handle_scope(
     env_: Option<&NapiEnv>,
-    result_: *mut napi_handle_scope,
+    result_: Option<&Out<napi_handle_scope>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_open_handle_scope");
     ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
-    *result = NapiHandleScope::open(env, false);
+    result.write(NapiHandleScope::open(env, false));
     env.ok()
 }
 
@@ -1276,12 +1295,12 @@ extern "C" fn napi_async_init(
     env_: Option<&NapiEnv>,
     _async_resource: napi_value,
     _async_resource_name: napi_value,
-    async_ctx_: *mut *mut c_void,
+    async_ctx_: Option<&Out<*mut c_void>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_async_init");
     let env = get_env!(env_);
     let async_ctx = get_out!(env, async_ctx_);
-    *async_ctx = env.as_mut_ptr().cast::<c_void>();
+    async_ctx.write(env.as_mut_ptr().cast::<c_void>());
     env.ok()
 }
 
@@ -1294,15 +1313,16 @@ extern "C" fn napi_async_destroy(env_: Option<&NapiEnv>, _async_ctx: *mut c_void
 }
 
 // this is just a regular function call
+/// SAFETY: `args` is null, or points to `arg_count` values that nothing writes during the call.
 #[unsafe(no_mangle)]
-extern "C" fn napi_make_callback(
+unsafe extern "C" fn napi_make_callback(
     env_: Option<&NapiEnv>,
     _async_ctx: *mut c_void,
     recv_: napi_value,
     func_: napi_value,
     arg_count: usize,
     args: *const napi_value,
-    maybe_result: *mut napi_value,
+    maybe_result: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_make_callback");
     let env = preamble!(env_);
@@ -1338,8 +1358,7 @@ extern "C" fn napi_make_callback(
         Err(_) => return env.pending_exception(),
     };
 
-    // SAFETY: `maybe_result` is null or a valid exclusive out-param per N-API contract.
-    if let Some(result) = unsafe { maybe_result.as_mut() } {
+    if let Some(result) = maybe_result {
         result.set(env, res);
     }
 
@@ -1349,13 +1368,13 @@ extern "C" fn napi_make_callback(
 #[unsafe(no_mangle)]
 extern "C" fn napi_open_escapable_handle_scope(
     env_: Option<&NapiEnv>,
-    result_: *mut napi_escapable_handle_scope,
+    result_: Option<&Out<napi_escapable_handle_scope>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_open_escapable_handle_scope");
     ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
-    *result = NapiHandleScope::open(env, true);
+    result.write(NapiHandleScope::open(env, true));
     env.ok()
 }
 
@@ -1378,7 +1397,7 @@ extern "C" fn napi_escape_handle(
     env_: Option<&NapiEnv>,
     scope_: Option<&NapiHandleScope>,
     escapee: napi_value,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_escape_handle");
     ungated!(env, env_);
@@ -1390,7 +1409,7 @@ extern "C" fn napi_escape_handle(
     if scope.escape(escapee.get()).is_err() {
         return NapiEnv::set_last_error(Some(env), NapiStatus::escape_called_twice);
     }
-    *result = escapee;
+    result.write(escapee);
     env.ok()
 }
 
@@ -1452,7 +1471,7 @@ unsafe extern "C" {
 extern "C" fn napi_is_error(
     env_: Option<&NapiEnv>,
     value_: napi_value,
-    result_: *mut bool,
+    result_: Option<&Out<bool>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_error");
     ungated!(env, env_);
@@ -1462,7 +1481,7 @@ extern "C" fn napi_is_error(
         return env.invalid_arg();
     }
     let result = get_out!(env, result_);
-    *result = value.is_any_error();
+    result.write(value.is_any_error());
     env.ok()
 }
 
@@ -1478,7 +1497,7 @@ unsafe extern "C" {
 extern "C" fn napi_is_arraybuffer(
     env_: Option<&NapiEnv>,
     value_: napi_value,
-    result_: *mut bool,
+    result_: Option<&Out<bool>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_arraybuffer");
     ungated!(env, env_);
@@ -1492,9 +1511,11 @@ extern "C" fn napi_is_arraybuffer(
     // ArrayBuffer in JSC, so `js_type` alone can't tell them apart. Node's
     // `napi_is_arraybuffer` maps to V8's `IsArrayBuffer()`, which is false for
     // SharedArrayBuffer, so exclude shared buffers here too.
-    *result = value
-        .as_array_buffer(env.to_js())
-        .is_some_and(|ab| ab.typed_array_type == jsc::JSType::ArrayBuffer && !ab.shared);
+    result.write(
+        value
+            .as_array_buffer(env.to_js())
+            .is_some_and(|ab| ab.typed_array_type == jsc::JSType::ArrayBuffer && !ab.shared),
+    );
     env.ok()
 }
 
@@ -1522,8 +1543,8 @@ unsafe extern "C" {
 extern "C" fn napi_get_arraybuffer_info(
     env_: Option<&NapiEnv>,
     arraybuffer_: napi_value,
-    data: *mut *mut u8,
-    byte_length: *mut usize,
+    data: Option<&Out<*mut u8>>,
+    byte_length: Option<&Out<usize>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_arraybuffer_info");
     ungated!(env, env_);
@@ -1553,11 +1574,11 @@ unsafe extern "C" {
 extern "C" fn napi_get_typedarray_info(
     env_: Option<&NapiEnv>,
     typedarray_: napi_value,
-    maybe_type: *mut napi_typedarray_type,
-    maybe_length: *mut usize,
-    maybe_data: *mut *mut u8,
-    maybe_arraybuffer: *mut napi_value,
-    maybe_byte_offset: *mut usize,
+    maybe_type: Option<&Out<napi_typedarray_type>>,
+    maybe_length: Option<&Out<usize>>,
+    maybe_data: Option<&Out<*mut u8>>,
+    maybe_arraybuffer: Option<&Out<napi_value>>,
+    maybe_byte_offset: Option<&Out<usize>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_typedarray_info");
     ungated!(env, env_);
@@ -1570,36 +1591,33 @@ extern "C" fn napi_get_typedarray_info(
 
     // Keep the pointer valid for the view's lifetime, as in Node: the
     // arraybuffer out-param below would otherwise invalidate it.
-    if !maybe_data.is_null() && !typedarray.materialize_array_buffer_view_buffer() {
+    if maybe_data.is_some() && !typedarray.materialize_array_buffer_view_buffer() {
         return env.generic_failure();
     }
 
     let Some(array_buffer) = typedarray.as_array_buffer(env.to_js()) else {
         return env.invalid_arg();
     };
-    // SAFETY: `maybe_type` is null or a valid exclusive out-param per N-API contract.
-    if let Some(ty) = unsafe { maybe_type.as_mut() } {
+    if let Some(ty) = maybe_type {
         // The `ArrayBuffer.typed_array_type` field is already a `JSType`, so map it
         // straight to `napi_typedarray_type`.
         let Some(napi_ty) = napi_typedarray_type::from_js_type(array_buffer.typed_array_type)
         else {
             return env.invalid_arg();
         };
-        *ty = napi_ty;
+        ty.write(napi_ty);
     }
 
     // TODO: handle detached
     write_out(maybe_data, array_buffer.ptr);
     write_out(maybe_length, array_buffer.len);
 
-    // SAFETY: `maybe_arraybuffer` is null or a valid exclusive out-param per N-API contract.
-    if let Some(arraybuffer) = unsafe { maybe_arraybuffer.as_mut() } {
+    if let Some(arraybuffer) = maybe_arraybuffer {
         arraybuffer.set(env, typedarray.get_array_buffer_view_buffer(env.to_js()));
     }
 
-    // SAFETY: `maybe_byte_offset` is null or a valid exclusive out-param per N-API contract.
-    if let Some(byte_offset) = unsafe { maybe_byte_offset.as_mut() } {
-        *byte_offset = typedarray.get_array_buffer_view_byte_offset();
+    if let Some(byte_offset) = maybe_byte_offset {
+        byte_offset.write(typedarray.get_array_buffer_view_byte_offset());
     }
     env.ok()
 }
@@ -1618,7 +1636,7 @@ unsafe extern "C" {
 extern "C" fn napi_is_dataview(
     env_: Option<&NapiEnv>,
     value_: napi_value,
-    result_: *mut bool,
+    result_: Option<&Out<bool>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_dataview");
     ungated!(env, env_);
@@ -1627,8 +1645,9 @@ extern "C" fn napi_is_dataview(
     if value.is_empty() {
         return env.invalid_arg();
     }
-    *result =
-        !value.is_empty_or_undefined_or_null() && value.js_type_loose() == jsc::JSType::DataView;
+    result.write(
+        !value.is_empty_or_undefined_or_null() && value.js_type_loose() == jsc::JSType::DataView,
+    );
     env.ok()
 }
 
@@ -1636,10 +1655,10 @@ extern "C" fn napi_is_dataview(
 extern "C" fn napi_get_dataview_info(
     env_: Option<&NapiEnv>,
     dataview_: napi_value,
-    maybe_bytelength: *mut usize,
-    maybe_data: *mut *mut u8,
-    maybe_arraybuffer: *mut napi_value,
-    maybe_byte_offset: *mut usize,
+    maybe_bytelength: Option<&Out<usize>>,
+    maybe_data: Option<&Out<*mut u8>>,
+    maybe_arraybuffer: Option<&Out<napi_value>>,
+    maybe_byte_offset: Option<&Out<usize>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_dataview_info");
     ungated!(env, env_);
@@ -1653,34 +1672,32 @@ extern "C" fn napi_get_dataview_info(
     };
     write_out(maybe_bytelength, array_buffer.byte_len);
     write_out(maybe_data, array_buffer.ptr);
-    // SAFETY: `maybe_arraybuffer` is null or a valid exclusive out-param per N-API contract.
-    if let Some(arraybuffer) = unsafe { maybe_arraybuffer.as_mut() } {
+    if let Some(arraybuffer) = maybe_arraybuffer {
         arraybuffer.set(env, dataview.get_array_buffer_view_buffer(env.to_js()));
     }
-    // SAFETY: `maybe_byte_offset` is null or a valid exclusive out-param per N-API contract.
-    if let Some(byte_offset) = unsafe { maybe_byte_offset.as_mut() } {
-        *byte_offset = dataview.get_array_buffer_view_byte_offset();
+    if let Some(byte_offset) = maybe_byte_offset {
+        byte_offset.write(dataview.get_array_buffer_view_byte_offset());
     }
 
     env.ok()
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_get_version(env_: Option<&NapiEnv>, result_: *mut u32) -> napi_status {
+extern "C" fn napi_get_version(env_: Option<&NapiEnv>, result_: Option<&Out<u32>>) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_version");
     let env = get_env!(env_);
     let result = get_out!(env, result_);
     // The result is supposed to be the highest NAPI version Bun supports, rather than the version reported by a NAPI module.
     // Keep this in sync with process.versions.napi in BunProcess.cpp.
-    *result = 10;
+    result.write(10);
     env.ok()
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn napi_create_promise(
     env_: Option<&NapiEnv>,
-    deferred_: *mut napi_deferred,
-    promise_: *mut napi_value,
+    deferred_: Option<&Out<napi_deferred>>,
+    promise_: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_promise");
     let env = preamble!(env_);
@@ -1691,7 +1708,7 @@ extern "C" fn napi_create_promise(
         context: env.to_js().bun_vm().context_of_caller().id(),
     });
     let prom_value = strong.promise.value();
-    *deferred = bun_core::heap::into_raw(strong);
+    deferred.write(bun_core::heap::into_raw(strong));
     promise.set(env, prom_value);
     env.ok()
 }
@@ -1700,18 +1717,16 @@ extern "C" fn napi_create_promise(
 /// script made it, whichever completion the addon does it from.
 fn conclude_deferred(
     env: &NapiEnv,
-    deferred: napi_deferred,
+    deferred: Returned<Deferred>,
     settle: impl FnOnce(&mut jsc::JSPromise, &JSGlobalObject) -> JsResult<()>,
 ) -> napi_status {
-    if deferred.is_null() {
+    let Some(deferred) = deferred else {
         return env.invalid_arg();
-    }
-    // SAFETY: deferred is non-null and was created by heap::alloc in napi_create_promise.
-    let context = unsafe { (*deferred).context };
+    };
+    let context = deferred.context;
     if !env.to_js().bun_vm().is_context_live(context) {
         // Of a Bun.ModuleGraph that has been disposed: released, and nothing is settled.
-        // SAFETY: as above; the addon is done with it on napi_ok.
-        drop(unsafe { bun_core::heap::take(deferred) });
+        drop(ManuallyDrop::into_inner(deferred));
         return env.ok();
     }
     let mut status = env.ok();
@@ -1720,8 +1735,7 @@ fn conclude_deferred(
             status = refused;
             return;
         }
-        // SAFETY: as above. `deferred_box` drops at scope exit (deinit + free).
-        let deferred_box = unsafe { bun_core::heap::take(deferred) };
+        let deferred_box = ManuallyDrop::into_inner(deferred);
         if settle(deferred_box.promise.get(), env.to_js()).is_err() {
             status = env.generic_failure();
         }
@@ -1732,7 +1746,7 @@ fn conclude_deferred(
 #[unsafe(no_mangle)]
 extern "C" fn napi_resolve_deferred(
     env_: Option<&NapiEnv>,
-    deferred: napi_deferred,
+    deferred: Returned<Deferred>,
     resolution_: napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_resolve_deferred");
@@ -1746,7 +1760,7 @@ extern "C" fn napi_resolve_deferred(
 #[unsafe(no_mangle)]
 extern "C" fn napi_reject_deferred(
     env_: Option<&NapiEnv>,
-    deferred: napi_deferred,
+    deferred: Returned<Deferred>,
     rejection_: napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_reject_deferred");
@@ -1761,7 +1775,7 @@ extern "C" fn napi_reject_deferred(
 extern "C" fn napi_is_promise(
     env_: Option<&NapiEnv>,
     value_: napi_value,
-    is_promise_: *mut bool,
+    is_promise_: Option<&Out<bool>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_promise");
     ungated!(env, env_);
@@ -1773,7 +1787,7 @@ extern "C" fn napi_is_promise(
         return env.invalid_arg();
     }
 
-    *is_promise = value.as_any_promise().is_some();
+    is_promise.write(value.as_any_promise().is_some());
     env.ok()
 }
 
@@ -1794,7 +1808,7 @@ unsafe extern "C" {
 extern "C" fn napi_create_date(
     env_: Option<&NapiEnv>,
     time: f64,
-    result_: *mut napi_value,
+    result_: Option<&Out<napi_value>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_date");
     let env = preamble!(env_);
@@ -1810,7 +1824,7 @@ extern "C" fn napi_create_date(
 extern "C" fn napi_is_date(
     env_: Option<&NapiEnv>,
     value_: napi_value,
-    is_date_: *mut bool,
+    is_date_: Option<&Out<bool>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_date");
     ungated!(env, env_);
@@ -1820,7 +1834,7 @@ extern "C" fn napi_is_date(
     if value.is_empty() {
         return env.invalid_arg();
     }
-    *is_date = value.js_type_loose() == jsc::JSType::JSDate;
+    is_date.write(value.js_type_loose() == jsc::JSType::JSDate);
     env.ok()
 }
 
@@ -2132,24 +2146,24 @@ bun_opaque::opaque_ffi! { pub struct struct_napi_async_cleanup_hook_handle__; }
 type napi_async_cleanup_hook_handle = *mut struct_napi_async_cleanup_hook_handle__;
 type napi_async_cleanup_hook = Option<extern "C" fn(napi_async_cleanup_hook_handle, *mut c_void)>;
 
-fn napi_span(ptr: *const u8, len: usize) -> &'static [u8] {
-    // SAFETY: caller-supplied C string region; lifetime is the duration of the NAPI call.
-    // `'static` is used because the slice never outlives the FFI call.
+/// SAFETY: for `'a`, `ptr` is null, or points to `len` bytes, or to a C string for `NAPI_AUTO_LENGTH`.
+unsafe fn napi_span<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
     if ptr.is_null() {
         return &[];
     }
 
     if len == NAPI_AUTO_LENGTH {
-        // SAFETY: N-API contract — `ptr` is a NUL-terminated C string when `len == NAPI_AUTO_LENGTH`.
+        // SAFETY: fn contract.
         return unsafe { bun_core::ffi::cstr(ptr.cast::<c_char>()) }.to_bytes();
     }
 
-    // SAFETY: N-API contract — `[ptr, ptr+len)` is a valid readable region for the call.
+    // SAFETY: fn contract.
     unsafe { bun_core::ffi::slice(ptr, len) }
 }
 
+/// SAFETY: as [`napi_span`], for both strings.
 #[unsafe(no_mangle)]
-extern "C" fn napi_fatal_error(
+unsafe extern "C" fn napi_fatal_error(
     location_ptr: *const u8,
     location_len: usize,
     message_ptr: *const u8,
@@ -2157,12 +2171,17 @@ extern "C" fn napi_fatal_error(
 ) -> ! {
     bun_output::scoped_log!(napi, "napi_fatal_error");
     Bun__napi_suppress_crash_on_abort_if_desired();
-    let mut message = napi_span(message_ptr, message_len_);
+    // SAFETY: fn contract.
+    let (mut message, location) = unsafe {
+        (
+            napi_span(message_ptr, message_len_),
+            napi_span(location_ptr, location_len),
+        )
+    };
     if message.is_empty() {
         message = b"fatal error";
     }
 
-    let location = napi_span(location_ptr, location_len);
     if !location.is_empty() {
         bun_core::Output::panic(format_args!(
             "NAPI FATAL ERROR: {} {}",
@@ -2206,14 +2225,14 @@ unsafe extern "C" {
 extern "C" fn napi_get_buffer_info(
     env_: Option<&NapiEnv>,
     value_: napi_value,
-    data: *mut *mut u8,
-    length: *mut usize,
+    data: Option<&Out<*mut u8>>,
+    length: Option<&Out<usize>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_buffer_info");
     ungated!(env, env_);
     let value = value_.get();
     // Keep the pointer valid for the buffer's lifetime, as in Node.
-    if !data.is_null() && !value.materialize_array_buffer_view_buffer() {
+    if data.is_some() && !value.materialize_array_buffer_view_buffer() {
         return env.generic_failure();
     }
     let Some(array_buf) = value.as_array_buffer(env.to_js()) else {
@@ -2304,7 +2323,7 @@ extern "C" fn napi_create_async_work(
     execute_: Option<napi_async_execute_callback>,
     complete: Option<napi_async_complete_callback>,
     data: *mut c_void,
-    result_: *mut *mut napi_async_work,
+    result_: Option<&Out<*mut napi_async_work>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_async_work");
     let env = get_env!(env_);
@@ -2313,7 +2332,7 @@ extern "C" fn napi_create_async_work(
     let Some(execute) = execute_ else {
         return env.invalid_arg();
     };
-    *result = napi_async_work::new(env, execute, complete, data);
+    result.write(napi_async_work::new(env, execute, complete, data));
     env.ok()
 }
 
@@ -2373,12 +2392,12 @@ extern "C" fn napi_cancel_async_work(
 #[unsafe(no_mangle)]
 extern "C" fn napi_get_node_version(
     env_: Option<&NapiEnv>,
-    version_: *mut *const napi_node_version,
+    version_: Option<&Out<*const napi_node_version>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_node_version");
     let env = get_env!(env_);
     let version = get_out!(env, version_);
-    *version = &raw const NAPI_NODE_VERSION_GLOBAL;
+    version.write(&raw const NAPI_NODE_VERSION_GLOBAL);
     env.ok()
 }
 
@@ -2390,7 +2409,7 @@ type napi_event_loop = *mut super::uv_posix::UvLoop;
 #[unsafe(no_mangle)]
 extern "C" fn napi_get_uv_event_loop(
     env_: Option<&NapiEnv>,
-    loop_: *mut napi_event_loop,
+    loop_: Option<&Out<napi_event_loop>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_uv_event_loop");
     let env = get_env!(env_);
@@ -2399,7 +2418,7 @@ extern "C" fn napi_get_uv_event_loop(
     {
         // A past alignment assertion here fired spuriously.
         // TODO(@190n) investigate
-        *loop_out = VirtualMachine::get().uv_loop();
+        loop_out.write(VirtualMachine::get().uv_loop());
     }
     #[cfg(unix)]
     {
@@ -2410,7 +2429,7 @@ extern "C" fn napi_get_uv_event_loop(
         if uv_loop.is_null() {
             return env.generic_failure();
         }
-        *loop_out = uv_loop;
+        loop_out.write(uv_loop);
     }
     env.ok()
 }
@@ -3317,7 +3336,7 @@ extern "C" fn napi_create_threadsafe_function(
     thread_finalize_cb: napi_finalize,
     context: *mut c_void,
     call_js_cb: Option<napi_threadsafe_function_call_js>,
-    result_: *mut napi_threadsafe_function,
+    result_: Option<&Out<napi_threadsafe_function>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_threadsafe_function");
     let env = get_env!(env_);
@@ -3399,7 +3418,7 @@ extern "C" fn napi_create_threadsafe_function(
     // SAFETY: as above.
     unsafe { (*function).tracker.did_schedule(vm.global()) };
 
-    *result = function;
+    result.write(function);
     env.ok()
 }
 

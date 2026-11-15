@@ -211,7 +211,7 @@ fn read_large_file(fd: FD, buf: &mut Vec<u8>, len: usize, position: u64) -> Mayb
             break;
         }
     }
-    // SAFETY: `total` counts the bytes read, up to the first short part.
+    // SAFETY: `total` counts the bytes read, up to and including the first short part.
     unsafe { bun_core::vec::commit_spare(buf, total) };
     Ok(total)
 }

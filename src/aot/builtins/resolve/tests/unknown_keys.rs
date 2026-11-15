@@ -415,6 +415,35 @@ fn a_variable_that_holds_the_global_object_brings_the_members_of_namespaces() {
     }
 }
 
+const READ_FROM_OFF_A_VARIABLE_THAT_MAY_BE_UNDEFINED: &[&str] = &[
+    "const Kind = globalThis?.Uint8Array; function h() { return Kind.from(f); }",
+    "const Kind = globalThis?.Uint8Array; function h() { return Kind['from'](f); }",
+    "const Kind = globalThis?.Uint8Array; const again = Kind; function h() { return again.from(f); }",
+];
+
+const READ_FROM_OFF_A_KNOWN_BUILTIN: &[&str] = &[
+    "const Kind = Uint8Array; function h() { return Kind.from(f); }",
+    "globalThis?.Uint8Array.from(f);",
+];
+
+#[test]
+fn a_name_off_a_variable_that_may_be_undefined_asks_for_the_members_of_that_name() {
+    for source in READ_FROM_OFF_A_VARIABLE_THAT_MAY_BE_UNDEFINED {
+        with_case(PROGRAM, source, |case| {
+            let uses = case.resolved.uses();
+            assert!(holds_code_of(uses, BuiltinId::ArrayFrom), "{source}");
+            let flat_map = BuiltinId::ArrayPrototypeFlatMap;
+            assert!(!holds_code_of(uses, flat_map), "{source}");
+        });
+    }
+    for source in READ_FROM_OFF_A_KNOWN_BUILTIN {
+        with_case(PROGRAM, source, |case| {
+            let uses = case.resolved.uses();
+            assert!(!holds_code_of(uses, BuiltinId::ArrayFrom), "{source}");
+        });
+    }
+}
+
 const ONLY_CALL_BUILT_INS_WITH_WRITTEN_PRIMITIVES: &[&str] = &[
     "",
     "console.log(1);",

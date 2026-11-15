@@ -2470,9 +2470,7 @@ impl FetchTasklet {
         // promise, `Bun.write` an `on_receive_value`).
         let outlived = self.response_stream.is_held()
             || locked.on_receive_value.is_some()
-            || locked
-                .promise
-                .is_some_and(|promise| !promise.is_empty_or_undefined_or_null());
+            || locked.promise.is_some();
         if !outlived {
             self.abandon_response_body();
         }

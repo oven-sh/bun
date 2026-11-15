@@ -5425,11 +5425,11 @@ impl NodeFS {
                     return Err(error);
                 }
                 let opened = path.slice_z(&mut self.sync_error_buf);
-                let fd = Syscall::open(opened, args.flag.as_int(), args.mode)?;
+                let file =
+                    sys::File::from_fd(Syscall::open(opened, args.flag.as_int(), args.mode)?);
                 note_opened_for_write(path.slice(), args.flag.as_int() & sys::O::TRUNC != 0);
-                let _close = scopeguard::guard(fd, |fd| fd.close());
                 while !data.is_empty() {
-                    let written = Syscall::write(fd, data)?;
+                    let written = Syscall::write(file.fd(), data)?;
                     data = &data[written..];
                 }
                 Ok(())
@@ -5743,34 +5743,24 @@ impl NodeFS {
                     let src_fd = src_file.fd();
 
                     let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
-                    // VERIFY-FIX(round1): was `usize` then passed as `&mut (wrote as u64)` —
-                    // that wrote into a discarded temporary so the deferred ftruncate
-                    // always saw 0. The scopeguard variant also double-borrowed `wrote`.
-                    // There are no early returns between open(dest) and the
-                    // `copy_file_using_read_write_loop` call, so inlining the
-                    // cleanup after it is equivalent.
-                    let mut wrote: u64 = 0;
                     if args.mode.shouldnt_overwrite() {
                         flags |= sys::O::EXCL;
                     }
 
-                    let dest_fd = match Syscall::open(dest, flags, stat_.st_mode as Mode) {
-                        Ok(result) => result,
+                    let dest_file = match Syscall::open(dest, flags, stat_.st_mode as Mode) {
+                        Ok(result) => sys::File::from_fd(result),
                         Err(err) => return Err(err.with_path(args.dest.slice())),
                     };
+                    let mut out = CopyDest::new(dest_file, stat_.st_mode as Mode);
 
-                    let result = Self::copy_file_using_read_write_loop(
+                    return Self::copy_file_using_read_write_loop(
                         src,
                         dest,
                         src_fd,
-                        dest_fd,
+                        out.file.fd(),
                         stat_.st_size.max(0) as usize,
-                        &mut wrote,
+                        &mut out.wrote,
                     );
-                    let _ = Syscall::ftruncate(dest_fd, (wrote & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
-                    dest_fd.close();
-                    return result;
                 }
             }
 
@@ -5826,11 +5816,8 @@ impl NodeFS {
             if args.mode.shouldnt_overwrite() {
                 flags |= sys::O::EXCL;
             }
-            let dest_fd = match Syscall::open(dest, flags, stat_.st_mode as Mode) {
-                Ok(result) => result,
-                Err(err) => return Err(err),
-            };
-            let _close_dest = scopeguard::guard(dest_fd, |fd| fd.close());
+            let dest_file = sys::File::from_fd(Syscall::open(dest, flags, stat_.st_mode as Mode)?);
+            let dest_fd = dest_file.fd();
 
             // Don't O_TRUNC at open: if src and dest resolve to the same
             // inode, that would zero the file before the first read. Match
@@ -5919,18 +5906,12 @@ impl NodeFS {
             }
 
             let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
-            // VERIFY-FIX(round1): `wrote` is read by the deferred-close scopeguard
-            // *after* the copy loops below mutate it. As a `usize` captured by-copy
-            // the guard always saw 0, and the `&mut (wrote as u64)` call sites
-            // wrote into discarded temporaries. `Cell<u64>` lets the guard borrow
-            // by reference while the loops `get`/`set`, so the value observed at
-            // scope-exit time is the final one.
-            let wrote: core::cell::Cell<u64> = core::cell::Cell::new(0);
             if args.mode.shouldnt_overwrite() {
                 flags |= sys::O::EXCL;
             }
 
-            let dest_fd = Syscall::open(dest, flags, stat_.st_mode as Mode)?;
+            let dest_file = sys::File::from_fd(Syscall::open(dest, flags, stat_.st_mode as Mode)?);
+            let dest_fd = dest_file.fd();
 
             let mut size: usize = stat_.st_size.max(0) as usize;
 
@@ -5941,13 +5922,12 @@ impl NodeFS {
                     sys::Tag::ioctl_ficlone,
                     dest,
                 ) {
-                    dest_fd.close();
+                    drop(dest_file);
                     // This is racey, but it's the best we can do
                     let _ = sys::unlink(dest);
                     return err;
                 }
                 let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
-                dest_fd.close();
                 return Ok(());
             }
 
@@ -5956,7 +5936,6 @@ impl NodeFS {
                 let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
                 if rc == 0 {
                     let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
-                    dest_fd.close();
                     return Ok(());
                 }
                 // If this fails for any reason, we say it's disabled
@@ -5964,25 +5943,20 @@ impl NodeFS {
                 sys::copy_file::disable_ioctl_ficlone();
             }
 
-            let _close_dest =
-                scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
-                    // ftruncate/fchmod take only ints — no memory-safety preconditions; route
-                    // through the existing `bun_sys` safe wrappers (same as lines above).
-                    let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(fd, m as u32);
-                    fd.close();
-                });
+            let mut out = CopyDest::new(dest_file, stat_.st_mode as Mode);
 
             let mut off_in_copy: i64 = 0;
             let mut off_out_copy: i64 = 0;
 
             if !sys::copy_file::can_use_copy_file_range_syscall() {
-                let mut w = wrote.get();
-                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(
-                    src, dest, src_fd, dest_fd, size, &mut w,
+                return Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(
+                    src,
+                    dest,
+                    src_fd,
+                    dest_fd,
+                    size,
+                    &mut out.wrote,
                 );
-                wrote.set(w);
-                return r;
             }
 
             if size == 0 {
@@ -6009,10 +5983,7 @@ impl NodeFS {
                                 if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
                                     sys::copy_file::disable_copy_file_range_syscall();
                                 }
-                                let mut w = wrote.get();
-                                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
-                                wrote.set(w);
-                                return r;
+                                return Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut out.wrote);
                             }
                             _ => return err,
                         }
@@ -6021,7 +5992,7 @@ impl NodeFS {
                     if written == 0 {
                         break;
                     }
-                    wrote.set(wrote.get().saturating_add(written as u64));
+                    out.wrote = out.wrote.saturating_add(written as u64);
                 }
             } else {
                 while size > 0 {
@@ -6044,10 +6015,7 @@ impl NodeFS {
                                 if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
                                     sys::copy_file::disable_copy_file_range_syscall();
                                 }
-                                let mut w = wrote.get();
-                                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
-                                wrote.set(w);
-                                return r;
+                                return Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut out.wrote);
                             }
                             _ => return err,
                         }
@@ -6055,7 +6023,7 @@ impl NodeFS {
                     if written == 0 {
                         break;
                     }
-                    wrote.set(wrote.get().saturating_add(written as u64));
+                    out.wrote = out.wrote.saturating_add(written as u64);
                     size = size.saturating_sub(written as usize);
                 }
             }
@@ -8097,14 +8065,8 @@ impl NodeFS {
             }
             PathOrFileDescriptor::Fd(fd) => *fd,
         };
-        let _close = scopeguard::guard(
-            (fd, matches!(args.file, PathOrFileDescriptor::Path(_))),
-            |(fd, is_path)| {
-                if is_path {
-                    fd.close();
-                }
-            },
-        );
+        let _opened =
+            matches!(args.file, PathOrFileDescriptor::Path(_)).then(|| sys::File::from_fd(fd));
 
         if args.aborted() {
             return Err(abort_err());
@@ -8378,14 +8340,14 @@ impl NodeFS {
                 #[cfg(not(any(target_os = "linux", target_os = "android")))]
                 let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
 
-                let fd = match sys::open(path, flags, 0) {
+                let file = match sys::open(path, flags, 0) {
                     Err(err) if is_only_in_the_executable(&err) => {
                         return Ok(encode_path_result(path.as_bytes(), args.encoding));
                     }
                     Err(err) => return Err(err.with_path(path)),
-                    Ok(fd_) => fd_,
+                    Ok(fd) => sys::File::from_fd(fd),
                 };
-                let _close = scopeguard::guard(fd, |fd| fd.close());
+                let fd = file.fd();
 
                 let buf = match Syscall::get_fd_path(fd, &mut outbuf) {
                     Err(err) => return Err(err.with_path(path)),
@@ -9410,31 +9372,22 @@ impl NodeFS {
                 let src_fd = src_file.fd();
 
                 let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
-                let wrote: core::cell::Cell<u64> = core::cell::Cell::new(0);
                 if mode.shouldnt_overwrite() {
                     flags |= sys::O::EXCL;
                 }
 
-                let dest_fd =
-                    Self::cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
-                let _close_dest =
-                    scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
-                        let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                        let _ = Syscall::fchmod(fd, m as u32);
-                        fd.close();
-                    });
+                let dest_file = self.cp_open_dest_with_mkdir(dest, flags, stat_.st_mode as Mode)?;
+                let dest_fd = dest_file.fd();
+                let mut out = CopyDest::new(dest_file, stat_.st_mode as Mode);
 
-                let mut w = wrote.get();
-                let r = Self::copy_file_using_read_write_loop(
+                return Self::copy_file_using_read_write_loop(
                     src,
                     dest,
                     src_fd,
                     dest_fd,
                     stat_.st_size.max(0) as usize,
-                    &mut w,
+                    &mut out.wrote,
                 );
-                wrote.set(w);
-                return r;
             }
 
             // we fallback to copyfile() when the file is > 128 KB and clonefile fails
@@ -9504,12 +9457,12 @@ impl NodeFS {
             }
 
             let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
-            let wrote: core::cell::Cell<u64> = core::cell::Cell::new(0);
             if mode.shouldnt_overwrite() {
                 flags |= sys::O::EXCL;
             }
 
-            let dest_fd = Self::cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
+            let dest_file = self.cp_open_dest_with_mkdir(dest, flags, stat_.st_mode as Mode)?;
+            let dest_fd = dest_file.fd();
 
             let mut size: usize = stat_.st_size.max(0) as usize;
 
@@ -9517,31 +9470,25 @@ impl NodeFS {
                 let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
                 if rc == 0 {
                     let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
-                    dest_fd.close();
                     return Ok(());
                 }
                 sys::copy_file::disable_ioctl_ficlone();
             }
 
-            let _close_dest = scopeguard::guard(
-                (dest_fd, stat_.st_mode as Mode, &wrote),
-                |(fd, m, wrote)| {
-                    let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(fd, m);
-                    fd.close();
-                },
-            );
+            let mut out = CopyDest::new(dest_file, stat_.st_mode as Mode);
 
             let mut off_in_copy: i64 = 0;
             let mut off_out_copy: i64 = 0;
 
             if !sys::copy_file::can_use_copy_file_range_syscall() {
-                let mut w = wrote.get();
-                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(
-                    src, dest, src_fd, dest_fd, size, &mut w,
+                return Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(
+                    src,
+                    dest,
+                    src_fd,
+                    dest_fd,
+                    size,
+                    &mut out.wrote,
                 );
-                wrote.set(w);
-                return r;
             }
 
             if size == 0 {
@@ -9571,10 +9518,7 @@ impl NodeFS {
                                 if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
                                     sys::copy_file::disable_copy_file_range_syscall();
                                 }
-                                let mut w = wrote.get();
-                                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
-                                wrote.set(w);
-                                return r;
+                                return Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut out.wrote);
                             }
                             _ => return err,
                         }
@@ -9583,7 +9527,7 @@ impl NodeFS {
                     if written == 0 {
                         break;
                     }
-                    wrote.set(wrote.get().saturating_add(written as u64));
+                    out.wrote = out.wrote.saturating_add(written as u64);
                 }
             } else {
                 while size > 0 {
@@ -9611,10 +9555,7 @@ impl NodeFS {
                                 if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
                                     sys::copy_file::disable_copy_file_range_syscall();
                                 }
-                                let mut w = wrote.get();
-                                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
-                                wrote.set(w);
-                                return r;
+                                return Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut out.wrote);
                             }
                             _ => return err,
                         }
@@ -9623,7 +9564,7 @@ impl NodeFS {
                     if written == 0 {
                         break;
                     }
-                    wrote.set(wrote.get().saturating_add(written as u64));
+                    out.wrote = out.wrote.saturating_add(written as u64);
                     size = size.saturating_sub(written as usize);
                 }
             }
@@ -9669,22 +9610,17 @@ impl NodeFS {
             }
 
             let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
-            let wrote: core::cell::Cell<u64> = core::cell::Cell::new(0);
             if mode.shouldnt_overwrite() {
                 flags |= sys::O::EXCL;
             }
 
-            let dest_fd =
-                match Self::cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode) {
-                    Ok(fd) => fd,
-                    Err(e) => return Err(e),
-                };
+            let dest_file = self.cp_open_dest_with_mkdir(dest, flags, stat_.st_mode as Mode)?;
+            let dest_fd = dest_file.fd();
 
             // No O_TRUNC at open: if src and dest resolve to the same inode,
             // that would zero the file before the first read.
             if let Ok(dst_stat) = Syscall::fstat(dest_fd) {
                 if stat_.st_ino == dst_stat.st_ino && stat_.st_dev == dst_stat.st_dev {
-                    dest_fd.close();
                     self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
                     return Err(sys::Error {
                         errno: SystemErrno::EINVAL as _,
@@ -9695,14 +9631,7 @@ impl NodeFS {
                 }
             }
 
-            let _close_dest = scopeguard::guard(
-                (dest_fd, stat_.st_mode as Mode, &wrote),
-                |(fd, m, wrote)| {
-                    let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(fd, m);
-                    fd.close();
-                },
-            );
+            let mut out = CopyDest::new(dest_file, stat_.st_mode as Mode);
 
             let size: usize = stat_.st_size.max(0) as usize;
 
@@ -9713,7 +9642,7 @@ impl NodeFS {
                 let want = if size == 0 {
                     (i32::MAX - 1) as usize
                 } else {
-                    size.saturating_sub(wrote.get() as usize)
+                    size.saturating_sub(out.wrote as usize)
                 };
                 let rc: isize = sys::freebsd::copy_file_range(
                     src_fd.native(),
@@ -9728,8 +9657,8 @@ impl NodeFS {
                         if rc == 0 {
                             return Ok(());
                         }
-                        wrote.set(wrote.get().saturating_add(rc as u64));
-                        if size != 0 && wrote.get() >= size as u64 {
+                        out.wrote = out.wrote.saturating_add(rc as u64);
+                        if size != 0 && out.wrote >= size as u64 {
                             return Ok(());
                         }
                     }
@@ -9747,10 +9676,14 @@ impl NodeFS {
                 }
             }
 
-            let mut w = wrote.get();
-            let r = Self::copy_file_using_read_write_loop(src, dest, src_fd, dest_fd, size, &mut w);
-            wrote.set(w);
-            return r;
+            return Self::copy_file_using_read_write_loop(
+                src,
+                dest,
+                src_fd,
+                dest_fd,
+                size,
+                &mut out.wrote,
+            );
         }
 
         #[cfg(windows)]
@@ -9818,15 +9751,12 @@ impl NodeFS {
                 }
                 return Ok(());
             } else {
-                let handle = match sys::openat_windows(FD::INVALID, src, sys::O::RDONLY, 0) {
-                    Err(err) => return Err(err),
-                    Ok(fd) => fd,
-                };
-                let _close = scopeguard::guard(handle, |fd| fd.close());
+                let file =
+                    sys::File::from_fd(sys::openat_windows(FD::INVALID, src, sys::O::RDONLY, 0)?);
                 let mut wbuf = paths::os_path_buffer_pool::get();
                 let len = unsafe {
                     windows::GetFinalPathNameByHandleW(
-                        handle.native(),
+                        file.fd().native(),
                         wbuf.as_mut_ptr(),
                         wbuf.len() as u32,
                         0,
@@ -9898,9 +9828,9 @@ impl NodeFS {
     /// parent directory and retries once. Any other error is annotated with
     /// `dest` copied into `sync_error_buf`.
     #[cfg(not(windows))]
-    fn cp_open_dest_with_mkdir(&mut self, dest: &ZStr, flags: i32, mode: Mode) -> Maybe<FD> {
+    fn cp_open_dest_with_mkdir(&mut self, dest: &ZStr, flags: i32, mode: Mode) -> Maybe<sys::File> {
         match Syscall::open(dest, flags, mode) {
-            Ok(result) => Ok(result),
+            Ok(result) => Ok(sys::File::from_fd(result)),
             Err(err) => {
                 if err.get_errno() == E::ENOENT {
                     // Create the parent directory if it doesn't exist
@@ -9916,7 +9846,7 @@ impl NodeFS {
                     });
                     mkdir_result?;
                     if let Ok(result) = Syscall::open(dest, flags, mode) {
-                        return Ok(result);
+                        return Ok(sys::File::from_fd(result));
                     }
                 }
                 self.sync_error_buf[..dest.len()].copy_from_slice(dest.as_bytes());
@@ -10493,6 +10423,33 @@ fn dt_delete_dir(parent: &sys::Dir, name: &[u8]) -> Result<(), E> {
     match Syscall::unlinkat_with_flags(parent.fd, z, flags) {
         Ok(()) => Ok(()),
         Err(e) => Err(e.get_errno()),
+    }
+}
+
+/// A copy's destination, opened without `O_TRUNC`: cut to what was written however the copy ends.
+#[cfg(unix)]
+struct CopyDest {
+    file: sys::File,
+    mode: Mode,
+    wrote: u64,
+}
+
+#[cfg(unix)]
+impl CopyDest {
+    fn new(file: sys::File, mode: Mode) -> Self {
+        Self {
+            file,
+            mode,
+            wrote: 0,
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for CopyDest {
+    fn drop(&mut self) {
+        let _ = Syscall::ftruncate(self.file.fd(), (self.wrote & ((1u64 << 63) - 1)) as i64);
+        let _ = Syscall::fchmod(self.file.fd(), self.mode);
     }
 }
 

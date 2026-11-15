@@ -57,7 +57,7 @@ pub use bun_core::STRING_ALLOCATION_LIMIT;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) type OnUnhandledRejection = fn(&VirtualMachine, &JSGlobalObject, JSValue);
-pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, JSValue>;
+pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, crate::Strong>;
 pub type ExceptionList = Vec<crate::exception_list::JsException>;
 
 /// Error for bytes that aren't interned yet and are longer than [`bun_core::String::max_length`].
@@ -6078,9 +6078,6 @@ impl VirtualMachine {
 
         // Loaded macros are functions of the outgoing realm. The macro context
         // remembers which ones are loaded, so the next file loads its own.
-        for callback in self.macros.get().values() {
-            callback.unprotect();
-        }
         self.macros.with_mut(MacroMap::clear_retaining_capacity);
         drop(self.transpiler.with_mut(|t| t.macro_context.take()));
 

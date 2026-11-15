@@ -545,17 +545,9 @@ pub(crate) fn register_macro<'a>(
     if callback.as_callable().is_none() {
         return Err(heap.error(format_args!("Macro must be a function")));
     }
-    let callback = callback.to_js();
-
-    VirtualMachine::get().macros.with_mut(|macros| {
-        let get_or_put_result = macros.get_or_put(id).expect("unreachable");
-        if get_or_put_result.found_existing {
-            get_or_put_result.value_ptr.unprotect();
-        }
-
-        callback.protect();
-        *get_or_put_result.value_ptr = callback;
-    });
+    let vm = VirtualMachine::get();
+    let callback = jsc::Strong::create(callback.to_js(), vm.global());
+    vm.macros.with_mut(|macros| macros.insert(id, callback));
 
     Ok(())
 }

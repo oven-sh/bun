@@ -1607,7 +1607,7 @@ impl BlobExt for Blob {
 
     fn get_mime_type_or_content_type(&self) -> Option<MimeType> {
         if self.content_type_was_set.get() {
-            return Some(MimeType::init(self.content_type_slice(), false, None));
+            return Some(MimeType::init(self.content_type_slice()));
         }
         self.store().map(|s| s.mime_type.clone())
     }

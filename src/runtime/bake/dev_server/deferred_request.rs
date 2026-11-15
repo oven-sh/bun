@@ -14,7 +14,6 @@ bun_output::define_scoped_log!(debug_log_dr, DlogeferredRequest, hidden);
 use core::cell::Cell;
 
 use super::*;
-use crate::server::AnyRequestContext;
 
 /// A small maximum is set because development servers are unlikely to
 /// acquire much load, so allocating a ton at the start for no reason
@@ -103,18 +102,6 @@ impl DeferredRequest {
         self.handler.replace(Handler::Aborted)
     }
 
-    /// The caller releases `defer_request`'s ref once it has responded.
-    pub(super) fn take_response_for_error_page(&self) -> Option<(AnyResponse, AnyRequestContext)> {
-        match self.take_handler() {
-            Handler::Aborted => None,
-            Handler::ServerHandler(saved) => {
-                saved.ctx.detach_response();
-                Some((saved.response, saved.ctx))
-            }
-            Handler::BundledHtmlPage(ram) => Some((ram.response, AnyRequestContext::NULL)),
-        }
-    }
-
     pub(crate) fn on_abort(&self) {
         debug_log_dr!("DeferredRequest({:p}) onAbort", self);
         self.take_handler().abort();
@@ -122,13 +109,22 @@ impl DeferredRequest {
 }
 
 impl Handler {
+    /// Dropping `self` completes the request, so the caller responds first.
+    pub(super) fn detach_response_for_error_page(&self) -> Option<AnyResponse> {
+        match self {
+            Handler::Aborted => None,
+            Handler::ServerHandler(saved) => {
+                saved.ctx.detach_response();
+                Some(saved.response)
+            }
+            Handler::BundledHtmlPage(ram) => Some(ram.response),
+        }
+    }
+
     /// Ends the response, which removes the abort callback that points to the request.
     pub(super) fn fail(self) {
-        if let Handler::ServerHandler(mut saved) = self {
-            // Releases `prepare_and_save_js_request_context`'s ref.
+        if let Handler::ServerHandler(saved) = self {
             saved.ctx.end_with_internal_server_error();
-            // Releases `defer_request`'s ref.
-            saved.deinit();
         } else {
             self.abort();
         }
@@ -137,17 +133,14 @@ impl Handler {
     /// Deinitializes state by aborting the connection.
     fn abort(self) {
         match self {
-            Handler::ServerHandler(mut saved) => {
+            Handler::ServerHandler(saved) => {
                 debug_log_dr!(
                     "  request url: {}",
-                    // SAFETY: saved.request is a live *mut webcore::Request (held strong by ctx)
-                    bstr::BStr::new(unsafe { (*saved.request).url.get() }.byte_slice())
+                    bstr::BStr::new(saved.request.url.get().byte_slice())
                 );
                 saved
                     .ctx
                     .set_signal_aborted(jsc::CommonAbortReason::ConnectionClosed);
-                // Releases `defer_request`'s ref. The context's abort handler has its own.
-                saved.deinit();
             }
             Handler::BundledHtmlPage(r) => {
                 // Reached from JS event-loop tasks (on_plugins_rejected, the

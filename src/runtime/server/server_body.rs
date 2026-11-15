@@ -118,7 +118,7 @@ trait RequestCtxOps: RequestCtx {
     fn deinit(&self);
     fn should_render_missing(&self) -> bool;
     fn render_missing(&self);
-    fn to_async(&self, req: &mut Self::Req, request_object: &mut Request);
+    fn to_async(&self, req: &mut Self::Req, request_object: &Request);
     fn ctx_method(&self) -> http::Method;
     fn set_defer_deinit(&self, flag: Option<DeferDeinitFlag>);
     fn set_request_body(&self, body: Option<crate::webcore::body::BodyHiveHandle>);
@@ -128,7 +128,7 @@ trait RequestCtxOps: RequestCtx {
     )]
     fn request_body_mut(&self) -> Option<&mut BodyValue>;
     fn set_signal(&self, signal: PendingAbortSignal);
-    fn set_request_weakref(&self, req: *mut Request);
+    fn set_request_weakref(&self, req: &RefPtr<Request>);
     fn clear_req(&self);
     fn set_is_web_browser_navigation(&self, v: bool);
     fn set_request_body_content_len(&self, len: usize);
@@ -190,7 +190,7 @@ where
         Self::render_missing(self)
     }
     #[inline]
-    fn to_async(&self, req: &mut Self::Req, ro: &mut Request) {
+    fn to_async(&self, req: &mut Self::Req, ro: &Request) {
         Self::to_async(self, std::ptr::from_mut(req).cast(), ro)
     }
     #[inline]
@@ -219,11 +219,8 @@ where
         self.signal.set(Some(signal));
     }
     #[inline]
-    fn set_request_weakref(&self, req: *mut Request) {
-        // SAFETY: `req` is a freshly-boxed Request (live for the request
-        // duration) still carrying its `heap::into_raw` provenance.
-        self.request_weakref
-            .set(unsafe { bun_ptr::WeakPtr::<Request>::init_ref(req) });
+    fn set_request_weakref(&self, req: &RefPtr<Request>) {
+        self.request_weakref.set(bun_ptr::WeakPtr::new(req));
     }
     #[inline]
     fn clear_req(&self) {
@@ -1302,8 +1299,8 @@ fn on_timeout_for_idle_warn() {
 // defined once in `super` (mod.rs). This file contributes additional inherent
 // methods on the same type — there is no separate Phase-A struct.
 pub(super) use super::{
-    CreateJsRequest, DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, NewServer,
-    ServerFlags, UserRoute,
+    CreateJsRequest, DebugHTTPSServer, DebugHTTPServer, DispatchedRequest, HTTPSServer, HTTPServer,
+    NewServer, ServerFlags, UserRoute,
 };
 
 /// Generic over the
@@ -1312,8 +1309,7 @@ pub(super) use super::{
 /// used by the bake/saved-request path; the generic form here is only reached
 /// from the `_for<Ctx>` dispatch helpers below.
 pub(crate) struct PreparedRequestFor<Ctx> {
-    pub(crate) js_request: JSValue,
-    pub(crate) request_object: *mut Request,
+    pub(crate) request: DispatchedRequest,
     pub ctx: *mut Ctx,
 }
 
@@ -1427,7 +1423,7 @@ fn set_request_timeout<'a>(
     let value = seconds.to_u32();
 
     if let Some(request) = request.as_class_ref::<Request>() {
-        let _ = request.request_context.set_timeout(value);
+        let _ = request.request_context.get().set_timeout(value);
     } else if let Some(response) = request.as_class_ref::<NodeHTTPResponse>() {
         response.set_timeout((value % 255) as u8);
     } else {
@@ -1559,7 +1555,7 @@ where
         if self.config.get().address.is_unix() {
             return Ok(JSValue::NULL);
         }
-        let Some(info) = request.request_context.get_remote_socket_info() else {
+        let Some(info) = request.request_context.get().get_remote_socket_info() else {
             return Ok(JSValue::NULL);
         };
         crate::socket::socket_address::SocketAddress::create_dto(
@@ -1622,12 +1618,12 @@ where
             );
         };
         // SAFETY: from_js returns a live *mut Request (rooted by the caller's
-        // argument). Shared, re-derived after each JS re-entry point below; the
-        // one field write at the end goes through `request_ptr`.
+        // argument). Shared, re-derived after each JS re-entry point below.
         let request = unsafe { &*request_ptr };
 
         if request
             .request_context
+            .get()
             .server_ptr()
             .is_some_and(|owner| !core::ptr::addr_eq(owner, &raw const *self))
         {
@@ -1638,6 +1634,7 @@ where
 
         let Some(upgrader_ptr) = request
             .request_context
+            .get()
             .get::<ServerRequestContext<SSL, DEBUG>>()
         else {
             return Ok(false);
@@ -1751,9 +1748,7 @@ where
                 request.url.set(BunString::EMPTY);
             }
 
-            // SAFETY: plain-field detach through the root pointer; the shared
-            // borrow above is not used past this point.
-            unsafe { (*request_ptr).request_context = AnyRequestContext::NULL };
+            request.request_context.set(AnyRequestContext::NULL);
             upgrader.request_weakref.set(request::WeakRef::EMPTY);
 
             options.data.ensure_still_alive();
@@ -1997,7 +1992,7 @@ where
         // TODO: set Host header
         // TODO: set User-Agent header
         // TODO: unify with fetch() implementation.
-        let request: *mut Request = if input.is_string() {
+        let request = RefPtr::new(if input.is_string() {
             let url_utf8 = input.to_utf8(global)?;
             let temp_url_str = url_utf8.slice();
 
@@ -2059,13 +2054,13 @@ where
                 }
             }
 
-            Request::new(Request::init2(
+            Request::init2(
                 BunString::clone_utf8(url.href),
                 headers,
                 // Moves `body` into the per-VM hive pool (ref_count = 1).
                 crate::webcore::body::hive_alloc(body),
                 method,
-            ))
+            )
         } else if let Some(request_) = input
             .is_object()
             .then(|| input.as_class_ref::<Request>())
@@ -2076,14 +2071,13 @@ where
             let fetch_error = Fetch::fetch_type_error_string(input);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(global, format_args!("{}", fetch_error));
             return Ok(JSPromise::rejected_promise(global, err).to_js());
-        };
+        });
 
         debug_assert!(!self.config.get().on_request.is_empty()); // confirmed above
         let global_this = self.global();
         let on_request = self.config.get().on_request;
-        // SAFETY: `request` was just allocated via `heap::alloc`; its ref
-        // transfers to the JS wrapper inside `to_js`.
-        let request_value = unsafe { Request::to_js(request, &global_this) };
+        let request_ptr = request.this_ptr();
+        let request_value = Request::to_js(request, &global_this);
         let response_value =
             match on_request.call(&global_this, self.js_value_assert_alive(), &[request_value]) {
                 Ok(v) => v,
@@ -2112,10 +2106,10 @@ where
 
         if let Some(resp) = <Response as bun_jsc::JsClass>::from_js(response_value) {
             // SAFETY: `from_js` returns a live `*mut Response` (owned by its
-            // JS wrapper, which `response_value` keeps alive). `request` is
+            // JS wrapper, which `response_value` keeps alive). The request is
             // kept alive by `request_value` (its JS wrapper) for the duration
             // of this synchronous frame.
-            unsafe { (*resp).set_url((*request).url.get().clone()) };
+            unsafe { (*resp).set_url(request_ptr.url.get().clone()) };
         }
         Ok(JSPromise::resolved_promise_value(global, response_value))
     }
@@ -2438,10 +2432,10 @@ where
             call_route(
                 global,
                 index,
-                prepared.request_object,
+                prepared.request.native.as_ptr(),
                 server_js,
                 server_request_list,
-                &mut prepared.js_request,
+                &mut prepared.request.js,
                 std::ptr::from_mut(req).cast::<c_void>(),
             )
         }) {
@@ -2449,31 +2443,22 @@ where
             Err(err) => global.take_exception(err),
         };
 
-        server.handle_request_for::<Ctx>(&should_deinit_context, &prepared, req, response_value);
+        server.handle_request_for::<Ctx>(&should_deinit_context, prepared, req, response_value);
     }
 
     fn handle_request_for<Ctx: RequestCtxOps<Server = Self>>(
         &self,
         should_deinit_context: &core::cell::Cell<bool>,
-        prepared: &PreparedRequestFor<Ctx>,
+        prepared: PreparedRequestFor<Ctx>,
         req: &mut Ctx::Req,
         response_value: JSValue,
     ) {
-        let request_object_ptr: *mut Request = prepared.request_object;
-        let detach_ptr = request_object_ptr;
-        scopeguard::defer! {
-            // uWS request will not live longer than this function
-            // SAFETY: request_object outlives this stack frame (boxed on the request).
-            unsafe { (*detach_ptr).request_context.detach_request() };
-        }
-
-        // SAFETY: `prepared.ctx` was allocated by `prepare_js_request_context_for`
+        let PreparedRequestFor { request, ctx } = prepared;
+        // SAFETY: `ctx` was allocated by `prepare_js_request_context_for`
         // for this frame and cannot be freed while `defer_deinit_...` is set (set
         // by the caller until cleared below).
-        let ctx = unsafe { &*prepared.ctx };
-        RequestCtxOps::on_response(ctx, self, prepared.js_request, response_value);
-        // Reference in the stack here in case it is not for whatever reason
-        prepared.js_request.ensure_still_alive();
+        let ctx = unsafe { &*ctx };
+        RequestCtxOps::on_response(ctx, self, request.js, response_value);
 
         RequestCtxOps::set_defer_deinit(ctx, None);
 
@@ -2489,8 +2474,7 @@ where
 
         // The request is asynchronous, and all information from `req` must be copied
         // since the provided uws.Request will be re-used for future requests (stack allocated).
-        // SAFETY: `request_object_ptr` is the live heap `Request` (see above).
-        RequestCtxOps::to_async(ctx, req, unsafe { &mut *request_object_ptr });
+        RequestCtxOps::to_async(ctx, req, &request.native);
     }
 
     fn on_request_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
@@ -2519,12 +2503,12 @@ where
 
         let global = self.global_this();
         let response_value =
-            match on_request_fn.call(global, js_value, &[prepared.js_request, js_value]) {
+            match on_request_fn.call(global, js_value, &[prepared.request.js, js_value]) {
                 Ok(v) => v,
                 Err(err) => global.take_exception(err),
             };
 
-        self.handle_request_for::<Ctx>(&should_deinit_context, &prepared, req, response_value);
+        self.handle_request_for::<Ctx>(&should_deinit_context, prepared, req, response_value);
     }
 
     fn prepare_js_request_context_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
@@ -2649,29 +2633,21 @@ where
 
         // Pooled body slot, ref_count = 1.
         let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);
-        // The ctx and Request each own a +1 on the
-        // same slot. Paired drop in `RequestContext::deinit` / `Request::destroy`.
+        // The ctx and Request each own a +1 on the same slot.
         ctx.set_request_body(Some(body_hive.clone()));
 
         let _context = self.vm().enter_context(self.context.get());
         let signal = AbortSignal::new(&self.global());
         let signal_for_req = signal.clone();
         ctx.set_signal(PendingAbortSignal::new(signal));
-        let request_object_ptr: *mut Request = Request::new(Request::init(
+        let request_object = RefPtr::new(Request::init(
             ctx.ctx_method(),
             AnyRequestContext::init(std::ptr::from_ref::<Ctx>(ctx)),
             SSL,
             Some(signal_for_req),
             body_hive,
         ));
-        // Leak so the ctx (which outlives this stack frame) can hold the
-        // pointer; Request is freed via ctx.deinit's request_weakref. The weak
-        // handle takes the raw pointer, not a reborrow of `request_object`:
-        // writes through `request_object` below would otherwise invalidate it.
-        ctx.set_request_weakref(request_object_ptr);
-        // SAFETY: freshly leaked; shared view — the headers/url population
-        // below takes `&Request`.
-        let request_object: &Request = unsafe { &*request_object_ptr };
+        ctx.set_request_weakref(&request_object);
 
         // The lazy `getRequest()` path that backs Request.url / .headers
         // is `*uws.Request`-typed; for HTTP/2 and HTTP/3 we populate both
@@ -2763,21 +2739,7 @@ where
         }
 
         Some(PreparedRequestFor {
-            js_request: match create_js_request {
-                // SAFETY: from `Request::new` above; the wrapper adopts its ref.
-                CreateJsRequest::Yes => unsafe {
-                    Request::to_js(request_object_ptr, &self.global())
-                },
-                CreateJsRequest::Bake => {
-                    match Request::to_js_for_bake(request_object_ptr, &self.global()) {
-                        Ok(v) => v,
-                        Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-                        Err(_) => return None,
-                    }
-                }
-                CreateJsRequest::No => JSValue::ZERO,
-            },
-            request_object: request_object_ptr,
+            request: DispatchedRequest::new(request_object, create_js_request, &self.global())?,
             ctx: ctx_slot,
         })
     }
@@ -2827,10 +2789,10 @@ where
             Bun__ServerRouteList__callRoute(
                 global,
                 index,
-                prepared.request_object,
+                prepared.request.native.as_ptr(),
                 server_js,
                 server_request_list,
-                &mut prepared.js_request,
+                &mut prepared.request.js,
                 std::ptr::from_mut(req).cast::<c_void>(),
             )
         }) {
@@ -2838,7 +2800,7 @@ where
             Err(err) => global.take_exception(err),
         };
 
-        server.handle_request(&should_deinit_context, &prepared, req, response_value);
+        server.handle_request(&should_deinit_context, prepared, req, response_value);
     }
 
     /// # Safety
@@ -2907,15 +2869,14 @@ where
 
         // Pooled body slot, ref_count = 1.
         let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);
-        // The ctx and Request each own a +1 on the
-        // same slot. Paired drop in `RequestContext::deinit` / `Request::destroy`.
+        // The ctx and Request each own a +1 on the same slot.
         ctx.request_body.set(Some(body_hive.clone()));
 
         let _context = this.vm().enter_context(this.context.get());
         let signal = AbortSignal::new(&this.global());
         let signal_for_req = signal.clone();
         ctx.signal.set(Some(PendingAbortSignal::new(signal)));
-        let request_object_ptr: *mut Request = Request::new(Request::init(
+        let request = RefPtr::new(Request::init(
             ctx.method,
             AnyRequestContext::init(std::ptr::from_ref(ctx)),
             SSL,
@@ -2924,36 +2885,21 @@ where
         ));
         ctx.upgrade_context
             .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)));
-        // Leaked so the ctx (which outlives this stack frame) can hold the
-        // pointer; freed via ctx.deinit's request_weakref. Everything below
-        // goes through this raw pointer rather than a `&mut Request` reborrow:
-        // the weak handle and the deferred `detach_request` both alias it.
-        // SAFETY: freshly leaked, so it carries the allocation's provenance.
-        ctx.request_weakref
-            .set(unsafe { bun_ptr::WeakPtr::<Request>::init_ref(request_object_ptr) });
+        ctx.request_weakref.set(bun_ptr::WeakPtr::new(&request));
 
-        // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
         let global = this.global();
-        // SAFETY: from `Request::new` above; the wrapper adopts its ref.
-        let args = [
-            unsafe { Request::to_js(request_object_ptr, &global) },
-            server_js,
-        ];
-        args[0].ensure_still_alive();
+        let request = DispatchedRequest {
+            native: request.this_ptr(),
+            js: Request::to_js(request, &global),
+        };
+        let args = [request.js, server_js];
 
         let response_value = match this.config.get().on_request.call(&global, server_js, &args) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
         };
-        // Its own copy, so the closure's capture does not pin `request_object_ptr`.
-        let detach_ptr = request_object_ptr;
-        scopeguard::defer! {
-            // uWS request will not live longer than this function
-            // SAFETY: see request_object_ptr above.
-            unsafe { (*detach_ptr).request_context.detach_request() };
-        }
 
-        ctx.on_response(this, args[0], response_value);
+        ctx.on_response(this, request.js, response_value);
 
         ctx.defer_deinit_until_callback_completes.set(None);
 
@@ -2969,9 +2915,7 @@ where
 
         ctx.to_async(
             std::ptr::from_mut::<uws::Request>(req).cast::<c_void>(),
-            // SAFETY: `request_object_ptr` is live (the ctx's weakref owns it)
-            // and no other borrow of the Request is outstanding here.
-            unsafe { &mut *request_object_ptr },
+            &request.native,
         );
     }
 

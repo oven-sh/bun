@@ -22,6 +22,8 @@ use super::worker::Worker;
 use crate::Command;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
+use crate::test_runner::cells::CellExt as _;
+use crate::test_runner::snapshot::Snapshots;
 use bun_collections::index_sort;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_sourcemap_jsc::code_coverage;
@@ -51,7 +53,7 @@ pub(crate) fn set_ids_without_workers(env: &mut bun_dotenv::Loader) {
 /// this to decide whether to run the serial coverage/JUnit reporters.
 #[optimize(size)]
 pub(crate) fn run_as_coordinator(
-    reporter: &mut CommandLineReporter,
+    reporter: &CommandLineReporter,
     vm: &VirtualMachine,
     files: &[Interned],
     ctx: Command::Context,
@@ -102,14 +104,15 @@ pub(crate) fn run_as_coordinator(
         });
     }
     let runs_compiled_code = crate::cli::run_compiled::runs_compiled_code();
-    if runs_compiled_code && let Some(timings) = reporter.timings.as_mut() {
+    let mut timings = reporter.timings.take();
+    if runs_compiled_code && let Some(timings) = timings.as_mut() {
         timings.record_workers(ctx.test_options.parallel);
     }
     // With --timings the contiguous chunks are cut by total duration instead
     // of file count, and each chunk is dispatched slowest-first (cache hits
     // depend on which worker runs a file, not the order within the worker).
     let mut costs: Option<Vec<u64>> = None;
-    let ranges: Vec<FileRange> = match reporter.timings.as_ref() {
+    let ranges: Vec<FileRange> = match timings.as_ref() {
         Some(t) if !t.is_empty() && !ctx.test_options.randomize => {
             let ranges = if crate::cli::run_compiled::runs_compiled_code() {
                 let mut ranges = vec![FileRange { lo: 0, hi: 0 }; k as usize];
@@ -156,11 +159,11 @@ pub(crate) fn run_as_coordinator(
         });
     }
 
-    let room_for_heavy_files = (reporter.timings.as_ref()).map_or(0, |t| t.largest_growth(&sorted));
-    let room_beside_heavy_files = (reporter.timings.as_ref()).map_or(0, |t| {
+    let room_for_heavy_files = timings.as_ref().map_or(0, |t| t.largest_growth(&sorted));
+    let room_beside_heavy_files = timings.as_ref().map_or(0, |t| {
         t.growth_of_average_files(&sorted, k.saturating_sub(1))
     });
-    let heavy_files_to_hand_out = (reporter.timings.as_ref()).map_or(0, |t| {
+    let heavy_files_to_hand_out = timings.as_ref().map_or(0, |t| {
         sorted
             .iter()
             .filter(|file| t.is_heavy(file.as_bytes()))
@@ -169,6 +172,7 @@ pub(crate) fn run_as_coordinator(
     let mut coord = Coordinator {
         vm,
         reporter,
+        timings,
         files: sorted,
         costs,
         cwd: FileSystem::get().top_level_dir(),
@@ -221,6 +225,7 @@ pub(crate) fn run_as_coordinator(
     vm.event_loop().ensure_waker();
     crate::cli::run_compiled::log_step_of_test_run(format_args!("the coordinator is set up"));
     vm.run_with_api_lock(|| coord.drive());
+    reporter.timings.set(coord.timings.take());
     coord.end_group();
     crate::cli::run_compiled::log_largest_worker(
         coord.max_worker_peak_rss_mb,
@@ -545,16 +550,34 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
 /// PDEATHSIG — coordinator death surfaces as channel close. Same `Channel`
 /// abstraction as the coordinator side: usockets over the socketpair on POSIX,
 /// `uv.Pipe` over the inherited duplex named-pipe on Windows.
-pub(crate) struct WorkerCommands {
-    pub(crate) channel: Channel,
+#[derive(Default)]
+pub(crate) struct WorkerLink {
+    channel: Channel,
     /// Reused across all worker → coordinator emits.
-    frame: Frame,
+    frame: core::cell::Cell<Frame>,
+    /// The coordinator-assigned index of the file currently being executed.
+    file_idx: core::cell::Cell<u32>,
+}
+
+impl WorkerLink {
+    /// Sends one frame of `kind`; `fill` writes its payload.
+    fn emit(&self, kind: frame::Kind, fill: impl FnOnce(&mut Frame)) {
+        self.frame.with_taken(|frame| {
+            frame.begin(kind);
+            fill(frame);
+            self.channel.send(frame.finish());
+        });
+    }
+}
+
+struct WorkerCommands {
+    link: &'static WorkerLink,
     /// Coordinator dispatches one `.run` and waits for `.file_done` before
     /// the next, so a single slot is sufficient. Owned path storage.
-    pub(crate) pending_idx: Option<u32>,
-    pub(crate) pending_path: Vec<u8>,
+    pending_idx: Option<u32>,
+    pending_path: Vec<u8>,
     /// `first_loads` of the process that ran in this one's place before it.
-    pub(crate) pending_first_loads: Vec<u8>,
+    pending_first_loads: Vec<u8>,
     /// A compiled run with `--update-timings`.
     pending_is_growth_written: bool,
     running: Option<RunningFile>,
@@ -570,16 +593,9 @@ struct RunningFile {
 }
 
 impl WorkerCommands {
-    /// Sends one frame of `kind`; `fill` writes its payload.
-    fn emit(&mut self, kind: frame::Kind, fill: impl FnOnce(&mut Frame)) {
-        self.frame.begin(kind);
-        fill(&mut self.frame);
-        self.channel.send(self.frame.finish());
-    }
-
     /// False as long as there is no file to run and one may still come.
     fn read_commands(&mut self) -> bool {
-        if let Some(mut received) = self.channel.take_received() {
+        if let Some(mut received) = self.link.channel.take_received() {
             while let Some((kind, mut rd)) = received.next_frame() {
                 match kind {
                     frame::Kind::Run => {
@@ -594,13 +610,13 @@ impl WorkerCommands {
                     _ => {}
                 }
             }
-            self.channel.keep_unread(received);
+            self.link.channel.keep_unread(received);
         }
-        self.pending_idx.is_some() || self.shutdown || self.channel.done.get()
+        self.pending_idx.is_some() || self.shutdown || self.link.channel.done.get()
     }
 
     /// Says what the file that runs has counted.
-    fn emit_file_done(&mut self, reporter: &mut CommandLineReporter, vm: &VirtualMachine) {
+    fn emit_file_done(&mut self, reporter: &CommandLineReporter, vm: &VirtualMachine) {
         let Some(file) = self.running.take() else {
             return;
         };
@@ -611,14 +627,15 @@ impl WorkerCommands {
         let elapsed_ns = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
             .ns()
             .saturating_sub(file.started_ns);
-        let (before, after) = (file.before, *reporter.summary());
+        let (before, after) = (file.before, reporter.summary());
         // What the file printed goes out ahead of the word that it is done, so that it is printed under the file's name.
         Output::flush();
         for refusal in crate::cli::run_compiled::refused_changes() {
-            self.emit(frame::Kind::RefusedChange, |wf| wf.str(&refusal));
+            self.link
+                .emit(frame::Kind::RefusedChange, |wf| wf.str(&refusal));
         }
         let first_loads = first_loads(vm);
-        self.emit(frame::Kind::FileDone, |wf| {
+        self.link.emit(frame::Kind::FileDone, |wf| {
             for v in [
                 file.idx,
                 after.pass - before.pass,
@@ -629,7 +646,7 @@ impl WorkerCommands {
                 after.skipped_because_label - before.skipped_because_label,
                 after.files - before.files,
                 after.shuffled - before.shuffled,
-                reporter.jest.unhandled_errors_between_tests - file.before_unhandled,
+                reporter.jest.unhandled_errors_between_tests.get() - file.before_unhandled,
             ] {
                 wf.u32(v);
             }
@@ -644,21 +661,17 @@ impl WorkerCommands {
 
 // Hoisted from a local struct inside run_as_worker — Rust does not
 // support method-bearing local structs that need to be named in a generic call.
-struct WorkerLoop<'a> {
-    reporter: &'a mut CommandLineReporter,
+struct WorkerLoop {
+    reporter: &'static CommandLineReporter,
     cmds: WorkerCommands,
     files_run: u32,
 }
 
-impl<'a> WorkerLoop<'a> {
+impl WorkerLoop {
     fn begin(&mut self, vm: &VirtualMachine) {
-        if !self.cmds.channel.adopt(vm, Fd::from_uv(3)) {
+        if !self.cmds.link.channel.adopt(vm, Fd::from_uv(3)) {
             bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
             Global::exit(1);
-        }
-        // SAFETY: single-threaded worker; WORKER_CMDS is only read on this thread
-        unsafe {
-            WORKER_CMDS.write(Some(&raw mut self.cmds));
         }
 
         // Test hook: "abort" dies by SIGABRT (the startup-panic branch),
@@ -680,7 +693,7 @@ impl<'a> WorkerLoop<'a> {
             }
         }
 
-        self.cmds.emit(frame::Kind::Ready, |_| {});
+        self.cmds.link.emit(frame::Kind::Ready, |_| {});
 
         loop {
             // The channel holds no reference on the loop, and a loop that nothing holds polls without sleeping.
@@ -701,15 +714,13 @@ impl<'a> WorkerLoop<'a> {
             }
             self.files_run += 1;
 
-            self.reporter.worker_ipc_file_idx = Some(idx);
-            // The coordinator counts the failures for `--bail`.
-            self.reporter.jest.bail = 0;
-            self.cmds.emit(frame::Kind::FileStart, |wf| wf.u32(idx));
+            self.cmds.link.file_idx.set(idx);
+            (self.cmds.link).emit(frame::Kind::FileStart, |wf| wf.u32(idx));
 
             self.cmds.running = Some(RunningFile {
                 idx,
-                before: *self.reporter.summary(),
-                before_unhandled: self.reporter.jest.unhandled_errors_between_tests,
+                before: self.reporter.summary(),
+                before_unhandled: self.reporter.jest.unhandled_errors_between_tests.get(),
                 started_ns: bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns(),
                 resident_at_start: start_measuring_growth(vm, self.cmds.pending_is_growth_written),
             });
@@ -732,12 +743,12 @@ impl<'a> WorkerLoop<'a> {
                 self.reporter
                     .jest
                     .bun_test_root
-                    .reset_hook_scope_for_test_isolation();
+                    .reset_preload_for_test_isolation();
                 crate::test_runner::Expect::reset_for_test_isolation(vm.global());
             } else {
                 Global::mimalloc_cleanup(false);
             }
-            self.reporter.jest.default_timeout_override = u32::MAX;
+            self.reporter.jest.default_timeout_override.set(u32::MAX);
             self.cmds.emit_file_done(self.reporter, vm);
         }
     }
@@ -858,7 +869,7 @@ fn growth_since(at_start: ResidentAtStart) -> Growth {
 /// run each file with isolation, stream per-test events back. Never returns.
 #[optimize(size)]
 pub(crate) fn run_as_worker(
-    reporter: &mut CommandLineReporter,
+    reporter: &'static CommandLineReporter,
     vm: &VirtualMachine,
     ctx: Command::Context,
 ) -> ! {
@@ -870,11 +881,11 @@ pub(crate) fn run_as_worker(
 
     vm.event_loop().ensure_waker();
 
+    let link = reporter.worker.get_or_init(WorkerLink::default);
     let mut wloop = WorkerLoop {
         reporter,
         cmds: WorkerCommands {
-            channel: Channel::default(),
-            frame: Frame::default(),
+            link,
             pending_idx: None,
             pending_path: Vec::new(),
             pending_first_loads: Vec::new(),
@@ -900,14 +911,9 @@ pub(crate) fn run_as_worker(
         std::process::abort();
     }
 
-    worker_flush_aggregates(
-        wloop.reporter,
-        vm,
-        &ctx.test_options.coverage,
-        &mut wloop.cmds,
-    );
+    worker_flush_aggregates(reporter, vm, &ctx.test_options.coverage, link);
     // Drain backpressure-buffered frames so the coordinator sees repeat_bufs / coverage_file.
-    let channel = &wloop.cmds.channel;
+    let channel = &link.channel;
     vm.run_with_api_lock(|| {
         while channel.has_pending_writes() && !channel.done.get() {
             vm.event_loop().tick();
@@ -922,7 +928,7 @@ pub(crate) fn run_as_worker(
     vm.exit_handler.exit_code.set(0);
     vm.exit_handler
         .skip_exit_listeners
-        .set(test_command::skip_exit_listeners(wloop.reporter));
+        .set(test_command::skip_exit_listeners(reporter));
     vm.exit_handler
         .requested
         .set(test_command::exit_is_requested());
@@ -937,21 +943,21 @@ pub(crate) fn run_as_worker(
 
 #[optimize(size)]
 fn worker_flush_aggregates(
-    reporter: &mut CommandLineReporter,
+    reporter: &CommandLineReporter,
     vm: &VirtualMachine,
     coverage: &CodeCoverageOptions,
-    cmds: &mut WorkerCommands,
+    link: &WorkerLink,
 ) {
     // Snapshots flush lazily when the next file opens its snapshot file; the
     // last file each worker ran has no successor to trigger that.
-    let runner = &mut reporter.jest;
-    let _ = runner.snapshots.write_inline_snapshots(&runner.files);
-    let _ = runner.snapshots.write_snapshot_file(&runner.files);
+    let runner = &reporter.jest;
+    let _ = runner.with_snapshots(Snapshots::write_inline_snapshots);
+    let _ = runner.with_snapshots(Snapshots::write_snapshot_file);
 
-    cmds.emit(frame::Kind::RepeatBufs, |wf| {
-        wf.str(reporter.failures_to_repeat_buf.as_slice());
-        wf.str(reporter.skips_to_repeat_buf.as_slice());
-        wf.str(reporter.todos_to_repeat_buf.as_slice());
+    link.emit(frame::Kind::RepeatBufs, |wf| {
+        wf.str(&reporter.failures_to_repeat_buf.take());
+        wf.str(&reporter.skips_to_repeat_buf.take());
+        wf.str(&reporter.todos_to_repeat_buf.take());
     });
 
     if coverage.enabled {
@@ -960,17 +966,10 @@ fn worker_flush_aggregates(
         CommandLineReporter::for_each_coverage_report(vm, coverage, |report| {
             encoded.clear();
             code_coverage::wire::encode(&report, &mut encoded);
-            cmds.emit(frame::Kind::CoverageFile, |wf| wf.str(&encoded));
+            link.emit(frame::Kind::CoverageFile, |wf| wf.str(&encoded));
         });
     }
 }
-
-/// Set in `run_as_worker` so `worker_emit_test_done` (called from
-/// `CommandLineReporter.handleTestCompleted`) can reach the channel.
-// PORTING.md §Global mutable state: single-worker-thread ptr slot → RacyCell.
-static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> = bun_core::RacyCell::new(None);
-// Lifetime note: stores an 'a-bound pointer as 'static; sound because the
-// pointee outlives all callers (process exits before it's dropped).
 
 /// Called from `CommandLineReporter.handleTestCompleted` in the worker with the
 /// fully-formatted status line (✓/✗ + scopes + name + duration, including ANSI
@@ -979,19 +978,12 @@ static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> = bun_core::
 /// replays into its own reporters.
 #[optimize(size)]
 pub(crate) fn worker_emit_test_done(
-    file_idx: u32,
+    link: &WorkerLink,
     formatted_line: &[u8],
     test: Option<&test_command::TestCaseReport<'_>>,
 ) {
-    // SAFETY: single-threaded worker; WORKER_CMDS only written/read on this thread.
-    let Some(cmds_ptr) = (unsafe { WORKER_CMDS.read() }) else {
-        return;
-    };
-    // SAFETY: cmds_ptr was set from &mut WorkerCommands in run_as_worker; pointee
-    // outlives all callers (process exits before it is dropped).
-    let cmds = unsafe { &mut *cmds_ptr };
-    cmds.emit(frame::Kind::TestDone, |wf| {
-        wf.u32(file_idx);
+    link.emit(frame::Kind::TestDone, |wf| {
+        wf.u32(link.file_idx.get());
         wf.str(formatted_line);
         if let Some(test) = test {
             encode_test_case(wf, test);

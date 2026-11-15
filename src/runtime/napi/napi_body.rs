@@ -43,10 +43,10 @@ impl JSValueNapiExt for JSValue {
 
 // `Taskable` impls for the napi heap tasks dispatched through the JS event loop.
 impl Taskable for napi_async_work {
-    const TAG: TaskTag = task_tag::NapiAsyncWork;
-    /// Work the pool handed back during teardown: its `complete` callback is
+    const TAG: TaskTag = task_tag::NapiAsyncWork; // `VirtualMachine::run_queued_addon_callbacks` relies on this release running the callback.
+    /// Work the pool handed back as its VM exits: its `complete` callback is
     /// how the addon learns the outcome and frees the work (Node calls it from
-    /// environment cleanup too); script it tries to run is refused at the boundary.
+    /// environment cleanup too); a Node-API call it makes into script is refused.
     unsafe fn release_unrun(this: *mut Self) {
         let global = VirtualMachine::get().global();
         // `Err` is left pending for the release dispatcher's fold.
@@ -71,9 +71,9 @@ impl Taskable for ThreadSafeFunction {
     }
 }
 impl Taskable for NapiFinalizerTask {
-    const TAG: TaskTag = task_tag::NapiFinalizerTask;
+    const TAG: TaskTag = task_tag::NapiFinalizerTask; // `VirtualMachine::run_queued_addon_callbacks` relies on this release running the callback.
     /// A finalizer queued before the loop stopped: Node runs an addon's
-    /// finalizers during environment cleanup (script already forbidden), and
+    /// finalizers during environment cleanup (a Node-API call into script is refused), and
     /// an addon counts on them (external buffers freed when a Worker exits).
     unsafe fn release_unrun(this: *mut Self) {
         // `Err` is left pending for the release dispatcher's fold.
@@ -112,6 +112,8 @@ unsafe extern "C" {
     /// `NapiEnv::cleanup` runs no finalizer until each of these has its `NapiEnv__asyncWorkLeftThreadPool`.
     fn NapiEnv__asyncWorkEnteredThreadPool(env: *mut NapiEnv);
     fn NapiEnv__asyncWorkLeftThreadPool(env: *mut NapiEnv);
+    /// JS thread, before `complete` is called. Where the VM's teardown follows, `NapiEnv::cleanup` waits for it too.
+    fn NapiEnv__asyncWorkReachedComplete(env: *mut NapiEnv);
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
     /// The reference to its VM's handle the env holds (`BunVmHandleRef`).
@@ -2057,12 +2059,15 @@ impl napi_async_work {
         // Note: the "this" value here may already be freed by the user in `complete`
         let _poll_ref = core::mem::take(&mut self.poll_ref);
 
+        let env = self.env.get();
+        // SAFETY: `self.env` keeps the env alive.
+        unsafe { NapiEnv__asyncWorkReachedComplete(env) };
+
         // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201
         let Some(complete) = self.complete else {
             return Ok(());
         };
 
-        let env = self.env.get();
         // SAFETY: env is held alive by NapiEnvRef for the duration of this call.
         let env_ref = unsafe { &*env };
         let _hs = NapiHandleScope::open_scoped(env_ref);
@@ -2472,6 +2477,12 @@ extern "C" fn Bun__napi_register_cleanup_zig(env: &NapiEnv) {
     );
 }
 
+/// Whether `VirtualMachine::teardown` follows the exit handlers that run `NapiEnv::cleanup`.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__napi_teardown_follows_exit(env: &NapiEnv) -> bool {
+    env.to_js().bun_vm().exit_runs_teardown()
+}
+
 #[unsafe(no_mangle)]
 extern "C" fn Bun__napi_run_finalizers_after_teardown_wait(env: &NapiEnv) {
     unsafe extern "C" {
@@ -2624,7 +2635,12 @@ pub(crate) struct ThreadSafeFunction {
     pub(crate) env_dead: AtomicBool,
     /// Also written under `lock`, once `finalize` or `env_teardown` has released every JS-thread-owned resource; until then the thread that drops the last `thread_count` reference must not free this (Node's `kClosed`).
     pub(crate) resources_released: AtomicBool,
+    /// How many more calls `deliver_at_exit` runs. `None` until its first visit.
+    exit_deliveries_left: Option<usize>,
 }
+
+/// How many of the calls that are queued during the exit of a Worker still run before its cleanup hooks. Node's `Dispatch` has a bound too (`kMaxIterationCount`).
+const CALLS_QUEUED_AT_EXIT_MAX: usize = 1000;
 
 bun_jsc::impl_abort_handle_owner!(ThreadSafeFunction, abort_handle, |this, _cause| {
     // SAFETY: trait contract: `this` is live, and this is the JS thread.
@@ -3120,6 +3136,64 @@ impl ThreadSafeFunction {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
+    /// The last turns of a Worker's loop, for one function: Node delivers the queued calls there, before the env's cleanup hooks. Returns how many calls ran. After a visit, [`env_teardown`](Self::env_teardown) gives back what is queued later.
+    fn deliver_at_exit(&mut self) -> usize {
+        // SAFETY: `env` is live: `env_teardown` is what drops our reference.
+        let Some(env) = self.env.as_ref().map(|env| unsafe { &*env.get() }) else {
+            return 0;
+        };
+        if env.to_js().bun_vm().worker_ref().is_none()
+            || !matches!(self.callback, TsfnCallback::C { .. })
+        {
+            return 0;
+        }
+        let mut delivered = 0;
+        'turns: loop {
+            let mut queued = Vec::new();
+            {
+                let _g = self.lock.lock_guard();
+                if self.is_closing() {
+                    break 'turns;
+                }
+                // What is queued on the first visit all runs. The calls and the released callbacks can queue more, and a call that always queues the next one must not keep the VM from its exit.
+                let backlog = self.queue.count.load(Ordering::SeqCst) as usize;
+                let left =
+                    (self.exit_deliveries_left).get_or_insert(backlog + CALLS_QUEUED_AT_EXIT_MAX);
+                let was_blocked = self.queue.is_blocked();
+                while queued.len() < *left {
+                    let Some(item) = self.queue.data.read_item() else {
+                        break;
+                    };
+                    queued.push(item);
+                }
+                *left -= queued.len();
+                let _ = (self.queue.count).fetch_sub(queued.len() as u32, Ordering::SeqCst);
+                if was_blocked && !self.queue.is_blocked() {
+                    self.blocking_condvar.broadcast();
+                }
+            }
+            if queued.is_empty() {
+                return delivered;
+            }
+            let mut queued = queued.into_iter();
+            while let Some(item) = queued.next() {
+                crate::dispatch::fold(self.deliver(env, item));
+                delivered += 1;
+                if self.is_closing() {
+                    self.hand_back(queued.collect::<Vec<_>>());
+                    break 'turns;
+                }
+            }
+        }
+        // A function that is closing runs no more calls: the addon gets them back without an env, as in `dispatch_one`.
+        let rest = {
+            let _g = self.lock.lock_guard();
+            self.take_queue()
+        };
+        self.hand_back(rest);
+        delivered
+    }
+
     /// Runs on the JS thread from `NapiEnv::cleanup()` while JSC is still
     /// alive but the VirtualMachine (and the event loop this TSFN points at)
     /// is about to be destroyed. Mirrors Node's
@@ -3164,7 +3238,8 @@ impl ThreadSafeFunction {
         if let Some(env) = env
             && env.to_js().bun_vm().worker_ref().is_some()
         {
-            if was_closing {
+            // For a function that `deliver_at_exit` visited, that was the last turn of the loop: what is queued since goes back too, as from Node's `EmptyQueue`.
+            if was_closing || self.exit_deliveries_left.is_some() {
                 self.hand_back(queued);
             } else if matches!(self.callback, TsfnCallback::C { .. }) {
                 for item in queued {
@@ -3298,6 +3373,14 @@ impl ThreadSafeFunction {
     }
 }
 
+/// Called from `VirtualMachine::run_queued_addon_callbacks` (JS thread), after each release of the queued addon callbacks, for every threadsafe function that is registered with an env of the VM's global.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__napi_threadsafe_function_deliver_at_exit(tsfn: *mut c_void) -> usize {
+    let this = tsfn.cast::<ThreadSafeFunction>();
+    // SAFETY: the registry only holds live TSFN pointers, and nothing frees one before `env_teardown`. Exclusive borrow scoped to this call.
+    unsafe { (*this).deliver_at_exit() }
+}
+
 /// Called from `NapiEnv::cleanup()` (JS thread) for every threadsafe function
 /// still registered with the env that is being torn down.
 #[unsafe(no_mangle)]
@@ -3381,14 +3464,18 @@ extern "C" fn napi_create_threadsafe_function(
         closing: AtomicU8::new(ClosingState::NotClosing as u8),
         env_dead: AtomicBool::new(false),
         resources_released: AtomicBool::new(false),
+        exit_deliveries_left: None,
     });
 
     // Register with the env so that VM/worker teardown neutralizes this TSFN
     // before the event loop it points at is freed. `false` means the env has
     // already torn its threadsafe functions down -- we are running from a
     // finalizer, after the loop's last tick.
+    // A callback that the exit of the VM releases runs just before that teardown, and its new function would stay open for every cleanup hook: it gets none either.
+    let exiting = vm.will_run_queued_addon_callbacks() && !vm.script_allowed();
     // SAFETY: env is live; `function` is a fresh heap allocation.
-    if !unsafe { NapiEnv__registerThreadSafeFunction(env.as_mut_ptr(), function.cast()) } {
+    if exiting || !unsafe { NapiEnv__registerThreadSafeFunction(env.as_mut_ptr(), function.cast()) }
+    {
         // Born dead. Free only what we allocated and never run the addon's
         // finalizer: the handle was never published, so the addon still owns
         // what it passed in (node's `Init` failure path just deletes the
@@ -5442,16 +5529,9 @@ impl NapiFinalizerTask {
 
         let vm: &VirtualMachine = self.finalizer.env.to_js().bun_vm();
 
-        if vm.is_shutting_down() {
+        if vm.is_shutting_down() && !vm.will_run_queued_addon_callbacks() {
             if vm.has_run_cleanup_hooks() {
-                // `on_exit()` already drained cleanup hooks; we are inside the
-                // final `collectNow()` (Heap::sweepArrayBuffers) and the JSC
-                // VM is being torn down. The cleanup-hook list will never be
-                // walked again, and running the user finalizer here (mid-GC,
-                // with the global about to be freed) is unsafe. Drop the task
-                // so the `Box<NapiFinalizerTask>` and its `NapiEnvRef` are
-                // released; the addon's external data is reclaimed by the OS
-                // at process exit.
+                // `on_exit()` is past the cleanup hooks, run or not, and this can be the final `collectNow()`: the finalizer does not run. The drop releases the task's `NapiEnvRef`.
                 drop(self);
                 return;
             }

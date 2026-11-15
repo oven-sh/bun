@@ -995,6 +995,8 @@ export const getEventLoopStats: () => {
   eventLoopAlive: boolean;
   /** usockets/libuv loop iterations so far (us_internal_loop_pre count). */
   iteration: number;
+  /** Work on other threads that has not posted its result to this VM yet (the tickets of its VmHandle). */
+  ticketsOutstanding: number;
 } = $bindgen("event_loop.bind.ts", "getActiveTasks");
 
 export const hostedGitInfo = {

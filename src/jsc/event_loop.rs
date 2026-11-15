@@ -1016,6 +1016,41 @@ impl EventLoop {
         self.release_pending_immediates();
     }
 
+    /// [`Self::release_queued_tasks`] for the tasks of `tags` alone, and for those that their release queues: the queue stays open. Returns how many it released.
+    pub fn release_queued_tasks_tagged(&self, tags: &[bun_event_loop::TaskTag]) -> usize {
+        let mut released = 0;
+        let mut others = Vec::new();
+        loop {
+            let mut tagged = Vec::new();
+            {
+                // SAFETY: the borrow ends before a release, which can enqueue a task, borrows `tasks` again.
+                let tasks = unsafe { &mut *self.tasks.get() };
+                Self::take_concurrent_tasks(tasks, self.concurrent_tasks.pop_batch());
+                while let Some(task) = tasks.read_item() {
+                    if tags.contains(&task.tag) {
+                        tagged.push(task);
+                    } else {
+                        others.push(task);
+                    }
+                }
+            }
+            if tagged.is_empty() {
+                break;
+            }
+            released += tagged.len();
+            for task in tagged {
+                // SAFETY: JS thread, heap alive; `task` just left the queue.
+                unsafe { self.release_task_unrun(task) };
+            }
+        }
+        // SAFETY: `write_item` only allocates.
+        let tasks = unsafe { &mut *self.tasks.get() };
+        for task in others {
+            let _ = tasks.write_item(task);
+        }
+        released
+    }
+
     /// Cancel (never run) every queued ImmediateObject; each cancel drops the
     /// immediate's keep-alive on this loop, so the loop must still exist.
     fn release_pending_immediates(&self) {
@@ -1465,6 +1500,7 @@ pub(crate) fn get_active_tasks(
         concurrent_ref: event_loop.concurrent_ref.load(Ordering::SeqCst),
         num_polls,
         iteration: event_loop.usockets_loop().iteration_number(),
+        tickets_outstanding: vm_ref.handle_ref().tickets_outstanding() as usize,
     }
 }
 

@@ -13,7 +13,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::webcore;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
-use bun_core::{String as BunString, Utf8WithString, ZBox, ZStr};
+use bun_core::{String as BunString, ZBox, ZStr};
 use bun_io::JsKeepAlive;
 use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
@@ -748,22 +748,19 @@ fn access_in_graph(
 }
 
 /// A writable copy of `contents`.
-fn embedded_file_buffer(graph: &bun_standalone_graph::Graph, contents: &[u8]) -> Buffer {
-    if graph.compiled_program.is_some()
-        && contents.len() >= sys::private_copy::MIN_MAPPED_BYTES
+fn embedded_file_buffer(contents: &[u8]) -> StringOrBytes {
+    if contents.len() >= sys::private_copy::MIN_MAPPED_BYTES
+        && compiled_program_graph().is_some()
         && let Some(copy) = sys::private_copy::map(contents)
     {
-        return Buffer::from_private_copy(copy);
+        return StringOrBytes::PrivateCopy(copy);
     }
-    Buffer::from_bytes(
-        contents.to_vec().into_boxed_slice(),
-        bun_jsc::JSType::Uint8Array,
-    )
+    StringOrBytes::Bytes(contents.into())
 }
 
 /// `readFile` of what `graph` holds at `path`; `None` if it holds nothing there.
 fn read_file_in_graph(
-    graph: &bun_standalone_graph::Graph,
+    graph: &'static bun_standalone_graph::Graph,
     path: &[u8],
     encoding: Encoding,
     string_type: ReadFileStringType,
@@ -771,9 +768,7 @@ fn read_file_in_graph(
     if let Some(file) = graph.find_data(path) {
         let contents: &[u8] = file.utf8_contents();
         return Some(if encoding == Encoding::Buffer {
-            Ok(ret::ReadFileWithOptions::Buffer(embedded_file_buffer(
-                graph, contents,
-            )))
+            Ok(ret::ReadFileWithOptions::Embedded(contents))
         } else if string_type == ReadFileStringType::Default {
             Ok(ret::ReadFileWithOptions::String(
                 contents.to_vec().into_boxed_slice(),
@@ -1059,7 +1054,6 @@ fn directory_exists_at_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<bool> {
 }
 
 type ReadPosition = i64;
-type Buffer = super::types::Buffer;
 type GidT = node::gid_t;
 type UidT = node::uid_t;
 
@@ -1187,7 +1181,7 @@ mod _async_tasks {
         pub(crate) type Readdir =
             AsyncFSTask<ret::Readdir, args::Readdir<'static>, { NodeFSFunctionEnum::Readdir }>;
         pub(crate) type ReadFile =
-            AsyncFSTask<ret::ReadFile, args::ReadFile<'static>, { NodeFSFunctionEnum::ReadFile }>;
+            AsyncFSTask<StringOrBytes, args::ReadFile<'static>, { NodeFSFunctionEnum::ReadFile }>;
         pub(crate) type Readlink =
             AsyncFSTask<ret::Readlink, args::Readlink<'static>, { NodeFSFunctionEnum::Readlink }>;
         pub(crate) type Readv = UVFSRequest<ret::Readv, args::Readv, { NodeFSFunctionEnum::Readv }>;
@@ -1763,7 +1757,7 @@ mod _async_tasks {
     // `ReadFile`/`WriteFile` carry an `AbortSignal` field — opt them in so the
     // `const _ = assert!(…::HAVE_ABORT_SIGNAL)` invariants in `async_` hold and
     // `signal()` exposes it to `AsyncFSTask::run_from_js_thread`.
-    // SAFETY: as for `impl_fs_argument!`; the `AbortSignal` ref is thread-safe.
+    // SAFETY: as for `impl_fs_argument!`; the pool only calls `AbortSignal::aborted`, an atomic load.
     unsafe impl ThreadIsolatedArg for args::ReadFile<'static> {}
     // SAFETY: see above.
     unsafe impl ThreadIsolatedArg for args::WriteFile<'static> {}
@@ -1823,12 +1817,6 @@ mod _async_tasks {
             0
         }
     }
-    impl FsReturn for JSValue {
-        #[inline]
-        fn fs_to_js(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-            Ok(self)
-        }
-    }
     impl FsReturn for () {
         #[inline]
         fn fs_to_js(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -1859,10 +1847,19 @@ mod _async_tasks {
             Ok(crate::node::types::FdJsc::to_js(self.into_raw(), global))
         }
     }
-    impl FsReturn for StringOrBuffer<'_> {
+    impl FsReturn for StringOrBytes {
         #[inline]
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
             self.into_js(global)
+        }
+    }
+    impl FsReturn for ret::ReadFile {
+        #[inline]
+        fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+            match self {
+                Self::Owned(contents) => contents.into_js(global),
+                Self::JsBuffer(buffer) => Ok(buffer.value),
+            }
         }
     }
     impl FsReturn for StringOrUndefined {
@@ -1933,12 +1930,6 @@ mod _async_tasks {
     pub(crate) struct AsyncFSTask<R, A, const F: NodeFSFunctionEnum> {
         pub(crate) result: Maybe<R>,
         pub args: ThreadIsolated<A>,
-    }
-    // SAFETY: results are plain data / owned buffers / WTF strings built off
-    // thread for hand-off (`ret::*`); `ThreadIsolated<A>` is Send by its contract.
-    unsafe impl<R: FsReturn, A: ThreadIsolatedArg, const F: NodeFSFunctionEnum> Send
-        for AsyncFSTask<R, A, F>
-    {
     }
 
     /// How an async fs operation reports its result: a promise, or the `node:fs` callback, called from the completion.
@@ -2056,7 +2047,7 @@ mod _async_tasks {
         pub(crate) tracker: AsyncTaskTracker,
     }
 
-    impl<R: FsReturn + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum>
+    impl<R: FsReturn + Send + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum>
         bun_jsc::JobContext for AsyncFSTask<R, A, F>
     where
         Op<{ F }>: NodeFSDispatch<R, A>,
@@ -2107,7 +2098,7 @@ mod _async_tasks {
         }
     }
 
-    impl<R: FsReturn + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum>
+    impl<R: FsReturn + Send + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum>
         AsyncFSTask<R, A, F>
     where
         Op<{ F }>: NodeFSDispatch<R, A>,
@@ -2977,12 +2968,9 @@ mod _async_tasks {
 
     pub(crate) enum ResultListEntryValue {
         WithFileTypes(Vec<Dirent>),
-        Buffers(Vec<Buffer>),
+        Buffers(Vec<Box<[u8]>>),
         Files(Vec<BunString>),
     }
-
-    // SAFETY: a `Buffer` in the list owns its bytes and has no JS value.
-    unsafe impl Send for ResultListEntryValue {}
 
     pub(crate) struct ResultListEntry {
         pub(crate) next: bun_threading::Link<ResultListEntry>, // INTRUSIVE: OwnedQueue link
@@ -3129,7 +3117,7 @@ mod _async_tasks {
             match self.tag {
                 ret::ReaddirTag::Files => impl_tag!(BunString, Files),
                 ret::ReaddirTag::WithFileTypes => impl_tag!(Dirent, WithFileTypes),
-                ret::ReaddirTag::Buffers => impl_tag!(Buffer, Buffers),
+                ret::ReaddirTag::Buffers => impl_tag!(Box<[u8]>, Buffers),
             }
         }
 
@@ -3181,7 +3169,7 @@ mod _async_tasks {
             ResultListEntryValue::WithFileTypes(v)
         }
     }
-    impl IntoResultListEntry for Buffer {
+    impl IntoResultListEntry for Box<[u8]> {
         fn into_variant(v: Vec<Self>) -> ResultListEntryValue {
             ResultListEntryValue::Buffers(v)
         }
@@ -4993,6 +4981,33 @@ impl StringOrUndefined {
     }
 }
 
+/// A string, or the contents of a `Buffer` that `into_js` creates.
+pub(crate) enum StringOrBytes {
+    String(BunString),
+    Bytes(Box<[u8]>),
+    PrivateCopy(sys::private_copy::PrivateCopy),
+}
+impl StringOrBytes {
+    fn into_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        match self {
+            StringOrBytes::String(s) => s.into_js(global_object),
+            StringOrBytes::Bytes(bytes) => JSValue::create_buffer_from_box(global_object, bytes),
+            StringOrBytes::PrivateCopy(copy) => {
+                let bytes = copy.into_non_null();
+                // SAFETY: the mapping is live, and only the deallocator unmaps it.
+                unsafe {
+                    JSValue::create_buffer_with_ctx(
+                        global_object,
+                        bytes,
+                        core::ptr::without_provenance_mut(bytes.len()),
+                        sys::private_copy::unmap,
+                    )
+                }
+            }
+        }
+    }
+}
+
 /// For use in `Return`'s definitions to act as `void` while returning `null` to JavaScript
 pub(crate) struct Null;
 
@@ -5019,7 +5034,7 @@ pub(crate) mod ret {
     pub(crate) type Link = ();
     pub(crate) type Lstat = StatOrNotFound;
     pub(crate) type Mkdir = StringOrUndefined;
-    pub(crate) type Mkdtemp = StringOrBuffer<'static>;
+    pub(crate) type Mkdtemp = StringOrBytes;
     pub(crate) type Open = sys::File;
     pub(crate) type WriteFile = ();
     pub(crate) type Readv = Read;
@@ -5053,21 +5068,18 @@ pub(crate) mod ret {
 
     pub(crate) enum Readdir {
         WithFileTypes(Box<[Dirent]>),
-        Buffers(Box<[Buffer]>),
+        Buffers(Box<[Box<[u8]>]>),
         Files(Box<[BunString]>),
     }
     impl Readdir {
         pub(crate) fn to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
             match self {
                 Readdir::WithFileTypes(items) => Dirent::into_js_array(items, global_object),
-                Readdir::Buffers(mut items) => {
-                    // Node returns `Buffer[]` for `{ encoding: "buffer" }`, not
-                    // `Uint8Array[]`. Ownership of every `Buffer`'s bytes
-                    // transfers to JSC via `to_node_buffer`; the boxed slice
-                    // itself is freed when `items` drops.
+                Readdir::Buffers(items) => {
+                    // Node returns `Buffer[]` for `{ encoding: "buffer" }`, not `Uint8Array[]`.
                     let array = JSValue::create_empty_array(global_object, items.len())?;
-                    for (i, item) in items.iter_mut().enumerate() {
-                        let res = item.to_node_buffer(global_object)?;
+                    for (i, item) in items.into_iter().enumerate() {
+                        let res = JSValue::create_buffer_from_box(global_object, item)?;
                         array.put_index(global_object, i as u32, res)?;
                     }
                     Ok(array)
@@ -5082,12 +5094,19 @@ pub(crate) mod ret {
         }
     }
 
-    pub(crate) type ReadFile = StringOrBuffer<'static>;
+    pub(crate) enum ReadFile {
+        Owned(StringOrBytes),
+        /// Only for `Flavor::Sync`.
+        JsBuffer(ArrayBuffer),
+    }
 
     pub(crate) enum ReadFileWithOptions {
         String(Box<[u8]>),
         TranscodedString(BunString),
-        Buffer(Buffer),
+        Bytes(Box<[u8]>),
+        /// A file of the standalone module graph.
+        Embedded(&'static [u8]),
+        JsBuffer(ArrayBuffer),
         /// `None` if the file is empty.
         NullTerminated(Option<bun_core::SensitiveCString>),
     }
@@ -5100,8 +5119,8 @@ pub(crate) mod ret {
         }
     }
 
-    pub(crate) type Readlink = StringOrBuffer<'static>;
-    pub(crate) type Realpath = StringOrBuffer<'static>;
+    pub(crate) type Readlink = StringOrBytes;
+    pub(crate) type Realpath = StringOrBytes;
     pub(crate) type Rename = ();
     pub(crate) type Rmdir = ();
     pub(crate) type Stat = StatOrNotFound;
@@ -5140,17 +5159,11 @@ impl Default for NodeFS {
 /// Encode a path returned by the OS (`mkdtemp`/`readlink`/`realpath`) using the
 /// caller's `encoding` option, matching Node.js: `"buffer"` yields a `Buffer`
 /// of the raw bytes, any other encoding is `Buffer.from(bytes).toString(enc)`.
-fn encode_path_result(bytes: &[u8], encoding: Encoding) -> StringOrBuffer<'static> {
+fn encode_path_result(bytes: &[u8], encoding: Encoding) -> StringOrBytes {
     match encoding {
-        Encoding::Buffer => {
-            StringOrBuffer::Buffer(Buffer::from_string(bytes).expect("unreachable"))
-        }
-        Encoding::Utf8 => {
-            StringOrBuffer::String(Utf8WithString::js_only(BunString::clone_utf8(bytes)))
-        }
-        enc => StringOrBuffer::String(Utf8WithString::js_only(webcore::encoding::to_bun_string(
-            bytes, enc,
-        ))),
+        Encoding::Buffer => StringOrBytes::Bytes(bytes.into()),
+        Encoding::Utf8 => StringOrBytes::String(BunString::clone_utf8(bytes)),
+        enc => StringOrBytes::String(webcore::encoding::to_bun_string(bytes, enc)),
     }
 }
 
@@ -6711,7 +6724,7 @@ impl NodeFS {
             );
         }
         let maybe = match args.tag() {
-            ret::ReaddirTag::Buffers => Self::readdir_inner::<Buffer>(
+            ret::ReaddirTag::Buffers => Self::readdir_inner::<Box<[u8]>>(
                 &mut self.sync_error_buf,
                 args,
                 args.recursive,
@@ -7301,7 +7314,13 @@ impl NodeFS {
         match result {
             Err(err) => Err(err),
             Ok(result) => match result {
-                ret::ReadFileWithOptions::Buffer(buffer) => Ok(StringOrBuffer::Buffer(buffer)),
+                ret::ReadFileWithOptions::Bytes(bytes) => {
+                    Ok(ret::ReadFile::Owned(StringOrBytes::Bytes(bytes)))
+                }
+                ret::ReadFileWithOptions::Embedded(contents) => {
+                    Ok(ret::ReadFile::Owned(embedded_file_buffer(contents)))
+                }
+                ret::ReadFileWithOptions::JsBuffer(buffer) => Ok(ret::ReadFile::JsBuffer(buffer)),
                 ret::ReadFileWithOptions::TranscodedString(str) => {
                     if str.is_dead() {
                         return Err(with_path_like(
@@ -7309,7 +7328,7 @@ impl NodeFS {
                             &args.path,
                         ));
                     }
-                    Ok(StringOrBuffer::String(Utf8WithString::js_only(str)))
+                    Ok(ret::ReadFile::Owned(StringOrBytes::String(str)))
                 }
                 ret::ReadFileWithOptions::String(s) => {
                     let str = if s.is_empty() {
@@ -7326,10 +7345,39 @@ impl NodeFS {
                             &args.path,
                         ));
                     }
-                    Ok(StringOrBuffer::String(Utf8WithString::js_only(str)))
+                    Ok(ret::ReadFile::Owned(StringOrBytes::String(str)))
                 }
                 _ => unreachable!(),
             },
+        }
+    }
+
+    fn read_file_async(&mut self, args: &args::ReadFile, _: Flavor) -> Maybe<StringOrBytes> {
+        match self.read_file(args, Flavor::Async)? {
+            ret::ReadFile::Owned(contents) => Ok(contents),
+            ret::ReadFile::JsBuffer(_) => unreachable!(),
+        }
+    }
+
+    /// `read_file` for a caller that does not give the bytes to JavaScript.
+    pub(crate) fn read_file_bytes(
+        path: PathOrFileDescriptor<'_>,
+        offset: BlobSizeType,
+        max_size: BlobSizeType,
+    ) -> Maybe<Box<[u8]>> {
+        let args = args::ReadFile {
+            encoding: Encoding::Buffer,
+            path,
+            offset,
+            max_size: Some(max_size),
+            ..Default::default()
+        };
+        let mut fs = NodeFS::default();
+        match fs.read_file_with_options(&args, Flavor::Sync, ReadFileStringType::Default)? {
+            ret::ReadFileWithOptions::Bytes(bytes) => Ok(bytes),
+            ret::ReadFileWithOptions::Embedded(contents) => Ok(contents.into()),
+            // A `JsBuffer` needs `fs.vm`.
+            _ => unreachable!(),
         }
     }
 
@@ -7343,7 +7391,7 @@ impl NodeFS {
         let file: &sys::File = match &args.path {
             PathOrFileDescriptor::Path(p) => {
                 let path = p.slice_z(&mut self.sync_error_buf);
-                let read_in = |graph: &bun_standalone_graph::Graph| {
+                let read_in = |graph: &'static bun_standalone_graph::Graph| {
                     read_file_in_graph(graph, path.as_bytes(), args.encoding, string_type)
                 };
 
@@ -7453,9 +7501,7 @@ impl NodeFS {
                             };
                             array_buffer.ensure_still_alive();
                             return match array_buffer.as_array_buffer(global) {
-                                Some(buffer) => Ok(ret::ReadFileWithOptions::Buffer(
-                                    bun_jsc::MarkedArrayBuffer::unowned(buffer),
-                                )),
+                                Some(buffer) => Ok(ret::ReadFileWithOptions::JsBuffer(buffer)),
                                 // This case shouldn't really happen.
                                 None => Err(with_path_like(
                                     sys::Error::from_code(E::ENOMEM, sys::Tag::read),
@@ -7464,12 +7510,9 @@ impl NodeFS {
                             };
                         }
                     }
-                    Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_bytes(
-                        temporary_read_buffer_before_stat_call
-                            .to_vec()
-                            .into_boxed_slice(),
-                        bun_jsc::JSType::Uint8Array,
-                    )))
+                    Ok(ret::ReadFileWithOptions::Bytes(
+                        temporary_read_buffer_before_stat_call.into(),
+                    ))
                 }
                 _ => {
                     if string_type == ReadFileStringType::Default {
@@ -7590,7 +7633,7 @@ impl NodeFS {
         if buf.is_empty() {
             drop(buf);
             return match args.encoding {
-                Encoding::Buffer => Ok(ret::ReadFileWithOptions::Buffer(Buffer::EMPTY)),
+                Encoding::Buffer => Ok(ret::ReadFileWithOptions::Bytes(Box::default())),
                 _ => {
                     if string_type == ReadFileStringType::Default {
                         Ok(ret::ReadFileWithOptions::String(Box::<[u8]>::default()))
@@ -7602,10 +7645,7 @@ impl NodeFS {
         }
 
         match args.encoding {
-            Encoding::Buffer => Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_bytes(
-                buf.into_boxed_slice(),
-                bun_jsc::JSType::Uint8Array,
-            ))),
+            Encoding::Buffer => Ok(ret::ReadFileWithOptions::Bytes(buf.into_boxed_slice())),
             _ => {
                 if string_type == ReadFileStringType::Default {
                     Ok(ret::ReadFileWithOptions::String(buf.into_boxed_slice()))
@@ -7786,7 +7826,7 @@ impl NodeFS {
         if args.encoding == Encoding::Utf8 {
             if let PathLike::String(s) = &args.path {
                 if strings::eql_long(s.slice(), link_path) {
-                    return Ok(StringOrBuffer::String(s.clone()));
+                    return Ok(StringOrBytes::String(s.string().clone()));
                 }
             }
         }
@@ -7868,7 +7908,7 @@ impl NodeFS {
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
                     if strings::eql_long(s.slice(), buf) {
-                        return Ok(StringOrBuffer::String(s.clone()));
+                        return Ok(StringOrBytes::String(s.string().clone()));
                     }
                 }
             }
@@ -7946,7 +7986,7 @@ impl NodeFS {
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
                     if strings::eql_long(s.slice(), buf) {
-                        return Ok(StringOrBuffer::String(s.clone()));
+                        return Ok(StringOrBytes::String(s.string().clone()));
                     }
                 }
             }
@@ -9495,6 +9535,7 @@ node_fs_ops! {
     Read => read, args::Read, ret::Read, uv = uv_read;
     Readdir => readdir, args::Readdir<'static>, ret::Readdir;
     ReadFile => read_file, args::ReadFile<'static>, ret::ReadFile;
+    ReadFile => read_file_async, args::ReadFile<'static>, StringOrBytes;
     Readlink => readlink, args::Readlink<'static>, ret::Readlink;
     Readv => readv, args::Readv, ret::Readv, uv = uv_readv;
     Realpath => realpath, args::Realpath<'static>, ret::Realpath;
@@ -9546,7 +9587,7 @@ pub(crate) trait ReaddirEntry: Sized {
     /// Windows-only: append from a UTF-16 directory entry name.
     /// Non-recursive readdir; `re_encoding_buffer` is the pooled scratch for
     /// `strings::from_w_path` when `encoding != utf8`. Only ever invoked when
-    /// `IS_U16` is true — `Buffer`'s impl is a `@compileError`-equivalent
+    /// `IS_U16` is true — `Box<[u8]>`'s impl is a `@compileError`-equivalent
     /// `unreachable!()`.
     #[cfg(windows)]
     fn append_entry_w(
@@ -9704,7 +9745,7 @@ impl ReaddirEntry for Dirent {
         });
     }
 }
-impl ReaddirEntry for Buffer {
+impl ReaddirEntry for Box<[u8]> {
     const IS_DIRENT: bool = false;
     #[cfg(windows)]
     const IS_U16: bool = false;
@@ -9718,7 +9759,7 @@ impl ReaddirEntry for Buffer {
         _kind: sys::FileKind,
         _encoding: Encoding,
     ) {
-        entries.push(Buffer::from_string(utf8_name).expect("oom"));
+        entries.push(utf8_name.into());
     }
     #[cfg(windows)]
     fn append_entry_w(
@@ -9741,7 +9782,7 @@ impl ReaddirEntry for Buffer {
         _encoding: Encoding,
         _apply_encoding: bool,
     ) {
-        entries.push(Buffer::from_string(without_nt_prefix::<u8>(name_to_copy)).expect("oom"));
+        entries.push(without_nt_prefix::<u8>(name_to_copy).into());
     }
 }
 

@@ -21,12 +21,6 @@ pub(crate) fn generate_compile_result_for_js_chunk(
     let _trace = bun_core::perf::trace("Bundler.generateCodeForFileInChunkJS");
     // `defer trace.end()` → handled by Drop on _trace
 
-    // Client and server bundles for Bake must outlive the bundle task.
-    // `BufferWriter::init()` output is allocated from the global heap and
-    // outlives the task's CompileResult consumption, so a per-dev-server
-    // arena would only be a perf optimization.
-    let _ = c.dev_server;
-
     let worker_alloc = worker.arena();
     let mut buffer_writer = js_printer::BufferWriter::init();
     // A plain `reset()` would be `mi_heap_destroy + mi_heap_new` *per part_range*

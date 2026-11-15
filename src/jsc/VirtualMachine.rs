@@ -1431,7 +1431,7 @@ impl VirtualMachine {
     }
 
     /// Waits for the watcher thread to finish the current change and prevents new ones.
-    fn stop_import_watcher(&self) {
+    fn stop_watcher(&self) {
         if let Some(watcher) = self.bun_watcher.replace(None) {
             watcher.shutdown(false);
             self.transpiler.with_mut(|t| t.resolver.watcher = None);
@@ -2434,7 +2434,7 @@ impl VirtualMachine {
             rare.cleanup_hooks.with_mut(|hooks| hooks.extend(held_back));
         }
         vm.run_cleanup_hooks();
-        vm.stop_import_watcher();
+        vm.stop_watcher();
         // The exiting main thread now parks the process-wide HTTP thread —
         // after the children it also served are joined and this VM's own
         // requests are back — so it cannot touch what process exit frees. If
@@ -3658,21 +3658,21 @@ pub fn process_fetch_log(
 /// `get()` returns the VM's `source_mappings` (fast path) or `self` (debugger / inline-sourcemap path).
 pub struct SourceMapHandlerGetter<'a> {
     source_mappings: &'a SavedSourceMap,
-    inline: bool,
+    wants_inline_source_map: bool,
 }
 
 impl<'a> SourceMapHandlerGetter<'a> {
     /// Does not take the VM: the transpiler's worker threads print too.
     #[inline]
-    pub(crate) fn new(source_mappings: &'a SavedSourceMap, inline: bool) -> Self {
+    pub(crate) fn new(source_mappings: &'a SavedSourceMap, wants_inline_source_map: bool) -> Self {
         Self {
             source_mappings,
-            inline,
+            wants_inline_source_map,
         }
     }
 
     pub fn get(&self) -> bun_js_printer::SourceMapHandler<'_> {
-        if !self.inline {
+        if !self.wants_inline_source_map {
             return self.source_mappings;
         }
         self

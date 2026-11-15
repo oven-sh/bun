@@ -481,22 +481,22 @@ impl FSEventsLoop {
         // SAFETY: event_flags is an array of length num_events per FSEvents API
         let event_flags = unsafe { bun_core::ffi::slice(event_flags.cast_const(), num_events) };
 
-        for handle in PathWatcherManager::lock().watchers() {
-            let handle_path = handle.path.as_bytes();
+        for watcher in PathWatcherManager::lock().watchers() {
+            let watcher_path = watcher.path.as_bytes();
 
             for (i, path_ptr) in paths.iter().enumerate() {
                 let mut flags = event_flags[i];
                 // SAFETY: each path_ptr is a NUL-terminated C string from FSEvents
                 let mut path = unsafe { bun_core::ffi::cstr(*path_ptr) }.to_bytes();
-                // Filter out paths that are outside handle's request
-                if path.len() < handle_path.len() || !path.starts_with(handle_path) {
+                // Filter out paths that are outside watcher's request
+                if path.len() < watcher_path.len() || !path.starts_with(watcher_path) {
                     continue;
                 }
                 let is_file = (flags & K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_IS_DIR) == 0;
 
                 // Remove common prefix, unless the watched folder is "/"
-                if !(handle_path.len() == 1 && handle_path[0] == b'/') {
-                    path = &path[handle_path.len()..];
+                if !(watcher_path.len() == 1 && watcher_path[0] == b'/') {
+                    path = &path[watcher_path.len()..];
 
                     // Ignore events with path equal to directory itself
                     if path.len() <= 1 && !is_file {
@@ -504,10 +504,10 @@ impl FSEventsLoop {
                     }
 
                     if path.is_empty() {
-                        // Since we're using fsevents to watch the file itself handle_path == path, and we now need to get the basename of the file back
-                        let basename = bun_core::strings::last_index_of_char(handle_path, b'/')
-                            .unwrap_or(handle_path.len());
-                        path = &handle_path[basename..];
+                        // Since we're using fsevents to watch the file itself watcher_path == path, and we now need to get the basename of the file back
+                        let basename = bun_core::strings::last_index_of_char(watcher_path, b'/')
+                            .unwrap_or(watcher_path.len());
+                        path = &watcher_path[basename..];
                         // Created and Removed seem to be always set, but don't make sense
                         flags &= !K_FS_EVENTS_RENAMED;
                     }
@@ -521,7 +521,7 @@ impl FSEventsLoop {
                 // Do not emit events from subdirectories (without option set)
                 if path.is_empty()
                     || (bun_core::strings::index_of_char_usize(path, b'/').is_some()
-                        && !handle.recursive)
+                        && !watcher.recursive)
                 {
                     continue;
                 }
@@ -539,9 +539,9 @@ impl FSEventsLoop {
                 } else {
                     WatchEventKind::Change
                 };
-                handle.emit(event_type, path, is_file);
+                watcher.emit(event_type, path, is_file);
             }
-            handle.flush();
+            watcher.flush();
         }
     }
 

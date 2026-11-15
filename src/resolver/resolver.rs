@@ -2709,11 +2709,11 @@ impl<'a> Resolver<'a> {
 
     /// Bust the directory cache for the given path, which may end in a separator.
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
-        Self::bust_dir_cache_of(&mut self.fs_mut().fs, path)
+        Self::bust_dir_cache_in(&mut self.fs_mut().fs, path)
     }
 
     /// The caches belong to the process, not to a resolver.
-    pub fn bust_dir_cache_of(fs: &mut Fs::file_system::RealFS, path: &[u8]) -> bool {
+    pub fn bust_dir_cache_in(fs: &mut Fs::file_system::RealFS, path: &[u8]) -> bool {
         let path = strings::without_trailing_slash_windows_path(path);
         Self::assert_valid_cache_key(path);
         let first_bust = fs.bust_entries_cache(path);

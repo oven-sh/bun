@@ -59,7 +59,7 @@ pub fn enable_hot_module_reloading(
 }
 
 /// `bun build --watch`.
-pub fn enable_reloading_for_build(transpiler: &mut Transpiler<'_>) {
+pub fn enable_hot_module_reloading_for_bundler(transpiler: &mut Transpiler<'_>) {
     let top_level_dir = FileSystem::get().top_level_dir();
     let watcher = HotReloader::new(transpiler).start(transpiler.env(), top_level_dir);
     transpiler.resolver.watcher = Some(watcher);
@@ -81,7 +81,7 @@ impl ChangedPaths {
     }
 
     /// Best-effort: if the write fails, the new process falls back to querying git.
-    fn write(&self) {
+    fn write_trigger_file(&self) {
         let Some(trigger_file) = &self.trigger_file else {
             return;
         };
@@ -211,7 +211,7 @@ impl HotReloader {
         {
             crate::node_compile_cache::persist_now();
             Output::flush();
-            self.changed_paths.write();
+            self.changed_paths.write_trigger_file();
             bun_removable_features::removable_body!(HotReload, Abort, {
                 bun_core::reload_process(
                     CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
@@ -470,7 +470,7 @@ impl bun_watcher::WatcherContext for HotReloader {
                         // on windows we receive file events for all items affected by a directory change
                         // so we only need to clear the directory cache. all other effects will be handled
                         // by the file events
-                        let _ = Resolver::bust_dir_cache_of(rfs, file_path);
+                        let _ = Resolver::bust_dir_cache_in(rfs, file_path);
                         continue;
                     }
                     #[cfg(not(windows))]
@@ -577,7 +577,7 @@ impl bun_watcher::WatcherContext for HotReloader {
                             }
                         }
 
-                        let _ = Resolver::bust_dir_cache_of(rfs, file_path);
+                        let _ = Resolver::bust_dir_cache_in(rfs, file_path);
 
                         // The watched entrypoint has a per-file inotify watch on its inode.
                         // An atomic rename (`rename(tmp, entrypoint)`) or a rm+recreate over

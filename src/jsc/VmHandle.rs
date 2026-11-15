@@ -566,6 +566,38 @@ pub extern "C" fn Bun__VM__currentLoopKind(vm: &VirtualMachine) -> LoopKind {
     vm.current_loop_kind()
 }
 
+// ── VmBound ───────────────────────────────────────────────────────────────
+
+/// A value that only its VM's thread can reach, inside a struct that threads share. `T` is never dropped, so empty it on the JS thread.
+pub struct VmBound<T> {
+    handle: VmHandle,
+    value: core::mem::ManuallyDrop<T>,
+}
+
+// SAFETY: `value` is only reached through `get`, which asks for the VM it was made on, and a
+// `&VirtualMachine` does not leave its thread. `handle` keeps `Shared` allocated, so no later VM gets its address.
+unsafe impl<T> Send for VmBound<T> {}
+// SAFETY: as above.
+unsafe impl<T> Sync for VmBound<T> {}
+
+impl<T> VmBound<T> {
+    pub fn new(vm: &VirtualMachine, value: T) -> Self {
+        VmBound {
+            handle: vm.handle(),
+            value: core::mem::ManuallyDrop::new(value),
+        }
+    }
+
+    pub fn handle(&self) -> &VmHandle {
+        &self.handle
+    }
+
+    /// `None` if `vm` is another VM.
+    pub fn get<'a>(&'a self, vm: &'a VirtualMachine) -> Option<&'a T> {
+        Arc::ptr_eq(&self.handle.0, &vm.handle_ref().0).then(|| &*self.value)
+    }
+}
+
 // ── Test suite only: deterministic late completions ───────────────────────
 //
 // `BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE` (first-level worker VMs; builds with

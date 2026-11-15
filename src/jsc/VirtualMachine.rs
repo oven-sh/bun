@@ -2263,7 +2263,8 @@ impl VirtualMachine {
                 _ => break,
             };
             for hook in hooks {
-                (hook.func)(hook.ctx);
+                // SAFETY: `push_cleanup_hook`'s contract, and the list no longer has it.
+                unsafe { (hook.func)(hook.ctx) };
                 // A hook's C signature returns nothing, so one that entered JS
                 // (an addon finalizer) leaves what it threw pending: fold it here,
                 // this loop being its dispatcher.

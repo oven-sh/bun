@@ -1835,6 +1835,24 @@ nativeTests.test_threadsafe_function_abort_hands_queued_items_back = async () =>
   writeSync(1, `finalized: ${nativeTests.threadsafe_function_with_queued_items_finalized()}\n`);
 };
 
+nativeTests.test_threadsafe_function_unref_and_ref_from_addon_thread = () => {
+  nativeTests.queue_threadsafe_function_items(() => {}, 0, /* print_finalize */ true);
+  nativeTests.unref_and_ref_threadsafe_function_from_addon_thread();
+  nativeTests.abort_threadsafe_function_with_queued_items();
+};
+
+nativeTests.test_threadsafe_function_unref_from_worker = async () => {
+  const { Worker } = require("node:worker_threads");
+  const addon = JSON.stringify(require.resolve("./build/Debug/napitests.node"));
+  nativeTests.queue_threadsafe_function_items(() => {}, 0, /* print_finalize */ true);
+  const worker = new Worker(`process.exit(require(${addon}).unref_threadsafe_function_with_queued_items())`, {
+    eval: true,
+  });
+  const [status] = await require("node:events").once(worker, "exit");
+  nativeTests.abort_threadsafe_function_with_queued_items();
+  return status;
+};
+
 // When napi_create_threadsafe_function is given no JS func, the call_js
 // callback receives a null js_callback (addons test `if (js_callback != NULL)`).
 nativeTests.test_tsfn_null_js_callback_driver = async () => {

@@ -21,6 +21,8 @@ use bun_core::EncodedSlice;
 #[cfg(not(windows))]
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
+#[cfg(unix)]
+use bun_io::PosixFlags;
 use bun_io::{IoEvent, JsKeepAlive, KeepAlive, Owner, PollTag, ReadResult};
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
 use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
@@ -164,7 +166,7 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
 
     /// May free `this` via `maybe_finished`.
     fn on_io(this: ThisPtr<Self>, event: IoEvent) {
-        let result = (this.output_reader()).read(bun_io::js_vm_ctx(), Some(event));
+        let result = this.output_reader().read(bun_io::js_vm_ctx(), Some(event));
         if this.note_read_result(result) {
             Self::maybe_finished(this);
         }
@@ -744,7 +746,7 @@ pub(crate) fn register_os_job(
         tmp_path: JsCell::new(None),
     });
     let owner = Owner::new(PollTag::CronRegister, job.as_ptr().cast());
-    // SAFETY: a field of its owner.
+    // SAFETY: `owner` points to the heap allocation that holds this reader.
     unsafe { job.output_reader.set_owner(owner) };
     let promise_value = job.promise.get().value();
     let this = job.this_ptr();
@@ -1147,7 +1149,7 @@ pub(crate) fn remove(cx: &mut JsScope<'_>, title: &[u8]) -> JsResult<JSValue> {
         tmp_path: JsCell::new(None),
     });
     let owner = Owner::new(PollTag::CronRemove, job.as_ptr().cast());
-    // SAFETY: a field of its owner.
+    // SAFETY: `owner` points to the heap allocation that holds this reader.
     unsafe { job.output_reader.set_owner(owner) };
     let promise_value = job.promise.get().value();
     let this = job.this_ptr();
@@ -1753,7 +1755,8 @@ trait SpawnCmdTarget: CronJobBase + bun_spawn::ProcessExitOwner {
     fn process_slot(&self) -> &JsCell<Option<ProcessHandle>>;
 }
 
-/// SAFETY: `owner` is the one a live job gave its reader. The job may be freed.
+/// # Safety
+/// `owner` is the one a live job gave its reader. The job may be freed.
 pub(crate) unsafe fn on_io(owner: Owner, event: IoEvent) {
     // SAFETY: fn contract.
     unsafe {
@@ -1908,17 +1911,16 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     {
         if let Some(stdout) = spawned.stdout.take().map(sys::File::into_raw) {
             if !spawned.memfds[1] {
-                use bun_io::pipe_reader::PosixFlags;
                 let _ = sys::set_nonblocking(stdout);
                 this.remaining_fds().set(this.remaining_fds().get() + 1);
                 let reader = this.output_reader();
-                reader.update_flags(|f| f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET));
                 reader.update_flags(|f| {
+                    f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
                     f.remove(
                         PosixFlags::MEMFD
                             | PosixFlags::RECEIVED_EOF
                             | PosixFlags::CLOSED_WITHOUT_REPORTING,
-                    )
+                    );
                 });
                 let Ok(result) = reader.start(bun_io::js_vm_ctx(), stdout, true) else {
                     this.set_err(format_args!("Failed to start reading stdout"));

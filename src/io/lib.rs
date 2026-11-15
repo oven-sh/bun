@@ -263,19 +263,6 @@ pub type LoopRef = &'static Loop;
 #[cfg(windows)]
 pub type LoopRef = *mut Loop;
 
-/// The platform-native [`Loop`] of a uws loop: itself on POSIX, the libuv loop it wraps on Windows.
-#[inline]
-pub fn uws_to_native(uws: &'static bun_uws_sys::Loop) -> LoopRef {
-    #[cfg(not(windows))]
-    {
-        uws
-    }
-    #[cfg(windows)]
-    {
-        uws.uv_loop()
-    }
-}
-
 pub use posix_event_loop::{IoEvent, Owner, PollTag, js_vm_ctx};
 
 #[cfg(not(windows))]
@@ -344,11 +331,6 @@ impl EventLoopCtx {
     #[inline]
     pub(crate) fn loop_sub_active(&self, n: u32) {
         self.loop_().sub_active(n);
-    }
-    /// See [`uws_to_native`].
-    #[inline]
-    pub fn native_loop(&self) -> LoopRef {
-        uws_to_native(self.loop_())
     }
 }
 #[cfg(not(windows))]

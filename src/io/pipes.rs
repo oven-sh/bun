@@ -2,6 +2,8 @@
 use core::cell::Cell;
 
 #[cfg(not(windows))]
+use bun_ptr::{CellExt as _, OptionCellExt as _};
+#[cfg(not(windows))]
 use bun_sys::{self as sys, Fd, FdExt};
 
 #[cfg(not(windows))]
@@ -29,15 +31,14 @@ impl PipeHandle {
         }
     }
 
-    /// `None` without a poll. `f` finds `self` without one.
+    /// `None` without a poll. The cell is empty while `f` runs.
     pub(crate) fn with_poll<R>(&self, f: impl FnOnce(&FilePoll) -> R) -> Option<R> {
-        let poll = self.poll.take()?;
-        let result = f(&poll);
-        self.poll.set(Some(poll));
-        Some(result)
+        self.poll.with_taken(|poll| poll.as_deref().map(f))
     }
 
-    /// SAFETY: `owner` is what `__bun_run_io` takes its tag for, until `self` is dropped or has another owner.
+    /// # Safety
+    /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to, until `self`
+    /// is dropped or has another owner.
     pub(crate) unsafe fn set_owner(&self, owner: Owner) {
         self.owner.set(owner);
         // SAFETY: caller contract. The poll leaves `self` by `take_from` alone, which replaces its owner.
@@ -53,7 +54,7 @@ impl PipeHandle {
     }
 
     pub fn has_poll(&self) -> bool {
-        self.with_poll(|_| ()).is_some()
+        self.poll.is_some()
     }
 
     pub fn is_registered(&self) -> bool {

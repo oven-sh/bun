@@ -159,7 +159,8 @@ impl<'a> Async<'a> {
                 // The mini arm heap-allocates an auto-deinit wrapper per bounce.
                 let any = bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from_callback_auto_deinit(
                     task,
-                    |task, _| task.run_from_main_thread(),
+                    // SAFETY: the loop of the script calls this.
+                    |task, _| unsafe { task.run_from_main_thread() },
                 );
                 mini.enqueue_task_concurrent(core::ptr::NonNull::new(any).expect("heap task"));
             }
@@ -186,12 +187,16 @@ impl bun_event_loop::BoxedTask for ShellAsyncTask {
 }
 
 impl ShellAsyncTask {
-    pub(crate) fn run_from_main_thread(mut self: Box<Self>) {
+    /// # Safety
+    /// Called by the event loop that `enqueue_self` gave `self` to.
+    pub(crate) unsafe fn run_from_main_thread(mut self: Box<Self>) {
         let interp_ref = self.interp.take().expect("set by enqueue_self");
-        interp_ref.run_yield_with(|interp| {
+        let resume = |interp: &mut Interpreter<'_>| {
             let node = self.node;
             interp.as_async_mut(node).task = Some(self);
             Async::next(interp, node)
-        });
+        };
+        // SAFETY: caller contract.
+        unsafe { interp_ref.run_yield_with(resume) };
     }
 }

@@ -764,7 +764,11 @@ fn run_task_cold(task: Task) {
 
     match task.tag() {
         // ── shell interpreter ────────────────────────────────────────────
-        task_tag::ShellAsync => boxed!(task, ShellAsyncTask).run_from_main_thread(),
+        task_tag::ShellAsync => {
+            let task = boxed!(task, ShellAsyncTask);
+            // SAFETY: `Async::enqueue_self` queued it on this loop.
+            unsafe { task.run_from_main_thread() };
+        }
         task_tag::ShellCondExprStatTask => shell_dispatch!(PoolTask<ShellCondExprStatTask>),
         task_tag::ShellCpTask => shell_dispatch!(ShellCpTask),
         task_tag::ShellTouchTask => shell_dispatch!(PoolTask<ShellTouchTask>),
@@ -774,7 +778,11 @@ fn run_task_cold(task: Task) {
         task_tag::ShellMvCheckTargetTask => shell_dispatch!(PoolTask<ShellMvCheckTargetTask>),
         task_tag::ShellRmDirTask => shell_dispatch!(ShellRmDirTask),
         task_tag::ShellGlobTask => shell_dispatch!(PoolTask<ShellGlobTask>),
-        task_tag::ShellYesTask => boxed!(task, ShellYesTask).run_from_main_thread(),
+        task_tag::ShellYesTask => {
+            let task = boxed!(task, ShellYesTask);
+            // SAFETY: `YesTask::enqueue` queued it on this loop.
+            unsafe { task.run_from_main_thread() };
+        }
 
         // Any tag the hot path mis-routed: producer bug.
         _ => panic!("Unexpected Task tag: {}", task.tag().0),

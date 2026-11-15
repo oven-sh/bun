@@ -559,6 +559,7 @@ pub(crate) struct DirTask {
 }
 
 bun_threading::intrusive_work_task!(DirTask, work_task);
+bun_core::intrusive_field!(DirTask, task: ShellTask);
 
 /// Held by a directory's task and its children. The last holder takes the task, and deletes the directory.
 type ParentTask = Arc<Guarded<Option<Box<DirTask>>>>;
@@ -1037,12 +1038,6 @@ impl bun_event_loop::BoxedTask for DirTask {
     /// See [`ShellTaskCtx`]: a step of a shell script always runs.
     fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
-    }
-}
-
-impl AsMut<ShellTask> for DirTask {
-    fn as_mut(&mut self) -> &mut ShellTask {
-        &mut self.task
     }
 }
 

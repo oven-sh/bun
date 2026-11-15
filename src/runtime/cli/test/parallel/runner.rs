@@ -14,11 +14,11 @@ use bun_resolver::fs::FileSystem;
 use bun_sys::Fd;
 
 use super::aggregate;
-use super::channel::{Channel, ChannelOwner};
+use super::channel::Channel;
 use super::coordinator::{Coordinator, abort_handler};
 use super::file_range::FileRange;
 use super::frame::{self, Frame};
-use super::worker::{Worker, WorkerPipe};
+use super::worker::Worker;
 use crate::Command;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
@@ -133,18 +133,14 @@ pub(crate) fn run_as_coordinator(
     };
 
     let mut workers: Vec<Worker> = Vec::with_capacity(k as usize);
-    // Populate fully BEFORE constructing Coordinator so it can hold
-    // `&mut [Worker]` without aliasing the push loop. The `coord` backref is
-    // null here and patched once Coordinator's address is fixed.
     for i in 0..k {
         let idx: u32 = i;
         workers.push(Worker {
-            // BACKREF (LIFETIMES.tsv: *const Coordinator<'static>) — patched below
-            coord: core::ptr::null(),
+            event_loop: bun_jsc::EventLoopHandle::init(vm.event_loop_ptr()),
             idx,
             range: ranges[idx as usize],
-            out: WorkerPipe::new(core::ptr::null()),
-            err: WorkerPipe::new(core::ptr::null()),
+            out: bun_io::BufferedReader::init::<Worker>(),
+            err: bun_io::BufferedReader::init::<Worker>(),
             process: None,
             ipc: Channel::default(),
             inflight: None,
@@ -152,7 +148,7 @@ pub(crate) fn run_as_coordinator(
             captured: Vec::new(),
             alive: false,
             exit_status: None,
-            reap_pending: false,
+            peak_rss_mb: 0,
             reached_ready: false,
             startup_failures: 0,
             waits_for_heavy_file_to_end: false,
@@ -172,16 +168,12 @@ pub(crate) fn run_as_coordinator(
     });
     let mut coord = Coordinator {
         vm,
-        event_loop_handle: bun_jsc::EventLoopHandle::init(vm.event_loop_ptr()),
         reporter,
         files: sorted,
         costs,
         cwd: FileSystem::get().top_level_dir(),
         argv,
         envps,
-        // Coordinator borrows the workers slice while each Worker holds a raw
-        // backref to the Coordinator; the raw pointers (never a second `&mut`)
-        // are what keep this sound. See the backref patch loop below.
         workers: &mut workers,
         parallel_limit: k,
         keeps_heavy_files_apart: runs_compiled_code,
@@ -193,7 +185,6 @@ pub(crate) fn run_as_coordinator(
         room_beside_heavy_files,
         heavy_files_to_hand_out,
         max_worker_peak_rss_mb: 0,
-        max_exited_worker_rss_mb: 0,
         scale_up_after_ms: if let Some(d) = ctx.test_options.parallel_delay_ms {
             i64::from(d)
         } else if let Some(s) = env.get(b"BUN_TEST_PARALLEL_SCALE_MS") {
@@ -227,29 +218,13 @@ pub(crate) fn run_as_coordinator(
 
     let _abort_guard = abort_handler::install();
 
-    // Patch the Worker→Coordinator backref now that `coord`'s address is fixed.
-    // Access workers through `coord.workers` to avoid a second &mut on the Vec.
-    {
-        // `&raw mut` so the stored `*const` backref keeps write provenance —
-        // Worker mutates the Coordinator through `coord.cast_mut()`. This only
-        // removes the read-only-provenance layer of UB: `coord.drive()` below
-        // is called through a fresh `&mut coord` and the backref writes happen
-        // during drive(), so the aliasing remains UB-adjacent under
-        // Stacked/Tree Borrows. Full fix = `*mut` backref or interior
-        // mutability (see `Worker.coord` field doc).
-        let coord_ptr = (&raw mut coord).cast::<Coordinator<'static>>().cast_const();
-        for w in coord.workers.iter_mut() {
-            w.coord = coord_ptr;
-        }
-    }
-
     vm.event_loop().ensure_waker();
     crate::cli::run_compiled::log_step_of_test_run(format_args!("the coordinator is set up"));
     vm.run_with_api_lock(|| coord.drive());
     coord.end_group();
     crate::cli::run_compiled::log_largest_worker(
         coord.max_worker_peak_rss_mb,
-        coord.max_exited_worker_rss_mb,
+        (coord.workers.iter()).fold(0, |most, w| most.max(w.peak_rss_mb)),
     );
     crate::cli::run_compiled::log_account_of_process(format_args!("coordinator | files {n}"));
 
@@ -575,7 +550,7 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
 /// abstraction as the coordinator side: usockets over the socketpair on POSIX,
 /// `uv.Pipe` over the inherited duplex named-pipe on Windows.
 pub(crate) struct WorkerCommands {
-    pub(crate) channel: Channel<WorkerCommands>,
+    pub(crate) channel: Channel,
     /// Reused across all worker → coordinator emits.
     frame: Frame,
     /// Coordinator dispatches one `.run` and waits for `.file_done` before
@@ -587,8 +562,7 @@ pub(crate) struct WorkerCommands {
     /// A compiled run with `--update-timings`.
     pending_is_growth_written: bool,
     running: Option<RunningFile>,
-    /// EOF, error, `.shutdown`, or a corrupt frame.
-    pub(crate) done: bool,
+    shutdown: bool,
 }
 
 struct RunningFile {
@@ -605,6 +579,28 @@ impl WorkerCommands {
         self.frame.begin(kind);
         fill(&mut self.frame);
         self.channel.send(self.frame.finish());
+    }
+
+    /// False as long as there is no file to run and one may still come.
+    fn read_commands(&mut self) -> bool {
+        if let Some(mut received) = self.channel.take_received() {
+            while let Some((kind, mut rd)) = received.next_frame() {
+                match kind {
+                    frame::Kind::Run => {
+                        self.pending_idx = Some(rd.u32());
+                        self.pending_path.clear();
+                        self.pending_path.extend_from_slice(rd.str());
+                        self.pending_first_loads.clear();
+                        self.pending_first_loads.extend_from_slice(rd.str());
+                        self.pending_is_growth_written = rd.u32() != 0;
+                    }
+                    frame::Kind::Shutdown => self.shutdown = true,
+                    _ => {}
+                }
+            }
+            self.channel.keep_unread(received);
+        }
+        self.pending_idx.is_some() || self.shutdown || self.channel.done.get()
     }
 
     /// Says what the file that runs has counted.
@@ -650,28 +646,6 @@ impl WorkerCommands {
     }
 }
 
-bun_core::intrusive_field!(WorkerCommands, channel: Channel<WorkerCommands>);
-impl ChannelOwner for WorkerCommands {
-    fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
-        match kind {
-            frame::Kind::Run => {
-                self.pending_idx = Some(rd.u32());
-                self.pending_path.clear();
-                self.pending_path.extend_from_slice(rd.str());
-                self.pending_first_loads.clear();
-                self.pending_first_loads.extend_from_slice(rd.str());
-                self.pending_is_growth_written = rd.u32() != 0;
-            }
-            frame::Kind::Shutdown => self.done = true,
-            _ => {}
-        }
-    }
-
-    fn on_channel_done(&mut self) {
-        self.done = true;
-    }
-}
-
 // Hoisted from a local struct inside run_as_worker — Rust does not
 // support method-bearing local structs that need to be named in a generic call.
 struct WorkerLoop<'a> {
@@ -682,7 +656,7 @@ struct WorkerLoop<'a> {
 
 impl<'a> WorkerLoop<'a> {
     fn begin(&mut self, vm: &VirtualMachine) {
-        if !Channel::adopt(&raw mut self.cmds.channel, vm, Fd::from_uv(3)) {
+        if !self.cmds.channel.adopt(vm, Fd::from_uv(3)) {
             bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
             Global::exit(1);
         }
@@ -716,9 +690,9 @@ impl<'a> WorkerLoop<'a> {
             // The channel holds no reference on the loop, and a loop that nothing holds polls without sleeping.
             let waits_for_command = bun_io::KeepAlive::init();
             waits_for_command.ref_(bun_io::js_vm_ctx());
-            while self.cmds.pending_idx.is_none() && !self.cmds.done {
+            while !self.cmds.read_commands() {
                 vm.event_loop().tick();
-                if self.cmds.pending_idx.is_some() || self.cmds.done {
+                if self.cmds.read_commands() {
                     break;
                 }
                 vm.event_loop().auto_tick();
@@ -911,7 +885,7 @@ pub(crate) fn run_as_worker(
             pending_first_loads: Vec::new(),
             pending_is_growth_written: false,
             running: None,
-            done: false,
+            shutdown: false,
         },
         files_run: 0,
     };
@@ -937,6 +911,17 @@ pub(crate) fn run_as_worker(
         &ctx.test_options.coverage,
         &mut wloop.cmds,
     );
+    // Drain backpressure-buffered frames so the coordinator sees repeat_bufs / coverage_file.
+    let channel = &wloop.cmds.channel;
+    vm.run_with_api_lock(|| {
+        while channel.has_pending_writes() && !channel.done.get() {
+            vm.event_loop().tick();
+            if !channel.has_pending_writes() || channel.done.get() {
+                break;
+            }
+            vm.event_loop().auto_tick();
+        }
+    });
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
     vm.exit_handler.exit_code.set(0);
@@ -983,18 +968,6 @@ fn worker_flush_aggregates(
             cmds.emit(frame::Kind::CoverageFile, |wf| wf.str(&encoded));
         });
     }
-
-    // Drain any backpressure-buffered frames before exit so the coordinator
-    // sees repeat_bufs / coverage_file.
-    vm.run_with_api_lock(|| {
-        while cmds.channel.has_pending_writes() && !cmds.channel.done.get() {
-            vm.event_loop().tick();
-            if !cmds.channel.has_pending_writes() || cmds.channel.done.get() {
-                break;
-            }
-            vm.event_loop().auto_tick();
-        }
-    });
 }
 
 /// Set in `run_as_worker` so `worker_emit_test_done` (called from

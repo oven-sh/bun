@@ -37,7 +37,7 @@ use crate::bundle_v2::{self as bundler, BundleV2};
 use crate::cache::{Entry as CacheEntry, ExternalFreeFunction};
 use crate::html_scanner::scan_import_records;
 use crate::options::{self, Loader};
-use crate::transpiler::Transpiler;
+use crate::transpiler::{MacroJSCtx, Transpiler};
 use crate::{ContentHasher, UseDirective, perf, target_from_hashbang};
 use bun_resolver::fs::PathResolverExt as _;
 use bun_resolver::{self as _resolver, Resolver};
@@ -2426,10 +2426,10 @@ pub mod parse_worker {
         // SAFETY: the worker owns `transpiler` and the table and outlives the parse; a macro cannot reach the worker.
         opts.macro_context = unsafe {
             let data = (*worker_raw).data.as_ref();
-            Some(js_parser::Macro::MacroContext::new(
-                transpiler.cast(),
+            Some(Transpiler::macro_context(
+                transpiler,
                 &data.expect("Worker.data set in create()").macro_load_states,
-                crate::transpiler::default_macro_js_value(),
+                MacroJSCtx::ZERO,
             ))
         };
         opts.package_version = task.package_version.slice();

@@ -136,9 +136,8 @@ fn call_macro(
         Some(MacroLoadState::Disabled) => return Ok(caller),
         None => {
             ctx.macro_load_states.set(hash, MacroLoadState::Disabled);
-            let (vm, is_new_vm) = if VirtualMachine::is_loaded() {
-                (VirtualMachine::get(), false)
-            } else {
+            let is_new_vm = !VirtualMachine::is_loaded();
+            let vm = if is_new_vm {
                 // SAFETY: the contract of `MacroContext::new`. `env` is the build's loader: it
                 // outlives the build and nothing writes to it while parse tasks run.
                 let (options, env) = unsafe {
@@ -147,7 +146,9 @@ fn call_macro(
                         (*transpiler).env.as_ref(),
                     )
                 };
-                (init_macro_vm(log, env, options)?, true)
+                init_macro_vm(log, env, options)?
+            } else {
+                VirtualMachine::get()
             };
             load_macro(
                 vm,
@@ -436,7 +437,7 @@ impl<'a> Run<'a> {
             let mut runner = Run {
                 caller,
                 vm,
-                global: vm.global(),
+                global,
                 bump,
                 log,
                 source,

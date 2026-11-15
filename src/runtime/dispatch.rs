@@ -1002,7 +1002,7 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             })
         }
         poll_tag::MEMORY_PRESSURE => {
-            crate::node::memory_pressure::on_poll(poll_ref, size_or_offset);
+            crate::node::memory_pressure::on_poll(poll_ref.fd, poll_ref.flags, size_or_offset);
         }
         poll_tag::PARENT_DEATH_WATCHDOG => {
             let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);
@@ -1050,14 +1050,15 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             [Dns],
             (
                 resolver: *const DNSResolver = owner.ptr.cast_const().cast::<DNSResolver>(),
-                poll: *mut FilePoll = poll,
+                fd: i32 = poll_ref.fd.native(),
+                readable: bool = poll_ref.is_readable(),
+                writable: bool = poll_ref.is_writable(),
             ) {
                 // R-2: deref as shared (`&*const`) — `on_dns_poll` takes `&self` and
                 // `Channel::process` re-enters the resolver via c-ares callbacks.
                 // SAFETY: tag set with this pointee type at `FilePoll::init`.
                 let resolver = unsafe { &*resolver };
-                // SAFETY: `poll` outlives this call (caller contract).
-                resolver.on_dns_poll(unsafe { &mut *poll });
+                resolver.on_dns_poll(fd, readable, writable);
             }
         ),
         poll_tag::GET_ADDR_INFO_REQUEST => {

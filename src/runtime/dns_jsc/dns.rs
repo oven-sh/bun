@@ -18,8 +18,6 @@ use bun_dns::{
     self, Backend as GetAddrInfoBackend, GetAddrInfo, GetAddrInfoResult,
     Options as GetAddrInfoOptions, ResultList as GetAddrInfoResultList,
 };
-#[cfg(not(windows))]
-use bun_io::FilePoll;
 use bun_io::{self as Async, KeepAlive};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
@@ -2228,11 +2226,11 @@ hostent_ttls_record_type!(
 );
 
 #[cfg(windows)]
-type PollType = UvDnsPoll;
+type PollType = OpenUvDnsPoll;
 #[cfg(not(windows))]
-type PollType = FilePoll;
+type PollType = Async::OwnedFilePoll;
 
-type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
+type PollsMap = ArrayHashMap<c_ares::ares_socket_t, PollType>;
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). c-ares
@@ -2318,6 +2316,50 @@ impl UvDnsPoll {
     fn from_poll(poll: *mut libuv::uv_poll_t) -> *mut Self {
         // SAFETY: poll points to UvDnsPoll.poll
         unsafe { bun_core::from_field_ptr!(UvDnsPoll, poll, poll) }
+    }
+}
+
+/// Dropping it closes the handle, which `on_close_uv` frees.
+#[cfg(windows)]
+pub(crate) struct OpenUvDnsPoll(*mut UvDnsPoll);
+
+#[cfg(windows)]
+impl OpenUvDnsPoll {
+    fn open(parent: *mut Resolver, socket: c_ares::ares_socket_t) -> Option<Self> {
+        let poll = UvDnsPoll::new(parent, socket);
+        // SAFETY: a fresh heap allocation with a zeroed `uv_poll_t`.
+        let rc = unsafe {
+            libuv::uv_poll_init_socket(Loop::get().uv_loop(), &raw mut (*poll).poll, socket as _)
+        };
+        if rc < 0 {
+            UvDnsPoll::destroy(poll);
+            return None;
+        }
+        Some(Self(poll))
+    }
+
+    fn start(&self, events: c_int) -> c_int {
+        // SAFETY: initialised by `open`, and not closed yet.
+        unsafe {
+            libuv::uv_poll_start(
+                &raw mut (*self.0).poll,
+                events,
+                Some(Resolver::on_dns_poll_uv),
+            )
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for OpenUvDnsPoll {
+    fn drop(&mut self) {
+        // SAFETY: initialised by `open`, and not closed yet.
+        unsafe {
+            libuv::uv_close(
+                (&raw mut (*self.0).poll).cast(),
+                Some(Resolver::on_close_uv),
+            )
+        };
     }
 }
 
@@ -2644,14 +2686,10 @@ impl Resolver {
     /// the structural fix for the previously ASM-verified PROVEN_CACHED
     /// miscompile that needed `black_box` laundering under `&mut self`.
     #[cfg(not(windows))]
-    pub(crate) fn on_dns_poll(&self, poll: &mut FilePoll) {
+    pub(crate) fn on_dns_poll(&self, fd: c_ares::ares_socket_t, readable: bool, writable: bool) {
         let vm = self.vm();
         let _exit = vm.enter_event_loop_scope();
         let Some(channel) = self.channel_ptr() else {
-            self.polls.with_mut(|p| {
-                let _ = p.remove(&poll.fd.native());
-            });
-            poll.deinit();
             return;
         };
 
@@ -2660,9 +2698,7 @@ impl Resolver {
         // SAFETY: `channel` is the live c-ares channel owned by `self`; no `&mut`
         // to `*self` is held across this re-entrant call (all fields are
         // UnsafeCell-backed).
-        unsafe {
-            (*channel).process(poll.fd.native(), poll.is_readable(), poll.is_writable());
-        }
+        unsafe { (*channel).process(fd, readable, writable) };
 
         // c-ares detaches a query only *after* its callback returns, so
         // `request_completed` may have seen it still counted; re-check now.
@@ -2677,103 +2713,40 @@ impl Resolver {
         readable: bool,
         writable: bool,
     ) {
-        #[cfg(windows)]
-        {
-            use libuv as uv;
-            if !readable && !writable {
-                // cleanup — `remove` is the ordered, value-returning variant.
-                if let Some(entry) = self.polls.with_mut(|p| p.remove(&fd)) {
-                    // SAFETY: `entry` is the heap `UvDnsPoll` we inserted below;
-                    // libuv takes ownership of the handle until `on_close_uv`
-                    // frees the allocation.
-                    unsafe {
-                        uv::uv_close(
-                            core::ptr::from_mut(&mut (*entry).poll).cast(),
-                            Some(Self::on_close_uv),
-                        )
-                    };
-                }
-                return;
-            }
+        if !readable && !writable {
+            // c-ares's way of saying that the socket is closed.
+            drop(self.polls.with_mut(|p| p.remove(&fd)));
+            return;
+        }
 
-            // Capture `self` as a raw backref for `UvDnsPoll::parent`.
-            let this_ptr: *mut Self = self.as_ctx_ptr();
-            // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
-            // any re-entrant call (libuv `uv_poll_*` below do not call back into
-            // this resolver synchronously).
-            let polls = unsafe { self.polls.get_mut() };
-            let poll_entry = bun_core::handle_oom(polls.get_or_put(fd));
-            let poll: *mut UvDnsPoll = if poll_entry.found_existing {
-                *poll_entry.value_ptr
-            } else {
-                let new_poll = UvDnsPoll::new(this_ptr, fd);
-                // Publish into the map first so the `GetOrPutResult` borrow can
-                // end (NLL) before we may need to `swap_remove` on init failure.
-                *poll_entry.value_ptr = new_poll;
-                // SAFETY: `new_poll` is a fresh heap allocation with a zeroed `uv_poll_t`.
-                if unsafe {
-                    uv::uv_poll_init_socket(Loop::get().uv_loop(), &mut (*new_poll).poll, fd as _)
-                } < 0
-                {
-                    UvDnsPoll::destroy(new_poll);
-                    let _ = polls.swap_remove(&fd);
-                    return;
-                }
-                new_poll
+        #[cfg(windows)]
+        self.polls.with_mut(|polls| {
+            use bun_collections::array_hash_map::MapEntry;
+            let poll = match polls.entry(fd) {
+                MapEntry::Occupied(entry) => entry.into_mut(),
+                MapEntry::Vacant(entry) => match OpenUvDnsPoll::open(self.as_ctx_ptr(), fd) {
+                    Some(poll) => entry.insert(poll),
+                    None => return,
+                },
             };
 
-            let uv_events = (if readable { uv::UV_READABLE } else { 0 })
-                | (if writable { uv::UV_WRITABLE } else { 0 });
-            // SAFETY: `poll` is the live entry just inserted/looked up above.
-            if unsafe {
-                uv::uv_poll_start(&mut (*poll).poll, uv_events, Some(Self::on_dns_poll_uv))
-            } < 0
-            {
-                let _ = polls.swap_remove(&fd);
-                // SAFETY: handle was successfully `uv_poll_init_socket`-ed, so
-                // `uv_close` is the required teardown path; `on_close_uv` frees
-                // the `UvDnsPoll` box.
-                unsafe {
-                    uv::uv_close(
-                        core::ptr::from_mut(&mut (*poll).poll).cast(),
-                        Some(Self::on_close_uv),
-                    )
-                };
+            let uv_events = (if readable { libuv::UV_READABLE } else { 0 })
+                | (if writable { libuv::UV_WRITABLE } else { 0 });
+            if poll.start(uv_events) < 0 {
+                polls.swap_remove(&fd);
             }
-        }
+        });
         #[cfg(not(windows))]
-        {
+        self.polls.with_mut(|polls| {
             let ctx = js_event_loop_ctx();
-
-            if !readable && !writable {
-                // read == 0 and write == 0 this is c-ares's way of notifying us that
-                // the socket is now closed. We must free the data associated with
-                // socket.
-                if let Some(value) = self.polls.with_mut(|p| p.remove(&fd)) {
-                    // SAFETY: `value` is the heap-allocated FilePoll for this fd.
-                    unsafe { (*value).deinit_with_vm(ctx) };
-                }
-                return;
-            }
-
             let owner = Async::Owner::new(
                 Async::posix_event_loop::poll_tag::DNS_RESOLVER,
                 self.as_ctx_ptr().cast::<()>(),
             );
             let loop_ = self.vm().uws_loop();
-            // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
-            // any re-entrant call (`FilePoll::register` is a syscall wrapper).
-            let polls = unsafe { self.polls.get_mut() };
-            let poll_entry = polls.get_or_put(fd).expect("unreachable");
-
-            if !poll_entry.found_existing {
-                *poll_entry.value_ptr =
-                    FilePoll::init(ctx, sys::Fd::from_native(fd), Default::default(), owner);
-            }
-
-            // SAFETY: `value_ptr` points at a slot just initialized above (or a
-            // previously-initialized live FilePoll hive slot); JS-thread exclusive.
-            let poll = unsafe { &mut **poll_entry.value_ptr };
+            let poll = polls
+                .entry(fd)
+                .or_insert_with(|| PollType::new(ctx, sys::Fd::from_native(fd), owner));
 
             // c-ares reports the full desired (readable, writable) set for this
             // fd; sync the poll's registration to match. FilePoll now supports
@@ -2809,7 +2782,7 @@ impl Resolver {
                     let _ = poll.register(loop_, Async::PollKind::Writable, false);
                 }
             }
-        }
+        });
     }
 
     // ───────────── JS host fns: resolve* family ─────────────
@@ -3082,6 +3055,8 @@ impl Resolver {
         };
         self.abort_handle.leave();
         drop(channel);
+        // Called from inside c-ares, `ares_destroy` reports no socket as closed.
+        self.polls.with_mut(PollsMap::clear_retaining_capacity);
         true
     }
 }

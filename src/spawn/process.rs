@@ -17,7 +17,9 @@ use bun_event_loop::EventLoopHandle;
 #[cfg(unix)]
 use bun_io::ParentDeathWatchdog;
 #[cfg(unix)]
-use bun_io::{FilePoll, KeepAlive};
+use bun_io::{FilePoll, KeepAlive, OwnedFilePoll};
+#[cfg(unix)]
+use bun_ptr::JsCell;
 use bun_ptr::{RefPtr, ThisPtr};
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
@@ -112,8 +114,7 @@ fn call_exit_handler(h: ProcessExitHandler, status: Status, rusage: &Rusage) {
 // bun.ptr.ThreadSafeRefCount → intrusive (FFI-crossing: *mut Process recovered
 // via `container_of` in on_exit_uv / on_close_uv). Per PORTING.md §Pointers,
 // keep the embedded count; the derive emits `ThreadSafeRefCounted` +
-// `AnyRefCounted`. Default `destructor` (`heap::take`) applies — `Drop` below
-// handles the poller.
+// `AnyRefCounted`. Default `destructor` (`heap::take`) applies.
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct Process {
     pub pid: PidT,
@@ -122,7 +123,7 @@ pub struct Process {
     /// Empty while it runs.
     status: OnceCell<Status>,
     #[cfg(unix)]
-    poller: Cell<Poller>,
+    poller: JsCell<Poller>,
     /// Inactive unless `poller` is `WaiterThread`.
     #[cfg(unix)]
     waiter_keep_alive: KeepAlive,
@@ -142,11 +143,9 @@ pub struct Process {
 }
 
 impl Drop for Process {
-    /// The allocation itself is freed by the `heap::take` in `destructor`
-    /// above; this `Drop` body covers the poller.
     fn drop(&mut self) {
         #[cfg(unix)]
-        self.deinit_poller();
+        self.detach_poller();
         #[cfg(windows)]
         debug_assert!(self.with_handle(|p| p.is_closed()).unwrap_or(true));
     }
@@ -277,7 +276,7 @@ impl Process {
             pidfd: Cell::new(posix.pidfd.unwrap_or(0)),
             js_poster: event_loop.js_poster(),
             event_loop,
-            poller: Cell::new(Poller::Detached),
+            poller: JsCell::new(Poller::Detached),
             waiter_keep_alive: KeepAlive::default(),
             status,
             exit_handler: Cell::default(),
@@ -368,7 +367,6 @@ impl Process {
             return Ok(());
         }
         let ctx = this.event_loop_ctx();
-        this.with_poll(FilePoll::deinit);
         this.poller.set(Poller::WaiterThread);
         this.waiter_keep_alive.ref_(ctx);
         waiter_thread_posix::reap_on_thread(RefPtr::from_this(this)).inspect_err(|_| {
@@ -430,37 +428,28 @@ impl Process {
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
             let watchfd = this.pid;
 
-            let poll: *mut FilePoll = if let Poller::Fd(poll) = this.poller.get() {
-                poll.as_ptr()
-            } else {
-                FilePoll::init(
+            let mut poll = match this.poller.replace(Poller::Detached) {
+                Poller::Fd(poll) => poll,
+                Poller::WaiterThread | Poller::Detached => OwnedFilePoll::new(
                     ctx,
                     Fd::from_native(watchfd),
-                    bun_io::file_poll::FlagsSet::default(),
                     bun_io::Owner::new(
                         bun_io::posix_event_loop::poll_tag::PROCESS,
                         this.as_ptr().cast(),
                     ),
-                )
+                ),
             };
 
-            this.poller.set(Poller::Fd(
-                core::ptr::NonNull::new(poll).expect("FilePoll::init returns a live hive slot"),
-            ));
-            // SAFETY: poll is live; exclusive on this thread (event loop).
-            // Borrow scoped to the call.
-            unsafe { (*poll).enable_keeping_process_alive(ctx) };
-
-            // SAFETY: poll is live; borrow scoped to the call.
-            unsafe {
-                (*poll).register(
+            poll.enable_keeping_process_alive(ctx);
+            let registered = poll
+                .register(
                     this.event_loop.platform_event_loop(),
                     bun_io::PollKind::Process,
                     PROCESS_POLL_ONE_SHOT,
                 )
-            }
-            // SAFETY: as above.
-            .inspect_err(|_| unsafe { (*poll).disable_keeping_process_alive(ctx) })
+                .inspect_err(|_| poll.disable_keeping_process_alive(ctx));
+            this.poller.set(Poller::Fd(poll));
+            registered
         }
     }
 
@@ -469,7 +458,6 @@ impl Process {
         let ctx = this.event_loop_ctx();
         if WaiterThread::should_use_waiter_thread() {
             WaiterThread::start()?;
-            this.with_poll(FilePoll::deinit);
             this.poller.set(Poller::WaiterThread);
             this.waiter_keep_alive.ref_(ctx);
             WaiterThread::append(RefPtr::from_this(this));
@@ -556,10 +544,7 @@ impl Process {
 
     pub fn close(&self) {
         #[cfg(unix)]
-        {
-            self.deinit_poller();
-            self.poller.set(Poller::Detached);
-        }
+        self.detach_poller();
         #[cfg(windows)]
         self.with_handle(|process| {
             if process.is_closed() {
@@ -800,12 +785,8 @@ impl core::fmt::Display for Status {
 }
 
 #[cfg(unix)]
-#[derive(Clone, Copy)]
 enum Poller {
-    /// Hive-allocated `bun_io::FilePoll` slot. Pointer (not `Box`) because the
-    /// poll lives in `Store`; freed via `FilePoll::deinit`,
-    /// never via Rust `drop`.
-    Fd(core::ptr::NonNull<FilePoll>),
+    Fd(OwnedFilePoll),
     /// Waited for off the loop: by the shared waiter thread (Linux without pidfd) or by a `reap_on_thread` thread (macOS).
     WaiterThread,
     Detached,
@@ -813,9 +794,8 @@ enum Poller {
 
 #[cfg(unix)]
 impl Process {
-    /// The caller overwrites `poller`, or drops the process.
-    fn deinit_poller(&self) {
-        if self.with_poll(FilePoll::deinit).is_none() && self.is_on_waiter_thread() {
+    fn detach_poller(&self) {
+        if let Poller::WaiterThread = self.poller.replace(Poller::Detached) {
             // Only here: a `Process` dropped on another thread is detached, and must not reach for its loop.
             self.waiter_keep_alive.unref(self.event_loop_ctx());
         }
@@ -828,12 +808,10 @@ impl Process {
     /// Runs `f` on the poll, if there is one.
     #[inline]
     fn with_poll<R>(&self, f: impl FnOnce(&mut FilePoll) -> R) -> Option<R> {
-        let Poller::Fd(mut poll) = self.poller.get() else {
-            return None;
-        };
-        // SAFETY: `Fd` names a live hive slot and is overwritten once that is freed. No `f` in this
-        // file gets back here, and what dispatches the poll is done with it after the callback.
-        Some(f(unsafe { poll.as_mut() }))
+        self.poller.with_mut(|poller| match poller {
+            Poller::Fd(poll) => Some(f(poll)),
+            Poller::WaiterThread | Poller::Detached => None,
+        })
     }
 }
 

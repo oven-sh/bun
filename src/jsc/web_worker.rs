@@ -19,7 +19,7 @@
 //!                      event loop until it drains or termination is requested,
 //!                      `beforeExit` on a natural drain.
 //!   3. `shutdown()`  — 'exit' handlers, stop phase, join own children, JSC VM
-//!                      teardown, free per-thread state; then `workerGlobalScopeDestroyed`.
+//!                      teardown, free per-thread state; `thread_main` then posts `workerGlobalScopeDestroyed`.
 //!   Then the thread drops its self-ref and returns; the parent joins it.
 //!
 //! Children: every worker created on a thread is registered on that thread's
@@ -979,7 +979,7 @@ impl WebWorker {
             }
         }
 
-        // Second checkpoint: initWorker just spent the bulk of startup time;
+        // `init_worker` just spent the bulk of startup time;
         // if terminate arrived during it, skip configureDefines() (which
         // walks the resolver's global dir_cache) and entry-point loading.
         // spin() will observe the flag.

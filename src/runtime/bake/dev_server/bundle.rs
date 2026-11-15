@@ -270,7 +270,7 @@ impl DevServer {
         &mut self,
         plugins: ::core::ptr::NonNull<crate::api::js_bundler::Plugin>,
     ) -> crate::Result<()> {
-        self.plugins = Some(Plugins::Lent(plugins));
+        self.plugins = Some(Plugins::Borrowed(plugins));
         self.plugin_state = PluginState::Loaded;
         self.start_next_bundle_if_present();
         Ok(())

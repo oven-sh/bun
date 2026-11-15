@@ -853,6 +853,7 @@ impl Crew {
                 }
             }
         }
+        // This frame never returns, and a VM that `end_vm` kept still points at `log`.
         if !VirtualMachine::is_loaded() {
             drop(log);
         }

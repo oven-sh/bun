@@ -56,7 +56,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         .transpose()?;
 
     let mut slot = Box::<DevServer>::new_uninit();
-    // Only stored, until `bun_watcher.start()`.
+    // Not dereferenced before `bun_watcher.start()`.
     let p: *mut DevServer = slot.as_mut_ptr();
     let bun_watcher = match Watcher::init::<DevServer>(p, top_level_dir) {
         Ok(w) => w,
@@ -77,7 +77,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             vm: bun_ptr::BackRef::new(options.vm),
             vm_handle: options.vm.handle(),
             server: None,
-            // Until the framework is resolved, below.
+            // Placeholder: the router is built once the framework is resolved.
             router: FrameworkRouter {
                 root: Box::from(root),
                 types: Box::new([]),
@@ -154,8 +154,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // `bun_watcher::AnyResolveWatcher` (LAYERING: same type), so the watcher's
     // vtable flows directly into the resolver without conversion.
     let resolve_watcher = dev.bun_watcher.get_resolve_watcher();
+    // The transpilers still point at the local that `log` moved out of.
     let log = &raw mut dev.log;
-    for transpiler in dev.transpilers() {
+    for transpiler in dev.transpilers_mut() {
         transpiler.set_log(log);
         transpiler.options.log = log;
         transpiler.options.dev_server = dev_ptr as *const ();
@@ -189,7 +190,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // `serverRuntimeImportSource` in `wrap_exports_for_client_reference`) see
     // absolute paths instead of the user's relative `"./framework/server.ts"`.
     let resolved_view = dev.framework.as_bundler_view();
-    for transpiler in dev.transpilers() {
+    for transpiler in dev.transpilers_mut() {
         transpiler.options.framework = Some(Arc::clone(&resolved_view));
     }
 
@@ -538,7 +539,7 @@ impl Drop for DevServer {
 // re-exports from memory_cost module already declared at top
 
 impl DevServer {
-    fn transpilers(&mut self) -> impl Iterator<Item = &mut Transpiler<'static>> {
+    fn transpilers_mut(&mut self) -> impl Iterator<Item = &mut Transpiler<'static>> {
         [&mut self.server_transpiler, &mut self.client_transpiler]
             .into_iter()
             .chain(&mut self.ssr_transpiler)

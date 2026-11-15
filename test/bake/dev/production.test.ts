@@ -505,15 +505,17 @@ export default function () {
     expect(exitCode).toBe(1);
   });
 
+  const appWithDnsQueryInFlight = `
+    import dns from "node:dns";
+    const silent = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    dns.setServers(["127.0.0.1:" + silent.port]);
+    dns.promises.resolve4("never-answered.invalid").catch(() => {});
+    export default { app: { framework: ${JSON.stringify(minimalFramework)} } };
+  `;
+
   test("a build that fails with a DNS query in flight reports its error", async () => {
     using dir = tempDir("bake-production-dns-in-flight", {
-      "app.ts": `
-        import dns from "node:dns";
-        const silent = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
-        dns.setServers(["127.0.0.1:" + silent.port]);
-        dns.promises.resolve4("never-answered.invalid").catch(() => {});
-        export default { app: { framework: ${JSON.stringify(minimalFramework)} } };
-      `,
+      "app.ts": appWithDnsQueryInFlight,
       "routes/index.ts": `export default () => new Response("index");`,
       "dist": "not a directory",
     });
@@ -528,13 +530,7 @@ export default function () {
 
   test("a build without routes exits cleanly with a DNS query in flight", async () => {
     using dir = tempDir("bake-production-dns-in-flight-ok", {
-      "app.ts": `
-        import dns from "node:dns";
-        const silent = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
-        dns.setServers(["127.0.0.1:" + silent.port]);
-        dns.promises.resolve4("never-answered.invalid").catch(() => {});
-        export default { app: { framework: ${JSON.stringify(minimalFramework)} } };
-      `,
+      "app.ts": appWithDnsQueryInFlight,
     });
 
     const { exitCode, stdout } = await Bun.$`${bunExe()} build --app ./app.ts`

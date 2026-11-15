@@ -189,6 +189,7 @@ pub fn set_break_point_on_first_line() -> bool {
 
 pub struct RuntimeTranspilerStore {
     pub(crate) generation_number: AtomicU32,
+    /// Boxed: 22 KB that `VirtualMachine::init` would otherwise copy.
     pub(crate) store: Box<TranspilerJobStore>,
     pub enabled: Cell<bool>,
     pub(crate) queue: Queue,

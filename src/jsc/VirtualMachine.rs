@@ -9,7 +9,6 @@ use core::ptr::NonNull;
 
 use bun_bundler::Transpiler;
 use bun_io as Async;
-use bun_ptr::AliasableBox;
 use bun_uws as uws;
 
 use crate::bun_string_jsc;
@@ -89,7 +88,7 @@ pub struct InitOptions {
     pub transform_options: bun_options_types::schema::api::TransformOptions,
     /// Consumed by `RuntimeHooks::init_runtime_state` → `configureDebugger`.
     pub debugger: bun_options_types::context::Debugger,
-    /// In place of the process's. Outlives the VM.
+    /// Used instead of `bun_dotenv::instance()`. Outlives the VM.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     /// `--install=...`; the resolver needs it before `configure_linker()` caches package.json.
@@ -413,7 +412,7 @@ pub struct VirtualMachine {
     pub(crate) graph_contexts: JsCell<
         bun_collections::ArrayHashMap<
             crate::ContextId,
-            AliasableBox<crate::ScriptExecutionContext>,
+            bun_ptr::AliasableBox<crate::ScriptExecutionContext>,
         >,
     >,
     /// The context native code has entered ([`enter_context`](Self::enter_context)) and not yet
@@ -430,7 +429,7 @@ pub struct VirtualMachine {
     pub test_isolation_generation: Cell<u32>,
     pub test_isolation_state: TestIsolationState,
 
-    /// What is dropped with the VM still reaches it through [`get`](Self::get).
+    /// `!Unpin`: fields being dropped still reach the VM through [`get`](Self::get).
     _pin: core::marker::PhantomPinned,
 }
 
@@ -1359,7 +1358,7 @@ impl VirtualMachine {
     /// WebCore's `JSEventListener`) and JSC discards microtasks. Both the
     /// ordinary teardown (after the stop phase) and a parent-terminated
     /// worker's exit (before it) go through here.
-    pub fn forbid_script(&self) {
+    fn forbid_script(&self) {
         Zig__GlobalObject__forbidExecution(self.global());
         self.handle.stop();
     }
@@ -1539,7 +1538,7 @@ impl VirtualMachine {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn log_mut(&self) -> Option<&mut bun_ast::Log> {
-        // SAFETY: see `log_ref`; single-JS-thread invariant.
+        // SAFETY: `init`'s caller keeps the log alive while the VM runs; single-JS-thread invariant.
         self.log.get().map(|mut p| unsafe { p.as_mut() })
     }
 
@@ -1962,19 +1961,20 @@ impl VirtualMachine {
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         use bun_bundler::entry_points::{Fs, MacroEntryPoint};
         use bun_collections::hash_map::Entry;
-        self.macro_entry_points.with_mut(|entry_points| {
-            if let Entry::Vacant(v) = entry_points.entry(hash) {
-                let mut ep = Box::new(MacroEntryPoint::default());
-                MacroEntryPoint::generate(
-                    &mut ep,
-                    &Fs::PathName::init(entry_path),
-                    function_name,
-                    hash,
-                )?;
-                v.insert(ep);
-            }
-            crate::CrateResult::<()>::Ok(())
-        })?;
+        self.macro_entry_points
+            .with_mut(|entry_points| -> crate::CrateResult<()> {
+                if let Entry::Vacant(v) = entry_points.entry(hash) {
+                    let mut ep = Box::new(MacroEntryPoint::default());
+                    MacroEntryPoint::generate(
+                        &mut ep,
+                        &Fs::PathName::init(entry_path),
+                        function_name,
+                        hash,
+                    )?;
+                    v.insert(ep);
+                }
+                Ok(())
+            })?;
 
         let promise = self.run_with_api_lock(|| self._load_macro_entry_point(specifier));
         promise.ok_or(crate::CrateError::JSError)
@@ -2288,9 +2288,9 @@ impl VirtualMachine {
         }
         let this = Self::get_mut_ptr();
         // SAFETY: main-thread VM on the main thread; exit handlers have run.
-        let finished = unsafe { Self::teardown(this, Teardown::MainThreadExit) };
+        let can_drop = unsafe { Self::teardown(this, Teardown::MainThreadExit) };
         let exit_code = self.exit_handler.exit_code.get();
-        if finished {
+        if can_drop {
             // SAFETY: no frame of this thread resumes. The allocation stays for signal handlers.
             unsafe { core::ptr::drop_in_place(this) };
         }
@@ -2517,12 +2517,12 @@ impl VirtualMachine {
     }
 }
 
-/// After [`teardown`](VirtualMachine::teardown).
+/// Runs only after [`teardown`](VirtualMachine::teardown).
 impl Drop for VirtualMachine {
-    /// Releases what calls back into the VM as it goes, while every field is whole.
+    /// First drops what calls `VirtualMachine::get()` when dropped.
     fn drop(&mut self) {
         debug_assert!(self.regular_event_loop.is_drained() && self.macro_event_loop.is_drained());
-        // Their polls are slots of `rare_data`.
+        // These `Process`es and `FileSink`s hold slots of `rare_data.file_polls`.
         self.auto_killer.clear();
         drop(self.test_isolation_state.at_retirement.take());
         drop_source_code_printer();
@@ -2661,7 +2661,7 @@ impl GraphContextStopAndFree {
 
 /// Which exit funnel is running [`VirtualMachine::teardown`].
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Teardown {
+enum Teardown {
     Worker,
     MainThreadExit,
 }
@@ -3077,20 +3077,21 @@ impl VirtualMachine {
         }
 
         // Saves a `mi_heap_new`/`mi_heap_destroy` pair.
-        static MAIN_HEAP: std::sync::LazyLock<bun_alloc::Arena> =
-            std::sync::LazyLock::new(bun_alloc::Arena::borrowing_default);
+        static MAIN_HEAP: bun_core::Once<bun_alloc::Arena> = bun_core::Once::new();
+        let heap = MAIN_HEAP.get_or_init(bun_alloc::Arena::borrowing_default);
 
         let mut args = core::mem::take(&mut opts.transform_options);
         let preserve_symlinks = args.preserve_symlinks.unwrap_or(false);
         args.write = Some(false);
         args.target = Some(bun_options_types::schema::api::Target::Bun);
         let env_loader = opts.env_loader.map(NonNull::as_ptr);
-        let transpiler = Transpiler::init(&MAIN_HEAP, log, args, env_loader).inspect_err(|_| {
+        let transpiler = Transpiler::init(heap, log, args, env_loader).inspect_err(|_| {
             bun_ast::expr::data::Store::deinit();
             bun_ast::stmt::data::Store::deinit();
         })?;
 
-        let this = Box::into_non_null(Box::<VirtualMachine>::new_uninit()).cast::<VirtualMachine>();
+        let this = bun_core::heap::into_raw_nn(Box::<VirtualMachine>::new_uninit())
+            .cast::<VirtualMachine>();
         let mut regular_event_loop = EventLoop::new(this);
         let _ = (regular_event_loop.tasks.get_mut()).ensure_unused_capacity(64);
         let vm = VirtualMachine {
@@ -3236,7 +3237,7 @@ impl VirtualMachine {
             t.resolver.prefer_module_field = false;
         });
 
-        // Before the global object, whose creation arms `WTFTimer`s on the runtime state's heap.
+        // Before the global object, whose creation arms `WTFTimer`s on `RuntimeState::timer`.
         if let Some(hooks) = runtime_hooks() {
             vm.runtime_state.set((hooks.init_runtime_state)(vm, &opts));
         }
@@ -5426,9 +5427,7 @@ impl VirtualMachine {
         }
 
         // Swap in a fresh log so resolver errors don't pollute the VM's main log.
-        // `vm.log` is set unconditionally in `init` and never cleared,
-        // so the `Option` is purely a
-        // zeroed-init nicety; the `expect` is infallible.
+        // `vm.log` is set in `init` and never cleared.
         let old_log: NonNull<bun_ast::Log> = jsc_vm.log.get().expect("vm.log set in init");
         let old_transpiler_log: *mut bun_ast::Log = jsc_vm.transpiler.get().log;
         let mut log = bun_ast::Log::default();

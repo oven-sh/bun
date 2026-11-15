@@ -89,7 +89,7 @@ pub(crate) struct RuntimeState {
     pub(crate) request_pools: crate::server::RequestPools,
     /// The resolver's PackageManager wake-handler context (module queue + VM
     /// handle); the resolver holds a raw pointer to it. Freed with the state.
-    pub(crate) wake_ctx: Option<Box<bun_jsc::async_module::WakeContext>>,
+    pub(crate) wake_ctx: Box<bun_jsc::async_module::WakeContext>,
     /// In-process `Bun.cron()` jobs that `--hot` reload / worker teardown must
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
     /// `clear_all_for_vm`.
@@ -196,7 +196,10 @@ pub(crate) fn path_watchers() -> &'static crate::node::win_watcher::PathWatchers
 
 /// [`RuntimeState::request_pools`] of `vm`.
 pub(crate) fn request_pools(vm: &VirtualMachine) -> &crate::server::RequestPools {
-    &state_of(vm).request_pools
+    let state = vm.runtime_state.get().cast::<RuntimeState>();
+    debug_assert!(!state.is_null(), "request_pools before init_runtime_state");
+    // SAFETY: as `timer_all`.
+    unsafe { &(*state).request_pools }
 }
 
 /// [`RuntimeState::lint`] of this thread's VM.
@@ -320,7 +323,11 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
         #[cfg(windows)]
         path_watchers: Default::default(),
         request_pools: Default::default(),
-        wake_ctx: None,
+        wake_ctx: Box::new(bun_jsc::async_module::WakeContext {
+            queue: &raw const vm.modules,
+            handle: vm.handle(),
+            kind: vm.current_loop_kind(),
+        }),
         cron_jobs: JsCell::default(),
         stat_watcher_scheduler: JsCell::new(None),
         test_runner: Cell::new(None),
@@ -331,12 +338,7 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
         #[cfg(unix)]
         uv_loop: crate::napi::uv_posix::UvLoop::new(ptr::NonNull::from(vm), vm.handle()),
     });
-    let wake_ctx = (state.wake_ctx).insert(Box::new(bun_jsc::async_module::WakeContext {
-        queue: &raw const vm.modules,
-        handle: vm.handle(),
-        kind: vm.current_loop_kind(),
-    }));
-    let context = ptr::NonNull::from(&mut **wake_ctx).cast();
+    let context = ptr::NonNull::from(&mut *state.wake_ctx).cast();
     let state = bun_core::heap::into_raw(state);
     RUNTIME_STATE.set(state);
 
@@ -347,7 +349,7 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
                 handler: bun_jsc::async_module::Queue::on_wake_handler,
             },
         ));
-        // Not for stored code: `compile.autoloadTsconfig: false` is applied later than this.
+        // With a module graph, `apply_standalone_runtime_flags` has yet to apply `compile.autoloadTsconfig: false`.
         let reads_tsconfig = opts.graph.is_none_or(|graph| {
             graph
                 .compiled_program()

@@ -1659,10 +1659,9 @@ pub(crate) fn pack(
         apply_publish_config(ctx.manager, &json.root, package_name)?;
     }
 
-    let mut this_transpiler = None;
     if let Err(err) = RunCommand::configure_env_for_run(
         &mut *ctx.command_ctx,
-        &mut this_transpiler,
+        &mut None,
         Some(std::ptr::from_mut(ctx.manager.env_mut())),
         ConfigureEnvOptions {
             log_errors: ctx.manager.options.log_level != LogLevel::Silent,

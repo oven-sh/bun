@@ -1026,13 +1026,8 @@ impl EventLoop {
         }
     }
 
-    /// As `release_queued_tasks` leaves the loop: later tasks are released on arrival.
-    pub(crate) fn is_drained(&mut self) -> bool {
-        self.tasks.get_mut().readable_length() == 0
-            && self.concurrent_tasks.is_empty()
-            && self.plugin_requests.get_mut().readable_length() == 0
-            && self.concurrent_plugin_requests.is_empty()
-            && self.immediate_tasks.get_mut().is_empty()
+    pub(crate) fn is_drained(&self) -> bool {
+        !self.has_pending_tasks() && self.immediate_task_count() == 0
     }
 
     /// Note (§Dispatch): `task` is an erased

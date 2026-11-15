@@ -356,15 +356,15 @@ pub(crate) enum PluginState {
 pub(crate) enum Plugins {
     /// From `Options::bundler_options`.
     Owned(crate::api::js_bundler::OwnedPlugin),
-    /// The server's.
-    Lent(::core::ptr::NonNull<crate::api::js_bundler::Plugin>),
+    /// Owned by the server's `ServePlugins`.
+    Borrowed(::core::ptr::NonNull<crate::api::js_bundler::Plugin>),
 }
 
 impl Plugins {
     fn as_non_null(&self) -> ::core::ptr::NonNull<crate::api::js_bundler::Plugin> {
         match self {
             Plugins::Owned(plugins) => plugins.as_non_null(),
-            Plugins::Lent(plugins) => *plugins,
+            Plugins::Borrowed(plugins) => *plugins,
         }
     }
 }
@@ -536,7 +536,7 @@ pub(crate) struct DevServer {
     // the server.
     pub(crate) server_transpiler: Transpiler<'static>,
     pub(crate) client_transpiler: Transpiler<'static>,
-    /// With a separate SSR graph.
+    /// `Some` with a separate SSR graph.
     pub(crate) ssr_transpiler: Option<Transpiler<'static>>,
     /// The log used by all `server_transpiler`, `client_transpiler` and `ssr_transpiler`.
     /// Note that it is rarely correct to write messages into it. Instead, associate

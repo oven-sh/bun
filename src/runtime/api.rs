@@ -161,8 +161,8 @@ fn with_text_format_source<R>(
             }
         }
     }
-    let kept = &global.bun_vm().text_format_arena;
-    let recycle = Recycle(Some(kept.take().unwrap_or_default()), kept);
+    let slot = &global.bun_vm().text_format_arena;
+    let recycle = Recycle(Some(slot.take().unwrap_or_default()), slot);
     let arena = recycle.0.as_ref().expect("set above");
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
     let _ast_scope = ast_memory_allocator.enter();

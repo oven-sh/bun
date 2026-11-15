@@ -190,7 +190,6 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     let mut pt = PerThread::placeholder(vm);
 
     match build_with_vm(ctx, &cwd, &mut pt) {
-        Ok(()) => {}
         Err(crate::Error::JSError) => {
             let err_value = vm.global().take_exception(jsc::JsError::Thrown);
             vm.print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value));
@@ -200,9 +199,8 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
             vm.on_exit();
             vm.global_exit();
         }
-        Err(e) => return Err(e),
+        result => result,
     }
-    Ok(())
 }
 
 /// Ported inline from `bun.bun_js.failWithBuildError` to avoid the
@@ -389,28 +387,27 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // `vm.log` is set from `ctx.log` (non-null, process-lifetime);
     // `log_mut()` is the safe accessor encapsulating the NonNull deref.
     let vm_log = vm.log_mut().unwrap();
-    let unresolved_framework = framework.as_bundler_view();
+    let unresolved_view = framework.as_bundler_view();
     let mut init_transpiler = |renderer, bundler_options| {
         framework
             .init_transpiler(
                 &options.arena,
                 vm_log,
-                crate::bake::Mode::ProductionStatic,
+                bake::Mode::ProductionStatic,
                 renderer,
-                &unresolved_framework,
+                &unresolved_view,
                 bundler_options,
             )
-            // The bundle borrows it for its own lifetime parameter, which rules out a drop.
+            // `BundleV2` takes `&'a mut Transpiler<'a>`, which cannot be dropped after that borrow.
             .map(ManuallyDrop::new)
     };
-    let server_transpiler =
-        &mut *init_transpiler(bake::Graph::Server, &options.bundler_options.server)?;
-    let client_transpiler =
-        &mut *init_transpiler(bake::Graph::Client, &options.bundler_options.client)?;
+    let mut server_transpiler =
+        init_transpiler(bake::Graph::Server, &options.bundler_options.server)?;
+    let mut client_transpiler =
+        init_transpiler(bake::Graph::Client, &options.bundler_options.client)?;
     let mut ssr_transpiler = separate_ssr_graph
         .then(|| init_transpiler(bake::Graph::Ssr, &options.bundler_options.ssr))
         .transpose()?;
-    let mut ssr_transpiler = ssr_transpiler.as_deref_mut();
 
     if ctx.bundler_options.bake_debug_disable_minify {
         let mut targets: Vec<&mut Transpiler> =
@@ -563,11 +560,11 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         // (in the bundler), not a user-facing diagnostic to swallow.
         BundleV2::generate_from_bake_production_cli(
             &entry_points,
-            server_transpiler,
+            &mut server_transpiler,
             bun_bundler::bundle_v2::BakeOptions {
                 framework: bundler_framework,
-                client_transpiler,
-                ssr_transpiler,
+                client_transpiler: &mut client_transpiler,
+                ssr_transpiler: ssr_transpiler.as_deref_mut(),
                 plugins: (options.bundler_options.plugin.as_ref())
                     .map(|plugin| plugin.as_non_null()),
             },

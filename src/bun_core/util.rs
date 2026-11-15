@@ -1135,17 +1135,15 @@ impl Stdio {
 /// (`readlink("/proc/self/fd/N")` on Linux, `fcntl(F_GETPATH)` on macOS,
 /// `fcntl(F_KINFO)` on FreeBSD), so it lives at T0 — moved down from
 /// `bun_sys::fd` per PORTING.md (no cross-crate extern).
-///
-/// SAFETY: `buf` must be valid for `cap` writable bytes.
-pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
+pub fn fd_path_raw(fd: Fd, buf: &mut [u8]) -> isize {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut proc = [0u8; 32];
         use std::io::Write as _;
         let mut c = std::io::Cursor::new(&mut proc[..]);
         let _ = write!(c, "/proc/self/fd/{}\0", fd.0);
-        // SAFETY: proc is NUL-terminated above; buf has cap bytes.
-        let n = unsafe { libc::readlink(proc.as_ptr().cast(), buf.cast(), cap) };
+        // SAFETY: proc is NUL-terminated above; it writes at most `buf.len()` bytes.
+        let n = unsafe { libc::readlink(proc.as_ptr().cast(), buf.as_mut_ptr().cast(), buf.len()) };
         if n < 0 {
             let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
             return if e == libc::ENOENT || e == libc::EBADF {
@@ -1156,49 +1154,16 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
         }
         return n;
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     {
-        let _ = cap;
-        // SAFETY: F_GETPATH expects buf with at least MAXPATHLEN bytes; callers
-        // pass ≥1024 which is the platform MAXPATHLEN on Darwin.
-        let rc = unsafe { libc::fcntl(fd.0, libc::F_GETPATH, buf) };
-        if rc < 0 {
-            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            return if e == libc::ENOENT || e == libc::EBADF {
-                -1
-            } else {
-                0
-            };
-        }
-        // SAFETY: kernel wrote a NUL-terminated path.
-        return unsafe { libc::strlen(buf.cast()) as isize };
-    }
-    #[cfg(target_os = "freebsd")]
-    {
-        use core::ptr::{addr_of, addr_of_mut};
-        let mut kif = core::mem::MaybeUninit::<libc::kinfo_file>::zeroed();
-        // SAFETY: kif is zeroed; kf_structsize is a c_int at a valid offset.
-        unsafe {
-            addr_of_mut!((*kif.as_mut_ptr()).kf_structsize)
-                .write(core::mem::size_of::<libc::kinfo_file>() as libc::c_int);
-        }
-        // SAFETY: F_KINFO expects a *mut kinfo_file with kf_structsize set.
-        let rc = unsafe { libc::fcntl(fd.0, libc::F_KINFO, kif.as_mut_ptr()) };
-        if rc < 0 {
-            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            return if e == libc::ENOENT || e == libc::EBADF {
-                -1
-            } else {
-                0
-            };
-        }
-        // SAFETY: kernel wrote a NUL-terminated path into kf_path.
-        let path = unsafe { addr_of!((*kif.as_ptr()).kf_path) } as *const u8;
-        let len = unsafe { libc::strlen(path.cast()) };
-        let n = len.min(cap);
-        // SAFETY: path has `len` initialized bytes; buf has `cap` bytes.
-        unsafe { core::ptr::copy_nonoverlapping(path, buf, n) };
-        return n as isize;
+        let Some(buf) = buf.first_chunk_mut() else {
+            return 0;
+        };
+        return match fd_path_fcntl(fd, buf) {
+            Ok(n) => n as isize,
+            Err(libc::ENOENT | libc::EBADF) => -1,
+            Err(_) => 0,
+        };
     }
     #[cfg(not(any(
         target_os = "linux",
@@ -1207,8 +1172,36 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
         target_os = "freebsd"
     )))]
     {
-        let _ = (fd, buf, cap);
+        let _ = (fd, buf);
         0
+    }
+}
+
+/// `fcntl(F_GETPATH)` or `fcntl(F_KINFO)`. Returns bytes written, or `errno`.
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+pub fn fd_path_fcntl(
+    fd: Fd,
+    buf: &mut [u8; libc::MAXPATHLEN as usize],
+) -> Result<usize, core::ffi::c_int> {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: F_GETPATH writes at most MAXPATHLEN bytes.
+        if unsafe { libc::fcntl(fd.0, libc::F_GETPATH, buf.as_mut_ptr()) } < 0 {
+            return Err(crate::ffi::errno());
+        }
+        Ok(crate::ffi::slice_to_nul(buf).len())
+    }
+    #[cfg(target_os = "freebsd")]
+    {
+        let mut info: libc::kinfo_file = crate::ffi::zeroed();
+        info.kf_structsize = size_of::<libc::kinfo_file>() as libc::c_int;
+        // SAFETY: F_KINFO writes one `kinfo_file`.
+        if unsafe { libc::fcntl(fd.0, libc::F_KINFO, &raw mut info) } < 0 {
+            return Err(crate::ffi::errno());
+        }
+        let path = crate::ffi::c_field_bytes(&info.kf_path);
+        buf[..path.len()].copy_from_slice(path);
+        Ok(path.len())
     }
 }
 
@@ -1289,8 +1282,7 @@ impl core::fmt::Display for Fd {
             #[cfg(debug_assertions)]
             if fd.0 >= 3 {
                 let mut buf = [0u8; 1024];
-                // SAFETY: buf is 1024 bytes, passed with matching cap.
-                let n = unsafe { fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };
+                let n = fd_path_raw(fd, &mut buf);
                 if n > 0 {
                     write!(w, "[{}]", bstr::BStr::new(&buf[..n as usize]))?;
                 } else if n == -1 {
@@ -2469,6 +2461,13 @@ impl Pollable {
 // pulling `bun_sys::syslog!` (tier inversion). Same `[sys]` tag at runtime.
 crate::declare_scope!(SYS, visible);
 
+/// `poll(2)`, single-shot (no EINTR retry). libc-convention return.
+#[cfg(not(windows))]
+pub fn poll_once(fds: &mut [libc::pollfd], timeout_ms: core::ffi::c_int) -> core::ffi::c_int {
+    // SAFETY: the kernel reads and writes `fds.len()` entries.
+    unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) }
+}
+
 /// Non-blocking poll for readability. POSIX-only.
 #[cfg(not(windows))]
 pub fn is_readable(fd: Fd) -> Pollable {
@@ -2478,8 +2477,7 @@ pub fn is_readable(fd: Fd) -> Pollable {
         events: libc::POLLIN | libc::POLLERR | libc::POLLHUP,
         revents: 0,
     }];
-    // SAFETY: polls is a valid 1-element array; timeout 0 = non-blocking.
-    let n = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
+    let n = poll_once(&mut polls, 0);
     let result = n > 0;
     let rc = if result && (polls[0].revents & (libc::POLLHUP | libc::POLLERR)) != 0 {
         Pollable::Hup
@@ -2517,8 +2515,7 @@ pub fn is_writable(fd: Fd) -> Pollable {
         events: libc::POLLOUT | libc::POLLERR | libc::POLLHUP,
         revents: 0,
     }];
-    // SAFETY: polls is a valid 1-element array; timeout 0 = non-blocking.
-    let n = unsafe { libc::poll(polls.as_mut_ptr(), 1, 0) };
+    let n = poll_once(&mut polls, 0);
     let result = n > 0;
     let rc = if result && (polls[0].revents & (libc::POLLHUP | libc::POLLERR)) != 0 {
         Pollable::Hup
@@ -3978,18 +3975,16 @@ pub fn getcwd_or_exe_dir(buf: &mut PathBuffer) -> &ZStr {
 /// Length-returning core of [`getcwd`]; `buf` holds the NUL-terminated path.
 fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
     #[cfg(unix)]
-    // SAFETY: `buf` provides `MAX_PATH_BYTES` writable bytes for `getcwd`; on
-    // success the returned pointer aliases `buf` and is NUL-terminated, so
-    // `strlen` reads in-bounds.
-    unsafe {
-        let p = libc::getcwd(buf.0.as_mut_ptr().cast(), buf.0.len());
+    {
+        // SAFETY: it writes at most `buf.0.len()` bytes.
+        let p = unsafe { libc::getcwd(buf.0.as_mut_ptr().cast(), buf.0.len()) };
         if p.is_null() {
             if crate::ffi::errno() == libc::ENOENT {
                 return Err(crate::CrateError::CurrentWorkingDirectoryUnlinked);
             }
             return Err(crate::CrateError::Unexpected);
         }
-        Ok(libc::strlen(p))
+        Ok(crate::ffi::slice_to_nul(&buf.0).len())
     }
     #[cfg(windows)]
     {
@@ -5092,9 +5087,13 @@ impl core::fmt::Display for f16 {
 // callsites (audited r5) are bundler/parser hot paths where Linux ftrace is
 // the profiling target. Windows/other platforms are no-ops.
 pub mod perf {
+    #[cfg(target_os = "linux")]
+    use core::ffi::{c_int, c_long};
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use core::sync::atomic::AtomicBool;
     use core::sync::atomic::{AtomicU8, Ordering};
+    #[cfg(target_os = "linux")]
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use std::sync::Once;
 
@@ -5197,6 +5196,49 @@ pub mod perf {
         {
             let _ = name;
             Ctx::DISABLED
+        }
+    }
+
+    /// A `perf_event_open` counter of the user-space instructions of a thread.
+    #[cfg(target_os = "linux")]
+    pub struct InstructionCounter(OwnedFd);
+
+    #[cfg(target_os = "linux")]
+    impl InstructionCounter {
+        pub const INHERIT: u64 = 1 << 1;
+        pub const INHERIT_THREAD: u64 = 1 << 35;
+
+        /// `thread` 0 is the calling thread. `inherit` holds the `inherit*` bits of `perf_event_attr`.
+        pub fn open(thread: c_int, inherit: u64) -> Option<Self> {
+            const HARDWARE: u64 = 0;
+            const SIZE: u64 = 64;
+            const INSTRUCTIONS: u64 = 1;
+            const EXCLUDE_KERNEL: u64 = 1 << 5;
+            const EXCLUDE_HYPERVISOR: u64 = 1 << 6;
+            const CLOSE_ON_EXEC: c_long = 8;
+            let flags = inherit | EXCLUDE_KERNEL | EXCLUDE_HYPERVISOR;
+            let attributes: [u64; 8] = [HARDWARE | SIZE << 32, INSTRUCTIONS, 0, 0, 0, flags, 0, 0];
+            // SAFETY: the kernel reads the 64 bytes that the size names and keeps no pointer.
+            let fd = unsafe {
+                libc::syscall(
+                    libc::SYS_perf_event_open,
+                    attributes.as_ptr(),
+                    c_long::from(thread),
+                    -1 as c_long,
+                    -1 as c_long,
+                    CLOSE_ON_EXEC,
+                )
+            };
+            // SAFETY: a new descriptor, which nothing else has.
+            (fd >= 0).then(|| Self(unsafe { OwnedFd::from_raw_fd(fd as c_int) }))
+        }
+
+        pub fn read(&self) -> Option<u64> {
+            let mut count = 0u64;
+            let fd = self.0.as_raw_fd();
+            // SAFETY: it writes at most the eight bytes of `count`.
+            let size = unsafe { libc::read(fd, (&raw mut count).cast(), size_of::<u64>()) };
+            (size == size_of::<u64>() as isize).then_some(count)
         }
     }
 

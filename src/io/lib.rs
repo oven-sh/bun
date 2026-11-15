@@ -1561,19 +1561,13 @@ pub mod waker {
         }
 
         pub fn wait(&self) {
-            // eventfd reads are always exactly 8 bytes (u64 counter). Use a u64
-            // directly instead of type-punning through usize, which would be UB
-            // on any 32-bit target and needs no `&mut *raw` reborrow here.
-            let mut bytes: u64 = 0;
-            // SAFETY: valid fd; `bytes` is an 8-byte buffer; result intentionally discarded.
-            let _ = unsafe { libc::read(self.fd.native(), (&raw mut bytes).cast(), 8) };
+            // eventfd reads are always exactly 8 bytes (u64 counter).
+            let _ = bun_sys::read(self.fd, &mut [0; 8]);
         }
 
         pub fn wake(&self) {
             // eventfd writes are always exactly 8 bytes (u64 increment).
-            let bytes: u64 = 1;
-            // SAFETY: valid fd; `bytes` is an 8-byte buffer; result intentionally discarded.
-            let _ = unsafe { libc::write(self.fd.native(), (&raw const bytes).cast(), 8) };
+            let _ = bun_sys::write(self.fd, &1u64.to_ne_bytes());
         }
     }
 

@@ -1069,7 +1069,7 @@ fn download_stream(
 pub struct S3DownloadStreamWrapper {
     stream: crate::webcore::byte_stream::ProducerHold,
     pub path: Box<[u8]>,
-    pub global: GlobalRef, // JSC_BORROW
+    pub global: bun_jsc::StrongGlobal,
     /// Owns `self`, so it is live. Null until `download_stream` sets it and once the stream is cancelled.
     pub task: Cell<*mut S3HttpDownloadStreamingTask>,
 }
@@ -1198,11 +1198,6 @@ pub(crate) fn readable_stream(
     cx: &bun_jsc::JsThread<'_>,
 ) -> JsResult<JSValue> {
     bun_removable_features::removable_definition!(S3Client, readable_stream);
-    // SAFETY (JSC_BORROW): `global_this` outlives the wrapper (it owns the JS heap that
-    // owns the readable stream which keeps the wrapper reachable via the producer handle);
-    // store as `'static` for the heap-allocated wrapper.
-    let global_static = GlobalRef::from(cx.global());
-
     // Ownership of the heap-allocated NewSource transfers to the JS wrapper via
     // `to_readable_stream()`/`to_js()`; the wrapper's finalize() reclaims it.
     let reader =
@@ -1218,7 +1213,7 @@ pub(crate) fn readable_stream(
     let wrapper = AliasableBox::new(S3DownloadStreamWrapper {
         stream: Default::default(),
         path: Box::<[u8]>::from(path),
-        global: global_static,
+        global: bun_jsc::StrongGlobal::new(cx.global()),
         task: Cell::new(core::ptr::null_mut()),
     });
     // SAFETY: `reader` is the live source made above.

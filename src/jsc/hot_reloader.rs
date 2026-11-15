@@ -640,7 +640,7 @@ fn arm_watch_reload_grace_timer() {
         .name("WatchReloadGrace".into())
         .spawn(move || {
             // `force()` clears the terminal through this thread's `Output`
-            // writers; they are zeroed until the thread is configured.
+            // writers, which print nothing until the thread is configured.
             Output::Source::configure_thread_no_js();
             const STEP_MS: u64 = 10;
             // Budget to drain the posted WatchReloadTask; extended once when

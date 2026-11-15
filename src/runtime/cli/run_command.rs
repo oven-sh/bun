@@ -4,7 +4,6 @@
 //! bun-shell / system shell. PATH stitching, `node_modules/.bin` lookup,
 //! markdown rendering, and the Windows bunx fast-path are all handled here.
 
-use ::core::ffi::c_char;
 use ::core::sync::atomic::{AtomicBool, Ordering};
 use std::io::Write as _;
 
@@ -451,8 +450,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bun_spawn::ctrl_c::install();
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
-            argv0: Some(shell_bin.as_ptr().cast::<::core::ffi::c_char>()),
-            envp: Some(envp.as_ptr().cast::<*const ::core::ffi::c_char>()),
+            argv0: Some(shell_bin.into()),
+            envp: Some(envp.as_list()),
             cwd: cwd.to_vec().into_boxed_slice(),
             stderr: sync::SyncStdio::Inherit,
             stdout: sync::SyncStdio::Inherit,
@@ -677,9 +676,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     }
                     // SAFETY: `ctx.log` set in `create_context_data` (single-
                     // threaded CLI startup), process-lifetime.
-                    let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                        Output::error_writer(),
-                    ));
+                    let _ = unsafe { ctx.log() }.print(Output::error_writer());
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>{}<r> loading directory {}",
                         bstr::BStr::new(err.name()),
@@ -692,9 +689,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 }
                 Ok(None) => {
                     // SAFETY: see `Err` arm above.
-                    let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                        Output::error_writer(),
-                    ));
+                    let _ = unsafe { ctx.log() }.print(Output::error_writer());
                     pretty_errorln!("error loading current directory");
                     Output::flush();
                     return Err(crate::Error::CouldntReadCurrentDirectory);
@@ -1748,9 +1743,7 @@ fn dump_build_error(vm: &VirtualMachine) {
     if let Some(log) = vm.log.get() {
         // SAFETY: `vm.log` set in `init`; single-threaded CLI.
         let log = unsafe { &mut *log.as_ptr() };
-        let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-            Output::error_writer_buffered(),
-        ));
+        let _ = log.print(Output::error_writer_buffered());
     }
     Output::flush();
 }
@@ -1852,14 +1845,7 @@ impl RunCommand {
     fn boot_failed_exit(ctx: &mut ContextData, display_name: &[u8], err: &crate::Error) -> ! {
         // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
         // CLI startup) and is process-lifetime.
-        //
-        // `Log::print` is generic over `IntoLogWrite`, which is
-        // implemented for `*mut io::Writer` (not `&mut`). `error_writer()`
-        // returns the process-global writer; cast to the raw pointer the
-        // trait expects.
-        let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
-            Output::error_writer(),
-        ));
+        let _ = unsafe { ctx.log() }.print(Output::error_writer());
 
         pretty_errorln!(
             "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
@@ -2208,8 +2194,8 @@ impl RunCommand {
         bun_spawn::ctrl_c::install();
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
-            argv0: Some(executable_z.as_ptr().cast::<c_char>()),
-            envp: Some(envp.as_ptr().cast::<*const c_char>()),
+            argv0: Some(executable_z.into()),
+            envp: Some(envp.as_list()),
             cwd: cwd.to_vec().into_boxed_slice(),
             stderr: sync::SyncStdio::Inherit,
             stdout: sync::SyncStdio::Inherit,
@@ -3233,9 +3219,7 @@ impl RunCommand {
     fn exec_as_if_node_boot_failed(ctx: &mut ContextData, basename: &[u8], err: crate::Error) -> ! {
         // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
         // CLI startup), process-lifetime.
-        let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
-            Output::error_writer(),
-        ));
+        let _ = unsafe { ctx.log() }.print(Output::error_writer());
 
         Output::err(
             err,
@@ -4088,7 +4072,7 @@ impl BunXFastPath {
         let utf8 = strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath);
         if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
-            let _ = unsafe { &mut *ctx.log }.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = unsafe { &mut *ctx.log }.print(Output::error_writer());
             Output::err(
                 err,
                 "Failed to run bin \"<b>{}<r>\"",

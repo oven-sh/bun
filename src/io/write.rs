@@ -259,7 +259,7 @@ impl<W: fmt::Write> Write for FmtAdapter<'_, W> {
 /// Inverse of [`FmtAdapter`]. Use this when a callee is typed against
 /// `impl core::fmt::Write` (e.g. `Display`, const-generic colour formatters,
 /// `Msg::write_format`) but you hold a `bun_io::Write` byte sink — `Vec<u8>`,
-/// `bun_core::io::Writer`, `&mut dyn Write`, etc.
+/// `&bun_core::io::Writer`, `&mut dyn Write`, etc.
 ///
 /// `write_str` routes through `write_all(s.as_bytes())`.
 ///

@@ -1400,9 +1400,7 @@ impl CronJob {
     /// Idempotent — every step checks its own state.
     fn stop_internal(&self, _vm: &VirtualMachine) {
         self.stopped.set(true);
-        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-            timer_all().remove(&self.event_loop_timer);
-        }
+        self.event_loop_timer.disarm();
         self.poll_ref.unref(bun_io::js_vm_ctx());
         self.abort_handle.leave();
         self.maybe_downgrade();

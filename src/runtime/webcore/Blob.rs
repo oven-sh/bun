@@ -461,7 +461,6 @@ impl BlobExt for Blob {
         if self.is_s3() {
             let store = self.store().expect("infallible: store present");
             let (s3, store) = (store.data.as_s3(), store.clone());
-            let keep_alive = bun_io::JsKeepAlive::active();
             let callback = Box::new(move |result: S3DownloadResult<'_>| {
                 let result = match result {
                     // `body` is owned by us (simple_request.rs); take the Vec's items as-is.
@@ -477,7 +476,6 @@ impl BlobExt for Blob {
                         }))
                     }
                 };
-                drop(keep_alive);
                 drop(store);
                 ctx.on_read_bytes(result)
             });
@@ -4756,7 +4754,6 @@ struct S3BlobDownloadTask {
     /// the borrow detaches from `&self` (Copy) for use across `&mut self` calls.
     pub global_this: bun_ptr::BackRef<JSGlobalObject>,
     pub(crate) promise: jsc::JSPromiseStrong,
-    _keep_alive: bun_io::JsKeepAlive,
     pub(crate) handler: S3ReadHandler,
 }
 
@@ -4812,7 +4809,6 @@ impl S3BlobDownloadTask {
             global_this: bun_ptr::BackRef::new(cx.global()),
             blob: Blob::dupe(blob),
             promise: jsc::JSPromiseStrong::init(cx.global()),
-            _keep_alive: bun_io::JsKeepAlive::active(),
             handler,
         };
         let promise = this.promise.value();

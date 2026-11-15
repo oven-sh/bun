@@ -443,12 +443,12 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         mem::size_of::<Self>()
     }
 
-    pub(crate) fn create_poll(&mut self, fd: Fd) -> FilePollRef {
+    pub(crate) fn create_poll(&mut self, fd: Fd) {
         let owner = Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast());
-        self.handle.set_poll(self.parent_event_loop(), fd, owner)
+        self.handle.set_poll(self.parent_event_loop(), fd, owner);
     }
 
-    pub fn get_poll(&self) -> Option<FilePollRef> {
+    pub fn get_poll(&self) -> Option<FilePollRef<'_>> {
         self.handle.get_poll()
     }
 
@@ -609,14 +609,17 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
             self.handle = PollOrFd::Fd(fd);
             return sys::Result::Ok(());
         }
-        let existing_poll = self.get_poll();
-        let poll = existing_poll.unwrap_or_else(|| self.create_poll(fd));
+        let had_poll = self.get_poll().is_some();
+        if !had_poll {
+            self.create_poll(fd);
+        }
+        let poll = self.get_poll().expect("made above");
         let loop_ = self.parent_event_loop().native_loop();
 
         match poll.register_with_fd(loop_, FilePollKind::Writable, fd) {
             sys::Result::Err(err) => {
                 // A poll from an earlier start() still holds that start's fd.
-                if existing_poll.is_none() {
+                if !had_poll {
                     self.handle = PollOrFd::Closed;
                 }
                 return sys::Result::Err(err);
@@ -768,7 +771,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         mem::size_of::<Self>() + self.outgoing.memory_cost()
     }
 
-    pub fn get_poll(&self) -> Option<FilePollRef> {
+    pub fn get_poll(&self) -> Option<FilePollRef<'_>> {
         self.handle.get_poll()
     }
 
@@ -1130,16 +1133,17 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
         // SAFETY: parent BACKREF set via set_parent; outlives this writer.
         let loop_ = unsafe { Parent::event_loop(self.parent()) };
-        let existing_poll = self.get_poll();
-        let poll = existing_poll.unwrap_or_else(|| {
+        let had_poll = self.get_poll().is_some();
+        if !had_poll {
             let owner = Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast());
-            self.handle.set_poll(loop_, fd, owner)
-        });
+            self.handle.set_poll(loop_, fd, owner);
+        }
+        let poll = self.get_poll().expect("made above");
 
         match poll.register_with_fd(loop_.native_loop(), FilePollKind::Writable, fd) {
             sys::Result::Err(err) => {
                 // A poll from an earlier start() still holds that start's fd.
-                if existing_poll.is_none() {
+                if !had_poll {
                     self.handle = PollOrFd::Closed;
                 }
                 return sys::Result::Err(err);

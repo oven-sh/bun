@@ -980,21 +980,16 @@ test("--parallel never interleaves console output across files", async () => {
 
 test("--parallel lazily scales workers based on file duration", async () => {
   // Each test file appends its PID so we can count distinct worker processes.
-  const body = (sleepMs: number) =>
-    `import {test,expect} from "bun:test"; import {appendFileSync} from "fs";
-     test("t", async()=>{ appendFileSync(process.env.PIDS, process.pid+"\\n"); await Bun.sleep(${sleepMs}); expect(1).toBe(1); });`;
-  const fixture = (sleepMs: number) => ({
-    "a.test.js": body(sleepMs),
-    "b.test.js": body(sleepMs),
-    "c.test.js": body(sleepMs),
-    "d.test.js": body(sleepMs),
-  });
-  const run = async (dir: string, scaleMs: number) => {
-    const pids = dir + "/pids.txt";
+  const run = async (name: string, scaleMs: number, wait: string) => {
+    const body = `import {test,expect} from "bun:test"; import {appendFileSync,readFileSync} from "fs";
+      appendFileSync(process.env.PIDS, process.pid+"\\n"); ${wait}
+      test("t", () => expect(1).toBe(1));`;
+    using dir = tempDir(name, { "a.test.js": body, "b.test.js": body, "c.test.js": body, "d.test.js": body });
+    const pids = String(dir) + "/pids.txt";
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--parallel=4"],
       env: { ...bunEnv, PIDS: pids, BUN_TEST_PARALLEL_SCALE_MS: String(scaleMs) },
-      cwd: dir,
+      cwd: String(dir),
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -1002,29 +997,22 @@ test("--parallel lazily scales workers based on file duration", async () => {
     return { stderr, exitCode, pids: new Set((await Bun.file(pids).text()).trim().split("\n")) };
   };
 
-  // Fast: 4 files × 0ms with a 250ms threshold. Each file (load + run +
-  // isolation swap) finishes within the threshold, so the coordinator never
-  // spawns a second worker. The threshold is raised from the production 5ms
-  // because debug-build module load alone exceeds 5ms.
+  // Huge threshold: every file finishes within it, on a loaded machine too, so the coordinator never spawns a second
+  // worker. The files are busy for longer than the production threshold of 5ms.
   {
-    using dir = tempDir("parallel-lazy-fast", fixture(0));
-    const r = await run(String(dir), 250);
+    const r = await run("parallel-lazy-fast", 1000000, "await Bun.sleep(20);");
     expect(r.stderr).toContain("4 pass");
     expect(r.pids.size).toBe(1);
     expect(r.exitCode).toBe(0);
   }
 
-  // Slow: 4 files × 200ms with a 50ms threshold. The first file exceeds the
-  // threshold so the coordinator spawns the remaining workers; multiple PIDs
-  // appear. The exact count depends on whether the first worker finishes its
-  // file before the newly-spawned workers report ready, so we only assert
-  // that scale-up happened at all — the differential against the fast case
-  // (which stays at exactly 1) is the proof.
+  // Every file is busy until all four have begun, so each of them needs a worker of its own. The first one exceeds the
+  // threshold, and the coordinator spawns the remaining workers. If it did not, the run would not end.
   {
-    using dir = tempDir("parallel-lazy-slow", fixture(200));
-    const r = await run(String(dir), 50);
+    const haveBegun = `readFileSync(process.env.PIDS, "utf8").trim().split("\\n").length`;
+    const r = await run("parallel-lazy-slow", 50, `while (${haveBegun} < 4) await Bun.sleep(1);`);
     expect(r.stderr).toContain("4 pass");
-    expect(r.pids.size).toBeGreaterThanOrEqual(2);
+    expect(r.pids.size).toBe(4);
     expect(r.exitCode).toBe(0);
   }
 });

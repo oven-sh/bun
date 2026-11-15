@@ -23,7 +23,7 @@ use bun_sys::{self as sys, Fd, File};
 use bun_uws::{AnyResponse, WriteResult};
 
 use crate::server::jsc::{EventLoopHandle, VirtualMachine};
-use crate::server::{DirectoryRoute, FileRoute};
+use crate::server::{DirectoryRoute, FileRoute, PendingRequest};
 
 bun_output::declare_scope!(FileResponseStream, hidden);
 
@@ -149,10 +149,9 @@ pub(crate) struct StartOptions {
 /// Who hears about the end of the stream. Exactly one of complete / abort /
 /// error is delivered, exactly once.
 pub(crate) enum StreamOwner {
-    /// The ref `FileRoute::on` took for this response; released on delivery.
-    FileRoute(RefPtr<FileRoute>),
-    /// Likewise for `DirectoryRoute::on`.
-    DirectoryRoute(RefPtr<DirectoryRoute>),
+    /// A reload can remove the route from the route table meanwhile.
+    FileRoute(PendingRequest<RefPtr<FileRoute>>),
+    DirectoryRoute(PendingRequest<RefPtr<DirectoryRoute>>),
     Ctx {
         ctx: *mut c_void,
         on_complete: fn(*mut c_void, AnyResponse),
@@ -172,8 +171,8 @@ enum StreamEnd {
 impl StreamOwner {
     fn deliver(self, resp: AnyResponse, end: StreamEnd) {
         match self {
-            StreamOwner::FileRoute(route) => route.on_response_complete(resp),
-            StreamOwner::DirectoryRoute(route) => route.on_response_complete(resp),
+            StreamOwner::FileRoute(route) => drop(route),
+            StreamOwner::DirectoryRoute(route) => drop(route),
             StreamOwner::Ctx {
                 ctx,
                 on_complete,

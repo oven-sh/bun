@@ -8,9 +8,7 @@ pub struct ParameterDescription {
 }
 
 impl ParameterDescription {
-    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
-        mut reader: NewReader<Container>,
-    ) -> Result<Self, AnyPostgresError> {
+    pub fn decode_internal(reader: &NewReader<'_>) -> Result<Self, AnyPostgresError> {
         // The Int32 message length bounds the Int16 count and the Int32[n]
         // body; an overrun is a malformed message, not a ShortRead.
         let remaining_bytes = reader.length()?.saturating_sub(4) as usize;
@@ -26,8 +24,7 @@ impl ParameterDescription {
         let mut parameters: Box<[Int4]> = vec![Int4::default(); n].into_boxed_slice();
 
         let data = reader.read(n * core::mem::size_of::<Int4>())?;
-        // `defer data.deinit()` — handled by Drop.
-        let (input_params, _) = data.slice().as_chunks::<{ size_of::<Int4>() }>();
+        let (input_params, _) = data.as_chunks::<{ size_of::<Int4>() }>();
         debug_assert_eq!(input_params.len(), parameters.len());
         for (src, dest) in input_params.iter().zip(parameters.iter_mut()) {
             *dest = Int4::from_be_bytes(*src);

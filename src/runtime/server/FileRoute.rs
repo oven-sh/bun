@@ -18,7 +18,9 @@ use crate::server::file_response_stream::{
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_jsc::bun_string_jsc;
 
-use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest};
+use crate::server::{
+    AnyServer, FileResponseStream, HTTPStatusText, PendingRequest, RangeRequest, Served,
+};
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
@@ -254,17 +256,13 @@ impl FileRoute {
         method: Method,
     ) {
         debug_assert!(this.server.get().is_some());
-        // Held until `on_response_complete`; a reload can drop the route
-        // table's ref while a `FileResponseStream` is still streaming.
-        let route = RefPtr::from_this(this);
-        if let Some(server) = route.server.get() {
-            server.on_pending_request();
+        let route = PendingRequest::new(RefPtr::from_this(this));
+        if let Some(server) = this.server.get() {
             resp.timeout(server.config().idle_timeout);
         }
-        let store = route.blob.store().unwrap().clone();
+        let store = this.blob.store().unwrap().clone();
         let Some(path) = store.get_path() else {
             req.set_yield(true);
-            route.on_response_complete(resp);
             return;
         };
 
@@ -290,25 +288,19 @@ impl FileRoute {
 
         let Ok(fd) = fd_result else {
             req.set_yield(true);
-            route.on_response_complete(resp);
             return;
         };
         let fd = StreamFd::Owned(fd);
 
-        // Every non-streaming outcome — bodiless status codes
-        // (304/204/205/307/308), HEAD, non-streamable files, and the JS-exception
-        // early returns — is `Serve::Done`, so neither the fd nor the route ref
-        // (or the server's pending_requests counter) can leak regardless of
-        // which branch ran.
-        match route.serve(fd.get(), path, &mut req, resp, method) {
-            Serve::Done => route.on_response_complete(resp),
+        match this.serve(fd.get(), path, &mut req, resp, method) {
+            Serve::Done => {}
             Serve::Stream {
                 file_type,
                 pollable,
                 offset,
                 length,
             } => {
-                let server = route.server.get().unwrap();
+                let server = this.server.get().unwrap();
                 FileResponseStream::start(FileResponseStreamOptions {
                     fd,
                     resp,
@@ -466,16 +458,11 @@ impl FileRoute {
             length: body_len,
         }
     }
+}
 
-    /// The last thing a response does with the route; callers then release
-    /// the ref `on()` took for it.
-    pub(crate) fn on_response_complete(&self, resp: AnyResponse) {
-        resp.clear_aborted();
-        resp.clear_on_writable();
-        resp.clear_timeout();
-        if let Some(server) = self.server.get() {
-            server.on_static_request_complete();
-        }
+impl Served for RefPtr<FileRoute> {
+    fn served_by(&self) -> Option<AnyServer> {
+        self.server.get()
     }
 }
 

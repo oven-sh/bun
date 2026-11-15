@@ -171,6 +171,7 @@ extern "C" void Bun__didFinishFirstCollectionOfCompiledProgram()
         mi_on_thread_idle_end();
 }
 
+#if ENABLE(WEBASSEMBLY)
 static_assert(sizeof(SHA_CTX) <= JSC::Wasm::SourceHasher::contextSize && alignof(SHA_CTX) <= 8);
 
 extern "C" void Bun__initializeSHA1(void* context)
@@ -187,6 +188,7 @@ extern "C" void Bun__finishSHA1(void* context, std::array<uint8_t, 20>& digest)
 {
     SHA1_Final(digest.data(), static_cast<SHA_CTX*>(context));
 }
+#endif
 
 extern "C" void Bun__ThreadPool__exitWithoutAnyThread();
 

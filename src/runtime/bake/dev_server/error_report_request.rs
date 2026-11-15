@@ -32,14 +32,12 @@ use bun_uws_sys::body_reader_mixin::{BodyReaderHandler, BodyResponse};
 
 use super::source_map_store::{self, GetResult, Key as SourceMapKey};
 use super::{CLIENT_PREFIX, DevServer};
-use crate::server::StaticRoute;
 use crate::server::static_route::InitFromBytesOptions;
+use crate::server::{PendingRequest, StaticRoute};
 use bun_core::fmt::parse_hex_to_u64;
 
 pub(crate) struct ErrorReportRequest {
-    // BACKREF: heap-allocated request; DevServer owns the server lifecycle and
-    // outlives every in-flight request (BackRef invariant).
-    dev: bun_ptr::BackRef<DevServer>,
+    dev: PendingRequest<bun_ptr::BackRef<DevServer>>,
 }
 
 impl BodyReaderHandler for ErrorReportRequest {
@@ -48,20 +46,9 @@ impl BodyReaderHandler for ErrorReportRequest {
     }
 }
 
-impl Drop for ErrorReportRequest {
-    fn drop(&mut self) {
-        let server = self.dev.server.expect("server bound");
-        server.on_static_request_complete();
-    }
-}
-
 impl ErrorReportRequest {
     pub(crate) fn run<R: BodyResponse>(dev: &mut DevServer, _req: &mut Request, resp: &mut R) {
-        dev.server
-            .as_mut()
-            .expect("server bound")
-            .on_pending_request();
-        let dev = bun_ptr::BackRef::new(dev);
+        let dev = PendingRequest::new(bun_ptr::BackRef::new(dev));
         uws::BodyReaderMixin::read_body(ErrorReportRequest { dev }, resp);
     }
 

@@ -19,7 +19,9 @@ use crate::node::{Encoding, StringOrBuffer};
 use crate::server::jsc::{
     self, ErrorCode, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine,
 };
-use crate::server::{AnyServer, AnyServerTag, HTTPStatusText, ServerWebSocket};
+use crate::server::{
+    AnyServer, AnyServerTag, HTTPStatusText, PendingRequest, Served, ServerWebSocket,
+};
 
 bun_core::declare_scope!(NodeHTTPResponse, visible);
 
@@ -86,7 +88,7 @@ pub(crate) struct NodeHTTPResponse {
     pub(crate) body_read_state: Cell<BodyReadState>,
     pub(crate) body_read_ref: jsc::Ref,
     /// Held until `mark_request_as_done`.
-    pending_ref: JsCell<Option<RefPtr<Self>>>,
+    pending_ref: JsCell<Option<PendingRequest<RefPtr<Self>>>>,
     /// What the handler returned, with the ref of the dispatch that waits for it.
     pub(crate) promise: JsCell<Option<(StrongOptional, RefPtr<Self>)>>,
     pub(crate) server: AnyServer,
@@ -600,7 +602,7 @@ impl NodeHTTPResponse {
         self.poll_ref.unref(vm);
         // During the upgrade the connection counts as neither HTTP nor WebSocket. Hold a pending
         // request so a stopped server doesn't drain if this is its last connection.
-        server.on_pending_request();
+        let pending = PendingRequest::new(server);
         let upgraded = !raw_response
             .upgrade_raw(
                 ws,
@@ -610,7 +612,7 @@ impl NodeHTTPResponse {
                 bun_opaque::opaque_deref_mut(context.as_ptr()),
             )
             .is_null();
-        server.on_request_complete();
+        drop(pending);
         if upgraded {
             self.bytes_written
                 .set(self.bytes_written.get().saturating_add(handshake.len()));
@@ -723,11 +725,8 @@ impl NodeHTTPResponse {
         self.clear_on_data_callback(self.get_this_value(), vm.global());
         self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
 
-        let server = self.server;
         self.poll_ref.unref(vm);
         self.unregister_auto_flush();
-
-        server.on_request_complete();
     }
 
     /// Unroots `promise`.
@@ -2622,6 +2621,12 @@ impl NodeHTTPResponse {
     }
 }
 
+impl Served for RefPtr<NodeHTTPResponse> {
+    fn served_by(&self) -> Option<AnyServer> {
+        Some(self.server)
+    }
+}
+
 impl Drop for NodeHTTPResponse {
     fn drop(&mut self) {
         debug_assert!(!self.body_read_ref.has.get());
@@ -2724,7 +2729,9 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         pending_pinned_write_owner: JsCell::new(crate::node::StringOrBuffer::EMPTY),
         auto_flush_ref: JsCell::new(None),
     });
-    response.pending_ref.set(Some(response.clone()));
+    response
+        .pending_ref
+        .set(Some(PendingRequest::new(response.clone())));
     *node_response_ptr = Some(response.clone());
 
     if *has_body {

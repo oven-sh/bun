@@ -22,7 +22,7 @@ use crate::jsc_hooks::timer_all;
 
 use super::{
     Clock, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ID, ImmediateObject, Kind,
-    KindBig, TimeoutObject,
+    KindBig, OwnedTimer, TimeoutObject,
 };
 
 /// Data that TimerObject and ImmediateObject have in common.
@@ -165,12 +165,13 @@ impl TimerObjectInternals {
 
     /// `@fieldParentPtr("internals", self).event_loop_timer`, for the heap and the id maps to keep.
     fn event_loop_timer(&self) -> *mut EventLoopTimer {
-        match self.parent_ptr() {
+        let timer = match self.parent_ptr() {
             // SAFETY: `p` points into a live container per `parent_ptr()`.
-            TimerParent::Immediate(p) => unsafe { core::ptr::addr_of_mut!((*p).event_loop_timer) },
+            TimerParent::Immediate(p) => unsafe { &raw const (*p).event_loop_timer },
             // SAFETY: as above.
-            TimerParent::Timeout(p) => unsafe { core::ptr::addr_of_mut!((*p).event_loop_timer) },
-        }
+            TimerParent::Timeout(p) => unsafe { &raw const (*p).event_loop_timer },
+        };
+        OwnedTimer::node(timer).cast_mut()
     }
 
     fn node(&self) -> &EventLoopTimer {
@@ -296,20 +297,15 @@ impl TimerObjectInternals {
 
         // Only a graph's context keeps a list of its timers.
         let graph_context = vm.as_graph_context(cx.context());
-        *self = Self {
-            id,
-            flags: {
-                let mut f = Flags::default();
-                f.set_kind(kind);
-                f.set_fake(clock == Clock::Fake);
-                f.set_epoch(timers.epoch.get());
-                Cell::new(f)
-            },
-            interval: Cell::new(interval),
-            context: cx.context().id(),
-            generation: cx.vm().test_isolation_generation.get(),
-            this_value: JsCell::new(JsRef::empty()),
-        };
+        self.id = id;
+        self.update_flags(|f| {
+            f.set_kind(kind);
+            f.set_fake(clock == Clock::Fake);
+            f.set_epoch(timers.epoch.get());
+        });
+        self.interval.set(interval);
+        self.context = cx.context().id();
+        self.generation = cx.vm().test_isolation_generation.get();
         // `self` is at its final address (embedded in its heap-allocated parent).
         if let Some(context) = graph_context {
             context.track_timer(
@@ -699,35 +695,19 @@ impl TimerObjectInternals {
             self.set_enable_keeping_event_loop_alive(vm, true);
         }
     }
+}
 
-    /// Final teardown, invoked from the parent container's `Drop` (count hit
-    /// zero). Unlinks the parent from every `Timer::All` data structure it may
-    /// still be reachable from so the free cannot leave a dangling
-    /// `*mut EventLoopTimer` in the heap or a leaked keep-alive count.
-    /// `this_value` is released by `JsRef: Drop` right after.
-    ///
-    /// # Safety
-    /// `self` is the `internals` field of a live heap-allocated
-    /// `TimeoutObject`/`ImmediateObject` whose refcount has just reached zero.
-    /// The per-thread `RuntimeState` and `VirtualMachine` are installed (always
-    /// true on the JS thread by the time a timer can be dropped).
-    pub(crate) unsafe fn deinit(&mut self) {
+impl Drop for TimerObjectInternals {
+    fn drop(&mut self) {
         let vm = VirtualMachine::get();
         let kind = self.flags.get().kind();
 
         let timers = timer_all();
 
-        // (b) `vm.timer.remove(eventLoopTimer())` if state == .ACTIVE — without
-        //     this the freed parent stays linked into `All.timers` and the next
-        //     `delete_min`/`drain_timers` dereferences freed memory.
-        if self.node().state.get() == EventLoopTimerState::ACTIVE {
-            timers.remove(self.node());
-        }
-
-        // (c) `vm.timer.maps.get(kind).swapRemove(id)` if
+        // (a) `vm.timer.maps.get(kind).swapRemove(id)` if
         //     `has_accessed_primitive` — drops the id→*mut EventLoopTimer
         //     entry minted by `to_primitive`. Swap-remove: the id map is only
-        //     ever keyed into, never iterated in order, and `deinit` runs for
+        //     ever keyed into, never iterated in order, and `drop` runs for
         //     every id-accessed timer a GC sweep collects, so the ordered
         //     remove's O(n) shift + index rebuild here was O(n²) across a
         //     sweep.
@@ -759,7 +739,7 @@ impl TimerObjectInternals {
             context.untrack_timer(core::ptr::from_mut(self).cast());
         }
 
-        // (d) `setEnableKeepingEventLoopAlive(vm, false)` — without this a
+        // (b) `setEnableKeepingEventLoopAlive(vm, false)` — without this a
         //     dropped-while-ref'd timer leaks `active_timer_count` /
         //     `immediate_ref_count` and the process hangs at exit.
         self.set_enable_keeping_event_loop_alive(vm, false);

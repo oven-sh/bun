@@ -3225,6 +3225,18 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
                 // Read the variable directly, because the namespace object would force a builtin's lazy export.
                 ExportVariable variable = findExportVariable(globalObject, moduleNamespaceObject, name);
                 RETURN_IF_EXCEPTION(scope, );
+#if ENABLE(AOT)
+                if (!variable.record && (!loaded.compiledModule || JSC::AOT::isEvicted(globalObject, *loaded.compiledModule))) {
+                    auto resolution = moduleNamespaceObject->moduleRecord()->resolveExport(globalObject, name);
+                    RETURN_IF_EXCEPTION(scope, );
+                    JSValue compiledOriginal = resolution.type == JSC::AbstractModuleRecord::Resolution::Type::Resolved ? JSC::AOT::readExportOfRecord(resolution.moduleRecord, resolution.localName) : JSValue();
+                    RETURN_IF_EXCEPTION(scope, );
+                    if (compiledOriginal) {
+                        overwritten->putDirectMayBeIndex(globalObject, name, compiledOriginal);
+                        RETURN_IF_EXCEPTION(scope, );
+                    }
+                }
+#endif
                 if (!variable.record)
                     continue;
                 JSValue original = variable.record->moduleEnvironment()->readVariable(vm, variable.offset);

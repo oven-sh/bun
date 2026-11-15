@@ -746,9 +746,7 @@ impl Subprocess<'_> {
         let is_sync = self.flags.get().contains(Flags::IS_SYNC);
         self.clear_abort_signal();
 
-        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-            crate::jsc_hooks::timer_all().remove(&self.event_loop_timer);
-        }
+        self.event_loop_timer.disarm();
         self.set_event_loop_timer_refd(false);
 
         jsc_vm.on_subprocess_exit(&self.process);
@@ -1066,9 +1064,7 @@ impl Subprocess<'_> {
         }
 
         self.process().detach();
-        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-            crate::jsc_hooks::timer_all().remove(&self.event_loop_timer);
-        }
+        self.event_loop_timer.disarm();
         self.set_event_loop_timer_refd(false);
 
         self.stdout_maxbuf.set(None);

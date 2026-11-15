@@ -1956,7 +1956,6 @@ dependencies = [
  "bun_boringssl",
  "bun_collections",
  "bun_core",
- "bun_ptr",
  "bun_sha_hmac",
  "bun_sys",
  "strum",

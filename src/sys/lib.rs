@@ -7350,7 +7350,7 @@ const RWF_NOWAIT: u32 = 0x00000008;
 
 /// `preadv2(RWF_NOWAIT)` with no fallback: `Ok(None)` means this fd's file type (or the kernel) lacks it and the caller should remember that.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-pub fn read_nowait(fd: Fd, mut cursor: BorrowedCursor<'_, u8>) -> Maybe<Option<usize>> {
+pub fn read_nowait_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>) -> Maybe<Option<usize>> {
     if !linux::RWFFlagSupport::is_maybe_supported() {
         return Ok(None);
     }

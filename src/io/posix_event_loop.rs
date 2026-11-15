@@ -74,6 +74,7 @@ fn deregistration_already_gone(errno: sys::E) -> bool {
 
 #[cfg(not(windows))]
 use crate::OpaqueCallback;
+use crate::max_buf::Kind;
 pub use crate::{EventLoopCtx, EventLoopCtxKind};
 
 unsafe extern "Rust" {
@@ -196,9 +197,9 @@ pub enum PollTag {
     TerminalReader,
     CronRegister,
     CronRemove,
-    FilterRun,
-    MultiRun,
-    TestWorker,
+    FilterRunHandle,
+    MultiRunPipeReader,
+    TestParallelWorker,
     LifecycleScript,
     InstallGit,
     SecurityScanReader,
@@ -208,8 +209,8 @@ pub enum PollTag {
 #[derive(Copy, Clone)]
 pub struct Owner {
     tag: PollTag,
-    /// Tells the readers of one owner apart.
-    key: u32,
+    /// Tells the two readers of one owner apart.
+    kind: Kind,
     ptr: *mut (),
 }
 
@@ -217,19 +218,19 @@ impl Owner {
     pub(crate) const NULL: Owner = Owner::new(PollTag::Null, core::ptr::null_mut());
     #[inline]
     pub const fn new(tag: PollTag, ptr: *mut ()) -> Owner {
-        Owner::with_key(tag, 0, ptr)
+        Owner::with_kind(tag, Kind::Stdout, ptr)
     }
     #[inline]
-    pub const fn with_key(tag: PollTag, key: u32, ptr: *mut ()) -> Owner {
-        Owner { tag, key, ptr }
+    pub const fn with_kind(tag: PollTag, kind: Kind, ptr: *mut ()) -> Owner {
+        Owner { tag, kind, ptr }
     }
     #[inline]
     pub fn tag(&self) -> PollTag {
         self.tag
     }
     #[inline]
-    pub fn key(&self) -> u32 {
-        self.key
+    pub fn kind(&self) -> Kind {
+        self.kind
     }
     #[inline]
     pub fn ptr(&self) -> *mut () {
@@ -454,7 +455,7 @@ impl FilePoll {
             target_os = "macos",
             target_os = "freebsd"
         ))]
-        return self.register_with_fd_impl(self.event_loop.loop_(), flag, one_shot, self.fd);
+        return self.register_impl(flag, one_shot);
         #[cfg(not(any(
             target_os = "linux",
             target_os = "android",
@@ -473,13 +474,8 @@ impl FilePoll {
         target_os = "macos",
         target_os = "freebsd"
     ))]
-    fn register_with_fd_impl(
-        &self,
-        loop_: &Loop,
-        flag: Flags,
-        one_shot: OneShotFlag,
-        fd: Fd,
-    ) -> sys::Result<()> {
+    fn register_impl(&self, flag: Flags, one_shot: OneShotFlag) -> sys::Result<()> {
+        let (loop_, fd) = (self.event_loop.loop_(), self.fd);
         let watcher_fd = loop_.fd();
 
         syslog!(
@@ -757,7 +753,7 @@ impl FilePoll {
             target_os = "macos",
             target_os = "freebsd"
         ))]
-        let result = self.unregister_with_fd_impl(loop_, self.fd, force_unregister);
+        let result = self.unregister_impl(loop_, force_unregister);
         #[cfg(not(any(
             target_os = "linux",
             target_os = "android",
@@ -778,12 +774,8 @@ impl FilePoll {
         target_os = "macos",
         target_os = "freebsd"
     ))]
-    fn unregister_with_fd_impl(
-        &self,
-        loop_: &Loop,
-        fd: Fd,
-        force_unregister: bool,
-    ) -> sys::Result<()> {
+    fn unregister_impl(&self, loop_: &Loop, force_unregister: bool) -> sys::Result<()> {
+        let fd = self.fd;
         debug_assert!(fd.native() >= 0 && fd != INVALID_FD);
 
         let registered = self.has_flag(Flags::PollReadable)
@@ -1395,7 +1387,7 @@ impl Pollable {
 #[unsafe(no_mangle)]
 /// # Safety
 /// uWS C callback: `loop_` is the live per-thread `us_loop_t`; `tagged_pointer`
-/// was registered via `Pollable::init` in `register_with_fd_impl`.
+/// was registered via `Pollable::init` in `register_impl`.
 unsafe extern "C" fn Bun__internal_dispatch_ready_poll(loop_: &Loop, tagged_pointer: *mut c_void) {
     let tag = Pollable::from(tagged_pointer);
 
@@ -1403,7 +1395,7 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(loop_: &Loop, tagged_poin
         return;
     }
 
-    // SAFETY: tag matched FilePoll; pointer was set via Pollable::init in register_with_fd_impl.
+    // SAFETY: tag matched FilePoll; pointer was set via Pollable::init in register_impl.
     // Not used once the owner runs, which may free the slot.
     let file_poll = unsafe { &*tag.as_file_poll() };
     if file_poll.has_flag(Flags::IgnoreUpdates) {

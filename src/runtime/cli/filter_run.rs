@@ -17,6 +17,7 @@ use bun_core::{ZStr, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
 use bun_install::lifecycle_script_runner::ScriptArgv;
+use bun_io::max_buf::Kind;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag};
 
 // The string fields below are owned boxes, except `combined` which is interned
@@ -183,11 +184,11 @@ impl<'a> ProcessHandle<'a> {
         let process =
             spawned.to_process_handle(EventLoopHandle::init_mini(handle.output.shared.event_loop));
 
-        let owner = std::ptr::from_mut(handle).cast();
-        // SAFETY: fields of their owner, whose slot in `State.handles` does not move.
-        unsafe {
-            (handle.stdout).set_owner(Owner::with_key(PollTag::FilterRun, 0, owner));
-            (handle.stderr).set_owner(Owner::with_key(PollTag::FilterRun, 1, owner));
+        let ptr = std::ptr::from_mut(handle).cast();
+        for kind in [Kind::Stdout, Kind::Stderr] {
+            let owner = Owner::with_kind(PollTag::FilterRunHandle, kind, ptr);
+            // SAFETY: `owner` points to the slot in `State.handles` that holds this reader, which does not move.
+            unsafe { handle.reader(kind).set_owner(owner) };
         }
 
         #[cfg(windows)]
@@ -242,13 +243,19 @@ impl<'a> ProcessHandle<'a> {
         Ok(())
     }
 
-    fn reader(&self, key: u32) -> &BufferedReader {
-        if key == 0 { &self.stdout } else { &self.stderr }
+    fn reader(&self, kind: Kind) -> &BufferedReader {
+        match kind {
+            Kind::Stdout => &self.stdout,
+            Kind::Stderr => &self.stderr,
+        }
     }
 
     /// The exit of the process ends the script, not the end of a reader.
-    pub(crate) fn read(&mut self, key: u32, event: Option<IoEvent>) {
-        let reader = if key == 0 { &self.stdout } else { &self.stderr };
+    pub(crate) fn read(&mut self, kind: Kind, event: Option<IoEvent>) {
+        let reader = match kind {
+            Kind::Stdout => &self.stdout,
+            Kind::Stderr => &self.stderr,
+        };
         let event_loop = self.output.shared.event_loop.as_event_loop_ctx();
         let _ = reader.read_chunks(event_loop, event, |chunk, _| {
             let _ = self.output.read_chunk(&chunk);
@@ -258,14 +265,14 @@ impl<'a> ProcessHandle<'a> {
 
     /// After the exit: a leftover child may hold the pipes open, so their EOF may never come.
     fn drain_and_close_pipes(&mut self) {
-        for key in [0, 1] {
+        for kind in [Kind::Stdout, Kind::Stderr] {
             // Windows has no synchronous drain.
             #[cfg(unix)]
-            if !self.reader(key).is_done() && self.reader(key).get_fd() != bun_sys::Fd::INVALID {
-                self.read(key, None);
+            if !self.reader(kind).is_done() && self.reader(kind).get_fd() != bun_sys::Fd::INVALID {
+                self.read(kind, None);
             }
-            if !self.reader(key).is_done() {
-                self.reader(key).deinit();
+            if !self.reader(kind).is_done() {
+                self.reader(kind).deinit();
             }
         }
     }

@@ -36,7 +36,7 @@ pub struct PipeReadScratchGuard<'a> {
 }
 
 impl PipeReadScratchGuard<'_> {
-    pub fn bytes(&mut self) -> &mut [u8] {
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
         &mut self.buffer.get_or_insert_with(bun_core::boxed_zeroed)[..]
     }
 }

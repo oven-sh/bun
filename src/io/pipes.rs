@@ -11,7 +11,7 @@ use crate::{EventLoopHandle, FilePoll, FilePollFlag, OwnedFilePoll, Owner};
 
 /// An fd, and its poll once it is waited on. Dropping it releases the poll. The fd stays open.
 #[cfg(not(windows))]
-pub struct PollOrFd {
+pub struct PipeHandle {
     /// `INVALID` when closed.
     fd: Cell<Fd>,
     /// Forced: the kernel keeps a fired poll for as long as the file is open.
@@ -20,7 +20,7 @@ pub struct PollOrFd {
 }
 
 #[cfg(not(windows))]
-impl PollOrFd {
+impl PipeHandle {
     pub(crate) const fn closed() -> Self {
         Self {
             fd: Cell::new(Fd::INVALID),
@@ -83,7 +83,7 @@ impl PollOrFd {
     }
 
     /// Leaves `other` closed. Both keep their owner.
-    pub(crate) fn take_from(&self, other: &PollOrFd) {
+    pub(crate) fn take_from(&self, other: &PipeHandle) {
         self.fd.set(other.fd.replace(Fd::INVALID));
         self.poll.set(other.poll.take());
         // SAFETY: `set_owner`'s contract.

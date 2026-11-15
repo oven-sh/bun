@@ -12,7 +12,8 @@ use bun_core::{CStrList, Output, strings};
 use bun_event_loop::EventLoopHandle;
 #[cfg(unix)]
 use bun_io::PosixFlags;
-use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadStatus};
+use bun_io::max_buf::Kind;
+use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
 use bun_paths as Path;
 use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 #[cfg(unix)]
@@ -818,10 +819,10 @@ impl GitSubprocess {
             stderr: BufferedReader::init(),
             remaining_fds: Cell::new(0),
         });
-        for key in [0, 1] {
-            let owner = Owner::with_key(PollTag::InstallGit, key, runner.as_ptr().cast());
+        for kind in [Kind::Stdout, Kind::Stderr] {
+            let owner = Owner::with_kind(PollTag::InstallGit, kind, runner.as_ptr().cast());
             // SAFETY: a field of its owner.
-            unsafe { runner.output(key).set_owner(owner) };
+            unsafe { runner.reader(kind).set_owner(owner) };
         }
         let this = runner.this_ptr();
         this.owner.set(Some(runner));
@@ -1234,9 +1235,9 @@ impl GitSubprocess {
             }
             let _ = bun_sys::set_nonblocking(fd);
             this.remaining_fds.set(this.remaining_fds.get() + 1);
-            reader.set_flags(PosixFlags::NONBLOCKING | PosixFlags::SOCKET, true);
-            let status = reader.start(this.event_loop.as_event_loop_ctx(), fd, true)?;
-            this.note_read_status(status);
+            reader.update_flags(|f| f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET));
+            let result = reader.start(this.event_loop.as_event_loop_ctx(), fd, true)?;
+            this.note_read_result(result);
         }
         #[cfg(windows)]
         for (reader, pipe) in [
@@ -1281,24 +1282,27 @@ impl GitSubprocess {
         Self::maybe_finished(this);
     }
 
-    fn output(&self, key: u32) -> &BufferedReader {
-        if key == 0 { &self.stdout } else { &self.stderr }
+    fn reader(&self, kind: Kind) -> &BufferedReader {
+        match kind {
+            Kind::Stdout => &self.stdout,
+            Kind::Stderr => &self.stderr,
+        }
     }
 
     /// May free `this`.
-    pub fn on_io(this: ThisPtr<Self>, key: u32, event: IoEvent) {
+    pub fn on_io(this: ThisPtr<Self>, kind: Kind, event: IoEvent) {
         let event_loop = this.event_loop.as_event_loop_ctx();
-        if this.note_read_status(this.output(key).read(event_loop, Some(event))) {
+        if this.note_read_result(this.reader(kind).read(event_loop, Some(event))) {
             Self::maybe_finished(this);
         }
     }
 
     /// `true` if the reader has ended.
-    fn note_read_status(&self, status: ReadStatus) -> bool {
-        match status {
-            ReadStatus::Pending => return false,
-            ReadStatus::Done => {}
-            ReadStatus::Failed(err) => self.read_error.with_mut(|e| _ = e.get_or_insert(err)),
+    fn note_read_result(&self, result: ReadResult) -> bool {
+        match result {
+            ReadResult::Pending => return false,
+            ReadResult::Done => {}
+            ReadResult::Err(err) => self.read_error.with_mut(|e| _ = e.get_or_insert(err)),
         }
         debug_assert!(self.remaining_fds.get() > 0);
         self.remaining_fds.set(self.remaining_fds.get() - 1);

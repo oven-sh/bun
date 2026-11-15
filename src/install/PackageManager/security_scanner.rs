@@ -19,8 +19,8 @@ use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{
     DependencyID, PackageID, PackageManager, invalid_dependency_id, invalid_package_id,
 };
-use bun_io::pipe_reader::Flags as ReaderFlags;
-use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadStatus};
+use bun_io::pipe_reader::ReaderFlags;
+use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
 use bun_ptr::RefPtr;
 #[cfg(not(windows))]
 use bun_spawn::SpawnResultExt as _;
@@ -724,10 +724,10 @@ fn attempt_security_scan(
     )?;
     let code = replace_first(&code, b"__SCANNER_MODULE__", &quoted);
 
-    let event_loop = EventLoopHandle::from_any(&manager.event_loop);
+    let event_loop_handle = EventLoopHandle::from_any(&manager.event_loop);
     let mut scanner = Box::new(SecurityScanSubprocess {
         manager,
-        event_loop,
+        event_loop_handle,
         code: code.into_boxed_slice(),
         json_data,
         process: None,
@@ -759,7 +759,7 @@ fn attempt_security_scan(
 
 pub struct SecurityScanSubprocess<'a> {
     manager: &'a mut PackageManager,
-    event_loop: EventLoopHandle,
+    event_loop_handle: EventLoopHandle,
     code: Box<[u8]>,
     json_data: Box<[u8]>,
     process: Option<ProcessHandle>,
@@ -893,7 +893,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         drop(ipc_write);
 
         let _ = bun_sys::set_nonblocking(ipc_read.fd());
-        self.ipc_reader.set_flags(ReaderFlags::NONBLOCKING, true);
+        self.ipc_reader
+            .update_flags(|f| f.insert(ReaderFlags::NONBLOCKING));
 
         let json_pipe = spawned.extra_pipes.swap_remove(1).into_owned();
         self.finish_spawn(&mut spawned, ipc_read, json_pipe)
@@ -923,7 +924,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         }
         let [child_read, parent_write] = json_fds.map(|fd| File::from_fd(Fd::from_uv(fd)));
 
-        let pipe = bun_io::Source::open_pipe(self.event_loop.native_loop(), parent_write.fd())?;
+        let pipe =
+            bun_io::Source::open_pipe(self.event_loop_handle.native_loop(), parent_write.fd())?;
         let _ = parent_write.into_raw(); // pipe owns it now
 
         let extra_fds: Box<[Stdio]> = Box::new([
@@ -938,7 +940,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             cwd: Box::from(FileSystem::get().top_level_dir()),
             extra_fds,
             windows: spawn::WindowsOptions {
-                loop_: self.event_loop,
+                loop_: self.event_loop_handle,
                 ..Default::default()
             },
             ..Default::default()
@@ -949,7 +951,8 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         drop((ipc_write, child_read));
 
-        self.ipc_reader.set_flags(ReaderFlags::NONBLOCKING, true);
+        self.ipc_reader
+            .update_flags(|f| f.insert(ReaderFlags::NONBLOCKING));
 
         self.finish_spawn(&mut spawned, ipc_read, StdioResult::Buffer(pipe))
     }
@@ -968,11 +971,11 @@ impl<'a> SecurityScanSubprocess<'a> {
         // isDone() returns true, otherwise we risk freeing this struct while
         // StaticPipeWriter still holds a pointer to it (child crash case).
         self.remaining_fds = 2;
-        let event_loop = self.event_loop;
-        let status = (self.ipc_reader)
+        let event_loop = self.event_loop_handle;
+        let result = (self.ipc_reader)
             .start(event_loop.as_event_loop_ctx(), ipc_read.into_raw(), true)
             .map_err(|e| e.to_zig_err())?;
-        self.on_read_status(status);
+        self.on_read_result(result);
 
         // `to_process` consumes `SpawnResult` by value on POSIX (and
         // `&mut self` on Windows); take ownership of the result and let the
@@ -1032,19 +1035,19 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 
     pub fn on_io(&mut self, event: IoEvent) {
-        let event_loop = self.event_loop.as_event_loop_ctx();
-        let status = (self.ipc_reader).read_chunks(event_loop, Some(event), |chunk, _| {
+        let event_loop = self.event_loop_handle.as_event_loop_ctx();
+        let result = (self.ipc_reader).read_chunks(event_loop, Some(event), |chunk, _| {
             self.ipc_data.extend_from_slice(&chunk);
             true
         });
-        self.on_read_status(status);
+        self.on_read_result(result);
     }
 
-    fn on_read_status(&mut self, status: ReadStatus) {
-        match status {
-            ReadStatus::Pending => return,
-            ReadStatus::Done => {}
-            ReadStatus::Failed(err) => {
+    fn on_read_result(&mut self, result: ReadResult) {
+        match result {
+            ReadResult::Pending => return,
+            ReadResult::Done => {}
+            ReadResult::Err(err) => {
                 Output::err_generic("Failed to read security scanner IPC: {}", (err,));
             }
         }

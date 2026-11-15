@@ -458,7 +458,7 @@ impl Resolver<'_, '_> {
     ) -> Option<(ModuleObjectOwner, ModuleObjectUse)> {
         let hir = self.input.hir;
         let id = mentioned_id(self.state(member));
-        if id.is_some_and(|id| self.may_hand_out_global_object(member, id)) {
+        if id.is_some_and(|id| self.find_global_handed_out(member, id).is_some()) {
             return Some(HOLDER_ESCAPED);
         }
         let (holder, key) = hir.member_key(member)?;

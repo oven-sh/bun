@@ -634,10 +634,10 @@ impl Resolver<'_, '_> {
         } else if makes_value {
             self.output.mentioned.push(id);
         }
-        if self.may_hand_out_global_object(expr, id) {
+        if let Some(global) = self.find_global_handed_out(expr, id) {
             self.output.method_that_hands_out_global_object_may_come_out = true;
-            self.mention(BuiltinId::GlobalThis);
-            self.expose(BuiltinId::GlobalThis);
+            self.mention(global);
+            self.expose(global);
         }
         if is_module_cache(id) {
             self.note_use_of_module_cache(expr);
@@ -1231,11 +1231,12 @@ impl Resolver<'_, '_> {
         }
     }
 
-    pub(super) fn may_hand_out_global_object(&self, expr: ExprId, id: BuiltinId) -> bool {
-        self.input.dialect == SourceDialect::Program
+    pub(super) fn find_global_handed_out(&self, expr: ExprId, id: BuiltinId) -> Option<BuiltinId> {
+        let hands_it_out = self.input.dialect == SourceDialect::Program
             && (self.takes_method_that_hands_out_global_object_off(expr, id)
                 || (hands_out_global_object(id)
-                    && !self.listens_for_event_that_program_alone_dispatches(expr, id)))
+                    && !self.listens_for_event_that_program_alone_dispatches(expr, id)));
+        hands_it_out.then_some(BuiltinId::GlobalThis)
     }
 
     fn listens_for_event_that_program_alone_dispatches(

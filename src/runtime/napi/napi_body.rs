@@ -2828,16 +2828,14 @@ impl ThreadSafeFunction {
     }
 
     fn dequeue(&self, shared: &mut TsfnShared) -> Option<DispatchStep> {
-        let was_blocked = self.is_blocked(shared);
         let task = shared.queue.read_item()?;
         let more = shared.queue.readable_length() > 0;
 
         if !more && shared.thread_count == 0 {
             shared.closing = ClosingState::Closing;
-            if self.max_queue_size > 0 {
-                self.blocking_condvar.signal();
-            }
-        } else if was_blocked && !self.is_blocked(shared) {
+        }
+        if self.max_queue_size > 0 {
+            // For every slot: the queue may never be full again, with producers still waiting.
             self.blocking_condvar.signal();
         }
 

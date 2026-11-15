@@ -29,7 +29,7 @@ use ::bun_semver as Semver;
 // `?*Api.BunInstall` (`self.opts.install`); `env` is the `*DotEnv.Loader`.
 unsafe extern "Rust" {
     /// SAFETY (genuine FFI precondition — NOT a `safe fn` candidate): impl
-    /// reborrows `&mut *log` / `&mut *env` and reads `*install` if non-null.
+    /// reborrows `&*log` / `&mut *env` and reads `*install` if non-null.
     /// All three must point at process-lifetime Transpiler-owned storage; the
     /// returned `NonNull` names the `'static` `PackageManager` singleton.
     /// Errs when the one-time init fails (e.g. the top-level directory is
@@ -48,7 +48,7 @@ unsafe extern "Rust" {
         name_hash: Install::PackageNameHash,
         version: &[u8],
         sliced: &Semver::SlicedString,
-        log: Option<&mut bun_ast::Log>,
+        log: Option<&bun_ast::Log>,
     ) -> Option<Dependency::Version>;
 }
 use crate::cache::Set as CacheSet;
@@ -627,16 +627,6 @@ impl<'a> Resolver<'a> {
         unsafe { core::ptr::addr_of_mut!((*self.fs).fs) }
     }
 
-    /// NOTE (Stacked Borrows): returns RAW `*mut` (see `fs()` note). BACKREF
-    /// — owner (Transpiler/BundleV2) outlives the Resolver; worker clones share
-    /// the same Log under the resolver mutex. Caller `unsafe { &mut *r.log() }`
-    /// at each use site; do not bind the projected `&mut Log` across another
-    /// `log()` deref.
-    #[inline(always)]
-    pub(crate) fn log(&self) -> *mut bun_ast::Log {
-        self.log.as_ptr()
-    }
-
     /// Temporarily redirect `self.log` to `log`, returning a guard that
     /// restores the previous pointer on drop.
     ///
@@ -661,37 +651,11 @@ impl<'a> Resolver<'a> {
         ResolverLogScope { slot, prev }
     }
 
-    /// Shared-borrow of the resolver's `Log` for read-only inspection
-    /// (e.g. `log.level`). Preferred over `unsafe { &*self.log() }`.
     #[inline(always)]
-    pub(crate) fn log_ref(&self) -> &bun_ast::Log {
-        // SAFETY: BACKREF — `self.log` is set in `init1` / `scoped_log`,
-        // owner-allocated, outlives the Resolver. Resolver mutex serializes
-        // mutation; a Shared `&` here pushes no Unique tag and so cannot
-        // alias-UB with the narrow `log_mut()` retags elsewhere (none are live
-        // across a `log_ref()` call).
+    pub fn log<'r>(&self) -> &'r bun_ast::Log {
+        // SAFETY: BACKREF — `self.log` is set in `init1` / `scoped_log`. FIXME:
+        // nothing ties `'r` to the log it was last set to.
         unsafe { self.log.as_ref() }
-    }
-
-    /// Unique-borrow of the resolver's `Log` for `add_*_fmt` / `add_msg`.
-    ///
-    /// Centralizes the per-site `unsafe { &mut *self.log() }` retag. `&mut
-    /// self` rules out two coexisting `&mut Log` from the SAME `Resolver`;
-    /// cross-clone aliasing (worker copies share the owner's `Log`) is
-    /// guarded by the resolver `mutex` — same invariant the open-coded sites
-    /// already relied on.
-    ///
-    /// Sites that need `&mut Log` while holding a disjoint `&mut self.<field>`
-    /// (`flush_debug_logs` ↔ `self.debug_logs`, `parse_tsconfig` ↔
-    /// `self.caches.json`) cannot route through `&mut self` and continue to
-    /// narrow-retag via the raw [`log()`](Self::log) accessor.
-    #[inline(always)]
-    pub fn log_mut(&mut self) -> &mut bun_ast::Log {
-        // SAFETY: BACKREF — `self.log` is set in `init1` / `scoped_log`; the
-        // pointee (owner-allocated `Log`, or a stack `Log` pinned by a live
-        // `ResolverLogScope`) outlives every borrow returned here. Resolver
-        // mutex serializes mutation across worker clones.
-        unsafe { self.log.as_mut() }
     }
 
     /// Lazily initializing
@@ -770,7 +734,7 @@ impl<'a> Resolver<'a> {
         name_hash: Install::PackageNameHash,
         version: &[u8],
         sliced: &Semver::SlicedString,
-        log: Option<&mut bun_ast::Log>,
+        log: Option<&bun_ast::Log>,
         // The package manager only records the `npm:` aliases of the project's own package.json
         // files. An alias that an installed package declares applies to that package alone.
         is_project: bool,
@@ -939,13 +903,7 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> crate::CrateResult<()> {
-        // NOTE: capture `log` before partially borrowing `self.debug_logs`
-        // so the method call doesn't conflict with the field borrow (`log()`
-        // derefs the raw `*mut Log` and is lifetime-decoupled from `&self`).
-        // SAFETY: BACKREF — `self.log` points at owner-allocated `Log`; disjoint from
-        // `self.debug_logs` (separate allocation), so the `&mut Log` does not alias the
-        // `self.debug_logs.as_mut()` borrow below.
-        let log = unsafe { &mut *self.log() };
+        let log = self.log();
         if let Some(debug) = self.debug_logs.as_mut() {
             // NOTE: only consume `what`/`notes` inside
             // the arm that actually emits, so the success-at-non-verbose path touches
@@ -954,7 +912,7 @@ impl<'a> Resolver<'a> {
             // the `what` buffer via `Data.text: Cow::Owned` (no `Box::leak`, PORTING.md
             // §Forbidden). The `should_print` gate mirrors the bypassed wrappers.
             if flush_mode == FlushMode::Fail {
-                if bun_ast::Kind::Debug.should_print(log.level) {
+                if bun_ast::Kind::Debug.should_print(log.level.get()) {
                     let what = core::mem::take(&mut debug.what);
                     let notes = core::mem::take(&mut debug.notes).into_boxed_slice();
                     log.add_msg(Msg {
@@ -971,8 +929,8 @@ impl<'a> Resolver<'a> {
                         ..Default::default()
                     });
                 }
-            } else if (log.level as u32) <= (bun_ast::Level::Verbose as u32) {
-                if bun_ast::Kind::Verbose.should_print(log.level) {
+            } else if (log.level.get() as u32) <= (bun_ast::Level::Verbose as u32) {
+                if bun_ast::Kind::Verbose.should_print(log.level.get()) {
                     let what = core::mem::take(&mut debug.what);
                     let notes = core::mem::take(&mut debug.notes).into_boxed_slice();
                     log.add_msg(Msg {
@@ -1330,7 +1288,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        if self.log_ref().level == bun_ast::Level::Verbose {
+        if self.log().level.get() == bun_ast::Level::Verbose {
             if self.debug_logs.is_some() {
                 // deinit → drop
                 self.debug_logs = None;
@@ -3187,8 +3145,8 @@ impl<'a> Resolver<'a> {
                             }
                             _ => None,
                         };
-                        let log = self.log_mut();
-                        let mut add = |text: core::fmt::Arguments<'_>| {
+                        let log = self.log();
+                        let add = |text: core::fmt::Arguments<'_>| {
                             log.add_resolve_error(
                                 None,
                                 bun_ast::Range::NONE,
@@ -3298,7 +3256,7 @@ impl<'a> Resolver<'a> {
                                 Semver::semver_string::Builder::string_hash(name),
                                 range,
                                 &Semver::SlicedString::init(&buf, range),
-                                Some(self.log_mut()),
+                                Some(self.log()),
                             );
                             if let Some(version) = version {
                                 dependency_version = version;
@@ -3350,7 +3308,7 @@ impl<'a> Resolver<'a> {
                     {
                         let found = self.dir_info_cached(folder);
                         if !matches!(found, Ok(Some(_))) {
-                            self.log_mut().add_error_fmt(
+                            self.log().add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 format_args!(
@@ -3375,7 +3333,7 @@ impl<'a> Resolver<'a> {
                                     None,
                                     esm.version,
                                     &sliced_string,
-                                    Some(self.log_mut()),
+                                    Some(self.log()),
                                 ) {
                                     Some(v) => v,
                                     None => break 'load_module_from_cache,
@@ -3676,7 +3634,7 @@ impl<'a> Resolver<'a> {
             Ok(d) => d,
             Err(err) => {
                 // TODO: handle this error better
-                let _ = self.log_mut().add_error_fmt(
+                let _ = self.log().add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!("Unable to open directory: {}", bstr::BStr::new(err.name())),
@@ -4289,14 +4247,10 @@ impl<'a> Resolver<'a> {
         let source = bun_ast::Source::init_path_string_owned(key_path, contents);
         let file_dir = source.path.source_dir();
 
-        // SAFETY: BACKREF — `self.log` (see `log()` NOTE); disjoint from `self.caches`,
-        // narrow `&mut` for this call only.
-        let mut result =
-            match TSConfigJSON::parse(unsafe { &mut *self.log() }, &source, &mut self.caches.json)?
-            {
-                Some(r) => r,
-                None => return Ok(None),
-            };
+        let mut result = match TSConfigJSON::parse(self.log(), &source, &mut self.caches.json)? {
+            Some(r) => r,
+            None => return Ok(None),
+        };
 
         // `baseUrl` can be longer than a path buffer. Joins against it are checked, so a long one never matches.
         if result.has_base_url() {
@@ -4751,7 +4705,7 @@ impl<'a> Resolver<'a> {
                             if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
-                                    let _ = self.log_mut().add_error_fmt(
+                                    let _ = self.log().add_error_fmt(
                                         None,
                                         bun_ast::Loc::default(),
                                         format_args!(
@@ -5954,7 +5908,7 @@ impl<'a> Resolver<'a> {
                 crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
                 | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {}
                 _ => {
-                    let _ = self.log_mut().add_error_fmt(
+                    let _ = self.log().add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
@@ -6484,9 +6438,9 @@ impl<'a> Resolver<'a> {
                 };
                 // It is for the resolvers that read it. What is wrong with it is not an error of
                 // one that reads another in its place.
-                let (mut ignored, log) = (bun_ast::Log::init(), self.log);
+                let (ignored, log) = (bun_ast::Log::init(), self.log);
                 if self.opts.tsconfig_override.is_some() {
-                    self.log = NonNull::from(&mut ignored);
+                    self.log = NonNull::from(&ignored);
                 }
                 let loaded = self.load_tsconfig(tsconfigpath, fd);
                 self.log = log;
@@ -6513,7 +6467,7 @@ impl<'a> Resolver<'a> {
             Err(err) => {
                 let pretty = tsconfigpath;
                 if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                    let _ = self.log_mut().add_error_fmt(
+                    let _ = self.log().add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!("Cannot find tsconfig file {}", bun_core::fmt::quote(pretty)),
@@ -6521,7 +6475,7 @@ impl<'a> Resolver<'a> {
                 } else if err != crate::Error::ParseErrorAlreadyLogged
                     && err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
                 {
-                    let _ = self.log_mut().add_error_fmt(
+                    let _ = self.log().add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
@@ -6557,7 +6511,7 @@ impl<'a> Resolver<'a> {
                 let parent_config_maybe: Option<Box<TSConfigJSON>> = match parsed {
                     Ok(v) => v,
                     Err((err, shown_path)) => {
-                        let _ = self.log_mut().add_debug_fmt(
+                        let _ = self.log().add_debug_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(

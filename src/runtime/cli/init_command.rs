@@ -477,9 +477,9 @@ impl InitCommand {
                     b"package.json",
                     package_json_contents.list.as_slice(),
                 );
-                let mut log = bun_ast::Log::init();
+                let log = bun_ast::Log::init();
                 let package_json_expr: bun_ast::Expr =
-                    match json::parse_package_json_utf8(&source, &mut log, &bump) {
+                    match json::parse_package_json_utf8(&source, &log, &bump) {
                         Ok(e) => e,
                         Err(_) => {
                             package_json_file = None;

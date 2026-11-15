@@ -1107,8 +1107,7 @@ fn parse_to_values(
                 Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
                 Err(YamlParseError::SyntaxError) => {
-                    if !log.msgs.is_empty() {
-                        let first_msg = &log.msgs[0];
+                    if let Some(first_msg) = log.msgs.get_mut().first() {
                         let error_text = &first_msg.data.text;
                         return Err(global.throw_value(global.create_syntax_error_instance(
                             format_args!("YAML Parse error: {}", bstr::BStr::new(error_text)),

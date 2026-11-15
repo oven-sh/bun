@@ -66,7 +66,7 @@ impl SourceProvider for Defines<'_> {
         &self,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> FoldOptions<'s> {
         let create_define = |&(name, value): &(&str, DefinedValue)| {
             let path = intern_dotted_name(name, arena, atoms);
@@ -95,11 +95,11 @@ impl SourceProvider for Defines<'_> {
         }
     }
 
-    fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
+    fn resolve(&self, request: &ResolveRequest<'_>, log: &Log) -> Result<Resolution, Failed> {
         WithoutServices.resolve(request, log)
     }
 
-    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+    fn load(&self, request: &LoadRequest<'_>, log: &Log) -> Result<Loaded, Failed> {
         WithoutServices.load(request, log)
     }
 
@@ -107,7 +107,7 @@ impl SourceProvider for Defines<'_> {
         WithoutServices.has_load_plugin(module)
     }
 
-    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+    fn finish_deferred_loads(&self, log: &Log) -> Vec<DeferredLoad> {
         WithoutServices.finish_deferred_loads(log)
     }
 
@@ -116,12 +116,12 @@ impl SourceProvider for Defines<'_> {
         file: &SourceFile<'_>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<DataModule<'s>, DataFailure> {
         WithoutServices.parse_data(file, arena, atoms, log)
     }
 
-    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+    fn check_embedded_files(&self, log: &Log) -> Result<(), Failed> {
         WithoutServices.check_embedded_files(log)
     }
 }

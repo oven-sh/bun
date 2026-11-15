@@ -28,7 +28,7 @@ pub(crate) fn print_report_log(mut log: bun_ast::Log) {
                 location.file = Box::from(shown);
             }
         };
-        for message in log.msgs.iter_mut() {
+        for message in log.msgs.get_mut() {
             shorten(&mut message.data);
             message.notes.iter_mut().for_each(shorten);
         }
@@ -92,7 +92,7 @@ pub(crate) fn time_since_start(timestamp: i128) -> Duration {
 }
 
 pub(super) fn print_outcome(
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     outcome: CompileOutcome,
     outfile: &[u8],
     finished: i128,
@@ -133,8 +133,8 @@ pub(super) fn print_outcome(
 
     let mut lines = Vec::new();
     report::write_lines(&outcome.report_messages, false, &mut lines);
-    let mut reports_log = bun_ast::Log::init();
-    report::add_messages_to_log(outcome.report_messages, &mut reports_log);
+    let reports_log = bun_ast::Log::init();
+    report::add_messages_to_log(outcome.report_messages, &reports_log);
     print_report_log(reports_log);
 
     for line in &outcome.trim_log_lines {

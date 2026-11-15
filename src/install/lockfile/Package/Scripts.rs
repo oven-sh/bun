@@ -313,7 +313,7 @@ impl Scripts {
     /// that would run.
     pub fn get_list(
         &mut self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         folder_path: &mut bun_paths::AutoAbsPath,
         folder_name: &[u8],
         resolution: &Resolution,
@@ -344,7 +344,7 @@ impl Scripts {
     pub(crate) fn fill_from_package_json(
         &mut self,
         string_builder: &mut LockfileStringBuilder<'_>,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         folder_path: &mut bun_paths::AutoAbsPath,
     ) -> Result<bool, crate::Error> {
         if folder_path.len() + "/package.json".len() >= bun_paths::MAX_PATH_BYTES {
@@ -375,7 +375,7 @@ impl Scripts {
 
     pub(crate) fn create_from_package_json(
         &mut self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         folder_path: &mut bun_paths::AutoAbsPath,
         folder_name: &[u8],
         resolution_tag: ResolutionTag,
@@ -416,9 +416,9 @@ fn read_gypfile(package_dir: &[u8], buf: &mut [u8]) -> bool {
         return true;
     };
     let json_src = bun_ast::Source::init_path_string(path.as_bytes(), json_buf.as_slice());
-    let mut log = bun_ast::Log::init();
+    let log = bun_ast::Log::init();
     initialize_store();
-    bun_json::ParsedJson::parse_package_json(&json_src, &mut log)
+    bun_json::ParsedJson::parse_package_json(&json_src, &log)
         .map_or(true, |parsed| gypfile_from_json(parsed.root))
 }
 

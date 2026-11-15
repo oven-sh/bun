@@ -786,8 +786,7 @@ impl CreateCommand {
                     package_json_contents.list.as_slice(),
                 );
 
-                // SAFETY: single-threaded CLI dispatch; no other borrow of `Cli::LOG_` is live in this scope.
-                let log: &mut bun_ast::Log = unsafe { ctx.log_mut() };
+                let log: &bun_ast::Log = ctx.log();
                 let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
                 let parsed = match JSON::parse_package_json_utf8_with_opts(
                     JSON::JSONOptions {
@@ -800,7 +799,7 @@ impl CreateCommand {
                 ) {
                     Ok(r) => r,
                     Err(_) => {
-                        if log.errors > 0 {
+                        if log.errors.get() > 0 {
                             let _ = log.print(Output::error_writer());
                         }
                         break 'process_package_json;
@@ -813,7 +812,7 @@ impl CreateCommand {
                     break 'process_package_json;
                 }
 
-                if log.errors > 0 {
+                if log.errors.get() > 0 {
                     let _ = log.print(Output::error_writer());
 
                     break 'process_package_json;
@@ -1760,8 +1759,7 @@ impl Example {
         refresher.refresh();
         bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(b"package.json", mutable.list.as_slice());
-        // SAFETY: single-threaded CLI dispatch; no other borrow of `Cli::LOG_` is live in this scope.
-        let log = unsafe { ctx.log_mut() };
+        let log = ctx.log();
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
         let expr = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,
@@ -1769,7 +1767,7 @@ impl Example {
                 refresher.end();
                 refresher.refresh();
 
-                if log.errors > 0 {
+                if log.errors.get() > 0 {
                     let _ = log.print(Output::error_writer());
                 } else {
                     bun_core::pretty_errorln!("Error parsing package: <r><red>{}<r>", err.name(),);
@@ -1778,7 +1776,7 @@ impl Example {
             }
         };
 
-        if log.errors > 0 {
+        if log.errors.get() > 0 {
             refresher.end();
             refresher.refresh();
 
@@ -1909,12 +1907,11 @@ impl Example {
         let source = bun_ast::Source::init_path_string(b"examples.json", mutable.list.as_slice());
         // Process-lifetime: the examples borrow from it.
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
-        // SAFETY: single-threaded CLI dispatch; no other borrow of `Cli::LOG_` is live in this scope.
-        let log = unsafe { ctx.log_mut() };
+        let log = ctx.log();
         let examples_object = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,
             Err(err) => {
-                if log.errors > 0 {
+                if log.errors.get() > 0 {
                     let _ = log.print(Output::error_writer());
                 } else {
                     bun_core::pretty_errorln!("Error parsing examples: <r><red>{}<r>", err.name(),);
@@ -1923,7 +1920,7 @@ impl Example {
             }
         };
 
-        if log.errors > 0 {
+        if log.errors.get() > 0 {
             let _ = log.print(Output::error_writer());
             Global::exit(1);
         }

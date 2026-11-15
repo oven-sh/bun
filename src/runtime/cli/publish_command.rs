@@ -253,16 +253,15 @@ impl Context {
 
         let bump = bun_alloc::Arena::new();
         let json_source = bun_ast::Source::init_path_string(b"package.json", package_json_contents);
-        let mut json =
-            match json_mod::parse_package_json_utf8(&json_source, manager.log_mut(), &bump) {
-                Ok(j) => j,
-                Err(bun_parsers::Error::Alloc(_)) => return Err(PackError::OutOfMemory),
-                Err(_) => {
-                    let _ = manager.log_mut().print(Output::error_writer());
-                    Output::err_generic("failed to parse tarball package.json", ());
-                    Global::crash();
-                }
-            };
+        let mut json = match json_mod::parse_package_json_utf8(&json_source, manager.log(), &bump) {
+            Ok(j) => j,
+            Err(bun_parsers::Error::Alloc(_)) => return Err(PackError::OutOfMemory),
+            Err(_) => {
+                let _ = manager.log().print(Output::error_writer());
+                Output::err_generic("failed to parse tarball package.json", ());
+                Global::crash();
+            }
+        };
         pack::drop_shadowed_properties(json);
 
         if pack::is_private_package(&json) {
@@ -688,9 +687,9 @@ impl PublishCommand {
         }
 
         let source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
-        let mut log = bun_ast::Log::init();
+        let log = bun_ast::Log::init();
         let bump = bun_alloc::Arena::new();
-        let Ok(json) = json_mod::parse_utf8(&source, &mut log, &bump) else {
+        let Ok(json) = json_mod::parse_utf8(&source, &log, &bump) else {
             return false;
         };
 
@@ -914,7 +913,7 @@ impl PublishCommand {
         response_buf: &mut MutableString,
     ) -> Result<Box<[u8]>, AllocError> {
         let bump = bun_alloc::Arena::new();
-        let manager_log: &mut bun_ast::Log = manager.log_mut();
+        let manager_log: &bun_ast::Log = manager.log();
         let res_source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
 
         'try_web: {

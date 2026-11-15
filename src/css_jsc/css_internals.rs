@@ -117,9 +117,9 @@ fn testing_impl<'a>(
 
     let global = cx.global();
     let browsers = targets.map(Browsers::from);
-    let mut log = Log::init();
+    let log = Log::init();
 
-    let mut parser_options = ParserOptions::default(Some(&mut log));
+    let mut parser_options = ParserOptions::default(Some(&log));
     parser_options.flags |= flags;
 
     let mut import_records = Vec::<ImportRecord>::default();
@@ -233,9 +233,9 @@ pub(crate) fn attr_test<'a>(
         ..Default::default()
     };
 
-    let mut log = Log::init();
+    let log = Log::init();
 
-    let parser_options = ParserOptions::default(Some(&mut log));
+    let parser_options = ParserOptions::default(Some(&log));
 
     let mut import_records = Vec::<ImportRecord>::default();
     match StyleAttribute::parse(

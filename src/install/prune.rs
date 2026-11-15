@@ -287,7 +287,7 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         LoadResult::Err(cause) => {
             if !quiet {
                 Output::err_generic("failed to load lockfile: {s}", (cause.value.name(),));
-                print_log_errors(manager.log_mut());
+                print_log_errors(manager.log());
             }
             Global::exit(1);
         }
@@ -592,7 +592,7 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
     };
     let quiet = manager.options.log_level == LogLevel::Silent;
 
-    let log = manager.log_mut();
+    let log = manager.log();
     let path: &[u8] = manager.root_package_json_path.as_bytes();
     let (source, json) = match manager
         .workspace_package_json_cache
@@ -838,15 +838,15 @@ fn hoist_tree(
         hoisted_dependencies: core::mem::take(&mut manager.lockfile.buffers.hoisted_dependencies),
         resolutions: manager.lockfile.buffers.resolutions.clone(),
     };
+    let log = manager.log();
     let pm: *mut PackageManager = manager;
     // SAFETY: same split as `PackageManager::load_lockfile_from_cwd` — `lockfile` is its own `Box`
     // allocation and the Filter builder only reads `manager.options`/`subcommand`/`summary`.
     let result = unsafe {
         let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
-        let log: *mut bun_ast::Log = (*pm).log;
         let options = (!all_rows).then_some(&*pm);
         (*lf).hoist::<{ tree::BuilderMethod::Filter }>(
-            &mut *log,
+            log,
             options,
             install_root_dependencies,
             workspace_filters,
@@ -1167,8 +1167,8 @@ fn installed_package_json(package: &Dir) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
     let bytes = sys::File::read_from(package.fd(), b"package.json").ok()?;
     crate::initialize_store();
     let source = bun_ast::Source::init_path_string_owned(b"package.json", bytes);
-    let mut log = bun_ast::Log::init();
-    let mut checker = crate::bun_json::PackageJSONVersionChecker::init(&source, &mut log);
+    let log = bun_ast::Log::init();
+    let mut checker = crate::bun_json::PackageJSONVersionChecker::init(&source, &log);
     if checker.parse().is_err() || checker.has_errors() || !checker.has_found_name {
         return None;
     }

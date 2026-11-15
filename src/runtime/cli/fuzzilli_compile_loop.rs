@@ -129,8 +129,7 @@ pub(crate) fn compile_programs(ctx: Context<'_>) -> ! {
     }
     let defines = ctx.args.define.clone();
     let compile = |ctx: &mut ContextData| {
-        // SAFETY: nothing else borrows the log between two builds.
-        unsafe { ctx.log_mut() }.reset();
+        ctx.log().reset();
         ctx.args.define.clone_from(&defines);
         match compile_from_context(ctx, CompileProduct::GraphBytes) {
             Ok(Ok(outcome)) => outcome.graph_bytes,
@@ -139,7 +138,7 @@ pub(crate) fn compile_programs(ctx: Context<'_>) -> ! {
     };
     // The tables that the first build of a process fills are filled once.
     if compile(ctx).is_none() {
-        print_log(ctx.log_ref());
+        print_log(ctx.log());
         stop("An empty program could not be compiled");
     }
     set_preload(
@@ -156,7 +155,7 @@ pub(crate) fn compile_programs(ctx: Context<'_>) -> ! {
         graph = compile(ctx);
     }
     if graph.is_none() {
-        print_log(ctx.log_ref());
+        print_log(ctx.log());
     }
     if reports_internal_error(ctx) {
         stop("The compiler reported an internal error");
@@ -359,8 +358,9 @@ fn read_stderr_of_this_program() -> Vec<u8> {
 }
 
 fn reports_internal_error(ctx: &ContextData) -> bool {
-    let mut messages = ctx.log_ref().msgs.iter();
-    messages.any(|message| message.data.text.starts_with(INTERNAL_ERROR_PREFIX))
+    ctx.log().with_msgs(|messages| {
+        (messages.iter()).any(|message| message.data.text.starts_with(INTERNAL_ERROR_PREFIX))
+    })
 }
 
 /// Returns whether that changed the option.

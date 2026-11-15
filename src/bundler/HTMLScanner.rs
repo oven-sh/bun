@@ -53,12 +53,12 @@ bun_core::declare_scope!(HTMLScanner, hidden);
 pub(crate) struct HTMLScanner<'a> {
     // arena field dropped — global mimalloc (see PORTING.md §Allocators).
     pub import_records: Vec<ImportRecord<'static>>,
-    pub log: &'a mut Log,
+    pub log: &'a Log,
     pub source: &'a Source<'a>,
 }
 
 impl<'a> HTMLScanner<'a> {
-    pub(crate) fn init(log: &'a mut Log, source: &'a Source<'a>) -> HTMLScanner<'a> {
+    pub(crate) fn init(log: &'a Log, source: &'a Source<'a>) -> HTMLScanner<'a> {
         HTMLScanner {
             import_records: Vec::new(),
             log,
@@ -152,7 +152,7 @@ impl<'a> HTMLScanner<'a> {
 
 /// The import records of the HTML file `source`: one per `<script src>`, `<link href>` and other tag the bundler follows.
 pub fn scan_import_records(
-    log: &mut Log,
+    log: &Log,
     source: &Source,
 ) -> Result<Vec<ImportRecord<'static>>, Error> {
     let mut scanner = HTMLScanner::init(log, source);

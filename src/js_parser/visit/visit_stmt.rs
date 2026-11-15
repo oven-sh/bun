@@ -1290,11 +1290,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //  `export var` is skipped because it's unnecessary. That *should* be a noop, but it loses the `is_export` flag if we're in HMR.
         let kind = p.select_local_kind(data.kind);
         if kind == S::Kind::KVar && !data.is_export {
+            if p.lowers_var_merged_with_function
+                && p.current_scope == p.module_scope
+                && p.decls_bind_function_merged_with_var(data.decls.slice())
+            {
+                p.lower_vars_merged_with_function(stmts, stmt.loc, data);
+                if p.options.features.react_fast_refresh {
+                    Self::register_react_refresh_decls(p, stmts, data.decls.slice())?;
+                }
+                return Ok(());
+            }
+
             let relocated =
                 p.maybe_relocate_vars_to_top_level(data.decls.slice(), RelocateVarsMode::Normal);
             if relocated.ok {
                 if let Some(new_stmt) = relocated.stmt {
                     stmts.push(new_stmt);
+                }
+                if p.lowers_var_merged_with_function {
+                    p.ignore_uses_of_bare_vars_merged_with_function(data.decls.slice());
                 }
 
                 return Ok(());
@@ -1306,39 +1320,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmts.push(*stmt);
 
         if p.options.features.react_fast_refresh && p.current_scope == p.module_scope {
-            for decl in data.decls.slice() {
-                'try_register: {
-                    let Some(val) = decl.value else {
-                        break 'try_register;
-                    };
-                    match val.data {
-                        // Assigning a component to a local.
-                        js_ast::ExprData::EArrow(_) | js_ast::ExprData::EFunction(_) => {}
-
-                        // A wrapped component.
-                        js_ast::ExprData::ECall(call) => match call.target.data {
-                            js_ast::ExprData::EIdentifier(id) => {
-                                if id.ref_ != p.react_refresh.latest_signature_ref {
-                                    break 'try_register;
-                                }
-                            }
-                            _ => break 'try_register,
-                        },
-                        _ => break 'try_register,
-                    }
-                    let id = match decl.binding.data {
-                        js_ast::binding::Data::BIdentifier(b) => b.r#ref,
-                        _ => break 'try_register,
-                    };
-                    let original_name = p.symbols[id.inner_index() as usize].original_name.slice();
-                    p.handle_react_refresh_register(
-                        stmts,
-                        original_name,
-                        id,
-                        ReactRefreshExportKind::Named,
-                    )?;
-                }
-            }
+            Self::register_react_refresh_decls(p, stmts, data.decls.slice())?;
         }
 
         if data.is_export && p.options.features.server_components.wraps_exports() {
@@ -1358,6 +1340,47 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        Ok(())
+    }
+
+    fn register_react_refresh_decls(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        decls: &[G::Decl],
+    ) -> Result<(), Error> {
+        for decl in decls {
+            'try_register: {
+                let Some(val) = decl.value else {
+                    break 'try_register;
+                };
+                match val.data {
+                    // Assigning a component to a local.
+                    js_ast::ExprData::EArrow(_) | js_ast::ExprData::EFunction(_) => {}
+
+                    // A wrapped component.
+                    js_ast::ExprData::ECall(call) => match call.target.data {
+                        js_ast::ExprData::EIdentifier(id) => {
+                            if id.ref_ != p.react_refresh.latest_signature_ref {
+                                break 'try_register;
+                            }
+                        }
+                        _ => break 'try_register,
+                    },
+                    _ => break 'try_register,
+                }
+                let id = match decl.binding.data {
+                    js_ast::binding::Data::BIdentifier(b) => b.r#ref,
+                    _ => break 'try_register,
+                };
+                let original_name = p.symbols[id.inner_index() as usize].original_name.slice();
+                p.handle_react_refresh_register(
+                    stmts,
+                    original_name,
+                    id,
+                    ReactRefreshExportKind::Named,
+                )?;
+            }
+        }
         Ok(())
     }
 
@@ -2008,7 +2031,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data.body = p.visit_loop_body(data.body);
 
         if let Some(for_init) = data.init {
-            if let StmtData::SLocal(local) = for_init.data {
+            if let StmtData::SLocal(mut local) = for_init.data {
                 // Potentially relocate "var" declarations to the top level. Note that this
                 // must be done inside the scope of the for loop or they won't be relocated.
                 if local.kind == S::Kind::KVar {
@@ -2018,6 +2041,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     );
                     if let Some(relocated) = relocate.stmt {
                         data.init = Some(relocated);
+                    } else if relocate.ok && p.lowers_var_merged_with_function {
+                        p.drop_decls_of_function_merged_with_var(&mut local.decls);
+                        if local.decls.is_empty() {
+                            data.init = None;
+                        }
                     }
                 }
             }

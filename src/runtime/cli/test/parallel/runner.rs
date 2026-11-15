@@ -230,7 +230,10 @@ pub(crate) fn run_as_coordinator(
     coord.end_group();
     crate::cli::run_compiled::log_largest_worker(
         coord.max_worker_peak_rss_mb,
-        (coord.workers.iter()).fold(0, |most, w| most.max(w.peak_rss_mb)),
+        (coord.workers.iter())
+            .map(|w| w.peak_rss_mb)
+            .max()
+            .unwrap_or(0),
     );
     crate::cli::run_compiled::log_account_of_process(format_args!("coordinator | files {n}"));
 
@@ -593,10 +596,10 @@ struct RunningFile {
 }
 
 impl WorkerCommands {
-    /// False as long as there is no file to run and one may still come.
+    /// Returns whether the wait is over: a file to run, a shutdown or a closed channel.
     fn read_commands(&mut self) -> bool {
-        if let Some(mut received) = self.link.channel.take_received() {
-            while let Some((kind, mut rd)) = received.next_frame() {
+        if let Some(mut incoming) = self.link.channel.take_incoming() {
+            while let Some((kind, mut rd)) = incoming.next_frame() {
                 match kind {
                     frame::Kind::Run => {
                         self.pending_idx = Some(rd.u32());
@@ -610,7 +613,7 @@ impl WorkerCommands {
                     _ => {}
                 }
             }
-            self.link.channel.keep_unread(received);
+            self.link.channel.restore_incoming(incoming);
         }
         self.pending_idx.is_some() || self.shutdown || self.link.channel.done.get()
     }

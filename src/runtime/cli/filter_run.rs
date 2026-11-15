@@ -1,7 +1,7 @@
 use core::cell::Cell;
 #[cfg(unix)]
 use core::ffi::c_void;
-use std::io::Write as _;
+use std::io::{self, Write as _};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
@@ -56,17 +56,19 @@ struct Shared {
     /// Buffer for batched output, unless `pretty_output`.
     print_buf: Cell<Vec<u8>>,
     /// There is output that `State::redraw` has not drawn.
-    has_output: Cell<bool>,
+    needs_redraw: Cell<bool>,
     /// A process has exited since `State::finish_exited` last looked.
     has_exits: Cell<bool>,
 }
 
 impl Shared {
-    /// `buf` was taken out of `print_buf`.
-    fn print(&self, mut buf: Vec<u8>) {
+    fn print(&self, fill: impl FnOnce(&mut Vec<u8>) -> io::Result<()>) -> io::Result<()> {
+        let mut buf = self.print_buf.take();
+        fill(&mut buf)?;
         write_to_stdout(&buf);
         buf.clear();
         self.print_buf.set(buf);
+        Ok(())
     }
 }
 
@@ -85,29 +87,30 @@ impl ScriptOutput<'_> {
     fn read_chunk(&mut self, chunk: &[u8]) -> crate::Result<()> {
         if self.shared.pretty_output {
             self.buffer.extend_from_slice(chunk);
-            self.shared.has_output.set(true);
+            self.shared.needs_redraw.set(true);
             return Ok(());
         }
-        let mut buf = self.shared.print_buf.take();
-        let mut content = chunk;
-        while let Some(i) = strings::index_of_char_usize(content, b'\n') {
-            let mut line;
-            (line, content) = content.split_at(i + 1);
-            if !self.buffer.is_empty() {
-                self.buffer.extend_from_slice(line);
-                line = &self.buffer;
+        self.shared.print(|buf| {
+            let mut content = chunk;
+            while let Some(i) = strings::index_of_char_usize(content, b'\n') {
+                let mut line;
+                (line, content) = content.split_at(i + 1);
+                if !self.buffer.is_empty() {
+                    self.buffer.extend_from_slice(line);
+                    line = &self.buffer;
+                }
+                write!(
+                    buf,
+                    "{} {}: {}",
+                    bun_core::fmt::escape_control_chars(&self.config.package_name),
+                    bun_core::fmt::escape_control_chars(&self.config.script_name),
+                    bstr::BStr::new(line),
+                )?;
+                self.buffer.clear();
             }
-            write!(
-                buf,
-                "{} {}: {}",
-                bun_core::fmt::escape_control_chars(&self.config.package_name),
-                bun_core::fmt::escape_control_chars(&self.config.script_name),
-                bstr::BStr::new(line),
-            )?;
-            self.buffer.clear();
-        }
-        self.buffer.extend_from_slice(content);
-        self.shared.print(buf);
+            self.buffer.extend_from_slice(content);
+            Ok(())
+        })?;
         Ok(())
     }
 }
@@ -321,7 +324,7 @@ impl<'a> State<'a> {
         // SAFETY: the process-lifetime DotEnv loader; nothing else reaches it during `start`.
         let env = unsafe { &mut *self.env };
         if self.handles[index].start(self.shell_bin, env).is_err() {
-            if self.shared.has_output.get() {
+            if self.shared.needs_redraw.get() {
                 let _ = self.redraw(false);
             }
             bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
@@ -352,14 +355,18 @@ impl<'a> State<'a> {
             }
             if dependent.skipped {
                 if !self.shared.pretty_output {
-                    let mut buf = self.shared.print_buf.take();
-                    let _ = writeln!(
-                        buf,
-                        "{} {}: Skipped",
-                        bun_core::fmt::escape_control_chars(&dependent.output.config.package_name),
-                        bun_core::fmt::escape_control_chars(&dependent.output.config.script_name),
-                    );
-                    self.shared.print(buf);
+                    let _ = self.shared.print(|buf| {
+                        writeln!(
+                            buf,
+                            "{} {}: Skipped",
+                            bun_core::fmt::escape_control_chars(
+                                &dependent.output.config.package_name
+                            ),
+                            bun_core::fmt::escape_control_chars(
+                                &dependent.output.config.script_name
+                            ),
+                        )
+                    });
                 }
                 self.finish(dependent_index);
             } else {
@@ -388,40 +395,41 @@ impl<'a> State<'a> {
             handle.drain_and_close_pipes();
         }
         if !self.shared.pretty_output {
-            let mut buf = self.shared.print_buf.take();
-            // flush any remaining buffer
-            if !handle.output.buffer.is_empty() {
-                writeln!(
-                    buf,
-                    "{}: {}",
-                    bun_core::fmt::escape_control_chars(&handle.output.config.package_name),
-                    bstr::BStr::new(&handle.output.buffer),
-                )?;
-                handle.output.buffer.clear();
-            }
-            // print exit status
-            match &handle.process.as_ref().unwrap().status {
-                Status::Exited(exited) => {
+            self.shared.print(|buf| {
+                // flush any remaining buffer
+                if !handle.output.buffer.is_empty() {
                     writeln!(
                         buf,
-                        "{} {}: Exited with code {}",
+                        "{}: {}",
                         bun_core::fmt::escape_control_chars(&handle.output.config.package_name),
-                        bun_core::fmt::escape_control_chars(&handle.output.config.script_name),
-                        exited.code,
+                        bstr::BStr::new(&handle.output.buffer),
                     )?;
+                    handle.output.buffer.clear();
                 }
-                Status::Signaled(signal) => {
-                    writeln!(
-                        buf,
-                        "{} {}: Signaled with code {}",
-                        bun_core::fmt::escape_control_chars(&handle.output.config.package_name),
-                        bun_core::fmt::escape_control_chars(&handle.output.config.script_name),
-                        bun_sys::SignalCode(*signal).name().unwrap_or("UNKNOWN"),
-                    )?;
+                // print exit status
+                match &handle.process.as_ref().unwrap().status {
+                    Status::Exited(exited) => {
+                        writeln!(
+                            buf,
+                            "{} {}: Exited with code {}",
+                            bun_core::fmt::escape_control_chars(&handle.output.config.package_name),
+                            bun_core::fmt::escape_control_chars(&handle.output.config.script_name),
+                            exited.code,
+                        )?;
+                    }
+                    Status::Signaled(signal) => {
+                        writeln!(
+                            buf,
+                            "{} {}: Signaled with code {}",
+                            bun_core::fmt::escape_control_chars(&handle.output.config.package_name),
+                            bun_core::fmt::escape_control_chars(&handle.output.config.script_name),
+                            bun_sys::SignalCode(*signal).name().unwrap_or("UNKNOWN"),
+                        )?;
+                    }
+                    _ => {}
                 }
-                _ => {}
-            }
-            self.shared.print(buf);
+                Ok(())
+            })?;
         }
         // `start` incremented this. Skipped scripts never start, so `finish` doesn't decrement it.
         self.remaining_scripts -= 1;
@@ -486,7 +494,7 @@ impl<'a> State<'a> {
         if !self.shared.pretty_output {
             return Ok(());
         }
-        self.shared.has_output.set(false);
+        self.shared.needs_redraw.set(false);
         self.draw_buf.clear();
         self.draw_buf
             .extend_from_slice(Output::SYNCHRONIZED_START.as_bytes());
@@ -907,7 +915,7 @@ pub(crate) fn run_scripts_with_filter(
             }
         },
         print_buf: Cell::default(),
-        has_output: Cell::new(false),
+        needs_redraw: Cell::new(false),
         has_exits: Cell::new(false),
     };
 
@@ -1005,7 +1013,7 @@ pub(crate) fn run_scripts_with_filter(
     AbortHandler::install();
 
     loop {
-        if shared.has_output.get() {
+        if shared.needs_redraw.get() {
             let _ = state.redraw(false);
         }
         state.finish_exited();

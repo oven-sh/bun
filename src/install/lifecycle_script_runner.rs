@@ -1,4 +1,4 @@
-use core::ffi::{c_char, c_void};
+use core::ffi::c_void;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::PackageManager;
@@ -13,7 +13,7 @@ use bun_io::heap as io_heap;
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags};
 
-use bun_core::ZStr;
+use bun_core::{CStrList, CStrRef, CStringList, ZStr};
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{
@@ -341,28 +341,25 @@ fn append_npm_run_in_workspaces(out: &mut Vec<u8>, args: &[u8]) -> usize {
 
 /// Without a POSIX shell, this runs `bun exec --no-env-file`. Like `sh`, it doesn't add any `.env*`
 /// file to the environment.
-pub struct ScriptArgv<'a>([*const c_char; 5], core::marker::PhantomData<&'a ZStr>);
+pub struct ScriptArgv<'a>([Option<CStrRef<'a>>; 5]);
 
 impl<'a> ScriptArgv<'a> {
     pub fn new(shell: Option<&'a ZStr>, script: &'a ZStr) -> Result<Self, crate::Error> {
-        let (null, script) = (core::ptr::null(), script.as_ptr());
-        let (exec, no_env_file) = (c"exec".as_ptr(), c"--no-env-file".as_ptr());
-        let argv = match shell {
-            Some(sh) if cfg!(unix) => [sh.as_ptr(), c"-c".as_ptr(), script, null, null],
+        let script = Some(script.into());
+        Ok(Self(match shell {
+            Some(sh) if cfg!(unix) => [Some(sh.into()), Some(c"-c".into()), script, None, None],
             _ => [
-                bun_core::self_exe_path()?.as_ptr(),
-                exec,
-                no_env_file,
+                Some(bun_core::self_exe_path()?.into()),
+                Some(c"exec".into()),
+                Some(c"--no-env-file".into()),
                 script,
-                null,
+                None,
             ],
-        };
-        Ok(Self(argv, core::marker::PhantomData))
+        }))
     }
 
-    /// The null-terminated array `spawn_process` takes.
-    pub fn as_ptr(&self) -> *const *const c_char {
-        self.0.as_ptr()
+    pub fn as_list(&self) -> CStrList<'_> {
+        CStrList::new(&self.0)
     }
 }
 
@@ -381,9 +378,9 @@ pub struct LifecycleScriptSubprocess<'a> {
     /// `BackRef`, not `&'a`: the install loop holds `&mut PackageManager` while scripts run.
     pub(crate) manager: bun_ptr::BackRef<PackageManager>,
     /// Owned by this
-    /// struct so the `K=V\0` buffers stay alive across every async
+    /// struct so the `K=V\0` strings stay alive across every async
     /// `spawn_next_script` for the script chain; freed with it.
-    pub(crate) envp: bun_dotenv::NullDelimitedEnvMap,
+    pub(crate) envp: CStringList,
     pub(crate) shell_bin: Option<&'a ZStr>,
 
     pub(crate) foreground: bool,
@@ -650,15 +647,15 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             b"\0",
         ]
         .concat();
-        let chain_envp = self.envp.as_slice();
-        let mut envp: Vec<*const c_char> = chain_envp[..chain_envp.len() - 1].to_vec();
-        envp.extend([
-            lifecycle_event.as_ptr().cast::<c_char>(),
-            lifecycle_script.as_ptr().cast::<c_char>(),
-            core::ptr::null(),
-        ]);
-        // SAFETY: both arrays are null-terminated, and their strings NUL-terminated and live.
-        Ok(unsafe { bun_spawn::spawn_process(&spawn_options, argv.as_ptr(), envp.as_ptr()) }??)
+        let script_envp = [&lifecycle_event, &lifecycle_script]
+            .map(|variable| Some(CStrRef::from_bytes_with_nul(variable)));
+        let envp = [self.envp.entries(), &script_envp, &[None]].concat();
+        let envp = Some(CStrList::new(&envp));
+        Ok(bun_spawn::spawn_process(
+            &spawn_options,
+            argv.as_list(),
+            envp,
+        )??)
     }
 
     /// Leaves `self` to the process and the readers until [`Self::maybe_finished`].
@@ -1005,7 +1002,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     pub(crate) fn spawn_package_scripts(
         manager: &mut PackageManager,
         list: ScriptsList,
-        envp: bun_dotenv::NullDelimitedEnvMap,
+        envp: CStringList,
         shell_bin: Option<&'a ZStr>,
         optional: bool,
         log_level: crate::LogLevel,

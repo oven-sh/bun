@@ -11,8 +11,8 @@ use bun_core::strings::{contains, index_of_any, split};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::fold::Constant;
 use bun_sema::hir::{
-    BinOp, CallId, Chain, ExprId, ExprKind, File, FileBuilder, FnBody, FnId, FnKind, Keyword,
-    KnownEvaluation, PatKind, StmtKind, TypeNodeKind, UnOp,
+    ArenaFew, BinOp, CallId, Chain, ExprId, ExprKind, File, FileBuilder, FnBody, FnId, FnKind,
+    Keyword, KnownEvaluation, PatKind, StmtKind, TypeNodeKind, UnOp,
 };
 use bun_sema::resolve::TreeChange;
 use bun_sema::session::Arena;
@@ -426,8 +426,9 @@ pub(crate) fn write_known_evaluations<'s>(
         let next_call = CallId(hir.calls.len() as u32);
         let mut evaluator = Evaluator::new(hir, atoms, beside, &calls, first_call, text_allowance);
         let (found, left) = evaluator.find_texts(&calls);
-        let evaluates_imports = evaluator.has_read_unknown_import();
-        hir.evaluates_imports |= evaluates_imports;
+        let mut unknown = evaluator.into_unknown_imports();
+        unknown.extend(hir.unknown_imports_of_texts.iter().copied());
+        hir.unknown_imports_of_texts = ArenaFew::from_iter_in(unknown.into_iter(), arena);
         if append_texts(arena, atoms, hir, is_module, &calls, found) == TreeChange::Unchanged {
             return change;
         }

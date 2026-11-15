@@ -156,9 +156,10 @@ fn write_what_other_files_say<'s>(
         ArenaFew::from_iter_in(inputs.exports_that_others_touch.iter().copied(), arena);
 }
 
-fn is_given_text(hir: &hir::File<'_>, constants: &[ImportedConstant]) -> bool {
-    let is_text = |it: &&ImportedConstant| matches!(it.value, Constant::String(_));
-    (constants.iter().filter(is_text)).any(|it| !hir.imported_constants.contains(it))
+fn learns_unknown_import_of_texts(hir: &hir::File<'_>, constants: &[ImportedConstant]) -> bool {
+    let lacking = &hir.unknown_imports_of_texts;
+    let mut known = (constants.iter()).filter(|it| !matches!(it.value, Constant::BigInt(_)));
+    known.any(|it| lacking.contains(&it.name))
 }
 
 fn fold_inputs_of<'c, 's: 'c>(
@@ -256,7 +257,7 @@ pub(super) fn analyze_code_file_again<'s, 'r>(
         mut code,
         payload,
     } = loaded;
-    if parse.hir.evaluates_imports && is_given_text(&parse.hir, inputs.imported_constants) {
+    if learns_unknown_import_of_texts(&parse.hir, inputs.imported_constants) {
         return None;
     }
     write_what_other_files_say(&mut parse.hir, inputs, arena);

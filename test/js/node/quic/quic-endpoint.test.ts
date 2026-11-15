@@ -666,7 +666,7 @@ describe("a send that fails for one destination", () => {
     },
   );
 
-  // With IP_RECVERR, a socket reports the ICMP error about one peer on its next send, whatever that send's destination is.
+  // A socket with IP_RECVERR reports the ICMP error about one peer on its next send, whatever that send's destination is, so the endpoint doesn't set it.
   test.skipIf(!isLinux)("an ICMP error about dead peers doesn't fail the sends to a live peer", async () => {
     const received: number[] = [];
     const serverSessions: any[] = [];
@@ -1597,8 +1597,7 @@ describe("a server session and its handshake", () => {
   });
 });
 
-// lsquic queues a stateless reset for retry when its send fails. The endpoint socket sets IP_RECVERR,
-// so on Linux the ICMP port unreachable for one reset fails the next send with ECONNREFUSED.
+// lsquic queues a stateless reset for retry when its send would block.
 describe("endpoint.close() with an unsent stateless reset", () => {
   test.skipIf(!isASAN || !isLinux)(
     "frees the reset's connection object",

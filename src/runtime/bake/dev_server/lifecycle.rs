@@ -63,7 +63,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(emit_memory_visualizer_events, 0);
         w!(
             memory_visualizer_timer,
-            EventLoopTimer::init_paused(EventLoopTimerTag::DevServerMemoryVisualizerTick)
+            OwnedTimer::init_paused(EventLoopTimerTag::DevServerMemoryVisualizerTick)
         );
         // `dev.frontend_only = dev.framework.file_system_router_types.len == 0`
         w!(
@@ -564,9 +564,6 @@ impl Drop for DevServer {
             }
         }
 
-        if self.memory_visualizer_timer.state.get() == EventLoopTimerState::ACTIVE {
-            crate::jsc_hooks::timer_all().remove(&self.memory_visualizer_timer);
-        }
         self.graph_safety_lock.lock();
         // Hand ownership of the heap allocation to the watcher thread (which frees it in
         // `thread_main` once `running` flips false). Auto-dropping the `Box`
@@ -599,9 +596,6 @@ impl Drop for DevServer {
 
         for value in self.source_maps.entries.values() {
             debug_assert!(value.ref_count > 0);
-        }
-        if self.source_maps.weak_ref_sweep_timer.state.get() == EventLoopTimerState::ACTIVE {
-            crate::jsc_hooks::timer_all().remove(&self.source_maps.weak_ref_sweep_timer);
         }
 
         // `Watcher::shutdown` serialises with `dispatch_file_updates` on

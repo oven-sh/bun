@@ -59,7 +59,6 @@ bun_event_loop::impl_timer_owner!(JSMySQLConnection;
 
 impl Drop for JSMySQLConnection {
     fn drop(&mut self) {
-        self.timers.stop();
         self.unregister_auto_flusher();
     }
 }

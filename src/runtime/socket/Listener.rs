@@ -291,7 +291,7 @@ impl Listener {
                 let default_data = socket_config.default_data;
                 previous.strong_data.with_mut(|data| {
                     if default_data.is_empty() {
-                        data.deinit();
+                        *data = Strong::empty();
                     } else {
                         data.set(cx.global(), default_data);
                     }

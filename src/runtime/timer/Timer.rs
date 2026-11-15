@@ -254,7 +254,9 @@ impl All {
             let object =
                 TimeoutObject::from_js(timeout).expect("TimeoutObject::init returns its wrapper");
             // SAFETY: the wrapper is pinned by the heap that holds the timer.
-            unsafe { (*object).event_loop_timer.is_due_when_idle.set(true) };
+            unsafe { &(*object).event_loop_timer }
+                .is_due_when_idle
+                .set(true);
         }
         Ok(timeout)
     }

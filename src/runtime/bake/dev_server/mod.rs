@@ -136,7 +136,7 @@ pub(crate) enum TraceImportGoal {
 // ──────────────────────────────────────────────────────────────────────────
 // EventLoopTimer
 // ──────────────────────────────────────────────────────────────────────────
-pub(crate) use bun_event_loop::EventLoopTimer::{EventLoopTimer, Tag as TimerTag};
+pub(crate) use bun_event_loop::EventLoopTimer::{EventLoopTimer, OwnedTimer, Tag as TimerTag};
 
 // ──────────────────────────────────────────────────────────────────────────
 // IncrementalResult / GraphTraceState
@@ -556,7 +556,7 @@ pub(crate) struct DevServer {
     pub(crate) emit_incremental_visualizer_events: u32,
     /// Reference count to number of active sockets with the memory_visualizer enabled.
     pub(crate) emit_memory_visualizer_events: u32,
-    pub(crate) memory_visualizer_timer: EventLoopTimer,
+    pub(crate) memory_visualizer_timer: OwnedTimer,
 
     pub(crate) assume_perfect_incremental_bundling: bool,
 

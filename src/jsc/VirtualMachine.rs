@@ -2469,7 +2469,7 @@ impl VirtualMachine {
             // SAFETY: fn contract.
             unsafe { (hooks.disarm_all_timers_for_vm_teardown)(this) };
         }
-        vm.gc_controller.deinit();
+        vm.gc_controller.disabled.set(true);
         crate::web_worker::join_child_workers(vm.child_workers.take());
         // Children have closed their own; now this VM's sqlite connections
         // checkpoint and close, before finalizers could.
@@ -2812,9 +2812,6 @@ pub struct RuntimeHooks {
         vm: &VirtualMachine,
         timer: *const bun_event_loop::EventLoopTimer::EventLoopTimer,
     ),
-    /// `vm.timer.remove(&event_loop_timer)` — see `timer_insert`.
-    pub timer_remove:
-        fn(vm: &VirtualMachine, timer: &bun_event_loop::EventLoopTimer::EventLoopTimer),
     /// `FakeTimers::min_delay_ms()` of the calling thread's VM. A slot for the same reason as `timer_insert`.
     pub timer_min_delay_ms: fn() -> u32,
     /// `FakeTimers::abort_signal_timeout_clock()` of the calling thread's VM.
@@ -3013,15 +3010,6 @@ impl VirtualMachine {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         // SAFETY: per fn contract.
         unsafe { (hooks.timer_insert)(self, timer) }
-    }
-
-    /// `vm.timer.remove(timer)` if `timer` is armed — see [`Self::timer_insert`].
-    #[inline]
-    pub fn timer_remove(&self, timer: &bun_event_loop::EventLoopTimer::EventLoopTimer) {
-        if timer.state.get() == bun_event_loop::EventLoopTimer::State::ACTIVE {
-            let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-            (hooks.timer_remove)(self, timer)
-        }
     }
 
     /// The shortest delay, in milliseconds, a timer armed now can have: 1 while `jest.useFakeTimers()` runs a timer's callback.
@@ -3429,8 +3417,7 @@ impl VirtualMachine {
         self.has_loaded.set(false);
         self.set_main(entry_path);
         self.main_resolved_path.set(bun_core::String::EMPTY);
-        self.overridden_main
-            .with_mut(crate::strong::Optional::deinit);
+        self.overridden_main.set(Default::default());
 
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
@@ -5701,11 +5688,11 @@ impl VirtualMachine {
             drop((*this).ref_strings.take());
             drop((*this).sampling_profiler_directory.take());
 
-            (*this).overridden_main.as_mut().deinit();
-            (*this).bake_config_plugins.as_mut().deinit();
+            drop((*this).overridden_main.take());
+            drop((*this).bake_config_plugins.take());
             drop((*this).bake_config_plugin_names.take());
-            (*this).bake_framework.as_mut().deinit();
-            (*this).pending_internal_promise.as_mut().deinit();
+            drop((*this).bake_framework.take());
+            drop((*this).pending_internal_promise.take());
 
             if let Some(hooks) = runtime_hooks() {
                 let state = (*this).runtime_state.replace(core::ptr::null_mut());
@@ -5791,8 +5778,7 @@ impl VirtualMachine {
         );
         self.set_main(Some(entry_path));
         self.main_resolved_path.set(bun_core::String::EMPTY);
-        self.overridden_main
-            .with_mut(crate::strong::Optional::deinit);
+        self.overridden_main.set(Default::default());
         if self.test_isolation_state.shares_global.get() {
             Bun__Process__resetArgv(self.global());
         }
@@ -6047,8 +6033,7 @@ impl VirtualMachine {
             // global makes the next file's call a no-op and dispatches
             // node:quic events into the dead realm.
             if !shares_global {
-                rare.node_quic_callbacks
-                    .with_mut(crate::strong::Optional::deinit);
+                rare.node_quic_callbacks.set(Default::default());
                 // The next file's `node:tls` starts from the stock defaults, so native clients must too.
                 let had_ca = rare.tls_default_ca.take().is_some();
                 let had_ciphers = rare.tls_default_ciphers.take().is_some();
@@ -6104,11 +6089,8 @@ impl VirtualMachine {
             (hooks.cancel_timers)(self, None);
         }
 
-        self.overridden_main
-            .with_mut(crate::strong::Optional::deinit);
-        self.entry_point_result
-            .value
-            .with_mut(crate::strong::Optional::deinit);
+        self.overridden_main.set(Default::default());
+        self.entry_point_result.value.set(Default::default());
         self.entry_point_result.cjs_set_value.set(false);
         self.entry_point_result.evaluated_as_cjs.set(false);
         self.set_pending_internal_promise(None);

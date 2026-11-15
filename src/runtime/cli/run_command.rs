@@ -3500,7 +3500,7 @@ impl RunCommand {
                         // (uncontended on this single-threaded CLI path).
                         let _entries_lock = bun_resolver::fs::FileSystem::get()
                             .fs
-                            .entries_mutex
+                            .entries_mutex()
                             .lock_guard();
                         let mut path_buf = bun_paths::path_buffer_pool::get();
                         let mut iter = entries.data.iter();
@@ -3554,7 +3554,7 @@ impl RunCommand {
                     // (uncontended on this single-threaded CLI path).
                     let _entries_lock = bun_resolver::fs::FileSystem::get()
                         .fs
-                        .entries_mutex
+                        .entries_mutex()
                         .lock_guard();
                     let mut iter = entries.data.iter();
 

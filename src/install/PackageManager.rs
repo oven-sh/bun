@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use std::collections::VecDeque;
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, OnceLock};
 
 use crate::Error;
 use crate::bun_fs as fs;
@@ -478,12 +478,14 @@ impl Inbox {
     }
 }
 
-pub(crate) static THREAD_POOL: LazyLock<ThreadPool> = LazyLock::new(|| {
-    ThreadPool::init(thread_pool::Config {
+pub(crate) static THREAD_POOL: OnceLock<ThreadPool> = OnceLock::new();
+
+pub(crate) fn install_pool() -> &'static ThreadPool {
+    ThreadPool::get_or_init(&THREAD_POOL, || thread_pool::Config {
         max_threads: u32::from(bun_core::get_thread_count()),
         ..Default::default()
     })
-});
+}
 
 pub struct PackageManager {
     pub root_dir: &'static fs::DirEntry,
@@ -2426,7 +2428,7 @@ pub fn init(
     if cli.env_files.is_empty() && !cli.no_env_file && !ctx.args.disable_default_env_files {
         // `.data` must only be probed while `entries_mutex` is held.
         let env_probe_keys = {
-            let _entries_lock = FileSystem::get().fs.entries_mutex.lock_guard();
+            let _entries_lock = FileSystem::get().fs.entries_mutex().lock_guard();
             dot_env::DirEntryKeys(
                 entries_option
                     .data
@@ -2879,7 +2881,7 @@ fn init_with_runtime_once(
         FileSystem::instance().read_directory(project_dir, 0, false)
         && {
             // `.data` probes must hold `entries_mutex`.
-            let _entries_lock = FileSystem::get().fs.entries_mutex.lock_guard();
+            let _entries_lock = FileSystem::get().fs.entries_mutex().lock_guard();
             entries.has_comptime_query(b"bun.lock") || entries.has_comptime_query(b"bun.lockb")
         }
         && let Ok(dir) = bun_sys::Dir::open(project_dir)

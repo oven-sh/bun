@@ -578,6 +578,42 @@ test.concurrent.each([
   });
 });
 
+test.concurrent("prompt in several Workers returns every line of stdin once", async () => {
+  using dir = tempDir("prompt-in-workers", {
+    "index.mjs": `
+      import { once } from "node:events";
+      import { Worker, isMainThread, parentPort } from "node:worker_threads";
+      if (isMainThread) {
+        const workers = [0, 1, 2].map(() => new Worker(import.meta.path));
+        const answers = await Promise.all(workers.map(worker => once(worker, "message")));
+        console.error(JSON.stringify(answers.flat().sort()));
+      } else {
+        parentPort.postMessage(prompt("Q?"));
+      }
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "index.mjs"],
+    cwd: String(dir),
+    stdio: ["pipe", "pipe", "pipe"],
+    env: bunEnv,
+  });
+
+  // The lines arrive in one read, after every Worker has asked.
+  let stdout = "";
+  for await (const chunk of proc.stdout) {
+    stdout += Buffer.from(chunk).toString();
+    if (stdout.length === "Q? Q? Q? ".length) {
+      proc.stdin.write("a\nb\nc\n");
+      proc.stdin.end();
+    }
+  }
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect({ stderr, exitCode }).toEqual({ stderr: '["a","b","c"]\n', exitCode: 0 });
+});
+
 test("globalThis.self = 123 works", () => {
   expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toMatchObject({
     configurable: true,

@@ -361,7 +361,7 @@ impl HotReloader {
         rfs: &mut Fs::file_system::RealFS,
         key: &[u8],
     ) -> Option<BackRef<Fs::DirEntry>> {
-        let _entries_lock = rfs.entries_mutex.lock_guard();
+        let _entries_lock = rfs.entries_mutex().lock_guard();
         match rfs.entries.get(key) {
             Some(Fs::EntriesOption::Entries(existing)) => Some(BackRef::new(*existing)),
             _ => None,
@@ -618,7 +618,7 @@ impl bun_watcher::WatcherContext for HotReloader {
                                         // resolver at a newer generation rewrites
                                         // the map in place under that lock.
                                         let looked_up = {
-                                            let _entries_lock = rfs.entries_mutex.lock_guard();
+                                            let _entries_lock = rfs.entries_mutex().lock_guard();
                                             Fs::DirEntry::get(&dir_ent, changed_name)
                                         };
                                         if let Some(ent) = looked_up {

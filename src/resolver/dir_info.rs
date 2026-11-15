@@ -107,9 +107,7 @@ impl DirInfo {
         query: &[u8],
     ) -> Option<&'static fs::Entry> {
         let rfs = &mut fs::FileSystem::instance().fs;
-        // `MutexGuard` stores the mutex by raw pointer, so holding it does not
-        // keep `rfs` borrowed.
-        let _lock = rfs.entries_mutex.lock_guard();
+        let _lock = rfs.entries_mutex().lock_guard();
         rfs.entries_at_locked(self.entries, generation)?
             .as_entries()?
             .get(query)

@@ -1,6 +1,6 @@
 use crate::{JSGlobalObject, JsResult};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
-use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
+use bun_threading::work_pool::{OwnedTask, Task as WorkPoolTask, WorkPool};
 
 unsafe extern "C" {
     fn Bun__EventLoopTaskNoContext__performTask(task: *mut EventLoopTaskNoContext);
@@ -65,11 +65,13 @@ pub struct ConcurrentCppTask {
     pub(crate) workpool_task: WorkPoolTask,
 }
 
-bun_threading::owned_task!(ConcurrentCppTask, workpool_task);
+// SAFETY: `cpp_task` is uniquely owned, and C++ creates it to run on a work queue thread.
+unsafe impl Send for ConcurrentCppTask {}
 
-impl ConcurrentCppTask {
-    #[allow(clippy::boxed_local)] // `owned_task!`'s required signature
-    fn run_owned(self: Box<Self>) {
+bun_threading::intrusive_work_task!(ConcurrentCppTask, workpool_task);
+
+impl OwnedTask for ConcurrentCppTask {
+    fn run(self: Box<Self>) {
         let ConcurrentCppTask {
             cpp_task, ticket, ..
         } = *self;

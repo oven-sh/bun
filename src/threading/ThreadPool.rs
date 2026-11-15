@@ -27,8 +27,11 @@
 //   SOFTWARE.
 
 use core::cell::Cell;
+use core::marker::PhantomPinned;
+use core::pin::Pin;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering, fence};
+use std::sync::OnceLock;
 
 use crate::{Futex, WaitGroup};
 use bun_core::Output;
@@ -180,21 +183,7 @@ impl AtomicSync {
 }
 
 pub struct ThreadPool {
-    /// When `true` (default), each worker calls
-    /// [`Output::Source::configure_named_thread`] on startup, which initializes
-    /// the WTF `StackBounds` thread-local via `Bun__StackCheck__initialize`.
-    /// Pools whose tasks never recurse through `StackCheck` (e.g. the package
-    /// manager's network/extract pool, the HTTP client) should clear this so
-    /// their workers use the `_no_js` variant and avoid faulting in the
-    /// otherwise-cold WTF/JSC `.text` pages on paths like `bun install`.
-    ///
-    /// Left as a public field (not in [`Config`]) so existing
-    /// `Config { max_threads, stack_size }` literals keep compiling; callers
-    /// flip it after [`ThreadPool::init`].
-    pub(crate) needs_stack_bounds: bool,
-    /// What its threads are called, before their number.
     name: &'static str,
-    /// See `without_spare_threads`.
     keeps_spare_thread_awake: bool,
     /// See `limit_threads`. At most `max_threads`.
     allowed_threads: AtomicU32,
@@ -206,6 +195,8 @@ pub struct ThreadPool {
     run_queue: node::Queue,
     threads: AtomicPtr<Thread>,
     stats: PoolStats,
+    /// Worker threads hold a pointer to the pool.
+    _pinned: PhantomPinned,
 }
 
 /// Configuration options for the thread pool.
@@ -214,6 +205,12 @@ pub struct ThreadPool {
 pub struct Config {
     pub stack_size: u32,
     pub max_threads: u32,
+    /// Prefix of the thread names.
+    pub name: &'static str,
+    /// If false, the pool wakes or starts a thread only when a task waits for one.
+    pub keeps_spare_thread_awake: bool,
+    /// Initial limit; see [`ThreadPool::limit_threads`].
+    pub allowed_threads: usize,
 }
 
 impl Default for Config {
@@ -221,18 +218,32 @@ impl Default for Config {
         Config {
             stack_size: POOL_THREAD_STACK_SIZE,
             max_threads: 0,
+            name: "Bun Pool",
+            keeps_spare_thread_awake: true,
+            allowed_threads: usize::MAX,
         }
     }
 }
 
 impl ThreadPool {
-    /// Statically initialize the thread pool using the configuration.
-    pub fn init(config: Config) -> ThreadPool {
-        ThreadPool {
-            needs_stack_bounds: true,
-            name: "Bun Pool",
-            keeps_spare_thread_awake: true,
-            allowed_threads: AtomicU32::new(1.max(config.max_threads)),
+    pub fn new_boxed(config: Config) -> Pin<Box<ThreadPool>> {
+        Box::pin(Self::new(config))
+    }
+
+    /// The pool in `place`, which is created on first use.
+    pub fn get_or_init(
+        place: &'static OnceLock<ThreadPool>,
+        config: impl FnOnce() -> Config,
+    ) -> &'static ThreadPool {
+        place.get_or_init(|| Self::new(config()))
+    }
+
+    /// Private, so that a pool that has threads never moves.
+    fn new(config: Config) -> ThreadPool {
+        let pool = ThreadPool {
+            name: config.name,
+            keeps_spare_thread_awake: config.keeps_spare_thread_awake,
+            allowed_threads: AtomicU32::new(1),
             stack_size: 1.max(config.stack_size),
             max_threads: 1.max(config.max_threads),
             sync: AtomicSync::new(Sync::zero()),
@@ -247,19 +258,10 @@ impl ThreadPool {
                 last_dump_ns: AtomicU64::new(if stats_enabled() { now_ns() } else { 0 }),
                 ..PoolStats::default()
             },
-        }
-    }
-
-    /// The same pool, whose threads are called `name` and a number. Before any is started.
-    pub fn named(mut self, name: &'static str) -> ThreadPool {
-        self.name = name;
-        self
-    }
-
-    /// The same pool, which wakes or starts a thread only when a task waits for one.
-    pub fn without_spare_threads(mut self) -> ThreadPool {
-        self.keeps_spare_thread_awake = false;
-        self
+            _pinned: PhantomPinned,
+        };
+        pool.limit_threads(config.allowed_threads);
+        pool
     }
 
     /// From now on the pool starts no thread while it has `count` or more. Tasks wait for the threads there are.
@@ -351,7 +353,7 @@ impl ThreadPool {
 
     /// Queues a task from `new_task` for every thread the pool has spawned, to run on that thread
     /// when it is next idle, and wakes them. Does not wait for any of them.
-    pub fn push_idle_task_to_each_thread(&self, mut new_task: impl FnMut() -> *mut Task) {
+    pub fn push_idle_task_to_each_thread(&self, mut new_task: impl FnMut() -> Batch) {
         let mut next = self.threads.load(Ordering::Acquire);
         while let Some(thread) = NonNull::new(next) {
             // A registered worker stays in the list, and alive, until the pool shuts down:
@@ -476,14 +478,18 @@ impl Task {
 /// An unordered collection of Tasks which can be submitted for scheduling as a group.
 #[derive(Default)]
 pub struct Batch {
-    pub len: usize,
+    len: usize,
     pub(crate) head: Option<NonNull<Task>>,
-    pub(crate) tail: Option<NonNull<Task>>,
+    tail: Option<NonNull<Task>>,
 }
 
 impl Batch {
     /// Create a batch from a single task.
-    pub fn from(task: *mut Task) -> Batch {
+    ///
+    /// # Safety
+    /// `task` is not in another batch or queue, stays valid and unaliased until its `callback` is
+    /// called, and `callback` is sound to call once on any thread that the batch is queued for.
+    pub unsafe fn from_raw(task: *mut Task) -> Batch {
         let task = NonNull::new(task);
         if let Some(task) = task {
             // A rescheduled task may still carry the link from its last batch.
@@ -495,6 +501,22 @@ impl Batch {
             head: task,
             tail: task,
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    fn into_list(self) -> Option<node::List> {
+        // len != 0 implies head/tail are Some.
+        (!self.is_empty()).then(|| node::List {
+            head: Task::node_of(self.head.unwrap()),
+            tail: Task::node_of(self.tail.unwrap()),
+        })
     }
 
     /// Another batch into this one, taking ownership of its tasks.
@@ -651,25 +673,19 @@ impl ThreadPool {
         group.add(tasks.len());
         let mut batch = Batch::default();
         for runner_task in tasks.iter_mut() {
-            batch.push(Batch::from(&raw mut runner_task.task.task));
+            // SAFETY: `tasks`, `shared` and `group` drop after `group.wait()` below, and the bounds on
+            // `Ctx`, `F` and `V` let `call` run on another thread.
+            batch.push(unsafe { Batch::from_raw(&raw mut runner_task.task.task) });
         }
         self.schedule(batch);
+        // Deferred, in case `on_calling_thread` unwinds.
+        scopeguard::defer! { group.wait(); }
         on_calling_thread();
-        group.wait();
-        // `tasks` drops here after all worker threads have finished touching it.
     }
 
-    fn schedule_impl(&self, Batch { len, head, tail }: Batch, try_current: bool) {
-        // Sanity check
-        if len == 0 {
+    fn schedule_impl(&self, batch: Batch, try_current: bool) {
+        let Some(mut list) = batch.into_list() else {
             return;
-        }
-
-        // Extract out the `Node`s from the `Task`s
-        // batch.len != 0 implies head/tail are Some.
-        let mut list = node::List {
-            head: Task::node_of(head.unwrap()),
-            tail: Task::node_of(tail.unwrap()),
         };
 
         let current: *mut Thread = 'blk: {
@@ -1232,13 +1248,10 @@ impl Thread {
         CURRENT.with(|c| c.get())
     }
 
-    pub fn push_idle_task(&self, task: *mut Task) {
-        let node_ptr = Task::node_of(NonNull::new(task).expect("non-null task"));
-        let list = node::List {
-            head: node_ptr,
-            tail: node_ptr,
-        };
-        self.idle_queue.push(&list);
+    pub fn push_idle_task(&self, batch: Batch) {
+        if let Some(list) = batch.into_list() {
+            self.idle_queue.push(&list);
+        }
     }
 
     /// Thread entry point which runs a worker for the ThreadPool
@@ -1270,17 +1283,7 @@ impl Thread {
             } else {
                 bun_core::zstr!("Bun Pool")
             };
-            // Pools whose tasks never consult `StackCheck` (install, HTTP) opt
-            // out via `needs_stack_bounds = false` so we don't pull in
-            // `Bun__StackCheck__initialize` → `WTF::StackBounds` and fault the
-            // JSC `.text` pages on the `bun install` cold path. Bundler/parser
-            // pools leave it `true` (the parser's recursion guard reads the
-            // WTF stack-end this initializes).
-            if thread_pool.get().needs_stack_bounds {
-                Output::Source::configure_named_thread(named);
-            } else {
-                Output::Source::configure_named_thread_no_js(named);
-            }
+            Output::Source::configure_named_thread(named);
         }
 
         let self_ = Thread {

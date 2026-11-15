@@ -274,21 +274,18 @@ pub(crate) fn prompt<'a>(
     // *  Not relevant in a server context.
     Output::flush();
 
+    let mut reader = Output::lock_buffered_stdin();
+
     // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
     // deleting the entire line
     #[cfg(windows)]
-    let _restore =
+    let stdin_mode_guard =
         bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
             unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
             ..Default::default()
         });
 
     // 7. Pause while waiting for the user's response.
-    // `bun.Output.buffered_stdin.reader()` — process-global 4 KiB buffered stdin.
-    // SAFETY: process-global static; prompt() runs single-threaded on the JS
-    // main thread, so the exclusive borrow is sound for this scope.
-    let reader: &mut bun_core::output::BufferedStdin =
-        unsafe { &mut *Output::buffered_stdin_reader() };
     let mut second_byte: Option<u8> = None;
     let Ok(first_byte) = reader.read_byte() else {
         // 8. Let result be null if the user aborts, or otherwise the string
@@ -354,6 +351,11 @@ pub(crate) fn prompt<'a>(
             }
         }
     }
+
+    // Under the lock, so that another thread does not save the changed mode.
+    #[cfg(windows)]
+    drop(stdin_mode_guard);
+    drop(reader);
 
     if !input.is_empty() && input[input.len() - 1] == b'\r' {
         input.truncate(input.len() - 1);

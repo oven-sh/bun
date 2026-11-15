@@ -669,7 +669,7 @@ pub mod fs {
         /// not be walked after unlock. The caller must NOT already hold
         /// `entries_mutex` (it is non-recursive).
         pub(crate) fn lookup(&self, query: &[u8]) -> (Option<&'static Entry>, Fd) {
-            let _lock = FileSystem::get().fs.entries_mutex.lock_guard();
+            let _lock = FileSystem::get().fs.entries_mutex().lock_guard();
             match self {
                 EntriesOption::Entries(entries) => (entries.get(query), entries.fd),
                 EntriesOption::Err(_) => (None, Fd::INVALID),
@@ -679,7 +679,7 @@ pub mod fs {
         /// Listing dir snapshot under `entries_mutex` (watch
         /// registration); `None` when the slot holds a read error.
         pub(crate) fn dir(&self) -> Option<&'static [u8]> {
-            let _lock = FileSystem::get().fs.entries_mutex.lock_guard();
+            let _lock = FileSystem::get().fs.entries_mutex().lock_guard();
             match self {
                 EntriesOption::Entries(entries) => Some(entries.dir),
                 EntriesOption::Err(_) => None,
@@ -778,7 +778,6 @@ pub mod fs {
     /// Real-filesystem backend: directory-entry cache plus fd-limit
     /// bookkeeping.
     pub struct RealFS {
-        pub entries_mutex: Mutex,
         /// Port of `entries: *EntriesOption.Map`. The resolver body addresses
         /// this directly (`rfs.entries.get_or_put(..)`); modeled as the wrapper
         /// `EntriesMap` (bun_alloc has no BSSMap equivalent).
@@ -789,6 +788,11 @@ pub mod fs {
     }
 
     impl RealFS {
+        pub fn entries_mutex(&self) -> &'static Mutex {
+            static ENTRIES_MUTEX: Mutex = Mutex::new();
+            &ENTRIES_MUTEX
+        }
+
         /// Raise RLIMIT_NOFILE and
         /// record the resulting fd budget so `need_to_close_files` can decide
         /// whether to cache directory fds.
@@ -797,7 +801,6 @@ pub mod fs {
             #[cfg(windows)]
             let _ = file_limit;
             RealFS {
-                entries_mutex: Mutex::default(),
                 entries: EntriesMap::new(),
                 cwd,
                 #[cfg(not(windows))]
@@ -951,7 +954,7 @@ pub mod fs {
             let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
             crate::Resolver::assert_valid_cache_key(dir);
-            let _unlock_guard = self.entries_mutex.lock_guard();
+            let _unlock_guard = self.entries_mutex().lock_guard();
 
             let mut in_place: Option<*mut DirEntry> = None;
 
@@ -1057,7 +1060,7 @@ pub mod fs {
             // `entries_mutex` to satisfy `EntriesMap::inner`'s aliasing
             // invariant. No caller already holds it (no re-entry from
             // `read_directory`/`dir_info_cached_maybe_log`).
-            let _g = self.entries_mutex.lock_guard();
+            let _g = self.entries_mutex().lock_guard();
             self.entries.remove(file_path)
         }
 
@@ -1294,7 +1297,7 @@ pub mod fs {
             generation: Generation,
         ) -> Option<&EntriesOption> {
             debug_assert!(
-                self.entries_mutex.is_held_by_current_thread(),
+                self.entries_mutex().is_held_by_current_thread(),
                 "entries_at_locked: caller must hold entries_mutex",
             );
             // erase to raw immediately so re-borrowing `&mut self` for

@@ -17,7 +17,7 @@ use bun_install::{
     DependencyID, ExtractTarball, INVALID_PACKAGE_ID, NetworkTask, PackageID, Repository,
 };
 // Import the *module* under the `Task` name so `Task::Id` resolves as a path.
-use super::{INBOX, InstallFields, InstallState, THREAD_POOL, directories, enqueue};
+use super::{INBOX, InstallFields, InstallState, directories, enqueue, install_pool};
 use super::{
     ManifestFailure, PackageInstaller, PackageManager, ProgressStrings, RemoteTurn, Subcommand,
     TaskCallbackList,
@@ -1284,12 +1284,12 @@ fn flush_dependency_queue(this: &mut PackageManager) {
 
 pub(crate) fn schedule_tasks(manager: &mut InstallFields<'_>) -> usize {
     let state = &mut *manager.state;
-    let count = state.task_batch.len
+    let count = state.task_batch.len()
         + state.network_resolve_batch.len()
         + state.network_tarball_batch.len();
 
     state.increment_pending_tasks(u32::try_from(count).expect("int cast"));
-    THREAD_POOL.schedule(core::mem::take(&mut state.task_batch));
+    install_pool().schedule(core::mem::take(&mut state.task_batch));
     let manifests = state.network_resolve_batch.drain(..);
     http::OwnedRequest::schedule(manifests.chain(state.network_tarball_batch.drain(..)));
     // Git tasks were counted as pending when they were queued.

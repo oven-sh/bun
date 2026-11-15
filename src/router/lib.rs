@@ -443,7 +443,7 @@ impl<'a> RouteLoader<'a> {
         // another thread (e.g. the bundler's resolver) rewrites this map in place
         // under that lock, so iterating it live would walk freed buckets.
         let entries: Vec<&Fs::Entry> = {
-            let _entries_lock = fs.fs.entries_mutex.lock_guard();
+            let _entries_lock = fs.fs.entries_mutex().lock_guard();
             match root_dir_info.get_entries_const() {
                 Some(entries) => entries.data.values().copied().collect(),
                 None => return,

@@ -16,7 +16,6 @@ use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::{S3Credentials, SignOptions, SignResult};
 use bun_s3_signing::error::{ErrorCodeAndMessage, S3Error, get_sign_error_code_and_message};
 use bun_s3_signing::storage_class::StorageClass;
-use bun_threading::thread_pool;
 use bun_url::URL;
 
 use crate::webcore::s3::multipart::{MultiPartUpload, UploadPart};
@@ -107,15 +106,7 @@ pub(crate) enum S3PartResult<'a> {
 }
 
 pub(crate) struct S3HttpSimpleTask {
-    // `http` is `MaybeUninit` because (a) it is initialised late —
-    // `AsyncHTTP` contains `&'static [u8]` and `fn(...)` fields, so a
-    // zeroed/default value would be instant UB; and (b) `Drop` only calls
-    // `http.clear_data()`, never a full destructor, and `http_callback` does a no-drop bitwise
-    // overwrite. Wrapping in `MaybeUninit` makes both possible: write-without-
-    // drop on assignment, and `clear_data()`-only in `Drop`. Invariant: `http` is initialised by
-    // `execute_simple_s3_request` before the task pointer escapes, so every later access (in
-    // `http_callback` / `Drop`) may `assume_init`.
-    pub(crate) http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
+    pub(crate) async_http_id: u32,
     /// Held while the request is out on the HTTP thread: how it delivers the
     /// response, and what makes the VM wait for it.
     pub(crate) http_ticket: Option<bun_jsc::Ticket>,
@@ -144,10 +135,10 @@ pub(crate) struct S3HttpSimpleTask {
 
 bun_jsc::impl_abort_handle_owner!(S3HttpSimpleTask, abort_handle, |this, _cause| {
     // SAFETY: trait contract — `this` is live (armed ⇒ its response has not
-    // run); `http` is initialised before the task is armed.
+    // run).
     unsafe {
         (*this).signal_store.aborted.store(true, Ordering::Relaxed);
-        bun_http::http_thread().schedule_shutdown((*this).http.assume_init_ref());
+        bun_http::HTTPThread::schedule_shutdown((*this).async_http_id);
     }
 });
 
@@ -473,48 +464,30 @@ impl S3HttpSimpleTask {
         }
     }
 
-    fn stage_http_result(
-        &mut self,
-        async_http: *mut AsyncHTTP<'static>,
-        mut result: HTTPClientResult<'_>,
-    ) {
+    fn stage_http_result(&mut self, mut result: HTTPClientResult<'_>) {
         let previous_metadata = self.result.metadata.take();
         result.body_into(&mut self.response_buffer.list);
         self.result = result.without_borrowed_body();
         if self.result.metadata.is_none() {
             self.result.metadata = previous_metadata;
         }
-        // `AsyncHTTP` transitively owns Drop types (`HTTPClient`, header
-        // `EntryList`s), so a plain `=` here would (a) drop the old `self.http`, freeing heap
-        // buffers that `*async_http` (a bitwise clone created by the HTTP thread) still
-        // aliases, and (b) leave the http-thread side to drop them again → double-free. We
-        // instead write through `MaybeUninit` to suppress the LHS drop, doing a bitwise struct
-        // overwrite with no destructor on either side. Ownership of the inner heap data
-        // conceptually transfers here; the http-thread side must free only its outer
-        // allocation (TrivialDeinit).
-        // SAFETY: `async_http` is a valid live pointer for the duration of this callback;
-        // `self.http` was previously initialised in `execute_simple_s3_request`.
-        unsafe { core::ptr::write(self.http.as_mut_ptr(), core::ptr::read(async_http)) };
     }
 
     /// this is the AsyncHTTP callback and is always called from the HTTPThread
     ///
     /// # Safety
     /// `this` must be a live heap pointer produced by `S3HttpSimpleTask::new` and exclusively
-    /// owned by the HTTP thread for the duration of this call. `async_http` must be a valid
-    /// pointer to an initialised `AsyncHTTP` for the duration of this call.
-    //
-    // `HTTPClientResultCallback` entrypoint: invoked by the HTTP thread with the raw task and
-    // request pointers it captured at schedule time, both non-null by construction.
+    /// owned by the HTTP thread for the duration of this call.
     pub(crate) fn http_callback(
         this: *mut Self,
-        async_http: *mut AsyncHTTP<'static>,
+        finished: bun_http::Finished,
         result: HTTPClientResult<'_>,
     ) {
+        drop(finished);
         let is_done = !result.has_more;
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` and is exclusively owned
         // by the HTTP thread until the handoff below; this borrow is scoped to the call.
-        unsafe { (*this).stage_http_result(async_http, result) };
+        unsafe { (*this).stage_http_result(result) };
         if is_done {
             // SAFETY: same exclusivity as above; the queue takes ownership of the inline
             // `concurrent_task` field's `next` link. The ticket is moved out first: the
@@ -547,27 +520,6 @@ impl S3HttpSimpleTask {
             );
             ticket.post(queued);
         }
-    }
-
-    fn release_portable(&mut self) {
-        // SAFETY: `http` is always initialised before the task pointer escapes (see
-        // `execute_simple_s3_request`).
-        let http = unsafe { self.http.assume_init_mut() };
-        http.clear_data();
-        http.request_headers = Default::default();
-        http.client.header_entries = Default::default();
-    }
-}
-
-impl Drop for S3HttpSimpleTask {
-    fn drop(&mut self) {
-        // Side effects beyond freeing owned fields (which Rust drops automatically):
-        // - http.clearData()
-        // Owned-field frees (response_buffer, headers, sign_result, range,
-        // proxy_url, result.certificate_info, result.metadata) are handled by their own Drop impls.
-        // Only `http.clear_data()` runs — never a full AsyncHTTP destructor —
-        // so we intentionally do NOT `assume_init_drop`.
-        self.release_portable();
     }
 }
 
@@ -709,8 +661,7 @@ pub(crate) fn execute_simple_s3_request(
 
     let proxy_url = resolve_proxy(options.proxy_url, &result.url);
     let task_ptr = S3HttpSimpleTask::new(S3HttpSimpleTask {
-        // written below via `MaybeUninit::write` before any read.
-        http: core::mem::MaybeUninit::uninit(),
+        async_http_id: 0,
         sign_result: result,
         callback: Some(callback),
         headers,
@@ -728,7 +679,7 @@ pub(crate) fn execute_simple_s3_request(
     // SAFETY: `task_ptr` is a freshly heap-allocated pointer, and `task` is not used once
     // `task_ptr` is dereferenced. `'static`: `url`, `headers_buf`, `body` and
     // `http_proxy` borrow heap buffers that `*task` owns and never writes again. They are stored in
-    // `task.http`, an `AsyncHTTP<'static>` that the HTTP thread reads, and remain valid until
+    // an `AsyncHTTP<'static>` that the HTTP thread reads, and remain valid until
     // `task` is dropped in `on_response`.
     let task: &'static mut S3HttpSimpleTask = unsafe { &mut *task_ptr };
     let url = URL::parse(&task.sign_result.url);
@@ -750,8 +701,6 @@ pub(crate) fn execute_simple_s3_request(
         body,
         HTTPClientResultCallback::new_with_release::<S3HttpSimpleTask>(
             task_ptr,
-            // SAFETY: `task_ptr` was just heap-allocated above and `async_http` is supplied by
-            // the HTTP thread as a live pointer for the duration of the callback.
             S3HttpSimpleTask::http_callback,
             S3HttpSimpleTask::release_at_shutdown,
         ),
@@ -765,17 +714,15 @@ pub(crate) fn execute_simple_s3_request(
             ..Default::default()
         },
     );
-    let http = task.http.write(async_http);
+    task.async_http_id = async_http.async_http_id;
     // queue http request
     bun_http::http_thread::init(&Default::default());
-    let mut batch = thread_pool::Batch::default();
-    http.schedule(&mut batch);
     // Out on the HTTP thread until its final callback: its context aborts it
     // when it stops, and the VM waits for it (the ticket).
     task.http_ticket = Some(VirtualMachine::get().ticket());
     task.context = context.id();
     // SAFETY: the task is heap-allocated and drops its handle with itself.
     unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
-    bun_http::HTTPThread::schedule(batch);
+    bun_http::HTTPThread::schedule([async_http]);
     Ok(())
 }

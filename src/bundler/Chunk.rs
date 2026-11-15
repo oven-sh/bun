@@ -1,5 +1,4 @@
 use crate::mal_prelude::*;
-use core::cell::UnsafeCell;
 use core::fmt;
 use std::io::Write as _;
 
@@ -75,16 +74,14 @@ pub struct Chunk<'a> {
     pub intermediate_output: IntermediateOutput,
     pub(crate) isolated_hash: u64,
 
-    // Set before use. The borrowed enum (`Renamer<'a>`)
-    // borrows from the symbol table and so can't live in this owning struct.
-    // `ChunkRenamer` is the owning equivalent (see `crate::bun_renamer`).
-    pub(crate) renamer: bun_renamer::ChunkRenamer,
+    /// The printer reads it through `LinkerContext::renamer_for_chunk`.
+    pub(crate) renamer: bun_renamer::ChunkRenamer<'a>,
     /// The nested scopes still to name after `rename_symbols_in_chunk`
     /// (number renamer only), `(source_index, module-scope child)` grouped by
     /// file; each file becomes a `NestedRenamer` task.
     pub(crate) nested_scopes_to_rename: Vec<(u32, *const bun_ast::Scope)>,
 
-    pub compile_results_for_chunk: CompileResultSlots,
+    pub compile_results_for_chunk: Box<[CompileResult]>,
 
     /// Byte length of the output emitted for this chunk: what `code()` returned plus
     /// the source map comment. The metafile reports it as `outputs[..].bytes`.
@@ -117,67 +114,9 @@ impl Default for Content<'_> {
 // point into bundler-arena storage that outlives the
 // pool join and is only mutated by the owning task; this mirrors
 // `InputFile`'s blanket impls (bundle_v2.rs).
-//
-// CONCURRENCY: during the `generate_compile_result_for_*_chunk` fan-out, many
-// `PendingPartRange` tasks share ONE `*mut Chunk` and each writes a disjoint
-// `compile_results_for_chunk[i]`. That field is therefore [`CompileResultSlots`]
-// (UnsafeCell-per-slot) so the per-task write is routed through interior
-// mutability and never requires an aliased `&mut Chunk` /
-// `&mut [CompileResult]` — see [`Chunk::write_compile_result_slot`].
-// `files_with_parts_in_chunk` values are bumped via atomic RMW;
-// the renamer is fully populated before fan-out, and the printer only reads it.
 unsafe impl Send for Chunk<'_> {}
-// SAFETY: shared `&Chunk` access during the worker fan-out writes only
-// `compile_results_for_chunk` (UnsafeCell-per-slot, disjoint indices) and
-// `files_with_parts_in_chunk` atomic counters; the remaining fields are
-// frozen before fan-out.
+// SAFETY: workers write only the atomic counters of `files_with_parts_in_chunk` through `&Chunk`.
 unsafe impl Sync for Chunk<'_> {}
-
-/// Disjoint-slot output buffer for [`Chunk::compile_results_for_chunk`].
-///
-/// Allocated single-threaded in `generate_chunks_in_parallel` *before* the
-/// `generate_compile_result_for_*_chunk` fan-out, written concurrently by
-/// worker threads at **disjoint** indices (one slot per `PendingPartRange.i`),
-/// then read single-threaded after the batch's `group.wait()`. Wrapping each
-/// slot in `UnsafeCell` makes the per-task write sound through a shared view —
-/// worker callbacks never need to materialize an aliased `&mut Chunk` or
-/// `&mut [CompileResult]` to publish their result.
-#[derive(Default)]
-#[repr(transparent)]
-pub struct CompileResultSlots(Box<[UnsafeCell<CompileResult>]>);
-
-// SAFETY: writes target disjoint slots (unique `i` per task); reads happen
-// only after the pool join (happens-before via the batch's `group.wait()`).
-// `CompileResult` itself is `Send`.
-unsafe impl Sync for CompileResultSlots {}
-
-impl CompileResultSlots {
-    pub(crate) fn new(len: usize) -> Self {
-        let mut v = Vec::with_capacity(len);
-        v.resize_with(len, || UnsafeCell::new(CompileResult::default()));
-        Self(v.into_boxed_slice())
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// Post-join read view. Single-threaded callers only (after the batch's `group.wait()`).
-    #[inline]
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = &CompileResult> + '_ {
-        // SAFETY: reads happen only after the pool join; no concurrent writer.
-        self.0.iter().map(|c| unsafe { &*c.get() })
-    }
-
-    /// Post-join exclusive access to one slot (e.g. to transfer ownership of
-    /// the result out of the chunk). `&mut self` proves no concurrent writer,
-    /// so `UnsafeCell::get_mut` needs no unsafe here.
-    #[inline]
-    pub fn get_mut(&mut self, i: usize) -> &mut CompileResult {
-        self.0[i].get_mut()
-    }
-}
 
 impl Default for Chunk<'_> {
     fn default() -> Self {
@@ -196,7 +135,7 @@ impl Default for Chunk<'_> {
             isolated_hash: u64::MAX,
             renamer: bun_renamer::ChunkRenamer::default(),
             nested_scopes_to_rename: Vec::new(),
-            compile_results_for_chunk: CompileResultSlots::default(),
+            compile_results_for_chunk: Box::default(),
             final_output_size: 0,
             flags: Flags::default(),
         }
@@ -204,55 +143,6 @@ impl Default for Chunk<'_> {
 }
 
 impl<'a> Chunk<'a> {
-    /// Write `result` into `compile_results_for_chunk[i]` through a raw
-    /// `*mut Chunk`, for the `generate_compile_result_for_*_chunk` worker
-    /// callbacks.
-    ///
-    /// Many `PendingPartRange` tasks share one `*mut Chunk` and each writes a
-    /// unique `i`. The write is routed entirely through raw-pointer field
-    /// projection (`addr_of_mut!`) and `UnsafeCell::get`, so no `&Chunk`,
-    /// `&mut Chunk`, or `&mut [CompileResult]` is ever materialized — only a
-    /// raw `*mut CompileResult` to this task's slot. That keeps the write
-    /// sound under Stacked Borrows even while peer tasks hold their own raw
-    /// views into the same `Chunk`.
-    ///
-    /// # Safety
-    /// - `chunk` must point to a live `Chunk` whose `compile_results_for_chunk`
-    ///   was sized by `generate_chunks_in_parallel` (so `i` is in-bounds).
-    /// - No two concurrent callers may pass the same `i` for the same `chunk`.
-    /// - No reader may observe slot `i` until after the worker-pool join.
-    #[inline]
-    pub(crate) unsafe fn write_compile_result_slot(
-        chunk: *mut Chunk,
-        i: usize,
-        result: CompileResult,
-    ) {
-        // SAFETY: per fn contract — `chunk` is live, `i` in-bounds, slot
-        // exclusively owned by this caller.
-        unsafe {
-            // Project to the slots field with no intermediate `&`/`&mut Chunk`.
-            let slots: *mut CompileResultSlots =
-                core::ptr::addr_of_mut!((*chunk).compile_results_for_chunk);
-            // `CompileResultSlots` is `repr(transparent)` over
-            // `Box<[UnsafeCell<CompileResult>]>`; reading the boxed-slice fat
-            // pointer in place (no move/drop) yields `*mut [UnsafeCell<_>]`
-            // without forming `&Box`. `Box<T>` is documented to have the same
-            // layout/ABI as `*mut T` (and `NonNull<T>`).
-            let cells: *mut [UnsafeCell<CompileResult>] =
-                core::ptr::read(slots.cast::<*mut [UnsafeCell<CompileResult>]>());
-            debug_assert!(
-                i < cells.len(),
-                "compile_results_for_chunk slot out of bounds"
-            );
-            let cell: *mut UnsafeCell<CompileResult> =
-                cells.cast::<UnsafeCell<CompileResult>>().add(i);
-            // `UnsafeCell` is `repr(transparent)` — `*mut UnsafeCell<T>` and
-            // `*mut T` address the same byte. Drop the previous (default)
-            // value in place and store the result.
-            *cell.cast::<CompileResult>() = result;
-        }
-    }
-
     #[inline]
     pub(crate) fn is_entry_point(&self) -> bool {
         self.entry_point.is_entry_point()
@@ -1480,43 +1370,31 @@ impl fmt::Display for CssImportOrderDebug<'_, '_> {
     }
 }
 
-pub(crate) type ImportsFromOtherChunks = ArrayHashMap<IndexInt, cross_chunk_import::ItemList>;
+pub(crate) type ImportsFromOtherChunks = ArrayHashMap<IndexInt, CrossChunkImportItemList>;
 
 #[derive(Default, Clone)]
 pub struct CrossChunkImportItem {
     pub(crate) r#ref: Ref,
 }
 pub type CrossChunkImportItemList = Vec<CrossChunkImportItem>;
-#[derive(Default)]
-pub struct CrossChunkImport {
-    pub(crate) chunk_index: IndexInt,
-    pub(crate) sorted_import_items: core::mem::ManuallyDrop<CrossChunkImportItemList>,
-}
 
-pub mod cross_chunk_import {
-    pub(crate) type ItemList = super::CrossChunkImportItemList;
-}
-
-impl CrossChunkImport {
+impl Chunk<'_> {
+    /// Fills `order` with the indices of `imports_from_other_chunks`, in the order to import them.
     /// `evaluation_rank[other]` is the position of `other` in the importing
     /// chunk's `reached_chunks_in_order` (`u32::MAX` when the walk did not
     /// reach it). ESM hoists every `import` above the chunk's own code, so
     /// this order is the only part of the source evaluation order the
     /// statements can keep.
     pub(crate) fn sorted_cross_chunk_imports(
-        list: &mut Vec<CrossChunkImport>,
-        chunks: &[Chunk],
+        order: &mut Vec<u32>,
+        chunks: &[Self],
         imports_from_other_chunks: &mut ImportsFromOtherChunks,
         stable_source_indices: &[u32],
         evaluation_rank: &[u32],
     ) {
-        list.clear();
-        list.reserve(imports_from_other_chunks.count());
-
         for i in 0..imports_from_other_chunks.count() {
-            let chunk_index = imports_from_other_chunks.keys()[i];
-
             debug_assert!({
+                let chunk_index = imports_from_other_chunks.keys()[i];
                 let exports_to_other_chunks = &chunks[chunk_index as usize]
                     .content
                     .javascript()
@@ -1537,16 +1415,14 @@ impl CrossChunkImport {
                         b.r#ref.inner_index(),
                     ))
             });
-
-            list.push(CrossChunkImport {
-                chunk_index,
-                sorted_import_items: import_items.shallow_copy(),
-            });
         }
 
-        index_sort::sort_slice_by(list, |a, b| {
-            (evaluation_rank[a.chunk_index as usize], a.chunk_index)
-                .cmp(&(evaluation_rank[b.chunk_index as usize], b.chunk_index))
+        let chunk_indices = imports_from_other_chunks.keys();
+        order.clear();
+        order.extend(0..chunk_indices.len() as u32);
+        index_sort::sort_indices(order, &mut |a, b| {
+            let (a, b) = (chunk_indices[a as usize], chunk_indices[b as usize]);
+            (evaluation_rank[a as usize], a).cmp(&(evaluation_rank[b as usize], b))
         });
     }
 }
@@ -1597,20 +1473,10 @@ pub mod bun_renamer {
     pub use bun_js_printer::renamer::*;
 
     #[derive(Default)]
-    pub enum ChunkRenamer {
+    pub enum ChunkRenamer<'a> {
         #[default]
         None,
-        Number(Box<bun_js_printer::renamer::NumberRenamer>),
+        Number(Box<bun_js_printer::renamer::NumberRenamer<'a>>),
         Minify(Box<bun_js_printer::renamer::MinifyRenamer>),
-    }
-
-    impl ChunkRenamer {
-        pub(crate) fn as_renamer(&self) -> bun_js_printer::renamer::Renamer<'_> {
-            match self {
-                ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
-                ChunkRenamer::Number(r) => bun_js_printer::renamer::Renamer::NumberRenamer(r),
-                ChunkRenamer::Minify(r) => bun_js_printer::renamer::Renamer::MinifyRenamer(r),
-            }
-        }
     }
 }

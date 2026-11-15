@@ -155,7 +155,7 @@ struct ScannerFinder<'a> {
 
 impl<'a> ScannerFinder<'a> {
     fn find_in_root_dependencies(&self) -> Option<PackageID> {
-        let pkgs = self.manager.lockfile.packages.slice();
+        let pkgs = &self.manager.lockfile.packages;
         let string_buf = self.manager.lockfile.buffers.string_bytes.as_slice();
         let root_deps = pkgs.items_dependencies()[0];
 
@@ -178,7 +178,7 @@ impl<'a> ScannerFinder<'a> {
     }
 
     fn validate_not_in_workspaces(&self) -> Result<(), Error> {
-        let pkgs = self.manager.lockfile.packages.slice();
+        let pkgs = &self.manager.lockfile.packages;
         let pkg_deps = pkgs.items_dependencies();
         let pkg_res = pkgs.items_resolution();
         let string_buf = self.manager.lockfile.buffers.string_bytes.as_slice();
@@ -302,7 +302,7 @@ pub fn print_security_advisories(manager: &PackageManager, results: &SecuritySca
         return;
     }
 
-    let pkgs = manager.lockfile.packages.slice();
+    let pkgs = &manager.lockfile.packages;
     let pkg_names = pkgs.items_name();
     let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
 
@@ -480,7 +480,7 @@ impl<'a> PackageCollector<'a> {
 
     /// The dependencies of the root package, then those of the workspace packages.
     fn collect_all_packages(&mut self) -> Result<(), Error> {
-        let pkgs = self.manager.lockfile.packages.slice();
+        let pkgs = &self.manager.lockfile.packages;
         for (pkg_id, deps) in pkgs.items_dependencies().iter().enumerate() {
             if pkg_id != 0 && pkgs.items_resolution()[pkg_id].tag != ResolutionTag::Workspace {
                 continue;
@@ -494,7 +494,7 @@ impl<'a> PackageCollector<'a> {
 
     fn collect_update_packages(&mut self) -> Result<(), Error> {
         let manager = self.manager;
-        let pkgs = manager.lockfile.packages.slice();
+        let pkgs = &manager.lockfile.packages;
         let resolutions = manager.lockfile.buffers.resolutions.as_slice();
 
         for req in manager.update_requests.iter() {
@@ -525,7 +525,7 @@ impl<'a> PackageCollector<'a> {
             return Ok(());
         }
 
-        let pkgs = self.manager.lockfile.packages.slice();
+        let pkgs = &self.manager.lockfile.packages;
         let resolutions = self.manager.lockfile.buffers.resolutions.as_slice();
 
         let mut wanted = bun_collections::DynamicBitSet::init_empty(pkgs.len())?;
@@ -547,7 +547,7 @@ impl<'a> PackageCollector<'a> {
     }
 
     fn process_queue(&mut self) -> Result<(), Error> {
-        let pkgs = self.manager.lockfile.packages.slice();
+        let pkgs = &self.manager.lockfile.packages;
 
         while let Some(item) = self.queue.pop_front() {
             let pkg_deps = pkgs.items_dependencies()[item.pkg_id as usize];
@@ -575,7 +575,7 @@ fn build_package_json(
 ) -> Result<Box<[u8]>, Error> {
     let mut json_buf: Vec<u8> = Vec::new();
 
-    let pkgs = manager.lockfile.packages.slice();
+    let pkgs = &manager.lockfile.packages;
     let pkg_names = pkgs.items_name();
     let pkg_resolutions = pkgs.items_resolution();
     let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
@@ -1471,7 +1471,7 @@ fn parse_security_advisories_from_expr(
 
         // Look up the package path for this advisory
         let mut pkg_path: Option<Box<[PackageID]>> = None;
-        let pkgs = manager.lockfile.packages.slice();
+        let pkgs = &manager.lockfile.packages;
         let pkg_names = pkgs.items_name();
         let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
 

@@ -137,7 +137,7 @@ pub fn populate_manifest_cache(
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let string_buf = lockfile.buffers.string_bytes.as_slice();
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let pkg_resolutions = pkgs.items_resolution();
     let pkg_names = pkgs.items_name();
     let pkg_dependencies = pkgs.items_dependencies();

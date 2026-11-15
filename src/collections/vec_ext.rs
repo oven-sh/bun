@@ -15,7 +15,6 @@
 
 use core::alloc::Allocator;
 use core::fmt;
-use core::mem::ManuallyDrop;
 
 use bun_alloc::AllocError;
 use bun_core::strings;
@@ -35,11 +34,6 @@ pub trait VecExt<T>: Sized {
         T: Copy;
     /// Moves the elements of `v` into a fresh `A` allocation and frees `v`'s arena buffer.
     fn from_bump_vec(v: bun_alloc::ArenaVec<'_, T>) -> Self;
-    /// Wrap a borrowed slice as a `Vec<T>` that **must not be dropped or
-    /// grown**.  Same hazard as the original — callers wrap in `ManuallyDrop`.
-    /// Kept only for the `StreamResult::Temporary*` pattern; new code should
-    /// take `&[T]` instead.
-    unsafe fn from_borrowed_slice_dangerous(items: &[T]) -> ManuallyDrop<Self>;
 
     // ── accessors ─────────────────────────────────────────────────────────
     fn slice(&self) -> &[T];
@@ -107,9 +101,6 @@ pub trait VecExt<T>: Sized {
     fn move_to_list(&mut self) -> Vec<T>;
     fn move_to_list_managed(&mut self) -> Vec<T>;
     fn to_owned_slice(&mut self) -> Box<[T]>;
-    /// Non-owning header alias.  For `Vec` this is `from_raw_parts` into a
-    /// `ManuallyDrop` — same UB-if-dropped contract as before.
-    fn shallow_copy(&self) -> ManuallyDrop<Self>;
 
     fn memory_cost(&self) -> usize;
     fn deep_clone_with<F>(&self, clone_one: F) -> Self
@@ -204,19 +195,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         // Buffer freed via `<&MimallocArena as Allocator>::deallocate` → `mi_free`.
         drop(src);
         out
-    }
-    #[inline]
-    unsafe fn from_borrowed_slice_dangerous(items: &[T]) -> ManuallyDrop<Self> {
-        // SAFETY: caller must never drop or grow the returned `Vec` — its
-        // buffer is borrowed.  Same contract as the original.
-        ManuallyDrop::new(unsafe {
-            Vec::from_raw_parts_in(
-                items.as_ptr().cast_mut(),
-                items.len(),
-                items.len(),
-                A::default(),
-            )
-        })
     }
 
     #[inline]
@@ -358,18 +336,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     #[inline]
     fn to_owned_slice(&mut self) -> Box<[T]> {
         self.move_to_list().into_boxed_slice()
-    }
-    #[inline]
-    fn shallow_copy(&self) -> ManuallyDrop<Self> {
-        // SAFETY: caller must not drop/grow the alias; original stays the owner.
-        ManuallyDrop::new(unsafe {
-            Vec::from_raw_parts_in(
-                self.as_ptr().cast_mut(),
-                self.len(),
-                self.capacity(),
-                A::default(),
-            )
-        })
     }
 
     #[inline]

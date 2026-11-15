@@ -217,6 +217,52 @@ it("a write to an object that inherits from process.env changes nothing about th
   });
 });
 
+it.concurrent.each(["TZ", "NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FETCH"])(
+  "the accessor of process.env.%s only touches process.env",
+  async name => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+      // (type $s (struct (field (mut i32))))
+      // (func (export "mk") (result (ref null $s)) struct.new_default $s)
+      const bytes = new Uint8Array([
+        0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
+        1, 10, 2, 0x5f, 1, 0x7f, 1, 0x60, 0, 1, 0x63, 0,
+        3, 2, 1, 1,
+        7, 6, 1, 2, 0x6d, 0x6b, 0, 0,
+        10, 7, 1, 5, 0, 0xfb, 1, 0, 0x0b,
+      ]);
+      const { get, set } = Object.getOwnPropertyDescriptor(process.env, "${name}");
+      const fs = require("node:fs");
+      const others = [
+        new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk(),
+        {},
+        fs.promises,
+        fs.readdirSync(".", { withFileTypes: true })[0],
+        new TextDecoderStream(),
+        new TextEncoderStream(),
+      ];
+      const before = others.map(other => get.call(other));
+      for (const other of others) set.call(other, "set");
+      Bun.gc(true);
+      const after = [...others, process.env].map(other => get.call(other));
+      const inherited = [Object.create(process.env), new Proxy(process.env, {})].map(env => env.${name});
+      process.env.${name} = "UTC";
+      console.log([...new Set([...before, ...after, ...inherited])].join(), Object.create(process.env).${name});
+      `,
+      ],
+      env: { ...bunEnv, [name]: "GMT" },
+      cwd: import.meta.dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "GMT UTC\n", stderr: "", exitCode: 0 });
+  },
+);
+
 it("process.env.TZ writes inside a worker do not change the main thread's timezone", async () => {
   // Node does not intercept TZ in workers (only RealEnvStore::Set calls
   // DateTimeConfigurationChangeNotification, and every worker env is a
@@ -2154,6 +2200,33 @@ console.log(load());
   it("catches exceptions with process.on('unhandledRejection', fn)", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUnhandledRejection.js")]);
     expect(await proc.exited).toBe(42);
+  });
+
+  it.each([
+    ["native", "process.chdir"],
+    ["JavaScript", "() => { throw new Error() }"],
+  ])("--unhandled-rejections=warn warns twice of a reason whose %s stack getter throws", async (_, getter) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--unhandled-rejections=warn",
+        "--no-warnings",
+        "-e",
+        `
+          process.on("warning", warning => console.log(warning.name, warning.stack !== null));
+          Promise.reject(Object.defineProperty({}, "stack", { get: ${getter} }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "UnhandledPromiseRejectionWarning true\n".repeat(2),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   it("delivers many unhandledRejections in order, including ones queued from the handler", async () => {

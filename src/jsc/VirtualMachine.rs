@@ -60,10 +60,6 @@ pub(crate) type OnUnhandledRejection = fn(&VirtualMachine, &JSGlobalObject, JSVa
 pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, crate::Strong>;
 pub type ExceptionList = Vec<crate::exception_list::JsException>;
 
-/// Error for bytes that aren't interned yet and are longer than [`bun_core::String::max_length`].
-#[derive(Debug)]
-pub struct StringTooLong;
-
 // ──────────────────────────────────────────────────────────────────────────
 // VirtualMachine struct (file-level @This())
 // ──────────────────────────────────────────────────────────────────────────
@@ -324,11 +320,6 @@ pub struct VirtualMachine {
     pub(crate) macro_event_loop: EventLoop,
     pub(crate) regular_event_loop: EventLoop,
     event_loop: Cell<*const EventLoop>, // BORROW_FIELD — points at sibling regular_event_loop/macro_event_loop
-
-    /// See [`Self::ref_counted_string`]. By hash.
-    ref_strings: JsCell<
-        bun_collections::HashMap<u32, bun_core::WTFString, bun_collections::IdentityContext<u32>>,
-    >,
 
     pub(crate) active_tasks: Cell<usize>,
 
@@ -3167,7 +3158,6 @@ impl VirtualMachine {
             regular_event_loop,
             // SAFETY: a field of the allocation.
             event_loop: Cell::new(unsafe { &raw const (*this.as_ptr()).regular_event_loop }),
-            ref_strings: JsCell::default(),
             active_tasks: Cell::new(0),
             rare_data: OnceCell::new(),
             proxy_env_storage: Default::default(),
@@ -4790,48 +4780,6 @@ impl VirtualMachine {
         (!in_standalone_executable || runs_tests_in_place) && !path.starts_with(b"data:")
     }
 
-    /// Builds a `ResolvedSource` backed by a ref-counted copy of `code` interned in the VM's ref-string map.
-    pub fn ref_counted_resolved_source(
-        &self,
-        ast: crate::resolved_source::PrintedAst,
-        code: &[u8],
-        specifier: &bun_core::String,
-        source_url: &[u8],
-    ) -> Result<ResolvedSource, StringTooLong> {
-        // refCountedString will panic if the code is empty
-        if code.is_empty() {
-            return Ok(ResolvedSource {
-                source_url: specifier.create_if_different(source_url),
-                ..ResolvedSource::printed(ast, Default::default())
-            });
-        }
-        let source = bun_core::String::adopt_wtf_impl(self.ref_counted_string(code)?.into_raw());
-        Ok(ResolvedSource {
-            source_url: specifier.create_if_different(source_url),
-            ..ResolvedSource::printed(ast, source)
-        })
-    }
-
-    /// Interns `input` as Latin-1 for as long as the VM lives.
-    pub fn ref_counted_string(&self, input: &[u8]) -> Result<bun_core::WTFString, StringTooLong> {
-        use bun_collections::zig_hash_map::MapEntry as Entry;
-        jsc::mark_binding();
-        debug_assert!(!input.is_empty());
-        let hash = bun_hash::XxHash32::hash(0, input);
-        self.ref_strings
-            .with_mut(|ref_strings| match ref_strings.entry(hash) {
-                Entry::Occupied(o) => Ok(o.get().clone()),
-                Entry::Vacant(_) if input.len() > bun_core::String::max_length() => {
-                    Err(StringTooLong)
-                }
-                Entry::Vacant(v) => {
-                    let string = bun_core::String::clone_latin1(input).into_wtf();
-                    let string = string.unwrap_or_else(|| bun_core::out_of_memory());
-                    Ok(v.insert(string).clone())
-                }
-            })
-    }
-
     // Note: `flags` is a runtime arg —
     // `FetchFlags` would need `ConstParamTy` (unstable derive on the enum's
     // owning module) to be a const generic; the only branches are cheap
@@ -6219,7 +6167,7 @@ impl VirtualMachine {
         ) {
             if err == crate::CrateError::JSError {
                 self.global().clear_exception();
-            } else {
+            } else if err != crate::CrateError::WorkerTerminated {
                 #[cfg(debug_assertions)]
                 {
                     bun_core::pretty_errorln!(
@@ -6715,6 +6663,10 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) -> crate::CrateResult<()> {
+        if self.global().vm().execution_forbidden() {
+            return Err(crate::CrateError::WorkerTerminated);
+        }
+
         // Note: stack-safety guard for the Error recursion path.
         // `print_error_instance_body` dispatches on runtime bools, so it
         // carries the union of all

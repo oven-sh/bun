@@ -446,6 +446,25 @@ it("a promise assigned to _onTimeout resolves to undefined, not the timer's argu
   });
 });
 
+it("a fulfilled promise assigned to _onTimeout keeps its value", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const promise = new Blob(["x"]).exists();
+        setTimeout(() => {}, 1)._onTimeout = promise;
+        setTimeout(async () => console.log(await promise), 1);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+});
+
 it("_onTimeout is the callback inside AsyncLocalStorage.run()", () => {
   const callback = () => {};
   const timer = new AsyncLocalStorage().run(1, () => setTimeout(callback, 100_000, 1, 2));

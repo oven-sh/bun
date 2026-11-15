@@ -3566,6 +3566,17 @@ test("Script methods called without a receiver throw the same error as .call(und
   }
 });
 
+test("Script.prototype has no cached data or source map URL, and can be inspected", () => {
+  const prototype: any = Script.prototype;
+  expect([
+    prototype.sourceMapURL,
+    prototype.cachedData,
+    prototype.cachedDataProduced,
+    prototype.cachedDataRejected,
+  ]).toEqual([undefined, undefined, undefined, undefined]);
+  expect(Bun.inspect(prototype)).toContain("runInThisContext");
+});
+
 test("nested vm runs each keep their own deadline", async () => {
   const code = `
     const vm = require("node:vm");

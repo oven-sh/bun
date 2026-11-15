@@ -422,6 +422,10 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
         return JSValue::NULL;
     }
 
+    if !value.materialize_array_buffer_view_buffer() {
+        bun_core::out_of_memory();
+    }
+
     let Some(array_buffer) = value.as_array_buffer(global_this) else {
         return global_this.to_invalid_arguments(format_args!(
             "Expected ArrayBufferView but received {:?}",

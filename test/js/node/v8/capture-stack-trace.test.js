@@ -2160,6 +2160,40 @@ test("Error.captureStackTrace rejects a WebAssembly GC object", () => {
   expect(() => Error.captureStackTrace(struct)).toThrow(new TypeError("invalid_argument"));
 });
 
+test.concurrent("the setter of a captured stack adds nothing to an object that takes no properties", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      // (type $s (struct (field (mut i32))))
+      // (func (export "mk") (result (ref null $s)) struct.new_default $s)
+      const bytes = new Uint8Array([
+        0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
+        1, 10, 2, 0x5f, 1, 0x7f, 1, 0x60, 0, 1, 0x63, 0,
+        3, 2, 1, 1,
+        7, 6, 1, 2, 0x6d, 0x6b, 0, 0,
+        10, 7, 1, 5, 0, 0xfb, 1, 0, 0x0b,
+      ]);
+      const error = new Error();
+      Error.captureStackTrace(error, function notOnTheStack() {});
+      const { set } = Object.getOwnPropertyDescriptor(error, "stack");
+      const heir = Object.create(error);
+      const receivers = [new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk(), Object.freeze({}), error];
+      heir.stack = "heir";
+      for (const receiver of receivers) set.call(receiver, "set");
+      Bun.gc(true);
+      console.log(JSON.stringify([heir, ...receivers].map(receiver => receiver.stack)));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: '["heir",null,null,"set"]\n', stderr: "", exitCode: 0 });
+});
+
 // Error.prepareStackTrace is a data property to a script, and native code keeps the function it calls. Each store of
 // the fixture ends in a definition of the value on Error, and that definition has to reach the native side: a
 // definition that puts a plain value in the property's place leaves every later store without effect.

@@ -1512,11 +1512,14 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return;
     if (is_errorlike) {
-        reasonStack = JSValue::decode(reason).get(globalObject, vm.propertyNames->stack);
+        JSValue stack = JSValue::decode(reason).get(globalObject, vm.propertyNames->stack);
+        if (!scope.exception()) [[likely]] {
+            reasonStack = stack;
+            warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
+        }
         CLEAR_IF_EXCEPTION(scope);
         if (vm.hasPendingTerminationException()) [[unlikely]]
             return;
-        warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
     }
     if (!reasonStack) {
         reasonStack = JSValue::decode(Bun__noSideEffectsToString(vm, globalObject, reason));

@@ -3540,3 +3540,31 @@ describe("GC pressure mid-rewrite", () => {
     });
   });
 });
+
+it("transform() of a streamed body near the stack limit returns a response or throws a RangeError", async () => {
+  const fixture = `
+    const controllers = [];
+    const input = () => new Response(new ReadableStream({ start: controller => void controllers.push(controller) }));
+    const calls = Array.from({ length: 256 }, () => [new HTMLRewriter(), input()]);
+    const outputs = [];
+    const thrown = new Set();
+    new HTMLRewriter().transform(input());
+    (function recurse() {
+      try { recurse(); } catch {}
+      const call = calls.pop();
+      if (!call) return;
+      try { outputs.push(call[0].transform(call[1])); } catch (error) { thrown.add(error.name); }
+    })();
+    for (const controller of controllers) controller.close();
+    await Promise.allSettled(outputs.map(output => output.text()));
+    console.log(outputs.length > 0, [...thrown].every(name => name === "RangeError"));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true true\n", stderr: "", exitCode: 0 });
+});

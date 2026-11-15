@@ -623,31 +623,6 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSV
     return result;
 }
 
-template<typename PromiseType, bool isInternal>
-static void handlePromise(PromiseType* promise, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue ctx, Zig::FFIFunction resolverFunction, Zig::FFIFunction rejecterFunction)
-{
-
-    auto globalThis = static_cast<Zig::GlobalObject*>(globalObject);
-
-    if constexpr (!isInternal) {
-        JSFunction* performPromiseThenFunction = globalObject->performPromiseThenFunction();
-        auto callData = JSC::getCallData(performPromiseThenFunction);
-        ASSERT(callData.type != CallData::Type::None);
-
-        MarkedArgumentBuffer arguments;
-        arguments.append(promise);
-        arguments.append(globalThis->thenable(resolverFunction));
-        arguments.append(globalThis->thenable(rejecterFunction));
-        arguments.append(jsUndefined());
-        arguments.append(JSValue::decode(ctx));
-        ASSERT(!arguments.hasOverflowed());
-        // async context tracking is handled by performPromiseThenFunction internally.
-        JSC::profiledCall(globalThis, JSC::ProfilingReason::Microtask, performPromiseThenFunction, callData, jsUndefined(), arguments);
-    } else {
-        promise->then(globalThis, resolverFunction, rejecterFunction);
-    }
-}
-
 static bool canPerformFastPropertyEnumerationForIterationBun(Structure* s)
 {
     if (s->hasNonReifiedStaticProperties()) {
@@ -3558,7 +3533,8 @@ void JSC__JSValue___then(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1
     auto* cell = JSC::JSValue::decode(JSValue0).asCell();
 
     if (JSC::JSPromise* promise = dynamicDowncast<JSC::JSPromise>(cell)) {
-        handlePromise<JSC::JSPromise, false>(promise, arg1, arg2, ArgFn3, ArgFn4);
+        auto* globalObject = static_cast<Zig::GlobalObject*>(arg1);
+        promise->performPromiseThenWithContext(globalObject->vm(), globalObject, globalObject->thenable(ArgFn3), globalObject->thenable(ArgFn4), jsUndefined(), JSValue::decode(arg2));
     }
 }
 
@@ -4630,7 +4606,7 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    promise->setFlags(static_cast<uint16_t>(JSC::JSPromise::Status::Fulfilled));
+    promise->setFlags(static_cast<uint16_t>(JSC::JSPromise::Status::Fulfilled) | JSC::JSPromise::isFirstResolvingFunctionCalledFlag);
     promise->setSlot(vm, JSC::JSValue::decode(JSValue1));
     return promise;
 }
@@ -5418,14 +5394,15 @@ JSC::JSString* JSC__JSValue__toJSStringView(JSC::EncodedJSValue JSValue0, JSC::J
 [[ZIG_EXPORT(check_slow)]] bool JSC__JSValue__toMatch(JSC::EncodedJSValue regexValue, JSC::JSGlobalObject* global, JSC::EncodedJSValue value)
 {
     ASSERT_NO_PENDING_EXCEPTION(global);
-    JSC::JSValue regex = JSC::JSValue::decode(regexValue);
-    JSC::JSValue str = JSC::JSValue::decode(value);
-    if (regex.asCell()->type() != RegExpObjectType || !str.isString()) {
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(global));
+    auto* regexObject = dynamicDowncast<JSC::RegExpObject>(JSC::JSValue::decode(regexValue));
+    if (!regexObject) {
         return false;
     }
-    JSC::RegExpObject* regexObject = dynamicDowncast<JSC::RegExpObject>(regex);
+    auto* str = JSC::JSValue::decode(value).toString(global);
+    RETURN_IF_EXCEPTION(scope, false);
 
-    return !!regexObject->match(global, JSC::asString(str));
+    RELEASE_AND_RETURN(scope, !!regexObject->match(global, str));
 }
 
 bool JSC__JSValue__stringIncludes(JSC::EncodedJSValue value, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue other)
@@ -5822,13 +5799,7 @@ NEVER_INLINE void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, J
 JSC::EncodedJSValue JSC__JSPromise__resolvedPromiseValue(JSC::JSGlobalObject* globalObject,
     JSC::EncodedJSValue JSValue1)
 {
-    auto& vm = JSC::getVM(globalObject);
-    JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    promise->setFlags(static_cast<uint16_t>(JSC::JSPromise::Status::Fulfilled));
-    promise->setSlot(vm, JSC::JSValue::decode(JSValue1));
-    JSC::ensureStillAliveHere(promise);
-    JSC::ensureStillAliveHere(JSC::JSValue::decode(JSValue1));
-    return JSC::JSValue::encode(promise);
+    return JSC::JSValue::encode(JSC__JSPromise__resolvedPromise(globalObject, JSValue1));
 }
 }
 

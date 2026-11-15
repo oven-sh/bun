@@ -1,7 +1,7 @@
 // Native crypto prototype methods must not segfault when called with an invalid `this`.
 // Before these fixes, jsDynamicCast returned null and the code dereferenced it anyway.
 import { expect, test } from "bun:test";
-import { createHmac, getDiffieHellman } from "node:crypto";
+import { createCipheriv, createHmac, getDiffieHellman } from "node:crypto";
 
 function getNativeHandle(obj: any) {
   const sym = Object.getOwnPropertySymbols(obj).find(s => s.description === "kHandle");
@@ -26,6 +26,12 @@ test("Hmac native update() throws ERR_INVALID_THIS instead of segfaulting on bad
   expect(() => nativeUpdate.call({}, hmac, "x")).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
   expect(() => nativeUpdate.call(null, hmac, "x")).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
   expect(() => nativeUpdate.call(42, hmac, "x")).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
+});
+
+test("the native Cipher constructor throws when it is given no arguments", () => {
+  const Cipher = getNativeHandle(createCipheriv("aes-128-ecb", Buffer.alloc(16), null)).constructor;
+
+  expect(() => new Cipher()).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
 });
 
 test("DiffieHellmanGroup verifyError getter throws ERR_INVALID_THIS instead of segfaulting on bad this", () => {

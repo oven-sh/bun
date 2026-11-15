@@ -165,3 +165,10 @@ describe("Stats methods and accessors called without a receiver", () => {
     });
   });
 });
+
+test.each([false, true])("the date accessors add nothing to a frozen Stats (bigint: %p)", bigint => {
+  const stats = Object.freeze(statSync(import.meta.path, { bigint }));
+  expect(() => stats.mtime).toThrow(TypeError);
+  expect(() => Reflect.set(stats, "mtime", new Date(0))).toThrow(TypeError);
+  expect(Object.isFrozen(stats)).toBe(true);
+});

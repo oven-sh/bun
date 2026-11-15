@@ -1,5 +1,6 @@
 //! `Bun.Archive` — tar/tgz pack + extract.
 
+use crate::node::types::Valid;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::Store;
@@ -323,6 +324,7 @@ impl Archive {
         }
 
         let path_slice = path_arg.to_utf8(global)?;
+        Valid::no_null_bytes(path_slice.slice(), "path", "a string", global)?;
 
         // Parse options for compression override
         let options_compress = parse_compression_options(global, options.to_js())?;
@@ -402,6 +404,7 @@ impl Archive {
         }
 
         let path_slice = path_arg.to_utf8(global)?;
+        Valid::no_null_bytes(path_slice.slice(), "path", "a string", global)?;
 
         // Parse options
         let mut glob_patterns: Option<Vec<GlobPattern>> = None;

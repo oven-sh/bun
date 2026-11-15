@@ -1,7 +1,7 @@
 import * as b from "bun-builtins-table";
 import { datesOfStatsCell } from "./native-cells.ts";
 
-// NodeFSStatBinding.cpp getDateField(): it reads `<name>Ms` off the object that it is entered with, makes a Date of it and puts the Date on that object under its own name, whatever the object is.
+// NodeFSStatBinding.cpp getDateField(): it reads `<name>Ms` off the object that it is entered with, makes a Date of it and defines the Date on that object under its own name.
 const date = (name: string) =>
   ({
     this: b.any,
@@ -15,6 +15,7 @@ const date = (name: string) =>
         b.createdIn(b.instance("Date").fresh, b.nativeCell(datesOfStatsCell)),
         b.definesName([name], b.nativeCell(datesOfStatsCell)),
         b.returnedFrom(datesOfStatsCell),
+        ...b.ownPropertyTraps,
       ],
     },
     implementation: b.generic,

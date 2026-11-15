@@ -21,9 +21,6 @@
 #include "ZigGlobalObject.h"
 #include "ObjectBindings.h"
 #include "JavaScriptCore/DateInstance.h"
-#if ENABLE(AOT)
-#include <JavaScriptCore/AOTPropertyWalk.h>
-#endif
 #include <wtf/Int128.h>
 #if !OS(WINDOWS)
 #include <sys/stat.h>
@@ -239,7 +236,7 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
 
     JSValue result = JSC::DateInstance::create(vm, globalObject->dateStructure(), internalNumber);
     if (!thisObject->structure()->mayBePrototype()) {
-        putDirectOrThrow(globalObject, thisObject, propertyName, result, 0);
+        defineOwnDataProperty(globalObject, thisObject, propertyName, result, 0);
         RETURN_IF_EXCEPTION(scope, {});
     }
     return result;
@@ -289,10 +286,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsStatsPrototypeFunction_DatePutter, (JSGlobalObject * 
     if (!thisObject)
         return false;
 
-    if (thisObject->type() == JSC::FinalObjectType || JSC::AOT::PropertyWalk::isCompiledObject(thisObject)) [[likely]]
-        RELEASE_AND_RETURN(scope, putDirectOrThrow(globalObject, thisObject, propertyName, JSValue::decode(encodedValue), 0));
-    // putDirect needs a structure transition, which a WebAssembly GC object doesn't support.
-    RELEASE_AND_RETURN(scope, thisObject->createDataProperty(globalObject, propertyName, JSValue::decode(encodedValue), true));
+    RELEASE_AND_RETURN(scope, defineOwnDataProperty(globalObject, thisObject, propertyName, JSValue::decode(encodedValue), 0));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsStatsPrototypeFunction_isBlockDevice, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

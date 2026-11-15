@@ -326,31 +326,38 @@ bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObjec
     RELEASE_AND_RETURN(scope, put(object, globalObject, propertyName, descriptor.value(), slot));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+// Script can call the three accessors on any object, whose private names are not theirs to touch.
+static JSObject* holderOfAccessor(VM& vm, JSC::EncodedJSValue thisValue, PropertyName propertyName)
+{
+    for (JSValue value = JSValue::decode(thisValue); value.isObject(); value = asObject(value)->getPrototypeDirect()) {
+        if (JSValue own = asObject(value)->getDirect(vm, propertyName))
+            return own.isCustomGetterSetter() ? asObject(value) : nullptr;
+    }
+    return nullptr;
+}
+
+static JSC::EncodedJSValue getPrivateOrEnvValue(JSGlobalObject* globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName, const Identifier& privateName)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]]
-        return JSValue::encode(jsUndefined());
-
-    auto* clientData = WebCore::clientData(vm);
+    if (auto* holder = holderOfAccessor(vm, thisValue, propertyName)) [[likely]] {
+        if (JSValue privateValue = holder->getDirect(vm, privateName))
+            return JSValue::encode(privateValue);
+    }
 
     EncodedSlice name = toEncodedSlice(propertyName.publicName());
     EncodedSlice value = { nullptr, 0 };
-
-    auto hasExistingValue = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().dataPrivateName());
-    RETURN_IF_EXCEPTION(scope, {});
-    if (hasExistingValue) {
-        return JSValue::encode(hasExistingValue);
-    }
 
     if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
         return JSValue::encode(jsUndefined());
     }
 
     return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+{
+    return getPrivateOrEnvValue(globalObject, thisValue, propertyName, WebCore::clientData(globalObject->vm())->builtinNames().dataPrivateName());
 }
 
 // The setters of the three accessors keep the written value under a private name.
@@ -366,7 +373,7 @@ static void putPrivateValue(VM& vm, JSObject* object, const Identifier& privateN
 JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
-    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
+    JSC::JSObject* object = holderOfAccessor(vm, thisValue, propertyName);
     if (!object)
         return false;
     auto* clientData = WebCore::clientData(vm);
@@ -422,33 +429,13 @@ ALWAYS_INLINE static Identifier BUN_CONFIG_VERBOSE_FETCH_PRIVATE_PROPERTY(VM& vm
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeTLSRejectUnauthorizedGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]]
-        return JSValue::encode(jsUndefined());
-
-    const auto& privateName = NODE_TLS_REJECT_UNAUTHORIZED_PRIVATE_PROPERTY(vm);
-    JSValue result = thisObject->getDirect(vm, privateName);
-    if (result) [[unlikely]] {
-        return JSValue::encode(result);
-    }
-
-    EncodedSlice name = toEncodedSlice(propertyName.publicName());
-    EncodedSlice value = { nullptr, 0 };
-
-    if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
-        return JSValue::encode(jsUndefined());
-    }
-
-    return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
+    return getPrivateOrEnvValue(globalObject, thisValue, propertyName, NODE_TLS_REJECT_UNAUTHORIZED_PRIVATE_PROPERTY(globalObject->vm()));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsNodeTLSRejectUnauthorizedSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
-    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
+    JSC::JSObject* object = holderOfAccessor(vm, thisValue, propertyName);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!object)
         return false;
@@ -470,33 +457,13 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeTLSRejectUnauthorizedSetter, (JSGlobalObject * gl
 
 JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]]
-        return JSValue::encode(jsUndefined());
-
-    const auto& privateName = BUN_CONFIG_VERBOSE_FETCH_PRIVATE_PROPERTY(vm);
-    JSValue result = thisObject->getDirect(vm, privateName);
-    if (result) [[unlikely]] {
-        return JSValue::encode(result);
-    }
-
-    EncodedSlice name = toEncodedSlice(propertyName.publicName());
-    EncodedSlice value = { nullptr, 0 };
-
-    if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
-        return JSValue::encode(jsUndefined());
-    }
-
-    return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
+    return getPrivateOrEnvValue(globalObject, thisValue, propertyName, BUN_CONFIG_VERBOSE_FETCH_PRIVATE_PROPERTY(globalObject->vm()));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
-    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
+    JSC::JSObject* object = holderOfAccessor(vm, thisValue, propertyName);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!object)
         return false;

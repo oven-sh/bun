@@ -70,7 +70,10 @@ using RestoreOriginal = void (*)(JSGlobalObject*, JSObject* target, JSValue key,
 
 static void restoreOriginals(Zig::GlobalObject* globalObject, WriteBarrier<Unknown>& slot, WriteBarrier<Unknown>& stubsOfPreload, JSObject* target, RestoreOriginal restore)
 {
-    auto* originals = uncheckedDowncast<JSMap>(slot.get());
+    JSValue stubbed = slot.get();
+    if (!stubbed)
+        return;
+    auto* originals = uncheckedDowncast<JSMap>(stubbed);
     slot.clear();
     if (ViUtils__isLoadingPreload(globalObject))
         stubsOfPreload.clear();
@@ -104,9 +107,7 @@ static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValu
 
 static void unstubAllGlobals(Zig::GlobalObject* globalObject)
 {
-    auto& stubbedGlobals = globalObject->mockModule.stubbedGlobals;
-    if (stubbedGlobals)
-        restoreOriginals(globalObject, stubbedGlobals, globalObject->mockModule.globalsOfPreload, globalObject->globalThis(), restoreGlobal);
+    restoreOriginals(globalObject, globalObject->mockModule.stubbedGlobals, globalObject->mockModule.globalsOfPreload, globalObject->globalThis(), restoreGlobal);
 }
 
 static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue value)

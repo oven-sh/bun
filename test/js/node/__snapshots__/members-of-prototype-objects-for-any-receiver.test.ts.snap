@@ -4200,29 +4200,29 @@ node:fs.Stats.prototype isSymbolicLink("a", 1)
   false <- every object
   undefined <- a number, a string, undefined, null
 node:fs.Stats.prototype atime, read
-  object Date, stores atime <- {}, an object without a prototype, an instance of another class, an heir of the prototype object
-  object Date <- a proxy of {}, a proxy of such an heir, the prototype object
+  object Date, stores atime <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
+  object Date <- the prototype object
   undefined <- a number, a string, undefined, null
 node:fs.Stats.prototype atime, stored to
   undefined, stores atime <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
   undefined <- the prototype object, a number, a string, undefined, null
 node:fs.Stats.prototype mtime, read
-  object Date, stores mtime <- {}, an object without a prototype, an instance of another class, an heir of the prototype object
-  object Date <- a proxy of {}, a proxy of such an heir, the prototype object
+  object Date, stores mtime <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
+  object Date <- the prototype object
   undefined <- a number, a string, undefined, null
 node:fs.Stats.prototype mtime, stored to
   undefined, stores mtime <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
   undefined <- the prototype object, a number, a string, undefined, null
 node:fs.Stats.prototype ctime, read
-  object Date, stores ctime <- {}, an object without a prototype, an instance of another class, an heir of the prototype object
-  object Date <- a proxy of {}, a proxy of such an heir, the prototype object
+  object Date, stores ctime <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
+  object Date <- the prototype object
   undefined <- a number, a string, undefined, null
 node:fs.Stats.prototype ctime, stored to
   undefined, stores ctime <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
   undefined <- the prototype object, a number, a string, undefined, null
 node:fs.Stats.prototype birthtime, read
-  object Date, stores birthtime <- {}, an object without a prototype, an instance of another class, an heir of the prototype object
-  object Date <- a proxy of {}, a proxy of such an heir, the prototype object
+  object Date, stores birthtime <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
+  object Date <- the prototype object
   undefined <- a number, a string, undefined, null
 node:fs.Stats.prototype birthtime, stored to
   undefined, stores birthtime <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir

@@ -855,12 +855,14 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
 JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName))
 {
     auto& vm = JSC::getVM(globalObject);
-    JSValue decodedValue = JSValue::decode(thisValue);
-    if (auto* object = decodedValue.getObject()) {
-        object->putDirect(vm, vm.propertyNames->stack, JSValue::decode(value), JSC::PropertyAttribute::DontEnum | 0);
-    }
+    auto* object = JSValue::decode(thisValue).getObject();
+    if (!object)
+        return true;
+    if (object->inherits<ErrorInstance>()) [[likely]]
+        return object->putDirect(vm, vm.propertyNames->stack, JSValue::decode(value), JSC::PropertyAttribute::DontEnum | 0);
 
-    return true;
+    PropertyDescriptor descriptor(JSValue::decode(value), JSC::PropertyAttribute::DontEnum | 0);
+    return object->methodTable()->defineOwnProperty(object, globalObject, vm.propertyNames->stack, descriptor, false);
 }
 
 bool isImportMetaEnvForTests(JSC::JSObject*);

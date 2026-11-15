@@ -4227,6 +4227,14 @@ describe("expect()", () => {
     for (const { label, value, matched } of tests) {
       test(label, () => expect(value).toMatch(matched));
     }
+
+    if (isBun) {
+      test("String object", () => {
+        expect(new String("abc")).toMatch("b");
+        expect(new String("abc")).toMatch(/b/);
+        expect(() => expect(new String("abc")).not.toMatch(/b/)).toThrow();
+      });
+    }
   });
 
   test_skipIf(isJest)("toBeNaN()", () => {

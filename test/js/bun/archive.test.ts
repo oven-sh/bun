@@ -537,6 +537,15 @@ describe("Bun.Archive", () => {
       expect(helloContent).toBe("Hello, World!");
     });
 
+    test("throws for a path with a null byte", () => {
+      using dir = tempDir("archive-extract-null-byte", {});
+      const archive = new Bun.Archive({ "hello.txt": "Hello, World!" });
+
+      expect(() => archive.extract(join(String(dir), "out\0ignored"))).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      );
+    });
+
     test("extracts nested directory structure", async () => {
       using dir = tempDir("archive-extract-nested", {});
 
@@ -1705,6 +1714,14 @@ describe("Bun.Archive", () => {
       const file = Bun.file(archivePath);
       expect(await file.exists()).toBe(true);
       expect(file.size).toBeGreaterThan(0);
+    });
+
+    test("throws for a path with a null byte", () => {
+      using dir = tempDir("archive-write-null-byte", {});
+
+      expect(() => Bun.Archive.write(join(String(dir), "test.tar\0ignored"), { "hello.txt": "Hello, World!" })).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      );
     });
 
     test("writes gzipped archive to file", async () => {

@@ -152,6 +152,29 @@ describe("AbortController GC", () => {
     });
   });
 
+  test("a signal from AbortSignal.any() that only pipeTo() and addEventListener() use survives GC", async () => {
+    const controller = new AbortController();
+    const target = new EventTarget();
+    let events = 0;
+    const pipes = Array.from({ length: 50 }, () => {
+      target.addEventListener("event", () => events++, { signal: AbortSignal.any([controller.signal]) });
+      return new ReadableStream()
+        .pipeTo(new WritableStream({ abort: reason => void aborted.push(reason) }), {
+          signal: AbortSignal.any([controller.signal]),
+        })
+        .catch(() => {});
+    });
+    const aborted: unknown[] = [];
+    await new Promise(setImmediate);
+    Bun.gc(true);
+
+    controller.abort("reason");
+    target.dispatchEvent(new Event("event"));
+    expect(events).toBe(0);
+    await Promise.all(pipes);
+    expect(aborted).toEqual(Array(50).fill("reason"));
+  });
+
   // collectContinuously is very slow on Windows CI; the code under test is
   // identical across platforms.
   test.skipIf(isWindows)(

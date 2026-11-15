@@ -600,7 +600,7 @@ export function runOnLoadPlugins(
         }
 
         const chosenLoader = LOADERS_MAP[loader];
-        if (chosenLoader === undefined) {
+        if (typeof chosenLoader !== "number") {
           throw new TypeError(`Loader ${loader} is not supported.`);
         }
 

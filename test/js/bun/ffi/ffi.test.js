@@ -793,6 +793,13 @@ describe.skipIf(!FFI_FIXTURE_PATH)("engine-native cstring", () => {
   });
 });
 
+it("ptr() of a small typed array stays valid when its buffer is read", () => {
+  const array = new Uint8Array(64);
+  const address = ptr(array);
+  new Uint8Array(array.buffer)[0] = 7;
+  expect([ptr(array), read.u8(address, 0)]).toEqual([address, 7]);
+});
+
 describe("read edge cases", () => {
   it("a negative byteOffset does not abort the process", () => {
     const buf = new Uint8Array([9, 8, 7, 6]);

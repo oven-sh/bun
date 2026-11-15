@@ -420,6 +420,18 @@ describe("ConnectionsList", () => {
     expect(list.all()).toEqual([closed]);
   });
 
+  test("expired() takes a timeout of more than 2 ** 32 nanoseconds", () => {
+    const list = new ConnectionsList();
+    const parser = new HTTPParser();
+    parser.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+    Bun.sleepSync(2);
+
+    // 33 microseconds when its nanoseconds wrap at 32 bits.
+    const hours = 2 ** 26 + 4295;
+    expect([list.expired(hours, 0), list.expired(0, hours)]).toEqual([[], []]);
+    expect(list.expired(1, 1)).toEqual([parser]);
+  });
+
   test("works with HTTPParser", () => {
     const p1 = new HTTPParser();
     p1.name = "parser1";

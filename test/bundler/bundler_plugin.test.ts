@@ -142,6 +142,15 @@ describe("bundler", () => {
       "/foo.magic": [`123`],
     },
   });
+  itBundled("plugin/LoadLoaderNamedLikeObjectPrototypeMember", {
+    files: loadFixture,
+    plugins(builder) {
+      builder.onLoad({ filter: /\.magic$/ }, () => ({ contents: "", loader: "constructor" as any }));
+    },
+    bundleErrors: {
+      "/foo.magic": [`Loader constructor is not supported.`],
+    },
+  });
   // A max-length 16-bit rope throws "Out of memory" the first time it's flattened.
   // `external: true` skips the JS-side path checks, which would flatten it first.
   test.concurrent("plugin/fails the build when a returned string can't be flattened", async () => {

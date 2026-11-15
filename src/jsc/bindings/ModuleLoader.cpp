@@ -548,9 +548,6 @@ static JSValue handleVirtualModuleResult(
         // require() can't wait, so fetchCommonJSModule() throws when it gets a pending promise back.
         if (commonJSModule && !wasModuleMock && promise->status() == JSPromise::Status::Pending)
             return promise;
-        JSFunction* performPromiseThenFunction = globalObject->performPromiseThenFunction();
-        auto callData = JSC::getCallData(performPromiseThenFunction);
-        ASSERT(callData.type != CallData::Type::None);
         auto specifierString = specifier->toWTFString(BunString::ZeroCopy);
         auto referrerString = referrer->toWTFString(BunString::ZeroCopy);
         PendingVirtualModuleResult* pendingModule = PendingVirtualModuleResult::create(globalObject, specifierString, referrerString);
@@ -566,15 +563,7 @@ static JSValue handleVirtualModuleResult(
             RETURN_IF_EXCEPTION(scope, {});
             return internalPromise;
         }
-        MarkedArgumentBuffer arguments;
-        arguments.append(promise);
-        arguments.append(globalObject->thenable(jsFunctionOnLoadObjectResultResolve));
-        arguments.append(globalObject->thenable(jsFunctionOnLoadObjectResultReject));
-        arguments.append(jsUndefined());
-        arguments.append(pendingModule);
-        ASSERT(!arguments.hasOverflowed());
-        JSC::profiledCall(globalObject, ProfilingReason::Microtask, performPromiseThenFunction, callData, jsUndefined(), arguments);
-        RETURN_IF_EXCEPTION(scope, {});
+        promise->performPromiseThenWithContext(vm, globalObject, globalObject->thenable(jsFunctionOnLoadObjectResultResolve), globalObject->thenable(jsFunctionOnLoadObjectResultReject), jsUndefined(), pendingModule);
         return internalPromise;
     }
     default: {

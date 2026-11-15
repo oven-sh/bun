@@ -394,6 +394,26 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.each([
+    ["an ES module", `export default 42;`, `(await import("./x.txt", { with: { type: "js" } })).default`],
+    ["a CommonJS module", `module.exports = 42;`, `(await import("./x.txt", { with: { type: "js" } })).default`],
+  ])("with --isolate, %s loaded by its type attribute is not served to a plain import", async (_, text, load) => {
+    using dir = tempDir("isolate-type-attribute", {
+      "x.txt": text,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        test("as js", async () => expect(${load}).toBe(42));
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        test("as text", async () => expect((await import("./x.txt")).default).toBe(${JSON.stringify(text)}));
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./b.test.ts"]);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+
   // https://github.com/oven-sh/bun/issues/33904
   // The linker rewrites an import that a plugin onResolve answers. When the answer has a
   // namespace, the printer emits "namespace:path", and the cached module record has to

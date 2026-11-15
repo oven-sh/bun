@@ -1196,7 +1196,28 @@ it.skipIf(!isASAN)("stops the file watcher thread before the VM is freed at exit
   expect(await Promise.all([run(), run(), run(), run()])).toEqual([0, 0, 0, 0]);
 });
 
-// --hot and --watch intern a module's transpiled text in the VM.
+it.each(["--hot", "--watch"])("%s tells apart two modules whose text has the same 32-bit hash", async flag => {
+  const text = (n: number) => `export default "module ${n}";\n`;
+  expect(Bun.hash.xxHash32(text(26773))).toBe(Bun.hash.xxHash32(text(157045)));
+  using dir = tempDir("hot-hash-collision", {
+    "a.mjs": text(26773),
+    "b.mjs": text(157045),
+    "entry.cjs": `
+      console.log(require("./a.mjs").default + ", " + require("./b.mjs").default);
+      process.exit(0);
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), flag, "--no-clear-screen", "entry.cjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "module 26773, module 157045\n", stderr: "", exitCode: 0 });
+});
+
 it("throws ERR_STRING_TOO_LONG for a module whose transpiled text exceeds the string limit", async () => {
   using dir = tempDir("hot-string-limit", {
     "big.cjs": `const s = ${JSON.stringify(Buffer.alloc(200 * 1024, "x").toString())};\nmodule.exports = { len: s.length };\n`,

@@ -89,9 +89,7 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue isDecipherValue = callFrame->argument(0);
-    ASSERT(isDecipherValue.isBoolean());
-    CipherKind cipherKind = isDecipherValue.asBoolean() ? CipherKind::Decipher : CipherKind::Cipher;
+    CipherKind cipherKind = callFrame->argument(0).isTrue() ? CipherKind::Decipher : CipherKind::Cipher;
 
     JSValue cipherValue = callFrame->argument(1);
     JSValue keyValue = callFrame->argument(2);

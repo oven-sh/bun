@@ -400,10 +400,9 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, 
 {
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = JSValue::decode(thisValueEncoded);
-    auto* script = dynamicDowncast<NodeVMScript>(thisValue);
+    auto* script = dynamicDowncast<NodeVMScript>(JSValue::decode(thisValueEncoded));
     if (!script) [[unlikely]] {
-        return throwThisIsNotAScript(globalObject, scope, thisValue);
+        return encodedJSUndefined();
     }
 
     // Populated by the compile in the constructor (a CodeCache hit copies it over too).
@@ -419,10 +418,9 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedData, (JSGlobalObject * globalObject, JS
 {
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = JSValue::decode(thisValueEncoded);
-    auto* script = dynamicDowncast<NodeVMScript>(thisValue);
+    auto* script = dynamicDowncast<NodeVMScript>(JSValue::decode(thisValueEncoded));
     if (!script) [[unlikely]] {
-        return throwThisIsNotAScript(globalObject, scope, thisValue);
+        return encodedJSUndefined();
     }
 
     scope.assertNoExceptionExceptTermination();
@@ -436,10 +434,9 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataProduced, (JSGlobalObject * globalOb
 {
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = JSValue::decode(thisValueEncoded);
-    auto* script = dynamicDowncast<NodeVMScript>(thisValue);
+    auto* script = dynamicDowncast<NodeVMScript>(JSValue::decode(thisValueEncoded));
     if (!script) [[unlikely]] {
-        return throwThisIsNotAScript(globalObject, scope, thisValue);
+        return encodedJSUndefined();
     }
 
     scope.assertNoExceptionExceptTermination();
@@ -450,10 +447,9 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalOb
 {
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = JSValue::decode(thisValueEncoded);
-    auto* script = dynamicDowncast<NodeVMScript>(thisValue);
+    auto* script = dynamicDowncast<NodeVMScript>(JSValue::decode(thisValueEncoded));
     if (!script) [[unlikely]] {
-        return throwThisIsNotAScript(globalObject, scope, thisValue);
+        return encodedJSUndefined();
     }
 
     switch (script->cachedDataRejected()) {

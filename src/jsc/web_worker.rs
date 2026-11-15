@@ -1386,7 +1386,7 @@ fn on_unhandled_rejection(
         error_instance = global_object.take_exception(err);
     }
     // Formatting ran script; if this worker was terminated meanwhile there is no error to dispatch.
-    if error_instance.is_termination_exception() {
+    if error_instance.is_termination_exception() || !vm.script_allowed() {
         return;
     }
     jsc::mark_binding();

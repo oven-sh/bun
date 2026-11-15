@@ -760,6 +760,20 @@ test.concurrent.each([
     `worker.on("message", () => worker.terminate());`,
     ["exit 1"],
   ],
+  [
+    "terminate() while an uncaught error is printed",
+    `setImmediate(() => { throw Object.assign(new Error(), { message: { toString() { ${spinUntilTerminated} } } }); });`,
+    `worker.on("message", () => worker.terminate());`,
+    ["exit 1"],
+  ],
+  [
+    "terminate() while an error in an uncaught object is printed",
+    `const spin = () => { ${spinUntilTerminated} };
+     const error = () => Object.assign(new Error(), { message: { toString: spin } });
+     setImmediate(() => { throw { a: Object.assign(error(), { cause: error() }), b: { [Bun.inspect.custom]: spin } }; });`,
+    `worker.on("message", () => worker.terminate());`,
+    ["exit 1"],
+  ],
   // The GC formats the stack of an Error whose `stack` hasn't been read yet.
   [
     "process.exit() in a 'workerMessage' listener",

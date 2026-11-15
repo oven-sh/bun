@@ -245,10 +245,12 @@ impl FileSystemRouter {
             root_dir_info.abs_path
         };
 
-        let vm = global.bun_vm();
         let ref_counted = |bytes: &[u8]| {
-            vm.ref_counted_string(bytes)
-                .map_err(|_| global.throw_string_too_long())
+            if bytes.len() > bun_core::String::max_length() {
+                return Err(global.throw_string_too_long());
+            }
+            let string = bun_core::String::clone_latin1(bytes).into_wtf();
+            Ok(string.unwrap_or_else(|| bun_core::out_of_memory()))
         };
         let base_dir = ref_counted(base_dir_str)?;
         router.config.dir = Box::from(base_dir.latin1_slice());

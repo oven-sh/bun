@@ -184,6 +184,28 @@ describe("vi.stubEnv", () => {
   test("unstubAllEnvs without stubs does nothing", () => {
     expect(vi.unstubAllEnvs()).toBe(vi);
   });
+
+  test("unstubAllEnvs can be called from a getter of process.env", async () => {
+    const { stderr, exitCode } = await run(["test"], {
+      "getter.test.js": `
+        import { expect, test, vi } from "bun:test";
+        test("restores", () => {
+          vi.stubEnv("VI_UTILS_NEW", "value");
+          const env = process.env;
+          let reads = 0;
+          Object.defineProperty(process, "env", {
+            get() {
+              if (reads++ === 0) vi.unstubAllEnvs();
+              return env;
+            },
+          });
+          vi.unstubAllEnvs();
+          expect(env.VI_UTILS_NEW).toBeUndefined();
+        });
+      `,
+    });
+    expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) restores"], exitCode: 0 });
+  });
 });
 
 describe("vi.stubGlobal", () => {

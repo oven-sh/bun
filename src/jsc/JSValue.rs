@@ -93,12 +93,7 @@ impl JSValue {
     }
 
     /// Attach `(resolve, reject)` reactions to this Promise, passing `ctx` as
-    /// the trailing argument to each. Thin wrapper over `JSC__JSValue___then`.
-    ///
-    /// Wraps in a `TopExceptionScope` and surfaces only
-    /// termination; every current call site discards the error, so this returns
-    /// `()` and lets the caller's surrounding scope (or none) observe a
-    /// termination on its next check.
+    /// the trailing argument to each.
     pub fn then<T>(
         self,
         global: &JSGlobalObject,
@@ -106,33 +101,12 @@ impl JSValue {
         resolve: host_fn::JSHostFn,
         reject: host_fn::JSHostFn,
     ) {
-        unsafe extern "C" {
-            // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST
-            // handle (`&` is ABI-identical to non-null `*mut`); remaining args
-            // are by-value (`JSValue`, fn-ptrs).
-            safe fn JSC__JSValue___then(
-                this: JSValue,
-                global: &JSGlobalObject,
-                ctx: JSValue,
-                resolve: host_fn::JSHostFn,
-                reject: host_fn::JSHostFn,
-            );
-        }
-        // Every current call site discards the error, so swallow termination.
-        crate::top_scope!(scope, global);
-        JSC__JSValue___then(
-            self,
-            global,
-            JSValue::from_ptr_address(ctx as usize),
-            resolve,
-            reject,
-        );
-        let _ = scope.assert_no_exception_except_termination();
+        let ctx = JSValue::from_ptr_address(ctx as usize);
+        self.then2(global, ctx, resolve, reject)
     }
 
     /// Like [`then`] but the context is a `JSValue` (not a raw pointer encoded
-    /// as a JS number). Wraps in a `TopExceptionScope` and surfaces only
-    /// termination; every current call site discards the error, so this returns `()`.
+    /// as a JS number).
     pub fn then2(
         self,
         global: &JSGlobalObject,
@@ -141,7 +115,7 @@ impl JSValue {
         reject: host_fn::JSHostFn,
     ) {
         unsafe extern "C" {
-            // safe: see decl in `then` above.
+            // safe: `JSGlobalObject` is an opaque ZST handle; remaining args are by-value.
             safe fn JSC__JSValue___then(
                 this: JSValue,
                 global: &JSGlobalObject,
@@ -150,20 +124,13 @@ impl JSValue {
                 reject: host_fn::JSHostFn,
             );
         }
-        crate::top_scope!(scope, global);
         JSC__JSValue___then(self, global, ctx, resolve, reject);
-        let _ = scope.assert_no_exception_except_termination();
     }
 
     /// Like [`then`], but the context is a `JSValue` instead of a raw pointer.
     /// Use this when the context should be GC-managed (e.g. a JSCell that gets
     /// collected with the Promise's reaction if the Promise is GC'd without
     /// settling).
-    ///
-    /// Wraps in a `TopExceptionScope` and surfaces only
-    /// termination; every current call site discards the error, so this returns
-    /// `()` and lets the caller's surrounding scope (or none) observe a
-    /// termination on its next check.
     #[inline]
     pub fn then_with_value(
         self,

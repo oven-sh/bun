@@ -2587,35 +2587,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     mi.into_deserialized()
                 });
 
-                // Watcher path uses ref-counted source.
-                if jsc_vm.is_watcher_enabled() {
-                    // SAFETY: `extra.source_code_printer` is non-null per
-                    // `TranspileExtra` contract; rederive after the print block
-                    // (Stacked Borrows — see the matching note below).
-                    let printer: &mut bun_js_printer::BufferPrinter =
-                        unsafe { &mut *extra.source_code_printer };
-                    let written = printer.ctx.get_written();
-                    let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
-                        && path.is_file()
-                        && loader.is_java_script_like()
-                    {
-                        bun_jsc::node_compile_cache::fetch(path.text, is_commonjs_module, written)
-                    } else {
-                        None
-                    };
-                    let mut resolved_source = jsc_vm
-                        .ref_counted_resolved_source(
-                            printed_ast,
-                            written,
-                            input_specifier,
-                            path.text,
-                        )
-                        .map_err(|_| global_object.throw_string_too_long())?;
-                    resolved_source.module_info = module_info;
-                    resolved_source.bytecode_cache = node_compile_cache_blob.unwrap_or_default();
-                    return Ok(resolved_source);
-                }
-
                 // Final ResolvedSource.
                 let tag = match loader {
                     L::Json | L::Jsonc => ResolvedSourceTag::JsonForObjectLoader,
@@ -2672,6 +2643,9 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 let printer: &mut bun_js_printer::BufferPrinter =
                     unsafe { &mut *extra.source_code_printer };
                 let written = printer.ctx.get_written();
+                if written.len() > bun_core::String::max_length() {
+                    return Err(global_object.throw_string_too_long().into());
+                }
                 // Node compile cache hook (sync transpile path). `fetch` copies
                 // `written`; the printer may be replaced below.
                 let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
@@ -3916,6 +3890,7 @@ fn transpile_file<const DATA_ONLY: bool>(
     let _specifier = specifier.to_utf8();
     let referrer_slice = referrer.to_utf8();
     let type_attribute_str: Option<&[u8]> = type_attribute.and_then(|s| s.as_utf8());
+    let has_type_attribute = type_attribute.is_some_and(|s| !s.is_empty());
 
     let mut virtual_source_to_use: Option<bun_ast::Source> = None;
     let mut source_blob: Option<crate::webcore::Blob> = None;
@@ -4030,6 +4005,7 @@ fn transpile_file<const DATA_ONLY: bool>(
                 &lr.path,
                 referrer.clone(),
                 concurrent_loader,
+                has_type_attribute,
                 lr.package_json,
                 aot_package_config,
                 module_loader,
@@ -4137,7 +4113,10 @@ fn transpile_file<const DATA_ONLY: bool>(
     };
 
     match transpile_source_code_inner::<DATA_ONLY>(jsc_vm, &args) {
-        Ok(resolved) => *ret = ErrorableResolvedSource::ok(resolved),
+        Ok(mut resolved) => {
+            resolved.depends_on_more_than_source |= has_type_attribute;
+            *ret = ErrorableResolvedSource::ok(resolved);
+        }
         Err(err) => {
             if let Some(value) = transpile_error_value(global, specifier, referrer, &mut log, err) {
                 *ret = ErrorableResolvedSource::err(value);

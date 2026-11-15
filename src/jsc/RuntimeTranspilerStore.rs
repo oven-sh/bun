@@ -313,6 +313,7 @@ impl RuntimeTranspilerStore {
         path: &Fs::Path<'_>,
         referrer: String,
         loader: Loader,
+        has_type_attribute: bool,
         package_json: Option<&PackageJSON>,
         // `Transpiler::find_aot_package_config` of `path`.
         aot_package_config: Option<std::sync::Arc<bun_resolver::tsconfig_json::TSConfigJSON>>,
@@ -352,6 +353,7 @@ impl RuntimeTranspilerStore {
                 ticket: None,
                 log: bun_ast::Log::init(),
                 loader,
+                has_type_attribute,
                 aot_package_config,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
                 module_loader: if module_loader.is_empty() {
@@ -405,6 +407,7 @@ pub struct TranspilerJob {
     pub(crate) non_threadsafe_input_specifier: bun_core::String,
     pub(crate) non_threadsafe_referrer: bun_core::String,
     pub(crate) loader: Loader,
+    has_type_attribute: bool,
     /// `Transpiler::find_aot_package_config`, asked on the JS thread.
     pub(crate) aot_package_config:
         Option<std::sync::Arc<bun_resolver::tsconfig_json::TSConfigJSON>>,
@@ -572,6 +575,7 @@ impl TranspilerJob {
                 let out = core::mem::take(&mut self.non_threadsafe_input_specifier);
                 debug_assert!(resolved_source.source_url.is_empty());
                 resolved_source.source_url = out.create_if_different(&self.path_text);
+                resolved_source.depends_on_more_than_source |= self.has_type_attribute;
                 // A job reads a file: `Bun__transpileFile` gives it no blob and no plugin's text.
                 let in_standalone_executable = vm.standalone_module_graph.is_some();
                 resolved_source.is_static = VirtualMachine::is_file_on_disk_static(

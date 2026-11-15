@@ -36,7 +36,7 @@ pub struct ResolvedSource {
     /// An ES module of the executable's pre-resolved module graph: it carries no `module_info`; the loader builds its
     /// record from the graph.
     pub is_prelinked_module: bool,
-    /// `source_code` also depends on macro results or `import.meta.glob` matches, so `IsolatedModuleCache` skips it.
+    /// `source_code` also depends on macro results, `import.meta.glob` matches or a `type` attribute, so `IsolatedModuleCache` skips it.
     pub depends_on_more_than_source: bool,
     /// `JSC::SourceProvenance::Static`: `source_code` comes from where the program is stored or from Bun itself, not from
     /// a JavaScript value. `--disallow-code-generation-from-strings=strict` runs nothing else.

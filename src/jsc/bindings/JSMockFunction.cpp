@@ -2491,17 +2491,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsMockFunctionWithImplementation, __att
         auto ctx = MockWithImplementationCleanupData::create(globalObject, thisObject, lastImpl, lastTail, lastFallback);
 
         JSFunction* cleanup = globalObject->mockModule.withImplementationCleanupFunction.getInitializedOnMainThread(globalObject);
-        JSFunction* performPromiseThenFunction = globalObject->performPromiseThenFunction();
-        auto callData = JSC::getCallData(performPromiseThenFunction);
-        MarkedArgumentBuffer arguments;
-        arguments.append(promise);
-        arguments.append(cleanup);
-        arguments.append(cleanup);
-        arguments.append(capability);
-        arguments.append(ctx);
-        ASSERT(!arguments.hasOverflowed());
-        call(globalObject, performPromiseThenFunction, callData, jsUndefined(), arguments);
-        RETURN_IF_EXCEPTION(scope, {});
+        promise->performPromiseThenWithContext(vm, globalObject, cleanup, cleanup, capability, ctx);
 
         return JSC::JSValue::encode(promise);
     }

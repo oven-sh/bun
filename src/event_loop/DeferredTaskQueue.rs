@@ -55,7 +55,13 @@ pub struct DeferredTaskQueue {
 }
 
 impl DeferredTaskQueue {
-    pub fn post_task(&self, ctx: Option<NonNull<c_void>>, task: DeferredRepeatingTask) -> bool {
+    /// # Safety
+    /// `task(ctx)` is sound to call until it returns `false` or `ctx` is unregistered.
+    pub unsafe fn post_task(
+        &self,
+        ctx: Option<NonNull<c_void>>,
+        task: DeferredRepeatingTask,
+    ) -> bool {
         // SAFETY: no callback runs in this borrow, and `run` holds none while it calls one.
         let map = unsafe { &mut *self.map.get() };
         // `ArrayHashMap` is currently aliased to std `HashMap`; the entry API
@@ -93,10 +99,7 @@ impl DeferredTaskQueue {
             };
 
             let task = map.values()[i];
-            // SAFETY: `nn` is the live `*mut T` registered by the caller; the
-            // callback contract (`HasAutoFlusher::on_auto_flush`) is that
-            // `task` may be invoked with exactly that pointer until it returns
-            // `false` or is explicitly unregistered.
+            // SAFETY: the contract of `post_task`.
             let keep = unsafe { task(nn.as_ptr()) };
             // SAFETY: the callback has returned; the borrow ends before the next one.
             map = unsafe { &mut *self.map.get() };
@@ -135,7 +138,8 @@ mod tests {
         fixture.grow_calls.update(|n| n + 1);
         for calls in fixture.calls.iter() {
             let ctx = NonNull::from(calls).cast();
-            fixture.queue.post_task(Some(ctx), count);
+            // SAFETY: the `Fixture` outlives `run`.
+            unsafe { fixture.queue.post_task(Some(ctx), count) };
         }
         true
     }
@@ -144,8 +148,11 @@ mod tests {
     fn a_task_that_grows_the_queue_does_not_take_the_turn_of_the_next() {
         let fixture = Fixture::default();
         let queue = &fixture.queue;
-        queue.post_task(Some(NonNull::from(&fixture).cast()), grow);
-        queue.post_task(Some(NonNull::from(&fixture.calls[0]).cast()), count);
+        // SAFETY: `fixture` outlives `run`.
+        unsafe {
+            queue.post_task(Some(NonNull::from(&fixture).cast()), grow);
+            queue.post_task(Some(NonNull::from(&fixture.calls[0]).cast()), count);
+        }
         queue.run();
         assert_eq!((fixture.grow_calls.get(), fixture.calls[0].get()), (1, 1));
     }

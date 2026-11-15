@@ -2404,10 +2404,9 @@ impl NodeHTTPResponse {
         }
         self.auto_flush_ref.set(Some(self.ref_guard()));
         let ctx = ptr::NonNull::new(self.as_ctx_ptr().cast::<c_void>());
-        let found_existing = VirtualMachine::get()
-            .event_loop()
-            .deferred_tasks
-            .post_task(ctx, on_auto_flush_trampoline);
+        let tasks = &VirtualMachine::get().event_loop().deferred_tasks;
+        // SAFETY: `auto_flush_ref` keeps `self` alive while it is registered.
+        let found_existing = unsafe { tasks.post_task(ctx, on_auto_flush_trampoline) };
         debug_assert!(!found_existing);
     }
 

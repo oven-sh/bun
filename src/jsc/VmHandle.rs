@@ -31,6 +31,7 @@
 //! set of call sites and of `unsafe impl Send/Sync` in the VM crates so a new
 //! path around the door needs a justification rather than a reviewer's luck.
 
+use core::ffi::c_void;
 #[cfg(debug_assertions)]
 use core::panic::Location;
 use core::ptr::NonNull;
@@ -489,7 +490,7 @@ impl VmHandle {
                 s.hot.state.store(State::Closed as u8, Ordering::SeqCst);
                 break;
             }
-            let _ = s.drained.1.timed_wait_guarded(&mut g, 1_000_000_000);
+            let _ = s.drained.1.timed_wait(&mut g, 1_000_000_000);
             drop(g);
             #[cfg(debug_assertions)]
             {
@@ -503,7 +504,7 @@ impl VmHandle {
         if s.active.load(Ordering::SeqCst) != 0 {
             let mut g = s.drained.0.lock();
             while s.active.load(Ordering::SeqCst) != 0 {
-                s.drained.1.wait_guarded(&mut g);
+                s.drained.1.wait(&mut g);
             }
         }
         // A weak post that entered before `Closed` was published.
@@ -629,7 +630,7 @@ mod test_gate {
     fn park_until_draining(s: &Shared) {
         let mut g = s.drained.0.lock();
         while s.state() < State::Draining {
-            s.drained.1.wait_guarded(&mut g);
+            s.drained.1.wait(&mut g);
         }
     }
     /// One line at a time: pool threads report concurrently.
@@ -867,8 +868,15 @@ pub enum ConcurrentPoster {
 #[derive(Clone, Copy)]
 pub struct MiniPoster(bun_ptr::BackRef<bun_event_loop::MiniEventLoop::MiniEventLoop>);
 
-// SAFETY: only `post_mini` reads the field, to call `enqueue_task_concurrent`, which is for any thread.
+// SAFETY: only `post` and `post_mini` read the field, to call an `enqueue_*_concurrent`, which is for any thread.
 unsafe impl Send for MiniPoster {}
+
+impl MiniPoster {
+    /// Calls `callback(value, context)` on the loop's thread.
+    pub fn post<T: Send + 'static>(self, value: T, callback: fn(T, *mut c_void)) {
+        self.0.enqueue_callback_concurrent(value, callback);
+    }
+}
 
 impl Clone for ConcurrentPoster {
     #[track_caller]
@@ -902,26 +910,25 @@ impl ConcurrentPoster {
         matches!(self, ConcurrentPoster::Js(..))
     }
 
-    /// Post a JS-loop `ConcurrentTask`. Panics (debug) if this poster is `Mini`.
-    pub fn post_js(&self, task: Box<ConcurrentTaskItem>) {
-        self.post_js_intrusive(bun_core::heap::into_raw_nn(task));
-    }
-
-    /// As [`Ticket::post_intrusive`].
+    /// As [`Ticket::post_intrusive`]. Panics (debug) if this poster is `Mini`.
     pub fn post_js_intrusive(&self, task: NonNull<ConcurrentTaskItem>) {
         match self {
             ConcurrentPoster::Js(t) => t.post_intrusive(task),
-            ConcurrentPoster::Mini(_) => debug_assert!(false, "post_js on a Mini poster"),
+            ConcurrentPoster::Mini(_) => debug_assert!(false, "post_js_intrusive on a Mini poster"),
         }
     }
 
     /// Post a mini-loop task (the mini loop outlives its work).
-    pub fn post_mini(
+    ///
+    /// # Safety
+    /// Same as `MiniEventLoop::enqueue_task_concurrent`.
+    pub unsafe fn post_mini(
         &self,
         task: NonNull<bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext>,
     ) {
         match self {
-            ConcurrentPoster::Mini(mini) => mini.0.enqueue_task_concurrent(task),
+            // SAFETY: fn contract.
+            ConcurrentPoster::Mini(mini) => unsafe { mini.0.enqueue_task_concurrent(task) },
             ConcurrentPoster::Js(..) => debug_assert!(false, "post_mini on a Js poster"),
         }
     }

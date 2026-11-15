@@ -213,7 +213,7 @@ impl MessageType {
 // Bun__ConsoleObject__* shims.
 // ───────────────────────────────────────────────────────────────────────────
 
-use bun_threading::Mutex;
+use bun_threading::{Mutex, MutexGuard};
 
 #[inline]
 fn vm_console(global: &JSGlobalObject) -> &ConsoleObject {
@@ -224,55 +224,37 @@ static STDERR_MUTEX: Mutex = Mutex::new();
 static STDOUT_MUTEX: Mutex = Mutex::new();
 
 thread_local! {
-    static STDERR_LOCK_COUNT: Cell<u16> = const { Cell::new(0) };
-    static STDOUT_LOCK_COUNT: Cell<u16> = const { Cell::new(0) };
+    static STDERR_LOCK_HELD: Cell<bool> = const { Cell::new(false) };
+    static STDOUT_LOCK_HELD: Cell<bool> = const { Cell::new(false) };
 }
 
-/// RAII guard for the per-stream reentrant console lock. Acquires on
-/// construction (incrementing the thread-local count and locking the global
-/// mutex on first entry), releases on `Drop` (decrementing and unlocking on
-/// last exit).
+/// RAII guard for the per-stream reentrant console lock.
 struct ConsoleStreamLock {
     use_stderr: bool,
+    /// `None` if this thread already holds the mutex.
+    guard: Option<MutexGuard<'static>>,
 }
 
 impl ConsoleStreamLock {
     fn acquire(use_stderr: bool) -> Self {
-        if use_stderr {
-            STDERR_LOCK_COUNT.with(|c| {
-                if c.get() == 0 {
-                    STDERR_MUTEX.lock();
-                }
-                c.set(c.get() + 1);
-            });
+        let guard = if use_stderr {
+            (!STDERR_LOCK_HELD.replace(true)).then(|| STDERR_MUTEX.lock_guard())
         } else {
-            STDOUT_LOCK_COUNT.with(|c| {
-                if c.get() == 0 {
-                    STDOUT_MUTEX.lock();
-                }
-                c.set(c.get() + 1);
-            });
-        }
-        Self { use_stderr }
+            (!STDOUT_LOCK_HELD.replace(true)).then(|| STDOUT_MUTEX.lock_guard())
+        };
+        Self { use_stderr, guard }
     }
 }
 
 impl Drop for ConsoleStreamLock {
     fn drop(&mut self) {
+        if self.guard.is_none() {
+            return;
+        }
         if self.use_stderr {
-            STDERR_LOCK_COUNT.with(|c| {
-                c.set(c.get() - 1);
-                if c.get() == 0 {
-                    STDERR_MUTEX.unlock();
-                }
-            });
+            STDERR_LOCK_HELD.set(false);
         } else {
-            STDOUT_LOCK_COUNT.with(|c| {
-                c.set(c.get() - 1);
-                if c.get() == 0 {
-                    STDOUT_MUTEX.unlock();
-                }
-            });
+            STDOUT_LOCK_HELD.set(false);
         }
     }
 }

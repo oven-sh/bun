@@ -17,7 +17,7 @@ use bun_threading::work_pool::{OwnedTask, Task as WorkPoolTask};
 
 use crate::package_installer::NodeModulesFolder;
 use crate::package_manager::package_manager_lifecycle::PreinstallStates;
-use crate::package_manager::{INBOX, THREAD_POOL};
+use crate::package_manager::{INBOX, install_pool};
 use crate::{
     BuntagHashBuf, DependencyID, Integrity, Lockfile, Npm, PackageID, Resolution,
     TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make, resolution,
@@ -808,7 +808,7 @@ impl<TaskType> NewTaskQueue<TaskType> {
         TaskType: OwnedTask,
     {
         self.wait_group.add_one();
-        THREAD_POOL.schedule(Batch::from_owned(task));
+        install_pool().schedule(Batch::from_owned(task));
     }
 
     pub(crate) fn wait(&self) {
@@ -1044,7 +1044,7 @@ impl LinkBatch {
         if let [job] = self.jobs.as_slice() {
             return self.link(job);
         }
-        let pool = &*THREAD_POOL;
+        let pool = install_pool();
         // If the OS can't start the pool's first worker, tasks scheduled on the pool would never
         // run.
         pool.warm(1);
@@ -1994,7 +1994,7 @@ impl<'a> PackageInstall<'a> {
         };
         // If the OS can't start the pool's first worker, tasks scheduled on the pool would never
         // run.
-        let pool = &*THREAD_POOL;
+        let pool = install_pool();
         pool.warm(1);
         if !pool.has_workers() {
             let _ = destination_dir.delete_tree(temp_path.as_bytes());

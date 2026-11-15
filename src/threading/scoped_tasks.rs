@@ -62,6 +62,7 @@ pub fn scope<T: Send, R: TaskRunner<T>, U>(
         // SAFETY: `schedule` passed the address of a slot, and nothing else uses its `task` until
         // `next_finished` returns it. `scope` keeps the slots and the `Scope` alive until `running`
         // reaches zero, which `CountedTask` only lets happen after this function has returned.
+        // The slot is not in `finished`, because it was idle when it was scheduled.
         unsafe {
             let scope = (*slot).scope.cast::<Scope<'_, T, R>>();
             (*scope).runner.run(&mut (*slot).task);
@@ -111,16 +112,19 @@ impl<T> ScopedTasks<'_, T> {
 
     pub fn schedule(&mut self, index: usize) {
         let slot = self.idle_slot(index);
-        // SAFETY: as in `idle_slot`.
-        unsafe { (*slot).in_flight = true };
         self.running.add_one();
-        // The pool's `Task` is at offset 0, and it is not queued because the slot was idle.
-        (self.schedule)(Batch::from(slot.cast::<Task>()));
+        // SAFETY: as in `idle_slot`. The pool's `Task` is at offset 0, is not queued because the
+        // slot was idle, and lives until `running` reaches zero. `T` is `Send` and `R` is `Sync`.
+        let batch = unsafe {
+            (*slot).in_flight = true;
+            Batch::from_raw(slot.cast::<Task>())
+        };
+        (self.schedule)(batch);
     }
 
     /// Does nothing until `next_finished` has returned all of the previous batch.
     pub fn pop_finished_batch(&mut self) {
-        if self.finished_batch.batch.count == 0 {
+        if self.finished_batch.batch.is_empty() {
             self.finished_batch = self.finished.pop_batch().iterator();
         }
     }

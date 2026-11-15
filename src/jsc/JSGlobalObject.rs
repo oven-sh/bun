@@ -1277,27 +1277,6 @@ pub use crate::GregorianDateTime;
 // splitting the public API across two incompatible structs.
 pub use crate::{IntegerRange, ValidateObjectOpts};
 
-/// `bun.webcore.ScriptExecutionContext.Identifier` (ported here, not in
-/// `bun_runtime`, because `JSGlobalObject::script_execution_context_identifier`
-/// must return it without a forward dep). `bun_runtime::webcore` re-exports
-/// this and layers `global_object()` / `bun_vm()` accessors on top.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
-pub struct ScriptExecutionContextIdentifier(pub u32);
-
-impl From<u32> for ScriptExecutionContextIdentifier {
-    #[inline]
-    fn from(id: u32) -> Self {
-        Self(id)
-    }
-}
-impl From<ScriptExecutionContextIdentifier> for u32 {
-    #[inline]
-    fn from(id: ScriptExecutionContextIdentifier) -> u32 {
-        id.0
-    }
-}
-
 use bun_core::fmt::VecWriter as WriteVec;
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1530,25 +1509,4 @@ unsafe extern "C" {
         old_global: &JSGlobalObject,
         console: *mut c_void,
     ) -> *mut JSGlobalObject;
-}
-
-impl ScriptExecutionContextIdentifier {
-    /// Returns `None` if the context referred to by `self` no longer exists.
-    pub(crate) fn global_object(self) -> Option<GlobalRef> {
-        // FFI call returns a valid pointer or null; the JSGlobalObject is owned
-        // by the VM and outlives any ScriptExecutionContext id pointing at it.
-        // `JSGlobalObject` is an opaque ZST handle so the deref is the
-        // centralised `opaque_ref` proof.
-        let p = ScriptExecutionContextIdentifier__getGlobalObject(self.0);
-        (!p.is_null()).then(|| GlobalRef::from(JSGlobalObject::opaque_ref(p)))
-    }
-
-    pub fn valid(self) -> bool {
-        self.global_object().is_some()
-    }
-}
-
-unsafe extern "C" {
-    // safe: by-value `u32` in, raw nullable pointer out (caller checks before deref).
-    safe fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) -> *mut JSGlobalObject;
 }

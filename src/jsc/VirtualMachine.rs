@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use bun_bundler::Transpiler;
 use bun_core::EncodedUnits;
+use bun_event_loop::EventLoopTimer::{Clock, ImmediateTask, TimerRef};
 use bun_io as Async;
 use bun_ptr::{CellExt as _, OptionCellExt as _, VecCellExt as _};
 use bun_uws as uws;
@@ -211,7 +212,7 @@ pub struct VirtualMachine {
     ///
     /// Note: the per-VM timer state and body-value pool live inside this box —
     /// both types are owned by `bun_runtime` (forward dep). Access goes through
-    /// [`RuntimeHooks::timer_insert`] / [`RuntimeHooks::body_value_hive_ref`].
+    /// [`RuntimeHooks::timer_update`] / [`RuntimeHooks::body_value_hive_ref`].
     pub runtime_state: Cell<*mut c_void>,
     #[cfg(not(windows))]
     pub event_loop_handle: Cell<Option<&'static uws::ThreadLoop>>,
@@ -409,8 +410,6 @@ pub struct VirtualMachine {
     pub commonjs_custom_extensions:
         JsCell<bun_collections::StringArrayHashMap<crate::node_module_module::CustomLoader>>,
     pub has_mutated_built_in_extensions: Cell<u32>,
-
-    pub initial_script_execution_context_identifier: i32,
 
     /// Owns what script running in this VM's global opens. `bun test --isolate`
     /// stops it at every file swap.
@@ -2373,11 +2372,10 @@ impl VirtualMachine {
             // this heap and keep being scheduled until ~VM returns.
             (hooks.cancel_timers)(vm, None);
             // And unlink every other kind of EventLoopTimer (socket timeouts,
-            // reconnect/lifetime timers, schedulers): their owners stay valid
-            // and find them CANCELLED, but nothing fires again even where the
-            // loop still turns (JSC's timers).
-            // SAFETY: fn contract.
-            unsafe { (hooks.disarm_all_timers_for_vm_teardown)(this) };
+            // reconnect/lifetime timers, schedulers) and release the refs that
+            // the heap holds: nothing fires again even where the loop still
+            // turns (JSC's timers).
+            (hooks.disarm_all_timers_for_vm_teardown)();
         }
         vm.gc_controller.disabled.set(true);
         crate::web_worker::join_child_workers(vm.child_workers.take());
@@ -2718,18 +2716,16 @@ pub struct RuntimeHooks {
     /// [`VirtualMachine::run_error_handler`].
     pub print_exception:
         fn(vm: &VirtualMachine, value: JSValue, exception_list: Option<&mut ExceptionList>),
-    /// `vm.timer.insert(&event_loop_timer)` — `Timer::All` lives in
+    /// `vm.timer.update_with_clock(timer, time, clock)` — `Timer::All` lives in
     /// `bun_runtime::RuntimeState` (b2-cycle); low-tier callers
     /// (`AbortSignal::Timeout`) reach it through this slot.
-    pub timer_insert: unsafe fn(
-        vm: &VirtualMachine,
-        timer: *const bun_event_loop::EventLoopTimer::EventLoopTimer,
-    ),
-    /// `FakeTimers::min_delay_ms()` of the calling thread's VM. A slot for the same reason as `timer_insert`.
+    pub timer_update:
+        fn(vm: &VirtualMachine, timer: TimerRef<'_>, time: &bun_core::Timespec, clock: Clock),
+    /// `FakeTimers::min_delay_ms()` of the calling thread's VM. A slot for the same reason as `timer_update`.
     pub timer_min_delay_ms: fn() -> u32,
     /// `FakeTimers::abort_signal_timeout_clock()` of the calling thread's VM.
-    pub abort_signal_timeout_clock: fn() -> bun_core::TimespecMockMode,
-    /// Reads the calling thread's `Timer::All`; see `timer_insert`.
+    pub abort_signal_timeout_clock: fn() -> Clock,
+    /// Reads the calling thread's `Timer::All`; see `timer_update`.
     pub timers_left: fn() -> TimersLeft,
     /// `RareData.defaultClientSslCtx()` — lazy default-trust-store client
     /// `SSL_CTX*`, shared by every `tls: true` outbound connection that didn't
@@ -2846,8 +2842,8 @@ pub struct RuntimeHooks {
     /// # Safety
     /// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
     pub stop_active_handles_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine) -> SweepResult,
-    /// Teardown only (never on a live VM): unlink every remaining EventLoopTimer.
-    pub disarm_all_timers_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine),
+    /// Teardown only (never on a live VM): unlink every remaining EventLoopTimer and release the refs that the heap holds.
+    pub disarm_all_timers_for_vm_teardown: fn(),
     /// Teardown-only, after ~VM (JSC's RunLoop timers use the heap until then):
     /// close the loop handles the timer heap embeds (Windows uv_timer/uv_idle)
     /// so the loop close unlinks them before the runtime state is freed.
@@ -2906,21 +2902,12 @@ impl VirtualMachine {
 }
 
 impl VirtualMachine {
-    /// `vm.timer.insert(timer)` — dispatches through `RuntimeHooks` because
+    /// `vm.timer.update_with_clock(timer, time, clock)` — dispatches through `RuntimeHooks` because
     /// `Timer::All` lives in `bun_runtime` (b2-cycle).
-    ///
-    /// # Safety
-    /// `timer` must point at a live `EventLoopTimer` not currently linked into
-    /// the heap; caller must be on the JS thread.
-    /// While linked it stays in the container `tag` names; only the heap writes links and states.
     #[inline]
-    pub unsafe fn timer_insert(
-        &self,
-        timer: *const bun_event_loop::EventLoopTimer::EventLoopTimer,
-    ) {
+    pub fn timer_update(&self, timer: TimerRef<'_>, time: &bun_core::Timespec, clock: Clock) {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-        // SAFETY: per fn contract.
-        unsafe { (hooks.timer_insert)(self, timer) }
+        (hooks.timer_update)(self, timer, time, clock)
     }
 
     /// The shortest delay, in milliseconds, a timer armed now can have: 1 while `jest.useFakeTimers()` runs a timer's callback.
@@ -2932,7 +2919,7 @@ impl VirtualMachine {
 
     /// The clock that an `AbortSignal.timeout()` armed now runs on.
     #[inline]
-    pub fn abort_signal_timeout_clock() -> bun_core::TimespecMockMode {
+    pub fn abort_signal_timeout_clock() -> Clock {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         (hooks.abort_signal_timeout_clock)()
     }
@@ -3135,7 +3122,6 @@ impl VirtualMachine {
                     .compiled_program()
                     .is_some_and(|program| !program.entry_points.is_empty())
             }));
-            addr_of_mut!((*vm).initial_script_execution_context_identifier).write(context_id);
             // Mutex fields: zeroed atomics ARE valid-unlocked, but write the
             // canonical value so the invariant is explicit.
             addr_of_mut!((*vm).remap_stack_frames_mutex).write(bun_threading::Mutex::new());
@@ -3154,11 +3140,9 @@ impl VirtualMachine {
 
         // High-tier per-VM state — Transpiler / Timer::All.
         // Note (init order): the transpiler and per-VM timer state must be
-        // built BEFORE `JSGlobalObject` creation. The C++ body
-        // of `Zig__GlobalObject__create` re-enters via `WTFTimer__create`/
-        // `WTFTimer__update` (JSC's GC scheduler), which dereferences
-        // `runtime_state().timer` — so this hook MUST run first or that path
-        // null-derefs.
+        // built BEFORE `JSGlobalObject` creation. `Zig__GlobalObject__create`
+        // calls `WTFTimer__create`, which returns null without the runtime
+        // state: JSC's timers would never fire.
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: hook contract — `vm` is the unique live VM on this thread.
             //
@@ -4399,11 +4383,8 @@ impl VirtualMachine {
         debugger.next_debugger_id.get()
     }
 
-    /// Note (§Dispatch): `task` is an erased
-    /// `*mut bun_runtime::timer::ImmediateObject` — see
-    /// [`crate::event_loop::RunImmediateFn`].
     #[inline]
-    pub fn enqueue_immediate_task(&self, task: *mut ()) {
+    pub fn enqueue_immediate_task(&self, task: ImmediateTask) {
         self.event_loop().enqueue_immediate_task(task);
     }
 

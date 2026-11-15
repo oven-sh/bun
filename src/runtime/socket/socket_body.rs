@@ -3725,9 +3725,14 @@ pub(crate) struct DuplexUpgradeContext {
     context: bun_jsc::ContextId,
 }
 
-impl Drop for DuplexUpgradeContext {
-    fn drop(&mut self) {
+bun_event_loop::impl_timer_owner!(DuplexUpgradeContext, drop = Self::deinit;
+    (upgrade: UpgradedDuplex).event_loop_timer: OwnedTimer<UpgradedDuplex>,
+);
+
+impl DuplexUpgradeContext {
+    fn deinit(&self) {
         DUPLEX_UPGRADE_CONTEXT_LIVE_COUNT.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+        self.upgrade.teardown();
     }
 }
 
@@ -4221,9 +4226,9 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
 
     // `DuplexUpgradeContext` is self-referential: `task.ctx` and
     // `upgrade.handlers.ctx` both point at the containing allocation, and
-    // `UpgradedDuplex` has fn-ptr-niched fields plus a `Drop` impl, so it
+    // `UpgradedDuplex` has fn-ptr-niched fields, so it
     // cannot be value-constructed with a placeholder and assigned later
-    // (`=` would Drop the placeholder; `zeroed()` is an invalid value).
+    // (`zeroed()` is an invalid value).
     // Allocate uninit, leak to a raw pointer for the stable address, then
     // field-write everything in place — `upgrade` last, once the address is
     // known.
@@ -4321,6 +4326,9 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
     // otherwise it was only used for protos/server_name and is freed here.
     // SAFETY: every field initialized above; nothing frees the context before this fn returns.
     let duplex_context_ref = unsafe { bun_ptr::ThisPtr::new(duplex_context) };
+    if let Some(connection_ref) = duplex_context_ref.connection_ref.get() {
+        crate::timer::OwnedTimer::mark_pinned(connection_ref.as_pin_ref());
+    }
     if duplex_context_ref.ssl_config.get().is_none() {
         drop(ssl_opts.take());
     }

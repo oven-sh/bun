@@ -17,7 +17,7 @@ use bun_uws as uws;
 
 use crate::jsc_hooks::{runtime_state, timer_all};
 use crate::node::net::block_list::BlockList;
-use crate::timer::{EventLoopTimerState, EventLoopTimerTag, OwnedTimer};
+use crate::timer::{EventLoopTimerTag, OwnedTimer};
 
 use super::aliased_struct::{AliasedStruct, all_atomic_struct, put_state_and_stats};
 use super::callbacks;
@@ -201,7 +201,7 @@ pub(crate) struct QuicEndpoint {
     /// `(address of the SSL, peer, line)`.
     early_keylog: Cell<Vec<(usize, StoredAddr, Vec<u8>)>>,
     block_list_allow: bool,
-    pub(crate) event_loop_timer: OwnedTimer,
+    event_loop_timer: OwnedTimer<{ EventLoopTimerTag::QuicEndpoint }>,
     pending_endpoint_close: Cell<bool>,
     /// The `CLOSECONTEXT_*` that the pending close reports.
     close_context: Cell<u8>,
@@ -316,7 +316,9 @@ pub(crate) extern "C" fn Bun__nodeQuic__processEndpoint(owner: &QuicEndpoint) {
     owner.run_driver_pass(Closes::Deliver);
 }
 
-bun_event_loop::impl_timer_owner!(QuicEndpoint; from_timer_ptr => event_loop_timer);
+bun_event_loop::impl_timer_owner!(QuicEndpoint, drop = Self::release_native;
+    event_loop_timer: OwnedTimer<QuicEndpoint>,
+);
 
 /// # Safety
 /// `socket` was created by `QuicEndpoint::bind`, and uSockets is running one of its callbacks.
@@ -901,7 +903,7 @@ impl QuicEndpoint {
             block_list,
             early_keylog: Cell::new(Vec::new()),
             block_list_allow,
-            event_loop_timer: OwnedTimer::init_paused(EventLoopTimerTag::QuicEndpoint),
+            event_loop_timer: OwnedTimer::init_paused(),
             pending_endpoint_close: Cell::new(false),
             close_context: Cell::new(CLOSECONTEXT_CLOSE),
             nq_driver: UsNqDriver::default(),
@@ -946,10 +948,16 @@ impl QuicEndpoint {
         Ok(())
     }
 
+    fn root_wrapper(&self, this_value: JsWrapper<'_, Self>, global: &JSGlobalObject) {
+        let root = StrongWrapper::new(this_value, global);
+        OwnedTimer::mark_pinned(root.as_pin_ref());
+        self.this_value.set(root);
+    }
+
     /// Returns false when the bind fails: Node does not throw here.
     fn ensure_bound(&self, global: &JSGlobalObject, this_value: JsWrapper<'_, Self>) -> bool {
         if self.socket.get().is_none() {
-            self.this_value.set(StrongWrapper::new(this_value, global));
+            self.root_wrapper(this_value, global);
             self.this_value.with(Self::bind);
         }
         self.socket.get().is_some()
@@ -1124,7 +1132,7 @@ impl QuicEndpoint {
         // time-driven state (RTO, ACK delay, idle) and the deferred close.
         self.mark_driver_pending();
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
-        timer_all().update(OwnedTimer::node(&raw const self.event_loop_timer), &next);
+        timer_all().update(self.event_loop_timer.timer_ref(), &next);
     }
 
     fn rearm_timer(&self) {
@@ -1154,12 +1162,11 @@ impl QuicEndpoint {
                 bun_core::TimespecMockMode::ForceRealTime,
                 ms as i64,
             );
-            timer_all().update(OwnedTimer::node(&raw const self.event_loop_timer), &next);
+            timer_all().update(self.event_loop_timer.timer_ref(), &next);
         }
     }
 
     pub(crate) fn on_timer_fire(&self) {
-        self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
         if self.pending_endpoint_close.replace(false) {
             self.deliver_endpoint_close(self.close_context.get(), 0);
             return;
@@ -1606,7 +1613,7 @@ impl QuicEndpoint {
         self.poll_ref.ref_(bun_io::js_vm_ctx());
         self.pending_endpoint_close.set(true);
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
-        timer_all().update(OwnedTimer::node(&raw const self.event_loop_timer), &next);
+        timer_all().update(self.event_loop_timer.timer_ref(), &next);
     }
 
     pub(super) fn buffer_early_keylog(&self, ssl: usize, peer: StoredAddr, line: &[u8]) {
@@ -1966,8 +1973,7 @@ impl QuicEndpoint {
         }
         self.mark_closing();
         if self.this_value.is_none() {
-            self.this_value
-                .set(StrongWrapper::new(this_value, cx.global()));
+            self.root_wrapper(this_value, cx.global());
         }
         if self.sessions.is_empty() && self.engine_conn_count() == 0 {
             self.finish_close();
@@ -2072,11 +2078,5 @@ struct SendScope<'a>(&'a Cell<u32>);
 impl Drop for SendScope<'_> {
     fn drop(&mut self) {
         self.0.update(|depth| depth - 1);
-    }
-}
-
-impl Drop for QuicEndpoint {
-    fn drop(&mut self) {
-        self.release_native();
     }
 }

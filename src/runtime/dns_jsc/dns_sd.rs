@@ -384,10 +384,17 @@ pub(crate) struct SharedConnection {
     /// `context` of the previous reply (a different one ends the prior request's contiguous run).
     last_ctx: *mut c_void,
     /// Early-out timer (JS threads only; the daemon timeout backstops other loops).
-    pub(crate) early_out_timer: OwnedTimer,
+    early_out_timer: AliasableBox<EarlyOutTimer>,
     /// Deadline the timer is currently armed for (0 = disarmed).
     early_out_armed_for: Cell<i64>,
 }
+
+/// Boxed: a `&mut SharedConnection` could move a timer that is armed.
+pub(crate) struct EarlyOutTimer {
+    event_loop_timer: OwnedTimer<{ EventLoopTimerTag::DnsSdConnection }>,
+}
+
+bun_event_loop::impl_timer_owner!(EarlyOutTimer; event_loop_timer: OwnedTimer<DnsSdConnection>);
 
 impl Drop for SharedConnection {
     fn drop(&mut self) {
@@ -434,7 +441,9 @@ impl SharedConnection {
             main_ref,
             inflight: Vec::new(),
             last_ctx: ptr::null_mut(),
-            early_out_timer: OwnedTimer::init_paused(EventLoopTimerTag::DnsSdConnection),
+            early_out_timer: AliasableBox::new(EarlyOutTimer {
+                event_loop_timer: OwnedTimer::init_paused(),
+            }),
             early_out_armed_for: Cell::new(0),
         });
         // SAFETY: the poll is a field of its owner.
@@ -610,32 +619,26 @@ impl SharedConnection {
         let now = bun::timespec::now(bun::TimespecMockMode::ForceRealTime);
         let next = now.add_ms((deadline - now.ms()).max(1));
         crate::jsc_hooks::timer_all()
-            .update(OwnedTimer::node(&raw const self.early_out_timer), &next);
+            .update(TimerRef::from_pin(self.early_out_timer.as_pin_ref()), &next);
         self.early_out_armed_for.set(deadline);
     }
 
-    /// Timer fire (via dispatch.rs): complete overdue queries. SAFETY: `this` is the live connection whose timer fired.
-    pub(crate) unsafe fn on_early_out(this: *mut Self) {
-        // Raw receiver like `on_readable`: `finish()` may re-derive `&mut Self`, so no borrow of `*this` outlives it.
+    /// Timer fire (via dispatch.rs): complete overdue queries.
+    pub(crate) fn on_early_out() {
         let _exit = event_loop_scope();
-        // SAFETY: `this` is the live connection whose timer fired; each borrow
-        // below ends before `finish()`.
-        let ready = unsafe {
-            // The heap pops without updating state; mark FIRED so a re-arm inserts instead of removing.
-            let timer = &(*this).early_out_timer;
-            timer.state.set(EventLoopTimerState::FIRED);
-            (*this).early_out_armed_for.set(0);
-            let now = now_ms();
-            let ready = (*this).take_ready(|q| {
-                let due = q.early_out_deadline_ms().is_some_and(|d| d <= now);
-                if due {
-                    q.give_up_on_stragglers();
-                }
-                due
-            });
-            (*this).arm_early_out();
-            ready
+        let Some(this) = Self::current() else {
+            return;
         };
+        this.early_out_armed_for.set(0);
+        let now = now_ms();
+        let ready = this.take_ready(|q| {
+            let due = q.early_out_deadline_ms().is_some_and(|d| d <= now);
+            if due {
+                q.give_up_on_stragglers();
+            }
+            due
+        });
+        this.arm_early_out();
         for inf in ready {
             Self::finish(inf);
         }

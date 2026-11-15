@@ -175,6 +175,11 @@
       "ShellInterpreterRef"
     ]
   },
+  "src/runtime/timer/WTFTimer.rs": {
+    "unsafe impl Send": [
+      "WTFTimerHeap"
+    ]
+  },
   "src/runtime/webcore/Blob.rs": {
     "WorkPool::schedule*": 1
   },

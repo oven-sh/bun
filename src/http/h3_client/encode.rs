@@ -161,7 +161,7 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
             unreachable!()
         };
         let ended = body.ended;
-        let Some(sb) = body.buffer_ref() else {
+        let Some(sb) = body.buffer.as_deref() else {
             return;
         };
         let mut locked = sb.lock();
@@ -191,7 +191,7 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         }
         drop(locked);
         if stream.request_body_done {
-            body.detach();
+            body.buffer = None;
         }
         return;
     }

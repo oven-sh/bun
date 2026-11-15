@@ -29,7 +29,7 @@ type TrustedDependenciesSet =
 /// Trust comes from what the package.json files say now, like for an install. Returns what the
 /// lockfile had recorded.
 pub(crate) fn read_trusted_dependencies(pm: &mut PackageManager) -> Option<TrustedDependenciesSet> {
-    let log = pm.log_mut();
+    let log = pm.log();
     match pm
         .lockfile
         .read_trusted_dependencies_from_manifests(&mut pm.workspace_package_json_cache, log)
@@ -101,7 +101,7 @@ impl Blocked {
 
         let mut scripts = packages.items_scripts()[package_id];
         // Pass `true` to get the scripts that will run once the package is trusted.
-        match scripts.get_list(pm.log_mut(), folder, alias, resolution, true) {
+        match scripts.get_list(pm.log(), folder, alias, resolution, true) {
             Ok(list) => Ok(list.filter(|list| list.total > 0)),
             Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => Ok(None),
             Err(e) => Err(e.into()),
@@ -588,20 +588,16 @@ impl TrustCommand {
         );
 
         let bump = Bump::new();
-        // SAFETY: `ctx.log` set by `Command::init`, non-null for the command.
-        let mut package_json: bun_ast::Expr = match bun_parsers::json::parse_utf8(
-            &package_json_source,
-            unsafe { ctx.log_mut() },
-            &bump,
-        ) {
-            Ok(v) => v,
-            Err(err) => {
-                let _ = ctx.log_ref().print(Output::error_writer());
+        let mut package_json: bun_ast::Expr =
+            match bun_parsers::json::parse_utf8(&package_json_source, ctx.log(), &bump) {
+                Ok(v) => v,
+                Err(err) => {
+                    let _ = ctx.log().print(Output::error_writer());
 
-                Output::err_generic("failed to parse package.json: {s}", (err.name(),));
-                Global::crash();
-            }
-        };
+                    Output::err_generic("failed to parse package.json: {s}", (err.name(),));
+                    Global::crash();
+                }
+            };
 
         let mut total_scripts_ran: usize = 0;
         let mut total_packages_with_scripts: usize = 0;

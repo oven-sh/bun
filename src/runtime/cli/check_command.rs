@@ -712,18 +712,18 @@ fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -
 }
 
 /// `BundleOptions::type_check` for `bun build --check`.
-pub(crate) fn check_for_build_command(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
+pub(crate) fn check_for_build_command(checked: TypeChecked, log: &bun_ast::Log) -> bool {
     check_for_build(checked, log, true)
 }
 
 /// `BundleOptions::type_check` for `Bun.build({ check: true })`. Prints nothing.
-pub(crate) fn check_for_bun_build(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
+pub(crate) fn check_for_bun_build(checked: TypeChecked, log: &bun_ast::Log) -> bool {
     check_for_build(checked, log, false)
 }
 
 /// Doesn't reread the bundle's files (`sources`). Adds the errors to `log`, which the build reports
 /// like its own. Runs on the bundler's thread.
-fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress: bool) -> bool {
+fn check_for_build(checked: TypeChecked, log: &bun_ast::Log, shows_progress: bool) -> bool {
     let TypeChecked {
         cwd,
         tsconfig,
@@ -775,8 +775,8 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
             Category::Suggestion | Category::Message => continue,
         };
         match kind {
-            bun_ast::Kind::Err => log.errors += 1,
-            _ => log.warnings += 1,
+            bun_ast::Kind::Err => log.errors.update(|n| n + 1),
+            _ => log.warnings.update(|n| n + 1),
         }
         log.add_msg(bun_ast::Msg {
             kind,
@@ -903,13 +903,13 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
         return Vec::new();
     };
     let source = bun_ast::Source::init_path_string(&page[..], &contents[..]);
-    let mut log = bun_ast::Log::init();
+    let log = bun_ast::Log::init();
     // The scanner resolves `/src/main.tsx` against `FileSystem`'s top-level directory, which
     // `bun ./index.html` hasn't initialized yet.
     if bun_resolver::fs::FileSystem::init(None).is_err() {
         return Vec::new();
     }
-    let records = bun_bundler::html_scanner::scan_import_records(&mut log, &source);
+    let records = bun_bundler::html_scanner::scan_import_records(&log, &source);
     let directory = resolve_path::dirname::<Auto>(&page);
     let is_url = |path: &[u8]| path.starts_with(b"//") || bun_core::strings::contains(path, b"://");
     (records.unwrap_or_default().iter())

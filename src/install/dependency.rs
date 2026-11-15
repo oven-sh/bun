@@ -74,7 +74,7 @@ pub trait DependencyExt {
         dependency: &[u8],
         tag: Option<version::Tag>,
         sliced: &SlicedString,
-        log: impl Into<Option<&'a mut bun_ast::Log>>,
+        log: impl Into<Option<&'a bun_ast::Log>>,
         package_manager: impl Into<Option<&'b mut PackageManager>>,
     ) -> Option<Version>;
     fn count_with_different_buffers<SB: StringBuilderLike>(
@@ -105,7 +105,7 @@ pub trait DependencyExt {
         alias_hash: impl Into<Option<PackageNameHash>>,
         dependency: &[u8],
         sliced: &SlicedString,
-        log: impl Into<Option<&'a mut bun_ast::Log>>,
+        log: impl Into<Option<&'a bun_ast::Log>>,
         manager: impl Into<Option<&'b mut PackageManager>>,
     ) -> Option<Version>;
 }
@@ -138,7 +138,7 @@ impl DependencyExt for Dependency {
     /// Forwards to the module-level `parse_with_optional_tag`.
     ///
     /// `alias_hash`, `log`, and `package_manager` accept either the bare value
-    /// (`u64` / `&mut Log` / `&mut PackageManager`) or `Option<_>` via
+    /// (`u64` / `&Log` / `&mut PackageManager`) or `Option<_>` via
     /// `impl Into<Option<_>>`.
     #[inline]
     fn parse_with_optional_tag<'a, 'b>(
@@ -147,7 +147,7 @@ impl DependencyExt for Dependency {
         dependency: &[u8],
         tag: Option<version::Tag>,
         sliced: &SlicedString,
-        log: impl Into<Option<&'a mut bun_ast::Log>>,
+        log: impl Into<Option<&'a bun_ast::Log>>,
         package_manager: impl Into<Option<&'b mut PackageManager>>,
     ) -> Option<Version> {
         parse_with_optional_tag(
@@ -268,7 +268,7 @@ impl DependencyExt for Dependency {
         alias_hash: impl Into<Option<PackageNameHash>>,
         dependency: &[u8],
         sliced: &SlicedString,
-        log: impl Into<Option<&'a mut bun_ast::Log>>,
+        log: impl Into<Option<&'a bun_ast::Log>>,
         manager: impl Into<Option<&'b mut PackageManager>>,
     ) -> Option<Version> {
         parse(alias, alias_hash, dependency, sliced, log, manager)
@@ -308,7 +308,7 @@ const SIZE: usize = core::mem::size_of::<VersionExternal>()
 
 pub struct Context<'a> {
     // allocator dropped (global mimalloc)
-    pub(crate) log: &'a mut bun_ast::Log,
+    pub(crate) log: &'a bun_ast::Log,
     pub(crate) buffer: &'a [u8],
 }
 
@@ -1143,7 +1143,7 @@ pub fn parse<'a, 'b>(
     alias_hash: impl Into<Option<PackageNameHash>>,
     dependency: &[u8],
     sliced: &SlicedString,
-    log: impl Into<Option<&'a mut bun_ast::Log>>,
+    log: impl Into<Option<&'a bun_ast::Log>>,
     manager: impl Into<Option<&'b mut PackageManager>>,
 ) -> Option<Version> {
     let dep = trim_literal(dependency);
@@ -1164,7 +1164,7 @@ pub(crate) fn parse_with_optional_tag<'a, 'b>(
     dependency: &[u8],
     tag: Option<Tag>,
     sliced: &SlicedString,
-    log: impl Into<Option<&'a mut bun_ast::Log>>,
+    log: impl Into<Option<&'a bun_ast::Log>>,
     package_manager: impl Into<Option<&'b mut PackageManager>>,
 ) -> Option<Version> {
     let dep = trim_literal(dependency);
@@ -1225,7 +1225,7 @@ pub(crate) fn parse_with_tag(
     dependency: &[u8],
     tag: Tag,
     sliced: &SlicedString,
-    log_: Option<&mut bun_ast::Log>,
+    log_: Option<&bun_ast::Log>,
     package_manager: Option<&mut dyn NpmAliasRegistry>,
 ) -> Option<Version> {
     // `to_version` (bun.lockb) and `clone_with_different_buffers` pass the literal untrimmed.

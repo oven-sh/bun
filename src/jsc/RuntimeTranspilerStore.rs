@@ -448,7 +448,7 @@ fn fulfill(
     result: Result<ResolvedSource, crate::CrateError>,
     specifier: &String,
     referrer: &String,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) -> JsResult<()> {
     crate::mark_binding();
     let mut errorable = match result {
@@ -521,6 +521,7 @@ impl TranspilerJob {
             && !vm.transpiler.get().options.no_macros
             && log
                 .msgs
+                .get_mut()
                 .iter()
                 .any(|msg| &*msg.data.text == MACROS_ARE_DISABLED);
         let (specifier, mut result) = match self.parse_error {
@@ -559,7 +560,7 @@ impl TranspilerJob {
                 &specifier,
                 &referrer,
                 Some(loader),
-                &mut log,
+                &log,
                 crate::module_loader::FetchFlags::Transpile,
             );
         }
@@ -571,7 +572,7 @@ impl TranspilerJob {
             result,
             &specifier,
             &referrer,
-            &mut log,
+            &log,
         )
     }
 
@@ -636,8 +637,8 @@ impl TranspilerJob {
 
         let mut cache = RuntimeTranspilerCache::default();
 
-        let mut log = bun_ast::Log::init();
-        let mut log_clone_guard = scopeguard::guard((&mut this.log, &mut log), |(dst, src)| {
+        let log = bun_ast::Log::init();
+        let log_clone_guard = scopeguard::guard((&mut this.log, &log), |(dst, src)| {
             *dst = bun_ast::Log::init();
             src.append_to(dst);
         });
@@ -654,7 +655,7 @@ impl TranspilerJob {
             core::mem::ManuallyDrop::new(unsafe { ptr::read((*vm).transpiler.as_ptr()) });
         let transpiler: &mut Transpiler<'_> = &mut transpiler_storage;
         transpiler.set_arena(&arena);
-        transpiler.set_log(&raw mut *log_clone_guard.1);
+        transpiler.set_log(log_clone_guard.1);
         // Note: the resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
         // The JS thread may have been in macro mode when its options were copied, but a job is never part of a macro.

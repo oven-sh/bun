@@ -250,13 +250,9 @@ pub struct Lexer<'a> {
 impl<'a> LexerLog<'a> for Lexer<'a> {
     type Err = Error;
     #[inline]
-    fn log_mut(&mut self) -> &mut Log {
-        // SAFETY: `self.log` is a non-null raw handle stored by the `init*`
-        // constructors from a caller-supplied `&mut Log`; the caller must keep
-        // the pointee alive and unaliased for the lexer's lifetime (see the
-        // `log` field doc and `init_without_reading`). `&mut self` ensures no
-        // overlapping reborrow exists for this call.
-        unsafe { self.log.as_mut() }
+    fn log(&self) -> &Log {
+        // SAFETY: the caller of `init*` keeps the pointee alive for the lexer's lifetime.
+        unsafe { self.log.as_ref() }
     }
     #[inline]
     fn source(&self) -> &'a Source<'a> {
@@ -281,21 +277,6 @@ impl<'a> LexerLog<'a> for Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
-    /// Reborrow the shared `Log`. The `&self` receiver lets call sites pass
-    /// other `self.*` fields as arguments without a borrow-checker conflict;
-    /// callers must not hold two results of `log()` (or a result alongside the
-    /// parser's `P::log()`) live at once.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn log(&self) -> &mut Log {
-        // SAFETY: `self.log` is a non-null raw handle stored by the `init*`
-        // constructors from a caller-supplied `&mut Log`; the caller must keep
-        // the pointee alive and unaliased for the lexer's lifetime. Only one
-        // `&mut Log` is materialized at a time — every call site is
-        // `self.log().method(...)` with no overlap.
-        unsafe { &mut *self.log.as_ptr() }
-    }
-
     #[inline]
     pub fn loc(&self) -> Loc {
         bun_ast::usize2loc(self.start)
@@ -2245,7 +2226,7 @@ impl<'a> Lexer<'a> {
     /// the `log` field doc) and the caller must keep the pointee alive for the
     /// lexer's lifetime. The looser bound lets `'a` (which `Ast<'a>` borrows
     /// through `arena`) outlive a stack-local scratch log.
-    pub fn init_without_reading(log: &mut Log, source: &'a Source<'a>, arena: &'a Arena) -> Self {
+    pub fn init_without_reading(log: &Log, source: &'a Source<'a>, arena: &'a Arena) -> Self {
         // Deref `Cow<'static,[u8]>` once; the resulting `&[u8]` borrows
         // `*source` (lifetime `'a`) regardless of Cow arm, so it is sound to
         // cache for the lexer's lifetime.

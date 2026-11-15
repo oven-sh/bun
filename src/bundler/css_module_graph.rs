@@ -46,7 +46,7 @@ pub(crate) fn without_bom(contents: Vec<u8>) -> Vec<u8> {
 }
 
 /// `None` when the file can't be read. `log` says why.
-pub fn read(path_text: &[u8], log: &mut Log) -> Option<Vec<u8>> {
+pub fn read(path_text: &[u8], log: &Log) -> Option<Vec<u8>> {
     match bun_sys::File::read_from(bun_sys::Fd::cwd(), path_text) {
         Ok(contents) => Some(without_bom(contents)),
         Err(err) => {
@@ -80,7 +80,7 @@ impl<'a> CssModuleFile<'a> {
         source_index: usize,
         path_text: &[u8],
         contents: Option<&'a [u8]>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<Self, Failure> {
         let top_level_dir = FileSystem::get().top_level_dir();
         let interned = host
@@ -158,7 +158,7 @@ impl<'a> CssModuleGraph<'a> {
         bump: &'a Arena,
         path_text: &[u8],
         contents: &'a [u8],
-        log: &mut Log,
+        log: &Log,
     ) -> Result<(), Failure> {
         self.0.push(CssModuleFile::parse(
             host,
@@ -179,7 +179,7 @@ impl<'a> CssModuleGraph<'a> {
                 }
                 let resolver = &mut host.transpiler().resolver;
                 let resolver_log =
-                    core::mem::replace(&mut resolver.log, core::ptr::NonNull::from(&mut *log));
+                    core::mem::replace(&mut resolver.log, core::ptr::NonNull::from(log));
                 let resolved =
                     resolver.resolve(file.source.path.source_dir(), record.path.text, record.kind);
                 resolver.log = resolver_log;
@@ -226,7 +226,7 @@ impl<'a> CssModuleGraph<'a> {
     }
 
     /// Pairs each local name in the first file with the space-separated class names it exports.
-    fn exports(&self, scratch: &Arena, log: &mut Log) -> Result<Vec<(Vec<u8>, Vec<u8>)>, Failure> {
+    fn exports(&self, scratch: &Arena, log: &Log) -> Result<Vec<(Vec<u8>, Vec<u8>)>, Failure> {
         let Some(sheet) = self.0.first().and_then(|file| file.sheet.as_ref()) else {
             return Ok(Vec::new());
         };
@@ -271,9 +271,9 @@ pub fn load_exports(
     let mut graph = CssModuleGraph(Vec::new());
     let mut skipped = Log::init();
 
-    graph.load(host, bump, path_text, contents, &mut skipped)?;
-    let exports = graph.exports(bump, &mut skipped)?;
-    for msg in &skipped.msgs {
+    graph.load(host, bump, path_text, contents, &skipped)?;
+    let exports = graph.exports(bump, &skipped)?;
+    for msg in skipped.msgs.get_mut() {
         bun_core::scoped_log!(
             CssModule,
             "{}: skipped: {}",

@@ -2071,7 +2071,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         // SAFETY: `ctx.log` is the CLI log, owned by the caller and not yet
         // shared with another thread.
         unsafe {
-            (*ctx.log).level = bun_ast::DEFAULT_LOG_LEVEL.load();
+            (*ctx.log).level.set(bun_ast::DEFAULT_LOG_LEVEL.load());
         }
     }
 

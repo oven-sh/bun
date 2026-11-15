@@ -181,7 +181,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     unsafe {
         // Still in `options`, so that an early return drops them.
         let framework = &options.framework;
-        let log = &mut *addr_of_mut!((*p).log);
+        let log = &(*p).log;
         let bundler_options = &options.bundler_options;
 
         match framework.init_transpiler(
@@ -265,7 +265,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         .is_err()
     {
         if dev.framework.is_built_in_react {
-            bake::Framework::add_react_install_command_note(&mut dev.log);
+            bake::Framework::add_react_install_command_note(&dev.log);
         }
         return Err(global.throw_value(dev.log.to_js_aggregate_error(
             global,

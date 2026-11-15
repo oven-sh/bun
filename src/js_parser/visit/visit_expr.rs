@@ -755,7 +755,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // Reborrow via the field-disjoint `Lexer::log()` accessor
                         // so `&p.lexer` and `&mut p.options` split cleanly under
                         // borrowck.
-                        let log = p.lexer.log();
+                        let log = bun_ast::LexerLog::log(&p.lexer);
                         let source = p.source;
                         let Ok(macro_result) = p
                             .options
@@ -2459,12 +2459,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     loc: expr.loc,
                     data: expr.data,
                 };
-                let start_error_count = p.log().msgs.len();
+                let start_error_count = p.log().msgs_len();
                 p.macro_call_count += 1;
                 // Reborrow via the field-disjoint `Lexer::log()` accessor
                 // so `&p.lexer` and `&mut p.options` split cleanly under
                 // borrowck.
-                let log = p.lexer.log();
+                let log = bun_ast::LexerLog::log(&p.lexer);
                 let source = p.source;
                 let macro_result = match p
                     .options
@@ -2482,7 +2482,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ) {
                     Ok(r) => r,
                     Err(_) => {
-                        if p.log().msgs.len() == start_error_count {
+                        if p.log().msgs_len() == start_error_count {
                             p.log()
                                 .add_error(Some(p.source), expr.loc, b"macro threw exception");
                         }

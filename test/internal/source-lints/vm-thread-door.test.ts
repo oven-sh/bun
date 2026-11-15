@@ -7,8 +7,8 @@
 // this lint freezes, for the VM crates (`jsc`, `runtime`, `event_loop`,
 // `sql_jsc`, `http_jsc`), the two things that could open one:
 //
-//   1. `unsafe impl Send` / `unsafe impl Sync`, the `owned_task!` macro
-//      (which emits one), `intrusive_work_task!` (which is what makes a
+//   1. `unsafe impl Send` / `unsafe impl Sync`, the
+//      `intrusive_work_task!` macro (which is what makes a
 //      type schedulable on the pool) and `VmBound<T>` (which is `Send + Sync`
 //      for any `T`). `VirtualMachine`,
 //      `EventLoop` and `JSGlobalObject` are `!Send + !Sync`, so VM state can
@@ -44,11 +44,10 @@ const DOOR = new Set(["src/jsc/VmHandle.rs", "src/jsc/job.rs"]);
 const PATTERNS: [name: string, re: RegExp][] = [
   ["unsafe impl Send", /\bunsafe\s+impl(?:\s*<[^>]*>)?\s+Send\s+for\s+([A-Za-z_][\w:<>, ']*)/g],
   ["unsafe impl Sync", /\bunsafe\s+impl(?:\s*<[^>]*>)?\s+Sync\s+for\s+([A-Za-z_][\w:<>, ']*)/g],
-  ["owned_task!", /\b(?:bun_threading::)?owned_task!\s*\(\s*(?:\[[^\]]*\]\s*)?([A-Za-z_]\w*)/g],
   ["intrusive_work_task!", /\b(?:bun_threading::)?intrusive_work_task!\s*\(\s*(?:\[[^\]]*\]\s*)?([A-Za-z_]\w*)/g],
   ["VmBound<", /\bVmBound<\s*(\w+)/g],
   ["WorkPool::schedule*", /\bWorkPool::(?:schedule|schedule_new|schedule_owned|go)\b/g],
-  ["worker_pool.schedule(Batch)", /\)\s*\.schedule\(\s*(?:bun_threading::thread_pool::)?Batch::from/g],
+  ["Batch::from*", /\bBatch::from\w*\s*\(/g],
   ["HTTPThread::schedule", /\bHTTPThread::schedule\s*\(/g],
   ["thread spawn", /\bthread::(?:Builder::new\s*\(|spawn\s*\()/g],
   ["uv_queue_work", /(?<!fn\s)\buv_queue_work\s*\(/g],

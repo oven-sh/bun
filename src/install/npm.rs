@@ -1,5 +1,4 @@
 use std::io::Write as _;
-use std::sync::LazyLock;
 
 use crate::Error;
 use crate::bun_json as JSON;
@@ -20,8 +19,8 @@ use crate::bin::{self, Bin};
 use crate::bun_fs::FileSystem;
 use crate::external_slice::ExternalPackageNameHashList;
 use crate::integrity::Integrity;
-use crate::package_manager::THREAD_POOL;
 use crate::package_manager::directories::TemporaryDirectory;
+use crate::package_manager::{THREAD_POOL, install_pool};
 use crate::{
     Aligner, ExternalSlice, ExternalStringList, ExternalStringMap, PackageManager, PackageNameHash,
     VersionSlice,
@@ -1443,7 +1442,7 @@ pub mod package_manifest {
         /// The next run, `--offline` above all, reads what this one fetched. A pool thread must not wait for its own pool.
         pub(crate) extern "C" fn finish_saves_at_exit() {
             if bun_crash_handler::cli_state::is_main_thread()
-                && LazyLock::get(&THREAD_POOL).is_some_and(ThreadPool::has_workers)
+                && THREAD_POOL.get().is_some_and(ThreadPool::has_workers)
             {
                 SAVES.wait();
             }
@@ -1496,7 +1495,7 @@ pub mod package_manifest {
                 temp_dir,
                 task: PoolTask::default(),
             }));
-            THREAD_POOL.schedule(batch);
+            install_pool().schedule(batch);
         }
 
         fn manifest_file_name<'b>(

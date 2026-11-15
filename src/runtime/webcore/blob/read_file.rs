@@ -195,7 +195,7 @@ impl bun_jsc::JobContext for ReadFile {
         // other thread touches `io_request` until it is queued again here.
         unsafe {
             if (*this).io_parking.cancel() {
-                io::IoRequestLoop::schedule(&mut (*this).io_request);
+                io::IoRequestLoop::schedule(&raw mut (*this).io_request);
             }
         }
     }
@@ -314,51 +314,56 @@ impl ReadFile {
 
     pub(crate) const IO_TAG: io::Tag = io::Tag::ReadFile;
 
-    pub(crate) fn on_ready(&mut self) {
+    /// # Safety
+    /// `this` is live, and this is the io thread.
+    pub(crate) unsafe fn on_ready(this: *mut Self) {
         bloblog!("ReadFile.onReady");
-        if !self.io_parking.fire() {
-            return;
+        // SAFETY: fn contract.
+        unsafe {
+            if (*this).io_parking.fire() {
+                Self::schedule_read_loop(this);
+            }
         }
-        self.task = WorkPoolTask {
-            node: Default::default(),
-            callback: Self::do_read_loop_task,
-        };
-        // On kqueue platforms we use one-shot mode, so:
-        // - we don't need to unregister
-        // - we don't need to delete from kqueue
-        if bun_core::Environment::IS_KQUEUE {
-            // unless pending IO has been scheduled in-between.
-            self.close_after_io = self.io_request.scheduled;
-        }
-
-        WorkPool::schedule(&raw mut self.task);
     }
 
-    pub(crate) fn on_io_error(&mut self, err: &bun_sys::Error) {
+    /// # Safety
+    /// As [`on_ready`](Self::on_ready).
+    pub(crate) unsafe fn on_io_error(this: *mut Self, err: &bun_sys::Error) {
         bloblog!("ReadFile.onIOError");
-        if !self.io_parking.fire() {
-            return;
+        // SAFETY: fn contract. After `fire` no other thread uses these fields.
+        unsafe {
+            if (*this).io_parking.fire() {
+                (*this).errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                (*this).system_error = Some(err.to_system_error().into());
+                Self::schedule_read_loop(this);
+            }
         }
-        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-        self.system_error = Some(err.to_system_error().into());
-        self.task = WorkPoolTask {
-            node: Default::default(),
-            callback: Self::do_read_loop_task,
-        };
-        // On kqueue platforms we use one-shot mode, so:
-        // - we don't need to unregister
-        // - we don't need to delete from kqueue
-        if bun_core::Environment::IS_KQUEUE {
-            // unless pending IO has been scheduled in-between.
-            self.close_after_io = self.io_request.scheduled;
+    }
+
+    /// # Safety
+    /// `fire` gave `this` to this thread.
+    unsafe fn schedule_read_loop(this: *mut Self) {
+        // SAFETY: fn contract. The `Job` that holds `this` is freed after `io_task` finishes.
+        unsafe {
+            (*this).task = WorkPoolTask {
+                node: Default::default(),
+                callback: Self::do_read_loop_task,
+            };
+            // On kqueue platforms we use one-shot mode, so:
+            // - we don't need to unregister
+            // - we don't need to delete from kqueue
+            if bun_core::Environment::IS_KQUEUE {
+                // unless pending IO has been scheduled in-between.
+                (*this).close_after_io = (*this).io_request.scheduled;
+            }
+            WorkPool::schedule(&raw mut (*this).task);
         }
-        WorkPool::schedule(&raw mut self.task);
     }
 
     /// Thunk matching `io::FileAction::on_error`'s `fn(*mut (), &sys::Error)` shape.
     fn on_io_error_thunk(ctx: *mut (), err: &bun_sys::Error) {
         // SAFETY: ctx is `self as *mut ReadFile` set in on_request_readable below.
-        unsafe { (*ctx.cast::<ReadFile>()).on_io_error(err) }
+        unsafe { Self::on_io_error(ctx.cast(), err) }
     }
 
     pub(crate) fn on_request_readable(request: &mut io::Request) -> io::Action<'_> {
@@ -419,7 +424,9 @@ impl ReadFile {
         self.close_after_io = true;
         self.io_request
             .store_callback_seq_cst(Self::on_request_readable);
-        io::IoRequestLoop::schedule(&mut self.io_request);
+        // SAFETY: the `Job` that holds `self` is freed after `io_task` finishes, and `park` gave the request to this thread.
+        // Not upheld: `self` is still borrowed when the io thread gets the request.
+        unsafe { io::IoRequestLoop::schedule(&raw mut self.io_request) };
     }
 
     /// Never touches `self.buffer`; the caller moves it out for the duration.

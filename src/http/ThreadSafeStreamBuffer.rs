@@ -2,8 +2,8 @@ use core::ffi::c_void;
 
 use bun_io::StreamBuffer;
 use bun_ptr::RefPtr;
+use bun_threading::Guarded;
 use bun_threading::guarded::GuardedLock;
-use bun_threading::{Guarded, Mutex};
 
 #[derive(bun_ptr::RefCounted)]
 pub struct ThreadSafeStreamBuffer {
@@ -54,7 +54,7 @@ impl ThreadSafeStreamBuffer {
 
     /// Locks the mutex; the guard unlocks it on `Drop`.
     #[inline]
-    pub fn lock(&self) -> GuardedLock<'_, State, Mutex> {
+    pub fn lock(&self) -> GuardedLock<'_, State> {
         self.state.lock()
     }
 

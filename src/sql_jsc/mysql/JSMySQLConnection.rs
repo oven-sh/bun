@@ -175,7 +175,8 @@ impl TimedConnection for JSMySQLConnection {
     }
 }
 
-impl AutoFlush for JSMySQLConnection {
+// SAFETY: refcounted on the heap, and `drop` unregisters.
+unsafe impl AutoFlush for JSMySQLConnection {
     fn vm(&self) -> &VirtualMachine {
         self.vm.get()
     }

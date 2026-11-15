@@ -322,6 +322,7 @@ pub struct Bufs {
     pub(crate) node_modules_check: PathBuffer,
     pub(crate) field_abs_path: PathBuffer,
     pub(crate) tsconfig_path_abs: PathBuffer,
+    pub(crate) tsconfig_extends: PathBuffer,
     pub(crate) check_browser_map: PathBuffer,
     pub(crate) remap_path: PathBuffer,
     pub(crate) load_as_file: PathBuffer,
@@ -6406,7 +6407,7 @@ impl<'a> Resolver<'a> {
                 // `extends` comes from the config file and can be any length.
                 let parsed = match ResolvePath::join_abs_string_buf_checked(
                     ts_dir_name,
-                    bufs!(tsconfig_path_abs),
+                    bufs!(tsconfig_extends),
                     &[ts_dir_name, &current.extends],
                     bun_paths::Platform::AUTO,
                 ) {

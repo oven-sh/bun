@@ -3,6 +3,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 
 use core::cell::OnceCell;
+use core::sync::SyncView;
 
 use bun_alloc::Arena;
 use bun_collections::HashMap;
@@ -40,8 +41,8 @@ pub struct Transpiler<'a> {
     /// First: points into `options` and `resolver`.
     pub macro_context: Option<js_ast::Macro::MacroContext>,
     pub options: options::BundleOptions<'a>,
-    // Raw ptr — `set_log` aims it at logs that `'a` outlives.
-    pub log: *const bun_ast::Log,
+    /// Bundler threads share `&Transpiler`, which must not lead to it.
+    log: SyncView<&'a bun_ast::Log>,
     // Bundler is an AST crate per PORTING.md, so an arena is threaded even
     // though callers usually pass `bun.default_allocator`.
     pub arena: &'a Arena,
@@ -57,12 +58,9 @@ pub struct Transpiler<'a> {
 }
 
 impl<'a> Transpiler<'a> {
-    pub fn set_log(&mut self, log: *const bun_ast::Log) {
-        self.log = log;
-        // SAFETY: caller (`ThreadPool::Worker::create`) passes the per-worker
-        // arena-allocated `Log`, which outlives this `Transpiler<'a>`.
-        self.resolver.log =
-            core::ptr::NonNull::new(log.cast_mut()).expect("set_log: log is non-null");
+    pub fn set_log(&mut self, log: &'a bun_ast::Log) {
+        self.log = SyncView::new(log);
+        self.resolver.set_log(Some(log));
     }
 
     /// Replace the transpiler's arena and re-init the macro context against it.
@@ -100,10 +98,8 @@ impl<'a> Transpiler<'a> {
     }
 
     #[inline]
-    pub fn log<'r>(&self) -> &'r bun_ast::Log {
-        // SAFETY: `self.log` is non-null after `init`. FIXME: nothing ties `'r`
-        // to the log that `set_log` was last given.
-        unsafe { &*self.log }
+    pub fn log(&mut self) -> &'a bun_ast::Log {
+        self.log.as_mut()
     }
 
     /// Shared read-only borrow of the `DotEnv::Loader`. Prefer this over
@@ -153,17 +149,15 @@ impl<'a> Transpiler<'a> {
     pub(crate) fn for_worker(
         from: &Transpiler<'a>,
         arena: &'a Arena,
-        log: *const bun_ast::Log,
+        log: &'a bun_ast::Log,
     ) -> Transpiler<'a> {
         let options = from.options.for_worker();
         let resolver_opts = resolver_bundle_options_subset(&options);
-        let log_nn = core::ptr::NonNull::new(log.cast_mut())
-            .expect("Transpiler::for_worker: log is non-null");
-        let resolver = Resolver::for_worker(&from.resolver, log_nn, resolver_opts);
+        let resolver = Resolver::for_worker(&from.resolver, Some(log), resolver_opts);
 
         Transpiler {
             options,
-            log,
+            log: SyncView::new(log),
             arena,
             // Per-worker scratch — workers never read the parent's accumulated state.
             result: options::TransformResult::default(),
@@ -352,7 +346,7 @@ impl<'a> Transpiler<'a> {
     /// A disabled module imports as `{}` and an external one stays an import. An entry point has
     /// nothing to emit in either case. `--external` skips entry points, so external means builtin.
     fn reject_unbundleable_entry_point<'e>(
-        &self,
+        &mut self,
         resolved: resolver::Result<'e>,
         entry_point: &[u8],
     ) -> crate::Result<resolver::Result<'e>> {
@@ -931,20 +925,13 @@ impl<'a> Transpiler<'a> {
     ///   * [`options::BundleOptions::from_api`] — `bun_bundler::options`
     ///   * [`Resolver::init1`] — `bun_resolver`
     ///
-    /// `log` / `env_loader_` are raw pointers (not `&'a mut`) to
-    /// match the struct field types — the same `*Log` is aliased into
-    /// `resolver.log` (see `set_log`).
+    /// `env_loader_` is a raw pointer (not `&'a mut`) to match the struct field type.
     pub fn init(
         arena: &'a Arena,
-        log: *const bun_ast::Log,
+        log: &'a bun_ast::Log,
         opts: api::TransformOptions,
         env_loader_: Option<*mut dot_env::Loader>,
     ) -> crate::Result<Transpiler<'a>> {
-        // Caller contract: `log` is the freshly-boxed per-VM `Log` from
-        // `VirtualMachine::init` and is never null. Validate up front so the
-        // deref sites below go through `NonNull` rather than the raw argument.
-        let log_nn =
-            core::ptr::NonNull::new(log.cast_mut()).expect("Transpiler::init: log is non-null");
         bun_ast::expr::data::Store::create();
         bun_ast::stmt::data::Store::create();
         // These two `create()`s are eager (not deferred to the first `parse()`)
@@ -999,13 +986,11 @@ impl<'a> Transpiler<'a> {
         }
 
         // hide elapsed time when loglevel is warn or error
-        // SAFETY: caller contract — `log` is the freshly-boxed per-VM `Log`
-        // (`VirtualMachine::init`), `env_loader` is either caller-owned or the
-        // leak above; no other live `&mut` to either at this point.
-        let log = unsafe {
-            (*env_loader).quiet = !log_nn.as_ref().level.get().at_least(bun_ast::Level::Info);
-            log_nn.as_ref()
-        };
+        // SAFETY: caller contract — `env_loader` is either caller-owned or the
+        // leak above; no other live `&mut` to it at this point.
+        unsafe {
+            (*env_loader).quiet = !log.level.get().at_least(bun_ast::Level::Info);
+        }
 
         // var pool = try arena.create(ThreadPool);
         // try pool.init(ThreadPool.InitConfig{
@@ -1026,13 +1011,13 @@ impl<'a> Transpiler<'a> {
 
         Ok(Transpiler {
             options: bundle_options,
-            log: log_nn.as_ptr(),
+            log: SyncView::new(log),
             arena,
             result: options::TransformResult {
                 outbase,
                 ..Default::default()
             },
-            resolver: Resolver::init1(log_nn, fs, resolver_opts),
+            resolver: Resolver::init1(log, fs, resolver_opts),
             output_files: Vec::new(),
             resolve_results,
             resolve_queue: ResolveQueue::default(),

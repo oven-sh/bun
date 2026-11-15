@@ -2157,6 +2157,7 @@ pub(crate) fn install_isolated_packages(
         let installed = DynamicBitSet::init_empty(lockfile.packages.len())?;
         let trusted_dependencies_from_update_requests =
             manager.find_trusted_dependencies_from_update_requests();
+        let log = manager.log();
         let manager_ptr: *mut PackageManager = manager;
         let mut installer = store::Installer {
             lockfile: lockfile_ptr,
@@ -2574,7 +2575,7 @@ pub(crate) fn install_isolated_packages(
 
         installer.relink_bins_of_members_with_scripts();
         installer.unlink_left_out_entries();
-        installer.warn_left_out_links();
+        installer.warn_left_out_links(log);
         installer.record_update_request_trust();
 
         let manager = installer.manager_mut();

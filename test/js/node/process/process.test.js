@@ -3093,8 +3093,10 @@ it("worker.getHeapStatistics().external_memory counts a Buffer the worker holds"
   );
   try {
     const before = await worker.getHeapStatistics();
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve, reject } = Promise.withResolvers();
     worker.once("message", resolve);
+    worker.once("error", reject);
+    worker.once("exit", code => reject(new Error(`worker exited with ${code} before it replied`)));
     worker.postMessage("go");
     const external = await promise;
     const after = await worker.getHeapStatistics();

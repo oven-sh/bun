@@ -1632,16 +1632,14 @@ pub(crate) mod strings_impl {
             simdutf::convert::utf16::to::utf8::with_errors::le(utf16, out)
         });
         if !result.is_successful() {
-            append_wtf8_from_utf16(list, utf16.input());
+            append_wtf8_from_utf16(list, utf16.slice());
         }
     }
 
-    /// Port of `convertUTF16ToUTF8Append`.
+    /// Unpaired surrogates become U+FFFD.
     pub fn convert_utf16_to_utf8_append(list: &mut Vec<u8>, utf16: &[u16]) {
-        let mut input = WithUtf8Len::utf16_worst_case(utf16);
-        if input.utf8_len() > list.capacity() - list.len() {
-            input = WithUtf8Len::utf16(utf16);
-        }
+        let input = WithUtf8Len::utf16_worst_case(utf16, list.capacity() - list.len())
+            .unwrap_or_else(|| WithUtf8Len::utf16(utf16));
         append_utf16_as_utf8(list, input);
     }
 
@@ -1711,10 +1709,8 @@ pub(crate) mod strings_impl {
         if utf16.is_empty() || buf.is_empty() {
             return EncodeIntoResult::default();
         }
-        let mut input = WithUtf8Len::utf16_worst_case(utf16);
-        if input.utf8_len() > buf.len() {
-            input = WithUtf8Len::utf16_with_replacement(utf16);
-        }
+        let input = WithUtf8Len::utf16_worst_case(utf16, buf.len())
+            .unwrap_or_else(|| WithUtf8Len::utf16_with_replacement(utf16));
         copy_utf16_into_utf8_with_utf8_len(buf, input)
     }
 
@@ -1722,7 +1718,7 @@ pub(crate) mod strings_impl {
         buf: &mut [u8],
         input: WithUtf8Len<'_, u16>,
     ) -> EncodeIntoResult {
-        let utf16 = input.input();
+        let utf16 = input.slice();
         if utf16.is_empty() || buf.is_empty() {
             return EncodeIntoResult::default();
         }
@@ -2209,7 +2205,7 @@ pub(crate) mod strings_impl {
     }
 
     /// `strings.convertUTF16ToUTF8InBuffer` — write UTF-8 into `out`, return
-    /// the written sub-slice. Infallible. The
+    /// the written sub-slice. Empty if `utf16` has an unpaired surrogate. The
     /// caller is responsible for sizing `out` for the worst case (≤ 3× input
     /// code units).
     ///

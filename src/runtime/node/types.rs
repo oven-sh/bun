@@ -383,6 +383,7 @@ impl StringOrBuffer<'static> {
     /// Like [`from_js`](Self::from_js), but copies a buffer that
     /// [`can_change_under_borrow`](jsc::ArrayBuffer::can_change_under_borrow).
     /// Use it for parsers that read a byte more than once.
+    /// `fs.read()` or another process can still write to it: not a `StableBytes`.
     pub(crate) fn from_js_stable(
         global: &JSGlobalObject,
         value: JSValue,

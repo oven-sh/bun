@@ -243,7 +243,7 @@ static JSC::JSString* tryDecodeUTF8(JSC::VM& vm, std::span<const uint8_t> bytes,
         return nullptr;
     std::span<char16_t> units;
     RefPtr<StringImpl> impl = StringImpl::tryCreateUninitialized(length, units);
-    if (!impl || !Bun__encoding__convertUTF8ToUTF16Exact(bytes.data(), bytes.size(), units.data(), units.size())) [[unlikely]]
+    if (!impl || !Bun__encoding__tryConvertUTF8ToUTF16Exact(bytes.data(), bytes.size(), units.data(), units.size())) [[unlikely]]
         return nullptr;
     return JSC::jsString(vm, String(impl.releaseNonNull()));
 }

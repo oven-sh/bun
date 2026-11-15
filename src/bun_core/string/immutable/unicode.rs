@@ -665,25 +665,26 @@ pub enum ToUTF16Error {
 
 crate::oom_from_alloc!(ToUTF16Error);
 
-const MAX_STACK_UTF16_LEN: usize = 4096;
+const MAX_STACK_CONVERTED_BYTES: usize = 4096;
 
 /// `None` if `input` is invalid. Not inlined, so that callers do not reserve the buffer on every call.
 #[inline(never)]
-fn convert_utf8_to_utf16_on_stack<R>(input: &[u8], f: impl FnOnce(&[u16]) -> R) -> Option<R> {
-    let mut stack = [const { MaybeUninit::uninit() }; MAX_STACK_UTF16_LEN];
+fn with_utf16_on_stack<R>(input: &[u8], f: impl FnOnce(&[u16]) -> R) -> Option<R> {
+    let mut stack = [const { MaybeUninit::uninit() }; MAX_STACK_CONVERTED_BYTES];
     let mut units = BorrowedBuf::from(&mut stack[..]);
     simdutf::convert::utf8::to::utf16::le(input, units.unfilled()).then(|| f(units.filled()))
 }
 
 /// Returns the part of `input` that was not appended, which is empty if `input` is valid and fits.
-pub(super) fn append_valid_utf8_as_utf16<'a>(
+pub(super) fn write_utf8_prefix_as_utf16<'a>(
     input: &'a [u8],
     mut output: BorrowedCursor<'_, u16>,
 ) -> &'a [u8] {
     // A multiple of simdutf's 64-byte block and of every UTF-8 sequence length keeps chunks aligned.
     const CHUNK_LEN_MULTIPLE: usize = 192;
-    // The haswell, westmere and arm64 kernels only check for invalid input at the end of a call.
+    // haswell, westmere and arm64 report invalid input only when a call ends. A later chunk can be as long as all before it.
     const FIRST_CHUNK_MAX_LEN: usize = 64 * 1024;
+    const MAX_SHORT_REST_LEN: usize = 4 * CHUNK_LEN_MULTIPLE;
 
     let mut rest = input;
     while !rest.is_empty() {
@@ -692,17 +693,17 @@ pub(super) fn append_valid_utf8_as_utf16<'a>(
         let mut chunk = rest;
         if rest.len() > max_len {
             // One copy is faster than converting a short `rest` in several smaller chunks.
-            if rest.len() <= MAX_STACK_UTF16_LEN
-                && (rest.len() <= 4 * CHUNK_LEN_MULTIPLE || capacity < rest.len() / 4 * 3)
+            if rest.len() <= MAX_STACK_CONVERTED_BYTES
+                && (rest.len() <= MAX_SHORT_REST_LEN || capacity < rest.len() / 4 * 3)
             {
-                let appended = convert_utf8_to_utf16_on_stack(rest, |units| {
-                    (units.len() <= capacity).then(|| output.append(units))
-                });
-                return if appended.flatten().is_some() {
+                return with_utf16_on_stack(rest, |units| {
+                    if units.len() > capacity {
+                        return rest;
+                    }
+                    output.append(units);
                     &[]
-                } else {
-                    rest
-                };
+                })
+                .unwrap_or(rest);
             }
             chunk =
                 truncate_to_char_boundary(rest, max_len / CHUNK_LEN_MULTIPLE * CHUNK_LEN_MULTIPLE);
@@ -715,13 +716,15 @@ pub(super) fn append_valid_utf8_as_utf16<'a>(
     rest
 }
 
-/// [`append_valid_utf8_as_utf16`] for a `Vec`. Reserves `additional` more units if `bytes` is valid.
-pub(super) fn append_valid_utf8_as_utf16_to_list<'a>(
+/// [`write_utf8_prefix_as_utf16`] for a `Vec`. Reserves `additional` more units if `bytes` is valid.
+pub(super) fn append_utf8_prefix_as_utf16<'a>(
     out: &mut Vec<u16>,
     bytes: &'a [u8],
     first_non_ascii: usize,
     additional: usize,
 ) -> Result<&'a [u8], ToUTF16Error> {
+    const MAX_LEN_ALWAYS_ON_STACK: usize = 256;
+
     let non_ascii = &bytes[first_non_ascii..];
     // Latin-1 and binary input usually fails here, before simdutf reads all of it.
     if !matches!(non_ascii, [0xC2..=0xF4, 0x80..=0xBF, ..]) {
@@ -732,11 +735,11 @@ pub(super) fn append_valid_utf8_as_utf16_to_list<'a>(
     let has_many_non_ascii = |&sample: &[u8; 16]| {
         (u128::from_ne_bytes(sample) & u128::from_ne_bytes([0x80; 16])).count_ones() > 4
     };
-    if bytes.len() <= 256
-        || (bytes.len() <= MAX_STACK_UTF16_LEN
+    if bytes.len() <= MAX_LEN_ALWAYS_ON_STACK
+        || (bytes.len() <= MAX_STACK_CONVERTED_BYTES
             && non_ascii.first_chunk().is_some_and(has_many_non_ascii))
     {
-        return convert_utf8_to_utf16_on_stack(bytes, |units| {
+        return with_utf16_on_stack(bytes, |units| {
             out.try_reserve_exact(units.len() + additional)
                 .map_err(|_| ToUTF16Error::OutOfMemory)?;
             out.extend_from_slice(units);
@@ -753,13 +756,13 @@ pub(super) fn append_valid_utf8_as_utf16_to_list<'a>(
     out.try_reserve_exact(len + additional)
         .map_err(|_| ToUTF16Error::OutOfMemory)?;
     Ok(crate::vec::append_with(out, usize::MAX, |out| {
-        append_valid_utf8_as_utf16(bytes, out)
+        write_utf8_prefix_as_utf16(bytes, out)
     }))
 }
 
 /// Returns false if `utf8` is invalid or does not convert to exactly `out.capacity()` units.
-pub fn convert_utf8_to_utf16_exact(mut out: BorrowedBuf<'_, u16>, utf8: &[u8]) -> bool {
-    append_valid_utf8_as_utf16(utf8, out.unfilled()).is_empty() && out.len() == out.capacity()
+pub fn try_convert_utf8_to_utf16_exact(mut out: BorrowedBuf<'_, u16>, utf8: &[u8]) -> bool {
+    write_utf8_prefix_as_utf16(utf8, out.unfilled()).is_empty() && out.len() == out.capacity()
 }
 
 pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: bool>(
@@ -771,7 +774,7 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
 
     let mut output: Vec<u16> = Vec::new();
     let mut remaining =
-        append_valid_utf8_as_utf16_to_list(&mut output, bytes, first_non_ascii_idx as usize, 0)?;
+        append_utf8_prefix_as_utf16(&mut output, bytes, first_non_ascii_idx as usize, 0)?;
     if remaining.is_empty() {
         crate::scoped_log!(
             strings,
@@ -1034,10 +1037,8 @@ pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
     let mut ended_on_non_ascii = false;
 
     if crate::FeatureFlags::USE_SIMDUTF {
-        let mut input = WithUtf8Len::utf16_worst_case(utf16);
-        if input.utf8_len() > buf_total {
-            input = WithUtf8Len::utf16(utf16);
-        }
+        let input = WithUtf8Len::utf16_worst_case(utf16, buf_total)
+            .unwrap_or_else(|| WithUtf8Len::utf16(utf16));
         crate::scoped_log!(
             strings,
             "UTF16 {} -> UTF8 {}",

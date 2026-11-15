@@ -5121,7 +5121,7 @@ enum Text<'a> {
 enum TextBytes<'a> {
     /// What the scan finds holds for the next read too. Another process can write to a mapped store.
     InStore(&'a [u8]),
-    Owned(strings::ImmutableBytes<'a>),
+    Stable(strings::StableBytes<'a>),
 }
 
 fn decode_text<'a>(
@@ -5131,7 +5131,7 @@ fn decode_text<'a>(
 ) -> JsResult<Text<'a>> {
     let raw_bytes = match bytes {
         TextBytes::InStore(bytes) => bytes,
-        TextBytes::Owned(bytes) => bytes.slice(),
+        TextBytes::Stable(bytes) => bytes.slice(),
     };
     let (bom, buf) = strings::BOM::detect_and_split(raw_bytes);
     if buf.is_empty() {
@@ -5146,7 +5146,7 @@ fn decode_text<'a>(
     }
     let converted = match bytes {
         TextBytes::InStore(_) => strings::to_utf16_alloc(buf, false, false),
-        TextBytes::Owned(bytes) => bytes
+        TextBytes::Stable(bytes) => bytes
             .substring(raw_bytes.len() - buf.len())
             .to_utf16_alloc(false),
     }
@@ -5167,7 +5167,7 @@ pub(crate) struct ToFormDataWithBytesFn;
 impl read_file::ReadFileToJs for ToStringWithBytesFn {
     fn from_owned(b: &Blob, g: &JSGlobalObject, by: Box<[u8]>) -> JsResult<JSValue> {
         let by = by.into_vec();
-        match decode_text(b, g, TextBytes::Owned((&by).into()))? {
+        match decode_text(b, g, TextBytes::Stable(strings::StableBytes::from(&by)))? {
             Text::Decoded(value) => Ok(value),
             Text::Utf16(external) => {
                 drop(by);
@@ -5631,7 +5631,7 @@ impl Internal {
         if bom_len == 0 {
             return bun_string_jsc::owned_utf8_into_js(global_this, bytes);
         }
-        match strings::ImmutableBytes::from(&bytes)
+        match strings::StableBytes::from(&bytes)
             .substring(bom_len)
             .to_utf16_alloc(false)
         {

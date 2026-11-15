@@ -1,5 +1,7 @@
 //! Making sure a route is bundled before it is served, and queueing requests while it builds.
 
+use bun_ptr::CellExt as _;
+
 use super::*;
 
 pub(super) struct RequestEnsureRouteBundledCtx<'a> {
@@ -102,16 +104,18 @@ pub(super) fn ensure_route_is_bundled(
                                 // `unsafe` site for the field); the borrow is dropped
                                 // before the assignment so no overlap with `&mut dev`.
                                 let vm = dev.vm();
-                                let has_tailwind = vm
-                                    .transpiler
-                                    .get()
-                                    .options
-                                    .serve_plugins
-                                    .iter()
-                                    .flatten()
-                                    .chain(vm.bake_config_plugin_names.get().iter())
-                                    .find(|p| strings::includes(p, b"tailwind"))
-                                    .map(|_| Default::default());
+                                let has_tailwind =
+                                    vm.bake_config_plugin_names.with_taken(|names| {
+                                        vm.transpiler
+                                            .get()
+                                            .options
+                                            .serve_plugins
+                                            .iter()
+                                            .flatten()
+                                            .chain(names.iter())
+                                            .find(|p| strings::includes(p, b"tailwind"))
+                                            .map(|_| Default::default())
+                                    });
                                 dev.has_tailwind_plugin_hack = has_tailwind;
 
                                 let load_result: crate::server::GetOrStartLoadResult = dev

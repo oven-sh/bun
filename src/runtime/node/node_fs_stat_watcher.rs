@@ -12,7 +12,7 @@ use bun_jsc::node::PathLike;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsRef, JsResult, WorkPool, WorkPoolTask};
 use bun_paths::resolve_path::{self as Path, platform};
-use bun_ptr::{BackRef, RefPtr, ThisPtr, ThreadSafeRefCount};
+use bun_ptr::{BackRef, CellExt as _, RefPtr, ThisPtr, ThreadSafeRefCount};
 use bun_resolver::fs;
 use bun_sys::{self, PosixStat};
 use bun_threading::{Guarded, UnboundedQueue};
@@ -402,7 +402,7 @@ impl StatWatcher {
     }
 
     fn lazy_scheduler(vm: &VirtualMachine) -> RefPtr<StatWatcherScheduler> {
-        crate::jsc_hooks::stat_watcher_scheduler(vm).with_mut(|slot| {
+        crate::jsc_hooks::stat_watcher_scheduler(vm).with_taken(|slot| {
             slot.get_or_insert_with(|| StatWatcherScheduler::init(vm))
                 .clone()
         })

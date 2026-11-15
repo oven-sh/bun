@@ -4,7 +4,7 @@
 use core::cell::{Cell, OnceCell};
 use core::ptr::NonNull;
 
-use bun_ptr::{RefCount, RefPtr};
+use bun_ptr::{CellExt as _, RefCount, RefPtr};
 
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
@@ -25,7 +25,7 @@ use crate::ipc as IPC;
 use crate::node::node_cluster_binding;
 use crate::timer::{EventLoopTimer, EventLoopTimerState};
 use crate::webcore::streams::SourceHandle;
-use crate::webcore::{self, AbortSignal, FileSink};
+use crate::webcore::{self, FileSink};
 #[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
 
@@ -75,7 +75,7 @@ pub enum ObservableGetter {
 pub(crate) use bun_spawn::process::StdioKind;
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). Host-fn bodies re-enter
+// interior mutability via `Cell` / `JsCell`. Host-fn bodies re-enter
 // JS (`run_callback`, promise resolve, getters that materialise streams) and a
 // live `&mut Self` across those calls would alias the fresh `&mut Self` the
 // codegen shim hands to whichever method JS calls next. `UnsafeCell`-backed
@@ -91,7 +91,7 @@ pub struct Subprocess<'a> {
     pub(crate) stdin: JsCell<Writable>,
     pub(crate) stdout: JsCell<Readable>,
     pub(crate) stderr: JsCell<Readable>,
-    pub(crate) stdio_pipes: JsCell<Vec<StdioPipeItem>>,
+    pub(crate) stdio_pipes: Cell<Vec<StdioPipeItem>>,
     pub(crate) pid_rusage: Cell<Option<Rusage>>,
 
     /// Terminal attached to this subprocess (if spawned with terminal option)
@@ -110,7 +110,7 @@ pub struct Subprocess<'a> {
     /// nulls this before the sink is freed, so it is never dereferenced after the sink dies.
     pub(crate) weak_file_sink_stdin_ptr: Cell<Option<NonNull<FileSink>>>,
     /// Held for the stdin `FileSink`, which points back here.
-    pub(crate) stdin_sink_ref: JsCell<Option<RefPtr<Subprocess<'a>>>>,
+    pub(crate) stdin_sink_ref: Cell<Option<RefPtr<Subprocess<'a>>>>,
     /// Follows the `signal` option until `clear_abort_signal`; armed only in a
     /// `Bun.ModuleGraph` context, which kills it when disposed (children
     /// of the realm's own script are the process auto-killer's).
@@ -123,8 +123,8 @@ pub struct Subprocess<'a> {
     pub(crate) event_loop_timer: EventLoopTimer,
     pub(crate) kill_signal: SignalCode,
 
-    pub(crate) stdout_maxbuf: JsCell<Option<MaxBuf::OwnerRef>>,
-    pub(crate) stderr_maxbuf: JsCell<Option<MaxBuf::OwnerRef>>,
+    pub(crate) stdout_maxbuf: Cell<Option<MaxBuf::OwnerRef>>,
+    pub(crate) stderr_maxbuf: Cell<Option<MaxBuf::OwnerRef>>,
     pub(crate) exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
 }
 
@@ -224,12 +224,6 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl Subprocess<'_> {
-    /// Shared borrow of the attached `AbortSignal`, if any.
-    #[inline]
-    pub(crate) fn abort_signal_ref(&self) -> Option<&AbortSignal> {
-        self.abort_handle.signal()
-    }
-
     pub(crate) fn resource_usage(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         self.create_resource_usage_object(cx.global())
     }
@@ -559,7 +553,7 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn on_stdin_destroyed(&self) {
-        let _stdin_sink_ref = self.stdin_sink_ref.replace(None);
+        let _stdin_sink_ref = self.stdin_sink_ref.take();
         self.update_flags(|f| f.insert(Flags::HAS_STDIN_DESTRUCTOR_CALLED));
         self.weak_file_sink_stdin_ptr.set(None);
 
@@ -635,7 +629,7 @@ impl Subprocess<'_> {
         // would not see EOF when the caller closes its copy. The duplicate is
         // kept so later reads return the same value.
         #[cfg(windows)]
-        self.stdio_pipes.with_mut(|pipes| {
+        self.stdio_pipes.with_taken(|pipes| {
             for slot in pipes.iter_mut() {
                 let buffer = match core::mem::take(slot) {
                     StdioResult::Buffer(buffer) => buffer,
@@ -654,35 +648,31 @@ impl Subprocess<'_> {
             }
         });
 
-        for item in self.stdio_pipes.get().iter() {
+        let to_js = |item: &StdioPipeItem| match item {
+            // Expose the numeric HANDLE value.
             #[cfg(windows)]
-            {
-                if let StdioResult::UnownedFd(fd) = item {
-                    // Expose the numeric HANDLE value.
-                    let handle: usize = fd.native() as usize;
-                    array.push(global, JSValue::js_number(handle as f64))?;
-                } else {
-                    array.push(global, JSValue::NULL)?;
-                }
+            StdioResult::UnownedFd(fd) => JSValue::js_number(fd.native() as usize as f64),
+            #[cfg(windows)]
+            _ => JSValue::NULL,
+            #[cfg(not(windows))]
+            ExtraPipe::OwnedFd(_) | ExtraPipe::UnownedFd(_) => {
+                JSValue::js_number(item.fd().native() as f64)
             }
             #[cfg(not(windows))]
-            {
-                match item {
-                    ExtraPipe::OwnedFd(_) | ExtraPipe::UnownedFd(_) => {
-                        array.push(global, JSValue::js_number(item.fd().native() as f64))?;
-                    }
-                    ExtraPipe::Unavailable => {
-                        array.push(global, JSValue::NULL)?;
-                    }
-                }
-            }
+            ExtraPipe::Unavailable => JSValue::NULL,
+        };
+        // By index: `push` can run a setter of `Array.prototype`.
+        let mut i = 0;
+        while let Some(value) = self.stdio_pipes.with_taken(|pipes| pipes.get(i).map(to_js)) {
+            array.push(global, value)?;
+            i += 1;
         }
         // The raw fd numbers are now visible to JS and the caller owns them.
         // Downgrade so finalize_streams never closes a number JS may have
         // already closed (whose value the kernel may have since recycled).
         #[cfg(not(windows))]
         self.stdio_pipes
-            .with_mut(|pipes| pipes.iter_mut().for_each(ExtraPipe::release_to_caller));
+            .with_taken(|pipes| pipes.iter_mut().for_each(ExtraPipe::release_to_caller));
         Ok(array)
     }
 
@@ -801,7 +791,7 @@ impl Subprocess<'_> {
             ) {
                 pipe.source.set(SourceHandle::None);
             }
-            let _stdin_sink_ref = self.stdin_sink_ref.replace(None);
+            let _stdin_sink_ref = self.stdin_sink_ref.take();
             pipe.on_attached_process_exit(status);
         }
 
@@ -1155,11 +1145,13 @@ impl Subprocess<'_> {
     pub(crate) fn record_stdio_pipe_ownership(this: *mut Self) {
         // SAFETY: `this` is the live boxed Subprocess (stable address).
         let me = unsafe { &*this };
-        for item in me.stdio_pipes.get().iter() {
-            if let StdioResult::Buffer(buffer) = item {
-                buffer.set_owner(this.cast(), Self::stop_for_vm_teardown);
+        me.stdio_pipes.with_taken(|pipes| {
+            for item in pipes {
+                if let StdioResult::Buffer(buffer) = item {
+                    buffer.set_owner(this.cast(), Self::stop_for_vm_teardown);
+                }
             }
-        }
+        });
     }
 
     /// `uv::open_handles` entry point: close every stdio pipe still held here.

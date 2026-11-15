@@ -186,6 +186,9 @@ pub trait JobContext: Sized + 'static {
     /// can wait on something external. Only such jobs are tracked by the VM.
     const CANCELLABLE: bool = false;
 
+    /// Whether [`then`](Self::then) also runs for a script that has stopped. Such a job has no context.
+    const OUTLIVES_SCRIPT: bool = false;
+
     /// Pool thread, VM not yet in its final wait when the pool reached the job
     /// (a job reached later is handed back unrun, as Node's environment
     /// cleanup `uv_cancel`s queued work). Return `done` to complete now; keep
@@ -341,7 +344,11 @@ impl<C: JobContext> Job<C> {
                 cancel: |p| unsafe { C::cancel(&raw mut (*p.cast::<Self>()).off) },
                 prev: core::ptr::null_mut(),
                 next: core::ptr::null_mut(),
-                context: cx.context().id(),
+                context: if C::OUTLIVES_SCRIPT {
+                    crate::ContextId::NONE
+                } else {
+                    cx.context().id()
+                },
                 generation: cx.vm().test_isolation_generation.get(),
             },
             ticket: Some(cx.vm().ticket()),
@@ -458,14 +465,14 @@ pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult
     // exit, and a `then` that calls back directly (node:crypto's callback forms) would run its
     // script under the next file.
     // SAFETY: `Job<C>` is `#[repr(C)]` with the header first.
-    if unsafe { (*header).generation } != vm.test_isolation_generation.get() {
+    let (generation, context) = unsafe { ((*header).generation, (*header).context) };
+    if generation != vm.test_isolation_generation.get() && context != crate::ContextId::NONE {
         // SAFETY: as below; released exactly once, here.
         unsafe { ((*header).release_unrun)(header) };
         return Ok(());
     }
     // The completion continues the script that scheduled the job.
-    // SAFETY: as above.
-    let context = vm.context_of(unsafe { (*header).context });
+    let context = vm.context_of(context);
     // SAFETY: as above.
     unsafe { ((*header).complete)(header, &global.js_thread(context)) }
 }

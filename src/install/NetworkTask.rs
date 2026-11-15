@@ -399,7 +399,7 @@ impl bun_core::output::ErrName for ForManifestError {
 }
 
 pub(crate) fn add_error_or_warning(
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     is_error: bool,
     message: core::fmt::Arguments<'_>,
 ) {
@@ -426,6 +426,7 @@ impl NetworkTask {
         loaded_manifest: Option<&PackageManifest>,
         is_optional: bool,
         needs_extended: bool,
+        log: &bun_ast::Log,
     ) -> Result<(), ForManifestError> {
         let request = self.manifest_request(
             name,
@@ -433,6 +434,7 @@ impl NetworkTask {
             loaded_manifest,
             is_optional,
             needs_extended || npm::name_suggests_libc(name),
+            log,
         )?;
         self.http = Some(request);
         Ok(())
@@ -443,6 +445,7 @@ impl NetworkTask {
         &mut self,
         scope: &npm::registry::Scope,
         is_optional: bool,
+        log: &bun_ast::Log,
     ) -> Result<(), ForManifestError> {
         let Callback::PackageManifest {
             name,
@@ -463,6 +466,7 @@ impl NetworkTask {
             loaded_manifest.as_ref(),
             is_optional,
             false,
+            log,
         )?;
         self.http = Some(request);
         Ok(())
@@ -475,11 +479,9 @@ impl NetworkTask {
         loaded_manifest: Option<&PackageManifest>,
         is_optional: bool,
         needs_extended: bool,
+        log: &bun_ast::Log,
     ) -> Result<Box<AsyncHTTP<'static>>, ForManifestError> {
         let pm = self.package_manager;
-        // SAFETY: `pm.log` is the long-lived `*mut Log` the package manager
-        // was constructed with.
-        let log = pm.log_mut();
 
         self.url_buf = 'blk: {
             // Not all registries support scoped package names when fetching the manifest.
@@ -765,6 +767,7 @@ impl NetworkTask {
         tarball_: ExtractTarball,
         scope: &npm::registry::Scope,
         authorization: Authorization,
+        log: &bun_ast::Log,
     ) -> Result<(), ForTarballError> {
         let pm = self.package_manager;
 
@@ -793,9 +796,7 @@ impl NetworkTask {
 
         if !(self.url_buf.starts_with(b"https://") || self.url_buf.starts_with(b"http://")) {
             let redacted_tarball_url = redacted_url(&self.url_buf);
-            // SAFETY: `pm.log` is the long-lived `*mut Log` the package
-            // manager was constructed with.
-            pm.log_mut().add_error_fmt(
+            log.add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(

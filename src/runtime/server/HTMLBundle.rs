@@ -69,7 +69,7 @@ impl HTMLBundle {
 
     /// For `Route::on_complete` and the dev server's `finalize_bundle`, when a build has no page for the file.
     pub(crate) fn no_html_page_log(&self) -> Log {
-        let mut log = Log::init();
+        let log = Log::init();
         log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
@@ -125,16 +125,14 @@ pub(crate) enum State {
     Pending,
     /// The plugin load or the `JSBundleCompletionTask` holds a [`PendingBuild`].
     Building,
-    Err(Log),
+    Err,
     Html(RefPtr<StaticRoute>),
 }
 
 impl State {
     fn memory_cost(&self) -> usize {
         match self {
-            State::Pending => 0,
-            State::Building => 0,
-            State::Err(log) => log.memory_cost(),
+            State::Pending | State::Building | State::Err => 0,
             State::Html(html) => html.memory_cost(),
         }
     }
@@ -205,7 +203,7 @@ impl Route {
             }
 
             // Simpler development workflow which rebundles on every request.
-            if matches!(route.state.get(), State::Html(_) | State::Err(_)) {
+            if matches!(route.state.get(), State::Html(_) | State::Err) {
                 route.state.set(State::Pending);
             }
         }
@@ -250,7 +248,7 @@ impl Route {
                     resp.on_aborted_this(Self::on_pending_response_aborted, this);
                     req.set_yield(false);
                 }
-                State::Err(_log) => {
+                State::Err => {
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_output::scoped_log!(
                             debug,
@@ -284,7 +282,7 @@ impl Route {
     fn schedule_bundle(this: ThisPtr<Self>, server: AnyServer) -> Result<(), crate::Error> {
         match server.get_or_load_plugins(ServePluginsCallback::HtmlBundleRoute(this)) {
             GetOrStartLoadResult::Err => {
-                this.state.set(State::Err(Log::init()));
+                this.state.set(State::Err);
             }
             GetOrStartLoadResult::Ready(plugins) => {
                 let plugins = plugins.map(NonNull::from);
@@ -300,17 +298,17 @@ impl Route {
     /// The build task will not deliver (the context that started it stopped, or the VM is going):
     /// what waits for the page is answered as for a failed build.
     pub(crate) fn on_build_abandoned(&self) {
-        self.state.set(State::Err(Log::init()));
+        self.state.set(State::Err);
         self.resume_pending_responses();
     }
 
     /// Production keeps the reason to itself, see `resume_pending_responses`.
-    fn set_build_error(&self, server: AnyServer, log: Log) {
+    fn set_build_error(&self, server: AnyServer, log: &Log) {
         if server.config().is_development() {
             let _ = log.print(bun_output::error_writer_buffered());
             bun_output::flush();
         }
-        self.state.set(State::Err(log));
+        self.state.set(State::Err);
     }
 
     pub(crate) fn on_plugins_resolved(
@@ -360,20 +358,19 @@ impl Route {
         config.target = bun_ast::Target::Browser;
         let is_development = development.is_development();
 
-        let cli = crate::cli::Command::get();
-        if let Some(minify_identifiers) = cli.args.serve_minify_identifiers {
+        if let Some(minify_identifiers) = xform.serve_minify_identifiers {
             config.minify.identifiers = minify_identifiers;
         } else if !is_development {
             config.minify.identifiers = true;
         }
 
-        if let Some(minify_whitespace) = cli.args.serve_minify_whitespace {
+        if let Some(minify_whitespace) = xform.serve_minify_whitespace {
             config.minify.whitespace = minify_whitespace;
         } else if !is_development {
             config.minify.whitespace = true;
         }
 
-        if let Some(minify_syntax) = cli.args.serve_minify_syntax {
+        if let Some(minify_syntax) = xform.serve_minify_syntax {
             config.minify.syntax = minify_syntax;
         } else if !is_development {
             config.minify.syntax = true;
@@ -393,7 +390,7 @@ impl Route {
         config.define.put(b"import.meta.env.SSR", b"false")?;
         config.define.put(b"import.meta.env.STATIC", b"false")?;
 
-        if let Some(define) = &cli.args.serve_define {
+        if let Some(define) = &xform.serve_define {
             debug_assert_eq!(define.keys.len(), define.values.len());
             // `StringMap` exposes only put/insert (no bulk re-index);
             // profile if hot.
@@ -412,7 +409,7 @@ impl Route {
             config.jsx.development = true;
         }
         // Production defaults to no sourcemaps so original sources are not served publicly.
-        config.source_map = if let Some(mode) = cli.args.serve_sourcemap {
+        config.source_map = if let Some(mode) = xform.serve_sourcemap {
             bundler_options::SourceMapOption::from_api(Some(mode))
         } else if is_development {
             bundler_options::SourceMapOption::Linked
@@ -437,7 +434,7 @@ impl Route {
             "HTMLBundleRoute(0x{:x}) plugins rejected",
             std::ptr::from_ref(self) as usize
         );
-        self.state.set(State::Err(Log::init()));
+        self.state.set(State::Err);
         self.resume_pending_responses();
         Ok(())
     }
@@ -446,7 +443,7 @@ impl Route {
     pub(crate) fn on_complete(
         &self,
         result: bun_bundler::Result<BuildResult>,
-        log: Log,
+        log: &Log,
         started_at_ns: u64,
     ) {
         let server = self.server.get().expect("server set");
@@ -491,7 +488,7 @@ impl Route {
                     output_file.output_kind == bundler_options::OutputKind::EntryPoint
                         && output_file.loader == Loader::Html
                 }) else {
-                    self.set_build_error(server, self.bundle.no_html_page_log());
+                    self.set_build_error(server, &self.bundle.no_html_page_log());
                     break 'bundle;
                 };
 
@@ -621,7 +618,7 @@ impl Route {
                         StaticRoute::on(html.this_ptr(), resp);
                     }
                 }
-                State::Err(_log) => {
+                State::Err => {
                     if self
                         .server
                         .get()

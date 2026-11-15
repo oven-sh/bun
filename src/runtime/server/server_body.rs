@@ -1227,7 +1227,7 @@ fn did_send_idletimeout_warning_once() -> &'static core::sync::atomic::AtomicBoo
 /// closures (which cannot name `NewServer<SSL,DEBUG>`) can call it.
 fn on_timeout_for_idle_warn() {
     if !did_send_idletimeout_warning_once().swap(true, core::sync::atomic::Ordering::Relaxed)
-        && !crate::cli::Command::get().debug.silent
+        && !bun_options_types::context::IS_SILENT.load()
     {
         bun_core::pretty_errorln!(
             "<r><yellow>[Bun.serve]<r><d>:<r> request timed out after 10 seconds. Pass <d><cyan>`idleTimeout`<r> to configure."

@@ -90,8 +90,8 @@ fn write_messages(messages: &LoadMessages) -> (Log, bool) {
     diagnostics.add_load_messages(messages);
     assert!(diagnostics.has_errors());
     let has_internal_errors = diagnostics.has_internal_errors();
-    let mut log = Log::init();
-    diagnostics.write_to(&mut log);
+    let log = Log::init();
+    diagnostics.write_to(&log);
     (log, has_internal_errors)
 }
 
@@ -261,10 +261,10 @@ fn generation_error_is_a_build_error() {
     compiler.report_compiler_error("Invalid type configuration for module", MAIN_PATH);
     let (log, has_internal_errors) = write_messages(&messages);
     assert!(!has_internal_errors);
-    assert_eq!((log.msgs.len(), log.errors), (1, 1));
+    assert_eq!((log.msgs_len(), log.errors.get()), (1, 1));
     let expected =
         b"React Compiler: Invalid type configuration for module in \"/project/main.tsx\"";
-    assert_eq!(&*log.msgs[0].data.text, expected);
+    assert_eq!(&*log.msgs.take()[0].data.text, expected);
 }
 
 #[test]
@@ -274,9 +274,9 @@ fn unsupported_node_is_an_internal_error() {
     compiler.report_unsupported_node("EClass", MAIN_PATH);
     let (log, has_internal_errors) = write_messages(&messages);
     assert!(has_internal_errors);
-    assert_eq!(log.msgs.len(), 1);
+    assert_eq!(log.msgs_len(), 1);
     let expected = b"React Compiler output has a EClass node in /project/main.tsx";
-    assert!(log.msgs[0].data.text.ends_with(expected));
+    assert!(log.msgs.take()[0].data.text.ends_with(expected));
 }
 
 #[test]

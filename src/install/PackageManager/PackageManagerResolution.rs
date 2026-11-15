@@ -118,6 +118,7 @@ impl PackageManager {
     }
 
     pub(crate) fn verify_resolutions(&mut self, log_level: LogLevel) {
+        let log = self.log();
         let lockfile = &self.lockfile;
         let resolutions_lists: &[DependencyIDSlice] = lockfile.packages.items_resolutions();
         let dependency_lists: &[DependencySlice] = lockfile.packages.items_dependencies();
@@ -169,7 +170,6 @@ impl PackageManager {
                         _ => None,
                     };
                     if missing_from.is_some() && root_has_workspaces.is_none() {
-                        let log = self.log_mut();
                         root_has_workspaces = Some(
                             match self.workspace_package_json_cache.get_with_path(
                                 log,

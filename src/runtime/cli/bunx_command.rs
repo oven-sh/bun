@@ -371,7 +371,7 @@ impl BunxCommand {
 
         bun_ast::initialize_store();
 
-        let parsed = json::ParsedJson::parse_package_json(&source, transpiler.log_mut())?;
+        let parsed = json::ParsedJson::parse_package_json(&source, transpiler.log())?;
         let expr = parsed.root;
 
         if let Some(bin_expr) = expr.get(b"bin") {
@@ -656,7 +656,7 @@ impl BunxCommand {
         let contents = bun_sys::File::read_from(Fd::cwd(), path).ok()?;
         let source = bun_ast::Source::init_path_string(path, contents.as_slice());
         bun_ast::initialize_store();
-        let parsed = json::ParsedJson::parse_package_json(&source, transpiler.log_mut()).ok()?;
+        let parsed = json::ParsedJson::parse_package_json(&source, transpiler.log()).ok()?;
         Some(read(&parsed.root))
     }
 
@@ -886,16 +886,14 @@ impl BunxCommand {
 
     pub(crate) fn exec(ctx: &mut ContextData, argv: &[&'static ZStr]) -> crate::Result<()> {
         // Don't log stuff
-        ctx.debug.silent = true;
+        bun_options_types::context::IS_SILENT.store(true);
 
         let opts = Options::parse(ctx, argv)?;
 
         let mut requests_buf = update_request::Array::with_capacity(64);
-        // SAFETY: single-threaded, and `UpdateRequest::parse` consumes `ctx_log` before anything reborrows it.
-        let ctx_log = unsafe { ctx.log_mut() };
         let update_requests = UpdateRequest::parse(
             None,
-            ctx_log,
+            ctx.log(),
             &[opts.package_name],
             &mut requests_buf,
             bun_install::Subcommand::Add,

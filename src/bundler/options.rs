@@ -40,7 +40,7 @@ mod bun_http {
 pub use bun_collections::StringSet;
 
 pub(crate) fn validate_path(
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     cwd: &[u8],
     rel_path: &[u8],
     path_kind: &[u8],
@@ -112,7 +112,7 @@ fn default_wildcard_patterns() -> Vec<WildcardPattern> {
 pub(crate) fn init_external_modules(
     cwd: &[u8],
     externals: &[&[u8]],
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     target: Target,
 ) -> ExternalModules {
     let mut result = ExternalModules {
@@ -903,7 +903,7 @@ pub(crate) mod default_user_defines {
 }
 
 pub(crate) fn defines_from_transform_options(
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     // PERF: borrowed, not owned — the caller (`load_defines`) holds
     // `transform_options` behind an `Arc`, so taking the `StringMap` by value
     // forced a full deep clone of the `--define` map *every* VM init even though
@@ -1289,7 +1289,7 @@ pub struct TypeChecked<'a, 'i> {
 
 /// `BundleOptions::type_check`. Errors are added to `log`, or reported in another way. Returns
 /// whether the build goes on.
-pub type TypeCheck = fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> bool;
+pub type TypeCheck = fn(checked: TypeChecked<'_, '_>, log: &bun_ast::Log) -> bool;
 
 /// BundleOptions is effectively webpack + babel
 pub struct BundleOptions<'a> {
@@ -1340,12 +1340,6 @@ pub struct BundleOptions<'a> {
     pub(crate) tsconfig_override: Option<Box<[u8]>>,
     pub target: Target,
     pub(crate) main_fields: Box<[Box<[u8]>]>,
-    /// TODO: remove this in favor accessing bundler.log
-    /// raw `*mut` (not `&'a mut`) — the same `*Log` is aliased
-    /// into `Transpiler.log` / `Resolver.log` / `Linker.log`. A stored
-    /// `&'a mut` here would assert uniqueness for `'a` and make every access
-    /// through those sibling raw pointers UB under stacked borrows.
-    pub log: *mut bun_ast::Log,
     pub(crate) external: ExternalModules,
     pub allow_unresolved: AllowUnresolved,
     pub entry_points: Box<[Box<[u8]>]>,
@@ -1606,7 +1600,6 @@ impl<'a> BundleOptions<'a> {
             tsconfig_override: self.tsconfig_override.clone(),
             target: self.target,
             main_fields: self.main_fields.clone(),
-            log: self.log,
             external: self.external.clone(),
             allow_unresolved: self.allow_unresolved.clone(),
             entry_points: self.entry_points.clone(),
@@ -1690,37 +1683,6 @@ impl<'a> BundleOptions<'a> {
         }
     }
 
-    /// Shared-borrow the per-Transpiler `Log`.
-    ///
-    /// SAFETY: `self.log` is non-null: `Transpiler::init` validates
-    /// the pointer via `NonNull::new(log).expect(..)` before storing it and
-    /// before calling `from_api`.
-    /// The pointee is the caller-owned arena `Log` which outlives `self`. The
-    /// same allocation is aliased into `Transpiler.log` / `Resolver.log` /
-    /// `Linker.log` as raw `*mut`; a `&` here is sound so long as no caller
-    /// holds a live `&mut Log` from one of those aliases concurrently.
-    #[inline]
-    pub(crate) fn log(&self) -> &bun_ast::Log {
-        // SAFETY: `self.log` is non-null after `from_api` and the caller-owned
-        // arena `Log` it points to outlives `self`; see method doc.
-        unsafe { &*self.log }
-    }
-
-    /// Reborrow the per-Transpiler `Log` mutably. `&self` receiver (not
-    /// `&mut self`) so call sites can pass other `self.*` fields alongside the
-    /// result without a borrowck conflict — mirrors `Transpiler::log_mut`.
-    ///
-    /// SAFETY: see [`BundleOptions::log`]. Callers must not hold two results
-    /// live at once, nor hold a result across a `Resolver` / `Linker` call
-    /// that itself writes through the aliased `*mut Log`.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn log_mut(&self) -> &mut bun_ast::Log {
-        // SAFETY: `self.log` is non-null and outlives `self`; caller upholds
-        // the no-alias contract documented on this method.
-        unsafe { &mut *self.log }
-    }
-
     /// Whether `bake.DevServer` is driving this bundle. The stored pointer is
     /// erased (`*const ()` — runtime type lives behind `dispatch::DevServerVTable`),
     /// so no `&T` accessor is possible; bundler code only ever tests presence.
@@ -1741,6 +1703,7 @@ impl<'a> BundleOptions<'a> {
 
     pub(crate) fn load_defines(
         &mut self,
+        log: &bun_ast::Log,
         arena: &bun_alloc::Arena,
         loader_: Option<&mut DotEnv::Loader>,
     ) -> Result<(), crate::Error> {
@@ -1779,11 +1742,8 @@ impl<'a> BundleOptions<'a> {
 
             Some(Cow::Borrowed(b"\"development\"".as_slice()))
         };
-        // reshaped for borrowck — node_env computed before passing self.log
         self.define = defines_from_transform_options(
-            // No other `&mut Log` is live across this call (see `log_mut`
-            // caller contract).
-            self.log_mut(),
+            log,
             self.transform_options.define.as_ref(),
             self.target,
             loader_,
@@ -1804,7 +1764,7 @@ impl<'a> BundleOptions<'a> {
     }
 
     pub(crate) fn from_api(
-        log: *mut bun_ast::Log,
+        log: &bun_ast::Log,
         transform: api::TransformOptions,
     ) -> Result<BundleOptions<'a>, crate::Error> {
         use core::sync::atomic::Ordering;
@@ -1828,7 +1788,6 @@ impl<'a> BundleOptions<'a> {
         let mut opts = BundleOptions {
             footer: Cow::Borrowed(b""),
             banner: Cow::Borrowed(b""),
-            log,
             // `define` is filled by `load_defines` later;
             // initialize empty so the struct is well-formed before `load_defines` runs.
             define: Box::new(defines::Define::default()),
@@ -2042,8 +2001,6 @@ impl<'a> BundleOptions<'a> {
                 .collect();
         }
 
-        // Reborrow the raw `*mut Log`
-        // for the duration of this call only.
         opts.external = init_external_modules(
             Fs::FileSystem::get().top_level_dir(),
             &transform
@@ -2051,8 +2008,7 @@ impl<'a> BundleOptions<'a> {
                 .iter()
                 .map(|s| s.as_ref())
                 .collect::<Vec<&[u8]>>(),
-            // sole live `&mut` for this call (struct not yet returned).
-            opts.log_mut(),
+            log,
             opts.target,
         );
         opts.out_extensions = opts.target.out_extensions();
@@ -2185,14 +2141,16 @@ impl TransformResult {
     pub(crate) fn init(
         outbase: Box<[u8]>,
         output_files: Box<[OutputFile]>,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
     ) -> Result<TransformResult, crate::Error> {
-        let mut errors: Vec<bun_ast::Msg> = Vec::with_capacity(log.errors as usize);
-        for msg in log.msgs.iter() {
-            if msg.kind == bun_ast::Kind::Err {
-                errors.push(msg.clone());
+        let mut errors: Vec<bun_ast::Msg> = Vec::with_capacity(log.errors.get() as usize);
+        log.with_msgs(|msgs| {
+            for msg in msgs.iter() {
+                if msg.kind == bun_ast::Kind::Err {
+                    errors.push(msg.clone());
+                }
             }
-        }
+        });
 
         Ok(TransformResult {
             outbase,
@@ -2603,7 +2561,7 @@ impl PathTemplate {
     /// Logs an error and returns `false` when `output_path` exceeds `MAX_OUTPUT_PATH_LEN`.
     pub(crate) fn check_output_path(
         &self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         input: &[u8],
         output_path: &[u8],
     ) -> bool {

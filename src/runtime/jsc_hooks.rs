@@ -378,11 +378,8 @@ unsafe fn init_runtime_state(
     // (see the `alloc_zeroed` note); reading it before this write is
     // validity-invariant UB, so write via `ptr::write` (NOT assignment — the
     // zeroed bytes are not a valid `Transpiler` to drop).
-    // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
-    // `VirtualMachine::init` immediately before this hook fires.
-    let log: *mut bun_ast::Log = unsafe { (*vm).log.get() }
-        .map(|p| p.as_ptr())
-        .unwrap_or(ptr::null_mut());
+    // SAFETY: `VirtualMachine::init` wrote `log` before calling this hook.
+    let log = unsafe { (*vm).log };
     // `bun_bundler::Transpiler::init` (transpiler.rs) returns `Ok` on the
     // happy path; the `Err` arm below handles genuine failures (e.g. a deleted
     // cwd → `getcwd` ENOENT). The `ptr::write` shape is load-bearing: do not
@@ -440,7 +437,7 @@ unsafe fn init_runtime_state(
                     // entries resolve via their link path (peer deps stay reachable).
                     t.resolver.opts.preserve_symlinks = preserve_symlinks;
                     // Branch on `opts.graph` here — with a module graph,
-                    // auto_jsx=true would
+                    // `configure_from_tsconfig` would
                     // `read_dir_info(cwd)` and cache its tsconfig.json BEFORE
                     // `apply_standalone_runtime_flags` can set
                     // `resolver.opts.load_tsconfig_json = false`, defeating
@@ -451,10 +448,8 @@ unsafe fn init_runtime_state(
                             .compiled_program()
                             .is_some_and(|program| program.allows_code_from_disk)
                     });
-                    if !reads_tsconfig {
-                        t.configure_linker_with_auto_jsx(false);
-                    } else {
-                        t.configure_linker();
+                    if reads_tsconfig {
+                        t.configure_from_tsconfig();
                     }
                 }
             }
@@ -735,32 +730,26 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
             } {
                 ResolveResultUnion::Success(r) => r,
                 ResolveResultUnion::Failure(e) => {
-                    if let Some(log) = vm.log.get() {
-                        // SAFETY: `log` is the unique per-VM `Box<Log>`.
-                        let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "{} resolving preload {}",
-                                e.name(),
-                                bun_core::fmt::format_json_string_latin1(preload_slice),
-                            ),
-                        );
-                    }
+                    vm.log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "{} resolving preload {}",
+                            e.name(),
+                            bun_core::fmt::format_json_string_latin1(preload_slice),
+                        ),
+                    );
                     return Err(e.into());
                 }
                 ResolveResultUnion::NotFound => {
-                    if let Some(log) = vm.log.get() {
-                        // SAFETY: `log` is the unique per-VM `Box<Log>`.
-                        let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "preload not found {}",
-                                bun_core::fmt::format_json_string_latin1(preload_slice),
-                            ),
-                        );
-                    }
+                    vm.log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "preload not found {}",
+                            bun_core::fmt::format_json_string_latin1(preload_slice),
+                        ),
+                    );
                     return Err(bun_jsc::CrateError::ModuleNotFound);
                 }
             };
@@ -1887,15 +1876,13 @@ fn note_compile_cache_parse_failure(
 /// `ModuleLoader.transpileSourceCode(...)` — the runtime-transpiler path:
 /// read file → `Transpiler::parse`
 /// → `js_printer::print` → `ResolvedSource`.
-///
-/// # Safety
-/// `args.log` is live for the call.
 #[unsafe(no_mangle)]
-unsafe fn __bun_transpile_source_code(
+fn __bun_transpile_source_code(
     jsc_vm: &VirtualMachine,
     args: &TranspileArgs<'_>,
+    log: &mut bun_ast::Log,
 ) -> Result<ResolvedSource, bun_jsc::CrateError> {
-    transpile_source_code_inner::<false>(jsc_vm, args).map_err(|e| to_jsc_fetch_error(&e))
+    transpile_source_code_inner::<false>(jsc_vm, args, log).map_err(|e| to_jsc_fetch_error(&e))
 }
 
 /// Inner body of [`__bun_transpile_source_code`] — split for `?`-on-`Result`
@@ -1903,8 +1890,10 @@ unsafe fn __bun_transpile_source_code(
 fn transpile_source_code_inner<const DATA_ONLY: bool>(
     jsc_vm: &VirtualMachine,
     args: &TranspileArgs<'_>,
+    log: &mut bun_ast::Log,
 ) -> crate::Result<ResolvedSource> {
-    let mut resolved_source = transpile_source_code_of_any_provenance::<DATA_ONLY>(jsc_vm, args)?;
+    let mut resolved_source =
+        transpile_source_code_of_any_provenance::<DATA_ONLY>(jsc_vm, args, log)?;
     resolved_source.is_static |= is_input_static(jsc_vm, args);
     Ok(resolved_source)
 }
@@ -1935,6 +1924,7 @@ fn is_input_static(vm: &VirtualMachine, args: &TranspileArgs<'_>) -> bool {
 fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
     jsc_vm: &VirtualMachine,
     args: &TranspileArgs<'_>,
+    log: &mut bun_ast::Log,
 ) -> crate::Result<ResolvedSource> {
     use Loader as L;
     let extra = args.extra;
@@ -2084,43 +2074,9 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
 
             let mut cache = RuntimeTranspilerCache::default();
 
-            // ── Swap `vm.transpiler.log` (and linker/resolver/pm logs) ──────
-            // `parse_maybe_return_file_only` writes diagnostics
-            // to `vm.transpiler.log`; the per-call `args.log` is what
-            // `Bun__transpileFile` later passes to `process_fetch_log`
-            //. Without this swap, parse errors land in the
-            // VM's stale log and the user-visible error formatting reads an
-            // empty buffer.
-            // Note: `vm.transpiler` is already read live below
-            // (`.reset_store()`, `.linker`, `.log` at :338) so the original
-            // "uninitialized Transpiler" gate was stale.
-            // `transpiler.log` / `args.log` are never-null (set in
-            // `Transpiler::init` / by the C++ caller respectively).
-            let old_log = jsc_vm.transpiler.get().log;
-            let old_log_nn = core::ptr::NonNull::new(old_log).expect("transpiler.log is non-null");
-            let args_log_nn = core::ptr::NonNull::new(args.log).expect("args.log is non-null");
+            // The caller turns `log` into the import's error.
+            let redirect = jsc_vm.log.redirect(log);
             let transpiler = jsc_vm.transpiler.as_ptr();
-            // SAFETY: field writes on the JS thread;
-            // `args.log` is non-null (checked above) and outlives this call.
-            unsafe {
-                (*transpiler).log = args.log;
-                (*transpiler).resolver.log = args_log_nn;
-                (*transpiler).linker.log = args.log;
-                if let Some(pm) = (*transpiler).resolver.package_manager {
-                    (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = args.log;
-                }
-            }
-            let _log_guard = scopeguard::guard(transpiler, move |transpiler| {
-                // SAFETY: as above; restores the log pointers swapped there.
-                unsafe {
-                    (*transpiler).log = old_log;
-                    (*transpiler).resolver.log = old_log_nn;
-                    (*transpiler).linker.log = old_log;
-                    if let Some(pm) = (*transpiler).resolver.package_manager {
-                        (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = old_log;
-                    }
-                }
-            });
 
             let is_node_override = !DATA_ONLY && specifier.starts_with(node_fallbacks::IMPORT_PATH);
 
@@ -2287,6 +2243,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         loader: Cell::new(L::Wasm),
                         module_type: Cell::new(ModuleType::Unknown),
                     };
+                    drop(redirect);
                     // Re-enter with `&parse_result.source` as `virtual_source`.
                     return transpile_source_code_inner::<DATA_ONLY>(
                         jsc_vm,
@@ -2294,12 +2251,12 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             specifier: args.specifier,
                             referrer: args.referrer,
                             input_specifier: args.input_specifier,
-                            log: args.log,
                             virtual_source: Some(&parse_result.source),
                             global_object: args.global_object,
                             flags: args.flags,
                             extra: &wasm_extra,
                         },
+                        log,
                     );
                 }
 
@@ -2308,8 +2265,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     maybe_watch_file(jsc_vm, &mut input_file, is_node_override, path, hash);
                 }
 
-                // SAFETY: `transpiler.log` was swapped to non-null `args.log` above.
-                if unsafe { (*(*transpiler).log).errors > 0 } {
+                if jsc_vm.log.has_errors() {
                     arena_guard.2 = false;
                     // Node compile cache: record the failed module so exit-time
                     // persist logs the "was not initialized" skip (Node parity).
@@ -2549,16 +2505,14 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 }
 
                 // Link import records.
-                // SAFETY: `options` is only read and `linker` is JS-thread-exclusive.
-                unsafe {
-                    (*transpiler).linker.link::<false, true>(
-                        &(*transpiler).options,
-                        path,
-                        &mut parse_result,
-                        &jsc_vm.origin,
-                        options::ImportPathFormat::AbsolutePath,
-                    )?;
-                }
+                bun_bundler::linker::link::<false, true>(
+                    jsc_vm.log,
+                    &jsc_vm.transpiler.get().options,
+                    path,
+                    &mut parse_result,
+                    &jsc_vm.origin,
+                    options::ImportPathFormat::AbsolutePath,
+                )?;
 
                 let printed_ast = bun_jsc::resolved_source::PrintedAst::new(&parse_result.ast);
                 let is_commonjs_module = printed_ast.is_commonjs_module;
@@ -2742,7 +2696,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             // Recurse as `.file`.
             extra.loader.set(L::File);
             extra.module_type.set(ModuleType::Unknown);
-            transpile_source_code_inner::<DATA_ONLY>(jsc_vm, args)
+            transpile_source_code_inner::<DATA_ONLY>(jsc_vm, args, log)
         }
 
         // ────────────────────────────────────────────────────────────────────
@@ -2836,8 +2790,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         global_object,
                         path.text,
                         args.virtual_source,
-                        // SAFETY: `args.log` is the caller's live `Log`; nothing else borrows it in this arm.
-                        unsafe { &mut *args.log }
+                        log
                     )?;
                     return Ok(ResolvedSource {
                         jsvalue_for_export: exports,
@@ -2966,7 +2919,7 @@ fn css_module_exports(
     global: &JSGlobalObject,
     path_text: &[u8],
     virtual_source: Option<&bun_ast::Source<'_>>,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) -> crate::Result<JSValue> {
     use bun_bundler::css_module_graph::{Failure, load_exports, read};
 
@@ -3680,7 +3633,7 @@ fn unreadable_file_error(
     global: &JSGlobalObject,
     specifier: &bun_core::String,
     referrer: &bun_core::String,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     path: &[u8],
 ) -> Option<JSValue> {
     let mut buffer = bun_paths::path_buffer_pool::get();
@@ -3717,7 +3670,7 @@ fn loader_refusal_error<const DATA_ONLY: bool>(
     is_commonjs_require: bool,
     loader: Loader,
     lr: &LoaderResult<'_>,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) -> Option<JSValue> {
     let refusal =
         refusal_of_what_loading_gives::<DATA_ONLY>(global, specifier, is_commonjs_require, loader)?;
@@ -3936,7 +3889,7 @@ fn transpile_file<const DATA_ONLY: bool>(
             is_commonjs_require,
             loader,
             &lr,
-            &mut log,
+            &log,
         )
     {
         *ret = ErrorableResolvedSource::err(error);
@@ -4060,7 +4013,7 @@ fn transpile_file<const DATA_ONLY: bool>(
             is_commonjs_require,
             synchronous_loader,
             &lr,
-            &mut log,
+            &log,
         )
     {
         *ret = ErrorableResolvedSource::err(error);
@@ -4080,17 +4033,16 @@ fn transpile_file<const DATA_ONLY: bool>(
         specifier: lr.specifier,
         referrer: referrer_slice.slice(),
         input_specifier: specifier,
-        log: &raw mut log,
         virtual_source: lr.virtual_source,
         global_object: global,
         flags: FetchFlags::Transpile,
         extra: &extra,
     };
 
-    match transpile_source_code_inner::<DATA_ONLY>(jsc_vm, &args) {
+    match transpile_source_code_inner::<DATA_ONLY>(jsc_vm, &args, &mut log) {
         Ok(resolved) => *ret = ErrorableResolvedSource::ok(resolved),
         Err(err) => {
-            if let Some(value) = transpile_error_value(global, specifier, referrer, &mut log, err) {
+            if let Some(value) = transpile_error_value(global, specifier, referrer, &log, err) {
                 *ret = ErrorableResolvedSource::err(value);
             }
         }
@@ -4104,7 +4056,7 @@ fn transpile_error_value(
     global: &JSGlobalObject,
     specifier: &bun_core::String,
     referrer: &bun_core::String,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     err: crate::Error,
 ) -> Option<JSValue> {
     match err {
@@ -4155,13 +4107,12 @@ pub(crate) fn transpile_as_loaded(
         specifier: path,
         referrer: b"",
         input_specifier: &specifier,
-        log: &raw mut log,
         virtual_source: Some(&virtual_source),
         global_object: global,
         flags: FetchFlags::Transpile,
         extra: &extra,
     };
-    transpile_source_code_inner::<false>(jsc_vm, &args).ok()
+    transpile_source_code_inner::<false>(jsc_vm, &args, &mut log).ok()
 }
 
 /// BunCompiledModules.cpp. An error of the class that `bun run` throws at the import of a file of data that its parser refuses, with the place that the parser named at the build. Empty where the build kept nothing under the path.
@@ -4289,14 +4240,13 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         specifier,
         referrer: referrer_slice.slice(),
         input_specifier: specifier_str,
-        log: &raw mut log,
         virtual_source: Some(&virtual_source),
         global_object: global,
         flags: FetchFlags::Transpile,
         extra: &extra,
     };
 
-    match transpile_source_code_inner::<false>(jsc_vm, &args) {
+    match transpile_source_code_inner::<false>(jsc_vm, &args, &mut log) {
         Ok(resolved) => {
             *ret = ErrorableResolvedSource::ok(resolved);
             bun_analytics::features::virtual_modules
@@ -4305,7 +4255,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         }
         Err(err) => {
             if let Some(value) =
-                transpile_error_value(global, specifier_str, referrer_str, &mut log, err)
+                transpile_error_value(global, specifier_str, referrer_str, &log, err)
             {
                 *ret = ErrorableResolvedSource::err(value);
             }

@@ -171,6 +171,24 @@ impl Drop for Parked {
 
 // ─── impl AutoInstaller ───────────────────────────────────────────────────
 
+impl PackageManager {
+    /// When the guard drops, what the manager has logged moves to `log`.
+    #[must_use]
+    pub(crate) fn drain_log_on_drop<'a>(
+        &mut self,
+        log: Option<&'a bun_ast::Log>,
+    ) -> impl Drop + use<'a> {
+        let own_log = self.log();
+        if let Some(log) = log {
+            own_log.level.set(log.level.get());
+        }
+        scopeguard::guard(log, move |log| match log {
+            Some(log) => own_log.append_to(log),
+            None => own_log.reset(),
+        })
+    }
+}
+
 impl hooks::AutoInstaller for PackageManager {
     // ── Lockfile reads ────────────────────────────────────────────────────
 
@@ -276,7 +294,9 @@ impl hooks::AutoInstaller for PackageManager {
         package_id: PackageID,
         resolution: &hooks::Resolution,
         path_buf: &'b mut bun_paths::PathBuffer,
+        log: Option<&bun_ast::Log>,
     ) -> Result<&'b [u8], bun_core::Error> {
+        let _drain = self.drain_log_on_drop(log);
         if let Err(why) = directories::try_get_cache_directory(self) {
             self.exit_or_log(&why);
             return Err(bun_core::Error::WriteFailed);
@@ -294,8 +314,9 @@ impl hooks::AutoInstaller for PackageManager {
             len = directories::path_for_resolution(self, package_id, &r, path_buf)
                 .map(|path| path.len());
         } else if len.is_err() && r.tag != resolution::Tag::Npm {
+            let log = self.log();
             let buf = self.lockfile.buffers.string_bytes.as_slice();
-            self.log_mut().add_error_fmt(
+            log.add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(
@@ -325,7 +346,9 @@ impl hooks::AutoInstaller for PackageManager {
         version_buf: &[u8],
         package_json_dir: Option<&[u8]>,
         behavior: hooks::Behavior,
+        log: Option<&bun_ast::Log>,
     ) -> hooks::EnqueueResult {
+        let _drain = self.drain_log_on_drop(log);
         // The package manager resolves a relative tarball path against the working directory,
         // which is the project only for `bun install`. Here the path is made absolute first.
         let mut absolute: Vec<u8> = Vec::new();
@@ -378,7 +401,7 @@ impl hooks::AutoInstaller for PackageManager {
         name_hash: Option<u64>,
         version: &[u8],
         sliced: &SlicedString,
-        log: Option<&mut bun_ast::Log>,
+        log: Option<&bun_ast::Log>,
     ) -> Option<hooks::DependencyVersion> {
         // `pm` is threaded so `parse_with_tag` can record `npm:` aliases into
         // `pm.known_npm_aliases`.
@@ -392,7 +415,7 @@ impl hooks::AutoInstaller for PackageManager {
         version: &[u8],
         tag: hooks::DependencyVersionTag,
         sliced: &SlicedString,
-        log: Option<&mut bun_ast::Log>,
+        log: Option<&bun_ast::Log>,
     ) -> Option<hooks::DependencyVersion> {
         dependency::parse_with_tag(name, Some(name_hash), version, tag, sliced, log, None)
     }
@@ -410,7 +433,7 @@ fn __bun_resolver_parse_dependency(
     name_hash: hooks::PackageNameHash,
     version: &[u8],
     sliced: &SlicedString,
-    log: Option<&mut bun_ast::Log>,
+    log: Option<&bun_ast::Log>,
 ) -> Option<hooks::DependencyVersion> {
     dependency::parse(
         name,
@@ -430,8 +453,6 @@ fn __bun_resolver_parse_dependency(
 // upcast to the `dyn AutoInstaller` trait object the resolver stores.
 //
 // SAFETY (callee contract):
-//   • `log` is the resolver's `NonNull<bun_ast::Log>` (Transpiler-owned,
-//     process-lifetime; `init_with_runtime` stores it raw).
 //   • `install` is `BundleOptions.install` (`?*Api.BunInstall`). The pointee is
 //     the CLI-owned `Box<BunInstall>` (process-lifetime), read-only.
 //   • `env` is the resolver's unwrapped `env_loader` (Transpiler-owned,
@@ -439,7 +460,7 @@ fn __bun_resolver_parse_dependency(
 #[unsafe(no_mangle)]
 #[inline(never)]
 unsafe fn __bun_resolver_init_package_manager(
-    mut log: core::ptr::NonNull<bun_ast::Log>,
+    log: &bun_ast::Log,
     install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
     mut env: core::ptr::NonNull<bun_dotenv::Loader>,
     prefer_offline: bool,
@@ -457,13 +478,12 @@ unsafe fn __bun_resolver_init_package_manager(
     // (see `run_command::wire_transpiler_from_ctx`); read-only borrow.
     let bun_install: Option<&crate::bun_schema::api::BunInstall> =
         install.map(|p| unsafe { p.as_ref() });
-    // SAFETY: caller guarantees `log` / `env` point at process-lifetime
+    // SAFETY: caller guarantees `env` points at process-lifetime
     // Transpiler-owned storage with no aliasing `&mut` live across this call.
-    let (log_ref, env_ref): (&mut bun_ast::Log, &mut bun_dotenv::Loader) =
-        unsafe { (log.as_mut(), env.as_mut()) };
+    let env_ref: &mut bun_dotenv::Loader = unsafe { env.as_mut() };
 
     let pm: *mut PackageManager = crate::package_manager::init_with_runtime(
-        log_ref,
+        log,
         bun_install,
         &crate::package_manager::CommandLineArguments {
             prefer_offline,
@@ -480,7 +500,7 @@ unsafe fn __bun_resolver_init_package_manager(
             | bun_resolver::Error::UnreadableConfig),
         ) => err,
         other => {
-            log_ref.add_zig_error_with_note(
+            log.add_zig_error_with_note(
                 other.name(),
                 format_args!("while initializing the auto-install package manager"),
             );

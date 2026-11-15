@@ -604,7 +604,6 @@ fn build_program(
         module_prefix,
         outfile: outfile.as_deref(),
         replaced_file: replaced_file.as_deref(),
-        log: request.log,
         arena: bundler.arena,
         event_loop: bundler.event_loop,
         worker_pool: bundler.worker_pool,
@@ -613,8 +612,7 @@ fn build_program(
         typescript_libs: bun_sema_driver::Libs::Bundled(crate::cli::typescript_libs::BUNDLED),
     });
     built.map_err(|failure| {
-        // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
-        let log = unsafe { &mut *request.log };
+        let log = request.log;
         if !log.has_errors() {
             log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("the build failed"));
         }
@@ -641,8 +639,7 @@ fn add_assets(
             .map_err(CompileFailure::Assets);
     }
     let entry_name = outfile.map_or(&b""[..], configuration::compile_outfile);
-    // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
-    let log = unsafe { &mut *request.log };
+    let log = request.log;
     let implicit = &files_for_file_system.implicitly_embedded[..];
     let asked_about = &files_for_file_system.asked_about[..];
     let (named_at_root, asset_paths) = match (assets, implicit, asked_about) {
@@ -684,7 +681,7 @@ fn add_assets(
 fn warn_about_shared_asset_names(
     named_at_root: &[u8],
     output_files: &[OutputFile],
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) {
     // Each path has its layer: 0 for the root, then the folders in order.
     let mut paths_by_name: PathsByName = Default::default();
@@ -763,7 +760,7 @@ fn emit_not_embedded_warnings(
     root_directory: &[u8],
     fs_only_paths: &[PathForFileSystemAlone],
     output_files: &[OutputFile],
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) {
     let root = with_forward_slashes(trim_trailing_separators(root_directory));
     let fs_only_paths = fs_only_paths.iter().filter(|it| !it.is_folder);
@@ -776,7 +773,7 @@ fn emit_not_embedded_warnings(
     for (path, warning) in &files_for_file_system.warnings_if_not_embedded {
         let spelled = with_forward_slashes(path);
         if !found.contains(spelled.get(root.len() + 1..).unwrap_or_default()) {
-            log.warnings += 1;
+            log.warnings.update(|n| n + 1);
             log.add_msg(warning.clone());
         }
     }
@@ -1076,7 +1073,7 @@ fn add_assets_under_root(
     entry_name: &[u8],
     root_directory: &[u8],
     output_files: &mut Vec<OutputFile>,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) -> Result<(Vec<u8>, Vec<PathForFileSystemAlone>), AssetError> {
     let working_directory =
         bun_sys::getcwd_alloc().map_err(AssetError::WorkingDirectoryUnreadable)?;

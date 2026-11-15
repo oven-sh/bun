@@ -79,8 +79,8 @@ pub fn install_with_manager(
     }
 
     // An error from the options or the environment is printed at every log level.
-    if manager.log_mut().has_errors() {
-        manager.log_mut().print(Output::error_writer())?;
+    if manager.log().has_errors() {
+        manager.log().print(Output::error_writer())?;
         Global::crash();
     }
 
@@ -172,7 +172,7 @@ pub fn install_with_manager(
                 let source_copy = root_package_json_source(manager, root_package_json_path, true)?;
 
                 let mut resolver: () = ();
-                let log = manager.log_mut();
+                let log = manager.log();
                 maybe_root.parse(
                     &mut lockfile,
                     manager,
@@ -187,16 +187,11 @@ pub fn install_with_manager(
                 let mut mapping = vec![invalid_package_id; maybe_root.dependencies.len as usize];
 
                 // `Diff::generate` (in lockfile_real::package) needs `manager`,
-                // `manager.log`, `manager.lockfile` and a
+                // `manager.lockfile` and a
                 // fresh `lockfile` simultaneously. Route through raw ptrs to satisfy
                 // borrowck.
                 manager.summary = {
-                    // `log_mut()` returns the disjoint CLI `Log` allocation
-                    // (BACKREF field, lifetime decoupled from `&self`); read it
-                    // and the `to_update` scalar safely through `manager`
-                    // *before* establishing the raw-ptr split so no borrow on
-                    // `*manager` survives into `mgr`'s `&mut` reborrows below.
-                    let log = manager.log_mut();
+                    let log = manager.log();
                     let to_update = manager.to_update;
                     let mgr: *mut PackageManager = manager;
                     // SAFETY: `mgr` is the sole provenance root for the manager
@@ -226,7 +221,7 @@ pub fn install_with_manager(
                     core::mem::take(&mut lockfile.package_extensions.rules);
                 let mut extension_rows: Vec<DependencyID> = Vec::new();
                 if !manager.lockfile.package_extensions.is_empty() {
-                    let log = manager.log_mut();
+                    let log = manager.log();
                     if let Some((rows, removed)) =
                         manager.lockfile.reconcile_package_extensions(log)?
                     {
@@ -663,9 +658,9 @@ pub fn install_with_manager(
     print_kept_patched(manager);
     warn_unchecked_sources(manager);
 
-    let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
-    manager.log_mut().print(Output::error_writer())?;
-    manager.log_mut().reset();
+    let had_errors_before_cleaning_lockfile = manager.log().has_errors();
+    manager.log().print(Output::error_writer())?;
+    manager.log().reset();
     super::add_catalog::refuse_declared_positionals(manager);
     super::package_json_write_back::fold_resolved_positionals(manager);
 
@@ -875,9 +870,9 @@ pub fn install_with_manager(
 
     if manager.options.lockfile_only {
         if log_level != Options::LogLevel::Silent {
-            manager.log_mut().print(Output::error_writer())?;
+            manager.log().print(Output::error_writer())?;
         }
-        if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
+        if had_errors_before_cleaning_lockfile || manager.log().has_errors() {
             Global::crash();
         }
         // save the lockfile and exit. make sure metahash is generated for binary lockfile
@@ -969,9 +964,9 @@ pub fn install_with_manager(
         warn_unsupported_platform(manager, &workspace_filters, install_root_dependencies);
     }
     if log_level != Options::LogLevel::Silent {
-        manager.log_mut().print(Output::error_writer())?;
+        manager.log().print(Output::error_writer())?;
     }
-    if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
+    if had_errors_before_cleaning_lockfile || manager.log().has_errors() {
         Global::crash();
     }
 
@@ -1445,12 +1440,13 @@ fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
 #[cold]
 #[inline(never)]
 fn warn_unsupported_platform(
-    manager: &PackageManager,
+    manager: &mut PackageManager,
     workspace_filters: &[WorkspaceFilter],
     install_root_dependencies: bool,
 ) {
     use crate::npm::Negatable;
 
+    let log = manager.log();
     let lockfile: &Lockfile = &manager.lockfile;
     let options = &manager.options;
     let pkgs = &lockfile.packages;
@@ -1503,7 +1499,7 @@ fn warn_unsupported_platform(
             continue;
         }
         warned.push(id);
-        manager.log_mut().add_warning_fmt(
+        log.add_warning_fmt(
             None,
             bun_ast::Loc::EMPTY,
             format_args!(
@@ -1565,7 +1561,7 @@ fn overrides_field(
     root_package_json_path: &ZStr,
 ) -> lockfile::override_map::Field {
     use lockfile::override_map::Field;
-    let log = manager.log_mut();
+    let log = manager.log();
     let WorkspacePackageJsonCacheResult::Entry(entry) = manager
         .workspace_package_json_cache
         .get_with_path(log, root_package_json_path.as_bytes(), Default::default())
@@ -1605,8 +1601,8 @@ fn report_lockfile_load_error(
     if log_level != Options::LogLevel::Silent
         && !crate::migration::reported_unsupported_lockfile_version(cause)
     {
-        if manager.log_mut().errors > 0 {
-            manager.log_mut().print(Output::error_writer())?;
+        if manager.log().has_errors() {
+            manager.log().print(Output::error_writer())?;
         }
 
         Output::err(
@@ -1622,7 +1618,7 @@ fn report_lockfile_load_error(
         Output::flush();
     }
     // The lockfile is ignored from here on. Its parse errors must not fail the install.
-    manager.log_mut().reset();
+    manager.log().reset();
 
     if manager.options.enable.fail_early() {
         Global::crash();
@@ -2032,8 +2028,9 @@ fn root_package_json_source(
     root_package_json_path: &ZStr,
     has_lockfile: bool,
 ) -> crate::Result<Source<'static>> {
+    let log = manager.log();
     let (verb, err) = match manager.workspace_package_json_cache.get_with_path(
-        manager.log_mut(),
+        log,
         root_package_json_path.as_bytes(),
         Default::default(),
     ) {
@@ -2048,8 +2045,8 @@ fn root_package_json_source(
         WorkspacePackageJsonCacheResult::ReadErr(err) => ("read", err),
         WorkspacePackageJsonCacheResult::ParseErr(err) => ("parse", err),
     };
-    if manager.log_mut().errors > 0 {
-        manager.log_mut().print(Output::error_writer())?;
+    if log.has_errors() {
+        log.print(Output::error_writer())?;
     }
     Output::err(
         err,
@@ -2121,10 +2118,7 @@ fn create_new_lockfile_and_enqueue(
 
     let mut resolver: () = ();
     {
-        // `log_mut()` reads the BACKREF `self.log` and returns the disjoint
-        // CLI `Log` allocation (lifetime decoupled from `&self`); call it
-        // safely *before* the raw-ptr split.
-        let log = manager.log_mut();
+        let log = manager.log();
         let mgr: *mut PackageManager = manager;
         // SAFETY: `mgr` is the sole provenance root; `parse` reborrows the
         // disjoint `lockfile` field through it. No other live `&mut` to
@@ -2266,7 +2260,7 @@ fn wait_for_resolution(manager: &mut PackageManager) -> crate::Result<()> {
 /// Resolves the deferred peers without waiting. A peer that needs a download stays in the queue.
 fn resolve_peers_without_waiting(manager: &mut PackageManager) -> crate::Result<()> {
     // An error ends the install, so the peers are not worth another round of requests.
-    if manager.log_mut().has_errors() {
+    if manager.log().has_errors() {
         return Ok(());
     }
     manager.peer_askers = None;
@@ -2293,18 +2287,18 @@ fn clean_lockfile(
     // a lockfile turns such a row into a workspace dependency, so the same is done here.
     (manager.lockfile).tag_workspace_links(manager.options.link_workspace_packages);
     let new_lockfile = {
+        let log = manager.log();
         let mgr: *mut PackageManager = manager;
-        // SAFETY: `lockfile`, `update_requests`, and `*log` are disjoint storage
+        // SAFETY: `lockfile` and `update_requests` are disjoint storage
         // within `*mgr`; `clean_with_logger` only reads `manager` for option flags
         // and its preinstall_state, so a single raw provenance root keeps all
         // reborrows under one tag (PORTING.md §Aliasing-split-borrow).
         unsafe {
-            let log = (*mgr).log;
             Lockfile::clean_with_logger(
                 &mut (*mgr).lockfile,
                 &mut *mgr,
                 &mut (*mgr).update_requests,
-                &mut *log,
+                log,
                 log_level,
             )?
         }
@@ -2316,7 +2310,7 @@ fn clean_lockfile(
         core::mem::take(&mut before_clean.package_extensions.rules);
     // The log had no errors before this, so the tree builder refused a name. Stop before the linker
     // runs.
-    if manager.log_mut().has_errors() {
+    if manager.log().has_errors() {
         manager.crash();
     }
     Ok(before_clean)
@@ -2516,7 +2510,7 @@ fn reresolve_rows_outside_overrides(
     if manager.pending_task_count() > 0 || manager.peer_dependencies.readable_length() > 0 {
         resolve_pending_tasks(manager, root, log_level, &mut NamedUpdates::default(), None)?;
     }
-    if manager.log_mut().has_errors() {
+    if manager.log().has_errors() {
         manager.crash();
     }
     redirect_moved_edges(&mut manager.lockfile, &moved, false);

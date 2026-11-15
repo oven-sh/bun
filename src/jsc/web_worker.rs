@@ -383,14 +383,7 @@ impl WebWorker {
         log!("[{}] create", this_context_id);
 
         let spec_slice = specifier_str.to_utf8();
-        // The transpiler holds its address: it is neither moved nor named until the guard below has run.
-        let mut temp_log = bun_ast::Log::default();
-        let prev_log = parent.transpiler.get().log;
-        parent.transpiler.with_mut(|t| t.set_log(&raw mut temp_log));
-        // RAII: log pointer restored on every return path, before `temp_log` drops.
-        scopeguard::defer! {
-            parent.transpiler.with_mut(|t| t.set_log(prev_log));
-        }
+        let mut log = bun_ast::Log::default();
 
         // SAFETY: caller passed valid (ptr,len) (or `(null,0)`); slice borrowed from C++.
         let preload_modules: &[BunString] =
@@ -406,6 +399,7 @@ impl WebWorker {
                 continue;
             }
             let dot_slash = OnceCell::new();
+            let redirect = parent.log.redirect(&mut log);
             let unresolved =
                 match resolve_entry_point_specifier(parent, utf8_slice.slice(), &dot_slash) {
                     Ok(preload) => {
@@ -414,10 +408,11 @@ impl WebWorker {
                     }
                     Err(unresolved) => unresolved,
                 };
+            drop(redirect);
             *error_message = match unresolved {
                 Unresolved::Because(text) => BunString::static_(text),
                 Unresolved::Logged => {
-                    let (global, log) = (parent.global(), parent.transpiler.get().log());
+                    let global = parent.global();
                     let out: jsc::JsResult<BunString> = (|| {
                         let out =
                             log.to_js(global, format_args!("Error resolving Worker entry point"))?;
@@ -1052,11 +1047,10 @@ impl WebWorker {
             Ok(p) => p,
             Err(unresolved) => {
                 vm.exit_handler.exit_code.set(1);
-                let vm_log = vm.log_mut().unwrap();
-                if vm_log.errors == 0
+                if !vm.log.has_errors()
                     && let Unresolved::Because(text) = unresolved
                 {
-                    vm_log.add_error(None, bun_ast::Loc::EMPTY, text);
+                    vm.log.add_error(None, bun_ast::Loc::EMPTY, text);
                 }
                 self.flush_logs(vm);
                 return self.shutdown();
@@ -1071,9 +1065,7 @@ impl WebWorker {
                 b"': this executable loads code from disk, so a Worker starts only at the files that the build saw a Worker start at. Pass the file to bun compile as another entry point.",
             ]
             .concat();
-            vm.log_mut()
-                .unwrap()
-                .add_error(None, bun_ast::Loc::EMPTY, message);
+            vm.log.add_error(None, bun_ast::Loc::EMPTY, message);
             self.flush_logs(vm);
             return self.shutdown();
         }
@@ -1263,8 +1255,7 @@ impl WebWorker {
         let mut exit_code: i32 = 0;
         if !vm_ptr.is_null() {
             // SAFETY: this thread's VM, whose API lock `thread_main` took; no other
-            // thread holds a pointer to it (they only ever held its handle);
-            // `init_worker` always passes `log: None`.
+            // thread holds a pointer to it (they only ever held its handle).
             exit_code = i32::from(unsafe { VirtualMachine::exit_and_free(vm_ptr) });
         }
         log!(
@@ -1341,13 +1332,12 @@ impl WebWorker {
     /// object would run into the pending termination.
     fn flush_logs(&self, vm: &VirtualMachine) {
         jsc::mark_binding();
-        let vm_log = vm.log_ref().unwrap();
-        if vm_log.msgs.is_empty() || !vm.script_allowed() {
+        if !vm.log.has_msgs() || !vm.script_allowed() {
             return;
         }
         let global = vm.global();
         let result: jsc::JsResult<(JSValue, BunString)> = (|| {
-            let err = vm_log.to_js(global, format_args!("Error in worker"))?;
+            let err = vm.log.to_js(global, format_args!("Error in worker"))?;
             let str = err.to_bun_string(global)?;
             Ok((err, str))
         })();
@@ -1484,17 +1474,14 @@ fn resolve_entry_point_specifier_quietly<'s>(
     dot_slash: &'s OnceCell<Vec<u8>>,
 ) -> Option<&'s [u8]> {
     let mut log = bun_ast::Log::default();
-    let log_before = parent.transpiler.get().log;
-    parent.transpiler.with_mut(|t| t.set_log(&raw mut log));
-    let path = resolve_entry_point_specifier(parent, str, dot_slash).ok();
-    parent.transpiler.with_mut(|t| t.set_log(log_before));
-    path
+    let _redirect = parent.log.redirect(&mut log);
+    resolve_entry_point_specifier(parent, str, dot_slash).ok()
 }
 
 /// Why [`resolve_entry_point_specifier`] has no path.
 enum Unresolved {
     Because(&'static str),
-    /// The transpiler's log has the resolver's error.
+    /// The VM's log has the resolver's error.
     Logged,
 }
 
@@ -1565,16 +1552,9 @@ fn resolve_entry_point_specifier<'s>(
     }
 
     let transpiler = parent.transpiler.as_ptr();
-    let said_before = {
-        // SAFETY: `parent` is this thread's VM, and only its own
-        // thread mutates its `transpiler` and the log that it writes to. No two
-        // references to the log overlap: this one ends with the block,
-        // `resolve_entry_point` makes its own where it fails, and the one in the
-        // `Err` arm is made when that call has returned.
-        let log = unsafe { &*(*transpiler).log };
-        (log.msgs.len(), log.errors)
-    };
-    // SAFETY: as above.
+    let log = parent.log;
+    let said_before = (log.msgs_len(), log.errors.get());
+    // SAFETY: `parent` is this thread's VM, and only its own thread mutates its `transpiler`.
     let resolved_entry_point = match unsafe { (*transpiler).resolve_entry_point(str, dot_slash) } {
         Ok(resolved) => resolved,
         Err(error) => {
@@ -1582,10 +1562,8 @@ fn resolve_entry_point_specifier<'s>(
                 .filter(|_| crate::compiled_program::program_of_executable().is_some())
                 .and_then(|graph| str.strip_prefix(graph.base_public_path_with_default_suffix()));
             if let Some(below_root) = below_root {
-                // SAFETY: as above.
-                let log = unsafe { &mut *(*transpiler).log };
-                log.msgs.truncate(said_before.0);
-                log.errors = said_before.1;
+                log.with_msgs(|msgs| msgs.truncate(said_before.0));
+                log.errors.set(said_before.1);
                 log.add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,

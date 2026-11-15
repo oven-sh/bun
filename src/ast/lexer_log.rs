@@ -5,26 +5,20 @@
 //! add_syntax_error}` that gate on `is_log_disabled`, dedup against
 //! `prev_error_loc`, push into `Log`, then record the loc. This trait
 //! collapses both.
-//!
-//! The trait carries a `'s` lifetime so `source()` can hand back the lexer's
-//! stored `&'s Source<'s>` *without* borrowing `self` — that is what lets the
-//! provided bodies call `self.log_mut()` afterwards without a split-borrow
-//! conflict.
 
 use core::fmt;
 
 use crate::{AddErrorOptions, Loc, Log, Range, Source, usize2loc};
 
-pub trait LexerLog<'s> {
+pub trait LexerLog {
     /// Per-lexer error variant returned from the `*_error` family
     /// (`Error::SyntaxError` for js, `crate::Error::SyntaxError` for
     /// the JSON-subset lexer).
     type Err;
 
     // ── required state accessors ────────────────────────────────────────
-    fn log_mut(&mut self) -> &mut Log;
-    /// NB: returns the lexer-stored `&'s Source<'s>`, *not* a `&self`-tied borrow.
-    fn source(&self) -> &'s Source<'s>;
+    fn log(&self) -> &Log;
+    fn source(&self) -> &Source<'_>;
     fn prev_error_loc_mut(&mut self) -> &mut Loc;
     fn start(&self) -> usize;
     fn syntax_err() -> Self::Err;
@@ -46,11 +40,10 @@ pub trait LexerLog<'s> {
         if l.eql(*self.prev_error_loc_mut()) {
             return;
         }
-        let source = self.source();
-        self.log_mut().add_error_fmt_opts(
+        self.log().add_error_fmt_opts(
             args,
             AddErrorOptions {
-                source: Some(source),
+                source: Some(self.source()),
                 loc: l,
                 ..Default::default()
             },
@@ -66,11 +59,10 @@ pub trait LexerLog<'s> {
         if r.loc.eql(*self.prev_error_loc_mut()) {
             return Ok(());
         }
-        let source = self.source();
-        self.log_mut().add_error_fmt_opts(
+        self.log().add_error_fmt_opts(
             args,
             AddErrorOptions {
-                source: Some(source),
+                source: Some(self.source()),
                 loc: r.loc,
                 len: r.len,
                 ..Default::default()
@@ -84,7 +76,7 @@ pub trait LexerLog<'s> {
     fn syntax_error(&mut self) -> Result<(), Self::Err> {
         // Only add this if there is not already an error — a more descriptive
         // one may already have been emitted.
-        if !self.log_mut().has_errors() {
+        if !self.log().has_errors() {
             self.add_error(self.start(), format_args!("Syntax Error"));
         }
         Err(Self::syntax_err())

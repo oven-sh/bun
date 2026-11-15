@@ -701,7 +701,7 @@ impl TarballStream {
             let Job::Extract { tarball, data, .. } = &mut (*task).job else {
                 unreachable!("`create_extract_task_for_streaming` built it");
             };
-            match (*this).populate_result(tarball, &mut (*task).log) {
+            match (*this).populate_result(tarball, &(*task).log) {
                 Ok(extracted) => {
                     *data = Some(extracted);
                     (*task).err = None;
@@ -754,7 +754,7 @@ impl TarballStream {
     fn populate_result(
         &mut self,
         tarball: &crate::ExtractTarball,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
     ) -> Result<crate::ExtractData, crate::Error> {
         if let Some(err) = self.fail {
             if matches!(err, crate::Error::Http(_)) {

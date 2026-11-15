@@ -58,7 +58,7 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
 
     if !has_compiler() {
         exit_with_failure(
-            ctx.log_ref(),
+            ctx.log(),
             origin,
             &ctx.bundler_options.compile_target,
             &CompileFailure::NoCompiler,
@@ -94,8 +94,7 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
         Ok(outcome)
     });
     let finished = bun_core::time::nano_timestamp();
-    // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
-    let log = unsafe { &mut *request.log };
+    let log = request.log;
     match result {
         Ok(outcome) => print_outcome(log, outcome, &location.outfile, finished),
         Err(failure) => exit_with_failure(log, request.origin, request.executable.target, &failure),

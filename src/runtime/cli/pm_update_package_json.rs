@@ -14,7 +14,8 @@ pub(crate) fn update_package_json_and_install_catch_error(
     ctx: Context,
     subcommand: Subcommand,
 ) -> Result<(), Error> {
-    update_package_json_and_install(ctx, subcommand).or_else(InstallCommand::handle_error)
+    update_package_json_and_install(ctx, subcommand)
+        .or_else(|e| InstallCommand::handle_error(ctx.log(), e))
 }
 
 fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> Result<(), Error> {

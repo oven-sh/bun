@@ -36,11 +36,11 @@ pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
                 }
                 Err(_) => {
                     // Skip duplicate-key warnings so the message names the fatal error.
-                    let first_msg = log
-                        .msgs
+                    let msgs = log.msgs.get_mut();
+                    let first_msg = msgs
                         .iter()
                         .find(|m| m.kind == bun_ast::Kind::Err)
-                        .or_else(|| log.msgs.first());
+                        .or_else(|| msgs.first());
                     if let Some(first_msg) = first_msg {
                         return Err(global.throw_value(global.create_syntax_error_instance(
                             format_args!(

@@ -61,11 +61,11 @@ fn output_order_ignores_insertion_order() {
 fn equal_entries_print_once() {
     let error = checker_error("/project/a.ts", (1, 5), 2322, "first");
     let log = written_errors(vec![error.clone(), error.clone()]);
-    assert_eq!((log.msgs.len(), log.errors), (1, 1));
+    assert_eq!((log.msgs_len(), log.errors.get()), (1, 1));
 
     let other_text = checker_error("/project/a.ts", (1, 5), 2322, "second");
     let log = written_errors(vec![error, other_text]);
-    assert_eq!((log.msgs.len(), log.errors), (2, 2));
+    assert_eq!((log.msgs_len(), log.errors.get()), (2, 2));
 }
 
 #[test]
@@ -99,14 +99,15 @@ fn internal_errors_print_last_and_once() {
     let log = written(diagnostics);
     let printed = kinds_and_texts(&log);
     assert_eq!(printed.len(), 1 + 26);
-    assert_eq!(log.errors as usize, 1 + 26);
+    assert_eq!(log.errors.get() as usize, 1 + 26);
     assert_eq!(printed[0].1, "TS100053: Macros are disabled");
     assert_eq!(printed[1].1, "internal compiler error (Load): zz");
     assert_eq!(printed[2].1, "internal compiler error (LinkAndEmit): 00");
     assert_eq!(printed[3].1, "internal compiler error (LinkAndEmit): 01");
     assert_eq!(printed[26].1, "internal compiler error (LinkAndEmit): 24");
-    assert!(log.msgs[1].notes.is_empty());
-    assert_eq!(log.msgs[26].notes[0].text.as_ref(), BUG_REPORT_REQUEST);
+    let msgs = log.msgs.take();
+    assert!(msgs[1].notes.is_empty());
+    assert_eq!(msgs[26].notes[0].text.as_ref(), BUG_REPORT_REQUEST);
 }
 
 #[test]
@@ -136,30 +137,32 @@ fn warnings_and_notes_do_not_fail_build() {
     diagnostics.add(None, note);
     assert!(!diagnostics.has_errors());
     let log = written(diagnostics);
-    assert_eq!((log.errors, log.warnings, log.msgs.len()), (0, 1, 2));
+    assert_eq!(
+        (log.errors.get(), log.warnings.get(), log.msgs_len()),
+        (0, 1, 2)
+    );
 }
 
 #[test]
 fn log_diagnostic_prints_number_and_counts() {
-    let mut log = Log::init();
-    log_diagnostic(&mut log, Code::UnsupportedOption, &[b"--splitting"]);
-    log_diagnostic(&mut log, Code::TryRequireInstead, &[b"\"shapes\""]);
+    let log = Log::init();
+    log_diagnostic(&log, Code::UnsupportedOption, &[b"--splitting"]);
+    log_diagnostic(&log, Code::TryRequireInstead, &[b"\"shapes\""]);
     let unsupported = "TS100050: --aot does not support --splitting".to_string();
     let note = "TS100111: Try require(\"shapes\") instead".to_string();
     assert_eq!(
         kinds_and_texts(&log),
         [(Kind::Err, unsupported), (Kind::Note, note)]
     );
-    assert_eq!((log.errors, log.warnings), (1, 0));
-    assert!(log.msgs[0].data.location.is_none());
+    assert_eq!((log.errors.get(), log.warnings.get()), (1, 0));
+    assert!(log.msgs.take()[0].data.location.is_none());
 }
 
 #[test]
 fn with_log_keeps_strings_of_finished_calls() {
     let messages = LoadMessages::default();
     messages.with_log(|log| {
-        log.errors += 1;
-        log.add_msg(Msg {
+        log.add_counted_msg(Msg {
             kind: Kind::Err,
             data: Data {
                 text: Cow::Borrowed(b"the plugin failed"),
@@ -182,11 +185,11 @@ fn with_log_keeps_strings_of_finished_calls() {
         describe(&log),
         ["/project/plugin.ts:3:4 Err the plugin failed"]
     );
-    assert_eq!(log.errors, 1);
+    assert_eq!(log.errors.get(), 1);
 
     let mut diagnostics = Diagnostics::new();
     diagnostics.add_load_messages(&messages);
-    assert!(written(diagnostics).msgs.is_empty());
+    assert_eq!(written(diagnostics).msgs_len(), 0);
 }
 
 #[test]
@@ -246,7 +249,8 @@ fn located_message_carries_source_line() {
         let diagnostic = Diagnostic::new(Code::FeatureArgumentCount, Some(span), &[]);
         diagnostics.add(Some(view), diagnostic);
         let log = written(diagnostics);
-        let location = log.msgs[0].data.location.as_ref().expect("a location");
+        let msgs = log.msgs.take();
+        let location = msgs[0].data.location.as_ref().expect("a location");
         let line = "const é = 1, x = 2;".as_bytes();
         assert_eq!(location.line_text.as_deref(), Some(line));
         assert_eq!((location.offset, location.length), (28, 1));

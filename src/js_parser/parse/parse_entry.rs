@@ -23,9 +23,9 @@ use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
 use bun_ast::{B, E, Expr, G, S, Stmt};
 
-// Named instantiations of `P<'_, TS, SCAN>`.
-pub type JavaScriptParser<'a> = P<'a, false, false>;
-pub type TSXParser<'a> = P<'a, true, false>;
+// Named instantiations of `P<'_, '_, TS, SCAN>`.
+pub type JavaScriptParser<'a, 'log> = P<'a, 'log, false, false>;
+pub type TSXParser<'a, 'log> = P<'a, 'log, true, false>;
 
 // In AST crates, ListManaged(T) backed by the arena → bumpalo Vec.
 type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
@@ -33,7 +33,7 @@ type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
 /// What `Parser::parse_only` parsed.
 pub struct ParsedOnly<'p, 'a> {
     pub stmts: &'p [js_ast::Stmt],
-    p: &'p P<'a, false, false>,
+    p: &'p P<'a, 'p, false, false>,
 }
 
 impl<'a> ParsedOnly<'_, 'a> {
@@ -103,19 +103,14 @@ pub fn parse_only_text<R>(
     options.jsc_builtin_syntax = jsc_builtin_syntax;
     options.suppress_warnings_about_weird_code = true;
     let define = Define::default();
-    let mut log = bun_ast::Log::init();
-    let parser = Parser::init(options, &mut log, &source, &define, &arena).ok()?;
+    let log = bun_ast::Log::init();
+    let parser = Parser::init(options, &log, &source, &define, &arena).ok()?;
     parser.parse_only(f).ok()
 }
 
-pub struct Parser<'a> {
+pub struct Parser<'a, 'log> {
     pub(crate) options: Options<'a>,
-    pub(crate) lexer: js_lexer::Lexer<'a>,
-    /// Raw pointer alias of `lexer.log`. Rust
-    /// cannot hold two live `&'a mut Log`, so both the parser- and lexer-side
-    /// handles are `NonNull` and dereferenced at use sites (see `log_mut` /
-    /// `Lexer::log()`). The pointee outlives `'a` (see `init`).
-    pub(crate) log: core::ptr::NonNull<bun_ast::Log>,
+    pub(crate) lexer: js_lexer::Lexer<'a, 'log>,
     pub(crate) source: &'a bun_ast::Source<'a>,
     pub(crate) define: &'a Define,
     pub(crate) bump: &'a Arena,
@@ -387,19 +382,16 @@ pub struct ParsedForCache {
 }
 
 // ── live `Parser::init` ───────────────────────────────────────────────────
-// The two aliasing `Log` handles (parser + lexer) are modeled as
-// `NonNull<Log>` on both sides — neither stores a long-lived `&mut`, so no
-// Stacked-Borrows tag is invalidated when accesses interleave.
-impl<'a> Parser<'a> {
+impl<'a, 'log> Parser<'a, 'log> {
     pub fn init(
         options: Options<'a>,
-        log: &mut bun_ast::Log,
+        log: &'log bun_ast::Log,
         source: &'a bun_ast::Source<'a>,
         define: &'a Define,
         bump: &'a Arena,
-    ) -> Result<Parser<'a>, Error> {
+    ) -> Result<Parser<'a, 'log>, Error> {
         source.check_parseable_len(log, "File")?;
-        let orig_error_count = log.errors;
+        let orig_error_count = log.errors.get();
         let mut lexer = js_lexer::Lexer::init_without_reading(log, source, bump);
         // Must be set before the priming `next()` so leading comments are seen.
         lexer.track_comments = options.features.minify_identifiers;
@@ -407,16 +399,12 @@ impl<'a> Parser<'a> {
         lexer.jsc_builtin_syntax = options.jsc_builtin_syntax;
         lexer.step();
         lexer.next()?;
-        // Copy the lexer's `NonNull<Log>` so both handles share one provenance
-        // chain (the `&'a mut Log` was consumed by `Lexer::init`).
-        let log_ptr = lexer.log;
         Ok(Parser {
             options,
             bump,
             lexer,
             define,
             source,
-            log: log_ptr,
             orig_error_count,
         })
     }
@@ -428,7 +416,7 @@ impl<'a> Parser<'a> {
 // append_part, to_ast, …}` (gated in P.rs); the full ported body is preserved
 // per-method-gated in the impl block below and replaces this stub once that
 // surface lands.
-impl<'a> Parser<'a> {
+impl<'a> Parser<'a, '_> {
     pub fn parse(self) -> Result<crate::Result<'a>, Error> {
         self.parse_with_cache(None)
     }
@@ -465,7 +453,6 @@ impl<'a> Parser<'a> {
     pub fn parse_only<R>(self, f: impl FnOnce(&ParsedOnly<'_, 'a>) -> R) -> Result<R, Error> {
         let p = &mut JavaScriptParser::init(
             self.bump,
-            self.log,
             self.source,
             self.define,
             self.lexer,
@@ -475,7 +462,7 @@ impl<'a> Parser<'a> {
         if p.lexer.token == js_lexer::T::THashbang {
             p.lexer.next()?;
         }
-        if p.log().errors > self.orig_error_count {
+        if p.log().errors.get() > self.orig_error_count {
             return Err(crate::Error::SyntaxError);
         }
         let mut opts = ParseStatementOptions {
@@ -484,7 +471,7 @@ impl<'a> Parser<'a> {
         };
         let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)?;
         // What the parser only logs is still an error: the statements are its best guess.
-        if p.log().errors > self.orig_error_count {
+        if p.log().errors.get() > self.orig_error_count {
             return Err(crate::Error::SyntaxError);
         }
         Ok(f(&ParsedOnly {
@@ -512,7 +499,6 @@ impl<'a> Parser<'a> {
     ) -> Result<(), Error> {
         let p = &mut P::<TS, true>::init(
             self.bump,
-            self.log,
             self.source,
             self.define,
             self.lexer,
@@ -536,7 +522,7 @@ impl<'a> Parser<'a> {
     }
 
     #[cold]
-    fn scan_imports_with<const TS: bool>(p: &mut P<'a, TS, true>) -> Result<(), Error> {
+    fn scan_imports_with<const TS: bool>(p: &mut P<'a, '_, TS, true>) -> Result<(), Error> {
         // The problem with our scan pass approach is type-only imports.
         // We don't have accurate symbol counts.
         // So we don't have a good way to distinguish between a type-only import and not.
@@ -652,7 +638,6 @@ impl<'a> Parser<'a> {
     ) -> Result<crate::Result<'a>, Error> {
         let p = &mut JavaScriptParser::init(
             self.bump,
-            self.log,
             self.source,
             self.define,
             self.lexer,
@@ -742,7 +727,7 @@ enum DateTimeLowerContainer {
 /// shaking may drop unused exports. Iterative: deep dotted TOML headers nest
 /// objects far beyond safe recursion depth.
 fn lower_date_time_literals<'a>(
-    p: &mut JavaScriptParser<'a>,
+    p: &mut JavaScriptParser<'a, '_>,
     expr: &mut Expr,
     temporal_ref: &mut Option<js_ast::Ref>,
 ) -> Result<(), Error> {
@@ -768,7 +753,7 @@ fn lower_date_time_literals<'a>(
 }
 
 fn lower_one_date_time_literal<'a>(
-    p: &mut JavaScriptParser<'a>,
+    p: &mut JavaScriptParser<'a, '_>,
     expr: &mut Expr,
     temporal_ref: &mut Option<js_ast::Ref>,
     work: &mut Vec<DateTimeLowerContainer>,
@@ -831,7 +816,7 @@ fn lower_one_date_time_literal<'a>(
     Ok(())
 }
 
-impl<'a> Parser<'a> {
+impl<'a> Parser<'a, '_> {
     fn _parse<const TS: bool>(
         self,
         mut cache: Option<&mut dyn TranspilerCache>,
@@ -841,17 +826,13 @@ impl<'a> Parser<'a> {
         let Parser {
             options,
             lexer,
-            log,
             source,
             define,
             bump,
             orig_error_count,
         } = self;
 
-        // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
-        // field docs), so handing the same raw pointer to both is defined —
-        // no `&mut` is materialized.
-        let p = &mut P::<TS, false>::init(bump, log, source, define, lexer, options);
+        let p = &mut P::<TS, false>::init(bump, source, define, lexer, options);
 
         if p.options.features.hot_module_reloading {
             debug_assert!(!p.options.tree_shaking);
@@ -875,7 +856,7 @@ impl<'a> Parser<'a> {
         }
 
         // The first token may already have logged an error; halt before the early returns below.
-        if p.log().errors > orig_error_count {
+        if p.log().errors.get() > orig_error_count {
             return Err(crate::Error::SyntaxError);
         }
 
@@ -952,7 +933,7 @@ impl<'a> Parser<'a> {
         // In a number of situations, we continue to parsing despite errors so that we can report more errors to the user
         //   Example where NOT halting causes a crash: A TS enum with a number literal as a member name
         //     https://discord.com/channels/876711213126520882/876711213126520885/1039325382488371280
-        if p.log().errors > orig_error_count {
+        if p.log().errors.get() > orig_error_count {
             return Err(crate::Error::SyntaxError);
         }
 
@@ -1228,7 +1209,7 @@ impl<'a> Parser<'a> {
         visit_tracer.end();
 
         // If there were errors while visiting, also halt here
-        if p.log().errors > orig_error_count {
+        if p.log().errors.get() > orig_error_count {
             return Err(crate::Error::SyntaxError);
         }
 
@@ -2607,7 +2588,7 @@ impl<'a> Parser<'a> {
         }
 
         // If there were errors during to_ast, also halt here
-        if p.log().errors > orig_error_count {
+        if p.log().errors.get() > orig_error_count {
             return Err(crate::Error::SyntaxError);
         }
 

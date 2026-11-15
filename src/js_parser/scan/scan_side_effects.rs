@@ -36,7 +36,7 @@ impl SideEffects {
     }
 
     pub(crate) fn simplify_boolean<'a, const TS: bool, const SCAN: bool>(
-        p: &P<'a, TS, SCAN>,
+        p: &P<'a, '_, TS, SCAN>,
         expr: Expr,
     ) -> Expr {
         if !p.options.features.dead_code_elimination {
@@ -48,7 +48,7 @@ impl SideEffects {
     }
 
     fn _simplify_boolean<'a, const TS: bool, const SCAN: bool>(
-        p: &P<'a, TS, SCAN>,
+        p: &P<'a, '_, TS, SCAN>,
         expr: &mut Expr,
     ) {
         loop {
@@ -119,7 +119,7 @@ impl SideEffects {
     }
 
     pub(crate) fn simplify_unused_expr<'a, const TS: bool, const SCAN: bool>(
-        p: &mut P<'a, TS, SCAN>,
+        p: &mut P<'a, '_, TS, SCAN>,
         expr: Expr,
     ) -> Option<Expr> {
         if !p.options.features.dead_code_elimination {
@@ -464,7 +464,7 @@ impl SideEffects {
     /// Hand-rolled because that helper takes `fn(&C, _)` and we need `&mut P` for the
     /// recursive `simplify_unused_expr` call.
     fn join_all_simplified<'a, const TS: bool, const SCAN: bool>(
-        p: &mut P<'a, TS, SCAN>,
+        p: &mut P<'a, '_, TS, SCAN>,
         items: &[Expr],
     ) -> Option<Expr> {
         let len = items.len();
@@ -494,7 +494,7 @@ impl SideEffects {
 
     ///
     fn simplify_unused_binary_comma_expr<'a, const TS: bool, const SCAN: bool>(
-        p: &mut P<'a, TS, SCAN>,
+        p: &mut P<'a, '_, TS, SCAN>,
         expr: Expr,
     ) -> Option<Expr> {
         let ExprData::EBinary(root_bin) = expr.data else {
@@ -709,7 +709,7 @@ impl SideEffects {
     }
 
     pub(crate) fn is_primitive_with_side_effects<'a, const TS: bool, const SCAN: bool>(
-        p: &P<'a, TS, SCAN>,
+        p: &P<'a, '_, TS, SCAN>,
         loc: bun_ast::Loc,
         data: &ExprData,
     ) -> bool {
@@ -778,7 +778,7 @@ impl SideEffects {
     }
 
     pub(crate) fn to_null_or_undefined<'a, const TS: bool, const SCAN: bool>(
-        p: &P<'a, TS, SCAN>,
+        p: &P<'a, '_, TS, SCAN>,
         exp: &ExprData,
     ) -> Option<Known> {
         if !p.options.features.dead_code_elimination {
@@ -855,7 +855,7 @@ impl SideEffects {
     }
 
     pub(crate) fn to_boolean<'a, const TS: bool, const SCAN: bool>(
-        p: &P<'a, TS, SCAN>,
+        p: &P<'a, '_, TS, SCAN>,
         exp: &ExprData,
     ) -> Option<Known> {
         if !p.options.features.dead_code_elimination {

@@ -8,6 +8,8 @@ use bstr::BStr;
 use bun_bundler::options::{TypeChecked, loaders_from_transform_options};
 use bun_clap as clap;
 use bun_core::{Global, Output, ZStr, env_var};
+use bun_options_types::context::ContextData;
+use bun_options_types::schema::api::TransformOptions;
 use bun_sema_driver::format::{self, Layout, Style};
 use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided};
 use bun_sema_driver::{
@@ -506,7 +508,7 @@ const HAS_TYPESCRIPT_TEST_RUNNER: bool =
     bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG;
 
 impl CheckCommand {
-    pub(crate) fn exec(args: &[&ZStr]) -> ! {
+    pub(crate) fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
         if HAS_TYPESCRIPT_TEST_RUNNER
             && let [first, rest @ ..] = args
             && first.as_bytes() == b"--run-typescript-tests"
@@ -515,24 +517,25 @@ impl CheckCommand {
             let passed = bun_sema_baselines::run_from_command_line(&rest);
             Global::exit(u32::from(!passed));
         }
-        Self::exec_with(&parse(args))
+        Self::exec_with(ctx, &parse(args))
     }
 
     /// `bun --check` without an entry point behaves like `bun check` without arguments. `bun` has
     /// already parsed its own arguments.
-    pub(crate) fn exec_without_arguments() -> ! {
-        Self::exec_with(&Options {
+    pub(crate) fn exec_without_arguments(ctx: &mut ContextData) -> ! {
+        let options = Options {
             command_line: CommandLine {
-                project: tsconfig_override().map(<[u8]>::to_vec),
+                project: ctx.args.tsconfig_override.as_deref().map(<[u8]>::to_vec),
                 ..Default::default()
             },
             ..Default::default()
-        })
+        };
+        Self::exec_with(ctx, &options)
     }
 
-    fn exec_with(options: &Options) -> ! {
+    fn exec_with(ctx: &mut ContextData, options: &Options) -> ! {
         if options.aot {
-            compile_check::exec(options)
+            compile_check::exec(ctx, options)
         }
         let (cwd, command_line) = (working_directory(), &options.command_line);
         // The closure returns the report so that it's never dropped. The process exits instead.
@@ -629,12 +632,13 @@ impl<'a> EntryPoint<'a> {
 
 /// Type-checks `entry_points` and everything they import before they run. Returns true if there are
 /// no errors. Errors go to stderr, so stdout stays the program's.
-pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<BeforeRead>) -> bool {
+pub(crate) fn check_before(
+    args: &TransformOptions,
+    entry_points: &[EntryPoint],
+    before_read: Option<BeforeRead>,
+) -> bool {
     let cwd = working_directory();
-    // `--loader`, `--conditions`
-    let args = bun_options_types::context::try_get().map(|ctx| &ctx.args);
-    let loaders = args.and_then(|args| args.loaders.as_ref());
-    let loaders = loaders_from_transform_options(loaders, bun_ast::Target::Bun);
+    let loaders = loaders_from_transform_options(args.loaders.as_ref(), bun_ast::Target::Bun);
     let by_extension = script_kinds_by_extension(&loaders.unwrap_or_default());
     let Some((paths, script_kinds)) = paths_to_check(&cwd, entry_points, &by_extension) else {
         return true;
@@ -649,9 +653,9 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
         paths: &paths,
         script_kinds: &script_kinds,
         script_kinds_by_extension: &by_extension,
-        conditions: args.map_or(&[][..], |args| &args.conditions[..]),
+        conditions: &args.conditions,
     };
-    check_and_report(&Paths::EntryPoints(entries), provided)
+    check_and_report(args, &Paths::EntryPoints(entries), provided)
 }
 
 fn script_kind_of(loader: bun_ast::Loader) -> Option<ScriptKind> {
@@ -713,18 +717,18 @@ fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -
 }
 
 /// `BundleOptions::type_check` for `bun build --check`.
-pub(crate) fn check_for_build_command(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
+pub(crate) fn check_for_build_command(checked: TypeChecked, log: &bun_ast::Log) -> bool {
     check_for_build(checked, log, true)
 }
 
 /// `BundleOptions::type_check` for `Bun.build({ check: true })`. Prints nothing.
-pub(crate) fn check_for_bun_build(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
+pub(crate) fn check_for_bun_build(checked: TypeChecked, log: &bun_ast::Log) -> bool {
     check_for_build(checked, log, false)
 }
 
 /// Doesn't reread the bundle's files (`sources`). Adds the errors to `log`, which the build reports
 /// like its own. Runs on the bundler's thread.
-fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress: bool) -> bool {
+fn check_for_build(checked: TypeChecked, log: &bun_ast::Log, shows_progress: bool) -> bool {
     let TypeChecked {
         cwd,
         tsconfig,
@@ -775,11 +779,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
             Category::Warning => bun_ast::Kind::Warn,
             Category::Suggestion | Category::Message => continue,
         };
-        match kind {
-            bun_ast::Kind::Err => log.errors += 1,
-            _ => log.warnings += 1,
-        }
-        log.add_msg(bun_ast::Msg {
+        log.add_counted_msg(bun_ast::Msg {
             kind,
             data: log_data_of(reported),
             metadata: format::metadata_of(reported),
@@ -904,13 +904,13 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
         return Vec::new();
     };
     let source = bun_ast::Source::init_path_string(&page[..], &contents[..]);
-    let mut log = bun_ast::Log::init();
+    let log = bun_ast::Log::init();
     // The scanner resolves `/src/main.tsx` against `FileSystem`'s top-level directory, which
     // `bun ./index.html` hasn't initialized yet.
     if bun_resolver::fs::FileSystem::init(None).is_err() {
         return Vec::new();
     }
-    let records = bun_bundler::html_scanner::scan_import_records(&mut log, &source);
+    let records = bun_bundler::html_scanner::scan_import_records(&log, &source);
     let directory = resolve_path::dirname::<Auto>(&page);
     let is_url = |path: &[u8]| path.starts_with(b"//") || bun_core::strings::contains(path, b"://");
     (records.unwrap_or_default().iter())
@@ -923,30 +923,27 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
 /// Type-checks the project containing the working directory, like `bun check`, before running one
 /// of its scripts or `bun bake`'s app. For `before_read`, see `watching`.
 #[inline(never)]
-pub(crate) fn check_project_before(before_read: Option<BeforeRead>) -> bool {
+pub(crate) fn check_project_before(
+    args: &TransformOptions,
+    before_read: Option<BeforeRead>,
+) -> bool {
     bun_removable_features::removable_definition!(Check, check_project_before);
     let provided = Provided {
         before_read,
         ..Default::default()
     };
-    check_and_report(&Paths::EntryPoints(Entries::default()), provided)
-}
-
-/// `bun`'s `--tsconfig-override`. The runtime resolves with this tsconfig instead of any other.
-fn tsconfig_override() -> Option<&'static [u8]> {
-    bun_options_types::context::try_get()?
-        .args
-        .tsconfig_override
-        .as_deref()
+    check_and_report(args, &Paths::EntryPoints(Entries::default()), provided)
 }
 
 /// Returns true if there are no errors.
 #[inline(never)]
-fn check_and_report(paths: &Paths, provided: Provided) -> bool {
+fn check_and_report(args: &TransformOptions, paths: &Paths, provided: Provided) -> bool {
     bun_removable_features::removable_definition!(Check, check_and_report);
     let cwd = working_directory();
     let then = |report| report;
-    let report = run(&cwd, tsconfig_override(), paths, &[], 0, provided, then);
+    // The runtime resolves with this tsconfig instead of any other.
+    let project = args.tsconfig_override.as_deref();
+    let report = run(&cwd, project, paths, &[], 0, provided, then);
     if report.diagnostics.is_empty() && report.incomplete.is_empty() {
         return report.is_ok();
     }

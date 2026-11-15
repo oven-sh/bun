@@ -106,8 +106,8 @@ pub(crate) fn value_loc_of(source: &bun_ast::Source, key_loc: bun_ast::Loc) -> b
 
 /// Finds `"name"` in the file on disk. The cached tree can be of an edit that is not written.
 fn name_range_on_disk(source: &bun_ast::Source) -> bun_ast::Range {
-    let mut log = bun_ast::Log::init();
-    let Ok(json) = crate::bun_json::ParsedJson::parse_package_json(source, &mut log) else {
+    let log = bun_ast::Log::init();
+    let Ok(json) = crate::bun_json::ParsedJson::parse_package_json(source, &log) else {
         return bun_ast::Range::NONE;
     };
     match json.root.as_property(b"name") {
@@ -141,7 +141,7 @@ pub(crate) fn folder_relative_to_top_level_dir<'a>(
 
 #[cold]
 fn invalid_trusted_dependencies(
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     source: &bun_ast::Source,
     loc: bun_ast::Loc,
 ) -> crate::Error {
@@ -157,16 +157,18 @@ fn invalid_trusted_dependencies(
 /// Warns once per file, because a workspace that changed is parsed twice into the same log.
 #[cold]
 fn warn_ignored_patched_dependencies(
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     source: &bun_ast::Source,
     key_loc: bun_ast::Loc,
 ) {
     const TEXT: &[u8] =
         b"ignoring \"patchedDependencies\" in workspace package, move it to the root package.json";
-    let warned = log.msgs.iter().any(|msg| {
-        *msg.data.text == *TEXT
-            && (msg.data.location.as_ref())
-                .is_some_and(|location| *location.file == *source.path.text)
+    let warned = log.with_msgs(|msgs| {
+        msgs.iter().any(|msg| {
+            *msg.data.text == *TEXT
+                && (msg.data.location.as_ref())
+                    .is_some_and(|location| *location.file == *source.path.text)
+        })
     });
     if !warned {
         log.add_range_warning(Some(source), source.range_of_string(key_loc), TEXT);
@@ -177,7 +179,7 @@ fn warn_ignored_patched_dependencies(
 /// `Some`.
 pub(crate) fn parse_append_trusted_dependencies(
     trusted_dependencies: &mut Option<TrustedDependenciesSet>,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     source: &bun_ast::Source,
     json: Expr,
     bump: &bun_alloc::Arena,
@@ -567,7 +569,7 @@ impl Package<u64> {
 
     pub(crate) fn from_npm(
         lockfile: &mut Lockfile,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         log_level: crate::LogLevel,
         manifest: &Npm::PackageManifest,
         version: SemverVersion,
@@ -752,7 +754,7 @@ impl Package<u64> {
                             Some(name.hash),
                             sliced.slice,
                             &sliced,
-                            Some(&mut *log),
+                            Some(log),
                             // An `npm:` alias in a registry manifest applies to this dependency
                             // only, so it is not registered as one of the project's aliases.
                             None,
@@ -970,7 +972,7 @@ impl DiffSummary {
 impl Diff {
     pub(crate) fn generate(
         pm: &mut PackageManager,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         from_lockfile: &mut Lockfile,
         to_lockfile: &mut Lockfile,
         from: &Package,
@@ -995,7 +997,7 @@ impl Diff {
     // The root summary's `remove` is the count of distinct names removed across root + workspaces.
     fn generate_inner(
         pm: &mut PackageManager,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         from_lockfile: &mut Lockfile,
         to_lockfile: &mut Lockfile,
         from: &Package,
@@ -1376,7 +1378,7 @@ impl Diff {
                     let (source_ref, json_root): (bun_ptr::ParentRef<bun_ast::Source>, Expr) =
                         match pm
                             .workspace_package_json_cache
-                            .get_with_path(&mut *log, package_json_path.slice(), Default::default())
+                            .get_with_path(log, package_json_path.slice(), Default::default())
                             .unwrap()
                         {
                             Ok(entry) => (bun_ptr::ParentRef::new(&entry.source), entry.root),
@@ -1659,7 +1661,7 @@ impl Diff {
     #[inline(never)]
     fn generate_folder(
         pm: &mut PackageManager,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         from_lockfile: &mut Lockfile,
         to_lockfile: &mut Lockfile,
         from_package_id: PackageID,
@@ -1683,12 +1685,12 @@ impl Diff {
             bun_ast::Source::init_path_string(package_json_path.slice(), contents.as_slice());
         let mut folder_pkg = Package::default();
         // Its messages point into `source`. The resolver reports them when it reads the directory.
-        let mut parse_log = bun_ast::Log::init();
+        let parse_log = bun_ast::Log::init();
         if folder_pkg
             .parse(
                 to_lockfile,
                 pm,
-                &mut parse_log,
+                &parse_log,
                 &source,
                 &mut (),
                 Features::FOLDER,
@@ -1713,7 +1715,7 @@ impl Diff {
 
     #[cold]
     #[inline(never)]
-    fn warn_folder_is_out_of_date(log: &mut bun_ast::Log, lockfile: &Lockfile, folder: PackageID) {
+    fn warn_folder_is_out_of_date(log: &bun_ast::Log, lockfile: &Lockfile, folder: PackageID) {
         log.add_warning_fmt(
             None,
             bun_ast::Loc::EMPTY,
@@ -1754,7 +1756,7 @@ impl Diff {
     #[cold]
     fn is_still_in_root_manifest(
         pm: &mut PackageManager,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         dep: &Dependency,
         buf: &[u8],
     ) -> bool {
@@ -2004,7 +2006,7 @@ impl Package<u64> {
         &mut self,
         lockfile: &mut Lockfile,
         pm: &mut PackageManager,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &bun_ast::Source,
         resolver: &mut R,
         features: Features,
@@ -2027,7 +2029,7 @@ impl Package<u64> {
     }
 
     /// Borrow-splitting bridge for `processDependencyList`, with `Features::NPM`. Borrowck
-    /// rejects passing `manager.lockfile`, `manager`, `manager.log` as three separate args
+    /// rejects passing `manager.lockfile` and `manager` as separate args
     /// overlapping `&mut self`, so split via raw pointer here.
     pub(crate) fn parse_from_real_manager<R: ResolverContext>(
         &mut self,
@@ -2035,11 +2037,10 @@ impl Package<u64> {
         source: &bun_ast::Source,
         resolver: &mut R,
     ) -> crate::Result<()> {
-        let log = manager.log_mut();
+        let log = manager.log();
         let lockfile: *mut Lockfile = &raw mut *manager.lockfile;
         // SAFETY: the `Box<Lockfile>` allocation lies outside `*manager`. `parse_with_json`
-        // derefs `pm.lockfile` only under `Features::workspaces`, which `NPM` does not set,
-        // and never `pm.log`.
+        // derefs `pm.lockfile` only under `Features::workspaces`, which `NPM` does not set.
         let lockfile = unsafe { &mut *lockfile };
         self.parse(lockfile, manager, log, source, resolver, Features::NPM)
     }
@@ -2050,7 +2051,7 @@ impl Package<u64> {
         linked_members: &mut lockfile::LinkedMembers,
         duplicate_checker_map: &mut lockfile::DuplicateCheckerMap,
         pm: &mut PackageManager,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &bun_ast::Source,
         group: &DependencyGroup,
         string_builder: &mut StringBuilder<'_>,
@@ -2137,7 +2138,7 @@ impl Package<u64> {
             sliced.slice,
             tag,
             &sliced,
-            Some(&mut *log),
+            Some(log),
             // Only the project's own `npm:` aliases are registered. An alias that another package
             // declares applies to that dependency only.
             (features.is_main || features.is_workspace).then_some(&mut *pm),
@@ -2200,7 +2201,7 @@ impl Package<u64> {
             );
         }
 
-        let unsafe_folder_path = |log: &mut bun_ast::Log, buf: &[u8]| {
+        let unsafe_folder_path = |log: &bun_ast::Log, buf: &[u8]| {
             log.add_error_fmt(
                 source,
                 value_loc_of(source, key_loc),
@@ -2273,7 +2274,7 @@ impl Package<u64> {
                         path.slice,
                         dependency::version::Tag::Workspace,
                         &path,
-                        Some(&mut *log),
+                        Some(log),
                         Some(&mut *pm),
                     ) {
                         dependency_version.value = dep.value;
@@ -2494,7 +2495,7 @@ impl Package<u64> {
         &mut self,
         lockfile: &mut Lockfile,
         pm: &mut PackageManager,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &bun_ast::Source,
         json: Expr,
         resolver: &mut dyn ResolverContext,

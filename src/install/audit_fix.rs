@@ -421,8 +421,8 @@ fn take_manifest_error(msgs: &mut Vec<bun_ast::Msg>, name: &[u8]) -> (Box<[u8]>,
     )
 }
 
-fn print_manifest_unavailable(manager: &PackageManager, items: &[ManifestUnavailable]) {
-    let log = manager.log_mut();
+fn print_manifest_unavailable(manager: &mut PackageManager, items: &[ManifestUnavailable]) {
+    let log = manager.log();
     if manager.options.log_level == LogLevel::Silent {
         log.reset();
         return;
@@ -436,7 +436,7 @@ fn print_manifest_unavailable(manager: &PackageManager, items: &[ManifestUnavail
             escape_control_chars(&item.detail)
         );
     }
-    if !log.msgs.is_empty() {
+    if log.has_msgs() {
         let _ = log.print(Output::error_writer());
     }
     log.reset();
@@ -673,7 +673,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
         .set(Enable::MANIFEST_CACHE_CONTROL, false);
     let ids: Vec<PackageID> = instances.iter().map(|inst| inst.pkg_id).collect();
     populate_manifest_cache::populate_manifest_cache(manager, Packages::Exact(&ids))?;
-    let log_msgs = &mut manager.log_mut().msgs;
+    let log = manager.log();
 
     let cache_ctx = manager.manifest_disk_cache_ctx();
     let min_age = manager.options.minimum_release_age_ms;
@@ -701,7 +701,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             for &a in &inst.advisories {
                 advisory_still_present.set(a);
             }
-            let (error, detail) = take_manifest_error(log_msgs, &inst.name);
+            let (error, detail) = log.with_msgs(|msgs| take_manifest_error(msgs, &inst.name));
             manifest_unavailable.push(ManifestUnavailable {
                 name: inst.name,
                 from: inst.from,

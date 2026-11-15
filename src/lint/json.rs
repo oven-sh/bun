@@ -41,8 +41,8 @@ pub fn parse(text: &[u8]) -> Option<Json> {
     let mut allocator = ASTMemoryAllocator::default();
     let _scope = allocator.enter();
     let source = Source::init_path_string(b"".as_slice(), text);
-    let mut log = Log::init();
-    let parsed = ParsedJson::parse_jsonc_document(&source, &mut log).ok()?;
+    let log = Log::init();
+    let parsed = ParsedJson::parse_jsonc_document(&source, &log).ok()?;
     let root = match parsed.root.data {
         Data::ENull(_) => JsonValue::Null,
         Data::EBoolean(it) => JsonValue::Boolean(it.value),
@@ -53,7 +53,7 @@ pub fn parse(text: &[u8]) -> Option<Json> {
         _ => return None,
     };
     // The parser warns about a duplicate key.
-    convert(&root, NestingLimit::new(), log.warnings > 0)
+    convert(&root, NestingLimit::new(), log.warnings.get() > 0)
 }
 
 /// Returns `None` if the value is nested too deeply.
@@ -204,12 +204,12 @@ pub fn with_parsed<T>(
     let source = Source::init_path_string(b"".as_slice(), text);
     let mut log = Log::init();
     let root = match notation {
-        Notation::Json5 => JSON5Parser::parse(&source, &mut log, &arena).ok(),
-        Notation::Toml => TOML::parse(&source, &mut log, &arena, false).ok(),
-        Notation::Yaml => YAML::parse(&source, &mut log, &arena, CyclicAliases::Reject).ok(),
+        Notation::Json5 => JSON5Parser::parse(&source, &log, &arena).ok(),
+        Notation::Toml => TOML::parse(&source, &log, &arena, false).ok(),
+        Notation::Yaml => YAML::parse(&source, &log, &arena, CyclicAliases::Reject).ok(),
     };
     let Some(root) = root else {
-        let first = log.msgs.first().map(|it| &it.data);
+        let first = log.msgs.get_mut().first().map(|it| &it.data);
         let error_location = first.and_then(|it| it.location.as_ref());
         return Err(SyntaxError {
             message: first.map_or_else(|| b"Syntax error".to_vec(), |it| it.text.to_vec()),

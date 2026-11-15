@@ -111,7 +111,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(bundles_since_last_error, 0);
         w!(has_tailwind_plugin_hack, None);
         w!(configuration_hash_key, [0; 16]);
-        w!(log, Log::init());
         w!(deferred_request_pool, HiveArrayFallback::init());
 
         // `.router = undefined` — placeholder until the real router is built below
@@ -164,13 +163,13 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     //
     // SAFETY: `init_transpiler` writes the slot via `MaybeUninit::write` (see
     // `config/transpiler.rs`), so the previous (uninitialized) bytes are never dropped.
-    // `log` was written above; reborrowing it is sound because no `&mut DevServer` exists.
     // Note: `Transpiler<'static>` erases the arena lifetime — `options.arena`
     // is the `UserOptions.arena` which is moved into / outlives the `DevServer`
     // box. Widen `'a → 'static` here once.
     // SAFETY: `options.arena` outlives every `Transpiler` field it backs (see
     // `Options::arena` doc — "must live until DevServer drops").
     let arena: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
+    let log: &'static Log = arena.alloc(Log::init());
     let mut bundler_framework_views: Vec<*mut bun_bundler::bake_types::Framework> =
         Vec::with_capacity(4);
     // SAFETY: `p` points into the boxed `MaybeUninit<DevServer>`; the fields
@@ -181,7 +180,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     unsafe {
         // Still in `options`, so that an early return drops them.
         let framework = &options.framework;
-        let log = &mut *addr_of_mut!((*p).log);
         let bundler_options = &options.bundler_options;
 
         match framework.init_transpiler(
@@ -220,6 +218,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             }
         }
 
+        w!(log, log);
         w!(bun_watcher, bun_watcher);
         w!(pending_reload_event, pending_reload_event);
         w!(spare_reload_event, HotReloadEvent::default());
@@ -265,7 +264,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         .is_err()
     {
         if dev.framework.is_built_in_react {
-            bake::Framework::add_react_install_command_note(&mut dev.log);
+            bake::Framework::add_react_install_command_note(dev.log);
         }
         return Err(global.throw_value(dev.log.to_js_aggregate_error(
             global,
@@ -607,6 +606,8 @@ impl Drop for DevServer {
             unsafe { ::core::ptr::drop_in_place(ptr) };
         }
         self.bundler_framework_views.clear();
+        // The log is in the arena, which does not run `Drop`.
+        self.log.clear_and_free();
 
         debug_assert!(self.magic == Magic::Valid);
         // self.magic = undefined — no Rust equivalent; freed memory.

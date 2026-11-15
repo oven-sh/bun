@@ -6926,4 +6926,27 @@ describe.concurrent("a handler that closes its socket and then waits for a promi
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
   });
+
+  // On Windows numPolls counts libuv's active handles, which a closed socket is not.
+  it.skipIf(isWindows)("keeps the closed sockets until it returns, and frees them afterwards", async () => {
+    const source = `
+      const polls = () => require("bun:internal-for-testing").getEventLoopStats().numPolls;
+      const sockets = await Promise.all(Array.from({ length: 50 }, () => Bun.udpSocket({ hostname: "127.0.0.1" })));
+      setImmediate(async () => {
+        const open = polls();
+        for (const socket of sockets) socket.close();
+        const built = Bun.build({
+          entrypoints: ["/wait.js"],
+          files: { "/wait.js": "" },
+          plugins: [{ name: "wait", setup: () => Bun.sleep(20) }],
+        });
+        const kept = polls() > open - 25;
+        await built;
+        await Bun.sleep(1);
+        console.log(JSON.stringify({ kept, freed: polls() < open - 25 }));
+      });`;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: '{"kept":true,"freed":true}\n', stderr: "", exitCode: 0 });
+  });
 });

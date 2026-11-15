@@ -4497,6 +4497,41 @@ describe.concurrent("a name that import and require() resolve to two files", () 
     );
   });
 
+  test("a CommonJS module of an earlier test file that requires the name runs again for the mock", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "helper.cjs": `
+          globalThis.helperRuns = (globalThis.helperRuns ?? 0) + 1;
+          const dual = require("dual");
+          exports.which = () => dual.which;
+        `,
+        "1.test.js": `
+          import { expect, test } from "bun:test";
+          test("a test file loads the module, which gets the file", () => {
+            globalThis.first = require("./helper.cjs");
+            globalThis.real = require("dual");
+            expect([globalThis.first.which(), globalThis.helperRuns]).toEqual(["real cjs", 1]);
+          });
+        `,
+        "2.test.js": `
+          import { expect, jest, mock, test } from "bun:test";
+          test("the next test file mocks the name, and the module that it requires again gets the mock", () => {
+            mock.module("dual", () => ({ which: "mock" }));
+            const helper = require("./helper.cjs");
+            expect([helper.which(), globalThis.helperRuns]).toEqual(["mock", 2]);
+            expect([helper === globalThis.first, globalThis.first.which()]).toEqual([false, "real cjs"]);
+            // The CommonJS file of the name itself stays as it ran.
+            jest.unmock("dual");
+            expect(require("dual")).toBe(globalThis.real);
+            expect(globalThis.loaded).toEqual(["dual cjs"]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
   test("a factory that requires its own name gets the CommonJS file, however require() resolves the name", async () => {
     await expectFixturesToPass(
       {

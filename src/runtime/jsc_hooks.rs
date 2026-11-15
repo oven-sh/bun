@@ -2648,20 +2648,12 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     L::Json | L::Jsonc => ResolvedSourceTag::JsonForObjectLoader,
                     L::Js | L::Jsx | L::Ts | L::Tsx => {
                         // A `.cjs` file under `"type": "module"` is still `PackageJsonTypeModule`.
-                        let dir = path.name().dir;
-                        let dir_info = if path.is_file() && bun_paths::is_absolute(dir) {
-                            // SAFETY: JS thread; the result is a stable cache slot.
-                            unsafe { (*transpiler).resolver.read_dir_info(dir) }
+                        let package_json = if path.is_file() {
+                            package_json_of(jsc_vm, path)
                         } else {
-                            Ok(None)
+                            None
                         };
-                        let module_type_ = match dir_info {
-                            Ok(Some(dir_info)) => (dir_info.package_json())
-                                .or(dir_info.enclosing_package_json)
-                                .map_or(module_type, |p| p.module_type),
-                            _ => module_type,
-                        };
-                        match module_type_ {
+                        match package_json.map_or(module_type, |p| p.module_type) {
                             ModuleType::Esm => ResolvedSourceTag::PackageJsonTypeModule,
                             ModuleType::Cjs => ResolvedSourceTag::PackageJsonTypeCommonjs,
                             _ => ResolvedSourceTag::Javascript,

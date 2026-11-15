@@ -4,7 +4,7 @@ use bun_collections::VecExt;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::strong::Optional as StrongOptional;
 use bun_jsc::{self as jsc, JSValue, JsCell};
-use bun_ptr::RefPtr;
+use bun_ptr::{OptionCellExt as _, RefPtr};
 use bun_sys::Error as SysError;
 
 use crate::webcore::streams::{self, BufferAction, IntoArray};
@@ -14,16 +14,15 @@ bun_output::declare_scope!(ByteStream, visible);
 
 /// Every JS-reachable inherent method takes `&self` so a
 /// re-entrant JS call (e.g. `pending.run()` → JS → `onPull`) cannot stack two
-/// `&mut ByteStream`. Fields mutated on those paths are wrapped in `Cell`
-/// (Copy scalars / raw ptrs) or [`JsCell`] (non-Copy). `high_water_mark` /
+/// `&mut ByteStream`. Fields mutated on those paths are wrapped in `Cell` or [`JsCell`]. `high_water_mark` /
 /// `size_hint` are written only at init time (before the JS wrapper exists)
 /// and stay bare.
 pub struct ByteStream {
     pub(crate) buffered: Buffered,
     pub(crate) has_received_last_chunk: Cell<bool>,
     pub(crate) pending: streams::Pending,
-    /// The producer failed while nothing was there to be told.
-    pending_error: JsCell<Option<streams::StreamError>>,
+    /// The producer's error, stored by [`Self::append`] until a reader takes it.
+    pending_error: Cell<Option<streams::StreamError>>,
     pub(crate) done: Cell<bool>,
     pub(crate) pending_value: JsCell<StrongOptional>, // jsc.Strong.Optional
     pub(crate) high_water_mark: blob::SizeType,
@@ -41,7 +40,7 @@ impl Default for ByteStream {
             buffered: Buffered::default(),
             has_received_last_chunk: Cell::new(false),
             pending: streams::Pending::default(),
-            pending_error: JsCell::new(None),
+            pending_error: Cell::new(None),
             done: Cell::new(false),
             pending_value: JsCell::new(StrongOptional::empty()),
             high_water_mark: 0,
@@ -838,12 +837,12 @@ impl ByteStream {
 
     /// The producer failed before anything attached and [`Self::append`] stored its error.
     pub(crate) fn has_pending_error(&self) -> bool {
-        self.pending_error.get().is_some()
+        self.pending_error.is_some()
     }
 
     /// Take the error stored by [`Self::append`].
     pub fn take_pending_error(&self) -> Option<streams::StreamError> {
-        self.pending_error.replace(None)
+        self.pending_error.take()
     }
 
     /// End the attached sink with the stored producer error. Returns false if none is stored.

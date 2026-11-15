@@ -141,8 +141,7 @@ pub mod convert {
             pub mod utf16 {
                 use super::*;
 
-                /// Appends `input` to `output`. Returns false, and appends nothing, if `input` is
-                /// empty or is not valid UTF-8. `output` needs room for one unit per input byte.
+                /// Appends `input`, or returns false if it is empty or invalid. Needs room for a unit per byte.
                 pub fn le(input: &[u8], mut output: BorrowedCursor<'_, u16>) -> bool {
                     assert!(input.len() <= output.capacity());
                     // SAFETY: the icelake, haswell, westmere, arm64 and fallback kernels of this

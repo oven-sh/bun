@@ -15,7 +15,7 @@ use std::rc::Rc;
 // Low-tier timer node + tag (per §Dispatch hot-path list, the `match tag`
 // dispatch lives in this crate; `bun_event_loop` only stores `(tag, ptr)`).
 pub(crate) use bun_event_loop::EventLoopTimer::{
-    EventLoopTimer, InHeap, State as EventLoopTimerState, Tag as EventLoopTimerTag,
+    EventLoopTimer, InHeap, OwnedTimer, State as EventLoopTimerState, Tag as EventLoopTimerTag,
 };
 // bun_event_loop carries a local `Timespec` stub instead of
 // `bun_core::Timespec`. Same `{sec: i64, nsec: i64}` shape; alias it here so
@@ -45,28 +45,21 @@ macro_rules! impl_timer_object {
         #[derive(::bun_ptr::RefCounted)]
         pub(crate) struct $T {
             pub ref_count: ::bun_ptr::RefCount<Self>,
-            pub event_loop_timer: super::EventLoopTimer,
+            pub event_loop_timer: super::OwnedTimer,
             pub internals: super::TimerObjectInternals,
         }
 
         ::bun_event_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer);
-
-        impl ::core::ops::Drop for $T {
-            fn drop(&mut self) {
-                // SAFETY: last ref gone; JS thread with RuntimeState installed.
-                unsafe { self.internals.deinit() }
-            }
-        }
 
         impl ::core::default::Default for $T {
             fn default() -> Self {
                 Self {
                     ref_count: ::bun_ptr::RefCount::init(),
                     // `init_paused`: next=EPOCH, state=PENDING, heap zeroed.
-                    event_loop_timer: super::EventLoopTimer::init_paused(
+                    event_loop_timer: super::OwnedTimer::init_paused(
                         super::EventLoopTimerTag::$T,
                     ),
-                    // Default-constructed here, then overwritten in `init()`.
+                    // Default-constructed here, then filled in by `init()`.
                     internals: super::TimerObjectInternals::default(),
                 }
             }
@@ -113,7 +106,7 @@ macro_rules! impl_timer_object {
                 // Heap-allocate; `*mut Self` is the
                 // pointer the JS wrapper holds. Ownership
                 // transfers to the wrapper via `to_js_ptr`; freed by
-                // `deref → deinit → heap::take`.
+                // `deref`.
                 let payload: *mut Self =
                     ::bun_core::heap::into_raw(::std::boxed::Box::new(Self::default()));
                 // SAFETY: `payload` is a fresh heap allocation whose ownership
@@ -121,7 +114,7 @@ macro_rules! impl_timer_object {
                 let js_value = unsafe { Self::to_js_ptr(payload, cx.global()) };
                 let _keep = ::bun_jsc::EnsureStillAlive(js_value);
                 // SAFETY: `payload` was just allocated above and is exclusively
-                // owned here; `internals.init()` writes every field.
+                // owned here.
                 unsafe {
                     (*payload).internals.init(
                         js_value, cx, id, kind, interval, callback, arguments, clock,
@@ -439,8 +432,8 @@ impl EventLoopDelayMonitor {
         let next = enabled.iter().map(|enabled| enabled.next);
         if let Some(next) = next.min_by(Timespec::order) {
             timer_all().update(&raw const self.event_loop_timer, &next);
-        } else if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-            timer_all().remove(&self.event_loop_timer);
+        } else {
+            self.event_loop_timer.disarm();
         }
     }
 }

@@ -23,7 +23,7 @@ use bun_sys::{self as sys, Fd, File};
 use bun_uws::{AnyResponse, WriteResult};
 
 use crate::server::jsc::{EventLoopHandle, VirtualMachine};
-use crate::server::{DirectoryRoute, FileRoute};
+use crate::server::{DirectoryRoute, FileRoute, PendingRequest};
 
 bun_output::declare_scope!(FileResponseStream, hidden);
 
@@ -37,6 +37,8 @@ pub(crate) struct FileResponseStream {
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: Cell<EventLoopHandle>,
+    reader: JsCell<BufferedReader>,
+    /// After `reader`, whose poll goes first.
     fd: StreamFd,
     idle_timeout: Cell<u8>,
 
@@ -44,7 +46,6 @@ pub(crate) struct FileResponseStream {
     owner: Cell<Option<StreamOwner>>,
 
     mode: Cell<Mode>,
-    reader: JsCell<BufferedReader>,
     sendfile: JsCell<Sendfile>,
 
     state: Cell<State>,
@@ -148,10 +149,9 @@ pub(crate) struct StartOptions {
 /// Who hears about the end of the stream. Exactly one of complete / abort /
 /// error is delivered, exactly once.
 pub(crate) enum StreamOwner {
-    /// The ref `FileRoute::on` took for this response; released on delivery.
-    FileRoute(RefPtr<FileRoute>),
-    /// Likewise for `DirectoryRoute::on`.
-    DirectoryRoute(RefPtr<DirectoryRoute>),
+    /// A reload can remove the route from the route table meanwhile.
+    FileRoute(PendingRequest<RefPtr<FileRoute>>),
+    DirectoryRoute(PendingRequest<RefPtr<DirectoryRoute>>),
     Ctx {
         ctx: *mut c_void,
         on_complete: fn(*mut c_void, AnyResponse),
@@ -171,8 +171,8 @@ enum StreamEnd {
 impl StreamOwner {
     fn deliver(self, resp: AnyResponse, end: StreamEnd) {
         match self {
-            StreamOwner::FileRoute(route) => route.on_response_complete(resp),
-            StreamOwner::DirectoryRoute(route) => route.on_response_complete(resp),
+            StreamOwner::FileRoute(route) => drop(route),
+            StreamOwner::DirectoryRoute(route) => drop(route),
             StreamOwner::Ctx {
                 ctx,
                 on_complete,
@@ -629,15 +629,6 @@ bun_io::impl_buffered_reader_parent! {
     // The reader still uses itself (embedded here) after dispatching the `on_reader_done` that releases the owning ref.
     ref_            = |this| (*this).ref_();
     deref           = |this| Self::deref(this);
-}
-
-impl Drop for FileResponseStream {
-    fn drop(&mut self) {
-        bun_output::scoped_log!(FileResponseStream, "deinit");
-        // `start()` cleared CLOSE_HANDLE, so the reader's `Drop` doesn't unregister the poll.
-        #[cfg(unix)]
-        self.reader_mut().handle.close_without_closing_fd();
-    }
 }
 
 fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> bool {

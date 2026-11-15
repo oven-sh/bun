@@ -390,9 +390,6 @@ where
         };
         let connect_port = if using_proxy { proxy_port } else { port };
 
-        let poll_ref = KeepAlive::init();
-        poll_ref.r#ref(vm.loop_ctx());
-
         log!(
             "connect: ssl={}, has_ssl_config={}, using_proxy={}",
             SSL,
@@ -446,7 +443,6 @@ where
                             // connection succeed against a host the user didn't
                             // trust. The C++ caller emits an `error` event on null.
                             log!("createSSLContext failed for WebSocket: {:?}", err);
-                            poll_ref.unref(vm.loop_ctx());
                             return None;
                         };
                         let raw = ctx.as_ptr();
@@ -459,6 +455,9 @@ where
         } else {
             None
         };
+
+        let poll_ref = KeepAlive::init();
+        poll_ref.r#ref(vm.loop_ctx());
 
         let client = RefPtr::new(HTTPClient::<SSL> {
             ref_count: Cell::new(1),

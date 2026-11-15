@@ -674,7 +674,7 @@ impl PublishCommand {
             return false;
         };
 
-        let mut req = manager.registry_request(
+        let req = manager.registry_request(
             http::Method::GET,
             package_url,
             headers.entries,
@@ -682,7 +682,7 @@ impl PublishCommand {
             b"",
         );
 
-        let Ok(res) = manager.send_with_retries(&mut req, &mut response_buf) else {
+        let Ok(res) = manager.send_with_retries(req, &mut response_buf) else {
             return false;
         };
         Self::print_npm_notice(&res);
@@ -730,7 +730,7 @@ impl PublishCommand {
     }
 
     fn send_or_crash(
-        req: &mut http::AsyncHTTP<'_>,
+        req: Box<http::AsyncHTTP<'_>>,
         response_buf: &mut MutableString,
         failure: &str,
     ) -> Result<http::HTTPResponseMetadata, AllocError> {
@@ -801,14 +801,14 @@ impl PublishCommand {
         let mut response_buf = MutableString::init(1024)?;
         let publish_url = Self::package_url(registry, &ctx.package_name);
 
-        let mut req = manager.registry_request(
+        let req = manager.registry_request(
             http::Method::PUT,
             publish_url.clone(),
             publish_headers.entries,
             publish_headers.content.written_slice(),
             publish_req_body,
         );
-        let res = Self::send_or_crash(&mut req, &mut response_buf, "failed to publish package")?;
+        let res = Self::send_or_crash(req, &mut response_buf, "failed to publish package")?;
 
         if res.status_code() < 400 {
             return Ok(true);
@@ -842,7 +842,7 @@ impl PublishCommand {
 
         if !prompt_for_otp {
             Npm::response_error::<false>(
-                &req,
+                publish_url.href,
                 &res,
                 Some((&ctx.package_name, &ctx.package_version)),
                 &mut response_buf,
@@ -860,19 +860,18 @@ impl PublishCommand {
 
         response_buf.reset();
 
-        let mut otp_req = manager.registry_request(
+        let otp_req = manager.registry_request(
             http::Method::PUT,
-            publish_url,
+            publish_url.clone(),
             otp_headers.entries,
             otp_headers.content.written_slice(),
             publish_req_body,
         );
-        let otp_res =
-            Self::send_or_crash(&mut otp_req, &mut response_buf, "failed to publish package")?;
+        let otp_res = Self::send_or_crash(otp_req, &mut response_buf, "failed to publish package")?;
 
         if otp_res.status_code() >= 400 {
             Npm::response_error::<true>(
-                &otp_req,
+                publish_url.href,
                 &otp_res,
                 Some((&ctx.package_name, &ctx.package_version)),
                 &mut response_buf,
@@ -1006,15 +1005,14 @@ impl PublishCommand {
             loop {
                 response_buf.reset();
 
-                let mut req = manager.registry_request(
+                let req = manager.registry_request(
                     http::Method::GET,
                     done_url.clone(),
                     auth_headers.entries.clone()?,
                     auth_headers.content.written_slice(),
                     b"",
                 );
-                let res =
-                    Self::send_or_crash(&mut req, response_buf, "failed to send OTP request")?;
+                let res = Self::send_or_crash(req, response_buf, "failed to send OTP request")?;
 
                 match res.status_code() {
                     202 => {
@@ -1056,7 +1054,7 @@ impl PublishCommand {
                     }
                     _ => {
                         Npm::response_error::<false>(
-                            &req,
+                            done_url.href,
                             &res,
                             Some((&ctx.package_name, &ctx.package_version)),
                             response_buf,

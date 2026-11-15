@@ -91,10 +91,6 @@ impl Strong {
         }
     }
 
-    pub(crate) fn deinit(&mut self) {
-        *self = Self::Empty;
-    }
-
     /// The held stream, re-tagged. Pure: no script, no exception, no trap poll (unlike
     /// [`ReadableStream::from_js`], which converts arbitrary values).
     pub(crate) fn get(&self) -> Option<ReadableStream> {

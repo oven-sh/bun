@@ -15,12 +15,10 @@ use bun_core::Output;
 use bun_core::{self as bun, env_var, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 use bun_dns::{
-    self, Backend as GetAddrInfoBackend, GetAddrInfo, GetAddrInfoResult,
+    self, AddrInfoList, Backend as GetAddrInfoBackend, GetAddrInfo, GetAddrInfoResult,
     Options as GetAddrInfoOptions, ResultList as GetAddrInfoResultList,
 };
-#[cfg(not(windows))]
-use bun_io::FilePoll;
-use bun_io::{self as Async, KeepAlive};
+use bun_io::JsKeepAlive;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -89,14 +87,6 @@ fn global_resolver(global_this: &JSGlobalObject) -> &'static Resolver {
 struct SendPtr<T>(*mut T);
 // SAFETY: see type doc — synchronization is provided by `global_cache()`.
 unsafe impl<T> Send for SendPtr<T> {}
-
-/// Bridge the JS-thread `VirtualMachine` to the aio-level `EventLoopCtx` used
-/// by `KeepAlive` / `FilePoll`. The DNS resolver always runs on the JS event
-/// loop, so the global `Js` ctx is the correct erasure here.
-#[inline]
-fn js_event_loop_ctx() -> Async::EventLoopCtx {
-    Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js)
-}
 
 bun_output::declare_scope!(GetAddrInfoRequest, visible);
 bun_output::declare_scope!(DNSLookup, visible);
@@ -419,47 +409,22 @@ pub(crate) mod get_addr_info_request {
             let cap = hostname.len() - 1;
             let copied_len = strings::copy(&mut hostname[..cap], &query_name).len();
             hostname[copied_len] = 0;
-            let mut addrinfo: *mut AddrInfo = ptr::null_mut();
             // SAFETY: hostname[copied_len] == 0
             let host = ZStr::from_buf(&hostname[..], copied_len);
             let debug_timer = Output::DebugTimer::start();
-            // SAFETY: FFI; all pointers valid for the call duration
-            let err = unsafe {
-                libc::getaddrinfo(
-                    host.as_ptr().cast::<c_char>(),
-                    if port_len > 0 {
-                        port_z.as_ptr().cast::<c_char>()
-                    } else {
-                        ptr::null()
-                    },
-                    hints
-                        .as_ref()
-                        .map(std::ptr::from_ref)
-                        .unwrap_or(ptr::null()),
-                    &raw mut addrinfo,
-                )
-            };
+            let result =
+                AddrInfoList::lookup(Some(host), (port_len > 0).then_some(port_z), hints.as_ref());
             sys::syslog!(
                 "getaddrinfo({}, {}) = {} ({})",
                 bstr::BStr::new(&query_name),
                 bstr::BStr::new(port_z.as_bytes()),
-                err,
+                result.as_ref().err().unwrap_or(&0),
                 debug_timer,
             );
-            if err != 0 || addrinfo.is_null() {
-                *self = LibcBackend::Err(err);
-                return;
-            }
-
-            // do not free addrinfo when err != 0: getaddrinfo only allocates the
-            // result list on success, so the out-pointer is unspecified on error.
-            let _free = scopeguard::guard(addrinfo, |a| {
-                // SAFETY: `a` was returned by libc::getaddrinfo (non-null per the check above).
-                unsafe { bun_dns::freeaddrinfo(a) }
-            });
-
-            // SAFETY: addrinfo is non-null (checked above); freed by `_free` guard after copy.
-            *self = LibcBackend::Success(GetAddrInfoResult::to_list(unsafe { &*addrinfo }));
+            *self = match result {
+                Ok(list) => LibcBackend::Success(GetAddrInfoResult::to_list(&list)),
+                Err(err) => LibcBackend::Err(err),
+            };
         }
     }
 }
@@ -483,7 +448,7 @@ impl c_ares::AddrInfoHandler for Query {
 struct DNSLookup {
     global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     promise: JSPromiseStrong,
-    poll_ref: KeepAlive,
+    _keep_alive: JsKeepAlive,
     /// The context whose script asked: an answer for a stopped one settles nothing.
     context: bun_jsc::ContextId,
 }
@@ -492,12 +457,9 @@ impl DNSLookup {
     fn init(global_this: &JSGlobalObject, context: bun_jsc::ContextId) -> Self {
         bun_output::scoped_log!(DNSLookup, "init");
 
-        let poll_ref = KeepAlive::init();
-        poll_ref.ref_(js_event_loop_ctx());
-
         Self {
             global_this: bun_ptr::BackRef::new(global_this),
-            poll_ref,
+            _keep_alive: JsKeepAlive::active(),
             promise: JSPromiseStrong::init(global_this),
             context,
         }
@@ -771,17 +733,6 @@ impl Outcome {
             Outcome::Error(e) => promise.reject(global, Ok(e)),
             Outcome::Stopped => return,
         });
-    }
-}
-
-impl Drop for DNSLookup {
-    fn drop(&mut self) {
-        bun_output::scoped_log!(DNSLookup, "deinit");
-        // DNSLookup is always created on the JS event loop (it holds a JSGlobalObject),
-        // so the Js-arm vtable is the correct EventLoopCtx for KeepAlive::unref.
-        self.poll_ref.unref(Async::posix_event_loop::get_vm_ctx(
-            Async::AllocatorType::Js,
-        ));
     }
 }
 
@@ -1233,8 +1184,8 @@ pub(crate) mod internal {
         .filter(|ip| family == netc::AF_UNSPEC || ip.is_ipv6() == (family == netc::AF_INET6))
         .map(|ip| bun_dns::Address::from_ip(ip, port).into_storage())
         .collect();
-        let mut chain = addrinfo_chain(&mut addrs);
-        process_results(chain.as_mut_ptr())
+        let chain = addrinfo_chain(&mut addrs);
+        process_results(chain.as_ptr())
     }
 
     /// Chrome's `IsAllLocalhostOfOneFamily`: every address is loopback and only one family is present, the shape glibc's AI_ADDRCONFIG produces for a hosts-file loopback name (crbug 42058 / 49024).
@@ -1357,7 +1308,7 @@ pub(crate) mod internal {
     // Pack getaddrinfo results into one allocation with address families
     // interleaved (RFC 8305 §4) so an unroutable family can never fill all
     // CONCURRENT_CONNECTIONS parallel connect attempts. See #4938 / #33278.
-    fn process_results(info: *mut AddrInfo) -> Box<[ResultEntry]> {
+    fn process_results(info: *const AddrInfo) -> Box<[ResultEntry]> {
         let mut count: usize = 0;
         let mut n_first: usize = 0;
         let first_family = if info.is_null() {
@@ -1366,7 +1317,7 @@ pub(crate) mod internal {
             // SAFETY: info is a live addrinfo node; freed by caller after we return.
             unsafe { (*info).ai_family }
         };
-        let mut info_: *mut AddrInfo = info;
+        let mut info_: *const AddrInfo = info;
         while !info_.is_null() {
             // SAFETY: info_ walks the libc-allocated addrinfo list; freed by caller after we return.
             unsafe {
@@ -1462,21 +1413,6 @@ pub(crate) mod internal {
         nodes
     }
 
-    fn after_result(req: *mut Request, info: *mut AddrInfo, err: c_int) {
-        let results: Option<Box<[ResultEntry]>> = if !info.is_null() {
-            let res = process_results(info);
-            // ws2_32!getaddrinfo-allocated on Windows — free via the matching
-            // ws2_32!freeaddrinfo (NOT uv_freeaddrinfo: different allocator).
-            // `.cast()` is identity on POSIX, libuv_sys→ws2_32 addrinfo on Windows.
-            // SAFETY: `info` is non-null (checked above) and owned by getaddrinfo.
-            unsafe { bun_dns::freeaddrinfo(info.cast()) };
-            Some(res)
-        } else {
-            None
-        };
-        after_result_entries(req, results, err);
-    }
-
     fn after_result_entries(req: *mut Request, results: Option<Box<[ResultEntry]>>, err: c_int) {
         let guard = global_cache().lock();
 
@@ -1507,68 +1443,43 @@ pub(crate) mod internal {
     fn work_pool_callback(req: *mut Request) {
         let mut service_buf = [0u8; 21];
         // SAFETY: `req` is the heap-allocated cache entry; `key` is set at construction and read-only.
-        let port = unsafe { (*req).key.port };
-        let service: *const c_char = if port > 0 {
-            bun_fmt::itoa_z(&mut service_buf, port as u64).as_ptr()
-        } else {
-            ptr::null()
-        };
+        let key = unsafe { &(*req).key };
+        let host = key.host.as_deref();
+        let service = (key.port > 0)
+            .then(|| ZStr::from_cstr(bun_fmt::itoa_z(&mut service_buf, key.port as u64)));
 
         #[cfg(windows)]
-        unsafe {
+        let result = {
             use bun_sys::windows::ws2_32 as wsa;
             libuv::uv__winsock_ensure();
-            let mut wsa_hints: wsa::addrinfo = bun_core::ffi::zeroed();
-            wsa_hints.ai_family = wsa::AF_UNSPEC;
-            wsa_hints.ai_socktype = wsa::SOCK_STREAM;
-
-            let mut addrinfo: *mut wsa::addrinfo = ptr::null_mut();
-            let err = wsa::getaddrinfo(
-                (*req)
-                    .key
-                    .host
-                    .as_ref()
-                    .map(|h| h.as_ptr().cast::<c_char>())
-                    .unwrap_or(ptr::null()),
-                service,
-                &wsa_hints,
-                &mut addrinfo,
-            );
-            after_result(req, addrinfo.cast(), err);
-        }
+            let mut hints: wsa::addrinfo = bun_core::ffi::zeroed();
+            hints.ai_family = wsa::AF_UNSPEC;
+            hints.ai_socktype = wsa::SOCK_STREAM;
+            AddrInfoList::lookup(host, service, Some(&hints))
+        };
         #[cfg(not(windows))]
-        // SAFETY: FFI getaddrinfo; `req.key.host` is the owned NUL-terminated host
-        // set at construction, `hints`/`addrinfo` are stack locals.
-        unsafe {
-            let mut addrinfo: *mut AddrInfo = ptr::null_mut();
+        let result = {
             let mut hints = get_hints();
-
-            let host_ptr = (*req)
-                .key
-                .host
-                .as_ref()
-                .map(|h| h.as_ptr().cast::<c_char>())
-                .unwrap_or(ptr::null());
-            let mut err = libc::getaddrinfo(host_ptr, service, &raw const hints, &raw mut addrinfo);
+            let mut result = AddrInfoList::lookup(host, service, Some(&hints));
 
             // Chrome's retries: AI_ADDRCONFIG left nothing, or only one family's loopback.
             if (hints.ai_flags & netc::AI_ADDRCONFIG) != 0
-                && (err == netc::EAI_NONAME
-                    || (err == 0 && is_all_loopback_of_one_family(addrinfo)))
+                && match &result {
+                    Ok(list) => is_all_loopback_of_one_family(&raw const **list),
+                    Err(err) => *err == netc::EAI_NONAME,
+                }
             {
                 hints.ai_flags &= !netc::AI_ADDRCONFIG;
-                let mut unfiltered: *mut AddrInfo = ptr::null_mut();
-                let retry_err =
-                    libc::getaddrinfo(host_ptr, service, &raw const hints, &raw mut unfiltered);
-                if retry_err == 0 || err != 0 {
-                    if !addrinfo.is_null() {
-                        bun_dns::freeaddrinfo(addrinfo);
-                    }
-                    addrinfo = unfiltered;
-                    err = retry_err;
+                let unfiltered = AddrInfoList::lookup(host, service, Some(&hints));
+                if unfiltered.is_ok() || result.is_err() {
+                    result = unfiltered;
                 }
             }
-            after_result(req, addrinfo, err);
+            result
+        };
+        match result.map(|list| process_results(&raw const *list)) {
+            Ok(results) => after_result_entries(req, Some(results), 0),
+            Err(err) => after_result_entries(req, None, err),
         }
     }
 
@@ -1627,8 +1538,8 @@ pub(crate) mod internal {
                 storage
             })
             .collect();
-        let mut chain = addrinfo_chain(&mut addrs);
-        let results = process_results(chain.as_mut_ptr());
+        let chain = addrinfo_chain(&mut addrs);
+        let results = process_results(chain.as_ptr());
         after_result_entries(req, Some(results), 0);
     }
 
@@ -1709,8 +1620,8 @@ pub(crate) mod internal {
         if addrs.is_empty() {
             return Err(global.throw_invalid_arguments(format_args!("addresses must not be empty")));
         }
-        let mut chain = addrinfo_chain(&mut addrs);
-        let results = process_results(chain.as_mut_ptr());
+        let chain = addrinfo_chain(&mut addrs);
+        let results = process_results(chain.as_ptr());
 
         let mut families = [0i32; MAX_ADDRESSES_FOR_TESTING];
         for (family, entry) in families.iter_mut().zip(results.iter()) {
@@ -1964,7 +1875,7 @@ pub(crate) mod internal {
         socket: *mut ConnectingSocket,
     ) -> c_int {
         let _guard = global_cache().lock();
-        // afterResult sets result and moves the notify list out under this same
+        // `after_result_entries` sets result and moves the notify list out under this same
         // lock, so once result is non-null the socket is no longer cancellable
         // (the callback has fired or is about to fire on the worker thread).
         // SAFETY: `request` is a live cache entry; `result`/`notify` are only
@@ -2228,11 +2139,11 @@ hostent_ttls_record_type!(
 );
 
 #[cfg(windows)]
-type PollType = UvDnsPoll;
+type PollType = OpenUvDnsPoll;
 #[cfg(not(windows))]
-type PollType = FilePoll;
+type PollType = bun_io::OwnedFilePoll;
 
-type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
+type PollsMap = ArrayHashMap<c_ares::ares_socket_t, PollType>;
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). c-ares
@@ -2318,6 +2229,50 @@ impl UvDnsPoll {
     fn from_poll(poll: *mut libuv::uv_poll_t) -> *mut Self {
         // SAFETY: poll points to UvDnsPoll.poll
         unsafe { bun_core::from_field_ptr!(UvDnsPoll, poll, poll) }
+    }
+}
+
+/// Dropping it closes the handle, which `on_close_uv` frees.
+#[cfg(windows)]
+pub(crate) struct OpenUvDnsPoll(*mut UvDnsPoll);
+
+#[cfg(windows)]
+impl OpenUvDnsPoll {
+    fn open(parent: *mut Resolver, socket: c_ares::ares_socket_t) -> Option<Self> {
+        let poll = UvDnsPoll::new(parent, socket);
+        // SAFETY: a fresh heap allocation with a zeroed `uv_poll_t`.
+        let rc = unsafe {
+            libuv::uv_poll_init_socket(Loop::get().uv_loop(), &raw mut (*poll).poll, socket as _)
+        };
+        if rc < 0 {
+            UvDnsPoll::destroy(poll);
+            return None;
+        }
+        Some(Self(poll))
+    }
+
+    fn start(&self, events: c_int) -> c_int {
+        // SAFETY: initialised by `open`, and not closed yet.
+        unsafe {
+            libuv::uv_poll_start(
+                &raw mut (*self.0).poll,
+                events,
+                Some(Resolver::on_dns_poll_uv),
+            )
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for OpenUvDnsPoll {
+    fn drop(&mut self) {
+        // SAFETY: initialised by `open`, and not closed yet.
+        unsafe {
+            libuv::uv_close(
+                (&raw mut (*self.0).poll).cast(),
+                Some(Resolver::on_close_uv),
+            )
+        };
     }
 }
 
@@ -2644,14 +2599,10 @@ impl Resolver {
     /// the structural fix for the previously ASM-verified PROVEN_CACHED
     /// miscompile that needed `black_box` laundering under `&mut self`.
     #[cfg(not(windows))]
-    pub(crate) fn on_dns_poll(&self, poll: &mut FilePoll) {
+    pub(crate) fn on_dns_poll(&self, fd: c_ares::ares_socket_t, readable: bool, writable: bool) {
         let vm = self.vm();
         let _exit = vm.enter_event_loop_scope();
         let Some(channel) = self.channel_ptr() else {
-            self.polls.with_mut(|p| {
-                let _ = p.remove(&poll.fd.native());
-            });
-            poll.deinit();
             return;
         };
 
@@ -2660,9 +2611,7 @@ impl Resolver {
         // SAFETY: `channel` is the live c-ares channel owned by `self`; no `&mut`
         // to `*self` is held across this re-entrant call (all fields are
         // UnsafeCell-backed).
-        unsafe {
-            (*channel).process(poll.fd.native(), poll.is_readable(), poll.is_writable());
-        }
+        unsafe { (*channel).process(fd, readable, writable) };
 
         // c-ares detaches a query only *after* its callback returns, so
         // `request_completed` may have seen it still counted; re-check now.
@@ -2677,111 +2626,48 @@ impl Resolver {
         readable: bool,
         writable: bool,
     ) {
-        #[cfg(windows)]
-        {
-            use libuv as uv;
-            if !readable && !writable {
-                // cleanup — `remove` is the ordered, value-returning variant.
-                if let Some(entry) = self.polls.with_mut(|p| p.remove(&fd)) {
-                    // SAFETY: `entry` is the heap `UvDnsPoll` we inserted below;
-                    // libuv takes ownership of the handle until `on_close_uv`
-                    // frees the allocation.
-                    unsafe {
-                        uv::uv_close(
-                            core::ptr::from_mut(&mut (*entry).poll).cast(),
-                            Some(Self::on_close_uv),
-                        )
-                    };
-                }
-                return;
-            }
+        if !readable && !writable {
+            // c-ares's way of saying that the socket is closed.
+            drop(self.polls.with_mut(|p| p.remove(&fd)));
+            return;
+        }
 
-            // Capture `self` as a raw backref for `UvDnsPoll::parent`.
-            let this_ptr: *mut Self = self.as_ctx_ptr();
-            // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
-            // any re-entrant call (libuv `uv_poll_*` below do not call back into
-            // this resolver synchronously).
-            let polls = unsafe { self.polls.get_mut() };
-            let poll_entry = bun_core::handle_oom(polls.get_or_put(fd));
-            let poll: *mut UvDnsPoll = if poll_entry.found_existing {
-                *poll_entry.value_ptr
-            } else {
-                let new_poll = UvDnsPoll::new(this_ptr, fd);
-                // Publish into the map first so the `GetOrPutResult` borrow can
-                // end (NLL) before we may need to `swap_remove` on init failure.
-                *poll_entry.value_ptr = new_poll;
-                // SAFETY: `new_poll` is a fresh heap allocation with a zeroed `uv_poll_t`.
-                if unsafe {
-                    uv::uv_poll_init_socket(Loop::get().uv_loop(), &mut (*new_poll).poll, fd as _)
-                } < 0
-                {
-                    UvDnsPoll::destroy(new_poll);
-                    let _ = polls.swap_remove(&fd);
-                    return;
-                }
-                new_poll
+        #[cfg(windows)]
+        self.polls.with_mut(|polls| {
+            use bun_collections::array_hash_map::MapEntry;
+            let poll = match polls.entry(fd) {
+                MapEntry::Occupied(entry) => entry.into_mut(),
+                MapEntry::Vacant(entry) => match OpenUvDnsPoll::open(self.as_ctx_ptr(), fd) {
+                    Some(poll) => entry.insert(poll),
+                    None => return,
+                },
             };
 
-            let uv_events = (if readable { uv::UV_READABLE } else { 0 })
-                | (if writable { uv::UV_WRITABLE } else { 0 });
-            // SAFETY: `poll` is the live entry just inserted/looked up above.
-            if unsafe {
-                uv::uv_poll_start(&mut (*poll).poll, uv_events, Some(Self::on_dns_poll_uv))
-            } < 0
-            {
-                let _ = polls.swap_remove(&fd);
-                // SAFETY: handle was successfully `uv_poll_init_socket`-ed, so
-                // `uv_close` is the required teardown path; `on_close_uv` frees
-                // the `UvDnsPoll` box.
-                unsafe {
-                    uv::uv_close(
-                        core::ptr::from_mut(&mut (*poll).poll).cast(),
-                        Some(Self::on_close_uv),
-                    )
-                };
+            let uv_events = (if readable { libuv::UV_READABLE } else { 0 })
+                | (if writable { libuv::UV_WRITABLE } else { 0 });
+            if poll.start(uv_events) < 0 {
+                polls.swap_remove(&fd);
             }
-        }
+        });
         #[cfg(not(windows))]
-        {
-            let ctx = js_event_loop_ctx();
-
-            if !readable && !writable {
-                // read == 0 and write == 0 this is c-ares's way of notifying us that
-                // the socket is now closed. We must free the data associated with
-                // socket.
-                if let Some(value) = self.polls.with_mut(|p| p.remove(&fd)) {
-                    // SAFETY: `value` is the heap-allocated FilePoll for this fd.
-                    unsafe { (*value).deinit_with_vm(ctx) };
-                }
-                return;
-            }
-
-            let owner = Async::Owner::new(
-                Async::posix_event_loop::poll_tag::DNS_RESOLVER,
+        self.polls.with_mut(|polls| {
+            let ctx = bun_io::js_vm_ctx();
+            let owner = bun_io::Owner::new(
+                bun_io::posix_event_loop::poll_tag::DNS_RESOLVER,
                 self.as_ctx_ptr().cast::<()>(),
             );
             let loop_ = self.vm().uws_loop();
-            // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
-            // any re-entrant call (`FilePoll::register` is a syscall wrapper).
-            let polls = unsafe { self.polls.get_mut() };
-            let poll_entry = polls.get_or_put(fd).expect("unreachable");
-
-            if !poll_entry.found_existing {
-                *poll_entry.value_ptr =
-                    FilePoll::init(ctx, sys::Fd::from_native(fd), Default::default(), owner);
-            }
-
-            // SAFETY: `value_ptr` points at a slot just initialized above (or a
-            // previously-initialized live FilePoll hive slot); JS-thread exclusive.
-            let poll = unsafe { &mut **poll_entry.value_ptr };
+            let poll = polls
+                .entry(fd)
+                .or_insert_with(|| PollType::new(ctx, sys::Fd::from_native(fd), owner));
 
             // c-ares reports the full desired (readable, writable) set for this
             // fd; sync the poll's registration to match. FilePoll now supports
             // both directions on one poll (epoll: combined mask via CTL_MOD;
             // kqueue: two filters on the same ident, both EV_DELETEd on
             // unregister).
-            let have_readable = poll.flags.contains(Async::PollFlag::PollReadable);
-            let have_writable = poll.flags.contains(Async::PollFlag::PollWritable);
+            let have_readable = poll.flags.contains(bun_io::PollFlag::PollReadable);
+            let have_writable = poll.flags.contains(bun_io::PollFlag::PollWritable);
 
             if (have_readable && !readable) || (have_writable && !writable) {
                 // Dropping a direction. FilePoll has no per-direction
@@ -2792,10 +2678,10 @@ impl Resolver {
                 // correct path and c-ares DNS fds are short-lived.
                 let _ = poll.unregister(loop_, false);
                 if readable {
-                    let _ = poll.register(loop_, Async::PollKind::Readable, false);
+                    let _ = poll.register(loop_, bun_io::PollKind::Readable, false);
                 }
                 if writable {
-                    let _ = poll.register(loop_, Async::PollKind::Writable, false);
+                    let _ = poll.register(loop_, bun_io::PollKind::Writable, false);
                 }
             } else {
                 // Only adding directions (or no change). register() issues a
@@ -2803,13 +2689,13 @@ impl Resolver {
                 // on kqueue EV_ADD creates a separate (ident, filter) knote
                 // without disturbing the existing one.
                 if readable && !have_readable {
-                    let _ = poll.register(loop_, Async::PollKind::Readable, false);
+                    let _ = poll.register(loop_, bun_io::PollKind::Readable, false);
                 }
                 if writable && !have_writable {
-                    let _ = poll.register(loop_, Async::PollKind::Writable, false);
+                    let _ = poll.register(loop_, bun_io::PollKind::Writable, false);
                 }
             }
-        }
+        });
     }
 
     // ───────────── JS host fns: resolve* family ─────────────
@@ -3082,6 +2968,8 @@ impl Resolver {
         };
         self.abort_handle.leave();
         drop(channel);
+        // Called from inside c-ares, `ares_destroy` reports no socket as closed.
+        self.polls.with_mut(PollsMap::clear_retaining_capacity);
         true
     }
 }

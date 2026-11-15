@@ -1252,9 +1252,9 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     pub(crate) fn clean(&mut self) -> Result<CleanResult, AllocError> {
         let mut total: u32 = 0;
 
-        let mut slice = self.list.to_owned_slice();
-        let mut trees: Vec<Tree> = slice.items_tree().to_vec();
-        let dependencies: &mut [DependencyIDList] = slice.items_dependencies_mut();
+        let mut list = core::mem::take(&mut self.list);
+        let mut trees: Vec<Tree> = list.items_tree().to_vec();
+        let dependencies: &mut [DependencyIDList] = list.items_dependencies_mut();
 
         for tree in &trees {
             total += tree.dependencies.len;
@@ -1297,8 +1297,6 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             tree.dependencies.len = len;
         }
 
-        slice.deinit_owned();
-
         Ok(CleanResult { trees, dep_ids })
     }
 }
@@ -1326,7 +1324,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
         return !dep.behavior.is_optional_peer();
     }
 
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let pkg_names = pkgs.items_name();
     let pkg_metas = pkgs.items_meta();
     let pkg_resolutions = pkgs.items_resolution();
@@ -1479,7 +1477,7 @@ impl Tree {
         // Copied out, so that neither keeps `builder` borrowed.
         let lockfile_ref = builder.lockfile;
         let lockfile: &Lockfile = lockfile_ref.get();
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let pkg_resolutions = pkgs.items_resolution();
         let dependencies: &[Dependency] = builder.dependencies;
 

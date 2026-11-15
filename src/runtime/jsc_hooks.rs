@@ -94,6 +94,7 @@ pub(crate) struct RuntimeState {
     pub(crate) body_value_pool: Box<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>,
     #[cfg(windows)]
     pub(crate) path_watchers: core::cell::OnceCell<Box<crate::node::win_watcher::PathWatchers>>,
+    pub(crate) request_pools: crate::server::RequestPools,
     /// The resolver's PackageManager wake-handler context (module queue + VM
     /// handle); the resolver holds a raw pointer to it. Freed with the state.
     pub(crate) wake_ctx: Option<Box<bun_jsc::async_module::WakeContext>>,
@@ -197,6 +198,14 @@ pub(crate) fn sql_rare(vm: &VirtualMachine) -> &bun_sql_jsc::jsc::RareData {
 #[cfg(windows)]
 pub(crate) fn path_watchers() -> &'static crate::node::win_watcher::PathWatchers {
     runtime_state().path_watchers.get_or_init(Default::default)
+}
+
+/// [`RuntimeState::request_pools`] of `vm`.
+pub(crate) fn request_pools(vm: &VirtualMachine) -> &crate::server::RequestPools {
+    let state = vm.runtime_state.get().cast::<RuntimeState>();
+    debug_assert!(!state.is_null(), "request_pools before init_runtime_state");
+    // SAFETY: as `timer_all`.
+    unsafe { &(*state).request_pools }
 }
 
 /// [`RuntimeState::lint`] of this thread's VM.
@@ -349,6 +358,7 @@ unsafe fn init_runtime_state(
         },
         #[cfg(windows)]
         path_watchers: Default::default(),
+        request_pools: Default::default(),
         wake_ctx: None,
         cron_jobs: JsCell::default(),
         stat_watcher_scheduler: JsCell::new(None),
@@ -1150,9 +1160,9 @@ unsafe fn timer_insert(
     timer_all_of(vm).insert(t);
 }
 
-/// `vm.timer.remove(timer)` — counterpart to [`timer_insert`].
-fn timer_remove(vm: &VirtualMachine, t: &bun_event_loop::EventLoopTimer::EventLoopTimer) {
-    timer_all_of(vm).remove(t);
+#[unsafe(no_mangle)]
+fn __bun_remove_timer(timer: &bun_event_loop::EventLoopTimer::EventLoopTimer) {
+    timer_all().remove(timer);
 }
 
 /// For `AbortSignal::Timeout`, which turns its delay into a deadline below this tier.
@@ -1349,7 +1359,6 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     run_pending_test_step,
     print_exception,
     timer_insert,
-    timer_remove,
     timer_min_delay_ms,
     abort_signal_timeout_clock,
     timers_left,
@@ -1364,7 +1373,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     load_standalone_sourcemap,
     apply_standalone_runtime_flags,
     parse_worker_exec_argv_flags,
-    stop_cron_for_vm_teardown,
+    stop_watches_for_vm_teardown,
     cron_clear_all_reload,
     retroactively_report_discovered_tests,
     cancel_timers,
@@ -1456,14 +1465,18 @@ unsafe fn parse_worker_exec_argv_flags(
 /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` —
 /// stops every in-process `Bun.cron()` job registered on
 /// this VM and releases the pending-promise ref so the struct frees (the event
-/// loop is dying; settle callbacks will never run).
-fn stop_cron_for_vm_teardown(vm: &VirtualMachine) {
+/// loop is dying; settle callbacks will never run). Drops the memory pressure watcher too.
+fn stop_watches_for_vm_teardown(vm: &VirtualMachine) {
     use crate::api::cron::{ClearMode, CronJob};
     CronJob::clear_all_for_vm::<{ ClearMode::Teardown }>(vm);
+    if let Some(state) = try_runtime_state() {
+        // Its poll is a slot of `RareData`, which is freed before the runtime state.
+        state.memory_pressure_watcher.set(None);
+    }
 }
 
 /// `jsc.API.cron.CronJob.clearAllForVM(vm, .reload)` —
-/// same impl as [`stop_cron_for_vm_teardown`] but skips
+/// the cron half of [`stop_watches_for_vm_teardown`], but skips
 /// the pending-promise force-release (the event loop survives a hot reload, so
 /// settle callbacks will still run).
 fn cron_clear_all_reload(vm: &VirtualMachine) {
@@ -1508,7 +1521,7 @@ fn cancel_timers(vm: &VirtualMachine, only: Option<bun_jsc::ContextId>) {
             return;
         };
         for (&timer, &kind) in timers.iter() {
-            // SAFETY: tracked ⇒ live (each untracks itself in its deinit); a
+            // SAFETY: tracked ⇒ live (each untracks itself when it drops); a
             // cancel may free the one it cancels, never another tracked one.
             unsafe {
                 match kind {
@@ -1574,7 +1587,7 @@ unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
 /// resolver's c-ares channel now so its `ARES_EDESTRUCTION` and socket-state
 /// callbacks run while the JSC VM, `RareData.file_polls`, and `runtime_state`
 /// are all still live. See `Resolver::close_channel_for_terminate`.
-fn stop_dns_for_vm_teardown() -> SweepResult {
+pub(crate) fn stop_dns_for_vm_teardown() -> SweepResult {
     let Some(state) = try_runtime_state() else {
         return SweepResult::Idle;
     };

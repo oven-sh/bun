@@ -54,7 +54,7 @@ use crate::webcore::s3::multipart::State as MultiPartUploadState;
 use crate::webcore::sink::ReadableSinkController;
 use crate::webcore::streams::NetworkSink;
 use bun_collections::IntegerBitSet;
-use bun_io::KeepAlive;
+use bun_io::JsKeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 
@@ -288,8 +288,7 @@ pub(crate) fn list_objects(
     let proxy_url = s3_simple_request::resolve_proxy(None, &result.url);
 
     let task_ptr = bun_core::heap::into_raw(Box::new(S3HttpSimpleTask {
-        // Written below via `MaybeUninit::write` before any read.
-        http: core::mem::MaybeUninit::uninit(),
+        async_http_id: 0,
         sign_result: result,
         callback: Some(s3_simple_request::Callback::ListObjects(callback)),
         headers,
@@ -299,18 +298,16 @@ pub(crate) fn list_objects(
         concurrent_task: Default::default(),
         proxy_url,
         body: Box::default(),
-        poll_ref: bun_io::KeepAlive::init(),
+        _keep_alive: JsKeepAlive::active(),
         signal_store: Default::default(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
         context: Default::default(),
     }));
     // SAFETY: just allocated, non-null, and `task` is not used once `task_ptr` is dereferenced.
     // `'static`: `url`, `headers_buf` and `http_proxy` borrow heap buffers that `*task` owns and
-    // never writes again. They are stored in `task.http`, an `AsyncHTTP<'static>` that the HTTP
+    // never writes again. They are stored in an `AsyncHTTP<'static>` that the HTTP
     // thread reads, and remain valid until `task` is dropped in `on_response`.
     let task: &'static mut S3HttpSimpleTask = unsafe { &mut *task_ptr };
-
-    task.poll_ref.ref_(bun_io::js_vm_ctx());
 
     let url = bun_url::URL::parse(&task.sign_result.url);
     let headers_buf: &'static [u8] = task.headers.buf.as_slice();
@@ -322,7 +319,7 @@ pub(crate) fn list_objects(
     // JS thread (request setup): read options from the current VM.
     let vm = VirtualMachine::get();
 
-    let http = task.http.write(bun_http::AsyncHTTP::init(
+    let http = bun_http::AsyncHTTP::init(
         bun_http::Method::GET,
         url,
         task.headers.entries.clone().expect("OOM"),
@@ -344,19 +341,18 @@ pub(crate) fn list_objects(
             signals: Some(task.signal_store.to()),
             ..Default::default()
         },
-    ));
+    );
+    task.async_http_id = http.async_http_id;
 
     // queue http request
     bun_http::http_thread::init(&Default::default());
-    let mut batch = bun_threading::thread_pool::Batch::default();
-    http.schedule(&mut batch);
     // Out on the HTTP thread until its final callback: its context aborts it
     // when it stops, and the VM waits for it (the ticket).
     task.http_ticket = Some(VirtualMachine::get().ticket());
     task.context = context.id();
     // SAFETY: the task is heap-allocated and drops its handle with itself.
     unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
-    bun_http::HTTPThread::schedule(batch);
+    bun_http::HTTPThread::schedule([http]);
     Ok(())
 }
 
@@ -492,7 +488,7 @@ pub(crate) fn writable_stream(
         storage_class,
         request_payer,
         credentials,
-        poll_ref: KeepAlive::init(),
+        poll_ref: JsKeepAlive::active(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<MultiPartUpload>(),
         context: cx.context().id(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
@@ -517,7 +513,6 @@ pub(crate) fn writable_stream(
     });
     task.unfinished.set(Some(task.clone()));
 
-    task.poll_ref.ref_(bun_io::js_vm_ctx());
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
     unsafe { bun_jsc::AbortHandle::arm_owner(task.as_ptr(), cx.context()) };
 
@@ -837,7 +832,7 @@ pub(crate) fn upload_stream(
         storage_class,
         request_payer,
         credentials,
-        poll_ref: KeepAlive::init(),
+        poll_ref: JsKeepAlive::active(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<MultiPartUpload>(),
         context: cx.context().id(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
@@ -861,7 +856,6 @@ pub(crate) fn upload_stream(
     });
     task.unfinished.set(Some(task.clone()));
 
-    task.poll_ref.ref_(bun_io::js_vm_ctx());
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
     unsafe { bun_jsc::AbortHandle::arm_owner(task.as_ptr(), cx.context()) };
 
@@ -1118,8 +1112,6 @@ fn download_stream(
     let owned_proxy = s3_simple_request::resolve_proxy(None, &result.url);
     let task_ptr = bun_core::heap::into_raw(S3HttpDownloadStreamingTask::new(
         S3HttpDownloadStreamingTask {
-            // `http: undefined` — fully overwritten by `task.http.write(AsyncHTTP::init(...))` below.
-            http: core::mem::MaybeUninit::uninit(),
             sign_result: result,
             proxy_url: owned_proxy,
             callback_context: NonNull::new(callback_context.cast::<()>())
@@ -1130,7 +1122,7 @@ fn download_stream(
             has_schedule_callback: core::sync::atomic::AtomicBool::new(false),
             signal_store: Default::default(),
             signals: Default::default(),
-            poll_ref: bun_io::KeepAlive::init(),
+            poll_ref: JsKeepAlive::active(),
             mutex: Default::default(),
             request_error: None,
             reported_response_buffer: MutableString::default(),
@@ -1151,8 +1143,6 @@ fn download_stream(
     // never writes again, for the HTTP thread. They remain valid until `task` is dropped in
     // `S3HttpDownloadStreamingTask::on_response`. See `execute_simple_s3_request`.
     let task: &'static mut S3HttpDownloadStreamingTask = unsafe { &mut *task_ptr };
-    task.poll_ref.ref_(bun_io::js_vm_ctx());
-
     let url = bun_url::URL::parse(&task.sign_result.url);
     let headers_buf: &'static [u8] = task.headers.buf.as_slice();
     let http_proxy = if !task.proxy_url.is_empty() {
@@ -1167,7 +1157,7 @@ fn download_stream(
     let verbose = vm.get_verbose_fetch();
     let reject_unauthorized = vm.get_tls_reject_unauthorized();
 
-    let http = task.http.write(bun_http::AsyncHTTP::init(
+    let http = bun_http::AsyncHTTP::init(
         bun_http::Method::GET,
         url,
         task.headers.entries.clone().expect("OOM"),
@@ -1189,20 +1179,18 @@ fn download_stream(
             tls_props: crate::socket::http_client_defaults(vm),
             ..Default::default()
         },
-    ));
+    );
     task.async_http_id = http.async_http_id;
     // enable streaming
     http.enable_response_body_streaming();
     // queue http request
     bun_http::http_thread::init(&Default::default());
-    let mut batch = bun_threading::thread_pool::Batch::default();
-    http.schedule(&mut batch);
     // Out on the HTTP thread until its final callback: its context aborts it
     // when it stops, and the VM waits for it (the ticket).
     task.http_ticket = Some(VirtualMachine::get().ticket());
     // SAFETY: the task is heap-allocated and drops its handle with itself.
     unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
-    bun_http::HTTPThread::schedule(batch);
+    bun_http::HTTPThread::schedule([http]);
     task_ptr
 }
 
@@ -1346,7 +1334,7 @@ impl S3DownloadStreamWrapper {
                 // Wake the HTTP thread so it observes the abort even when the
                 // socket is idle; otherwise the final `has_more == false`
                 // callback never fires and both the task and wrapper leak.
-                bun_http::http_thread().schedule_shutdown_by_id((*task).async_http_id);
+                bun_http::HTTPThread::schedule_shutdown((*task).async_http_id);
             }
         }
     }

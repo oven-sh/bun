@@ -1519,15 +1519,6 @@ bun_event_loop::link_impl_JsEventLoop! {
     Jsc for EventLoop => |this| {
         iteration_number() => (*this).usockets_loop().iteration_number()
             + (*this).task_drains.load(Ordering::Relaxed),
-        // Return raw to avoid asserting uniqueness — multiple handles may name the
-        // same VM.
-        file_polls() => (*this).vm_ref().rare_data().file_polls_ptr(),
-        put_file_poll(poll, was_ever_registered) => {
-            let store = (*this).vm_ref().rare_data().file_polls_ptr();
-            let ctx = Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js);
-            // `poll` is a live hive-slot pointer (vtable contract) — non-null.
-            (*store).put(core::ptr::NonNull::new_unchecked(poll), ctx, was_ever_registered);
-        },
         uws_loop() => (*this).usockets_loop(),
         event_loop_ctx() => (*this).event_loop_ctx(),
         tick() => (*this).tick(),

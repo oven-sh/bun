@@ -57,7 +57,7 @@ pub use bun_core::STRING_ALLOCATION_LIMIT;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) type OnUnhandledRejection = fn(&VirtualMachine, &JSGlobalObject, JSValue);
-pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, JSValue>;
+pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, crate::Strong>;
 pub type ExceptionList = Vec<crate::exception_list::JsException>;
 
 /// Error for bytes that aren't interned yet and are longer than [`bun_core::String::max_length`].
@@ -2383,7 +2383,7 @@ impl VirtualMachine {
     ///     listeners, sockets, watchers, subprocess/pipe/tty handles, in-flight
     ///     fetch/S3/Bun.build aborted or cancelled), socket groups and the DNS
     ///     channel closed.
-    ///  B. release — cron, user timers and GC-controller timers cancelled; child
+    ///  B. release — cron, memory pressure watch, user and GC-controller timers cancelled; child
     ///     workers joined; this VM's sqlite connections closed; **the wait**:
     ///     every ticket held off-thread comes back while queued work is
     ///     released without running; the handle closes; main: HTTP thread
@@ -2447,7 +2447,7 @@ impl VirtualMachine {
             unsafe { uws::Timer::close::<true>(t.as_ptr()) };
         }
         if let Some(hooks) = hooks {
-            (hooks.stop_cron_for_vm_teardown)(vm);
+            (hooks.stop_watches_for_vm_teardown)(vm);
             // Drop every TimeoutObject/ImmediateObject's heap node, JS pin and
             // +1 while runtime state and the JSC heap are alive. The heap itself
             // (and the loop handle it embeds) stays up: JSC's own RunLoop timers
@@ -2461,7 +2461,7 @@ impl VirtualMachine {
             // SAFETY: fn contract.
             unsafe { (hooks.disarm_all_timers_for_vm_teardown)(this) };
         }
-        vm.gc_controller.deinit();
+        vm.gc_controller.disabled.set(true);
         crate::web_worker::join_child_workers(vm.child_workers.take());
         // Children have closed their own; now this VM's sqlite connections
         // checkpoint and close, before finalizers could.
@@ -2804,9 +2804,6 @@ pub struct RuntimeHooks {
         vm: &VirtualMachine,
         timer: *const bun_event_loop::EventLoopTimer::EventLoopTimer,
     ),
-    /// `vm.timer.remove(&event_loop_timer)` — see `timer_insert`.
-    pub timer_remove:
-        fn(vm: &VirtualMachine, timer: &bun_event_loop::EventLoopTimer::EventLoopTimer),
     /// `FakeTimers::min_delay_ms()` of the calling thread's VM. A slot for the same reason as `timer_insert`.
     pub timer_min_delay_ms: fn() -> u32,
     /// `FakeTimers::abort_signal_timeout_clock()` of the calling thread's VM.
@@ -2877,12 +2874,10 @@ pub struct RuntimeHooks {
     /// `None` if parsing failed.
     pub parse_worker_exec_argv_flags:
         unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<WorkerExecArgvFlags>,
-    /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
-    /// `bun_runtime::api::cron`.
-    pub stop_cron_for_vm_teardown: fn(vm: &VirtualMachine),
+    /// Cron jobs and the memory pressure watcher, while the loop and `RareData` are alive.
+    pub stop_watches_for_vm_teardown: fn(vm: &VirtualMachine),
     /// `CronJob.clearAllForVM(vm, .reload)`.
-    /// Same impl as `stop_cron_for_vm_teardown` but
-    /// the `.reload` mode preserves the next-fire schedule across the new
+    /// The `.reload` mode preserves the next-fire schedule across the new
     /// global so timers re-register instead of being torn down.
     pub cron_clear_all_reload: fn(vm: &VirtualMachine),
     /// Standalone-graph sourcemap load.
@@ -3008,15 +3003,6 @@ impl VirtualMachine {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         // SAFETY: per fn contract.
         unsafe { (hooks.timer_insert)(self, timer) }
-    }
-
-    /// `vm.timer.remove(timer)` if `timer` is armed — see [`Self::timer_insert`].
-    #[inline]
-    pub fn timer_remove(&self, timer: &bun_event_loop::EventLoopTimer::EventLoopTimer) {
-        if timer.state.get() == bun_event_loop::EventLoopTimer::State::ACTIVE {
-            let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-            (hooks.timer_remove)(self, timer)
-        }
     }
 
     /// The shortest delay, in milliseconds, a timer armed now can have: 1 while `jest.useFakeTimers()` runs a timer's callback.
@@ -3424,8 +3410,7 @@ impl VirtualMachine {
         self.has_loaded.set(false);
         self.set_main(entry_path);
         self.main_resolved_path.set(bun_core::String::EMPTY);
-        self.overridden_main
-            .with_mut(crate::strong::Optional::deinit);
+        self.overridden_main.set(Default::default());
 
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
@@ -5635,7 +5620,7 @@ impl VirtualMachine {
             drop(core::mem::take(&mut (*this).source_mappings));
 
             if let Some(hooks) = runtime_hooks() {
-                (hooks.stop_cron_for_vm_teardown)(&*this);
+                (hooks.stop_watches_for_vm_teardown)(&*this);
             }
             if let Some(rare) = (*this).rare_data.take() {
                 // Paired with `rare_data()`'s `register_root_region`.
@@ -5660,11 +5645,11 @@ impl VirtualMachine {
             drop((*this).ref_strings.take());
             drop((*this).sampling_profiler_directory.take());
 
-            (*this).overridden_main.as_mut().deinit();
-            (*this).bake_config_plugins.as_mut().deinit();
+            drop((*this).overridden_main.take());
+            drop((*this).bake_config_plugins.take());
             drop((*this).bake_config_plugin_names.take());
-            (*this).bake_framework.as_mut().deinit();
-            (*this).pending_internal_promise.as_mut().deinit();
+            drop((*this).bake_framework.take());
+            drop((*this).pending_internal_promise.take());
 
             if let Some(hooks) = runtime_hooks() {
                 let state = (*this).runtime_state.replace(core::ptr::null_mut());
@@ -5750,8 +5735,7 @@ impl VirtualMachine {
         );
         self.set_main(Some(entry_path));
         self.main_resolved_path.set(bun_core::String::EMPTY);
-        self.overridden_main
-            .with_mut(crate::strong::Optional::deinit);
+        self.overridden_main.set(Default::default());
         if self.test_isolation_state.shares_global.get() {
             Bun__Process__resetArgv(self.global());
         }
@@ -6006,8 +5990,7 @@ impl VirtualMachine {
             // global makes the next file's call a no-op and dispatches
             // node:quic events into the dead realm.
             if !shares_global {
-                rare.node_quic_callbacks
-                    .with_mut(crate::strong::Optional::deinit);
+                rare.node_quic_callbacks.set(Default::default());
             }
         }
         let _ = self.event_loop().drain_microtasks();
@@ -6057,11 +6040,8 @@ impl VirtualMachine {
             (hooks.cancel_timers)(self, None);
         }
 
-        self.overridden_main
-            .with_mut(crate::strong::Optional::deinit);
-        self.entry_point_result
-            .value
-            .with_mut(crate::strong::Optional::deinit);
+        self.overridden_main.set(Default::default());
+        self.entry_point_result.value.set(Default::default());
         self.entry_point_result.cjs_set_value.set(false);
         self.entry_point_result.evaluated_as_cjs.set(false);
         self.set_pending_internal_promise(None);
@@ -6078,9 +6058,6 @@ impl VirtualMachine {
 
         // Loaded macros are functions of the outgoing realm. The macro context
         // remembers which ones are loaded, so the next file loads its own.
-        for callback in self.macros.get().values() {
-            callback.unprotect();
-        }
         self.macros.with_mut(MacroMap::clear_retaining_capacity);
         drop(self.transpiler.with_mut(|t| t.macro_context.take()));
 
@@ -6311,9 +6288,6 @@ impl VirtualMachine {
         if was_internal {
             if let Some(exception_) = exception {
                 let mut holder = crate::zig_exception::Holder::init();
-                // Note: `holder.deinit(self)` runs at the tail (for borrowck)
-                // — semantics unchanged because
-                // `need_to_clear_parser_arena_on_deinit` is false here.
                 let zig_exception: &mut ZigException<'_> = holder.zig_exception();
                 exception_.get_stack_trace(global_ref, &mut zig_exception.stack);
                 if zig_exception.stack.frames_len > 0 {
@@ -6323,7 +6297,6 @@ impl VirtualMachine {
                     let origin = self.is_from_devserver.then_some(&self.origin);
                     zig_exception.add_to_error_list(list, self.top_level_dir(), origin);
                 }
-                holder.deinit(self);
             }
         }
     }
@@ -6543,15 +6516,15 @@ impl VirtualMachine {
 
     /// Fills `exception` from `error_instance`, remapping stack frames through source maps.
     /// `source_code` receives the text that `exception`'s source lines borrow.
+    #[must_use = "hold the guard until `exception` is printed"]
     pub(crate) fn remap_zig_exception<'a>(
         &self,
         exception: &mut ZigException<'a>,
         error_instance: JSValue,
         exception_list: Option<&mut ExceptionList>,
-        must_reset_parser_arena_later: &mut bool,
         source_code: &'a mut bun_core::Utf8Bytes<'static>,
         allow_source_code_preview: bool,
-    ) {
+    ) -> Option<ModuleLoader::ArenaResetGuard<'_>> {
         error_instance.to_zig_exception(self.global(), exception);
         let mut enable_source_code_preview = allow_source_code_preview
             && !(bun_core::env_var::feature_flag::BUN_DISABLE_SOURCE_CODE_PREVIEW::get()
@@ -6559,10 +6532,9 @@ impl VirtualMachine {
                 || bun_core::env_var::feature_flag::BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW::get()
                     .unwrap_or(false));
 
-        self.remap_zig_exception_frames(
+        let arena_reset = self.remap_zig_exception_frames(
             exception,
             error_instance,
-            must_reset_parser_arena_later,
             source_code,
             &mut enable_source_code_preview,
         );
@@ -6582,6 +6554,7 @@ impl VirtualMachine {
             let origin = self.is_from_devserver.then_some(&self.origin);
             exception.add_to_error_list(list, self.top_level_dir(), origin);
         }
+        arena_reset
     }
 
     /// [`Self::remap_zig_exception`]'s work on the frames and source lines. A REPL frame clears `enable_source_code_preview`.
@@ -6589,10 +6562,9 @@ impl VirtualMachine {
         &self,
         exception: &mut ZigException<'a>,
         error_instance: JSValue,
-        must_reset_parser_arena_later: &mut bool,
         source_code: &'a mut bun_core::Utf8Bytes<'static>,
         enable_source_code_preview: &mut bool,
-    ) {
+    ) -> Option<ModuleLoader::ArenaResetGuard<'_>> {
         let global = self.global();
 
         fn is_noisy_builtin(name: &bun_core::String) -> bool {
@@ -6653,7 +6625,7 @@ impl VirtualMachine {
 
         let frames = &mut frames_buf[..frames_len];
         if frames.is_empty() {
-            return;
+            return None;
         }
 
         // Pick the top-most non-builtin frame for source preview.
@@ -6736,6 +6708,7 @@ impl VirtualMachine {
             })
         };
 
+        let mut arena_reset = None;
         if let Some((mapping, display_url, external_code)) = resolved {
             if let Some(src) = display_url {
                 frames[top].source_url = src.into();
@@ -6781,7 +6754,7 @@ impl VirtualMachine {
                     // Source is gone; the frames still get remapped below.
                     break 'code bun_core::Utf8Bytes::EMPTY;
                 };
-                *must_reset_parser_arena_later = true;
+                arena_reset = Some(ModuleLoader::ArenaResetGuard::new(self));
                 original_source.source_code.into_utf8()
             };
             *source_code = code;
@@ -6861,6 +6834,7 @@ impl VirtualMachine {
                 }
             }
         }
+        arena_reset
     }
 
     /// Prints an already-remapped exception (name, message, stack, source lines) to `writer`.
@@ -6950,15 +6924,12 @@ impl VirtualMachine {
         // box it to keep the per-level recursion frame small enough for the
         // 16K-deep `bun-inspect.test.ts` Error chain on Windows debug.
         let mut exception_holder = Box::new(crate::zig_exception::Holder::init());
-        // `exception` borrows the whole holder, whose flag is set once that borrow has ended.
-        let mut need_to_clear = false;
         let exception = exception_holder.zig_exception();
 
-        self.remap_zig_exception(
+        let _arena_reset = self.remap_zig_exception(
             exception,
             error_instance,
             exception_list,
-            &mut need_to_clear,
             &mut source_code,
             formatter.error_display_level != crate::console_object::ErrorDisplayLevel::Warn,
         );
@@ -6979,9 +6950,6 @@ impl VirtualMachine {
         if recorded {
             formatter.visited_remove(error_instance);
         }
-
-        exception_holder.need_to_clear_parser_arena_on_deinit = need_to_clear;
-        exception_holder.deinit(self);
         result
     }
 

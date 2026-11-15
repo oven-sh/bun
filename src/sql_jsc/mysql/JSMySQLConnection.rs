@@ -6,7 +6,7 @@ use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 use crate::generated_bindgen::js_my_sql_connection::js_MySQLConnection as js;
 use crate::jsc::{
     AutoFlush, EventLoopTimerTag, GlobalRef, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
-    KeepAlive, VirtualMachine, VirtualMachineSqlExt as _, run_callback,
+    VirtualMachine, VirtualMachineSqlExt as _, run_callback,
 };
 use crate::shared::CachedStructure;
 use crate::shared::cached_structure::{column_name_to_js, transform_name};
@@ -18,8 +18,8 @@ use bun_core::strings;
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
 use bun_sql::mysql::protocol::any_mysql_error::Error as AnyMySQLErrorT;
 use bun_sql::mysql::protocol::error_packet::ErrorPacket;
+use bun_sql::mysql::protocol::new_reader::PacketReader;
 use bun_sql::mysql::protocol::new_writer::NewWriter;
-use bun_sql::mysql::protocol::stack_reader::PacketReader;
 use bun_uws::{self as uws, AnySocket, NewSocketHandler, SocketTCP};
 
 use super::js_my_sql_query::JSMySQLQuery;
@@ -42,7 +42,7 @@ pub struct JSMySQLConnection {
     js_value: JsCell<JsRef>,
     global_object: GlobalRef,
     vm: BackRef<VirtualMachine>,
-    poll_ref: KeepAlive,
+    poll_ref: bun_io::JsKeepAlive,
     /// Held from the socket's open to its close.
     socket_ref: Cell<Option<RefPtr<Self>>>,
 
@@ -59,9 +59,6 @@ bun_event_loop::impl_timer_owner!(JSMySQLConnection;
 
 impl Drop for JSMySQLConnection {
     fn drop(&mut self) {
-        self.timers.stop();
-        let ctx = self.vm_ctx();
-        self.poll_ref.unref(ctx);
         self.unregister_auto_flusher();
     }
 }
@@ -318,7 +315,7 @@ impl JSMySQLConnection {
             js_value: JsCell::new(JsRef::empty()),
             global_object: GlobalRef::from(global_object),
             vm: BackRef::new(VirtualMachine::get()),
-            poll_ref: KeepAlive::default(),
+            poll_ref: Default::default(),
             connection: JsCell::new(my_sql_connection::MySQLConnection::init(
                 database,
                 username,
@@ -690,7 +687,7 @@ impl JSMySQLConnection {
         }
     }
 
-    pub(crate) fn on_error_packet(&self, request: Option<&JSMySQLQuery>, err: &ErrorPacket) {
+    pub(crate) fn on_error_packet(&self, request: Option<&JSMySQLQuery>, err: &ErrorPacket<'_>) {
         if let Some(request) = request {
             if let Some(err_) = self.global_object.try_take_exception() {
                 request.reject_with_js_value(err_);

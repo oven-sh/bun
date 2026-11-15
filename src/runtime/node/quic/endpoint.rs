@@ -15,7 +15,7 @@ use bun_lsquic_sys as lsquic;
 use bun_uws as uws;
 
 use crate::jsc_hooks::timer_all;
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimerState, EventLoopTimerTag, OwnedTimer};
 
 use super::callbacks;
 use super::ffi::lsquic_callback;
@@ -242,7 +242,7 @@ pub(crate) struct QuicEndpoint {
     early_keylog: JsCell<Vec<(*mut c_void, StoredAddr, Vec<u8>)>>,
     block_list_js: JsCell<Option<bun_jsc::Strong>>,
     block_list_allow: Cell<bool>,
-    pub(crate) event_loop_timer: EventLoopTimer,
+    pub(crate) event_loop_timer: OwnedTimer,
     pending_endpoint_close: Cell<bool>,
     /// Intrusive node on the loop's node:quic driver list; linked only while
     /// this endpoint holds a socket. `us_nq_loop_flush_if_pending` runs the
@@ -1218,7 +1218,7 @@ impl QuicEndpoint {
             early_keylog: JsCell::new(Vec::new()),
             block_list_js: JsCell::new(block_list_js),
             block_list_allow: Cell::new(block_list_allow),
-            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::QuicEndpoint),
+            event_loop_timer: OwnedTimer::init_paused(EventLoopTimerTag::QuicEndpoint),
             pending_endpoint_close: Cell::new(false),
             nq_driver: JsCell::new(UsNqDriver::default()),
             nq_registered: Cell::new(false),
@@ -1558,7 +1558,7 @@ impl QuicEndpoint {
         // time-driven state (RTO, ACK delay, idle) and the deferred close.
         self.mark_driver_pending();
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
-        timer_all().update(&raw const self.event_loop_timer, &next);
+        timer_all().update(OwnedTimer::node(&raw const self.event_loop_timer), &next);
     }
 
     fn rearm_timer(&self) {
@@ -1596,7 +1596,7 @@ impl QuicEndpoint {
                 bun_core::TimespecMockMode::ForceRealTime,
                 ms as i64,
             );
-            timer_all().update(&raw const self.event_loop_timer, &next);
+            timer_all().update(OwnedTimer::node(&raw const self.event_loop_timer), &next);
         }
     }
 
@@ -2039,9 +2039,7 @@ impl QuicEndpoint {
         }
         // Unlink first: the driver walk must never reach a freed endpoint.
         self.unlink_loop_driver();
-        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-            timer_all().remove(&self.event_loop_timer);
-        }
+        self.event_loop_timer.disarm();
         for engine in [
             self.server_engine.replace(null_mut()),
             self.client_engine.replace(null_mut()),
@@ -2088,7 +2086,7 @@ impl QuicEndpoint {
         self.poll_ref.ref_(bun_io::js_vm_ctx());
         self.pending_endpoint_close.set(true);
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
-        timer_all().update(&raw const self.event_loop_timer, &next);
+        timer_all().update(OwnedTimer::node(&raw const self.event_loop_timer), &next);
     }
 
     fn apply_server_session_options(
@@ -2647,11 +2645,6 @@ impl Drop for SendScope<'_> {
 
 impl Drop for QuicEndpoint {
     fn drop(&mut self) {
-        // Remove the timer before the backing storage drops, or a later heap
-        // operation dereferences the freed node.
-        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-            timer_all().remove(&self.event_loop_timer);
-        }
         self.detach_for_finalize();
         self.release_native();
     }

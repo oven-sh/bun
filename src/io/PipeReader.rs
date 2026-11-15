@@ -3,7 +3,7 @@ use core::mem;
 
 use bun_sys::{self as sys, Fd};
 
-use crate::{EventLoopHandle, FilePollKind, FilePollRef, LoopRef, Owner, PollTag};
+use crate::{EventLoopHandle, FilePollKind, LoopRef, Owner, PollTag};
 
 /// `bun_io::poll_tag::BUFFERED_READER` — every `FilePoll` allocated by this
 /// module stores a `*mut BufferedReader` (erased) as its owner; the per-tag
@@ -340,7 +340,7 @@ impl PosixBufferedReader {
         self.flags.insert(PosixFlags::IS_PAUSED);
 
         // Unregister the FilePoll if it's registered
-        if let PollOrFd::Poll(poll) = &mut self.handle {
+        if let Some(poll) = self.handle.get_poll() {
             if poll.is_registered() {
                 let _ = poll.unregister(self.vtable.loop_(), false);
             }
@@ -506,13 +506,13 @@ impl PosixBufferedReader {
             if !self.flags.contains(PosixFlags::POLLABLE) {
                 return Ok(());
             }
-            self.handle = PollOrFd::Poll(FilePollRef::init(
+            self.handle.set_poll(
                 ev,
                 fd,
                 Owner::new(PollTag::BufferedReader, owner_ptr.cast()),
-            ));
+            );
         }
-        let Some(poll) = self.handle.get_poll_mut() else {
+        let Some(poll) = self.handle.get_poll() else {
             return Ok(());
         };
         poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
@@ -977,7 +977,9 @@ enum ReadOnce {
 
 impl Drop for PosixBufferedReader {
     fn drop(&mut self) {
-        self.close_without_reporting();
+        if self.flags.contains(PosixFlags::CLOSE_HANDLE) {
+            self.handle.close(None, None::<fn(*mut c_void)>);
+        }
     }
 }
 

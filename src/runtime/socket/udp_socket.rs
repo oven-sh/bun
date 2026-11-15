@@ -4,7 +4,7 @@ use core::ffi::c_char;
 use core::ffi::{c_int, c_void};
 
 use bun_core::{String as BunString, Utf8Bytes};
-use bun_io::KeepAlive;
+use bun_io::JsKeepAlive;
 use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::bindgen::{self, IntoError as _, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
@@ -514,7 +514,7 @@ pub(crate) struct UDPSocket {
     pub global_this: BackRef<JSGlobalObject>,
     pub this_value: JsCell<JsRef>,
 
-    pub poll_ref: KeepAlive,
+    pub poll_ref: JsKeepAlive,
     /// if marked as closed the socket pointer may be stale
     pub closed: Cell<bool>,
     connect_info: Cell<Option<ConnectInfo>>,
@@ -574,7 +574,7 @@ impl UDPSocket {
             config: JsCell::new(UDPSocketConfig::default()),
             global_this: BackRef::new(cx.global()),
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: KeepAlive::init(),
+            poll_ref: JsKeepAlive::default(),
             closed: Cell::new(false),
             connect_info: Cell::new(None),
             #[cfg(not(windows))]
@@ -1671,7 +1671,6 @@ impl Drop for UDPSocket {
             }
             uws::udp::Socket::opaque_mut(socket).close();
         }
-        this.poll_ref.disable();
     }
 }
 

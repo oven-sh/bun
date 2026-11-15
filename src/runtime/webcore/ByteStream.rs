@@ -859,7 +859,7 @@ impl ByteStream {
         let view = self.value();
         self.buffered.clear();
         self.done.set(true);
-        self.pending_value.with_mut(|pv| pv.deinit());
+        self.pending_value.set(Default::default());
         // A native sink wired to this stream must fail, not later see an EOF and commit what it
         // has (an S3 upload would complete with a truncated object).
         let sink = *self.sink.get();

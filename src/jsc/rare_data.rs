@@ -611,8 +611,8 @@ impl SocketGroups {
 
 impl RareData {
     pub(crate) fn release_js_handles(&self) {
-        self.s3_default_client.with_mut(Strong::deinit);
-        self.node_quic_callbacks.with_mut(Strong::deinit);
+        self.s3_default_client.set(Default::default());
+        self.node_quic_callbacks.set(Default::default());
     }
 
     // ── lazy-init: hot_map ─────────────────────────────────────────────────

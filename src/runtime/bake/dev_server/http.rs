@@ -390,9 +390,7 @@ fn send_built_in_not_found<R: ResponseLike>(resp: &mut R) {
 /// Problem statement documented on `SCRIPT_UNREF_PAYLOAD`
 /// Takes 8 bytes: The generation ID in hex.
 struct UnrefSourceMapRequest {
-    // BACKREF: DevServer outlives the request; raw ptr avoids the `'static`
-    // bound on `BodyReaderHandler` that a borrowed `&mut DevServer` would violate.
-    dev: *mut DevServer,
+    dev: PendingRequest<bun_ptr::BackRef<DevServer, bun_ptr::Mut>>,
 }
 
 impl bun_uws_sys::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest {
@@ -401,23 +399,12 @@ impl bun_uws_sys::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest
     }
 }
 
-impl Drop for UnrefSourceMapRequest {
-    fn drop(&mut self) {
-        // SAFETY: dev outlives the request
-        let server = unsafe { (*self.dev).server }.expect("server bound");
-        server.on_static_request_complete();
-    }
-}
-
 impl UnrefSourceMapRequest {
     fn run<R>(dev: &mut DevServer, _: &mut Request, resp: &mut R)
     where
         R: bun_uws_sys::body_reader_mixin::BodyResponse,
     {
-        dev.server
-            .as_mut()
-            .expect("server bound")
-            .on_pending_request();
+        let dev = PendingRequest::new(bun_ptr::BackRef::new_mut(dev));
         uws::BodyReaderMixin::read_body(UnrefSourceMapRequest { dev }, resp);
     }
 
@@ -432,7 +419,7 @@ impl UnrefSourceMapRequest {
         let source_map_key = source_map_store::Key::init((generation as u64) << 32);
         // SAFETY: dev outlives the request; the exclusive reborrow is narrowed to
         // `source_maps` for this statement.
-        let _ = unsafe { &mut (*self.dev).source_maps }.remove_or_upgrade_weak_ref(
+        let _ = unsafe { &mut (*self.dev.as_ptr()).source_maps }.remove_or_upgrade_weak_ref(
             source_map_key,
             source_map_store::RemoveOrUpgradeMode::Remove,
         );

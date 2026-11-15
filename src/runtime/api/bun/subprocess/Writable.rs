@@ -86,7 +86,7 @@ impl Writable {
         // `on_stdin_destroyed` — writing afterwards would follow a `deref()`
         // that may free `process`, a write-after-free. The only observable
         // difference is `has_pending_activity_stdio()` seeing `Ignore`
-        // (== false) instead of a just-deref'd `Buffer` (== true) inside
+        // (== false) instead of a `Buffer` (== true) inside
         // `update_has_pending_activity`, which is the state it converges to
         // immediately after anyway.
         process.stdin.set(Writable::Ignore);
@@ -109,7 +109,8 @@ impl Writable {
         })
     }
 
-    /// SAFETY: the result becomes `subprocess.stdin`.
+    /// # Safety
+    /// The result becomes `subprocess.stdin`.
     pub(crate) unsafe fn init(
         mut stdio: Stdio,
         event_loop: &EventLoop,
@@ -120,9 +121,9 @@ impl Writable {
         let global = event_loop.global_ref();
 
         let evtloop = event_loop.as_handle();
-        let owner = Owner::new(PollTag::StaticPipeWriter, subprocess.as_ptr().cast());
+        let owner = Owner::new(PollTag::SubprocessStdinWriter, subprocess.as_ptr().cast());
         // SAFETY: fn contract.
-        let buffer = |result, blob| unsafe { StaticPipeWriter::create(owner, result, blob) };
+        let create_writer = |result, blob| unsafe { StaticPipeWriter::create(owner, result, blob) };
 
         #[cfg(windows)]
         {
@@ -147,7 +148,7 @@ impl Writable {
                 }
 
                 Stdio::Blob(blob) => {
-                    return Ok(Writable::Buffer(buffer(result, blob)));
+                    return Ok(Writable::Buffer(create_writer(result, blob)));
                 }
                 Stdio::Fd(fd) => {
                     return Ok(Writable::Fd(fd));
@@ -211,7 +212,7 @@ impl Writable {
                 Ok(Writable::Pipe(pipe_ref))
             }
 
-            Stdio::Blob(blob) => Ok(Writable::Buffer(buffer(result, blob))),
+            Stdio::Blob(blob) => Ok(Writable::Buffer(create_writer(result, blob))),
             #[cfg(any(target_os = "linux", target_os = "android"))]
             Stdio::Memfd(_file) => Ok(Writable::Memfd { _file }),
             Stdio::Fd(fd) => Ok(Writable::Fd(fd)),

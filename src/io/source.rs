@@ -174,12 +174,7 @@ impl Drop for OpenFile {
 /// - The `fs` is properly deinitialized before reuse
 /// - Cancellation is only attempted when an operation is in-flight
 ///
-/// Typical usage pattern:
-/// 1. Check `can_start()` - returns true if ready for a new operation
-/// 2. Call `prepare()` - marks fs as in-use
-/// 3. Set up buffer and call `uv_fs_write()` (`submit_read()` does both steps for a read)
-/// 4. In callback, call `on_complete()` first to clean up
-/// 5. Process the result
+/// `submit_read()` / `submit_write()` start an operation, and its callback calls `on_complete()` first.
 ///
 /// Cancellation:
 /// - Call `stop()` to cancel an in-flight operation

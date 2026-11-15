@@ -2,7 +2,7 @@
 //! `standalone_graph/` (used by the bundler with no JS in the loop); only the
 //! `Blob` accessor that needs a `&JSGlobalObject` lives here.
 
-use core::ptr::NonNull;
+use std::sync::OnceLock;
 
 use bun_core::{self as bstring, strings};
 use bun_http::MimeType;
@@ -15,10 +15,14 @@ use bun_standalone_graph::{File, Graph, is_bun_standalone_file_path};
 
 /// The process-wide template of an embedded file's `Blob`: store, content
 /// type and a shared `name`. `global_this` is null; `file_blob` stamps it per VM.
-fn template_blob(
-    file: &'static File,
-) -> NonNull<bun_standalone_graph::StandaloneModuleGraph::Blob> {
-    *file.cached_blob.get_or_init(|| {
+fn template_blob(file: &'static File) -> &'static Blob {
+    /// By index in `Graph::files`.
+    static TEMPLATES: OnceLock<Box<[OnceLock<Box<Blob>>]>> = OnceLock::new();
+    let graph = Graph::get_ref().expect("an embedded file has a graph");
+    let files = graph.files.values();
+    let templates = TEMPLATES.get_or_init(|| files.iter().map(|_| OnceLock::new()).collect());
+    let index = files.element_offset(file).expect("a file of the graph");
+    templates[index].get_or_init(|| {
         let mut bytes = Bytes::init_static(file.utf8_contents());
         bytes.stored_name = file.name.to_vec().into_boxed_slice();
         let mut store = Store::new(Data::Bytes(bytes), MimeType::NONE);
@@ -36,20 +40,13 @@ fn template_blob(
         blob.size.set(store.size());
         // Never released, so JS is never given these read-only bytes to write to.
         blob.store.set(Some(store));
-        let name = match bun_standalone_graph::Graph::get_ref() {
-            Some(graph) => graph.display_name_of(file),
-            None => file.display_name().into(),
-        };
+        let name = graph.display_name_of(file);
         if !name.is_empty() {
             let mut name = bstring::String::clone_utf8(&name);
             name.make_thread_shareable();
             blob.name.set(name);
         }
-        // `cached_blob` is typed against the lower crate's opaque `Blob`
-        // (it cannot name `webcore::Blob` without a dep cycle).
-        NonNull::new(Blob::new(blob))
-            .expect("Blob::new returned null")
-            .cast()
+        Box::new(blob)
     })
 }
 
@@ -78,9 +75,7 @@ pub(crate) fn is_asset(blob: &Blob) -> bool {
 
 /// A fresh dupe of the template, owned by `global`'s VM.
 pub(crate) fn file_blob(file: &'static File, global: &JSGlobalObject) -> Blob {
-    // SAFETY: `template_blob` returns the pointer from `Blob::new`, never
-    // freed for the process lifetime; only read here.
-    let blob = unsafe { template_blob(file).cast::<Blob>().as_ref() }.dupe_with_content_type(true);
+    let blob = template_blob(file).dupe_with_content_type(true);
     blob.global_this.set(global);
     blob
 }

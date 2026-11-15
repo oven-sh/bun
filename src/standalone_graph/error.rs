@@ -2,6 +2,8 @@
 pub enum Error {
     #[error("Corrupted module graph: entry point ID is greater than module list count")]
     CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount,
+    #[error("Corrupted module graph: a record is out of range")]
+    CorruptedModuleGraph,
     #[error("TargetNotFound")]
     TargetNotFound,
     #[error("NetworkError")]
@@ -45,6 +47,7 @@ impl Error {
             Self::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount => {
                 "Corrupted module graph: entry point ID is greater than module list count"
             }
+            Self::CorruptedModuleGraph => "Corrupted module graph: a record is out of range",
             Self::TargetNotFound => "TargetNotFound",
             Self::NetworkError => "NetworkError",
             Self::InvalidResponse => "InvalidResponse",

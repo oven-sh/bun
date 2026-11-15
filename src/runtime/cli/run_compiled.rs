@@ -1046,7 +1046,7 @@ fn parse_descriptor(text: &[u8]) -> Option<Fd> {
 #[cold]
 #[inline(never)]
 pub(crate) fn use_graph_descriptor(text: &[u8]) {
-    if Graph::get().is_some() {
+    if Graph::get_ref().is_some() {
         return;
     }
     let Some(descriptor) = parse_descriptor(text) else {
@@ -1138,7 +1138,7 @@ pub(crate) const PROGRAM_FILE_FLAG: &[u8] = b"--aot-program-file=";
 #[cfg(not(bun_locked_environment))]
 #[cold]
 #[inline(never)]
-pub(crate) fn load_program_file() -> bun_standalone_graph::Result<Option<*mut Graph>> {
+pub(crate) fn load_program_file() -> bun_standalone_graph::Result<Option<&'static Graph>> {
     use bun_paths::resolve_path::{join_abs_string, platform};
     use bun_resolver::compiled_program::{FILE_IN_PLACE_OF_EXECUTABLE, FileInPlaceOfExecutable};
 

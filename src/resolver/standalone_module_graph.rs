@@ -21,7 +21,7 @@ pub struct BytecodeModule {
     pub origin_path: &'static [u8],
     pub is_esm: bool,
     /// The payload the module's cache entry is in, and where in it.
-    pub bytecode: *mut [u8],
+    pub bytecode: &'static [u8],
     pub bytecode_entry_offset: u32,
 }
 
@@ -274,13 +274,12 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// trait object) can read it without downcasting to the concrete graph.
     fn compile_exec_argv(&self) -> &[u8];
     /// Ahead-of-time bytecode for InternalModuleRegistry module `id` embedded by `bun build --compile`, if any.
-    /// A raw pointer because JSC reads (and may patch) it in place; the bytes live for the process.
     /// The payload internal module `id`'s ahead-of-time bytecode is in, and where in it its cache entry starts.
-    fn builtin_module_bytecode(&self, _id: u32) -> Option<(*mut [u8], u32)> {
+    fn builtin_module_bytecode(&self, _id: u32) -> Option<(&'static [u8], u32)> {
         None
     }
     /// Every internal module that has bytecode: `(id, payload, entry offset)`.
-    fn for_each_builtin_bytecode(&self, _each: &mut dyn FnMut(u32, *mut [u8], u32)) {}
+    fn for_each_builtin_bytecode(&self, _each: &mut dyn FnMut(u32, &'static [u8], u32)) {}
     /// The one shared bytecode string table (`JSC::EncoderStringTable::serialize`) every chunk's payload references by ordinal; empty when the executable has none.
     fn bytecode_string_table(&self) -> &'static [u8] {
         &[]
@@ -293,7 +292,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// The bytecode payload an order file laid out (`--bytecode-order`), and where each of its regions ends.
     fn linked_bytecode_payload(
         &self,
-    ) -> Option<(*const [u8], [u32; LINKED_BYTECODE_REGION_COUNT])> {
+    ) -> Option<(&'static [u8], [u32; LINKED_BYTECODE_REGION_COUNT])> {
         None
     }
     /// The path of every file, and the path every module's bytecode is keyed on.
@@ -312,6 +311,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
 #[cfg(all(test, not(windows)))]
 mod tests {
     use super::*;
+    use crate::compiled_program::LoadedImage;
 
     const ROOT: &[u8] = b"/$bunfs/root/";
     const ENTRY_POINT: &[u8] = b"/$bunfs/root/worker.js";
@@ -356,7 +356,13 @@ mod tests {
             module_path: COMPILED_MODULES[0],
         };
         let entry_points = Box::new([entry_point]);
-        let program = CompiledProgram::new(b"image", None, entry_points, Box::new([0]), false);
+        let program = CompiledProgram::new(
+            LoadedImage::default(),
+            None,
+            entry_points,
+            Box::new([0]),
+            false,
+        );
         program.set_module_lookup(find_compiled_module);
         FakeGraph {
             program: Some(program),

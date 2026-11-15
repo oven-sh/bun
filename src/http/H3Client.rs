@@ -4,7 +4,7 @@
 //! each `ClientSession` is one QUIC connection to an origin and multiplexes
 //! `Stream`s, each bound 1:1 to an `HTTPClient`. The result-delivery surface
 //! is the same one H2 uses (`handleResponseMetadata` / `handleResponseBody` /
-//! `progressUpdateH3`), so redirect, decompression, and FetchTasklet plumbing
+//! `InFlightRequest::finish`), so redirect, decompression, and FetchTasklet plumbing
 //! are shared with HTTP/1.1.
 //!
 //! Layout mirrors `h2_client/`:

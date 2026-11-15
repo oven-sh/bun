@@ -409,7 +409,7 @@ fn is_hostname(host: &[u8]) -> bool {
         .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
-pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
+fn check_x509_server_identity(x509: &boring::X509, hostname: &[u8]) -> bool {
     // As in Node.js, a host is an IP address only as typed, and only in the strict form of `net.isIP`: `ares_inet_pton` reads "127.1" as 127.1.0.0 and takes "1.2.3.4/8".
     let typed = unfqdn(hostname);
     let mut host_ip = bun_core::ip_address::parse_strict(typed);
@@ -518,7 +518,7 @@ fn set_peer(name: &[u8], out_peer: Option<&mut MaybeUninit<bun_core::String>>) {
 /// readable, and `out_peer` must be null or point to an empty string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__X509__checkHost(
-    x509: Option<&mut boring::X509>,
+    x509: Option<&boring::X509>,
     host_ptr: *const u8,
     host_len: usize,
     flags: u32,
@@ -721,7 +721,7 @@ impl core::fmt::Display for CanonicalIpList<'_> {
 /// Writes Node's `checkServerIdentity` failure reason (lib/tls.js) for the
 /// peer's leaf certificate, e.g. `Host: x. is not in the cert's altnames: …`.
 pub fn write_server_identity_mismatch_reason(
-    ssl_ptr: &mut boring::SSL,
+    ssl: &boring::SSL,
     hostname: &[u8],
     out: &mut dyn core::fmt::Write,
 ) -> core::fmt::Result {
@@ -730,7 +730,7 @@ pub fn write_server_identity_mismatch_reason(
     let host = HostName(hostname);
     let host_is_ip = bun_core::ip_address::is_ip_host(hostname);
 
-    let Some(x509) = ssl_ptr.peer_leaf_certificate() else {
+    let Some(x509) = ssl.peer_certificate() else {
         return out.write_str(NO_DNS);
     };
     let names = match x509.subject_alt_names() {
@@ -763,17 +763,16 @@ pub fn write_server_identity_mismatch_reason(
     }
 }
 
-pub fn check_server_identity(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> bool {
-    ssl_ptr
-        .peer_leaf_certificate()
-        .is_some_and(|x509| check_x509_server_identity(x509, hostname))
+pub fn check_server_identity(ssl: &boring::SSL, hostname: &[u8]) -> bool {
+    ssl.peer_certificate()
+        .is_some_and(|x509| check_x509_server_identity(&x509, hostname))
 }
 
 /// Node.js's `ERR_TLS_CERT_ALTNAME_INVALID` message for the peer's leaf certificate and `hostname`.
-pub fn server_identity_mismatch_message(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> String {
+pub fn server_identity_mismatch_message(ssl: &boring::SSL, hostname: &[u8]) -> String {
     let mut message = String::from("Hostname/IP does not match certificate's altnames: ");
     // Infallible: the writer is a `String`.
-    let _ = write_server_identity_mismatch_reason(ssl_ptr, hostname, &mut message);
+    let _ = write_server_identity_mismatch_reason(ssl, hostname, &mut message);
     message
 }
 
@@ -788,7 +787,7 @@ pub enum ServerIdentity {
 }
 
 /// [`check_server_identity`] as a verdict. `None` or an empty `host` is [`ServerIdentity::Unchecked`].
-pub fn server_identity(ssl: &mut boring::SSL, host: Option<&[u8]>) -> ServerIdentity {
+pub fn server_identity(ssl: &boring::SSL, host: Option<&[u8]>) -> ServerIdentity {
     match host {
         Some(host) if !host.is_empty() => {
             if check_server_identity(ssl, host) {
@@ -801,9 +800,73 @@ pub fn server_identity(ssl: &mut boring::SSL, host: Option<&[u8]>) -> ServerIden
     }
 }
 
+/// The result of a server's ALPN select callback. The protocol borrows from the list that the client offered.
+#[derive(PartialEq, Eq, Debug)]
+pub enum AlpnSelection<'a> {
+    Selected(&'a [u8]),
+    /// Sends a fatal no_application_protocol alert (RFC 7301 section 3.2).
+    AlertFatal,
+    /// Continues the handshake without ALPN.
+    NoAck,
+}
+
+/// The protocols of a wire-format list, up to the first malformed entry.
+fn alpn_protocols(mut protos: &[u8]) -> impl Iterator<Item = &[u8]> {
+    core::iter::from_fn(move || {
+        let (&len, rest) = protos.split_first().filter(|(len, _)| **len > 0)?;
+        let (protocol, rest) = rest.split_at_checked(len.into())?;
+        protos = rest;
+        Some(protocol)
+    })
+}
+
+impl<'a> AlpnSelection<'a> {
+    pub fn select_proto(protocol: &[u8], offered: &'a [u8]) -> Self {
+        alpn_protocols(offered)
+            .find(|offer| *offer == protocol)
+            .map_or(Self::AlertFatal, Self::Selected)
+    }
+
+    /// As `SSL_select_next_proto`: the first of `protos` that was offered, and none if `protos` is malformed.
+    pub fn select_next_proto(protos: &[u8], offered: &'a [u8]) -> Self {
+        if alpn_protocols(protos).map(|p| 1 + p.len()).sum::<usize>() != protos.len() {
+            return Self::AlertFatal;
+        }
+        alpn_protocols(protos)
+            .map(|protocol| Self::select_proto(protocol, offered))
+            .find(|selection| *selection != Self::AlertFatal)
+            .unwrap_or(Self::AlertFatal)
+    }
+
+    /// Fills the out-parameters of the callback and returns its `SSL_TLSEXT_ERR_*` code.
+    pub fn write_to(self, out: &mut *const u8, out_len: &mut u8) -> c_int {
+        match self {
+            Self::Selected(protocol) => {
+                let Ok(len) = u8::try_from(protocol.len()) else {
+                    return boring::SSL_TLSEXT_ERR_ALERT_FATAL;
+                };
+                (*out, *out_len) = (protocol.as_ptr(), len);
+                boring::SSL_TLSEXT_ERR_OK
+            }
+            Self::AlertFatal => boring::SSL_TLSEXT_ERR_ALERT_FATAL,
+            Self::NoAck => boring::SSL_TLSEXT_ERR_NOACK,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{NameBytes, is_safe_alt_name};
+    use super::{AlpnSelection, NameBytes, is_safe_alt_name};
+
+    #[test]
+    fn alpn_selection_uses_server_order() {
+        use AlpnSelection::{AlertFatal, Selected};
+        let select = |protos| AlpnSelection::select_next_proto(protos, b"\x01a\x02bc\x01d");
+        assert_eq!(select(b"\x01x\x01d\x01a"), Selected(b"d"));
+        assert_eq!(select(b"\x01b"), AlertFatal);
+        assert_eq!(select(b"\x01a\x02b"), AlertFatal);
+        assert_eq!(select(b"\x01a\x00"), AlertFatal);
+    }
 
     #[test]
     fn safe_alt_name_matches_node() {

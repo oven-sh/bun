@@ -33,7 +33,7 @@
 //! Before this crate existed the body above was hand-typed ~180 times across
 //! ~100 files (plus three crate-local `macro_rules! opaque!` copies in
 //! `boringssl_sys`, `uws_sys`, and `uws`). [`opaque_ffi!`] is the single
-//! source of truth.
+//! source of truth, except for `boringssl_sys`, whose handles have no `opaque_ref`.
 #![no_std]
 
 /// Declare one or more opaque FFI handle types. See the [crate] docs for the
@@ -41,9 +41,7 @@
 ///
 /// ```ignore
 /// bun_opaque::opaque_ffi! {
-///     /// `struct ssl_st` (`typedef ... SSL`).
-///     pub struct SSL;
-///     pub struct BIO;
+///     pub struct us_socket_t;
 /// }
 /// ```
 ///
@@ -102,7 +100,7 @@ macro_rules! opaque_ffi {
         }
     )+};
     // Comma-list `pub Name, pub(super) Name2` form — kept for the
-    // `bun_core::opaque_extern!` re-export and the boringssl_sys wrapper.
+    // `bun_core::opaque_extern!` re-export.
     ($( $(#[$m:meta])* $v:vis $name:ident ),+ $(,)?) => {
         $crate::opaque_ffi! { $( $(#[$m])* $v struct $name; )+ }
     };

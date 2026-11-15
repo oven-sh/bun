@@ -826,6 +826,55 @@ it("writing to the socket from inside SNICallback or ALPNCallback delivers the d
   }
 });
 
+it.each(["TLSv1.3", "TLSv1.2"] as const)(
+  "an ALPNCallback can write to another TLS socket after SNICallback destroyed its own (%s)",
+  async maxVersion => {
+    let other: TLSSocket | undefined, client: TLSSocket | undefined, accepted: net.Socket;
+    const echo = createServer(COMMON_CERT, socket => socket.on("error", () => {}).pipe(socket));
+    const server = createServer({
+      ...COMMON_CERT,
+      maxVersion,
+      SNICallback(_name, cb) {
+        accepted.destroy();
+        cb(null, undefined);
+      },
+      ALPNCallback({ protocols }) {
+        other!.write("one;");
+        return protocols[0];
+      },
+    });
+    server.on("connection", socket => (accepted = socket));
+    server.on("tlsClientError", () => {});
+    try {
+      await once(echo.listen(0, "127.0.0.1"), "listening");
+      other = connect({ port: (echo.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: false });
+      await once(other, "secureConnect");
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let echoed = "";
+      other.on("data", chunk => (echoed += chunk) === "one;two;" && resolve(echoed));
+      other.on("error", (err: NodeJS.ErrnoException) => resolve(`${echoed}${err.code}`));
+      other.on("close", () => resolve(`${echoed}close`));
+
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      client = connect({
+        port: (server.address() as AddressInfo).port,
+        host: "127.0.0.1",
+        servername: "localhost",
+        ALPNProtocols: ["x/1"],
+        rejectUnauthorized: false,
+      });
+      client.on("error", () => {});
+      client.on("close", () => other!.write("two;"));
+      expect(await promise).toBe("one;two;");
+    } finally {
+      client?.destroy();
+      other?.destroy();
+      server.close();
+      echo.close();
+    }
+  },
+);
+
 it("leaves socket.authorized false unless a client certificate was requested and verified", async () => {
   // A server that never requested a client certificate must not report the
   // connection as authorized (matches Node.js fail-closed semantics).

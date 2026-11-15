@@ -1270,7 +1270,7 @@ impl<const SSL: bool> Handler<SSL> {
     /// `us_dispatch_server_identity`: only a client that is in its handshake has a name to match.
     pub fn server_identity(
         ptr: *mut c_void,
-        ssl: &mut bun_boringssl_sys::SSL,
+        ssl: &bun_boringssl_sys::SSL,
     ) -> bun_boringssl::ServerIdentity {
         HTTPContext::<SSL>::get_tagged(ptr)
             .client_mut()
@@ -1334,14 +1334,9 @@ impl<const SSL: bool> Handler<SSL> {
                 }
                 if client.wants_server_identity_check() {
                     // if checkServerIdentity returns false, we dont call firstCall — the connection was rejected
-                    // SAFETY: the native handle on a TLS socket is `*mut SSL`,
-                    // live and non-null after the handshake completes.
-                    let ssl = unsafe {
-                        &mut *socket
-                            .get_native_handle()
-                            .expect("TLS socket has native handle after handshake")
-                            .cast::<bun_boringssl_sys::SSL>()
-                    };
+                    // SAFETY: `socket` is live, and `check_server_identity` does not use `ssl` after it closes `socket`.
+                    let ssl =
+                        unsafe { socket.ssl() }.expect("TLS socket has an SSL after handshake");
                     if !client.check_server_identity::<SSL>(socket, ssl, true) {
                         // checkServerIdentity already called closeAndFail() → fail()
                         // → result callback, which may have destroyed the

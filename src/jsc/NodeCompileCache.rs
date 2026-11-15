@@ -5,12 +5,12 @@
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use bstr::ByteSlice;
-use bun_boringssl::c as boring;
 use bun_collections::{HashMap, IdentityContext};
 use bun_core::String as BunString;
 use bun_core::{Mutex, ZStr, env_var};
 use bun_options_types::Format;
 use bun_paths::{MAX_PATH_BYTES, SEP};
+use bun_sha_hmac::sha::hashers::SHA256;
 use bun_sys::{self as sys, Fd, O};
 
 use crate::resolved_source::Bytecode;
@@ -143,25 +143,18 @@ fn type_name(is_cjs: bool) -> &'static str {
 
 fn sha256(bytes: &[u8]) -> [u8; HASH_SIZE] {
     let mut out = [0u8; HASH_SIZE];
-    // SAFETY: `out` is exactly the 32 bytes SHA256 writes.
-    unsafe { boring::SHA256(bytes.as_ptr(), bytes.len(), out.as_mut_ptr()) };
+    SHA256::hash(bytes, &mut out);
     out
 }
 
 /// First 8 digest bytes of `SHA256(type byte || filename)`: the in-memory map
 /// key and the on-disk entry name (16 hex chars).
 fn cache_key(filename: &[u8], is_cjs: bool) -> u64 {
-    let type_byte: [u8; 1] = [is_cjs as u8];
-    let mut ctx = core::mem::MaybeUninit::<boring::SHA256_CTX>::uninit();
+    let mut hasher = SHA256::init();
+    hasher.update(&[is_cjs as u8]);
+    hasher.update(filename);
     let mut out = [0u8; HASH_SIZE];
-    // SAFETY: `SHA256_Init` fully initializes the context; updates/final only
-    // read the given byte ranges and write the 32-byte digest.
-    unsafe {
-        boring::SHA256_Init(ctx.as_mut_ptr());
-        boring::SHA256_Update(ctx.as_mut_ptr(), type_byte.as_ptr().cast(), 1);
-        boring::SHA256_Update(ctx.as_mut_ptr(), filename.as_ptr().cast(), filename.len());
-        boring::SHA256_Final(out.as_mut_ptr(), ctx.as_mut_ptr());
-    }
+    hasher.r#final(&mut out);
     u64::from_le_bytes(out[..8].try_into().expect("8 bytes"))
 }
 

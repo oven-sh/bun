@@ -1,5 +1,5 @@
 use crate::jsc::{JSGlobalObject, JSValue};
-use bun_sql::postgres::postgres_protocol::{NewWriter, WriterContext};
+use bun_sql::postgres::postgres_protocol::NewWriter;
 use bun_sql::postgres::postgres_types::{AnyPostgresError, Tag};
 
 // Postgres stores timestamp and timestampz as microseconds since 2000-01-01
@@ -73,11 +73,11 @@ pub(crate) fn to_binary(date: JSValue) -> Option<i64> {
     Some((unix_ms as i64 - POSTGRES_EPOCH_DATE) * US_PER_MS)
 }
 
-pub(crate) fn write_text<Context: WriterContext>(
+pub(crate) fn write_text(
     global_object: &JSGlobalObject,
     date: JSValue,
     tag: Tag,
-    writer: NewWriter<Context>,
+    writer: &mut NewWriter<'_>,
 ) -> Result<(), AnyPostgresError> {
     let mut buf = [0u8; 64];
     let Some(len) = date.to_iso_string(global_object, &mut buf).map(<[u8]>::len) else {

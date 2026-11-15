@@ -1,4 +1,6 @@
+use core::cell::Cell;
 use core::ptr::NonNull;
+use std::rc::Rc;
 
 use crate::generated_bindgen::js_my_sql_query::js_MySQLQuery as js;
 use crate::jsc::{
@@ -7,9 +9,9 @@ use crate::jsc::{
 };
 use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args;
+use bun_jsc::JSArray;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSArray, JsCell};
-use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
+use bun_ptr::{AsCtxPtr, BackRef, CellExt as _, ParentRef, RefPtr};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
 use bun_sql::mysql::protocol::column_definition41::ColumnDefinition41;
@@ -29,8 +31,8 @@ pub struct JSMySQLQuery {
     this_value: JsRef,
     ref_count: bun_ptr::RefCount,
     global_object: BackRef<JSGlobalObject>,
-    query: JsCell<MySQLQuery>,
-    undescribed: JsCell<Undescribed<Vec<ColumnDefinition41>>>,
+    query: MySQLQuery,
+    undescribed: Cell<Undescribed<Vec<ColumnDefinition41>>>,
 }
 
 impl JSMySQLQuery {
@@ -67,8 +69,8 @@ impl JSMySQLQuery {
             this_value: JsRef::empty(),
             ref_count: bun_ptr::RefCount::init(),
             global_object: BackRef::new(global_this),
-            query: JsCell::new(MySQLQuery::init(query, bigint, simple)),
-            undescribed: JsCell::new(Undescribed::default()),
+            query: MySQLQuery::init(query, bigint, simple),
+            undescribed: Cell::default(),
         }));
         let this = ParentRef::from(NonNull::new(this_ptr).expect("heap::into_raw non-null"));
 
@@ -144,7 +146,7 @@ impl JSMySQLQuery {
                 );
             }
         };
-        self.query.with_mut(|q| q.set_result_mode(mode));
+        self.query.set_result_mode(mode);
         Ok(())
     }
 
@@ -167,32 +169,40 @@ impl JSMySQLQuery {
     }
 
     /// `result.statement`, or the number that `describe_result` makes it for.
-    fn description(&self, has_columns: bool) -> JsResult<JSValue> {
-        let query = self.query.get();
-        match query.get_statement() {
-            Some(_) if query.is_discarding_response() => Ok(JSValue::NULL),
-            Some(statement) if statement.statement_id > 0 => {
-                statement.description(self.global_object(), query.text(), has_columns)
-            }
-            Some(statement) => Ok(self
-                .undescribed
-                .with_mut(|results| results.push(statement.take_columns(has_columns)))),
-            None => Ok(JSValue::NULL),
+    /// `columns`: `None` for an OK packet without a result set.
+    pub(crate) fn description(
+        &self,
+        statement: &MySQLStatement,
+        columns: Option<&mut Vec<ColumnDefinition41>>,
+    ) -> JsResult<JSValue> {
+        if self.is_discarding_response() {
+            return Ok(JSValue::NULL);
         }
+        if statement.statement_id.get() > 0 {
+            let (global, query) = (self.global_object(), self.query.text());
+            return match columns {
+                Some(columns) => statement.description(global, query, columns),
+                None => statement.description_without_columns(global, query),
+            };
+        }
+        let columns = columns.map(core::mem::take).unwrap_or_default();
+        let mut results = self.undescribed.take();
+        let number = results.push(columns);
+        self.undescribed.put_back(results);
+        Ok(number)
     }
 
     pub fn describe_result(&self, cx: &mut JsScope<'_>, number: JsLocal<'_>) -> JsResult<JSValue> {
         match self
             .undescribed
-            .with_mut(|results| results.take(number.to_js()))
+            .with_taken(|results| results.take(number.to_js()))
         {
-            Some(columns) => describe(cx.global(), self.query.get().text(), &[], &columns),
+            Some(columns) => describe(cx.global(), self.query.text(), &[], &columns),
             None => Ok(JSValue::NULL),
         }
     }
 
-    pub(crate) fn resolve(&self, result: &MySQLQueryResult) {
-        let _guard = self.ref_guard();
+    pub(crate) fn resolve(&self, result: &MySQLQueryResult, description: JsResult<JSValue>) {
         let is_last_result = result.is_last_result;
         let _downgrade = is_last_result.then(|| DowngradeOnDrop(self));
         // Rejected here; `result()` below has nothing to deliver and ends it at its last result.
@@ -203,13 +213,12 @@ impl JSMySQLQuery {
             );
             JSValue::UNDEFINED
         };
+        let statement = description.unwrap_or_else(reject);
         let last_insert_id = self
             .last_insert_id_to_js(result.last_insert_id)
             .unwrap_or_else(reject);
-        // `result()` lets go of the statement at the last result.
-        let statement = self.description(result.has_columns).unwrap_or_else(reject);
 
-        if !self.query.with_mut(|q| q.result(is_last_result)) {
+        if !self.query.result(is_last_result) {
             return;
         }
 
@@ -252,7 +261,7 @@ impl JSMySQLQuery {
         // If you need to touch JS, you wanna to use reject or reject_with_js_value instead
         let _guard = self.ref_guard();
         self.this_value.downgrade();
-        let _ = self.query.with_mut(|q| q.fail());
+        let _ = self.query.fail();
     }
 
     pub(crate) fn reject(&self, err: AnyMySQLError::Error) {
@@ -282,10 +291,10 @@ impl JSMySQLQuery {
 
     /// `transition` moves the query to its rejected state, and returns whether
     /// a rejection is still to be delivered to JS.
-    fn reject_when(&self, transition: fn(&mut MySQLQuery) -> bool, err: JSValue) {
+    fn reject_when(&self, transition: fn(&MySQLQuery) -> bool, err: JSValue) {
         let _guard = self.ref_guard();
 
-        if !self.query.with_mut(transition) {
+        if !transition(&self.query) {
             return;
         }
         let _downgrade = DowngradeOnDrop(self);
@@ -322,7 +331,7 @@ impl JSMySQLQuery {
     }
 
     pub(crate) fn run(&self, connection: &MySQLConnection) -> Result<(), AnyMySQLError::Error> {
-        if self.query.with_mut(|q| q.start(connection))? {
+        if self.query.start(connection)? {
             return Ok(());
         }
         let this_value = self.this_value.try_get();
@@ -332,53 +341,49 @@ impl JSMySQLQuery {
         // `params` is on the malloc heap: `roots` keeps the buffers in it alive.
         MarkedArgumentBuffer::new(|roots| {
             let params = MySQLQuery::bind(self.global_object(), binding_value, roots)?;
-            self.query.with_mut(|q| q.execute(connection, &params))
+            self.query.execute(connection, &params)
         })
     }
 
     #[inline]
     pub(crate) fn is_completed(&self) -> bool {
-        self.query.get().is_completed()
+        self.query.is_completed()
     }
     #[inline]
     pub(crate) fn is_in_flight(&self) -> bool {
-        self.query.get().is_in_flight()
+        self.query.is_in_flight()
     }
     #[inline]
     pub(crate) fn can_be_followed(&self) -> bool {
-        self.query.get().can_be_followed()
+        self.query.can_be_followed()
     }
     #[inline]
     pub(crate) fn is_pending(&self) -> bool {
-        self.query.get().is_pending()
+        self.query.is_pending()
     }
     #[inline]
     pub(crate) fn prepared(&self) {
-        self.query.with_mut(|q| q.prepared());
+        self.query.prepared();
     }
     #[inline]
     pub(crate) fn is_discarding_response(&self) -> bool {
-        self.query.get().is_discarding_response()
+        self.query.is_discarding_response()
     }
     #[inline]
     pub(crate) fn is_simple(&self) -> bool {
-        self.query.get().is_simple()
+        self.query.is_simple()
     }
     #[inline]
     pub(crate) fn is_bigint_supported(&self) -> bool {
-        self.query.get().is_bigint_supported()
+        self.query.is_bigint_supported()
     }
     #[inline]
     pub(crate) fn get_result_mode(&self) -> SQLQueryResultMode {
-        self.query.get().get_result_mode()
-    }
-    // TODO: isolate statement modification away from the connection
-    pub(crate) fn get_statement(&self) -> Option<&mut MySQLStatement> {
-        self.query.get().get_statement()
+        self.query.get_result_mode()
     }
 
-    pub(crate) fn statement_ref(&self) -> Option<RefPtr<MySQLStatement>> {
-        self.query.get().statement_ref()
+    pub(crate) fn statement(&self) -> Option<Rc<MySQLStatement>> {
+        self.query.statement()
     }
 
     #[inline]

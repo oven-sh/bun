@@ -146,9 +146,9 @@ impl<'a> PipeReader<'a> {
         }
     }
 
-    /// The exit of the process ends the script, not the end of a reader.
     pub(crate) fn read(&mut self, event: Option<IoEvent>) {
         let event_loop = self.output.shared.event_loop.as_event_loop_ctx();
+        // Ignored: `on_process_exit` ends the script.
         let _ = self.reader.read_chunks(event_loop, event, |chunk, _| {
             let _ = self.output.read_chunk(&chunk);
             true
@@ -220,7 +220,7 @@ impl<'a> ProcessHandle<'a> {
 
         for pipe in [&mut self.stdout_reader, &mut self.stderr_reader] {
             let owner = Owner::new(PollTag::MultiRunPipeReader, std::ptr::from_mut(pipe).cast());
-            // SAFETY: a field of its owner, whose slot in `State.handles` does not move.
+            // SAFETY: `owner` points to the value that holds this reader, whose slot in `State.handles` does not move.
             unsafe { pipe.reader.set_owner(owner) };
         }
 

@@ -1208,7 +1208,7 @@ pub(crate) mod testing_apis {
     /// Inject a synthetic read error into a subprocess's stdout/stderr
     /// PipeReader, as if the underlying read() syscall (Posix) or libuv read
     /// callback (Windows) had failed with EBADF. Used by tests to exercise
-    /// the onReaderError cleanup path, which is otherwise very hard to
+    /// the `on_read_result` cleanup path, which is otherwise very hard to
     /// trigger deterministically — on Windows in particular, peer death on
     /// a named pipe maps to UV_EOF rather than an error.
     ///

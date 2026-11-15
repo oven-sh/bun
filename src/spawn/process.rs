@@ -600,7 +600,7 @@ impl Process {
         {
             // Detached is a deliberate no-op: spawnSync's `read_all()` runs
             // before `watch_or_reap()` installs the poller; the first
-            // `recv_non_block` returns EAGAIN (yes hasn't written yet) so the
+            // `recv_non_block_buf` returns EAGAIN (yes hasn't written yet) so the
             // maxBuffer overflow fires from the event-loop poll
             // tick *after* the Fd poller is armed. Do not widen this match to
             // mask spawn-maxbuf.test.ts — the async-path hang there has a

@@ -102,15 +102,17 @@ impl IOReader {
         });
         let ptr = std::rc::Rc::as_ptr(&this);
         let owner = Owner::new(PollTag::ShellIoReader, ptr.cast_mut().cast());
-        // SAFETY: a field of its owner.
+        // SAFETY: `owner` points to the heap allocation that holds this reader.
         unsafe { this.reader.set_owner(owner) };
         #[cfg(not(windows))]
-        (this.reader).update_flags(|f| f.remove(bun_io::PosixFlags::CLOSE_HANDLE));
+        this.reader
+            .update_flags(|f| f.remove(bun_io::PosixFlags::CLOSE_HANDLE));
         #[cfg(windows)]
-        (this.reader).set_source(bun_io::Source::File(bun_io::Source::open_file(
-            evtloop.loop_(),
-            fd,
-        )));
+        this.reader
+            .set_source(bun_io::Source::File(bun_io::Source::open_file(
+                evtloop.loop_(),
+                fd,
+            )));
         crate::shell_log!("IOReader(0x{:x}, fd={}) create", ptr as usize, fd);
         this
     }
@@ -222,9 +224,11 @@ impl IOReader {
 
     /// A listener may drop every other `Rc`.
     pub(crate) fn on_io(self: &std::rc::Rc<Self>, event: IoEvent) {
-        let result = (self.reader).read_chunks(self.io_evtloop(), Some(event), |chunk, state| {
-            self.on_read_chunk(&chunk, state)
-        });
+        let result = self
+            .reader
+            .read_chunks(self.io_evtloop(), Some(event), |chunk, state| {
+                self.on_read_chunk(&chunk, state)
+            });
         match result {
             ReadResult::Pending => {}
             ReadResult::Done => self.on_reader_done(),
@@ -330,17 +334,15 @@ impl IOReader {
 // Drop
 // ──────────────────────────────────────────────────────────────────────────
 
+// The windows reader closes the file descriptor.
+#[cfg(not(windows))]
 impl Drop for IOReader {
     fn drop(&mut self) {
-        // The windows reader closes the file descriptor.
-        #[cfg(not(windows))]
-        {
-            // The poll goes before its fd.
-            self.reader.release_handle();
-            let fd = self.state.get_mut().fd;
-            if fd != Fd::INVALID {
-                let _ = sys::close(fd);
-            }
+        // The poll goes before its fd.
+        self.reader.release_handle();
+        let fd = self.state.get_mut().fd;
+        if fd != Fd::INVALID {
+            let _ = sys::close(fd);
         }
     }
 }

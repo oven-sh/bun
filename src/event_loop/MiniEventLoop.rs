@@ -57,7 +57,7 @@ pub struct MiniEventLoop {
     concurrent_tasks: ConcurrentTaskQueue,
     pub loop_: &'static UwsLoop,
     #[cfg(not(windows))]
-    file_polls: OnceCell<Box<UnsafeCell<FilePollStore>>>,
+    file_polls: OnceCell<Box<FilePollStore>>,
     /// `NonNull` so that [`EventLoopHandle::env`] can hand out a `*mut` with mutable provenance.
     env: Option<NonNull<DotEnvLoader>>,
     // Opaque ctx assigned externally; only read/cleared here.
@@ -70,14 +70,12 @@ pub struct MiniEventLoop {
 }
 
 thread_local! {
-    /// What `init_global` made. `GLOBAL` can be the package manager's loop before that.
-    static OWN: Cell<Option<&'static MiniEventLoop>> = const { Cell::new(None) };
-    pub static GLOBAL: Cell<Option<&'static MiniEventLoop>> = const { Cell::new(None) };
+    static GLOBAL: Cell<Option<&'static MiniEventLoop>> = const { Cell::new(None) };
 }
 
 /// Returns this thread's loop. `env` only counts for the call that makes it.
 pub fn init_global(env: Option<&'static mut DotEnvLoader>) -> &'static MiniEventLoop {
-    if let Some(global) = OWN.get() {
+    if let Some(global) = GLOBAL.get() {
         return global;
     }
     let mut global = MiniEventLoop::init();
@@ -95,7 +93,6 @@ pub fn init_global(env: Option<&'static mut DotEnvLoader>) -> &'static MiniEvent
     EventLoopHandle::init_mini(global).set_as_parent_of(global.loop_);
 
     GLOBAL.set(Some(global));
-    OWN.set(Some(global));
     global
 }
 
@@ -131,10 +128,9 @@ impl MiniEventLoop {
     }
 
     #[cfg(not(windows))]
-    fn file_polls_ptr(&self) -> *mut FilePollStore {
+    fn file_polls(&self) -> &FilePollStore {
         self.file_polls
-            .get_or_init(|| Box::new(UnsafeCell::new(FilePollStore::init())))
-            .get()
+            .get_or_init(|| Box::new(FilePollStore::init()))
     }
 
     pub(crate) fn init() -> MiniEventLoop {
@@ -278,7 +274,7 @@ impl MiniEventLoop {
 bun_io::link_impl_EventLoopCtx! {
     Mini for MiniEventLoop => |this| {
         loop_() => (*this).loop_,
-        file_polls_ptr() => (*this).file_polls_ptr(),
+        file_polls_ptr() => (*this).file_polls(),
         // Mini has no pending_unref_counter; the upstream deliberately panics.
         increment_pending_unref_counter() => panic!("FIXME TODO"),
         after_event_loop_callback() => (*this).after_event_loop_callback.get(),

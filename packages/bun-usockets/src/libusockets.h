@@ -224,6 +224,10 @@ struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(str
 
 void us_udp_socket_close(struct us_udp_socket_t *s);
 
+/* Another process reads the descriptor from now on: the socket takes one
+ * datagram per receive call. */
+void us_udp_socket_mark_shared(struct us_udp_socket_t *s);
+
 int us_udp_socket_set_broadcast(struct us_udp_socket_t *s, int enabled);
 
 /* SO_RCVBUF / SO_SNDBUF for a UDP socket. size == 0 reads the current value,

@@ -359,20 +359,19 @@ impl Route {
         config.target = bun_ast::Target::Browser;
         let is_development = development.is_development();
 
-        let cli = crate::cli::Command::get();
-        if let Some(minify_identifiers) = cli.args.serve_minify_identifiers {
+        if let Some(minify_identifiers) = xform.serve_minify_identifiers {
             config.minify.identifiers = minify_identifiers;
         } else if !is_development {
             config.minify.identifiers = true;
         }
 
-        if let Some(minify_whitespace) = cli.args.serve_minify_whitespace {
+        if let Some(minify_whitespace) = xform.serve_minify_whitespace {
             config.minify.whitespace = minify_whitespace;
         } else if !is_development {
             config.minify.whitespace = true;
         }
 
-        if let Some(minify_syntax) = cli.args.serve_minify_syntax {
+        if let Some(minify_syntax) = xform.serve_minify_syntax {
             config.minify.syntax = minify_syntax;
         } else if !is_development {
             config.minify.syntax = true;
@@ -392,7 +391,7 @@ impl Route {
         config.define.put(b"import.meta.env.SSR", b"false")?;
         config.define.put(b"import.meta.env.STATIC", b"false")?;
 
-        if let Some(define) = &cli.args.serve_define {
+        if let Some(define) = &xform.serve_define {
             debug_assert_eq!(define.keys.len(), define.values.len());
             // `StringMap` exposes only put/insert (no bulk re-index);
             // profile if hot.
@@ -411,7 +410,7 @@ impl Route {
             config.jsx.development = true;
         }
         // Production defaults to no sourcemaps so original sources are not served publicly.
-        config.source_map = if let Some(mode) = cli.args.serve_sourcemap {
+        config.source_map = if let Some(mode) = xform.serve_sourcemap {
             bundler_options::SourceMapOption::from_api(Some(mode))
         } else if is_development {
             bundler_options::SourceMapOption::Linked

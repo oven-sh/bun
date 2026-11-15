@@ -262,7 +262,7 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       if (!condition()) throw new Error("never happened: " + condition);
     }
     // duplex.inNextWrite runs once, inside _write. duplex.stall holds the write callback back.
-    async function connect(options) {
+    async function connect(options, settings) {
       const duplex = new Duplex({
         ...options,
         read() {},
@@ -276,7 +276,7 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
         },
       });
       duplex.written = [];
-      const session = http2.connect("http://localhost:1", { createConnection: () => duplex });
+      const session = http2.connect("http://localhost:1", { createConnection: () => duplex, settings });
       await once(session, "connect");
       const acked = once(session, "localSettings");
       duplex.push(Buffer.concat([frame(4, 0, 0), frame(4, 1, 0)]));
@@ -443,6 +443,33 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       for (const { session } of Object.values(peers)) session.destroy();
     `);
       expect(result).toEqual({ stdout: JSON.stringify(expected), stderr: "", exitCode: 0 });
+    },
+    10_000 * ASAN_MULTIPLIER,
+  );
+
+  test(
+    "can feed a session that is reopening the window of a resumed stream",
+    async () => {
+      const result = await run(/* js */ `
+      const a = await connect({}, { initialWindowSize: 1 << 20 });
+      const b = await connect();
+      const req = a.session.request({ ":path": "/" });
+      req.on("error", () => {});
+      await until(() => a.duplex.written.length > 0);
+      req.pause();
+      a.duplex.push(frame(1, 4, 1, Buffer.from([0x88 /* :status 200 */])));
+      for (let i = 0; i < 40; i++) a.duplex.push(frame(0, 0, 1, Buffer.alloc(16384)));
+      let pinged = false;
+      a.session.on("ping", () => (pinged = true));
+      b.duplex.inNextWrite = () => a.duplex.push(ping());
+      req.prependListener("resume", () => b.session.ping(() => {}));
+      req.resume();
+      await until(() => pinged);
+      console.log("pinged");
+      a.session.destroy();
+      b.session.destroy();
+    `);
+      expect(result).toEqual({ stdout: "pinged", stderr: "", exitCode: 0 });
     },
     10_000 * ASAN_MULTIPLIER,
   );

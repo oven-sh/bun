@@ -10,7 +10,7 @@ use bun_core::Environment;
 
 use crate::{
     ArrayBuffer, CommonString, ErrorCode, JSArray, JSGlobalObject, JSObject, JSString, JSValue,
-    JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
+    JsError, JsThread, PinnedArrayBuffer, Strong, ThreadIsolated, ThreadIsolatedArg,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -937,6 +937,9 @@ impl core::ops::Deref for PinnedBytes {
 pub unsafe trait JsPayload: Sized + 'static {
     #[doc(hidden)]
     const PAYLOAD_OFFSET: usize;
+    /// No member takes `&mut self`.
+    #[doc(hidden)]
+    const SHARED_THIS: bool;
     /// # Safety
     /// The caller writes the payload before anything else runs. A null `structure` is the class's own.
     #[doc(hidden)]
@@ -1154,6 +1157,43 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
     pub fn payload_ptr(self) -> NonNull<T> {
         // SAFETY: generated offset inside the cell.
         unsafe { self.0.byte_add(T::PAYLOAD_OFFSET).cast() }
+    }
+}
+
+/// A [`JsWrapper`] that outlives its call: a GC root that lends the payload it keeps alive.
+pub struct StrongWrapper<T> {
+    wrapper: Strong,
+    payload: NonNull<T>,
+}
+
+// SAFETY: a `Strong`, and a pointer that is only followed with a `JsThread`.
+unsafe impl<T> crate::job::JsAffine for StrongWrapper<T> {}
+
+impl<T: JsPayload> StrongWrapper<T> {
+    pub fn new(wrapper: JsWrapper<'_, T>, global: &JSGlobalObject) -> Self {
+        const { assert!(T::SHARED_THIS) };
+        Self {
+            wrapper: Strong::create(wrapper.to_js(), global),
+            payload: wrapper.payload_ptr(),
+        }
+    }
+
+    pub fn to_js(&self) -> JSValue {
+        self.wrapper.get()
+    }
+
+    pub fn payload<'a>(&'a self, _: &JsThread<'a>) -> &'a T {
+        // SAFETY: the heap is alive and `wrapper` roots the cell, so the payload was not dropped.
+        // `new` checked that it is only ever shared.
+        unsafe { self.payload.as_ref() }
+    }
+
+    /// The global object of the wrapper's class, which a `ShadowRealm` has its own of.
+    pub fn global<'a>(&'a self, _: &JsThread<'a>) -> &'a JSGlobalObject {
+        // SAFETY: `wrapper` roots the cell, and every structure the cell takes holds this global object.
+        unsafe {
+            &*extern_types::Bun__Bindgen__globalObjectOf(self.to_js().encoded() as *mut c_void)
+        }
     }
 }
 

@@ -101,12 +101,12 @@ enum RmParseFlag {
 }
 
 impl Rm {
-    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         note_found_on_disk();
         Self::next(interp, cmd)
     }
 
-    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn next(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         loop {
             // Read the tag, drop the borrow, then act.
             enum Tag {
@@ -210,8 +210,7 @@ impl Rm {
                                         // Copy resolved before
                                         // re-borrowing `interp` mutably.
                                         let resolved_owned = resolved.to_vec();
-                                        if let Some(safeguard) =
-                                            Builtin::of(interp, cmd).stderr.needs_io()
+                                        if let Some(fd) = Builtin::of(interp, cmd).stderr.needs_io()
                                         {
                                             Self::state_mut(interp, cmd).state =
                                                 RmState::ParseOpts {
@@ -219,28 +218,23 @@ impl Rm {
                                                     wait_write_err: true,
                                                 };
                                             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                                            return Builtin::of_mut(interp, cmd)
-                                                .stderr
-                                                .enqueue_fmt(
-                                                    child,
-                                                    Some(Kind::Rm),
-                                                    format_args!(
-                                                        "\"{}\" may not be removed\n",
-                                                        bstr::BStr::new(&resolved_owned)
-                                                    ),
-                                                    safeguard,
-                                                );
+                                            return interp.enqueue_fmt(
+                                                fd,
+                                                child,
+                                                Some(Kind::Rm),
+                                                format_args!(
+                                                    "\"{}\" may not be removed\n",
+                                                    bstr::BStr::new(&resolved_owned)
+                                                ),
+                                            );
                                         }
-                                        let buf = Builtin::fmt_error_arena(
-                                            interp,
-                                            cmd,
+                                        let buf = Builtin::fmt_error(
                                             Some(Kind::Rm),
                                             format_args!(
                                                 "\"{}\" may not be removed\n",
                                                 bstr::BStr::new(&resolved_owned)
                                             ),
-                                        )
-                                        .to_vec();
+                                        );
                                         let _ =
                                             Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
                                         return Builtin::done(interp, cmd, 1);
@@ -270,29 +264,26 @@ impl Rm {
                             );
                         }
                         RmParseFlag::IllegalOptionWithFlag => {
-                            if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+                            if let Some(fd) = Builtin::of(interp, cmd).stderr.needs_io() {
                                 Self::state_mut(interp, cmd).state = RmState::ParseOpts {
                                     idx,
                                     wait_write_err: true,
                                 };
                                 let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                                return Builtin::of_mut(interp, cmd).stderr.enqueue_fmt(
+                                return interp.enqueue_fmt(
+                                    fd,
                                     child,
                                     Some(Kind::Rm),
                                     format_args!(
                                         "illegal option -- {}\n",
                                         bstr::BStr::new(&arg[1..])
                                     ),
-                                    safeguard,
                                 );
                             }
-                            let buf = Builtin::fmt_error_arena(
-                                interp,
-                                cmd,
+                            let buf = Builtin::fmt_error(
                                 Some(Kind::Rm),
                                 format_args!("illegal option -- {}\n", bstr::BStr::new(&arg[1..])),
-                            )
-                            .to_vec();
+                            );
                             let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
                             return Builtin::done(interp, cmd, 1);
                         }
@@ -334,23 +325,21 @@ impl Rm {
         }
     }
 
-    fn write_err_literal(interp: &Interpreter, cmd: NodeId, idx: u32, buf: &[u8]) -> Yield {
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+    fn write_err_literal(interp: &mut Interpreter<'_>, cmd: NodeId, idx: u32, buf: &[u8]) -> Yield {
+        if let Some(fd) = Builtin::of(interp, cmd).stderr.needs_io() {
             Self::state_mut(interp, cmd).state = RmState::ParseOpts {
                 idx,
                 wait_write_err: true,
             };
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stderr
-                .enqueue(child, buf, safeguard);
+            return interp.enqueue(fd, child, buf);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
         Builtin::done(interp, cmd, 1)
     }
 
     pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         _: usize,
         e: Option<bun_sys::SystemError>,
@@ -381,7 +370,7 @@ impl Rm {
         }
     }
 
-    fn on_shell_rm_task_done(interp: &Interpreter, task: RefPtr<ShellRmTask>) {
+    fn on_shell_rm_task_done(interp: &mut Interpreter<'_>, task: RefPtr<ShellRmTask>) -> Yield {
         let cmd = task.cmd;
         // SAFETY: the pool is done with the task.
         let task_err = unsafe { (*task.as_ptr()).err.get_mut().take() };
@@ -394,11 +383,9 @@ impl Rm {
             forget_shell_operand(cwd, operand, was_on_disk);
         }
         drop(task);
-        // Format the error string before
-        // stashing the error on `exec` (formatting needs &mut interp).
         let errstr: Option<Vec<u8>> = task_err
             .as_ref()
-            .map(|e| Builtin::task_error_to_string(interp, cmd, Kind::Rm, e).to_vec());
+            .map(|e| Builtin::task_error_to_string(Kind::Rm, e));
         let (tasks_done, total) = {
             let RmState::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
                 panic!("Invalid state")
@@ -412,16 +399,12 @@ impl Rm {
         };
 
         if let Some(s) = errstr {
-            if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+            if let Some(fd) = Builtin::of(interp, cmd).stderr.needs_io() {
                 if let RmState::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                     exec.output_count.fetch_add(1, Ordering::SeqCst);
                 }
                 let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                Builtin::of_mut(interp, cmd)
-                    .stderr
-                    .enqueue(child, &s, safeguard)
-                    .run(interp);
-                return;
+                return interp.enqueue(fd, child, &s);
             }
             let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &s);
         }
@@ -442,17 +425,16 @@ impl Rm {
                 _ => 0,
             };
             Self::state_mut(interp, cmd).state = RmState::Done { exit_code: code };
-            Self::next(interp, cmd).run(interp);
+            return Self::next(interp, cmd);
         }
+        Yield::suspended()
     }
 
     /// Flushes a `DirTask`'s buffered list of deleted paths to stdout.
-    fn write_verbose(interp: &Interpreter, cmd: NodeId, buf: &[u8]) -> Yield {
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+    fn write_verbose(interp: &mut Interpreter<'_>, cmd: NodeId, buf: &[u8]) -> Yield {
+        if let Some(fd) = Builtin::of(interp, cmd).stdout.needs_io() {
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stdout
-                .enqueue(child, buf, safeguard);
+            return interp.enqueue(fd, child, buf);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, buf);
         let done = match &mut Self::state_mut(interp, cmd).state {
@@ -530,7 +512,7 @@ impl Rm {
     }
 
     #[inline]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Rm {
+    fn state_mut<'i>(interp: &'i mut Interpreter<'_>, cmd: NodeId) -> &'i mut Rm {
         match &mut Builtin::of_mut(interp, cmd).impl_ {
             crate::shell::builtin::Impl::Rm(r) => &mut **r,
             _ => unreachable!(),
@@ -628,7 +610,7 @@ pub(crate) struct DirTask {
 impl ShellRmTask {
     /// Not a `PoolTask`: the `DirTask` tree posts it back, in [`finish_concurrently`].
     fn schedule(
-        interp: &Interpreter,
+        interp: &Interpreter<'_>,
         cmd: NodeId,
         opts: Opts,
         root_path: &[u8],
@@ -1425,11 +1407,11 @@ impl DirTask {
     pub(crate) fn run_from_main_thread(this: *mut DirTask) {
         // SAFETY: caller contract.
         let (rm, deleted_entries) = unsafe { Self::take_queued(this) };
-        // SAFETY: both set by `schedule`. No `&ShellRmTask`: the pool may be writing `task.poster`.
-        let (interp, cmd) = unsafe { (&*(*rm.as_ptr()).task.interp, (*rm.as_ptr()).cmd) };
-        let next = Rm::write_verbose(interp, cmd, &deleted_entries);
-        drop((rm, deleted_entries));
-        next.run(interp);
+        // SAFETY: `rm` waits for this output. No `&ShellRmTask`: the pool may be writing `task.poster`.
+        let (shell_interp, cmd) =
+            unsafe { ((*rm.as_ptr()).task.interp.as_ref(), (*rm.as_ptr()).cmd) };
+        drop(rm);
+        shell_interp.run_yield_with(move |interp| Rm::write_verbose(interp, cmd, &deleted_entries));
     }
 
     /// SAFETY: `this` was posted via [`queue_for_write`], and is not used again.
@@ -1640,7 +1622,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellRmTask {
             "ShellRmTask scheduled via ShellTask::schedule; use ShellRmTask::schedule"
         );
     }
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
+    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter<'_>) -> Yield {
         // SAFETY: the ref `schedule` made, which `finish_concurrently` posted.
         Rm::on_shell_rm_task_done(interp, unsafe { RefPtr::from_raw(this) })
     }

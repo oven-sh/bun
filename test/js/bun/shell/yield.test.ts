@@ -104,6 +104,36 @@ describe("yield", async () => {
     });
   });
 
+  test("scripts started from a `then` getter while the promise resolves", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let depth = 0;
+        Object.defineProperty(Object.prototype, "then", {
+          get() {
+            if (this.exitCode !== undefined && depth < 10) {
+              depth++;
+              Bun.$\`echo x\`.quiet().run();
+            }
+          },
+        });
+        Bun.$\`echo x\`.quiet().run();
+        console.log(depth);
+        `,
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "10\n", stderr: "", exitCode: 0 });
+  });
+
   // A state can throw a JS error (here: a `${value}` redirect target the command
   // cannot use, or a failed write of a "command not found" message). When the
   // command is not the first thing the script runs, the trampoline is driven

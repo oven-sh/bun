@@ -1605,6 +1605,19 @@ describe("deno_task", () => {
     TestBuilder.command`echo $(echo 1 && echo 2)`.stdout("1 2\n").runAsTest("nested echo cmd subst with conditional");
     // TODO Sleep tests
 
+    TestBuilder.command`$(echo ${BUN} ./code.ts)`
+      .ensureTempDir()
+      .file("code.ts", `process.exit(3)`)
+      .exitCode(3)
+      .runAsTest("exit code comes from the subprocess that a cmd subst names");
+
+    TestBuilder.command`$(echo ${BUN} ./code.ts; false)`
+      .ensureTempDir()
+      .file("code.ts", `console.log("ran")`)
+      .stdout("ran\n")
+      .exitCode(0)
+      .runAsTest("exit code comes from the subprocess that a failing cmd subst names");
+
     describe("drops NUL bytes from the output", () => {
       TestBuilder.command`echo "$(echo -e 'a\0b\0c')" $(echo -e 'a\0b c\0d')`
         .stdout("abc ab cd\n")

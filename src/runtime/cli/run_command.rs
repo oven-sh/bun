@@ -360,7 +360,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             let mini = bun_event_loop::MiniEventLoop::init_global(Some(unsafe {
                 &mut *std::ptr::from_mut::<DotEnv::Loader>(env)
             }));
-            let code = match crate::shell::Interpreter::init_and_run_from_source(
+            let code = match crate::shell::ShellInterpreter::init_and_run_from_source(
                 ctx,
                 mini,
                 name,
@@ -923,7 +923,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `initAndRunFromFile`: read source then hand off to the interpreter.
         let src = sys::File::read_from(Fd::cwd(), entry_path)?;
 
-        crate::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path, &src)
+        crate::shell::ShellInterpreter::init_and_run_from_file(ctx, mini, entry_path, &src)
     }
 
     /// `VirtualMachine::init`,

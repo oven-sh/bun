@@ -28,15 +28,13 @@ pub(crate) enum State {
 }
 
 impl Which {
-    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
-            if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+            if let Some(fd) = Builtin::of(interp, cmd).stdout.needs_io() {
                 Self::state_mut(interp, cmd).state = State::OneArg;
                 let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                return Builtin::of_mut(interp, cmd)
-                    .stdout
-                    .enqueue(child, b"\n", safeguard);
+                return interp.enqueue(fd, child, b"\n");
             }
             let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, b"\n");
             return Builtin::done(interp, cmd, 1);
@@ -51,24 +49,18 @@ impl Which {
                 let arg = Self::arg(interp, cmd, i);
                 match search.resolve(&arg) {
                     Some(resolved) => {
-                        let buf = Builtin::fmt_error_arena(
-                            interp,
-                            cmd,
+                        let buf = Builtin::fmt_error(
                             None,
                             format_args!("{}\n", bstr::BStr::new(&resolved)),
-                        )
-                        .to_vec();
+                        );
                         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                     }
                     None => {
                         had_not_found = true;
-                        let buf = Builtin::fmt_error_arena(
-                            interp,
-                            cmd,
+                        let buf = Builtin::fmt_error(
                             Some(Kind::Which),
                             format_args!("{} not found\n", bstr::BStr::new(&arg)),
-                        )
-                        .to_vec();
+                        );
                         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                     }
                 }
@@ -84,7 +76,7 @@ impl Which {
         Self::next(interp, cmd)
     }
 
-    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn next(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         let (arg_idx, had_not_found) = match &Self::state_mut(interp, cmd).state {
             State::MultiArgs {
@@ -113,21 +105,16 @@ impl Which {
                     *had_not_found = true;
                     *waiting_write = true;
                 }
-                if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-                    return Builtin::of_mut(interp, cmd).stdout.enqueue_fmt(
+                if let Some(fd) = Builtin::of(interp, cmd).stdout.needs_io() {
+                    return interp.enqueue_fmt(
+                        fd,
                         child,
                         None,
                         format_args!("{} not found\n", bstr::BStr::new(&arg)),
-                        safeguard,
                     );
                 }
-                let buf = Builtin::fmt_error_arena(
-                    interp,
-                    cmd,
-                    None,
-                    format_args!("{} not found\n", bstr::BStr::new(&arg)),
-                )
-                .to_vec();
+                let buf =
+                    Builtin::fmt_error(None, format_args!("{} not found\n", bstr::BStr::new(&arg)));
                 let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                 Self::arg_complete(interp, cmd)
             }
@@ -137,28 +124,23 @@ impl Which {
                 {
                     *waiting_write = true;
                 }
-                if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-                    return Builtin::of_mut(interp, cmd).stdout.enqueue_fmt(
+                if let Some(fd) = Builtin::of(interp, cmd).stdout.needs_io() {
+                    return interp.enqueue_fmt(
+                        fd,
                         child,
                         None,
                         format_args!("{}\n", bstr::BStr::new(&resolved)),
-                        safeguard,
                     );
                 }
-                let buf = Builtin::fmt_error_arena(
-                    interp,
-                    cmd,
-                    None,
-                    format_args!("{}\n", bstr::BStr::new(&resolved)),
-                )
-                .to_vec();
+                let buf =
+                    Builtin::fmt_error(None, format_args!("{}\n", bstr::BStr::new(&resolved)));
                 let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                 Self::arg_complete(interp, cmd)
             }
         }
     }
 
-    fn arg_complete(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn arg_complete(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         if let State::MultiArgs {
             arg_idx,
             waiting_write,
@@ -172,7 +154,7 @@ impl Which {
     }
 
     pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         _: usize,
         e: Option<bun_sys::SystemError>,
@@ -189,7 +171,7 @@ impl Which {
 
     // ── helpers ────────────────────────────────────────────────────────────
 
-    fn arg(interp: &Interpreter, cmd: NodeId, idx: usize) -> Vec<u8> {
+    fn arg(interp: &Interpreter<'_>, cmd: NodeId, idx: usize) -> Vec<u8> {
         Builtin::of(interp, cmd).arg_bytes(idx).to_vec()
     }
 }
@@ -200,7 +182,7 @@ struct SearchEnv {
 }
 
 impl SearchEnv {
-    fn load(interp: &Interpreter, cmd: NodeId) -> Self {
+    fn load(interp: &Interpreter<'_>, cmd: NodeId) -> Self {
         let shell = Builtin::shell(interp, cmd);
         Self {
             path_env: shell.export_env.get(b"PATH").unwrap_or_default().to_vec(),

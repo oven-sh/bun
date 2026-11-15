@@ -5,10 +5,6 @@ use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub(crate) struct Echo {
-    /// The fully-rendered output (joined argv + optional trailing newline).
-    /// Kept on the state so the async IOWriter path can borrow it across
-    /// yields.
-    pub(crate) output: Vec<u8>,
     state: State,
 }
 
@@ -21,7 +17,7 @@ enum State {
 }
 
 impl Echo {
-    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         let output = {
             let bltn = Builtin::of(interp, cmd);
             let argc = bltn.args_slice().len();
@@ -87,24 +83,19 @@ impl Echo {
             }
             out
         };
-        Self::state_mut(interp, cmd).output = output;
 
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+        if let Some(fd) = Builtin::of(interp, cmd).stdout.needs_io() {
             Self::state_mut(interp, cmd).state = State::WaitingIo;
-            let buf = Self::state_mut(interp, cmd).output.clone();
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stdout
-                .enqueue(child, &buf, safeguard);
+            return interp.enqueue(fd, child, &output);
         }
-        let buf = Self::state_mut(interp, cmd).output.clone();
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &output);
         Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(interp, cmd, 0)
     }
 
     pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         _: usize,
         err: Option<bun_sys::SystemError>,

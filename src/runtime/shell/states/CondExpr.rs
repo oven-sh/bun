@@ -3,6 +3,7 @@
 use crate::node::fs::stat_embedded_shell_operand;
 use crate::shell::ExitCode;
 use crate::shell::ast;
+use crate::shell::builtin::IoKind;
 use crate::shell::dispatch_tasks::ShellCondExprStatTask;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, PoolTask, ShellTask, ShellWork};
 use crate::shell::io::IO;
@@ -10,13 +11,13 @@ use crate::shell::states::base::{Base, Env};
 use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
 
-pub(crate) struct CondExpr {
+pub(crate) struct CondExpr<'a> {
     pub(crate) base: Base,
-    pub node: bun_ptr::BackRef<ast::CondExpr>,
+    pub node: &'a ast::CondExpr<'a>,
     pub(crate) io: IO,
     pub(crate) state: CondExprState,
     pub args: Vec<Vec<u8>>,
-    shell: Env,
+    pub(crate) shell: Env,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -30,36 +31,35 @@ pub enum CondExprState {
     WaitingWriteErr,
 }
 
-impl CondExpr {
+impl<'a> CondExpr<'a> {
     pub(crate) fn init(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'a>,
         shell: Env,
-        node: &ast::CondExpr,
+        node: &'a ast::CondExpr<'a>,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::CondExpr(CondExpr {
             base: Base::new(parent),
             shell,
-            node: bun_ptr::BackRef::new(node),
+            node,
             io,
             state: CondExprState::Idle,
             args: Vec::new(),
         }))
     }
 
-    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &mut Interpreter<'a>, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &mut Interpreter<'a>, this: NodeId) -> Yield {
         // Expand each arg via Expansion, then evaluate the operator.
         loop {
-            let (shell, node) = {
+            let (shell, n) = {
                 let me = interp.as_condexpr(this);
-                (me.shell.as_ptr(), me.node)
+                (me.shell.id(), me.node)
             };
-            let n = node.get();
             match interp.as_condexpr(this).state {
                 CondExprState::Idle => {
                     interp.as_condexpr_mut(this).state = CondExprState::ExpandingArgs { idx: 0 };
@@ -80,7 +80,11 @@ impl CondExpr {
 
     /// Evaluates the operator against
     /// the expanded `args` and returns the resulting exit code.
-    fn command_impl_start(interp: &Interpreter, this: NodeId, op: ast::CondExprOp) -> Yield {
+    fn command_impl_start(
+        interp: &mut Interpreter<'a>,
+        this: NodeId,
+        op: ast::CondExprOp,
+    ) -> Yield {
         use ast::CondExprOp as Op;
         let parent = interp.as_condexpr(this).base.parent;
         match op {
@@ -100,7 +104,7 @@ impl CondExpr {
                 // back on the main thread via `on_stat_task_done`.
                 let (cwd_fd, mut path) = {
                     let me = interp.as_condexpr(this);
-                    let cwd_fd = me.shell.cwd_fd.fd();
+                    let cwd_fd = interp.shells[me.shell.id()].cwd_fd.fd();
                     (cwd_fd, me.args[0].clone())
                 };
                 if path.last() != Some(&0) {
@@ -163,7 +167,7 @@ impl CondExpr {
     /// `WaitingWriteErr`: on write failure finish with the errno as the exit
     /// code, otherwise finish with exit code 1.
     pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'a>,
         this: NodeId,
         _written: usize,
         err: Option<bun_sys::SystemError>,
@@ -189,7 +193,7 @@ impl CondExpr {
     /// Main-thread re-entry for the
     /// off-thread `stat`/`lstat` posted by a unary file-test operator.
     fn on_stat_task_done(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'a>,
         this: NodeId,
         stat: &bun_sys::Result<bun_sys::Stat>,
         path: &[u8],
@@ -200,7 +204,7 @@ impl CondExpr {
             CondExprState::WaitingStat
         ));
         let op = interp.as_condexpr(this).node.op;
-        let cwd = interp.as_condexpr(this).shell.cwd();
+        let cwd = interp.shells[interp.as_condexpr(this).shell.id()].cwd();
         let operand = path.strip_suffix(b"\0").unwrap_or(path);
         let embedded = match stat {
             Err(_) => stat_embedded_shell_operand(cwd, operand),
@@ -226,7 +230,7 @@ impl CondExpr {
     }
 
     pub(crate) fn child_done(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'a>,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
@@ -260,7 +264,12 @@ impl CondExpr {
     }
 
     /// `path` is NUL-terminated by the caller.
-    fn do_stat(interp: &Interpreter, this: NodeId, cwd_fd: bun_sys::Fd, path: Vec<u8>) -> Yield {
+    fn do_stat(
+        interp: &mut Interpreter<'a>,
+        this: NodeId,
+        cwd_fd: bun_sys::Fd,
+        path: Vec<u8>,
+    ) -> Yield {
         debug_assert!(path.last() == Some(&0));
         let task = ShellCondExprStatTask {
             cond: this,
@@ -279,7 +288,7 @@ impl CondExpr {
     /// `on_io_writer_chunk`); otherwise append to the captured stderr buffer
     /// and finish with exit 1.
     fn write_failing_error(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'a>,
         this: NodeId,
         args: core::fmt::Arguments<'_>,
     ) -> Yield {
@@ -288,25 +297,16 @@ impl CondExpr {
         use std::io::Write as _;
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
-        if interp.as_condexpr(this).io.stderr.needs_io().is_some() {
+        if let OutKind::Fd(fd) = interp.as_condexpr(this).io.stderr {
             // Only the fd arm transitions state.
             interp.as_condexpr_mut(this).state = CondExprState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::CondExpr);
-            // `OutKind::Fd` guaranteed by `needs_io()`.
-            if let OutKind::Fd(fd) = &interp.as_condexpr(this).io.stderr {
-                return fd.writer.enqueue(child, fd.captured, &buf);
-            }
-            unreachable!()
+            return interp.enqueue(fd, child, &buf);
         }
         // No-IO path: append to the shell env's captured stderr and finish
         // synchronously with exit 1 (matches `on_io_writer_chunk`).
-        if let OutKind::Pipe = &interp.as_condexpr(this).io.stderr {
-            // SAFETY: single trampoline frame; no other borrow of the env's
-            // (or its parent's) stderr buffer is live.
-            let stderr = unsafe { interp.as_condexpr_mut(this).shell.buffered_stderr_mut() };
-            stderr.extend_from_slice(&buf);
-        }
-        let parent = interp.as_condexpr(this).base.parent;
+        let Base { parent, shell, .. } = interp.as_condexpr(this).base;
+        (interp.shells.buffered_mut(shell, IoKind::Stderr)).extend_from_slice(&buf);
         interp.child_done(parent, this, 1)
     }
 }
@@ -320,7 +320,7 @@ impl ShellWork for ShellCondExprStatTask {
         self.stat = crate::shell::interpreter::shell_statat(self.cwd_fd, z);
     }
 
-    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+    fn run_from_main_thread(&mut self, interp: &mut Interpreter<'_>) -> Yield {
         CondExpr::on_stat_task_done(interp, self.cond, &self.stat, &self.path)
     }
 }

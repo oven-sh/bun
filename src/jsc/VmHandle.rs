@@ -559,16 +559,23 @@ impl VirtualMachine {
     }
 }
 
+/// JS thread: [`VirtualMachine::current_loop_kind`] for C++ (`BunLoopKind`),
+/// captured by the initiator of work whose completion is posted weakly.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VM__currentLoopKind(vm: &VirtualMachine) -> LoopKind {
+    vm.current_loop_kind()
+}
+
 // ── VmBound ───────────────────────────────────────────────────────────────
 
-/// State of a VM's thread inside an object that other threads share. Never dropped: any thread can be the last owner.
+/// A value that only its VM's thread can reach, inside a struct that threads share. `T` is never dropped, so empty it on the JS thread.
 pub struct VmBound<T> {
     handle: VmHandle,
     value: core::mem::ManuallyDrop<T>,
 }
 
 // SAFETY: `value` is only reached through `get`, which asks for the VM it was made on, and a
-// `&VirtualMachine` does not leave its thread. `handle` keeps its address from naming another VM.
+// `&VirtualMachine` does not leave its thread. `handle` keeps `Shared` allocated, so no later VM gets its address.
 unsafe impl<T> Send for VmBound<T> {}
 // SAFETY: as above.
 unsafe impl<T> Sync for VmBound<T> {}
@@ -589,13 +596,6 @@ impl<T> VmBound<T> {
     pub fn get<'a>(&'a self, vm: &'a VirtualMachine) -> Option<&'a T> {
         Arc::ptr_eq(&self.handle.0, &vm.handle_ref().0).then(|| &*self.value)
     }
-}
-
-/// JS thread: [`VirtualMachine::current_loop_kind`] for C++ (`BunLoopKind`),
-/// captured by the initiator of work whose completion is posted weakly.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__currentLoopKind(vm: &VirtualMachine) -> LoopKind {
-    vm.current_loop_kind()
 }
 
 // ── Test suite only: deterministic late completions ───────────────────────

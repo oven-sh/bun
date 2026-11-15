@@ -1891,6 +1891,38 @@ describe.concurrent("a module mocked without a factory", () => {
 });
 
 describe.concurrent("a name that import and require() resolve to two files", () => {
+  const esm = (name: string) =>
+    `(globalThis.loaded ??= []).push("${name} esm"); export const which = "real esm"; export const fn = () => "real esm"; export default { which, fn };`;
+  const cjs = (name: string) =>
+    `(globalThis.loaded ??= []).push("${name} cjs"); module.exports = { which: "real cjs", fn: () => "real cjs" };`;
+  // An import of each of `names` loads the ES module, and require() of it the CommonJS file. With a query the two
+  // files of "./lib" are two more modules: they run again for that name, and the two names have a mock each.
+  const names = ["dual", "dual/sub", "#dep", "./lib", "./lib?v=1", "./folder"];
+  const withoutQuery = (name: string) => name.replace(/\?.*/, "");
+  const files = {
+    "package.json": JSON.stringify({
+      name: "project",
+      imports: { "#dep": { import: "./dep.mjs", require: "./dep.cjs" } },
+    }),
+    "node_modules/dual/package.json": JSON.stringify({
+      name: "dual",
+      exports: {
+        ".": { import: "./esm.mjs", require: "./cjs.cjs" },
+        "./sub": { import: { default: "./sub.mjs" }, default: "./sub.cjs" },
+      },
+    }),
+    "node_modules/dual/esm.mjs": esm("dual"),
+    "node_modules/dual/cjs.cjs": cjs("dual"),
+    "node_modules/dual/sub.mjs": esm("dual/sub"),
+    "node_modules/dual/sub.cjs": cjs("dual/sub"),
+    "dep.mjs": esm("#dep"),
+    "dep.cjs": cjs("#dep"),
+    "lib.mjs": esm("./lib"),
+    "lib.cjs": cjs("./lib"),
+    "folder/index.mjs": esm("./folder"),
+    "folder/index.cjs": cjs("./folder"),
+  };
+
   test("a name whose file for require() is a native addon", async () => {
     await expectFixturesToPass(
       {
@@ -1916,6 +1948,60 @@ describe.concurrent("a name that import and require() resolve to two files", () 
         `,
       },
       1,
+    );
+  });
+
+  test("a factory that requires its own name gets the CommonJS file, however require() resolves the name", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "exits.test.js": `
+          import { expect, mock, test } from "bun:test";
+          import Module from "node:module";
+          const spread = { which: "real cjs", fn: expect.any(Function), extra: 1 };
+          test("the resolver", async () => {
+            mock.module("dual", () => ({ ...require("dual"), extra: 1 }));
+            const required = require("dual");
+            expect(required).toEqual(spread);
+            expect((await import("dual")).fn).toBe(required.fn);
+          });
+          test("a replaced Module._resolveFilename", () => {
+            const resolveFilename = Module._resolveFilename;
+            Module._resolveFilename = (...args) => resolveFilename.apply(Module, args);
+            try {
+              mock.module("dual/sub", () => ({ ...require("dual/sub"), extra: 1 }));
+              expect(require("dual/sub")).toEqual(spread);
+            } finally {
+              Module._resolveFilename = resolveFilename;
+            }
+          });
+          // The key of a mock is the path that an import resolves its name to. require() of a key asks no resolver.
+          test("the path of each file, written out", () => {
+            const importPath = Bun.resolveSync("./lib", import.meta.dir);
+            const requirePath = require.resolve("./lib");
+            mock.module("./lib", () => ({
+              ofName: require("./lib").which,
+              ofRequirePath: require(requirePath).which,
+              ofImportPath: require(importPath).which,
+            }));
+            const required = require("./lib");
+            expect(required).toEqual({ ofName: "real cjs", ofRequirePath: "real cjs", ofImportPath: "real esm" });
+            expect([require(requirePath) === required, require(importPath) === required]).toEqual([true, true]);
+          });
+          test("each CommonJS file ran once, and the one ES module that a factory asked for", () => {
+            expect(globalThis.loaded).toEqual(["dual cjs", "dual/sub cjs", "./lib cjs", "./lib esm"]);
+          });
+        `,
+        "paths.test.cjs": `
+          const { expect, mock, test } = require("bun:test");
+          test("options.paths", () => {
+            mock.module("#dep", () => ({ ...require("#dep", { paths: [__dirname] }), extra: 1 }));
+            expect(require("#dep", { paths: [__dirname] })).toEqual({ which: "real cjs", fn: expect.any(Function), extra: 1 });
+            expect(globalThis.loaded.filter(name => name.startsWith("#dep "))).toEqual(["#dep cjs"]);
+          });
+        `,
+      },
+      5,
     );
   });
 

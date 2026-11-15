@@ -16,11 +16,7 @@ pub(super) struct BoolReader<'a> {
 }
 
 impl<'a> BoolReader<'a> {
-    pub(super) fn new(bytes: &'a [u8]) -> Result<Self> {
-        // The value is below the range at all times, which starts at 255.
-        if bytes.first() == Some(&255) {
-            return Err(Error::InvalidLossyFrame);
-        }
+    pub(super) fn new(bytes: &'a [u8]) -> Self {
         let mut reader = Self {
             unread: bytes,
             value: 0,
@@ -28,8 +24,12 @@ impl<'a> BoolReader<'a> {
             spare_bits: -16,
             made_up_bytes: 0,
         };
-        reader.refill();
-        Ok(reader)
+        match bytes.first() {
+            // The value is below the range at all times, which starts at 255. There is nothing to read from such data.
+            Some(255) => reader.unread = &[],
+            _ => reader.refill(),
+        }
+        reader
     }
 
     pub(super) fn check_not_past_end(&self) -> Result<()> {

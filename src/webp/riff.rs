@@ -1,7 +1,7 @@
 //! The RIFF container: https://developers.google.com/speed/webp/docs/riff_container
 
 use crate::error::{Error, Result};
-use crate::vec;
+use crate::{lossless, vec};
 
 type Tag = [u8; 4];
 
@@ -49,8 +49,8 @@ pub(crate) struct Canvas {
 /// The `VP8 ` or `VP8L` chunk.
 #[derive(Clone, Copy)]
 pub(crate) struct ImageChunk<'a> {
-    /// As much of `image` as the file has, padding included.
-    // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/demux/demux.c#L233
+    /// `image` goes on to the end of the file.
+    // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/dec/webp_dec.c#L475
     pub(crate) bitstream: Bitstream<'a>,
     pub(crate) declared_len: usize,
 }
@@ -85,8 +85,7 @@ impl<'a> Container<'a> {
         }
         let canvas = match split_header(chunks)? {
             (VP8X, VP8X_LEN, payload) => Some(Canvas::parse(payload)?),
-            (VP8 | VP8L, ..) => None,
-            _ => return Err(Error::InvalidContainer),
+            _ => None,
         };
         Ok(Self {
             canvas,
@@ -107,11 +106,15 @@ impl<'a> Container<'a> {
         if self.has_flag(ANIMATION_FLAG) {
             return Err(Error::Animated);
         }
-        let mut unread = self.chunks;
-        let mut room = self.declared_len;
+        let canvas_len = self.canvas.map_or(0, |_| HEADER_LEN + VP8X_LEN);
+        let mut unread = self.chunks.get(canvas_len..).unwrap_or_default();
+        let mut room = self.declared_len.saturating_sub(canvas_len);
         let mut alpha = None;
         loop {
             let (tag, len, rest) = split_header(unread)?;
+            if self.canvas.is_none() && tag != VP8 && tag != VP8L {
+                return Ok(ImageChunk::without_header(unread));
+            }
             // An image that is the only chunk gets away without its padding.
             let needed = if self.canvas.is_some() {
                 padded(len)
@@ -121,10 +124,9 @@ impl<'a> Container<'a> {
             room = room
                 .checked_sub(HEADER_LEN + needed)
                 .ok_or(Error::InvalidContainer)?;
-            let image = rest.get(..padded(len)).unwrap_or(rest);
             let bitstream = match tag {
-                VP8 => Bitstream::Lossy { image, alpha },
-                VP8L => Bitstream::Lossless { image },
+                VP8 => Bitstream::Lossy { image: rest, alpha },
+                VP8L => Bitstream::Lossless { image: rest },
                 _ => {
                     unread = rest.get(needed..).ok_or(Error::UnexpectedEof)?;
                     if tag == ALPH {
@@ -152,6 +154,19 @@ impl<'a> Container<'a> {
                 return rest.get(..len).filter(|profile| !profile.is_empty());
             }
             unread = rest.get(padded(len)..)?;
+        }
+    }
+}
+
+impl<'a> ImageChunk<'a> {
+    // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/dec/webp_dec.c#L264
+    fn without_header(image: &'a [u8]) -> Self {
+        Self {
+            bitstream: match image.first() {
+                Some(&lossless::SIGNATURE) => Bitstream::Lossless { image },
+                _ => Bitstream::Lossy { image, alpha: None },
+            },
+            declared_len: image.len(),
         }
     }
 }

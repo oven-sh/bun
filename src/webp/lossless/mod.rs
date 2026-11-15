@@ -8,7 +8,7 @@ type Argb = u32;
 
 const BLACK: Argb = 0xff00_0000;
 
-const SIGNATURE: u8 = 0x2f;
+pub(crate) const SIGNATURE: u8 = 0x2f;
 const IMAGE_SIZE_BITS: u32 = 14;
 const VERSION_BITS: u32 = 3;
 

@@ -87,7 +87,7 @@ impl<'a> Parameters<'a> {
             .rest
             .split_at_checked(header.first_partition_len)
             .ok_or(Error::UnexpectedEof)?;
-        let mut reader = BoolReader::new(first_partition)?;
+        let mut reader = BoolReader::new(first_partition);
         let _color_space = reader.read_flag();
         let _clamping_type = reader.read_flag();
         let segmentation = Segmentation::read(&mut reader);
@@ -131,13 +131,13 @@ fn split_partitions(bytes: &[u8], count: usize) -> Result<[BoolReader<'_>; MAX_P
     for (partition, &[l0, l1, l2]) in partitions.iter_mut().zip(lens.as_chunks().0) {
         let len = u32::from_le_bytes([l0, l1, l2, 0]) as usize;
         let (bytes, rest) = unread.split_at_checked(len).ok_or(Error::UnexpectedEof)?;
-        *partition = BoolReader::new(bytes)?;
+        *partition = BoolReader::new(bytes);
         unread = rest;
     }
     if unread.is_empty() {
         return Err(Error::UnexpectedEof);
     }
-    *partitions.at_mut(count - 1) = BoolReader::new(unread)?;
+    *partitions.at_mut(count - 1) = BoolReader::new(unread);
     Ok(partitions)
 }
 

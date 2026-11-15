@@ -35,6 +35,10 @@ function bits(...fields: [number, number][]) {
 /** No transform, no color cache, one group of prefix codes that have one symbol each. The pixels take no bits. */
 const oneColor = (r: number, g: number, b: number, a: number) =>
   [[0, 3], ...[g, r, b, a, 0].map(symbol => [0b101 | (symbol << 3), 11])] as [number, number][];
+/** The pixels take one bit each. */
+const twoGreens = oneColor(1, 2, 3, 4).with(1, [0b111 | (0 << 3) | (1 << 11), 19]);
+/** Its 256 colors are stored like a picture that has no use for transforms and groups. */
+const palette = [[0b111, 3], [255, 8], [0, 1], ...oneColor(1, 1, 1, 1).slice(1)] as [number, number][];
 const vp8l = (width: number, height: number, version = 0) =>
   chunk("VP8L", bits([0x2f, 8], [width - 1, 14], [height - 1, 14], [0, 1], [version, 3], ...oneColor(1, 2, 3, 4)));
 
@@ -47,7 +51,7 @@ function* chunksOf(file: Uint8Array) {
   }
 }
 const black = async (width: number, height: number) =>
-  Buffer.from(await encode(pngOf(width, height, Buffer.alloc(width * height * 4, Buffer.of(0, 0, 0, 255))), "80"));
+  Buffer.from(await encode(pngOf(width, height, Buffer.alloc(width * height * 4, Buffer.of(0, 0, 0, 255))), "100"));
 const vp8 = async (width: number, height: number) => (await black(width, height)).subarray(12);
 
 const size = (file: Uint8Array, maxPixels?: number) =>
@@ -139,6 +143,61 @@ describe("the container", () => {
       file.writeUInt32LE(file.length - 8 - 2, 4);
       expect(await size(file)).toBe(FAILED);
     }
+    for (const length of [2 ** 31, 2 ** 32 - 11, 2 ** 32 - 10, 2 ** 32 - 1]) {
+      expect(await size(riff(header, chunk("JUNK", [], length), image))).toBe(FAILED);
+    }
+  });
+
+  test("VP8X has a size even if it does not fit", async () => {
+    const file = riff(header);
+    file.writeUInt32LE(12, 4);
+    expect(await size(file)).toBe("2x1");
+    expect(await size(Buffer.concat([file, chunk("JUNK")]))).toBe(FAILED);
+  });
+
+  test("an image is read to its end, be that behind its chunk or the RIFF chunk", async () => {
+    const lossy = await vp8(2, 1);
+    const firstPartition = lossy.readUIntLE(8, 3) >> 5;
+    for (const [whole, shortest] of [
+      [image, 0],
+      [lossy, firstPartition + 1],
+    ] as const) {
+      const expected = await decode(riff(whole));
+      for (const before of [[], [vp8x(0, 2, 1)]]) {
+        const file = riff(...before, whole);
+        const at = file.length - whole.length;
+        file.writeUInt32LE(shortest, at + 4);
+        expect(await decode(file)).toEqual(expected);
+        file.writeUInt32LE(at + shortest + (shortest & 1), 4);
+        expect(await decode(file)).toEqual(expected);
+      }
+    }
+    lossy.writeUInt32LE(firstPartition, 4);
+    expect(await size(riff(lossy))).toBe(FAILED);
+  });
+
+  test("an image that is all there is needs no chunk header", async () => {
+    for (const whole of [image, await vp8(2, 1)]) {
+      expect(await decode(riff(whole.subarray(8)))).toEqual(await decode(riff(whole)));
+      expect(await decodes(riff(vp8x(0, 2, 1), whole.subarray(8)))).toBe(false);
+    }
+    expect(await size(riff(vp8l(2, 1, 1).subarray(8)))).toBe(FAILED);
+  });
+
+  test("nothing is read from a partition of a lossy image that starts with 255", async () => {
+    const small = await vp8(16, 16);
+    const modes = small.subarray(8, 8 + 10 + (small.readUIntLE(8, 3) >> 5));
+    const withTokens = (first: number) => riff(chunk("VP8 ", [...modes, first, ...Buffer.alloc(4096)]));
+    expect(await decodes(withTokens(254))).toBe(true);
+    expect(await decodes(withTokens(255))).toBe(false);
+
+    const withModes = (first: number) => {
+      const frame = Buffer.from([...modes.subarray(0, 10), first, ...Buffer.alloc(63, 144), ...Buffer.alloc(4096)]);
+      frame.writeUIntLE((64 << 5) | 16, 0, 3);
+      return riff(chunk("VP8 ", frame));
+    };
+    expect(await decodes(withModes(0))).toBe(true);
+    expect(await decodes(withModes(255))).toBe(false);
   });
 
   test("the limits of a lossless image", async () => {
@@ -202,6 +261,17 @@ describe("ALPH", () => {
     expect(await alphas(file)).toEqual([77, 77]);
   });
 
+  test.each([
+    ["without", []],
+    ["with", palette],
+  ])("compressed %s a palette, it has the bits of the last pixel too", async (_, transform) => {
+    const fields = [...transform, ...twoGreens];
+    const stream = [...bits(...fields), 255];
+    const spare = 8 * stream.length - fields.reduce((sum, [, count]) => sum + count, 0);
+    expect(await decodes(await withAlpha(spare, 1, chunk("ALPH", [1, ...stream])))).toBe(true);
+    expect(await decodes(await withAlpha(spare + 1, 1, chunk("ALPH", [1, ...stream])))).toBe(false);
+  });
+
   test("the last in front of a lossy image counts, whatever VP8X says", async () => {
     const [one, two, image] = [chunk("ALPH", [0, 1]), chunk("ALPH", [0, 2]), await vp8(1, 1)];
     expect(await alphas(riff(vp8x(ALPHA, 1, 1), one, two, chunk("JUNK"), image))).toEqual([2]);
@@ -212,10 +282,6 @@ describe("ALPH", () => {
 });
 
 describe("memory is written to as the rows come, not when the header does", async () => {
-  const [start, , ...others] = oneColor(1, 2, 3, 4);
-  const twoGreens = [start, [0b111 | (0 << 3) | (1 << 11), 19], ...others] as [number, number][];
-  // Its 256 colors are stored like a picture that has no use for transforms and groups.
-  const palette = [[0b111, 3], [255, 8], [0, 1], ...oneColor(1, 1, 1, 1).slice(1)] as [number, number][];
   const someRows = Array(8192).fill(0x55);
   const lossless = (side: number, ...stream: [number, number][]) =>
     riff(chunk("VP8L", [...bits([0x2f, 8], [side - 1, 14], [side - 1, 14], [0, 4], ...stream), ...someRows]));

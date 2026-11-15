@@ -2203,14 +2203,20 @@ fn window_line_text(full_line: &[u8], offset_in_line: usize) -> &[u8] {
 
 /// Where a diagnostic stands in a buffer that a parser reads in its own
 /// units: 1-based line and column, and the `[line_start, line_end)` range
-/// of the units of the line that holds it. Columns count UTF-16 code units
-/// (the convention of [`Source::init_error_position`]) so `write_format`
-/// places its caret the same way. Line ends are `\n`, `\r\n` and `\r` only,
-/// the set XML §2.11 normalizes; the U+2028/U+2029 that
-/// `ErrorPositionState` also counts are not line breaks to XML.
+/// of the units of the line that holds it. The conventions are those of
+/// [`Source::init_error_position`]: columns count UTF-16 code units (so
+/// `write_format` places its caret the same way), and an offset at the end
+/// of the input describes its last unit (`index`), so an error there stands
+/// on the last line and not on one past it. It differs from
+/// `ErrorPositionState` in two ways: a bare `\r` starts the next line at
+/// column 1, not 0, and U+2028/U+2029 are not line ends (`\n`, `\r\n` and
+/// `\r` are, the set XML §2.11 normalizes).
 pub struct LinePosition {
     pub line: i32,
     pub column: i32,
+    /// The unit the line and column describe: `offset`, clamped into the
+    /// buffer.
+    pub index: usize,
     pub line_start: usize,
     pub line_end: usize,
 }
@@ -2249,7 +2255,15 @@ impl LinePosition {
         offset: usize,
         decode: impl Fn(&[U]) -> (u32, usize),
     ) -> LinePosition {
-        let offset = offset.min(contents.len());
+        let mut offset = offset.min(contents.len().saturating_sub(1));
+        // The `\n` of a `\r\n` belongs to the line break, not to a line of
+        // its own: an error there is at the end of the line before it.
+        if offset > 0
+            && decode(&contents[offset..]).0 == 0x0A
+            && decode(&contents[offset - 1..]).0 == 0x0D
+        {
+            offset -= 1;
+        }
         let mut line: i32 = 1;
         let mut column: i32 = 1;
         let mut line_start = 0;
@@ -2286,6 +2300,7 @@ impl LinePosition {
         LinePosition {
             line,
             column,
+            index: offset,
             line_start,
             line_end,
         }
@@ -2293,7 +2308,8 @@ impl LinePosition {
 
     /// The [`Location`] of a diagnostic at this position, for a source whose
     /// line holding it is `line_text` as UTF-8 with the error `offset_in_line`
-    /// bytes into it, and whose caller-facing `offset` is given.
+    /// bytes into it, and whose caller-facing `offset` is given (unclamped:
+    /// the input's length for an error at its end).
     pub fn to_location(
         &self,
         source: &Source,

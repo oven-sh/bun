@@ -527,8 +527,8 @@ describe("error position", () => {
   // `position` is where the parser stopped, in the document: 1-based `line` and
   // `column` (UTF-16 code units), the text of that line, and `offset` as an
   // index into the input (a string index for a string, a byte offset for bytes).
-  const position = (input: string | Uint8Array, options?: XML.ParseOptions) =>
-    (syntaxError(input, options) as SyntaxError & { position: unknown }).position;
+  const position = (input: string | Uint8Array | Blob, options?: XML.ParseOptions) =>
+    (syntaxError(input as string, options) as SyntaxError & { position: unknown }).position;
   const doc = "<rss>\n<channel>\n<title>Bots & misinformation</title>\n</channel>\n</rss>\n";
   const expectedDoc = { line: 3, column: 14, offset: 29, lineText: "<title>Bots & misinformation</title>" };
 
@@ -542,6 +542,7 @@ describe("error position", () => {
       lineText: "<script/>",
     });
     expect(position("")).toEqual({ line: 1, column: 1, offset: 0, lineText: "" });
+    expect(position(new Blob([doc]))).toEqual(expectedDoc);
     // The message and the inherited call-site properties are as they were.
     const err = syntaxError(doc) as SyntaxError & { line: number; column: number };
     expect(err.message).toBe("XML Parse error: Expected an entity name after '&' but found space");
@@ -562,6 +563,17 @@ describe("error position", () => {
     const text = "<a>\n<b>\u2014\u{1F600} & x</b></a>";
     expect(position(text)).toEqual({ line: 2, column: 9, offset: 12, lineText: "<b>—😀 & x</b></a>" });
     expect(text[12]).toBe(" ");
+  });
+
+  test("an error at the end of the input: offset is the length, the place is the last character", () => {
+    // As `BuildMessage.position` (and the other parsers) report it: on the last line, not one past it.
+    expect(position("<a>")).toEqual({ line: 1, column: 3, offset: 3, lineText: "<a>" });
+    expect(position("<a>\n")).toEqual({ line: 1, column: 4, offset: 4, lineText: "<a>" });
+    expect(position(Buffer.from("<a>\n"))).toEqual({ line: 1, column: 4, offset: 4, lineText: "<a>" });
+    expect(position("<a>\r\n")).toEqual({ line: 1, column: 4, offset: 5, lineText: "<a>" });
+    expect(position("<a>\n<b>\n")).toEqual({ line: 2, column: 4, offset: 8, lineText: "<b>" });
+    expect(position("<a>\n\n")).toEqual({ line: 2, column: 1, offset: 5, lineText: "" });
+    expect(position("<a>\u2014\n")).toEqual({ line: 1, column: 5, offset: 5, lineText: "<a>—" });
   });
 
   test("\\r and \\r\\n are line ends", () => {
@@ -591,6 +603,13 @@ describe("error position", () => {
       offset: 39,
       lineText: "<a>&e;</a>",
     });
+    // In an attribute value, and in a parameter entity of the internal subset.
+    const attr = `<!DOCTYPE a [<!ENTITY e "<">]>\n<a b="&e;"/>`;
+    expect(position(attr)).toEqual({ line: 2, column: 7, offset: 37, lineText: `<a b="&e;"/>` });
+    expect(attr.slice(37, 40)).toBe("&e;");
+    const pe = `<!DOCTYPE a [<!ENTITY % p "<!ELEMENT a (b|)>">\n%p;]>\n<a/>`;
+    expect(position(pe)).toEqual({ line: 2, column: 1, offset: 47, lineText: "%p;]>" });
+    expect(pe.slice(47, 50)).toBe("%p;");
   });
 
   test("UTF-8 bytes: offset is a byte offset", () => {
@@ -613,26 +632,35 @@ describe("error position", () => {
     expect(latin1[54]).toBe(0x20);
 
     const odd = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("<a/>", "utf16le"), Buffer.from([0x20])]);
-    expect(position(odd)).toEqual({ line: 1, column: 5, offset: 10, lineText: "<a/>" });
+    expect(position(odd)).toEqual({ line: 1, column: 4, offset: 10, lineText: "<a/>" });
   });
 
   test("importing the same bytes reports the same place", async () => {
-    const be = Buffer.from(`<?xml version="1.0" encoding="UTF-16"?>\n<a>\n<b>\u00e9 & x</b></a>`, "utf16le").swap16();
-    const latin1 = Buffer.from(`<?xml version="1.0" encoding="ISO-8859-1"?>\n<a>\n<b>\xe9 & x</b></a>`, "latin1");
-    using dir = tempDir("xml-error-position", { "be.xml": be, "latin1.xml": latin1 });
-    for (const [name, bytes] of [
-      ["be.xml", be],
-      ["latin1.xml", latin1],
-    ] as const) {
+    const files = {
+      "utf8.xml": Buffer.from("<rss>\n<channel>\n<title>Bots & misinformation</title>\n</channel>\n</rss>\n"),
+      "eof.xml": Buffer.from("<a>\n<b>\n"),
+      "cr.xml": Buffer.from("<a>\r<b>\r<c>&</c></b></a>\r"),
+      "be.xml": Buffer.from(`<?xml version="1.0" encoding="UTF-16"?>\n<a>\n<b>\u00e9 & x</b></a>`, "utf16le").swap16(),
+      "latin1.xml": Buffer.from(`<?xml version="1.0" encoding="ISO-8859-1"?>\n<a>\n<b>\xe9 & x</b></a>`, "latin1"),
+    };
+    const expected = {
+      "utf8.xml": expectedDoc,
+      "eof.xml": { line: 2, column: 4, offset: 8, lineText: "<b>" },
+      "cr.xml": { line: 3, column: 5, offset: 12, lineText: "<c>&</c></b></a>" },
+      "be.xml": { line: 3, column: 7, offset: 100, lineText: "<b>é & x</b></a>" },
+      "latin1.xml": { line: 3, column: 7, offset: 54, lineText: "<b>é & x</b></a>" },
+    };
+    using dir = tempDir("xml-error-position", files);
+    for (const name of Object.keys(files) as (keyof typeof files)[]) {
       let imported: any;
       try {
         await import(join(String(dir), name));
       } catch (e) {
         imported = e;
       }
-      expect(imported.constructor.name).toBe("BuildMessage");
       const { line, column, offset, lineText } = imported.position;
-      expect({ line, column, offset, lineText }).toEqual(position(bytes));
+      expect({ line, column, offset, lineText }).toEqual(expected[name]);
+      expect(position(files[name])).toEqual(expected[name]);
     }
   });
 });

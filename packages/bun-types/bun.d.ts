@@ -1144,6 +1144,28 @@ declare module "bun" {
   }
 
   /**
+   * Where a text-format parser ({@link XML.parse}) stopped in its document,
+   * the `position` property of the `SyntaxError` it throws: the shape of
+   * `BuildMessage.position` (the global `Position`) without the file, which
+   * importing the same document as a file reports.
+   */
+  interface ParseErrorPosition {
+    /** 1-based line in the document. */
+    line: number;
+    /** 1-based column in the line, in UTF-16 code units. */
+    column: number;
+    /**
+     * An index into the input: a string index for a string, a byte offset
+     * for bytes (into the bytes as given, whatever their encoding). For an
+     * error at the end of the input it is the input's length, and the line,
+     * column and text are those of the last character.
+     */
+    offset: number;
+    /** The text of the line, with a long line cut to the part around the error. */
+    lineText: string;
+  }
+
+  /**
    * XML related APIs
    */
   namespace XML {
@@ -1221,25 +1243,6 @@ declare module "bun" {
 
     // ── parse ──────────────────────────────────────────────────────────────
 
-    /**
-     * Where {@link parse} stopped in the document, the `position` property of
-     * the `SyntaxError` it throws: the shape of `BuildMessage.position`, which
-     * importing the same document as a file reports.
-     */
-    interface ParseErrorPosition {
-      /** 1-based line in the document. */
-      line: number;
-      /** 1-based column in the line, in UTF-16 code units. */
-      column: number;
-      /**
-       * An index into the input: a string index for a string, a byte offset
-       * for bytes (into the bytes as given, whatever their encoding).
-       */
-      offset: number;
-      /** The text of the line, with a long line cut to the part around the error. */
-      lineText: string;
-    }
-
     interface ParseOptions {
       /**
        * Selects the shape of the result.
@@ -1291,7 +1294,7 @@ declare module "bun" {
      * @throws {SyntaxError} If the document is not well-formed, uses an
      * unsupported encoding, or exceeds the entity-expansion limits. The error's
      * own `position` property is where the parser stopped in the document
-     * (see {@link ParseErrorPosition}). Its inherited `line`, `column` and
+     * (a {@link Bun.ParseErrorPosition}). Its inherited `line`, `column` and
      * `sourceURL` are the JavaScript call site.
      * @throws {RangeError} If elements are nested too deeply
      *

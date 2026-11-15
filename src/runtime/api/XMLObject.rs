@@ -108,11 +108,8 @@ pub(crate) fn parse<'a>(
                         ));
                         if let Some(location) = &mut first_msg.data.location {
                             if let Some(utf8) = reparsed {
-                                // The re-parse read a UTF-8 copy of the string,
-                                // whose characters are all one byte in Latin-1:
-                                // the index in the string is the character count.
-                                let end = location.offset.min(utf8.len());
-                                location.offset = strings::wtf8_codepoint_count(&utf8[..end]);
+                                // The re-parse read a UTF-8 copy of the string.
+                                location.offset = super::js_string_index(utf8, location.offset);
                             }
                             if let Some(position) = super::location_to_js(global, location)? {
                                 error.put(global, b"position", position);

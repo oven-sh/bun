@@ -130,7 +130,7 @@ try {
 }
 ```
 
-The error's inherited `line`, `column` and `sourceURL` are the JavaScript call site, as for any error.
+For an error at the end of the input (a missing closing tag), `offset` is the input's length and the line, column and text are those of the last character. The error's inherited `line`, `column` and `sourceURL` are the JavaScript call site, as for any error.
 
 ### `Bun.XML.stringify()`
 

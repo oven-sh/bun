@@ -786,11 +786,10 @@ enum Origin {
 #[cold]
 #[inline(never)]
 fn locate_utf16(source: &Source, units: &[u16], unit: usize, offset: usize) -> Location {
-    let unit = unit.min(units.len());
     let at = LinePosition::utf16(units, unit);
     let line = strings::to_utf8_alloc(&units[at.line_start..at.line_end]);
     let in_line =
-        simdutf::length::utf8::from::utf16::le_with_replacement(&units[at.line_start..unit]);
+        simdutf::length::utf8::from::utf16::le_with_replacement(&units[at.line_start..at.index]);
     at.to_location(source, &line, in_line, offset)
 }
 
@@ -957,6 +956,8 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
     fn report_error(&mut self, pos: usize, args: core::fmt::Arguments<'_>) {
         let doc = self.document();
         let pos = pos.min(doc.len());
+        // `pos` is the error's offset; the line, column and text describe the
+        // clamped `index`, the last unit when the input ended.
         let location = if U::WIDE {
             locate_utf16(self.source, U::utf16(doc), pos, pos)
         } else {
@@ -964,7 +965,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
             if self.latin1 {
                 let at = LinePosition::latin1(bytes, pos);
                 let line = &bytes[at.line_start..at.line_end];
-                let in_line = pos - at.line_start;
+                let in_line = at.index - at.line_start;
                 match strings::to_utf8_from_latin1(line) {
                     Some(utf8) => {
                         let in_line = simdutf::length::utf8::from::latin1(&line[..in_line]);
@@ -989,7 +990,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                     }
                     Origin::Latin1 => simdutf::length::utf16::from::utf8(&bytes[..boundary]),
                 };
-                at.to_location(self.source, line, pos - at.line_start, offset)
+                at.to_location(self.source, line, at.index - at.line_start, offset)
             }
         };
         self.log.add_error_with_location(location, args);

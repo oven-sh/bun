@@ -55,9 +55,9 @@ XML.stringify({ a: "1" }, null, 123n);
 
 // The `position` of a parse error is the shape of `BuildMessage.position` without the file.
 {
-  const position: XML.ParseErrorPosition = { line: 3, column: 14, offset: 29, lineText: "<title>" };
+  const position: Bun.ParseErrorPosition = { line: 3, column: 14, offset: 29, lineText: "<title>" };
   expectType(position.line).is<number>();
   expectType(position.lineText).is<string>();
-  const build: Pick<BuildMessage["position"] & {}, keyof XML.ParseErrorPosition> = position;
-  expectType(build).is<XML.ParseErrorPosition>();
+  const build: Pick<Position, keyof Bun.ParseErrorPosition> = position;
+  expectType(build).is<Bun.ParseErrorPosition>();
 }

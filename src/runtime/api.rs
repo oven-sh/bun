@@ -219,6 +219,13 @@ fn location_to_js(
     Ok(Some(object))
 }
 
+/// The index in a JS string of the byte `offset` of its UTF-8 form: the
+/// `offset` of a [`bun_ast::Location`] a parser computed over that UTF-8, for
+/// a caller who passed the string.
+fn js_string_index(utf8: &[u8], offset: usize) -> usize {
+    bun_core::strings::element_length_utf8_into_utf16(&utf8[..offset.min(utf8.len())])
+}
+
 // ─── shared Expr → JS conversion for the text-format parsers ─────────────────
 
 /// `Expr` → `JSValue` for the text-format parsers (TOML, JSON5), through the

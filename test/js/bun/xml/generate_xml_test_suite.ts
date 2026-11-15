@@ -355,9 +355,7 @@ function defineOwn(obj: Record<string, unknown>, key: string, value: unknown) {
 // therefore passed as bytes; everything else is inlined as a string.
 const utf8Strict = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 type Input =
-  | { kind: "string"; text: string }
-  | { kind: "utf8-bytes"; text: string }
-  | { kind: "bytes"; base64: string };
+  { kind: "string"; text: string } | { kind: "utf8-bytes"; text: string } | { kind: "bytes"; base64: string };
 function classifyInput(bytes: Buffer): Input {
   const looks16 =
     (bytes[0] === 0xfe && bytes[1] === 0xff) ||
@@ -645,6 +643,12 @@ function expectRejects(input: string | Buffer, message?: string): void {
   }
   expect(err).toBeInstanceOf(SyntaxError);
   if (message !== undefined) expect((err as SyntaxError).message).toBe(message);
+  // Every rejection says where, in the document.
+  const { position } = err as SyntaxError & { position: Bun.ParseErrorPosition };
+  expect(position.line).toBeGreaterThanOrEqual(1);
+  expect(position.column).toBeGreaterThanOrEqual(1);
+  expect(position.offset).toBeWithin(0, input.length + 1);
+  expect(typeof position.lineText).toBe("string");
   expect(() => tree(input)).toThrow(SyntaxError);
 }
 `;

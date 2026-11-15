@@ -207,7 +207,7 @@ impl RunningEntry {
         };
         let limit = self
             .sequence(&buntest)
-            .and_then(|sequence| Some(buntest.step(sequence.active_entry.get()?).timespec.get()));
+            .and_then(|sequence| Some(buntest.sequence_entry(sequence.active_entry.get()?).timespec.get()));
         limit.is_some_and(|limit| {
             !limit.eql(&Timespec::EPOCH)
                 && limit

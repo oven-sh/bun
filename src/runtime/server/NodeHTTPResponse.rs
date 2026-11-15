@@ -1404,10 +1404,7 @@ impl NodeHTTPResponse {
                 // synchronous `set_closed()` from `JSNodeHTTPServerSocket::
                 // onClose` has already flipped SOCKET_CLOSED, so
                 // `should_request_be_pending()` is now false; let the gate
-                // re-evaluate. Release the connection first so the
-                // `clear_on_data_callback` reached from `mark_request_as_done`
-                // can't touch the dead socket.
-                self.connection.release();
+                // re-evaluate.
                 self.mark_request_as_done_if_necessary();
             }
             return;
@@ -1452,10 +1449,6 @@ impl NodeHTTPResponse {
             self.on_data_or_aborted(b"", true, AbortEvent::Abort, js_this);
         }
 
-        // The connection is released before the guard's release because
-        // `mark_request_as_done_if_necessary()` + that release can drop the
-        // last ref when the JS wrapper has already finalized; nothing between
-        // them reads the connection, so releasing first avoids a post-destroy write.
         if EVENT == AbortEvent::Abort {
             if self.flags.get().contains(Flags::ENDED) {
                 // An ended response that was still draining is over now: `finished` reads true, as after a drain.
@@ -1463,7 +1456,6 @@ impl NodeHTTPResponse {
             } else {
                 self.mark_request_as_done_if_necessary();
             }
-            self.connection.release();
         }
     }
 

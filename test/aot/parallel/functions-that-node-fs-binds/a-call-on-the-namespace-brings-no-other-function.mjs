@@ -3,5 +3,5 @@
 import fs from "node:fs";
 import "node:net";
 const ask = call => { try { return String(call()); } catch (error) { return error.code; } };
-console.log(ask(() => fs.appendFileSync("/no such folder/file", "text", { mode: 0o600 })), ask(() => fs.chmodSync("/no such folder/file", 0o600)), ask(() => fs.closeSync(1e6)));
-console.log([1e6, 2e6].map(descriptor => ask(() => fs.closeSync(descriptor))).join(), ask(() => fs.closeSync(...["none"])));
+console.log(ask(() => fs.appendFileSync("/no such folder/file", "text", { mode: 0o600 })), ask(() => fs.chmodSync("/no such folder/file", 0o600)), ask(() => fs.closeSync(-1)));
+console.log([-1, -2].map(descriptor => ask(() => fs.closeSync(descriptor))).join(), ask(() => fs.closeSync(...["none"])));

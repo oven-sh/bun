@@ -50,7 +50,7 @@ describe.concurrent("frames of built-in modules", () => {
           using dir = tempDir("frames-of-built-in-modules", program);
           const folder = String(dir);
           built(await spawned([bunExe(), "compile", "app-of-the-test.ts", "--outfile", "app", ...flags], folder, env));
-          const { stdout } = await spawned([join(folder, isWindows ? "app.exe" : "app")], folder, env);
+          const { stdout, exitCode } = await spawned([join(folder, isWindows ? "app.exe" : "app")], folder, env);
           expect(stdout).not.toContain("OfTheTest");
           expect(stdout).not.toContain("of-the-test");
           const frames = stdout
@@ -60,6 +60,7 @@ describe.concurrent("frames of built-in modules", () => {
           expect(frames.filter(frame => frame === emit)).toEqual([emit, emit, emit]);
           const ofProgram = /^(?:(?:<anonymous>|null|) \((?:.*[\\/])?compiled\.js\)|(?:.*[\\/])?compiled\.js)$/;
           expect(frames.filter(frame => frame !== emit && !ofProgram.test(frame))).toEqual([]);
+          expect(exitCode).toBe(0);
         }),
       buildLimit,
     );

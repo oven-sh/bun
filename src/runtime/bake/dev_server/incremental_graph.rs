@@ -317,7 +317,7 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) current_css_files: Vec<u64>,
 }
 
-/// The two graphs, with what a change to or a trace of either one reads and reports.
+/// The client and server graphs, and the state their methods share.
 pub(crate) struct Graphs {
     /// Absolute path to the project root. The HMR runtime's module IDs are relative to it.
     pub(crate) root: Box<[u8]>,
@@ -325,7 +325,7 @@ pub(crate) struct Graphs {
     pub(crate) server: IncrementalGraph<{ Side::Server }>,
     /// State populated during bundling and hot updates. Often cleared
     pub(crate) incremental_result: IncrementalResult,
-    /// A framework route's index by its file, also if it is not bundled or navigatable (a layout).
+    /// Route index by file, including layouts and unbundled routes.
     pub(crate) route_lookup: ArrayHashMap<ServerFileIndex, RouteIndexAndRecurseFlag>,
     /// Accessible via `/_bun/asset/<key>`.
     pub(crate) assets: Assets,
@@ -1343,30 +1343,30 @@ impl Graphs {
     pub(crate) fn insert_stale<const SIDE: Side>(
         &mut self,
         abs_path: &[u8],
-        graph: bake::Graph,
+        bake_graph: bake::Graph,
     ) -> Result<FileIndex<SIDE>, bun_alloc::AllocError>
     where
         Self: AsMut<IncrementalGraph<SIDE>>,
     {
-        self.insert_stale_extra(abs_path, graph, RouteKind::NotRoute)
+        self.insert_stale_extra(abs_path, bake_graph, RouteKind::NotRoute)
     }
 
     /// `IncrementalGraph(side).insertStaleExtra` (spec :1300).
     pub(crate) fn insert_stale_extra<const SIDE: Side>(
         &mut self,
         abs_path: &[u8],
-        graph: bake::Graph,
+        bake_graph: bake::Graph,
         route: RouteKind,
     ) -> Result<FileIndex<SIDE>, bun_alloc::AllocError>
     where
         Self: AsMut<IncrementalGraph<SIDE>>,
     {
         debug_assert!(match SIDE {
-            Side::Client => graph == bake::Graph::Client,
-            Side::Server => graph != bake::Graph::Client,
+            Side::Client => bake_graph == bake::Graph::Client,
+            Side::Server => bake_graph != bake::Graph::Client,
         });
-        let files = self.as_mut();
-        let gop = files.bundled_files.get_or_put(abs_path)?;
+        let graph = self.as_mut();
+        let gop = graph.bundled_files.get_or_put(abs_path)?;
         let idx = gop.index;
         let found_existing = gop.found_existing;
         if found_existing {
@@ -1377,22 +1377,22 @@ impl Graphs {
             *gop.key_ptr = Box::<[u8]>::from(abs_path);
         }
         if !found_existing {
-            files.edge_lists.push(EdgeLists::default());
+            graph.edge_lists.push(EdgeLists::default());
         }
-        files.ensure_stale_bit_capacity(true)?;
-        files.stale_files.set(idx);
+        graph.ensure_stale_bit_capacity(true)?;
+        graph.stale_files.set(idx);
 
         match SIDE {
             Side::Client => {
                 // The rebuild replaces a css root's asset (`replace_asset_path`) or drops it (`insert_failure`).
-                if files.bundled_files.values_mut()[idx].free_content() {
+                if graph.bundled_files.values_mut()[idx].free_content() {
                     self.assets.unref_by_path(abs_path);
                 }
             }
             Side::Server => {
-                let is_ssr_graph = graph == bake::Graph::Ssr;
+                let is_ssr_graph = bake_graph == bake::Graph::Ssr;
                 if !found_existing {
-                    files.bundled_files.values_mut()[idx] = File {
+                    graph.bundled_files.values_mut()[idx] = File {
                         kind: FileKind::Unknown,
                         failed: false,
                         is_rsc: !is_ssr_graph,
@@ -1402,9 +1402,9 @@ impl Graphs {
                         ..Default::default()
                     };
                 } else if is_ssr_graph {
-                    files.bundled_files.values_mut()[idx].is_ssr = true;
+                    graph.bundled_files.values_mut()[idx].is_ssr = true;
                 } else {
-                    files.bundled_files.values_mut()[idx].is_rsc = true;
+                    graph.bundled_files.values_mut()[idx].is_rsc = true;
                 }
             }
         }
@@ -1504,25 +1504,25 @@ impl Graphs {
     where
         Self: AsMut<IncrementalGraph<SIDE>>,
     {
-        let files = self.as_mut();
+        let graph = self.as_mut();
         let (idx, parsed_for) = match key {
-            InsertFailureKey::AbsPath(abs_path, graph) => {
-                let gop = files.bundled_files.get_or_put(abs_path)?;
+            InsertFailureKey::AbsPath(abs_path, bake_graph) => {
+                let gop = graph.bundled_files.get_or_put(abs_path)?;
                 if !gop.found_existing {
                     *gop.key_ptr = Box::<[u8]>::from(abs_path);
                 }
                 let (i, fe) = (gop.index, gop.found_existing);
                 if !fe {
-                    files.edge_lists.push(EdgeLists::default());
+                    graph.edge_lists.push(EdgeLists::default());
                 }
-                (i, Some(graph))
+                (i, Some(bake_graph))
             }
             InsertFailureKey::Index(i) => (i as usize, None),
         };
-        files.ensure_stale_bit_capacity(true)?;
-        files.stale_files.set(idx);
+        graph.ensure_stale_bit_capacity(true)?;
+        graph.stale_files.set(idx);
 
-        let file = &mut files.bundled_files.values_mut()[idx];
+        let file = &mut graph.bundled_files.values_mut()[idx];
         file.failed = true;
         match SIDE {
             Side::Client => {

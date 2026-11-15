@@ -166,7 +166,7 @@ pub(crate) fn install_hoisted_packages(
 
     if log_level.show_progress() {
         let hoisted_len = this.lockfile.buffers.hoisted_dependencies.len();
-        this.start_link_progress(hoisted_len);
+        this.start_install_progress_bar(hoisted_len);
     }
 
     let _restore_manager = RestoreManager {

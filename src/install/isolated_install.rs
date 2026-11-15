@@ -2110,7 +2110,7 @@ pub(crate) fn install_isolated_packages(
 
     {
         if manager.options.log_level.show_progress() {
-            manager.start_link_progress(store.entries.len());
+            manager.start_install_progress_bar(store.entries.len());
         }
 
         let node_pkg_ids = store.nodes.items_pkg_id();

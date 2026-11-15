@@ -87,7 +87,7 @@ pub trait Accessor {
 
 pub trait AccessorDirIter {
     type Handle;
-    fn next(&mut self) -> Maybe<Option<DirEntry<'_>>>;
+    fn next(&mut self) -> Maybe<Option<AccessorDirEntry<'_>>>;
     fn iterate(dir: Self::Handle) -> Self;
     #[cfg(windows)]
     fn set_name_filter(&mut self, _filter: Option<&[u16]>) {
@@ -95,7 +95,7 @@ pub trait AccessorDirIter {
     }
 }
 
-pub struct DirEntry<'a> {
+pub struct AccessorDirEntry<'a> {
     pub name: &'a [u8],
     pub kind: bun_sys::FileKind,
     /// For accessors with [`Accessor::ENTRY_KIND_FOLLOWS_SYMLINKS`]: the
@@ -138,8 +138,8 @@ impl AccessorDirIter for SyscallDirIter {
     type Handle = SyscallHandle;
 
     #[inline]
-    fn next(&mut self) -> Maybe<Option<DirEntry<'_>>> {
-        Ok(self.value.next()?.map(|entry| DirEntry {
+    fn next(&mut self) -> Maybe<Option<AccessorDirEntry<'_>>> {
+        Ok(self.value.next()?.map(|entry| AccessorDirEntry {
             name: entry.name.slice_u8(),
             kind: entry.kind,
             symlink_target: None,
@@ -1252,7 +1252,7 @@ enum FollowedLink {
     /// `(st_dev, st_ino)` of the followed target (Symlink work-item arm).
     Target(Stat),
     /// Accessor-cached real path of the followed target
-    /// ([`DirEntry::symlink_target`]).
+    /// ([`AccessorDirEntry::symlink_target`]).
     RealPath(Box<[u8]>),
 }
 

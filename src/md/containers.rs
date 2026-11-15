@@ -132,7 +132,8 @@ impl Parser<'_> {
                 )?;
             } else if ch == b'-' || ch == b'+' || ch == b'*' {
                 // Save opener position for later loose-list patching
-                self.containers[idx].opener = u32::try_from(self.blocks.len()).expect("int cast");
+                self.containers[idx].opener_index =
+                    u32::try_from(self.blocks.len()).expect("int cast");
                 // Unordered list + list item
                 self.push_container_block(BlockType::Ul, 0, types::BLOCK_CONTAINER_OPENER, mark)?;
                 self.push_container_block(
@@ -147,7 +148,8 @@ impl Parser<'_> {
                 )?;
             } else if ch == b'.' || ch == b')' {
                 // Save opener position for later loose-list patching
-                self.containers[idx].opener = u32::try_from(self.blocks.len()).expect("int cast");
+                self.containers[idx].opener_index =
+                    u32::try_from(self.blocks.len()).expect("int cast");
                 // Ordered list + list item
                 self.push_container_block(
                     BlockType::Ol,
@@ -184,7 +186,7 @@ impl Parser<'_> {
             let is_task = self.containers[idx].is_task;
             let task_mark_off = self.containers[idx].task_mark_off;
             let start = self.containers[idx].start;
-            let opener = self.containers[idx].opener;
+            let opener_index = self.containers[idx].opener_index as usize;
             let loose_flag: u32 = if is_loose { types::BLOCK_LOOSE_LIST } else { 0 };
             let is_ended_by_colons = self.is_directive_end && self.n_containers == keep;
             let end = (self.line_beg, container_end, u32::from(is_ended_by_colons));
@@ -194,7 +196,7 @@ impl Parser<'_> {
                 self.push_container_block(BlockType::Quote, 0, types::BLOCK_CONTAINER_CLOSER, end)?;
             } else if ch == b'-' || ch == b'+' || ch == b'*' {
                 // Retroactively patch the opener with loose flag
-                if is_loose && let Some(opener_hdr) = self.blocks.get_mut(opener as usize) {
+                if is_loose && let Some(opener_hdr) = self.blocks.get_mut(opener_index) {
                     opener_hdr.flags |= types::BLOCK_LOOSE_LIST;
                 }
                 self.push_container_block(
@@ -215,7 +217,7 @@ impl Parser<'_> {
                 )?;
             } else if ch == b'.' || ch == b')' {
                 // Retroactively patch the opener with loose flag
-                if is_loose && let Some(opener_hdr) = self.blocks.get_mut(opener as usize) {
+                if is_loose && let Some(opener_hdr) = self.blocks.get_mut(opener_index) {
                     opener_hdr.flags |= types::BLOCK_LOOSE_LIST;
                 }
                 self.push_container_block(

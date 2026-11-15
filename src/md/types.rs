@@ -276,8 +276,8 @@ pub struct Container {
     pub(crate) start: u32,
     pub(crate) mark_indent: u32,
     pub(crate) contents_indent: u32,
-    /// Of a list: the index of its opener in `Parser.blocks`.
-    pub(crate) opener: u32,
+    /// Index in `Parser.blocks` of a list's opener.
+    pub(crate) opener_index: u32,
     /// Where the marker of the container (of the current item of a list) is.
     pub(crate) mark_beg: OFF,
     pub(crate) mark_end: OFF,

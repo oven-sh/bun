@@ -24,10 +24,10 @@ impl Default for AnyTaskWithExtraContext {
 
 impl AnyTaskWithExtraContext {
     /// Boxes `wrapped` with the returned task. Running it calls `callback(wrapped, extra)` and frees the box.
-    pub fn from_callback_auto_deinit<T: 'static>(
+    pub(crate) fn from_callback_auto_deinit<T: 'static>(
         wrapped: T,
         callback: fn(T, *mut c_void),
-    ) -> *mut AnyTaskWithExtraContext {
+    ) -> NonNull<AnyTaskWithExtraContext> {
         #[repr(C)]
         struct Wrapper<T> {
             any_task: AnyTaskWithExtraContext,
@@ -57,7 +57,7 @@ impl AnyTaskWithExtraContext {
         // SAFETY: `task` was just produced by heap::alloc; valid and exclusive.
         unsafe {
             (*task).any_task.ctx = NonNull::new(task.cast::<()>());
-            core::ptr::addr_of_mut!((*task).any_task)
+            NonNull::new_unchecked(&raw mut (*task).any_task)
         }
     }
 
@@ -74,10 +74,10 @@ impl AnyTaskWithExtraContext {
 /// Stable Rust cannot take a fn value as a const generic, so `Callback` moves to
 /// a runtime argument on `init` and is type-erased (ABI-identical: both forms
 /// are thin fn pointers taking two thin data pointers).
-pub struct New<T, C>(PhantomData<(*mut T, *mut C)>);
+pub(crate) struct New<T, C>(PhantomData<(*mut T, *mut C)>);
 
 impl<T, C> New<T, C> {
-    pub fn init(ctx: *mut T, callback: fn(*mut T, *mut C)) -> AnyTaskWithExtraContext {
+    pub(crate) fn init(ctx: *mut T, callback: fn(*mut T, *mut C)) -> AnyTaskWithExtraContext {
         AnyTaskWithExtraContext {
             // SAFETY: `fn(*mut T, *mut C)` and `fn(*mut (), *mut ())` have identical
             // ABI (single code pointer, two pointer-sized args).

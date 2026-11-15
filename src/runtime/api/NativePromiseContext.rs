@@ -23,7 +23,7 @@ use core::ptr::NonNull;
 use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue};
-use bun_ptr::{AnyRefCounted, RefPtr};
+use bun_ptr::{RefCounted, RefPtr};
 
 use crate::api::html_rewriter;
 use crate::api::server;
@@ -97,7 +97,7 @@ impl Tag {
 
 /// Maps a concrete native type to its `Tag`, expressed as a compile-time
 /// mapping via a trait impl per type.
-pub(crate) trait NativePromiseContextType: AnyRefCounted {
+pub(crate) trait NativePromiseContextType: RefCounted {
     const TAG: Tag;
 }
 
@@ -181,7 +181,7 @@ pub(crate) fn take_held(cell: JSValue) -> JSValue {
 /// settling).
 ///
 /// The destructor runs during GC sweep, so it is NOT safe to do anything
-/// that might touch the JSC heap. RequestContext.deref() can trigger
+/// that might touch the JSC heap. Dropping a ref on a RequestContext can trigger
 /// deinit() which aborts signals, unrefs bodies, and calls back into
 /// the server — all of which may unprotect JS values or allocate. We must
 /// defer that work to the event loop.
@@ -290,7 +290,7 @@ impl DeferredDerefTask {
                 // SAFETY: the detached controller handed over the pipe's last ref (its destructor's
                 // trailing `controller_finalize` is a no-op for this sink).
                 Tag::HTMLRewriterPipeFree => unsafe {
-                    drop(RefPtr::from_raw(ctx.cast::<html_rewriter::RewriterPipe>()))
+                    RefPtr::decrement_strong_count(ctx.cast::<html_rewriter::RewriterPipe>())
                 },
                 _ => {}
             }
@@ -315,35 +315,35 @@ impl DeferredDerefTask {
         unsafe {
             match tag {
                 Tag::HTTPServerRequestContext => {
-                    drop(RefPtr::from_raw(ctx.cast::<HTTPServerRequestContext>()))
+                    RefPtr::decrement_strong_count(ctx.cast::<HTTPServerRequestContext>())
                 }
                 Tag::HTTPSServerRequestContext => {
-                    drop(RefPtr::from_raw(ctx.cast::<HTTPSServerRequestContext>()))
+                    RefPtr::decrement_strong_count(ctx.cast::<HTTPSServerRequestContext>())
                 }
-                Tag::DebugHTTPServerRequestContext => drop(RefPtr::from_raw(
-                    ctx.cast::<DebugHTTPServerRequestContext>(),
-                )),
-                Tag::DebugHTTPSServerRequestContext => drop(RefPtr::from_raw(
-                    ctx.cast::<DebugHTTPSServerRequestContext>(),
-                )),
+                Tag::DebugHTTPServerRequestContext => {
+                    RefPtr::decrement_strong_count(ctx.cast::<DebugHTTPServerRequestContext>())
+                }
+                Tag::DebugHTTPSServerRequestContext => {
+                    RefPtr::decrement_strong_count(ctx.cast::<DebugHTTPSServerRequestContext>())
+                }
                 Tag::HTTPServerMuxRequestContext => {
-                    drop(RefPtr::from_raw(ctx.cast::<HTTPServerMuxRequestContext>()))
+                    RefPtr::decrement_strong_count(ctx.cast::<HTTPServerMuxRequestContext>())
                 }
                 Tag::HTTPSServerMuxRequestContext => {
-                    drop(RefPtr::from_raw(ctx.cast::<HTTPSServerMuxRequestContext>()))
+                    RefPtr::decrement_strong_count(ctx.cast::<HTTPSServerMuxRequestContext>())
                 }
-                Tag::DebugHTTPServerMuxRequestContext => drop(RefPtr::from_raw(
-                    ctx.cast::<DebugHTTPServerMuxRequestContext>(),
-                )),
-                Tag::DebugHTTPSServerMuxRequestContext => drop(RefPtr::from_raw(
-                    ctx.cast::<DebugHTTPSServerMuxRequestContext>(),
-                )),
+                Tag::DebugHTTPServerMuxRequestContext => {
+                    RefPtr::decrement_strong_count(ctx.cast::<DebugHTTPServerMuxRequestContext>())
+                }
+                Tag::DebugHTTPSServerMuxRequestContext => {
+                    RefPtr::decrement_strong_count(ctx.cast::<DebugHTTPSServerMuxRequestContext>())
+                }
                 Tag::HTMLRewriterSuspension => {
                     RefPtr::from_raw(ctx.cast::<html_rewriter::RewriterPipe>())
                         .abandon_suspension();
                 }
                 Tag::HTMLRewriterPipeFree => {
-                    drop(RefPtr::from_raw(ctx.cast::<html_rewriter::RewriterPipe>()));
+                    RefPtr::decrement_strong_count(ctx.cast::<html_rewriter::RewriterPipe>());
                 }
                 Tag::S3UploadStream => {
                     // The pump's promise was collected unsettled (the script running it is gone):

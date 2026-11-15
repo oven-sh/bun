@@ -30,25 +30,20 @@ pub use bun_core::{RawSlice, cast_fn_ptr};
 mod aliasable_box;
 pub use aliasable_box::AliasableBox;
 
-pub mod raw_ref_count;
 pub mod weak_ptr;
 
 pub mod tagged_pointer;
 pub use tagged_pointer::TaggedPtr;
 
 pub mod ref_count;
-pub use ref_count::{
-    AnyRefCounted, CellRefCounted, RefCount, RefCounted, RefPtr, ThreadSafeRefCount,
-    ThreadSafeRefCounted,
-};
-// Derive macros — same names as the traits (separate namespace). The derives
-// expand to `::bun_ptr::…` paths, so this crate is the canonical re-export
-// point: `#[derive(bun_ptr::CellRefCounted)]`.
-pub use bun_core_macros::{CellRefCounted, RefCounted, ThreadSafeRefCounted};
+pub use ref_count::{RefCount, RefCounted, RefPtr, ThreadSafeRefCount};
+// The derive expands to `::bun_ptr::…` paths, so it is re-exported here: `#[derive(bun_ptr::RefCounted)]`.
+pub use bun_core_macros::RefCounted;
+#[cfg(test)]
+extern crate self as bun_ptr;
 
 pub mod parent_ref;
 pub use parent_ref::ParentRef;
-pub use raw_ref_count::RawRefCount;
 pub use weak_ptr::WeakPtr;
 
 // Intrusive parent-from-field recovery — canonical helpers live in `bun_core`
@@ -659,8 +654,8 @@ impl<T> Default for DetachablePtr<T> {
 // The returned pointer carries **shared (read-only) provenance** — it is
 // derived from `&self`, so writing through it directly is UB. The `*mut`
 // spelling exists purely to match C-shaped signatures (`void *`, uSockets
-// ext slots, `RefPtr::init_ref`, vtable thunks, intrusive
-// `RefCount::deref`). Consumers must deref as `&*p` and route mutation
+// ext slots, `RefPtr::init_ref`, vtable thunks).
+// Consumers must deref as `&*p` and route mutation
 // through `Cell` / `JsCell` / `UnsafeCell` interior-mutability fields.
 //
 // Blanket-implemented for all `T`: bring the trait into scope with
@@ -675,7 +670,7 @@ pub trait AsCtxPtr {
     /// `RefPtr::init_ref` ctx slots. The closures/trampolines deref it as shared
     /// (`&*p`) — every method they reach is `&self` post-R-2, so no write
     /// provenance is required; the `*mut` spelling is purely to match the
-    /// `HasAutoFlush` / `RefCount` ABI.
+    /// `HasAutoFlush` ABI.
     #[inline(always)]
     fn as_ctx_ptr(&self) -> *mut Self
     where

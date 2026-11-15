@@ -25,9 +25,9 @@ use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct FileRoute {
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     server: Cell<Option<AnyServer>>,
     blob: Blob,
     headers: Headers,
@@ -117,7 +117,7 @@ impl FileRoute {
 
     fn new(blob: Blob, headers: Headers, server: Option<AnyServer>, status_code: u16) -> FileRoute {
         FileRoute {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             server: Cell::new(server),
             has_last_modified_header: headers.get(b"last-modified").is_some(),
             has_content_length_header: headers.get(b"content-length").is_some(),
@@ -175,10 +175,6 @@ impl FileRoute {
                 let blob = body_value.use_();
 
                 blob.global_this.set(std::ptr::from_ref(global));
-                debug_assert!(
-                    !blob.is_heap_allocated(),
-                    "expected blob not to be heap-allocated"
-                );
                 *body_value = BodyValue::Blob(blob.dupe());
                 let headers = headers_from(global, response.get_init_headers(), &blob)?;
                 let status_code = response.status_code();
@@ -195,10 +191,6 @@ impl FileRoute {
             if blob.needs_to_read_file() {
                 let b = blob.dupe();
                 b.global_this.set(std::ptr::from_ref(global));
-                debug_assert!(
-                    !b.is_heap_allocated(),
-                    "expected blob not to be heap-allocated"
-                );
                 let headers = headers_from(global, None, &b)?;
                 return Ok(Some(RefPtr::new(FileRoute::new(b, headers, None, 200))));
             }

@@ -1,12 +1,10 @@
-use core::cell::Cell;
-
 use bun_ptr::RefPtr;
 
 bun_core::declare_scope!(RefCountedEnvStr, hidden);
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct RefCountedStr {
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     data: Box<[u8]>,
 }
 
@@ -14,7 +12,7 @@ impl RefCountedStr {
     pub(crate) fn init(data: Box<[u8]>) -> RefPtr<RefCountedStr> {
         bun_core::scoped_log!(RefCountedEnvStr, "init: {}", bstr::BStr::new(&*data));
         RefPtr::new(RefCountedStr {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             data,
         })
     }

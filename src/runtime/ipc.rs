@@ -816,9 +816,9 @@ enum ContinueSendReason {
 /// The transport returns the number of bytes written as an `i32`.
 const MAX_WRITE_LEN: usize = i32::MAX as usize;
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct SendQueue {
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     root: Cell<Option<core::ptr::NonNull<SendQueue>>>,
     queue: Cell<Vec<SendHandle>>,
     waiting_for_ack: Cell<Option<SendHandle>>,
@@ -934,7 +934,7 @@ impl SendQueue {
     pub(crate) fn new(mode: Mode, owner: Option<SendQueueOwner>) -> RefPtr<SendQueue> {
         log!("SendQueue#init");
         let this = RefPtr::new(Self {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             root: Cell::new(None),
             queue: Cell::new(Vec::new()),
             waiting_for_ack: Cell::new(None),
@@ -1722,7 +1722,7 @@ impl bun_event_loop::Taskable for SendQueue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::SendQueueDeferred;
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the SendQueue root queued with a held ref.
-        drop(unsafe { RefPtr::from_raw(this) });
+        unsafe { RefPtr::decrement_strong_count(this) };
     }
     /// The channel's own close hop.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {

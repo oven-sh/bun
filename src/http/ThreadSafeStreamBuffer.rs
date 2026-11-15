@@ -5,11 +5,11 @@ use bun_ptr::RefPtr;
 use bun_threading::guarded::GuardedLock;
 use bun_threading::{Guarded, Mutex};
 
-#[derive(bun_ptr::ThreadSafeRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub struct ThreadSafeStreamBuffer {
     state: Guarded<State>,
     /// Intrusive atomic refcount: 1 for main thread and 1 for http thread.
-    pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<ThreadSafeStreamBuffer>,
+    pub(crate) ref_count: bun_ptr::ThreadSafeRefCount,
 }
 
 /// What the main thread and the http thread share, reached through [`ThreadSafeStreamBuffer::lock`].

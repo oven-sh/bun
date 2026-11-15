@@ -179,7 +179,7 @@ impl WindowsNamedPipe {
     ///
     /// Only for paths that cannot run after `on_close` released the
     /// connection's ref (reads stop and the wrapper goes away in
-    /// `release_resources`): a ref taken at zero would queue the free twice.
+    /// `release_resources`): `schedule_deinit` can have run by then.
     ///
     /// [`on_close`]: Self::on_close
     fn keep_alive(&self) -> RefPtr<WindowsNamedPipeContext> {

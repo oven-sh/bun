@@ -11,7 +11,7 @@ thread-affine-types = ["Strong"]
 # A check build cannot read their bodies, so they are named here.
 freed-while-borrowed-frees = ["heap::destroy"]
 # Like the line above, for releases that free only the last reference.
-freed-while-borrowed-releases = ["ThreadSafeRefCount::deref", "RefCount::deref"]
+freed-while-borrowed-releases = ["RefPtr::decrement_strong_count"]
 # Bun's own lock types, for the lock order checks.
 lock-guard-types = ["GuardedLock", "threading::MutexGuard", "RwLockReadGuard", "RwLockWriteGuard"]
 # The raw mutex locks and unlocks by hand, with no guard.

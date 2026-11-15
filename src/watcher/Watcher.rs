@@ -19,6 +19,8 @@ use crate::kevent_watcher as platform;
 #[cfg(windows)]
 use crate::windows_watcher as platform;
 use bun_collections::index_sort;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use platform::watch_loop;
 #[cfg(target_arch = "wasm32")]
 compile_error!("Unsupported platform");
 
@@ -66,10 +68,10 @@ pub(crate) type Platform = platform::Platform;
 pub struct Watcher {
     #[cfg(not(windows))]
     pub(crate) platform: Platform,
-    /// Locked while the context is called.
+    /// Locked while a `WatcherContext` method runs.
     pub(crate) state: Guarded<State>,
     cwd: &'static [u8],
-    /// Cleared by `shutdown`, polled by the platform `watch_loop`.
+    /// Cleared by `shutdown`, polled by `watch_loop`.
     pub(crate) running: bun_core::AtomicCell<bool>,
 }
 
@@ -77,7 +79,7 @@ pub(crate) struct State {
     pub(crate) watchlist: WatchList,
     evictions: Evictions,
     close_descriptors: bool,
-    /// Until the watcher thread takes it.
+    /// `Some` until `thread_main` takes it.
     thread: Option<Box<WatcherThread>>,
 }
 
@@ -203,7 +205,7 @@ impl Watcher {
 
         let thread = self.state.lock().thread.take();
         let mut thread = thread.expect("a watcher is started once");
-        if let Err(err) = platform::watch_loop(self, &mut thread) {
+        if let Err(err) = watch_loop(self, &mut thread) {
             let _state = self.state.lock();
             if self.running.load() {
                 thread.ctx.on_error(err);
@@ -317,7 +319,7 @@ impl Watcher {
         // - We register the event here.
         // our while(true) loop above receives notification of changes to any of the events created here.
         // SAFETY: only `watch_loop_cycle` waits on this kqueue, and it reads `udata` as an index.
-        let _ = unsafe { bun_sys::kevent(self.platform.fd, &[event], &mut [], None) };
+        let _ = unsafe { bun_sys::kevent(self.platform.fd.fd(), &[event], &mut [], None) };
     }
 
     fn append_file_assume_capacity<'a>(
@@ -673,7 +675,7 @@ impl Watcher {
         self.append_file(watchlist, fd, file_path, to_static, hash, dir_fd)
     }
 
-    /// Takes effect after the next change.
+    /// Queues `index` for the next `flush_evictions`.
     pub fn remove_at_index(&self, index: WatchItemIndex) {
         self.state.lock().evictions.push(index);
     }
@@ -702,6 +704,14 @@ impl Drop for State {
     }
 }
 
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn watch_loop(this: &Watcher, thread: &mut WatcherThread) -> sys::Result<()> {
+    while this.running.load() {
+        platform::watch_loop_cycle(this, thread)?;
+    }
+    Ok(())
+}
+
 fn index_of(watchlist: &WatchList, hash: HashType) -> Option<usize> {
     watchlist.items_hash().iter().position(|it| *it == hash)
 }
@@ -722,7 +732,7 @@ pub struct WatchEvent {
 
 impl WatchEvent {
     /// Names of the changed files inside a watched directory. Only inotify reports them.
-    pub fn names<'a, 'b>(self, buf: &'b [&'a [u8]]) -> &'b [&'a [u8]] {
+    pub fn names<'a>(self, buf: &'a [&'a [u8]]) -> &'a [&'a [u8]] {
         if self.name_len == 0 {
             return &[];
         }
@@ -789,7 +799,6 @@ impl fmt::Display for Op {
 // ─── WatchItem ────────────────────────────────────────────────────────────
 
 pub struct WatchItem {
-    /// Freed by `flush_evictions` when `Owned`; borrowed bytes must outlive the entry.
     pub file_path: Cow<'static, [u8]>,
     // filepath hash for quick comparison
     pub hash: u32,

@@ -2583,7 +2583,9 @@ pub mod parse_worker {
 
             watcher_data = WatcherData {
                 // Without a watcher, a file that the task opened closes here.
-                file: entry.file.filter(|_| ctx.bun_watcher.is_some()),
+                file: entry
+                    .file
+                    .filter(|_| ctx.transpiler().resolver.watcher.is_some()),
                 dir_fd: Fd::INVALID,
             };
 

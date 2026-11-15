@@ -1,8 +1,6 @@
 //! The dev server's part of the watcher thread.
 
 use super::*;
-use bun_jsc::vm_handle::Posted;
-use std::sync::Arc;
 
 pub(super) struct WatchContext {
     pub(super) pending_reload_event: Arc<PendingReloadEvent>,
@@ -72,12 +70,7 @@ impl bun_watcher::WatcherContext for WatchContext {
 
         if !pending.event.is_empty() && !core::mem::replace(&mut pending.scheduled, true) {
             drop(pending);
-            let queued = Arc::into_raw(Arc::clone(&self.pending_reload_event));
-            let task = bun_event_loop::ConcurrentTask::create_from(queued.cast_mut());
-            if let Posted::Refused(_) = self.vm_handle.post(bun_jsc::LoopKind::Regular, task) {
-                // SAFETY: from `into_raw` above, and not queued.
-                drop(unsafe { Arc::from_raw(queued) });
-            }
+            self.pending_reload_event.post(&self.vm_handle);
         }
     }
 

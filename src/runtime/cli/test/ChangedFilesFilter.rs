@@ -20,9 +20,9 @@ use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::PathBuffer as CorePathBuffer;
 use bun_core::strings;
-use bun_core::{self, Global, Output, env_var, fmt as bun_fmt};
+use bun_core::{self, Global, Output, ZBox, env_var, fmt as bun_fmt};
 #[cfg(not(windows))]
-use bun_core::{ZBox, ZStr, getenv_z};
+use bun_core::{ZStr, getenv_z};
 #[cfg(windows)]
 use bun_jsc::EventLoopHandle;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -309,7 +309,7 @@ const TRIGGER_FILE_ENV_VAR_Z: &ZStr =
 
 /// Make sure the trigger-file env var is set (generating a fresh temp
 /// path if this is the first process in the --watch chain) and return the path.
-pub(crate) fn init_watch_trigger() -> Option<bun_core::ZBox> {
+pub(crate) fn init_watch_trigger() -> Option<ZBox> {
     #[cfg(windows)]
     {
         // Windows --watch restarts via TerminateProcess + parent

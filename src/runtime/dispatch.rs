@@ -1417,7 +1417,7 @@ pub(crate) unsafe fn fire_timer(
             [Test],
             (t: *mut EventLoopTimer = t, now: &ElTimespec = now) -> JsResult<()> {
                 if let Some(file) = clone_active_strong()
-                    && core::ptr::eq(&raw const file.timer, t)
+                    && core::ptr::eq(&raw const *file.timer, t)
                 {
                     BunTest::bun_test_timeout_callback(&file, now, VirtualMachine::get());
                 }

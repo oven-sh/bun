@@ -92,6 +92,8 @@ pub fn decide(input: &TrimInput<'_>, edges: &FeatureEdges) -> Decision {
         retain_all_a_program_can_enter(&mut retained, input);
     }
     close(&mut retained, edges);
+    retain_what_its_executables_enter(&mut retained);
+    close(&mut retained, edges);
 
     let mut unretained = FeatureSet::EMPTY;
     if request.removes_unused || input.is_program_compiled() {
@@ -197,6 +199,19 @@ fn can_enter_test_runner(used: &UsedFeatures) -> bool {
     used.can_reach_test_runner
         || used.uses(CREATES_REALMS)
         || used.can_start_worker_from_unseen_code()
+}
+
+fn retain_what_its_executables_enter(retained: &mut RetainedFeatures) {
+    if retained.set.contains(Feature::AotCompiler) {
+        let reason = RetainReason::NeededBy {
+            feature: Feature::AotCompiler,
+            strength: EdgeStrength::RecoverableGuard,
+        };
+        retained.insert_set(
+            &Feature::all_entered_from(EnteredFrom::CompiledCode),
+            reason,
+        );
+    }
 }
 
 fn retain_all_a_program_can_enter(retained: &mut RetainedFeatures, input: &TrimInput<'_>) {
@@ -778,9 +793,7 @@ mod tests {
             for &feature in Feature::ALL {
                 let is_expected = match cause {
                     UnseenCodeCause::ProgramNotCompiled => false,
-                    _ if feature.entered_from() == EnteredFrom::CompiledCode => {
-                        cause != UnseenCodeCause::ReportMissing
-                    }
+                    _ if feature.entered_from() == EnteredFrom::CompiledCode => !keeps_compilers,
                     _ => {
                         outside.contains(feature)
                             && !(keeps_compilers && ENTERED_BY_BUNDLER.contains(&feature))
@@ -885,6 +898,23 @@ mod tests {
 
         let trimmed = decide_request(&used, &removing_unused());
         assert!(FeatureSet::from_features(&ENTERED_BY_BUNDLER).is_subset_of(&trimmed.unused));
+    }
+
+    #[test]
+    fn program_that_compiles_keeps_what_compiled_code_enters() {
+        let entered = Feature::all_entered_from(EnteredFrom::CompiledCode);
+        let used = using(&[Feature::Bundler]);
+        let decision = decide_request(&used, &TrimRequest::default());
+        for feature in entered.iter() {
+            assert!(!decision.unused.contains(feature), "{feature:?}");
+        }
+        let allowing = TrimRequest {
+            allow: vec![TrimFeature::Aot],
+            ..removing_unused()
+        };
+        assert!(!decide_request(&used, &allowing).unused.intersects(&entered));
+        let trimmed = decide_request(&used, &removing_unused());
+        assert!(entered.is_subset_of(&trimmed.unused));
     }
 
     #[test]

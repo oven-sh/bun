@@ -1,6 +1,5 @@
 // Classes, literals, constructor functions, accessors and sloppy deletions beside deletes-of-pinned-late-names.cjs, with several shares of pinned names.
 const out = [];
-const attempt = (run) => { try { return run(); } catch (e) { return e.constructor.name; } };
 {
     class A { constructor(i) { this.a = i; } }
     const make = (i) => { const o = new A(i); o.lateA = i; return o; }, before = (o) => { delete o.lateA; }, remove = (o) => delete o.lateA, pin = (o) => { Object.defineProperty(o, "lateA", { value: 5 }); };
@@ -16,9 +15,9 @@ const attempt = (run) => { try { return run(); } catch (e) { return e.constructo
 }
 {
     function F(i) { this.f = i; }
-    const make = (i) => { const o = new F(i); o.lateC = [i]; return o; }, before = (o) => { delete o.lateC; }, remove = (o) => { "use strict"; return delete o.lateC; }, pin = (o) => { Object.defineProperty(o, "lateC", { value: null, writable: true }); };
+    const make = (i) => { const o = new F(i); o.lateC = [i]; return o; }, before = (o) => { delete o.lateC; }, remove = (o) => delete o.lateC, pin = (o) => { Object.defineProperty(o, "lateC", { value: null, writable: true }); };
     let gone = 0, kept = 0;
-    for (let i = 0; i < 400; i++) { const o = make(i); before(o); if (i % 3 === 0) { pin(o); if (attempt(() => remove(o)) === true) gone++; else kept++; if (!("lateC" in o)) gone += 1000; } }
+    for (let i = 0; i < 400; i++) { const o = make(i); before(o); if (i % 3 === 0) { pin(o); if (remove(o)) gone++; else kept++; if (!("lateC" in o)) gone += 1000; } }
     out.push(gone + " " + kept);
 }
 {

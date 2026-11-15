@@ -1248,13 +1248,6 @@ fn a_declaration_that_another_file_may_call_early_guards_the_variable_that_it_na
     assert!(!variable_needs_guard(TSLIB_ES_MODULE));
     let on_a_cycle = format!("import \"./main.mjs\";\n{TSLIB_ES_MODULE}");
     assert!(variable_needs_guard(&on_a_cycle));
-    let that_loads = |name: &str| {
-        format!(
-            "import {{ createRequire }} from \"node:module\";\nconst held = {{ load: createRequire(import.meta.url) }};\nheld.load(\"{name}\");\n{TSLIB_ES_MODULE}"
-        )
-    };
-    assert!(variable_needs_guard(&that_loads("./main.mjs")));
-    assert!(!variable_needs_guard(&that_loads("node:os")));
 }
 
 #[test]

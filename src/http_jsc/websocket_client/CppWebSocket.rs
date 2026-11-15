@@ -377,8 +377,7 @@ impl CppWebSocket {
                 true
             }
             (NameCheck::BuiltIn, _) => ssl.is_some_and(|ssl| {
-                // SAFETY: every caller is a handshake handler.
-                !hostname.is_empty() && unsafe { bun_uws::check_server_identity(ssl, hostname) }
+                !hostname.is_empty() && bun_uws::check_server_identity(ssl, hostname)
             }),
             (NameCheck::Callback { callback, enforce }, TlsHandshake::First { context, .. }) => {
                 // Before the 101 the upgrade client hears of a renegotiation too.

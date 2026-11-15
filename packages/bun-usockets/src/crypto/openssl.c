@@ -67,6 +67,7 @@ struct loop_ssl_data {
   unsigned int ssl_read_input_length;
   unsigned int ssl_read_input_offset;
 
+  /* NULL or a socket with an SSL: us_internal_ssl_detach clears it, us_internal_ssl_socket_relocated follows it. */
   struct us_socket_t *ssl_socket;
   BIO *shared_rbio;
   BIO *shared_wbio;
@@ -717,6 +718,9 @@ void us_internal_ssl_socket_relocated(struct us_loop_t *loop, struct us_socket_t
                                       struct us_socket_t *new_s) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
   if (!loop_ssl_data) return;
+  if (loop_ssl_data->ssl_socket == old_s) {
+    loop_ssl_data->ssl_socket = new_s;
+  }
   if (loop_ssl_data->ssl_write_batch_owner == old_s) {
     loop_ssl_data->ssl_write_batch_owner = new_s;
   }
@@ -1940,6 +1944,7 @@ void us_internal_ssl_detach(struct us_socket_t *s) {
       loop_ssl_data->ssl_last_fatal_error[0] = 0;
       loop_ssl_data->ssl_last_fatal_error_owner = NULL;
     }
+    if (loop_ssl_data && loop_ssl_data->ssl_socket == s) loop_ssl_data->ssl_socket = NULL;
   }
 }
 

@@ -3422,8 +3422,7 @@ impl VirtualMachine {
         self.has_loaded.set(false);
         self.set_main(entry_path);
         self.main_resolved_path.set(bun_core::String::EMPTY);
-        self.overridden_main
-            .with_mut(crate::strong::Optional::deinit);
+        self.overridden_main.set(Default::default());
 
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
@@ -5658,11 +5657,11 @@ impl VirtualMachine {
             drop((*this).ref_strings.take());
             drop((*this).sampling_profiler_directory.take());
 
-            (*this).overridden_main.as_mut().deinit();
-            (*this).bake_config_plugins.as_mut().deinit();
+            drop((*this).overridden_main.take());
+            drop((*this).bake_config_plugins.take());
             drop((*this).bake_config_plugin_names.take());
-            (*this).bake_framework.as_mut().deinit();
-            (*this).pending_internal_promise.as_mut().deinit();
+            drop((*this).bake_framework.take());
+            drop((*this).pending_internal_promise.take());
 
             if let Some(hooks) = runtime_hooks() {
                 let state = (*this).runtime_state.replace(core::ptr::null_mut());
@@ -5748,8 +5747,7 @@ impl VirtualMachine {
         );
         self.set_main(Some(entry_path));
         self.main_resolved_path.set(bun_core::String::EMPTY);
-        self.overridden_main
-            .with_mut(crate::strong::Optional::deinit);
+        self.overridden_main.set(Default::default());
         if self.test_isolation_state.shares_global.get() {
             Bun__Process__resetArgv(self.global());
         }
@@ -6004,8 +6002,7 @@ impl VirtualMachine {
             // global makes the next file's call a no-op and dispatches
             // node:quic events into the dead realm.
             if !shares_global {
-                rare.node_quic_callbacks
-                    .with_mut(crate::strong::Optional::deinit);
+                rare.node_quic_callbacks.set(Default::default());
             }
         }
         let _ = self.event_loop().drain_microtasks();
@@ -6055,11 +6052,8 @@ impl VirtualMachine {
             (hooks.cancel_timers)(self, None);
         }
 
-        self.overridden_main
-            .with_mut(crate::strong::Optional::deinit);
-        self.entry_point_result
-            .value
-            .with_mut(crate::strong::Optional::deinit);
+        self.overridden_main.set(Default::default());
+        self.entry_point_result.value.set(Default::default());
         self.entry_point_result.cjs_set_value.set(false);
         self.entry_point_result.evaluated_as_cjs.set(false);
         self.set_pending_internal_promise(None);

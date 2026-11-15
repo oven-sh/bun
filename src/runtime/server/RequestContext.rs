@@ -1570,7 +1570,7 @@ where
         let _ = self.end_request_streaming(); // TODO: properly propagate exception upwards
 
         self.response_body_readable_stream_ref
-            .with_mut(|s| s.deinit());
+            .set(readable_stream::Strong::Empty);
 
         self.pathname.set(BunString::EMPTY);
     }
@@ -2016,7 +2016,7 @@ where
             // No reader yet: `cancel()` would skip the stream.
             crate::dispatch::fold(stream.cancel_with_reason(global_this, JSValue::UNDEFINED));
             this.response_body_readable_stream_ref
-                .with_mut(|s| s.deinit());
+                .set(readable_stream::Strong::Empty);
             return;
         }
         let resp = this.resp.get().expect("infallible: resp bound");
@@ -2077,7 +2077,7 @@ where
             this.sink.set(None);
             stream.done();
             this.response_body_readable_stream_ref
-                .with_mut(|s| s.deinit());
+                .set(readable_stream::Strong::Empty);
             this.end_stream(this.should_close_connection());
             return;
         }
@@ -2963,7 +2963,7 @@ where
                     match stream.ptr {
                         readable_stream::Source::Invalid => {
                             this.response_body_readable_stream_ref
-                                .with_mut(|s| s.deinit());
+                                .set(readable_stream::Strong::Empty);
                             // Stream is invalid, render empty body
                             this.do_render_blob();
                             return;
@@ -2991,7 +2991,7 @@ where
                                 // we don't have a response, so we can discard the stream
                                 stream.done();
                                 this.response_body_readable_stream_ref
-                                    .with_mut(|s| s.deinit());
+                                    .set(readable_stream::Strong::Empty);
                                 return;
                             }
                             let resp = this.resp.get().expect("infallible: resp bound");
@@ -3006,7 +3006,7 @@ where
                                     byte_list.move_to_list_managed(),
                                 ));
                                 this.response_body_readable_stream_ref
-                                    .with_mut(|s| s.deinit());
+                                    .set(readable_stream::Strong::Empty);
                                 this.do_render_blob();
                                 return;
                             }
@@ -3019,10 +3019,6 @@ where
                             ));
                             stream.lock_native(global_this);
                             byte_stream.signal_consumer_attached();
-                            // Deinit the old Strong reference before creating a new one
-                            // to avoid leaking the Strong.Impl memory
-                            this.response_body_readable_stream_ref
-                                .with_mut(|s| s.deinit());
                             this.response_body_readable_stream_ref
                                 .set(readable_stream::Strong::init(stream, global_this));
 
@@ -3160,7 +3156,7 @@ where
                 let global_this = this.server().global_this();
                 let js_err = err.to_js(global_this);
                 this.response_body_readable_stream_ref
-                    .with_mut(|s| s.deinit());
+                    .set(readable_stream::Strong::Empty);
                 this.run_error_handler(js_err);
                 return;
             }

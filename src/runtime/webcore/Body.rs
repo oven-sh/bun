@@ -299,7 +299,7 @@ impl PendingValue {
         let mut stream = self.readable.get()?;
 
         if let Some(blob) = stream.to_any_blob(global) {
-            self.readable.deinit();
+            self.readable = Default::default();
             return Some(blob);
         }
 
@@ -327,7 +327,7 @@ impl PendingValue {
             }
         }
         let blob = stream.to_any_blob(global)?;
-        self.readable.deinit();
+        self.readable = Default::default();
         Some(blob)
     }
 }
@@ -940,7 +940,7 @@ impl Value {
                 } else {
                     readable.done();
                 }
-                locked.readable.deinit();
+                locked.readable = Default::default();
             }
 
             if let Some(callback) = locked.on_receive_value.take() {
@@ -1473,7 +1473,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         };
         // That can run script, which can replace the body.
         if let Value::Locked(locked) = self.get_body_value() {
-            locked.readable.deinit();
+            locked.readable = Default::default();
         }
         if promise.is_ok() {
             // The consumer holds its reader now; keep the lock once it lets go.

@@ -721,7 +721,7 @@ impl FakeTimers {
         // SAFETY: JS thread; releasing a `Strong` runs no JS.
         unsafe {
             (*self.replaced.as_ptr()).clear();
-            (*self.originals.get()).deinit();
+            *self.originals.get() = Default::default();
             (*self.ticks.get()).clear();
             (*self.drives.as_ptr()).clear();
         }
@@ -1279,7 +1279,7 @@ impl FakeTimers {
                 // Like sinon, reject with this one even if a timer threw earlier.
                 // SAFETY: JS thread; the borrow ends at this statement.
                 if let Some(drive) = AsyncDrive::find(unsafe { &mut *this.drives.as_ptr() }, id) {
-                    drive.thrown.deinit();
+                    drive.thrown = Default::default();
                 }
                 Self::drive_threw(global, id, thrown);
                 Some(Step::Finished)

@@ -604,7 +604,7 @@ pub(crate) trait CompressionStreamImpl:
         }
         self.pending_close().set(false);
         self.closed().set(true);
-        self.this_value().with_mut(|v| v.deinit());
+        self.this_value().set(Default::default());
         self.stream().with_mut(|s| s.close());
         self.input_copy().set(InputCopy::default());
     }

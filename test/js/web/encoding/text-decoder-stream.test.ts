@@ -314,3 +314,68 @@ test("TextDecoderStream does not call a patched TextDecoder.prototype.decode", a
     TextDecoder.prototype.decode = original;
   }
 });
+
+// Each decoder holds back a sequence that the end of a chunk cuts: the C++ state
+// of the non-fatal stream, and the TextDecoder of the fatal stream and of
+// `decode(chunk, { stream: true })`. They must agree on what is a cut sequence.
+{
+  // Each way a chunk can end, after one character: 1 to 3 bytes, in each class that the decoder tells apart.
+  const leads = [0xc2, 0xe0, 0xed, 0xef, 0xf0, 0xf4, 0xf5, 0x80];
+  const seconds = [0x80, 0x8f, 0x90, 0x9f, 0xa0, 0xbf, 0x41];
+  const thirds = [0x80, 0xbf, 0x41];
+  const tails: number[][] = [];
+  for (const lead of leads) {
+    tails.push([lead]);
+    for (const second of seconds) {
+      tails.push([lead, second]);
+      for (const third of thirds) tails.push([lead, second, third]);
+    }
+  }
+  // What follows the cut: a byte that cannot continue it, or bytes that can.
+  const nexts = [[0x7c], [0x80, 0x80, 0x80, 0x7c]];
+
+  test("utf-8: each chunk of a stream gives the text that TextDecoder gives for it", async () => {
+    for (const next of nexts) {
+      // The "|" that ends each `next` leaves nothing pending for the tail after it.
+      const chunks = tails.flatMap(tail => [Uint8Array.from([0xc3, 0xa9, ...tail]), Uint8Array.from(next)]);
+      const decoder = new TextDecoder();
+      // A stream gives no chunk for no text.
+      const expected = chunks.map(chunk => decoder.decode(chunk, { stream: true })).filter(text => text !== "");
+      const output = await Bun.readableStreamToArray(
+        readableStreamFromArray(chunks).pipeThrough(new TextDecoderStream()),
+      );
+      expect(output).toEqual(expected);
+    }
+  });
+
+  test("utf-8: a stream that ends in a cut sequence gives the text that TextDecoder gives", async () => {
+    for (const tail of tails) {
+      const chunk = Uint8Array.from([0xc3, 0xa9, ...tail]);
+      const decoder = new TextDecoder();
+      const expected = [decoder.decode(chunk, { stream: true }), decoder.decode()].filter(text => text !== "");
+      const output = await Bun.readableStreamToArray(
+        readableStreamFromArray([chunk]).pipeThrough(new TextDecoderStream()),
+      );
+      expect(output, `é, then [${tail}]`).toEqual(expected);
+    }
+  });
+
+  test("utf-8 fatal: a stream rejects where TextDecoder throws, and gives its text where it does not", async () => {
+    for (const tail of tails) {
+      for (const next of nexts) {
+        const chunks = [Uint8Array.from([0xc3, 0xa9, ...tail]), Uint8Array.from(next)];
+        const decoder = new TextDecoder("utf-8", { fatal: true });
+        let expected: string[] | undefined;
+        try {
+          expected = [...chunks.map(chunk => decoder.decode(chunk, { stream: true })), decoder.decode()];
+        } catch {}
+        const output = Bun.readableStreamToArray(
+          readableStreamFromArray(chunks).pipeThrough(new TextDecoderStream("utf-8", { fatal: true })),
+        );
+        if (expected)
+          expect(await output, `é, then [${tail}], then [${next}]`).toEqual(expected.filter(text => text !== ""));
+        else await expect(output, `é, then [${tail}], then [${next}]`).rejects.toBeInstanceOf(TypeError);
+      }
+    }
+  });
+}

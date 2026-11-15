@@ -133,7 +133,7 @@ pub fn crc32_bytes(crc: u32, data: &[u8]) -> u32 {
     crc as u32
 }
 
-/// `compress2()`: `source` as one zlib stream at the start of `dest`, and its length.
+/// `compress2()`: writes `source` to `dest` as one zlib stream and returns its length.
 pub fn compress(dest: &mut [u8], source: &[u8], level: c_int) -> Result<usize, ReturnCode> {
     let mut dest_len = uLong::try_from(dest.len()).unwrap_or(uLong::MAX);
     let source_len = uLong::try_from(source.len()).map_err(|_| ReturnCode::BufError)?;
@@ -598,7 +598,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 // Owned streaming encoder/decoder — RAII z_stream with no borrowed buffers.
 //
-// These hold only the z_stream and its
+// Unlike `Zlib*ArrayList<'a>` above, these hold only the z_stream and its
 // C-side `internal_state`. Input and output are passed per call, so callers
 // can hold a decoder across multiple chunks without lifetime erasure.
 // ──────────────────────────────────────────────────────────────────────────

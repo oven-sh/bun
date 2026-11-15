@@ -201,7 +201,7 @@ pub mod c {
 // -----------------------------------
 
 /// Why a call on a context failed: one of `c::ZSTD_error_*`.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ErrorCode(pub c::ZSTD_ErrorCode);
 
 impl ErrorCode {
@@ -210,6 +210,10 @@ impl ErrorCode {
             return Err(ErrorCode(c::ZSTD_getErrorCode(rc)));
         }
         Ok(rc)
+    }
+
+    pub fn is_alloc_failure(self) -> bool {
+        self.0 == c::ZSTD_error_memory_allocation
     }
 
     pub fn message(self) -> &'static CStr {
@@ -271,7 +275,10 @@ impl OwnedCCtx {
     }
 
     fn try_as_ptr(&self) -> core::result::Result<*mut c::ZSTD_CCtx, ErrorCode> {
-        self.error.map_or(Ok(self.ptr.as_ptr()), Err)
+        match self.error {
+            Some(err) => Err(err),
+            None => Ok(self.ptr.as_ptr()),
+        }
     }
 
     pub fn load_dictionary(&mut self, dictionary: &[u8]) -> core::result::Result<(), ErrorCode> {
@@ -313,7 +320,8 @@ impl OwnedCCtx {
         let (consumed, result) = with_buffers(buffers, |out, input| unsafe {
             c::ZSTD_compressStream2(cctx, out, input, end_op)
         });
-        (consumed, result.inspect_err(|&err| self.error = Some(err)))
+        self.error = result.err();
+        (consumed, result)
     }
 }
 
@@ -339,7 +347,10 @@ impl OwnedDCtx {
     }
 
     fn try_as_ptr(&self) -> core::result::Result<*mut c::ZSTD_DCtx, ErrorCode> {
-        self.error.map_or(Ok(self.ptr.as_ptr()), Err)
+        match self.error {
+            Some(err) => Err(err),
+            None => Ok(self.ptr.as_ptr()),
+        }
     }
 
     pub fn load_dictionary(&mut self, dictionary: &[u8]) -> core::result::Result<(), ErrorCode> {
@@ -382,7 +393,8 @@ impl OwnedDCtx {
         let (consumed, result) = with_buffers(buffers, |out, input| unsafe {
             c::ZSTD_decompressStream(dctx, out, input)
         });
-        (consumed, result.inspect_err(|&err| self.error = Some(err)))
+        self.error = result.err();
+        (consumed, result)
     }
 }
 
@@ -414,7 +426,7 @@ bun_core::impl_tag_error!(ZstdError);
 impl ZstdError {
     /// The error for a failed decompression call; `other` is the non-allocation failure.
     fn for_decompression(code: ErrorCode, other: ZstdError) -> ZstdError {
-        if code.0 == c::ZSTD_error_memory_allocation {
+        if code.is_alloc_failure() {
             ZstdError::OutOfMemory
         } else {
             other

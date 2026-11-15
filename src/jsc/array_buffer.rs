@@ -158,6 +158,7 @@ impl ArrayBuffer {
     }
 
     /// Limits the view to at most `len` bytes at `offset`.
+    #[inline]
     pub fn narrow(&mut self, offset: usize, len: usize) {
         let offset = offset.min(self.byte_len);
         self.ptr = self.ptr.wrapping_add(offset);

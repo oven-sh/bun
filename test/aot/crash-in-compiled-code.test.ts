@@ -10,7 +10,7 @@ import { without } from "./harness/capabilities";
 import { withoutCoreDump } from "./harness/commands";
 import { afterAll, raiseDefaultTimeout } from "./harness/default-timeout";
 import { run as runCommand } from "./harness/run";
-import { beforeAll, describe, eachRow, gap, test } from "./supported";
+import { beforeAll, describe, test } from "./supported";
 
 raiseDefaultTimeout(240_000);
 
@@ -350,21 +350,11 @@ else console.log("went on", lowest(how));
     });
 
     // The npm package signal-exit listens for SIGTRAP and SIGABRT, and half the command line tools on npm load it.
-    // A native abort() calls no function of Bun's on macOS, where a failed assertion of the engine is a trap.
-    const ofAbort = (row: readonly [string, string, string]) =>
-      isMacOS
-        ? gap(
-            "Bun's handler for a signal that JavaScript listens for returns: abort() ends the process without a word",
-            row,
-          )
-        : row;
-    eachRow<readonly [how: string, signal: string, listens: string]>([
+    test.each([
       ...["", "listens", "listened"].map(listens => ["trap", "SIGTRAP", listens] as const),
-      ["abort", "SIGABRT", ""],
-      ofAbort(["abort", "SIGABRT", "listens"]),
-      ["abort", "SIGABRT", "listened"],
-      ["trap in a Worker", "SIGTRAP", "listens"],
-      ofAbort(["abort in a Worker", "SIGABRT", "listens"]),
+      ...["", "listens", "listened"].map(listens => ["abort", "SIGABRT", listens] as const),
+      ["trap in a Worker", "SIGTRAP", "listens"] as const,
+      ["abort in a Worker", "SIGABRT", "listens"] as const,
     ])("%s ends a program with %s and one report, with the argument %j", async (how, signal, listens) => {
       await using child = Bun.spawn({
         cmd: withoutCoreDump([join(cwd, "app"), how, listens]),

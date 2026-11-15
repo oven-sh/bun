@@ -347,15 +347,38 @@ SignalHandler setSignalHandler(int signalNumber, SignalHandler handler)
 
 #endif // HANDLES_ACCESS_FAULTS_BY_SIGNAL
 
+#if OS(DARWIN)
+static bool isRaisedByAbort(const ucontext_t& context)
+{
+    sigset_t unblocked = ~context.uc_sigmask;
+    for (int signalNumber : { SIGABRT, SIGILL, SIGTRAP, SIGFPE, SIGBUS, SIGSEGV, SIGSYS, SIGKILL, SIGSTOP })
+        sigdelset(&unblocked, signalNumber);
+    return !unblocked;
+}
+#endif
+
 bool mayReportOwnCrash(int signalNumber)
 {
+#if OS(DARWIN)
+    if (signalNumber == SIGABRT)
+        return JSC::AOT::Image::isRegistered();
+#endif
     return (signalNumber == SIGTRAP || signalNumber == SIGILL || signalNumber == SIGSEGV || signalNumber == SIGBUS) && JSC::AOT::Image::isRegistered();
 }
 
 void reportOwnCrash(int signalNumber, siginfo_t* info, void* context)
 {
-    if (mayReportOwnCrash(signalNumber)) [[unlikely]]
-        CrashHandler__reportOwnCrash(signalNumber, info, context);
+    if (!mayReportOwnCrash(signalNumber)) [[likely]]
+        return;
+#if OS(DARWIN)
+    if (signalNumber == SIGABRT) {
+        struct sigaction action;
+        if (isRaisedByAbort(*static_cast<ucontext_t*>(context)) && CrashHandler__getAction(&action))
+            action.sa_sigaction(signalNumber, info, context);
+        return;
+    }
+#endif
+    CrashHandler__reportOwnCrash(signalNumber, info, context);
 }
 
 static void endProcessUnlessOwnCrash(int signalNumber, siginfo_t* info, void* context)

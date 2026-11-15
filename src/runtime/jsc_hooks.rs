@@ -437,7 +437,7 @@ unsafe fn init_runtime_state(
                     // entries resolve via their link path (peer deps stay reachable).
                     t.resolver.opts.preserve_symlinks = preserve_symlinks;
                     // Branch on `opts.graph` here — with a module graph,
-                    // `configure_linker` would
+                    // `configure_from_tsconfig` would
                     // `read_dir_info(cwd)` and cache its tsconfig.json BEFORE
                     // `apply_standalone_runtime_flags` can set
                     // `resolver.opts.load_tsconfig_json = false`, defeating
@@ -449,7 +449,7 @@ unsafe fn init_runtime_state(
                             .is_some_and(|program| program.allows_code_from_disk)
                     });
                     if reads_tsconfig {
-                        t.configure_linker();
+                        t.configure_from_tsconfig();
                     }
                 }
             }

@@ -60,8 +60,8 @@ pub(crate) struct Image {
     source: OnceCell<Source>,
     /// A Blob with no bytes in memory (`Bun.file()`, `Bun.s3()`, an fd), until `set_source`.
     unread_blob: Cell<Option<Strong>>,
-    /// The bytes that `source` owns. `estimated_size` reads it on GC threads.
-    source_size: AtomicUsize,
+    /// The bytes that `source` owns. Read on GC threads.
+    estimated_size: AtomicUsize,
     pipeline: Cell<Pipeline>,
     /// Decompression-bomb guard. Checked against the *header* dimensions before
     /// any RGBA buffer is allocated. Mirrors Sharp's `limitInputPixels`.
@@ -86,7 +86,7 @@ impl Default for Image {
         Self {
             source: OnceCell::new(),
             unread_blob: Cell::new(None),
-            source_size: AtomicUsize::new(0),
+            estimated_size: AtomicUsize::new(0),
             pipeline: Cell::new(Pipeline::default()),
             max_pixels: codecs::DEFAULT_MAX_PIXELS,
             auto_orient: true,
@@ -259,7 +259,7 @@ impl Image {
             )));
         }
         let mut img = Image::default();
-        img.set_input(global, input)?;
+        img.set_source_from_js(global, input)?;
         apply_options(&mut img, global, options.to_js())?;
         let borrows_input = matches!(img.source.get(), Some(Source::JsBuffer));
         let this_value = structure.create(&cx.heap, img);
@@ -278,15 +278,15 @@ impl Image {
     ) -> JsResult<JSValue> {
         let mut img = Image::default();
         apply_options(&mut img, global, options)?;
-        // For Blob receivers `set_input` either dupes (in-memory blob) or
+        // For Blob receivers `set_source_from_js` either dupes (in-memory blob) or
         // creates a Strong (file/S3); the cached `sourceJS` slot is only used
         // for the `.js_buffer` path, which a Blob never produces.
-        img.set_input(global, blob_value)?;
+        img.set_source_from_js(global, blob_value)?;
         debug_assert!(!matches!(img.source.get(), Some(Source::JsBuffer)));
         Ok(img.to_js(global))
     }
 
-    fn set_input(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+    fn set_source_from_js(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         match source_from_js(global, value)? {
             Some(source) => self.set_source(source),
             None => self.unread_blob.set(Some(Strong::create(value, global))),
@@ -305,7 +305,7 @@ impl Image {
             Source::Path(p) => p.len(),
         };
         if self.source.set(source).is_ok() {
-            self.source_size.store(size, Ordering::Relaxed);
+            self.estimated_size.store(size, Ordering::Relaxed);
             self.unread_blob.set(None);
         }
     }
@@ -316,7 +316,7 @@ impl Image {
     }
 
     pub(crate) fn estimated_size(&self) -> usize {
-        self.source_size.load(Ordering::Relaxed)
+        self.estimated_size.load(Ordering::Relaxed)
     }
 }
 

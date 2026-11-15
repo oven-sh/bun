@@ -13,10 +13,11 @@
 //! types (`Box`, `Rc`, `Arc`, `Cow`) and `bun_collections` (`TaggedPtr`,
 //! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
 
-mod js_cell;
-pub use js_cell::JsCell;
 mod cell_ext;
 pub use cell_ext::{CellExt, OptionCellExt};
+
+mod js_cell;
+pub use js_cell::JsCell;
 
 // FFI-crossing externally-ref-counted pointer (e.g., WTFStringImpl). Canonical
 // impl moved down to `bun_core::external_shared` (cycle-break for the

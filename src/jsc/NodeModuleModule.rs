@@ -37,12 +37,8 @@ impl ApiLoader {
 extern "C" fn NodeModuleModule__findPath(
     global: &JSGlobalObject,
     request_bun_str: &BunString,
-    paths_maybe: *mut JSArray,
+    paths_maybe: Option<&JSArray>,
 ) -> JSValue {
-    // `JSArray` is an `opaque_ffi!` ZST handle; `opaque_ref` is the centralised
-    // non-null-ZST deref proof. Nullable per the C++ caller contract.
-    let paths_maybe: Option<&JSArray> =
-        (!paths_maybe.is_null()).then(|| JSArray::opaque_ref(paths_maybe));
     jsc::host_fn::to_js_host_call(global, || find_path(global, request_bun_str, paths_maybe))
 }
 

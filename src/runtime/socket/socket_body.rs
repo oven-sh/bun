@@ -1056,7 +1056,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             this.this_value.downgrade();
             if let Some(promise) = handlers.take_promise() {
                 // reject the promise on connect() error
-                let js_promise = jsc::JSPromise::opaque_mut(promise.as_promise().unwrap());
+                let js_promise = promise.as_promise().unwrap();
                 let err_value = err.to_error_instance_with_async_stack(&global, js_promise);
                 js_promise.reject(&global, Ok(err_value))?;
             }
@@ -1092,7 +1092,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else if let Some(val) = handlers.take_promise() {
             // They've defined a `connectError` callback
             // The error is effectively handled, but we should still reject the promise.
-            let promise = jsc::JSPromise::opaque_mut(JSValue::as_promise(val).unwrap());
+            let promise = val.as_promise().unwrap();
             let err_ = err_for_promise
                 .take()
                 .to_error_instance_with_async_stack(&global, promise);

@@ -882,8 +882,7 @@ impl Image {
                 // HEIC/AVIF need the system backend → fall through to async.
                 Err(codecs::Error::UnsupportedOnPlatform) => {}
                 Err(e) => {
-                    return Ok(JSPromise::rejected_promise(global, reject_error(global, e))
-                        .as_value(global));
+                    return Ok(JSPromise::rejected_promise(global, reject_error(global, e)).to_js());
                 }
             }
         }
@@ -1063,7 +1062,7 @@ impl Image {
                         zstr!("Image: source ArrayBuffer was detached"),
                     ),
                 )
-                .as_value(cx.global()));
+                .to_js());
             }
         };
         let work = PipelineTask {
@@ -1604,7 +1603,7 @@ impl PipelineTask {
     /// the hold on the Image are released when `js` drops at the end.
     pub(crate) fn then(mut self, mut js: PipelineJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {
         let global = cx.global();
-        let promise = js.promise.swap();
+        let promise = js.promise.swap(global);
         let image = js.image.image(cx);
         // Stash final dims here (JS thread) — `run()` is on a WorkPool thread
         // so writing `image.*` there would race the synchronous getters.

@@ -178,7 +178,7 @@ pub(crate) fn load_npmrc<'a>(
         save_exact: install.exact,
         hoist: install.hoist,
     };
-    Ok(bun_jsc::JSObject::create(&pojo, global)?.to_js())
+    bun_jsc::JSObject::create(&pojo, global)
 }
 
 pub(crate) fn parse(heap: &JsHeap<'_>, source: &[u8]) -> JsResult<JSValue> {

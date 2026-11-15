@@ -612,7 +612,7 @@ impl jsc::JobContext for TransformTask {
         Some(done)
     }
     fn then(mut this: Self, mut js: TransformJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {
-        TransformTask::then(&mut this, js.promise.swap(), cx.global())
+        TransformTask::then(&mut this, &js.promise.swap(cx.global()), cx.global())
     }
 }
 
@@ -761,7 +761,7 @@ impl TransformTask {
         }
     }
 
-    fn then(&mut self, promise: &mut JSPromise, global: &JSGlobalObject) -> JsResult<()> {
+    fn then(&mut self, promise: &JSPromise, global: &JSGlobalObject) -> JsResult<()> {
         // The job drops this `TransformTask` (running its `Drop`: transpiler
         // deref etc.) right after `then` returns.
         if self.log.has_any() || self.err.is_some() {
@@ -791,7 +791,7 @@ impl TransformTask {
         self.finish(promise, global)
     }
 
-    fn finish(&mut self, promise: &mut JSPromise, global: &JSGlobalObject) -> JsResult<()> {
+    fn finish(&mut self, promise: &JSPromise, global: &JSGlobalObject) -> JsResult<()> {
         promise.settle(
             global,
             core::mem::take(&mut self.output_code).into_js(global),
@@ -1137,8 +1137,8 @@ impl JSTranspiler {
 
         let mut log = bun_ast::Log::with_level(self.log_level);
 
-        // `MacroJSCtx` carries the encoded `JSValue` bits (`#[repr(transparent)] i64`).
-        let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0 as i64);
+        // SAFETY: `_keep_ctx` outlives the parse, which is what calls macros.
+        let macro_js_ctx = unsafe { MacroJSCtx::from_encoded(js_ctx_value.encoded()) };
         // `transformSync` does not reuse what an earlier call loaded, and a nested `scan` has to see what this call is still loading.
         let old_states = self.macro_load_states.replace(MacroLoadStates::default());
         let parse_result =

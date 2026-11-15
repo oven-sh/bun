@@ -261,7 +261,7 @@ impl Vm for ThreadVm {
             let kind = JSValue::js_number_from_int32(kind as i32);
             let mut returned = (state.handle.get().call(global, JSValue::UNDEFINED, &[kind]))
                 .map_err(|error| message_of(global, global.take_exception(error)))?;
-            if let Some(promise) = returned.as_any_promise() {
+            if let Some(promise) = returned.as_promise() {
                 // Like `wait_for_promise`, but gives up on a promise that nothing can settle anymore. Node.js exits in
                 // that case.
                 while promise.status() == jsc::js_promise::Status::Pending {
@@ -279,10 +279,11 @@ impl Vm for ThreadVm {
                     }
                     vm.auto_tick();
                 }
-                returned = promise.result(global.vm());
+                let result = promise.result(global.vm());
                 if promise.status() == jsc::js_promise::Status::Rejected {
-                    return Err(message_of(global, returned));
+                    return Err(message_of(global, result));
                 }
+                returned = result;
             }
             match returned.to_bun_string(global) {
                 Ok(text) => Ok(text.to_utf8().slice().to_vec()),

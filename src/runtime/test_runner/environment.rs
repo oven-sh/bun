@@ -4,10 +4,11 @@ use super::jest::Jest;
 use bun_core::lexer::end_of_run;
 use bun_core::{Output, Timespec, TimespecMockMode};
 use bun_core::strings;
+use bun_jsc::bindgen::JsLocal;
 use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::{VirtualMachine, runtime_hooks};
 use bun_jsc::{
-    JSInternalPromise, JSPromise, JSValue, JsError, JsResult,
+    JSPromise, JSValue, JsError, JsResult,
     StringJsc as _, Strong, bun_string_jsc, js_promise,
 };
 use bun_options_types::context::TestEnvironment;
@@ -121,11 +122,11 @@ impl Environment {
         }
     }
 
-    pub(crate) fn load_entry_point(
+    pub(crate) fn load_entry_point<'a>(
         &mut self,
-        vm: &VirtualMachine,
+        vm: &'a VirtualMachine,
         path: &'static [u8],
-    ) -> crate::Result<*mut JSInternalPromise> {
+    ) -> crate::Result<JsLocal<'a, JSPromise>> {
         if !core::mem::replace(&mut self.is_entered, true) {
             if let Some(rejected) = self.enter(vm, path)? {
                 return Ok(rejected);
@@ -151,11 +152,11 @@ impl Environment {
 
     /// An unsupported pragma only warns, so files with pragmas that older `bun test` versions ignored keep running.
     #[optimize(size)]
-    fn enter(
+    fn enter<'a>(
         &mut self,
-        vm: &VirtualMachine,
+        vm: &'a VirtualMachine,
         path: &'static [u8],
-    ) -> crate::Result<Option<*mut JSInternalPromise>> {
+    ) -> crate::Result<Option<JsLocal<'a, JSPromise>>> {
         let kind = match &self.comment {
             None => self.project,
             Some(Ok(kind)) => *kind,
@@ -190,8 +191,8 @@ impl Environment {
             if let Some(project) = project {
                 teardown(vm, &project);
             }
-            if !rejected_preload.is_null() {
-                return Ok(Some(rejected_preload));
+            if rejected_preload.is_some() {
+                return Ok(rejected_preload);
             }
         }
 
@@ -215,10 +216,10 @@ pub(crate) fn is_in_preload() -> bool {
     VirtualMachine::get().is_in_preload.get()
 }
 
-fn rejected(vm: &VirtualMachine, err: JsError) -> crate::Result<*mut JSInternalPromise> {
+fn rejected(vm: &VirtualMachine, err: JsError) -> crate::Result<JsLocal<'_, JSPromise>> {
     let promise = JSPromise::rejected_promise_with_caught_exception(vm.global(), err)?;
     promise.set_handled();
-    Ok(std::ptr::from_mut(promise))
+    Ok(promise)
 }
 
 /// The reporter prints the file name lazily, so force it out before printing a warning about the file.
@@ -275,14 +276,14 @@ fn teardown(vm: &VirtualMachine, function: &Strong) {
         .call(global, JSValue::UNDEFINED, &[JSValue::FALSE])
     {
         Ok(result) => {
-            let Some(promise) = result.as_any_promise() else {
+            let Some(promise) = result.as_promise() else {
                 if let (true, Some(runner)) = (result == JSValue::TRUE, Jest::runner()) {
                     runner.environment_is_left.set(true);
                 }
                 return;
             };
             let _protected = result.protected();
-            promise.set_handled(global.vm());
+            promise.set_handled();
             // Same time limit as a hook. No timer is armed for it, so it's only checked when the event loop wakes up.
             let timeout = Jest::runner().map_or(0, |runner| runner.default_timeout_ms);
             let deadline = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, timeout.into());

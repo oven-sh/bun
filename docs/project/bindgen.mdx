@@ -580,7 +580,9 @@ to. It is `Copy`, one register, and not rooted, because JavaScriptCore scans the
 stack. The lifetime is what stops it from being stored in a struct, captured by a
 task or sent to a thread. `JsLocal<'a, T>` is one known to be a `JSString`,
 `JSObject`, `Callable` or `BufferSource`. `value.to_js()` gives the `JSValue`;
-`JsLocal::new(heap, value)` goes the other way.
+`JsLocal::new(heap, value)` goes the other way. A `JsLocal` of a `JSString`, `JSObject`,
+`JSPromise` or `JSMap` derefs to the cell, and `cell.to_local(global)` makes one. That one
+has the lifetime of `global`, so the compiler does not stop you from storing it.
 
 What outlives a call:
 

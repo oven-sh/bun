@@ -11,14 +11,9 @@ pub(super) fn load_module(
 ) -> crate::Result<JSValue> {
     let promise_value =
         jsc::from_js_host_call(global, || BakeLoadModuleByKey(global, key)).map_err(js_err)?;
-    let promise: *mut jsc::JSInternalPromise = match promise_value.as_any_promise().unwrap() {
-        AnyPromise::Internal(p) => p,
-        AnyPromise::Normal(_) => unreachable!(),
-    };
-    // S012: `JSInternalPromise` (= `JSPromise`) is an `opaque_ffi!` ZST —
-    // safe `*mut → &mut` deref via the const-asserted accessor.
-    jsc::JSInternalPromise::opaque_mut(promise).set_handled();
-    vm.wait_for_promise(AnyPromise::Internal(promise))
+    let promise = promise_value.as_promise().unwrap();
+    promise.set_handled();
+    vm.wait_for_promise(promise)
         .map_err(|stopped| js_err(stopped.throw(vm.global())))?;
     // TODO: Specially draining microtasks here because `waitForPromise` has a
     //       bug which forgets to do it, but I don't want to fix it right now as it
@@ -27,7 +22,7 @@ pub(super) fn load_module(
         Global::crash();
     }
     let jsc_vm = vm.jsc_vm();
-    match jsc::JSInternalPromise::opaque_mut(promise).unwrap(jsc_vm, UnwrapMode::MarkHandled) {
+    match promise.unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => {
             jsc::from_js_host_call(global, || BakeGetModuleNamespace(global, key)).map_err(js_err)

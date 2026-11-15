@@ -634,8 +634,8 @@ fn has_extend(text: &[u8], prefix: &[u8]) -> bool {
     false
 }
 
-/// Returns the offset of the first unclosed `(` or `[` in `tokens`. With `braces_nest`, a `{` inside a bracket
-/// is closed by a `}`, as in the params of an at-rule.
+/// Returns the offset of the first unclosed `(` or `[` in `tokens`. With `braces_nest`, a `}` closes a `{` in a
+/// bracket.
 #[cold]
 fn unclosed_bracket(tokens: &[Token], braces_nest: bool) -> u32 {
     let mut open: Vec<(u8, Token)> = Vec::new();
@@ -657,9 +657,8 @@ fn unclosed_bracket(tokens: &[Token], braces_nest: bool) -> u32 {
     at.map_or(0, |it| it.range.start)
 }
 
-/// Whether the params of an at-rule that an unclosed bracket has extended to the end of the file have a block or
-/// another at-rule in them. Prettier's `scss/no-semicolon/url.scss` ends in a `(` followed by a `//` comment,
-/// and is formatted.
+/// Whether the params of an at-rule hold a block or another at-rule. Prettier formats `scss/no-semicolon/url.scss`,
+/// whose last at-rule ends in a `(` and a `//` comment.
 #[cold]
 fn swallowed_statement(params: &[Token]) -> bool {
     params.iter().any(|token| {
@@ -917,8 +916,8 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // `postcss` has this check in `other` and not in `atrule`, so an at-rule whose `(` is never closed takes
-        // the rest of the file as its params, and Prettier prints `@media ;` for `@media (a {\n.b {\n}`.
+        // `other` in `postcss` has this check and `atrule` has not, so Prettier prints `@media ;` for
+        // `@media (a {\n.b {\n}`.
         if !brackets.is_empty() && swallowed_statement(&params) {
             return Err(self.reject(Message::UnclosedBracket, unclosed_bracket(&params, true)));
         }

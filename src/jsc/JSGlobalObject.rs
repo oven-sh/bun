@@ -10,7 +10,7 @@ use crate::error_code::ErrorBuilder;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
     CommonStrings, DOMExceptionCode, ErrorableString, JSValue, JsError, JsResult, MAX_SAFE_INTEGER,
-    MIN_SAFE_INTEGER, VM,
+    MIN_SAFE_INTEGER, VM, Weak,
 };
 use bun_core::EncodedSlice;
 
@@ -74,7 +74,7 @@ impl core::fmt::Debug for GlobalRef {
 pub struct WeakGlobalRef {
     global: GlobalRef,
     /// `None` for `vm.global()`, which only `bun test --isolate` unprotects before teardown.
-    weak: Option<crate::Weak<()>>,
+    weak: Option<Weak<()>>,
 }
 
 impl WeakGlobalRef {
@@ -84,8 +84,7 @@ impl WeakGlobalRef {
             vm.test_isolation_enabled.get() || !core::ptr::eq(global, vm.global());
         Self {
             global: GlobalRef::new(global),
-            weak: can_be_collected
-                .then(|| crate::Weak::create_passive(global.to_js_value(), global)),
+            weak: can_be_collected.then(|| Weak::create_passive(global.to_js_value(), global)),
         }
     }
 

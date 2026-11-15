@@ -2024,15 +2024,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let app = bun_opaque::opaque_deref_mut(self.app().unwrap());
         let self_ptr: *mut Self = self.as_ctx_ptr();
         let any_server = AnyServer::from(self_ptr.cast_const());
-        let dev_server: Option<*mut crate::bake::DevServer::DevServer> = self
-            .dev_server
-            .with_taken(|dev| dev.as_ref().map(bun_ptr::AliasableBox::as_ptr));
+        let has_dev_server = self.dev_server.is_some();
 
         // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
         // Only enable this when we're using the dev server.
         let mut should_add_chrome_devtools_json_route = DEBUG
             && self.config.get().allow_hot
-            && dev_server.is_some()
+            && has_dev_server
             && self
                 .config
                 .get()
@@ -2199,7 +2197,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         // --- 5. Register static routes & track "/*" coverage ---
-        let mut needs_plugins = dev_server.is_some();
+        let mut needs_plugins = has_dev_server;
         let mut has_static_route_for_star_path = false;
 
         for entry in &self.config.get().static_routes {
@@ -2339,7 +2337,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .unwrap_or_default();
             // `load_and_resolve_plugins` adds the plugins of `bake.config.ts`.
             if !names.is_empty() || vm.bake_config_plugins.get().has() {
-                self.plugins.get_or_init(|| ServePlugins::init(names));
+                let _ = self.plugins.set(ServePlugins::init(names));
             }
         }
 
@@ -2357,16 +2355,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let mux_star_covered = star_methods_covered_by_user;
 
         // --- 8. Handle DevServer routes & track "/*" coverage ---
-        let mut has_dev_server_for_star_path = false;
-        if let Some(dev_ptr) = dev_server {
-            // dev.setRoutes might register its own "/*" HTTP handler
-            self.with_dev_server(|dev| {
-                has_dev_server_for_star_path = bun_core::handle_oom(dev.set_routes(dev_ptr, self));
-            });
-            if has_dev_server_for_star_path {
-                // Assume dev server "/*" covers all methods if it exists
-                star_methods_covered_by_user = http_method::Set::all();
-            }
+        // dev.setRoutes might register its own "/*" HTTP handler
+        let has_dev_server_for_star_path = self.dev_server.with_taken(|dev| {
+            dev.as_ref().is_some_and(|dev| {
+                // SAFETY: see `with_dev_server`. It is dropped after `clear_routes()` or after the app.
+                bun_core::handle_oom(unsafe {
+                    crate::bake::DevServer::DevServer::set_routes(dev.as_ptr(), self)
+                })
+            })
+        });
+        if has_dev_server_for_star_path {
+            // Assume dev server "/*" covers all methods if it exists
+            star_methods_covered_by_user = http_method::Set::all();
         }
 
         // Setup user websocket fallback route aka fetch function; if fetch is

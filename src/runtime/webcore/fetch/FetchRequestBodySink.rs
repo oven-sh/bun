@@ -166,9 +166,10 @@ impl FetchRequestBodySink {
             // it is still on the stack (FileReader.on_reader_error ref-leak).
             self.source.clear();
             if let Some(task) = self.task.take() {
-                let err_js = err
-                    .zip(task.global_this.get())
-                    .map(|(e, global_this)| e.to_js(&global_this));
+                let err_js = err.map(|e| {
+                    let global_this = task.global_this.get();
+                    global_this.map_or(JSValue::UNDEFINED, |global| e.to_js(&global))
+                });
                 // SAFETY: `task` is a ref. Dropping it may free `*self`.
                 unsafe { (*task.as_ptr()).write_end_request(err_js) };
             }

@@ -1994,6 +1994,39 @@ test.skipIf(isWindows)("the next response can read a FIFO fd after an aborted Re
   }
 });
 
+// epoll refuses a second registration of an fd.
+test.skipIf(!isLinux)("a Response(Bun.file(fd)) that fails to poll a FIFO does not read from it", async () => {
+  using dir = tempDir("serve-fifo-fd-shared", {});
+  const fifoPath = join(String(dir), "fd.fifo");
+  mkfifo(fifoPath);
+  const fd = openSync(fifoPath, constants.O_RDONLY | constants.O_NONBLOCK);
+  const writer = openSync(fifoPath, "w");
+  try {
+    const polling = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        if (req.url.endsWith("/second")) {
+          writeSync(writer, "hello");
+          closeSync(writer);
+        }
+        // One turn of the event loop later the server has taken the response.
+        setImmediate(polling.resolve);
+        return new Response(Bun.file(fd));
+      },
+    });
+    const first = fetch(server.url).then(res => res.text());
+    await Promise.race([polling.promise, first]);
+    const second = await fetch(server.url + "second")
+      .then(res => res.text())
+      .catch(err => err.code);
+    expect({ first: await first, second }).toEqual({ first: "hello", second: "ECONNRESET" });
+  } finally {
+    closeSync(fd);
+  }
+});
+
 test.concurrent.skipIf(isWindows)(
   "a handler that answers with Bun.file(FIFO) while its request body fails on maxRequestBodySize",
   async () => {

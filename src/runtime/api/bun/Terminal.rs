@@ -12,18 +12,15 @@
 use core::cell::Cell;
 #[cfg(not(windows))]
 use core::ffi::c_int;
-use core::ffi::c_void;
 #[cfg(windows)]
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::node::StringOrBuffer;
 use bun_core::EncodedSlice;
 use bun_core::SignalCode;
-use bun_io::LoopRef;
-use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
-use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
+use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult, StreamingWriter, WriteStatus};
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{
@@ -46,12 +43,12 @@ pub(crate) use crate::generated_bindgen::terminal::js_Terminal as js;
 /// Reference counting for Terminal.
 /// Refs are held by:
 /// 1. The JS wrapper (released when it is collected)
-/// 2. Reader (released in onReaderDone/onReaderError)
+/// 2. Reader (released in `on_read_result`)
 /// 3. Writer (released in onWriterClose)
 ///
 // Every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The
-// BufferedReader/StreamingWriter parent-vtable thunks deref `*mut Self` as
+// StreamingWriter parent-vtable thunks deref `*mut Self` as
 // `&*this` (shared); all field mutation routes through the cells.
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct Terminal {
@@ -84,7 +81,7 @@ pub(crate) struct Terminal {
     writer: JsCell<IOWriter>,
 
     /// Reader for receiving data from the terminal
-    reader: JsCell<IOReader>,
+    reader: BufferedReader,
 
     /// Held until the writer closes.
     writer_ref: JsCell<Option<bun_ptr::RefPtr<Terminal>>>,
@@ -143,8 +140,6 @@ pub(crate) type IOWriter = StreamingWriter<Terminal>;
 /// Poll type alias for FilePoll Owner registration
 #[cfg(not(windows))]
 pub(crate) type Poll = IOWriter;
-
-pub(crate) type IOReader = BufferedReader;
 
 /// Options for creating a Terminal
 pub(crate) struct Options {
@@ -299,8 +294,7 @@ impl Terminal {
     }
 
     /// `self`'s address as `*mut Self` for intrusive backref / refcount slots.
-    /// Callers deref it as `&*const` (shared) — see the `BufferedReaderParent`
-    /// / `*StreamingWriterParent` thunks below — so no write provenance is
+    /// Callers deref it as `&*const` (shared), so no write provenance is
     /// required; the `*mut` spelling is purely to match the C-shaped vtable
     /// signatures. All field mutation routes through `Cell`/`JsCell`.
     #[inline]
@@ -310,20 +304,20 @@ impl Terminal {
 
     /// Recover `&Terminal` from the parent back-pointer stashed via
     /// [`as_ctx_ptr`](Self::as_ctx_ptr) in `open` (handed to
-    /// `reader.set_parent` / `writer.parent`). Centralises the set-once
+    /// `writer.parent`). Centralises the set-once
     /// `*mut Self → &Self` deref so the I/O-vtable trampolines below stay
     /// safe at the call site (one `unsafe` here, N safe callers).
     ///
-    /// Only valid for the `BufferedReaderParent` /
+    /// Only valid for the
     /// `{Posix,Windows}StreamingWriterParent` thunks where `this` is the
     /// registered BACKREF — do NOT call from `WriterParent::ref_` /
     /// `deref` (those run while a `&mut self.writer` borrow is live and must
     /// avoid forming `&Terminal`; see Stacked-Borrows note there).
     #[inline]
     fn from_parent_ptr<'a>(this: *mut Self) -> &'a Self {
-        // SAFETY: `this` is the BACKREF set via `reader.set_parent` /
+        // SAFETY: `this` is the BACKREF set via
         // `writer.parent = …` in `open`. The Terminal is heap-stable
-        // (`RefPtr::new`) and outlives every reader/writer callback (the
+        // (`RefPtr::new`) and outlives every writer callback (the
         // intrusive +1 ref held by the I/O machinery is dropped only after the
         // last callback fires). R-2: shared borrow only — bodies take `&self`;
         // field writes go through `Cell`/`JsCell`, so re-entrant JS forming a
@@ -378,7 +372,7 @@ impl Terminal {
             event_loop_handle: EventLoopHandle::init(global_object.bun_vm().event_loop_ptr()),
             global_this: bun_ptr::BackRef::new(global_object),
             writer: JsCell::new(IOWriter::default()),
-            reader: JsCell::new(IOReader::init::<Terminal>()),
+            reader: BufferedReader::init(),
             writer_ref: JsCell::new(None),
             reader_ref: JsCell::new(None),
             this_value: JsCell::new(JsRef::empty()),
@@ -390,10 +384,9 @@ impl Terminal {
         });
         let parent_ptr = terminal.as_ptr();
 
-        // Set reader parent
-        terminal
-            .reader
-            .with_mut(|r| r.set_parent(parent_ptr.cast::<c_void>()));
+        let owner = Owner::new(PollTag::TerminalReader, parent_ptr.cast());
+        // SAFETY: `owner` points to the heap allocation that holds this reader.
+        unsafe { terminal.reader.set_owner(owner) };
 
         // Set writer parent
         terminal.writer.with_mut(|w| w.parent = parent_ptr);
@@ -413,43 +406,31 @@ impl Terminal {
             }
         }
 
-        // Start reader with the read fd. The reader's ref is taken first: when
-        // the poll registration fails, POSIX `start()` calls `on_reader_error`,
-        // which releases that ref, and still returns Ok.
-        terminal.reader_ref.set(Some(terminal.clone()));
-        match terminal
+        // Start reader with the read fd - adds a ref.
+        let event_loop = terminal.event_loop_handle.as_event_loop_ctx();
+        let Ok(result) = terminal
             .reader
-            .with_mut(|r| r.start(pty_result.read.fd(), true))
-            .map(|()| pty_result.read.into_raw())
-        {
-            sys::Result::Err(_) => {
-                // No callback ran: the reader took neither the fd nor its ref.
-                terminal.reader_ref.set(None);
-                return Err(terminal.fail_reader_start());
-            }
-            sys::Result::Ok(_) if terminal.is_reader_done() => {
-                return Err(terminal.fail_reader_start());
-            }
-            sys::Result::Ok(_) => {
-                #[cfg(unix)]
-                {
-                    terminal.reader.with_mut(|r| {
-                        if let Some(poll) = r.handle.get_poll() {
-                            // PTY behaves like a pipe, not a socket
-                            r.flags
-                                .insert(PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
-                            poll.set_flag(bun_io::FilePollFlag::Nonblocking);
-                        }
-                    });
-                }
-                terminal.update_flags(|f| f.insert(Flags::READER_STARTED));
-            }
+            .start(event_loop, pty_result.read.fd(), true)
+        else {
+            // The reader did not take the fd.
+            drop(pty_result.read);
+            return Err(terminal.fail_reader_start());
+        };
+        pty_result.read.into_raw();
+        terminal.reader_ref.set(Some(terminal.clone()));
+        terminal.on_read_result(result);
+        if terminal.is_reader_done() {
+            return Err(terminal.fail_reader_start());
         }
+        // PTY behaves like a pipe, not a socket
+        #[cfg(unix)]
+        terminal
+            .reader
+            .update_flags(|f| f.insert(PosixFlags::NONBLOCKING));
+        terminal.update_flags(|f| f.insert(Flags::READER_STARTED));
 
         // Start reading data
-        // SAFETY: the reader cell is live for the terminal's lifetime; `read`
-        // is the raw re-entrancy-safe entry (its dispatch runs user JS).
-        unsafe { IOReader::read(terminal.reader.as_ptr()) };
+        terminal.read(None);
         // The first read can end the reader too: EOF, a read error, or a failed re-arm.
         if terminal.is_reader_done() {
             return Err(terminal.fail_reader_start());
@@ -627,9 +608,7 @@ impl Terminal {
         // +1 so `self` stays live for the trailing field accesses.
         let guard = self.ref_guard();
         if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
-            // SAFETY: single JS thread; re-entrant user JS (data callback may
-            // call `terminal.close()`) is handled by `read`'s raw dispatch.
-            unsafe { IOReader::read(self.reader.as_ptr()) };
+            self.read(None);
             if self.flags.get().contains(Flags::CLOSED) {
                 return;
             }
@@ -640,8 +619,7 @@ impl Terminal {
         // A grandchild holding the slave keeps this at EAGAIN and re-arms.
         let flags = self.flags.get();
         if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
-            // SAFETY: same as the `read()` call above.
-            unsafe { IOReader::read(self.reader.as_ptr()) };
+            self.read(None);
         }
         // An inline terminal whose child has exited no longer keeps the event
         // loop alive; the polls stay registered so grandchild output still
@@ -661,8 +639,7 @@ impl Terminal {
     #[cfg(windows)]
     pub(crate) fn unref_after_inline_child_exit(&self) {
         if !self.flags.get().contains(Flags::CLOSED) {
-            let ctx = self.event_loop_handle.as_event_loop_ctx();
-            self.writer.with_mut(|w| w.update_ref(ctx, false));
+            self.writer.with_mut(|w| w.update_ref(false));
         }
     }
 
@@ -714,14 +691,14 @@ impl Terminal {
             }
             Err(_) => {
                 // CreateThread failed — the process is in a bad state. Close the
-                // reader so onReaderDone fires next loop tick (releasing the reader
+                // reader so `on_read_result` runs (releasing the reader
                 // ref) instead of hanging on an EOF that will never come. Leak hpcon;
                 // calling ClosePseudoConsole here would deadlock since reader.close()
                 // is async (uv_close) and the pipe HANDLE is still open. Conhost sees
                 // broken-pipe once libuv's deferred close runs.
                 let flags = self.flags.get();
                 if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
-                    self.reader.with_mut(|r| r.close());
+                    self.on_read_result(self.reader.close());
                 }
             }
         }
@@ -795,6 +772,7 @@ pub(crate) type OpenPtyFn = unsafe extern "C" fn(
 mod lib_util {
     use super::*;
     use bun_core::ZStr;
+    use core::ffi::c_void;
 
     // Per PORTING.md §Global mutable state: the flag is an AtomicBool and the
     // handle slot an AtomicPtr (null ⇔ None — dlopen never yields a null Some).
@@ -1488,11 +1466,8 @@ impl Terminal {
     }
 
     fn update_ref(&self, add: bool) {
-        // POSIX `update_ref` takes `&self`; Windows takes `&mut self` — route
-        // both through `with_mut` so the body is target-agnostic.
-        self.reader.with_mut(|r| r.update_ref(add));
-        let ctx = self.event_loop_handle.as_event_loop_ctx();
-        self.writer.with_mut(|w| w.update_ref(ctx, add));
+        self.reader.update_ref(add);
+        self.writer.with_mut(|w| w.update_ref(add));
     }
 
     /// Close the terminal
@@ -1523,11 +1498,11 @@ impl Terminal {
             // Dispatch ClosePseudoConsole off-thread (it blocks until the output
             // pipe is drained on Windows < 11 24H2) and leave the reader open so
             // the event loop can keep draining; conhost flushes the final frame,
-            // closes its pipe end, and the reader observes EOF → onReaderDone.
+            // closes its pipe end, and the reader observes EOF → `on_read_result`.
             if let Some(hpcon) = self.hpcon.take() {
                 self.close_pseudoconsole_off_thread(hpcon);
             }
-            // Leave the reader open; onReaderDone closes it on EOF.
+            // Leave the reader open; `on_read_result` closes it on EOF.
             let flags = self.flags.get();
             if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
                 return;
@@ -1536,7 +1511,7 @@ impl Terminal {
 
         // Close reader (closes its fd)
         if self.flags.get().contains(Flags::READER_STARTED) {
-            self.reader.with_mut(|r| r.close());
+            self.on_read_result(self.reader.close());
         }
 
         #[cfg(unix)]
@@ -1605,23 +1580,27 @@ impl Terminal {
         }
     }
 
-    // IOReader callbacks
-    fn on_reader_done(&self) {
-        bun_output::scoped_log!(Terminal, "onReaderDone");
-        // exit_code 0 = clean EOF on PTY stream (not subprocess exit code)
-        self.on_reader_finished(0);
+    pub(crate) fn read(&self, event: Option<IoEvent>) {
+        let event_loop = self.event_loop_handle.as_event_loop_ctx();
+        let result = self.reader.read_chunks(event_loop, event, |chunk, _| {
+            self.on_read_chunk(&chunk);
+            true
+        });
+        self.on_read_result(result);
     }
 
-    fn on_reader_error(&self, err: &sys::Error) {
-        bun_output::scoped_log!(Terminal, "onReaderError: {:?}", err);
-        // exit_code 1 = I/O error on PTY stream (not subprocess exit code)
-        self.on_reader_finished(1);
-    }
-
-    /// Shared tail of `on_reader_done`/`on_reader_error`: take `reader_ref`
-    /// before the exit callback so re-entry (`terminal.close()` from the
+    /// Takes `reader_ref` before the exit callback so re-entry (`terminal.close()` from the
     /// callback) finds it gone and no-ops.
-    fn on_reader_finished(&self, exit_code: i32) {
+    fn on_read_result(&self, result: ReadResult) {
+        // 0 = EOF, 1 = PTY read error; not the subprocess's exit code.
+        let exit_code = match result {
+            ReadResult::Pending => return,
+            ReadResult::Done => 0,
+            ReadResult::Err(err) => {
+                bun_output::scoped_log!(Terminal, "onReaderError: {:?}", err);
+                1
+            }
+        };
         let Some(_reader_ref) = self.reader_ref.replace(None) else {
             return;
         };
@@ -1645,8 +1624,8 @@ impl Terminal {
     #[cfg(unix)]
     fn finish_io_after_eof(&self) {
         // EOF closes the reader itself, a read error does not.
-        if !self.reader.get().is_done() {
-            self.reader.with_mut(|r| r.close());
+        if !self.reader.is_done() {
+            self.on_read_result(self.reader.close());
         }
         // `end()` dispatches `on_writer_close`.
         if !self.is_writer_done() {
@@ -1706,25 +1685,23 @@ impl Terminal {
     }
 
     // Called when data is available from the reader
-    // Returns true to continue reading, false to pause
-    fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
-        let _ = has_more;
+    fn on_read_chunk(&self, chunk: &[u8]) {
         bun_output::scoped_log!(Terminal, "onReadChunk: {} bytes", chunk.len());
 
         if self.flags.get().contains(Flags::FINALIZED) {
-            return true;
+            return;
         }
 
         let Some(this_jsvalue) = self.this_value.get().try_get() else {
-            return true;
+            return;
         };
         let Some(callback) = js::data_get_cached(this_jsvalue) else {
-            return true;
+            return;
         };
 
         let global_this = self.global();
         // Use try_reserve so a transient OOM on a large chunk doesn't abort
-        // the process — log and `return true` to keep reading instead.
+        // the process — log and keep reading instead.
         let mut v: Vec<u8> = Vec::new();
         if v.try_reserve_exact(chunk.len()).is_err() {
             bun_output::scoped_log!(
@@ -1732,7 +1709,7 @@ impl Terminal {
                 "onReadChunk: dupe failed (OOM), dropping {} bytes",
                 chunk.len()
             );
-            return true;
+            return;
         }
         v.extend_from_slice(chunk);
         let bytes = v.into_boxed_slice();
@@ -1745,7 +1722,7 @@ impl Terminal {
             Ok(data) => data,
             Err(err) => {
                 crate::dispatch::fold(Err(err));
-                return true;
+                return;
             }
         };
 
@@ -1758,12 +1735,6 @@ impl Terminal {
             this_jsvalue,
             &[this_jsvalue, data],
         );
-
-        true // Continue reading
-    }
-
-    fn loop_(&self) -> LoopRef {
-        self.event_loop_handle.native_loop()
     }
 
     pub(crate) fn finalize(&self) {
@@ -1785,49 +1756,12 @@ impl Drop for Terminal {
     }
 }
 
-// BufferedReader vtable parent: Terminal declares
-// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop`.
-bun_io::buffered_reader_parent_link!(Terminal for Terminal);
-impl BufferedReaderParent for Terminal {
-    const KIND: bun_io::BufferedReaderParentLinkKind =
-        bun_io::BufferedReaderParentLinkKind::Terminal;
-    const HAS_ON_READ_CHUNK: bool = true;
-
-    unsafe fn on_read_chunk(
-        this: *mut Self,
-        chunk: bun_io::Chunk<'_>,
-        has_more: ReadState,
-    ) -> bool {
-        bun_removable_features::removable_body!(Terminal, Abort, {
-            Self::from_parent_ptr(this).on_read_chunk(&chunk, has_more)
-        })
-    }
-    unsafe fn on_reader_done(this: *mut Self) {
-        bun_removable_features::removable_body!(Terminal, Abort, {
-            Self::from_parent_ptr(this).on_reader_done();
-        })
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        bun_removable_features::removable_body!(Terminal, Abort, {
-            Self::from_parent_ptr(this).on_reader_error(&err);
-        })
-    }
-    unsafe fn loop_(this: *mut Self) -> LoopRef {
-        Self::from_parent_ptr(this).loop_()
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        Self::from_parent_ptr(this)
-            .event_loop_handle
-            .as_event_loop_ctx()
-    }
-}
-
 // `bun.io.StreamingWriter(@This(), struct { onClose, onWritable, onError, onWrite })`
 // → trait impl on `Terminal`. All methods take `*mut Self` because the writer
 // is an intrusive *field of* the parent — see PipeWriter.rs PosixStreamingWriterParent.
 #[cfg(unix)]
 impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::TERMINAL_POLL;
+    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::PollTag::TerminalPoll;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         Self::from_parent_ptr(this).on_write(amount, status);
     }
@@ -1841,9 +1775,6 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
         Self::from_parent_ptr(this)
             .event_loop_handle
             .as_event_loop_ctx()
-    }
-    unsafe fn loop_(this: *mut Self) -> LoopRef {
-        Self::from_parent_ptr(this).event_loop_handle.r#loop()
     }
 }
 
@@ -1863,9 +1794,9 @@ impl bun_io::pipe_writer::WriterParent for Terminal {
 
 #[cfg(windows)]
 impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
-    unsafe fn loop_(this: *mut Self) -> *mut bun_libuv_sys::Loop {
+    unsafe fn loop_(this: *mut Self) -> &'static bun_uws::Loop {
         // SAFETY: BACKREF set via writer.parent; shared-only read.
-        unsafe { (*this).event_loop_handle.uv_loop() }
+        unsafe { (*this).event_loop_handle.r#loop() }
     }
 }
 

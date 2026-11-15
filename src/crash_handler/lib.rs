@@ -41,7 +41,7 @@ mod compiled_frames;
 ))]
 mod fault_registers;
 mod stopped_builds;
-pub use compiled_frames::{DecodedReport, ShortBuildId, report_compiled_frames};
+pub use compiled_frames::{DecodedReport, ShortBuildId, keep_own_segments, report_compiled_frames};
 pub use stopped_builds::{BuildDescribers, DescribeBuild, report_stopped_builds};
 
 /// Link-time target for `bun_alloc::out_of_memory()` — declared

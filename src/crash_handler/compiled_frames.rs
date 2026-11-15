@@ -255,11 +255,43 @@ pub(crate) fn is_own_stop(
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
+static OWN_SEGMENTS: std::sync::OnceLock<Box<[core::ops::Range<usize>]>> =
+    std::sync::OnceLock::new();
+
+pub fn keep_own_segments() {
+    #[cfg(all(unix, not(target_os = "macos")))]
+    OWN_SEGMENTS.get_or_init(find_own_segments);
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn find_own_segments() -> Box<[core::ops::Range<usize>]> {
+    let Some(own) = bun_sys::elf::find_loaded_module(find_own_segments as *const () as usize)
+    else {
+        return Box::default();
+    };
+    // SAFETY: the headers of this executable are mapped as long as it runs.
+    let headers =
+        unsafe { core::slice::from_raw_parts(own.program_headers, own.program_header_count) };
+    let segments = headers
+        .iter()
+        .filter(|it| it.p_type == bun_sys::elf::PT_LOAD);
+    segments
+        .map(|segment| {
+            let start = own.base_address.wrapping_add(segment.p_vaddr as usize);
+            start..start + segment.p_memsz as usize
+        })
+        .collect()
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
 fn is_in_own_segment(address: usize) -> bool {
-    let module_at =
-        |address| bun_sys::elf::find_loaded_module(address).map(|module| module.base_address);
-    let own = module_at(is_in_own_segment as *const () as usize);
-    own.is_some() && module_at(address) == own
+    let is_in_one_of = |segments: &[core::ops::Range<usize>]| {
+        segments.iter().any(|segment| segment.contains(&address))
+    };
+    match OWN_SEGMENTS.get() {
+        Some(kept) => is_in_one_of(kept),
+        None => is_in_one_of(&find_own_segments()),
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -297,7 +329,9 @@ fn is_in_own_segment(address: usize) -> bool {
 mod tests {
     use super::removed_feature_entered;
     #[cfg(unix)]
-    use super::{TRAP_OF_REMOVED_CODE, is_at_trap_of_removed_code, is_in_own_segment};
+    use super::{
+        TRAP_OF_REMOVED_CODE, is_at_trap_of_removed_code, is_in_own_segment, keep_own_segments,
+    };
 
     /// The engine's, as in an executable without compiled code.
     #[unsafe(no_mangle)]
@@ -316,17 +350,22 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn only_traps_of_this_executable_are_of_removed_code() {
-        let own_trap = TRAP_OF_REMOVED_CODE.as_ptr().addr();
-        assert!(is_in_own_segment(own_trap));
-        assert!(is_at_trap_of_removed_code(own_trap));
-
         let copied = TRAP_OF_REMOVED_CODE.to_vec();
-        assert!(!is_in_own_segment(copied.as_ptr().addr()));
-        assert!(!is_at_trap_of_removed_code(copied.as_ptr().addr()));
+        let check = || {
+            let own_trap = TRAP_OF_REMOVED_CODE.as_ptr().addr();
+            assert!(is_in_own_segment(own_trap));
+            assert!(is_at_trap_of_removed_code(own_trap));
 
-        let local_function = removed_feature_entered as *const () as usize;
-        assert!(is_in_own_segment(local_function));
-        assert!(!is_at_trap_of_removed_code(local_function));
-        assert!(!is_at_trap_of_removed_code(0));
+            assert!(!is_in_own_segment(copied.as_ptr().addr()));
+            assert!(!is_at_trap_of_removed_code(copied.as_ptr().addr()));
+
+            let local_function = removed_feature_entered as *const () as usize;
+            assert!(is_in_own_segment(local_function));
+            assert!(!is_at_trap_of_removed_code(local_function));
+            assert!(!is_at_trap_of_removed_code(0));
+        };
+        check();
+        keep_own_segments();
+        check();
     }
 }

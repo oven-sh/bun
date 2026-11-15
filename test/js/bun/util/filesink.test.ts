@@ -1625,7 +1625,7 @@ describe.concurrent("start() on an open writer", () => {
   it.skipIf(!isLinux).each([
     ["open", `const path = join(dir, "missing", "target.txt");`],
     [
-      "epoll_ctl",
+      "write",
       // A FIFO with a reader opens for writing, but cannot take over the TTY's poll.
       `const path = join(dir, "fifo");
       Bun.spawnSync(["mkfifo", path]);
@@ -1648,6 +1648,36 @@ describe.concurrent("start() on an open writer", () => {
       console.log(JSON.stringify({ failed, buffered, closed: await closed() }));
     `);
     expect(result).toEqual({ failed: syscall, buffered: 0, closed: "all" });
+  });
+
+  it.skipIf(isWindows)("start({ path }) to a second FIFO throws EBUSY and the pending write finishes", async () => {
+    const result = await run(`
+      const paths = [join(dir, "a"), join(dir, "b")];
+      Bun.spawnSync(["mkfifo", ...paths]);
+      const [reader] = paths.map(path => fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK));
+      const writer = Bun.file(paths[0]).writer();
+      const out = { received: 0 };
+      writer.write(Buffer.alloc(2 * 1024 * 1024, "x"));
+      try {
+        writer.start({ path: paths[1] });
+      } catch (e) {
+        out.code = e.code;
+      }
+      function drain() {
+        try {
+          for (let n; (n = fs.readSync(reader, Buffer.alloc(65536))) > 0; ) out.received += n;
+        } catch (e) {
+          if (e.code !== "EAGAIN") throw e;
+        }
+      }
+      // Only the pending write keeps the process alive.
+      setInterval(drain, 1).unref();
+      process.on("exit", () => {
+        drain();
+        console.log(JSON.stringify(out));
+      });
+    `);
+    expect(result).toEqual({ code: "EBUSY", received: 2 * 1024 * 1024 });
   });
 
   it("start({ path }) settles a queued write and flushes it to the new path", async () => {

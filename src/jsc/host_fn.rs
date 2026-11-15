@@ -90,7 +90,7 @@ pub fn host_call_error_value(global_this: &JSGlobalObject, err: JsError) -> JSVa
 /// `Terminated` reached a host-function trampoline (code shared with loop-level callers took the VM's
 /// termination beneath us). Beneath script JSC still needs an exception to unwind what is above:
 /// rethrow the VM's and return empty. With no script above (a trampoline C++ drives from the loop —
-/// `AnyPromise::wrap` from a work-pool completion) there is nothing to unwind and nothing may be pending:
+/// `JSPromise::settle_with` from a work-pool completion) there is nothing to unwind and nothing may be pending:
 /// hand back `undefined`; whoever called stands down on the stopped VM.
 #[cold]
 fn terminated_beneath_script(global_this: &JSGlobalObject) -> JSValue {

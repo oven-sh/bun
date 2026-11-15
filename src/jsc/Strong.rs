@@ -202,8 +202,8 @@ impl OwnedImpl {
     const SLOT_MASK: usize = (1usize << 48) - 1;
 
     #[inline(always)]
-    fn slot_ptr(&self) -> *mut crate::DecodedJSValue {
-        (self.0.as_ptr() as usize & Self::SLOT_MASK) as *mut crate::DecodedJSValue
+    fn slot_ptr(&self) -> *mut JSValue {
+        (self.0.as_ptr() as usize & Self::SLOT_MASK) as *mut JSValue
     }
 
     fn new(global: &JSGlobalObject, value: JSValue) -> OwnedImpl {
@@ -218,9 +218,8 @@ impl OwnedImpl {
     #[inline(always)]
     fn get(&self) -> JSValue {
         // SAFETY: StrongRef.cpp guarantees the low 48 bits address a live
-        // `JSC::JSValue`-sized slot for the lifetime of the handle;
-        // `DecodedJSValue` is its `#[repr(C)]` ABI mirror.
-        unsafe { (*self.slot_ptr()).encode() }
+        // `JSC::JSValue`-sized slot for the lifetime of the handle.
+        unsafe { *self.slot_ptr() }
     }
 
     fn set(&self, global: &JSGlobalObject, value: JSValue) {

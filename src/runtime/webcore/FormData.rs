@@ -3,7 +3,7 @@
 use bun_core::{self, declare_scope, scoped_log};
 use bun_core::{EncodedSlice, strings};
 use bun_jsc::bindgen::JsHeap;
-use bun_jsc::{AnyPromise, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::{DOMFormData, JSGlobalObject, JSPromise, JSValue, JsError, JsResult};
 use bun_semver::{self, SlicedString};
 
 use crate::generated_bindgen::blob::BlobOrBuildArtifact;
@@ -17,14 +17,14 @@ pub(crate) struct FormData {}
 pub(crate) use bun_core::form_data::{AsyncFormData, Encoding};
 
 /// JSC-touching extension on `AsyncFormData` (lives in this crate because it
-/// needs `JSGlobalObject` + `AnyPromise`).
+/// needs `JSGlobalObject` + `JSPromise`).
 pub(crate) trait AsyncFormDataExt {
-    fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()>;
+    fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: &JSPromise) -> JsResult<()>;
 }
 
 impl AsyncFormDataExt for AsyncFormData {
     /// Parse errors are routed into the promise rejection; only settlement's own exception escapes.
-    fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()> {
+    fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: &JSPromise) -> JsResult<()> {
         if let Encoding::Multipart(b) = &self.encoding {
             if b.is_empty() {
                 scoped_log!(
@@ -33,7 +33,7 @@ impl AsyncFormDataExt for AsyncFormData {
                 );
                 promise.reject(
                     global,
-                    global.create_error_instance(format_args!("FormData missing boundary")),
+                    Ok(global.create_error_instance(format_args!("FormData missing boundary"))),
                 )?;
                 return Ok(());
             }
@@ -42,14 +42,14 @@ impl AsyncFormDataExt for AsyncFormData {
         let js_value = match FormData::to_js(global, data, &self.encoding) {
             Ok(v) => v,
             Err(crate::Error::JSError) => {
-                promise.reject(global, global.take_error(JsError::Thrown))?;
+                promise.reject(global, Ok(global.take_error(JsError::Thrown)))?;
                 return Ok(());
             }
             Err(e) => {
                 scoped_log!(FormData, "AsnycFormData.toJS -> failed ");
                 promise.reject(
                     global,
-                    global.create_error_instance(format_args!("FormData {}", e.name())),
+                    Ok(global.create_error_instance(format_args!("FormData {}", e.name()))),
                 )?;
                 return Ok(());
             }

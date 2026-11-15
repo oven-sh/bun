@@ -25,9 +25,7 @@ use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
 use bun_io::IntrusiveUvFs as _;
 #[cfg(not(windows))]
 use bun_io::{self as io, FileAction};
-use bun_jsc::{
-    self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SystemError,
-};
+use bun_jsc::{self as jsc, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SystemError};
 use bun_ptr::RefPtr;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
@@ -97,7 +95,7 @@ impl<F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<F> {
             ..
         } = *{ self };
         let global_this = global_this.get();
-        let promise = promise.swap();
+        let promise = promise.swap(global_this);
         match maybe_bytes {
             ReadFileResultType::Result(result) => {
                 let bytes = result.buf;
@@ -105,14 +103,14 @@ impl<F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<F> {
                     blob.size
                         .set((bytes.len() as SizeType).min(blob.size.get()));
                 }
-                // The `#[track_caller]` `to_js_host_call` inside `AnyPromise::wrap`
+                // The `#[track_caller]` `to_js_host_call` inside `JSPromise::settle_with`
                 // provides the source-location/exception-scope behaviour.
-                AnyPromise::Normal(promise).wrap(global_this, move |g| {
+                promise.settle_with(global_this, move |g| {
                     F::from_owned(&blob, g, bytes.into_vec())
                 })?;
             }
             ReadFileResultType::Err(err) => {
-                let val = err.to_error_instance_with_async_stack(global_this, promise);
+                let val = err.to_error_instance_with_async_stack(global_this, &promise);
                 promise.reject(global_this, Ok(val))?;
             }
         }

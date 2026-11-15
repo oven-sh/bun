@@ -41,17 +41,27 @@ pub mod Macro {
         str_.starts_with(NAMESPACE_WITH_COLON)
     }
 
-    /// `JSValue` is `#[repr(transparent)] i64` (PORTING.md §JSC types). This
+    /// `JSValue` is `#[repr(transparent)] usize` (PORTING.md §JSC types). This
     /// newtype carries the encoded bits at the lowest tier that needs them so
     /// `Transpiler::ParseOptions.macro_js_ctx` and `MacroContext.javascript_object`
     /// share one canonical type without `bun_js_parser` / `bun_bundler` taking a
-    /// `bun_jsc` dep. Higher tiers convert with `JSValue(ctx.0)` / `MacroJSCtx(v.0)`.
+    /// `bun_jsc` dep.
     #[repr(transparent)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-    pub struct MacroJSCtx(pub i64);
+    pub struct MacroJSCtx(usize);
     impl MacroJSCtx {
         /// Spec `default_macro_js_value` = `JSValue.zero`.
         pub const ZERO: Self = MacroJSCtx(0);
+
+        /// # Safety
+        /// `bits` encode a `JSValue` that is kept alive for as long as a macro can be called with the result.
+        pub const unsafe fn from_encoded(bits: usize) -> Self {
+            MacroJSCtx(bits)
+        }
+
+        pub const fn encoded(self) -> usize {
+            self.0
+        }
     }
     impl Default for MacroJSCtx {
         #[inline]

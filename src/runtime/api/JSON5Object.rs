@@ -267,7 +267,7 @@ impl Stringifier {
     fn stringify_object(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
         let iter = jsc::JSPropertyIterator::init(
             global,
-            value.to_object(global)?,
+            &*value.to_object(global)?,
             jsc::JSPropertyIteratorOptions {
                 skip_empty_name: false,
                 include_value: true,

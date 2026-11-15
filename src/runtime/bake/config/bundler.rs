@@ -86,8 +86,8 @@ impl SplitBundlerOptions {
             let plugin_result =
                 plugin.add_plugin(function, empty_object, JSValue::NULL, false, true)?;
 
-            if let Some(promise) = plugin_result.as_any_promise() {
-                promise.set_handled(global.vm());
+            if let Some(promise) = plugin_result.as_promise() {
+                promise.set_handled();
                 // TODO: remove this call, replace with a promise list that must
                 // be resolved before the first bundle task can begin.
                 global

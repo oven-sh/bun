@@ -925,32 +925,33 @@ impl Body {
             }
 
             if let Some(Consumer::Promise(root, action)) = locked.consumer {
-                let promise = root.get().as_any_promise().unwrap();
+                let promise = root.get();
+                let promise = promise.as_promise().unwrap();
 
                 match action {
-                    // These ones must use promise.wrap() to handle exceptions thrown while calling .toJS() on the value.
+                    // These ones must use promise.settle_with() to handle exceptions thrown while calling .toJS() on the value.
                     // These exceptions can happen if the String is too long, ArrayBuffer is too large, JSON parse error, etc.
                     Action::GetText => match self.tag() {
                         Tag::WTFStringImpl | Tag::InternalBlob => {
                             let mut blob = self.use_as_any_blob_allow_non_utf8_string();
-                            promise.wrap(cx.global(), |_| blob.to_string_transfer(cx))?;
+                            promise.settle_with(cx.global(), |_| blob.to_string_transfer(cx))?;
                         }
                         _ => {
                             let mut blob = self.use_();
-                            promise.wrap(cx.global(), |_| blob.to_string_transfer(cx))?;
+                            promise.settle_with(cx.global(), |_| blob.to_string_transfer(cx))?;
                         }
                     },
                     Action::GetJSON => {
                         let mut blob = self.use_as_any_blob_allow_non_utf8_string();
-                        promise.wrap(cx.global(), |_| blob.to_json(cx))?;
+                        promise.settle_with(cx.global(), |_| blob.to_json(cx))?;
                     }
                     Action::GetArrayBuffer => {
                         let mut blob = self.use_as_any_blob_allow_non_utf8_string();
-                        promise.wrap(cx.global(), |_| blob.to_array_buffer_transfer(cx))?;
+                        promise.settle_with(cx.global(), |_| blob.to_array_buffer_transfer(cx))?;
                     }
                     Action::GetBytes => {
                         let mut blob = self.use_as_any_blob_allow_non_utf8_string();
-                        promise.wrap(cx.global(), |_| blob.to_uint8_array_transfer(cx))?;
+                        promise.settle_with(cx.global(), |_| blob.to_uint8_array_transfer(cx))?;
                     }
                     Action::GetFormData(async_form_data) => {
                         let blob = self.use_as_any_blob();
@@ -1060,10 +1061,10 @@ impl Body {
         let was_disturbed = locked.consumer.is_some() || locked.readable.is_disturbed(global);
 
         if let Some(Consumer::Promise(root, _)) = &locked.consumer
-            && let Some(promise) = root.get().as_any_promise()
+            && let Some(promise) = root.get().as_promise()
             && promise.status() == jsc::js_promise::Status::Pending
         {
-            promise.reject_with_async_stack(global, err.to_js(global))?;
+            promise.reject_with_async_stack(global, Ok(err.to_js(global)))?;
         }
 
         let keep_unless_disturbed = |err| {

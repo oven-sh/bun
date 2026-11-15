@@ -1,6 +1,6 @@
 use crate::{JSArrayIterator, JSGlobalObject, JSValue, JsResult};
 
-bun_opaque::opaque_ffi! {
+bun_opaque::sealed_handle! {
     /// Opaque FFI handle for `JSC::JSArray`. Always used behind a reference/pointer.
     pub struct JSArray;
 }
@@ -16,6 +16,7 @@ impl JSArray {
     }
 
     pub(crate) fn iterator<'a>(&self, global: &'a JSGlobalObject) -> JsResult<JSArrayIterator<'a>> {
-        JSValue::from_cell(self).array_iterator(global)
+        // SAFETY: only a live cell is borrowed as `&Self`.
+        unsafe { JSValue::from_cell(self) }.array_iterator(global)
     }
 }

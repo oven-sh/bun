@@ -6,16 +6,6 @@
 using namespace JSC;
 using namespace Bun;
 
-extern "C" JSBigInt* JSC__JSBigInt__fromJS(EncodedJSValue encodedValue)
-{
-    JSValue value = JSValue::decode(encodedValue);
-    ASSERT(!value.isEmpty());
-    if (auto* bigInt = dynamicDowncast<JSBigInt>(value)) {
-        return bigInt;
-    }
-    return nullptr;
-}
-
 extern "C" int8_t JSC__JSBigInt__orderDouble(JSBigInt* bigInt, double num)
 {
     ASSERT(!std::isnan(num));

@@ -3,15 +3,12 @@ use core::cmp::Ordering;
 use crate::{JSGlobalObject, JSValue, JsResult};
 use bun_core::String as BunString;
 
-bun_opaque::opaque_ffi! {
+bun_opaque::sealed_handle! {
     /// Opaque JSC BigInt cell. Always used behind a reference (`&JSBigInt`).
     pub struct JSBigInt;
 }
 
 unsafe extern "C" {
-    // safe: `JSValue` is a by-value tagged i64; returns a nullable GC-cell
-    // pointer the caller checks before deref.
-    safe fn JSC__JSBigInt__fromJS(value: JSValue) -> *mut JSBigInt;
     safe fn JSC__JSBigInt__orderDouble(this: &JSBigInt, num: f64) -> i8;
     safe fn JSC__JSBigInt__orderUint64(this: &JSBigInt, num: u64) -> i8;
     safe fn JSC__JSBigInt__orderInt64(this: &JSBigInt, num: i64) -> i8;
@@ -47,14 +44,10 @@ impl BigIntOrderable for i64 {
 }
 
 impl JSBigInt {
-    pub fn from_js(value: JSValue) -> Option<&'static JSBigInt> {
-        // Returned pointer (if non-null) points to a GC-owned JSBigInt cell.
-        // Lifetime is tied to GC, not Rust — caller must keep `value` alive
-        // (stack-scanned) for as long as the returned ref is used. `JSBigInt`
-        // is an opaque ZST handle so the deref is the centralised `opaque_ref`
-        // proof.
-        let p = JSC__JSBigInt__fromJS(value);
-        (!p.is_null()).then(|| JSBigInt::opaque_ref(p))
+    #[inline]
+    pub fn from_js(value: &JSValue) -> Option<&JSBigInt> {
+        // SAFETY: just checked.
+        (value.js_type() == crate::JSType::HeapBigInt).then(|| unsafe { value.as_cell_unchecked() })
     }
 
     pub fn order<T: BigIntOrderable>(&self, num: T) -> Ordering {

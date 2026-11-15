@@ -5092,7 +5092,7 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
         // Instead, when the module yielded, capture the async capability's
         // promise. Its resolution value is the module's final completion
         // value; the --print loop in run_command.rs already unwraps promises
-        // via asAnyPromise + Bun__onResolveEntryPointResult.
+        // via as_promise + Bun__onResolveEntryPointResult.
         JSC::JSValue valueToStore = result;
         if (auto* moduleRecord = dynamicDowncast<JSC::AbstractModuleRecord>(moduleRecordValue)) {
             JSC::JSValue state = moduleRecord->internalField(JSC::AbstractModuleRecord::Field::State).get();

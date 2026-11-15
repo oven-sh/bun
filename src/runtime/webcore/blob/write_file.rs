@@ -343,14 +343,14 @@ impl WriteFile {
 
         if let Some(err) = system_error {
             return settle(
-                promise.swap(),
+                &promise.swap(global_this),
                 global_this,
                 WriteFileResultType::Err(Box::new(err)),
             );
         }
 
         settle(
-            promise.swap(),
+            &promise.swap(global_this),
             global_this,
             WriteFileResultType::Result(total_written as SizeType),
         )
@@ -695,7 +695,7 @@ mod windows_impl {
             };
             drop(self);
 
-            settle(promise.swap(), &global_this, result)
+            settle(&promise.swap(&global_this), &global_this, result)
         }
 
         fn throw(mut self: Box<Self>, err: sys::Error) -> jsc::JsResult<()> {
@@ -776,7 +776,7 @@ mod windows_impl {
 
 /// Reports a finished write to its promise.
 fn settle(
-    promise: &mut JSPromise,
+    promise: &JSPromise,
     global_this: &JSGlobalObject,
     count: WriteFileResultType,
 ) -> jsc::JsResult<()> {

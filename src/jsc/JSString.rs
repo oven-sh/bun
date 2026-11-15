@@ -4,7 +4,7 @@ use crate::{JSGlobalObject, JSValue, JsResult};
 use bun_core::StringView;
 use bun_core::Utf8Bytes;
 
-bun_opaque::opaque_ffi! {
+bun_opaque::sealed_handle! {
     /// Opaque JSC `JSString*` cell. Never constructed in Rust; only handled by reference.
     pub struct JSString;
 }
@@ -66,10 +66,6 @@ pub struct Latin1Characters<'a> {
 }
 
 impl JSString {
-    pub fn to_js(&self) -> JSValue {
-        JSValue::from_cell(self)
-    }
-
     #[inline]
     pub fn ensure_still_alive(&self) {
         self.to_js().ensure_still_alive();
@@ -83,7 +79,8 @@ impl JSString {
             crate::call_check_slow(global, || JSC__JSString__view(self, global, &mut owner))?;
         Ok(JSStringView {
             cell: self,
-            owner: JSString::opaque_ref(owner),
+            // SAFETY: `self` or its base string. The view keeps it visible to the stack scan.
+            owner: unsafe { &*owner },
             view,
         })
     }
@@ -111,7 +108,7 @@ impl JSString {
 
     /// The characters of an 8-bit string that is no rope, read in place.
     #[inline(always)]
-    pub fn flat_latin1_characters(&self) -> Option<&[u8]> {
+    pub(crate) fn flat_latin1_characters(&self) -> Option<&[u8]> {
         // SAFETY: every JSString has `m_fiber`.
         let fiber: usize = unsafe { self.read_at(layout::FIBER) };
         if fiber & layout::IS_ROPE != 0 {
@@ -124,7 +121,7 @@ impl JSString {
 
     /// The characters, read in place: no call, nothing resolved, nothing thrown.
     #[inline]
-    pub fn latin1_characters(&self) -> Option<Latin1Characters<'_>> {
+    pub(crate) fn latin1_characters(&self) -> Option<Latin1Characters<'_>> {
         // SAFETY: every JSString has `m_fiber`.
         let fiber: usize = unsafe { self.read_at(layout::FIBER) };
         if fiber & layout::IS_ROPE != 0 {

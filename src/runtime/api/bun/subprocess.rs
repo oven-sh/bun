@@ -807,7 +807,7 @@ impl Subprocess<'_> {
                     match status {
                         Status::Exited(exited) => {
                             let _ = promise
-                                .as_any_promise()
+                                .as_promise()
                                 .unwrap()
                                 .resolve(global_this, JSValue::js_number(exited.code as f64));
                             // TODO: properly propagate exception upwards
@@ -815,13 +815,13 @@ impl Subprocess<'_> {
                         Status::Err(err) => {
                             let js_err = err.to_js(global_this);
                             let _ = promise
-                                .as_any_promise()
+                                .as_promise()
                                 .unwrap()
-                                .reject_with_async_stack(global_this, js_err);
+                                .reject_with_async_stack(global_this, Ok(js_err));
                             // TODO: properly propagate exception upwards
                         }
                         Status::Signaled(signaled) => {
-                            let _ = promise.as_any_promise().unwrap().resolve(
+                            let _ = promise.as_promise().unwrap().resolve(
                                 global_this,
                                 JSValue::js_number(
                                     bun_sys::SignalCode(*signaled).to_exit_code() as f64

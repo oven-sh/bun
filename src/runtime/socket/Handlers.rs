@@ -213,10 +213,10 @@ impl Handlers {
         let Some(promise) = self.take_promise() else {
             return Ok(());
         };
-        let Some(any_promise) = promise.as_any_promise() else {
+        let Some(js_promise) = promise.as_promise() else {
             return Ok(());
         };
-        any_promise.resolve(&self.global_object, value)?;
+        js_promise.resolve(&self.global_object, value)?;
         Ok(())
     }
 
@@ -224,10 +224,10 @@ impl Handlers {
         let Some(promise) = self.take_promise() else {
             return Ok(false);
         };
-        let Some(any_promise) = promise.as_any_promise() else {
+        let Some(js_promise) = promise.as_promise() else {
             return Ok(false);
         };
-        any_promise.reject(&self.global_object, value)?;
+        js_promise.reject(&self.global_object, Ok(value))?;
         Ok(true)
     }
 

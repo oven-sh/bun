@@ -21,8 +21,8 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-bun_opaque::opaque_ffi! {
-    /// Opaque JSC `JSObject` cell handle. Always borrowed (`&JSObject` / `&mut JSObject`).
+bun_opaque::sealed_handle! {
+    /// Opaque JSC `JSObject` cell handle. Always borrowed (`&JSObject`).
     pub struct JSObject;
 }
 
@@ -32,10 +32,6 @@ impl JSObject {
         JSC__JSObject__maxInlineCapacity
     }
 
-    pub fn to_js(&self) -> JSValue {
-        JSValue::from_cell(self)
-    }
-
     /// Marshall a struct instance into a JSObject, copying its properties.
     ///
     /// Each field will be encoded with `jsc::to_js`. Fields whose types have a
@@ -43,10 +39,7 @@ impl JSObject {
     ///
     /// This method is equivalent to `Object.create(...)` + setting properties,
     /// and is only intended for creating POJOs.
-    pub fn create<T: PojoFields>(
-        pojo: &T,
-        global: &JSGlobalObject,
-    ) -> JsResult<&'static mut JSObject> {
+    pub fn create<T: PojoFields>(pojo: &T, global: &JSGlobalObject) -> JsResult<JSValue> {
         Self::create_from_struct_with_prototype::<T, false>(pojo, global)
     }
 
@@ -61,7 +54,7 @@ impl JSObject {
     pub fn create_null_proto<T: PojoFields>(
         pojo: &T,
         global: &JSGlobalObject,
-    ) -> JsResult<&'static mut JSObject> {
+    ) -> JsResult<JSValue> {
         Self::create_from_struct_with_prototype::<T, true>(pojo, global)
     }
 
@@ -80,7 +73,7 @@ impl JSObject {
     fn create_from_struct_with_prototype<T: PojoFields, const NULL_PROTOTYPE: bool>(
         pojo: &T,
         global: &JSGlobalObject,
-    ) -> JsResult<&'static mut JSObject> {
+    ) -> JsResult<JSValue> {
         // Rust has no field reflection; `PojoFields` impls are hand-written
         // (see trait docs) and emit an inline
         // `put(b"name", JSValue::from_any(global, &self.name)?)?;` per field.
@@ -90,24 +83,15 @@ impl JSObject {
         } else {
             JSValue::create_empty_object(global, T::FIELD_COUNT)
         };
-        debug_assert!(val.is_object());
-        // `val.is_object()` asserted above in debug; JSC guarantees these
-        // constructors return a JSObject cell. A cell-tagged JSValue's payload
-        // IS the cell pointer (NotCellMask bits are zero). `JSObject` is an
-        // `opaque_ffi!` ZST handle; `opaque_mut` is the centralised
-        // non-null-ZST deref proof (zero-byte `&mut` cannot alias).
-        let obj = JSObject::opaque_mut(val.0 as *mut JSObject);
-
-        let cell = obj.to_js();
         // Each `fromAny` result is `put()` immediately before the next field
         // is encoded. The callback shape preserves that ordering and keeps
         // every intermediate JSValue on the stack (never collected into a Vec).
         pojo.put_fields(global, |name, value| {
-            cell.put(global, name, value);
+            val.put(global, name, value);
             Ok(())
         })?;
 
-        Ok(obj)
+        Ok(val)
     }
 
     /// # Safety
@@ -126,7 +110,7 @@ impl JSObject {
         // A cell-tagged JSValue's
         // payload IS the JSCell* (NotCellMask bits are zero), so the raw usize
         // is the pointer. SAFETY: caller guarantees `owner.is_cell()`.
-        let owner_cell = owner.0 as *mut JSCell;
+        let owner_cell = owner.encoded() as *mut JSCell;
         // SAFETY: thin FFI shim; `owner_cell` is non-null per caller contract.
         // `global.as_ptr()` yields the raw FFI handle — JSGlobalObject is an
         // opaque JSC cell with interior mutability on the C++ side; Rust holds
@@ -148,10 +132,7 @@ impl JSObject {
     }
 
     /// This will not call getters or be observable from JavaScript.
-    pub(crate) fn get_code_property_vm_inquiry(
-        &mut self,
-        global: &JSGlobalObject,
-    ) -> Option<JSValue> {
+    pub(crate) fn get_code_property_vm_inquiry(&self, global: &JSGlobalObject) -> Option<JSValue> {
         let v = Bun__JSObject__getCodePropertyVMInquiry(global, self);
         if v.is_empty() {
             return None;

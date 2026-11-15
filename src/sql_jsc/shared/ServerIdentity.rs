@@ -52,7 +52,7 @@ fn verdict(
         return Ok(Some(no_verdict(global)));
     }
     // Any object counts: a DOMException or a util.inherits() error is not an ErrorInstance cell.
-    if result.is_object() && result.as_any_promise().is_none() {
+    if result.is_object() && result.as_promise().is_none() {
         return Ok(Some(result));
     }
     // As in Node, every other truthy value refuses too, the Promise of an async callback included.

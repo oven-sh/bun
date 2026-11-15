@@ -1125,15 +1125,15 @@ impl<'a> Repl<'a> {
     }
 
     /// Drive the loop until `promise` settles; `true` if a SIGINT (see `sigint_handler`) cut the wait short.
-    fn wait_for_promise_or_sigint(vm: &VirtualMachine, promise: *mut jsc::JSPromise) -> bool {
+    fn wait_for_promise_or_sigint(vm: &VirtualMachine, promise: &jsc::JSPromise) -> bool {
         use core::sync::atomic::Ordering;
         SIGINT_DURING_WAIT.store(false, Ordering::Release);
-        while jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending {
+        while promise.status() == PromiseStatus::Pending {
             if SIGINT_DURING_WAIT.swap(false, Ordering::AcqRel) {
                 return true;
             }
             vm.event_loop().tick();
-            if jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending
+            if promise.status() == PromiseStatus::Pending
                 && !SIGINT_DURING_WAIT.load(Ordering::Acquire)
             {
                 vm.event_loop().auto_tick();
@@ -1647,7 +1647,7 @@ impl<'a> Repl<'a> {
         let mut resolved_result = result;
         if let Some(promise) = result.as_promise() {
             // Mark as handled BEFORE waiting to prevent unhandled rejection output
-            jsc::JSPromise::opaque_mut(promise).set_handled();
+            promise.set_handled();
 
             // Temporarily re-enable signal delivery so Ctrl+C can interrupt
             // the blocking waitForPromise call
@@ -1664,12 +1664,12 @@ impl<'a> Repl<'a> {
             // SAFETY: `vm.jsc_vm` is the live JSC VM handle for this thread.
             let jsc_vm_ref = vm.jsc_vm();
             // Check promise status after waiting
-            match jsc::JSPromise::opaque_mut(promise).status() {
+            match promise.status() {
                 PromiseStatus::Fulfilled => {
-                    resolved_result = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
+                    resolved_result = promise.result(jsc_vm_ref);
                 }
                 PromiseStatus::Rejected => {
-                    let rejection = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
+                    let rejection = promise.result(jsc_vm_ref);
                     self.set_last_error(rejection);
                     // Set _error on the global object
                     let global_this = global.to_js_value();
@@ -1783,18 +1783,14 @@ impl<'a> Repl<'a> {
         // If the transform wrapped in an async IIFE (top-level await), wait for it
         let mut resolved_result = result;
         if let Some(promise) = result.as_promise() {
-            // SAFETY: `promise` is a live JSC heap cell; `vm.jsc_vm` is the
-            // owning JSC VM handle for this thread.
-            jsc::JSPromise::opaque_mut(promise).set_handled();
+            promise.set_handled();
             // Interrupted (SIGINT forbids execution) ⇒ handled just below.
-            let _ = vm.wait_for_promise(jsc::AnyPromise::Normal(promise));
+            let _ = vm.wait_for_promise(promise);
             let jsc_vm_ref = vm.jsc_vm();
-            match jsc::JSPromise::opaque_mut(promise).status() {
-                PromiseStatus::Fulfilled => {
-                    resolved_result = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref)
-                }
+            match promise.status() {
+                PromiseStatus::Fulfilled => resolved_result = promise.result(jsc_vm_ref),
                 PromiseStatus::Rejected => {
-                    let rejection = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
+                    let rejection = promise.result(jsc_vm_ref);
                     self.print_js_error_to(rejection, Output::error_writer(), stderr_colors);
                     return true;
                 }
@@ -1899,9 +1895,7 @@ impl<'a> Repl<'a> {
 
         let mut resolved_result = result;
         if let Some(promise) = result.as_promise() {
-            // SAFETY: `promise` is a live JSC heap cell; `vm.jsc_vm` is the
-            // owning JSC VM handle for this thread.
-            jsc::JSPromise::opaque_mut(promise).set_handled();
+            promise.set_handled();
             self.enable_signals_during_wait();
             // Wait for the promise to settle, or for a SIGINT.
             if Self::wait_for_promise_or_sigint(vm, promise) {
@@ -1910,12 +1904,10 @@ impl<'a> Repl<'a> {
                 return;
             }
             let jsc_vm_ref = vm.jsc_vm();
-            match jsc::JSPromise::opaque_mut(promise).status() {
-                PromiseStatus::Fulfilled => {
-                    resolved_result = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref)
-                }
+            match promise.status() {
+                PromiseStatus::Fulfilled => resolved_result = promise.result(jsc_vm_ref),
                 PromiseStatus::Rejected => {
-                    let rejection = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
+                    let rejection = promise.result(jsc_vm_ref);
                     self.set_last_error(rejection);
                     self.print_js_error(rejection);
                     self.disable_signals_during_wait();

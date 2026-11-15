@@ -966,8 +966,8 @@ pub(crate) mod js_bundler {
                     )?;
 
                     if !plugin_result.is_empty_or_undefined_or_null() {
-                        if let Some(promise) = plugin_result.as_any_promise() {
-                            promise.set_handled(global_this.vm());
+                        if let Some(promise) = plugin_result.as_promise() {
+                            promise.set_handled();
                             global_this
                                 .bun_vm()
                                 .wait_for_promise(promise)
@@ -1315,7 +1315,7 @@ pub(crate) mod js_bundler {
 
             // Parse the files option for in-memory files
             if let Some(files_obj) = config.get_own_object(global_this, "files")? {
-                this.files = file_map_from_js(global_this, JSValue::from_cell(files_obj))?;
+                this.files = file_map_from_js(global_this, files_obj.to_js())?;
             }
 
             if let Some(flag) =
@@ -1551,7 +1551,7 @@ pub(crate) mod js_bundler {
             if let Some(define) = config.get_own_object(global_this, "define")? {
                 let define_iter = jsc::JSPropertyIterator::init(
                     global_this,
-                    define,
+                    &define,
                     jsc::JSPropertyIteratorOptions {
                         skip_empty_name: true,
                         include_value: true,
@@ -1588,7 +1588,7 @@ pub(crate) mod js_bundler {
             if let Some(loaders) = config.get_own_object(global_this, "loader")? {
                 let loader_iter = jsc::JSPropertyIterator::init(
                     global_this,
-                    loaders,
+                    &loaders,
                     jsc::JSPropertyIteratorOptions {
                         skip_empty_name: true,
                         include_value: true,
@@ -2187,7 +2187,8 @@ pub(crate) mod js_bundler {
         pub(crate) fn new(global: &JSGlobalObject, target: BunPluginTarget) -> Self {
             jsc::mark_binding();
             let plugin = JSBundlerPlugin__create(global, target);
-            JSValue::from_cell(plugin).protect();
+            // SAFETY: a cell that the engine has just made.
+            unsafe { JSValue::from_cell(plugin) }.protect();
             Self(NonNull::new(plugin).expect("JSBundlerPlugin__create returns a cell"))
         }
 
@@ -2212,7 +2213,8 @@ pub(crate) mod js_bundler {
                 return;
             }
             self.tombstone();
-            JSValue::from_cell(self.0.as_ptr()).unprotect();
+            // SAFETY: `new` protected it.
+            unsafe { JSValue::from_cell(self.0.as_ptr()) }.unprotect();
         }
     }
 
@@ -2281,7 +2283,7 @@ pub(crate) mod js_bundler {
             bun_jsc::top_scope!(scope, global_this);
             let value = JSBundlerPlugin__runOnEndCallbacks(
                 self,
-                build_promise.as_value(global_this),
+                build_promise.to_js(),
                 build_result,
                 rejection_value,
             );

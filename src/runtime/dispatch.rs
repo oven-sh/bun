@@ -1018,12 +1018,6 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
                 this.read(Some(event))
             })
         }
-        PollTag::InstallGit => io_arm!(
-            [Install],
-            RefPtr::init_ref,
-            GitSubprocess,
-            |this, key, event| GitSubprocess::on_io(&this, key, event)
-        ),
         PollTag::ShellIoReader => {
             io_arm!([Shell], clone_rc, ShellIoReader, |this, _, event| {
                 this.on_io(event)
@@ -1062,6 +1056,12 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         ),
 
         // These free themselves once they have read to the end.
+        PollTag::InstallGit => io_arm!(
+            [Install],
+            bun_ptr::ThisPtr::new,
+            GitSubprocess,
+            |this, key, event| GitSubprocess::on_io(this, key, event)
+        ),
         PollTag::SubprocessPipeReader => {
             in_features!([Spawn], (owner: Owner = owner, event: IoEvent = event) {
                 // SAFETY: the contract of `__bun_run_io`.

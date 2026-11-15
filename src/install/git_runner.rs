@@ -1285,10 +1285,11 @@ impl GitSubprocess {
         if key == 0 { &self.stdout } else { &self.stderr }
     }
 
-    pub fn on_io(this: &RefPtr<Self>, key: u32, event: IoEvent) {
+    /// May free `this`.
+    pub fn on_io(this: ThisPtr<Self>, key: u32, event: IoEvent) {
         let event_loop = this.event_loop.as_event_loop_ctx();
         if this.note_read_status(this.output(key).read(event_loop, Some(event))) {
-            Self::maybe_finished(this.this_ptr());
+            Self::maybe_finished(this);
         }
     }
 

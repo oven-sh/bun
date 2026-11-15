@@ -898,21 +898,6 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         self.err_fmt(pos, format_args!("{}", msg))
     }
 
-    /// Where the grammar has a required `S` before the current token.
-    fn require_spaced(&mut self) -> PResult<()> {
-        if self.tok.spaced {
-            return Ok(());
-        }
-        let tok = self.tok;
-        Err(self.err_fmt(
-            tok.pos,
-            format_args!(
-                "Whitespace is required before {}",
-                KindDisplay(tok.kind, self.latin1)
-            ),
-        ))
-    }
-
     fn err_fmt(&mut self, pos: usize, args: core::fmt::Arguments<'_>) -> PErr {
         let loc = self.loc(pos);
         self.log.add_error_fmt_opts(
@@ -982,6 +967,21 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
 
     fn err_invalid_char(&mut self) -> PErr {
         self.err_here("Invalid character in XML:")
+    }
+
+    /// Where the grammar has a required `S` before the current token.
+    fn require_spaced(&mut self) -> PResult<()> {
+        if self.tok.spaced {
+            return Ok(());
+        }
+        let tok = self.tok;
+        Err(self.err_fmt(
+            tok.pos,
+            format_args!(
+                "Whitespace is required before {}",
+                KindDisplay(tok.kind, self.latin1)
+            ),
+        ))
     }
 
     // ── byte cursor ────────────────────────────────────────────────────────
@@ -3316,6 +3316,10 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         )
     }
 
+    fn require_spaced(&mut self) -> PResult<()> {
+        self.scanner.require_spaced()
+    }
+
     fn expect_name(&mut self, expected: &str) -> PResult<&'a [U]> {
         match self.scanner.tok.kind {
             Kind::Name(name) => Ok(name),
@@ -3537,7 +3541,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         if !matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, name)) {
             return Ok(None);
         }
-        self.scanner.require_spaced()?;
+        self.require_spaced()?;
         let pos = self.scanner.tok.pos;
         self.advance()?;
         if self.scanner.tok.kind != Kind::Eq {
@@ -3559,11 +3563,11 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         self.in_dtd = true;
         self.advance()?;
         self.expect_name("the document type name")?;
-        self.scanner.require_spaced()?;
+        self.require_spaced()?;
         self.advance()?;
         if matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"SYSTEM") || eq_ascii(n, b"PUBLIC"))
         {
-            self.scanner.require_spaced()?;
+            self.require_spaced()?;
             self.parse_external_id(false)?;
             self.scanner.has_external_subset = true;
         }
@@ -3594,17 +3598,17 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             if !matches!(self.scanner.tok.kind, Kind::Literal(_)) {
                 return Err(self.unexpected("a quoted system identifier after SYSTEM"));
             }
-            self.scanner.require_spaced()?;
+            self.require_spaced()?;
             return self.advance();
         }
         self.advance_literal(Literal::Pubid)?;
         if !matches!(self.scanner.tok.kind, Kind::Literal(_)) {
             return Err(self.unexpected("a quoted public identifier after PUBLIC"));
         }
-        self.scanner.require_spaced()?;
+        self.require_spaced()?;
         self.advance_literal(Literal::System)?;
         if matches!(self.scanner.tok.kind, Kind::Literal(_)) {
-            self.scanner.require_spaced()?;
+            self.require_spaced()?;
             return self.advance();
         }
         if notation {
@@ -3678,15 +3682,15 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     fn parse_element_decl(&mut self) -> PResult<u32> {
         self.advance()?;
         self.expect_name("an element name after '<!ELEMENT'")?;
-        self.scanner.require_spaced()?;
+        self.require_spaced()?;
         self.advance()?;
         match self.scanner.tok.kind {
             Kind::Name(n) if eq_ascii(n, b"EMPTY") || eq_ascii(n, b"ANY") => {
-                self.scanner.require_spaced()?;
+                self.require_spaced()?;
                 self.advance()?;
             }
             Kind::ParenOpen => {
-                self.scanner.require_spaced()?;
+                self.require_spaced()?;
                 self.advance()?;
                 if matches!(self.scanner.tok.kind, Kind::Hash(n) if eq_ascii(n, b"PCDATA")) {
                     self.parse_mixed()?;
@@ -3820,7 +3824,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     fn parse_attlist_decl(&mut self) -> PResult<u32> {
         self.advance()?;
         let element = self.expect_name("an element name after '<!ATTLIST'")?;
-        self.scanner.require_spaced()?;
+        self.require_spaced()?;
         loop {
             self.advance()?;
             let name = match self.scanner.tok.kind {
@@ -3832,32 +3836,32 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                     );
                 }
             };
-            self.scanner.require_spaced()?;
+            self.require_spaced()?;
 
             // AttType (§3.3.1): without validation only CDATA versus the
             // rest matters, for attribute-value normalization (§3.3.3).
             self.advance()?;
             let cdata = match self.scanner.tok.kind {
                 Kind::Name(n) if eq_ascii(n, b"CDATA") => {
-                    self.scanner.require_spaced()?;
+                    self.require_spaced()?;
                     true
                 }
                 Kind::Name(n) if eq_ascii(n, b"ID") || eq_ascii(n, b"IDREF") || eq_ascii(n, b"IDREFS") || eq_ascii(n, b"ENTITY") || eq_ascii(n, b"ENTITIES") || eq_ascii(n, b"NMTOKEN") || eq_ascii(n, b"NMTOKENS") => {
-                    self.scanner.require_spaced()?;
+                    self.require_spaced()?;
                     false
                 }
                 Kind::Name(n) if eq_ascii(n, b"NOTATION") => {
-                    self.scanner.require_spaced()?;
+                    self.require_spaced()?;
                     self.advance()?;
                     if self.scanner.tok.kind != Kind::ParenOpen {
                         return Err(self.unexpected("'(' after NOTATION"));
                     }
-                    self.scanner.require_spaced()?;
+                    self.require_spaced()?;
                     self.parse_enumeration(true)?;
                     false
                 }
                 Kind::ParenOpen => {
-                    self.scanner.require_spaced()?;
+                    self.require_spaced()?;
                     self.parse_enumeration(false)?;
                     false
                 }
@@ -3870,20 +3874,20 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             self.advance_literal(literal)?;
             let default = match self.scanner.tok.kind {
                 Kind::Hash(n) if eq_ascii(n, b"REQUIRED") || eq_ascii(n, b"IMPLIED") => {
-                    self.scanner.require_spaced()?;
+                    self.require_spaced()?;
                     None
                 }
                 Kind::Hash(n) if eq_ascii(n, b"FIXED") => {
-                    self.scanner.require_spaced()?;
+                    self.require_spaced()?;
                     self.advance_literal(literal)?;
                     let Kind::Literal(value) = self.scanner.tok.kind else {
                         return Err(self.unexpected("a quoted default value after #FIXED"));
                     };
-                    self.scanner.require_spaced()?;
+                    self.require_spaced()?;
                     Some(value)
                 }
                 Kind::Literal(value) => {
-                    self.scanner.require_spaced()?;
+                    self.require_spaced()?;
                     Some(value)
                 }
                 _ => {
@@ -3936,7 +3940,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         }
         let parameter = self.scanner.tok.kind == Kind::Percent;
         if parameter {
-            self.scanner.require_spaced()?;
+            self.require_spaced()?;
             self.advance()?;
         }
         let name = self.expect_name(if parameter {
@@ -3944,20 +3948,20 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         } else {
             "an entity name or '%' after '<!ENTITY'"
         })?;
-        self.scanner.require_spaced()?;
+        self.require_spaced()?;
 
         self.advance_literal(Literal::EntityValue)?;
         let value = match self.scanner.tok.kind {
             Kind::Literal(value) => {
-                self.scanner.require_spaced()?;
+                self.require_spaced()?;
                 self.advance()?;
                 EntityValue::Internal(value)
             }
             Kind::Name(n) if eq_ascii(n, b"SYSTEM") || eq_ascii(n, b"PUBLIC") => {
-                self.scanner.require_spaced()?;
+                self.require_spaced()?;
                 self.parse_external_id(false)?;
                 if matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"NDATA")) {
-                    self.scanner.require_spaced()?;
+                    self.require_spaced()?;
                     if parameter {
                         return Err(self
                             .scanner
@@ -3965,7 +3969,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                     }
                     self.advance()?;
                     self.expect_name("a notation name after NDATA")?;
-                    self.scanner.require_spaced()?;
+                    self.require_spaced()?;
                     self.advance()?;
                     EntityValue::Unparsed
                 } else {
@@ -3993,13 +3997,13 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     fn parse_notation_decl(&mut self) -> PResult<u32> {
         self.advance()?;
         self.expect_name("a notation name after '<!NOTATION'")?;
-        self.scanner.require_spaced()?;
+        self.require_spaced()?;
         self.advance()?;
         if !matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"SYSTEM") || eq_ascii(n, b"PUBLIC"))
         {
             return Err(self.unexpected("SYSTEM or PUBLIC in the notation declaration"));
         }
-        self.scanner.require_spaced()?;
+        self.require_spaced()?;
         self.parse_external_id(true)?;
         self.expect_gt("'>' to end the notation declaration")
     }

@@ -846,7 +846,7 @@ pub mod analyze_transpiled_module {
 }
 
 /// Where [`print_ast`] saves what it printed.
-pub trait RuntimeTranspilerCache {
+pub trait TranspilerCacheWriter {
     fn put(&self, output_code: &[u8], sourcemap: &[u8], esm_record: &[u8]);
 }
 
@@ -1285,7 +1285,7 @@ pub struct Options<'a> {
     pub source_map_handler: Option<SourceMapHandler<'a>>,
     pub target: bun_ast::Target,
 
-    pub runtime_transpiler_cache: Option<&'a dyn RuntimeTranspilerCache>,
+    pub runtime_transpiler_cache: Option<&'a dyn TranspilerCacheWriter>,
     pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
     pub input_files_for_dev_server: Option<&'a [bun_ast::Source<'a>]>,
 

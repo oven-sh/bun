@@ -9,6 +9,7 @@ use core::ptr::NonNull;
 
 use bun_bundler::Transpiler;
 use bun_io as Async;
+use bun_ptr::AliasableBox;
 use bun_uws as uws;
 
 use crate::bun_string_jsc;
@@ -84,8 +85,7 @@ pub struct EntryPointResult {
 /// live in `bun_options_types` (already a dep of `bun_jsc`), so they thread
 /// through here instead of being dropped at the CLI call-site.
 pub struct InitOptions {
-    /// The CLI's `api.TransformOptions`. Consumed by `RuntimeHooks::init_runtime_state`
-    /// → `Transpiler::init(.., configureTransformOptionsForBunVM(args), ..)`.
+    /// The CLI's `api.TransformOptions`, for `Transpiler::init`.
     pub transform_options: bun_options_types::schema::api::TransformOptions,
     /// Consumed by `RuntimeHooks::init_runtime_state` → `configureDebugger`.
     pub debugger: bun_options_types::context::Debugger,
@@ -93,11 +93,9 @@ pub struct InitOptions {
     /// the caller's log instead of boxing a fresh one (CLI-path macros pass the
     /// transpiler's log so macro load errors land in the bundle output).
     pub log: Option<NonNull<bun_ast::Log>>,
-    /// Forwarded to
-    /// `RuntimeHooks::init_runtime_state` so the high-tier `Transpiler::init`
-    /// reuses the caller's env loader.
+    /// For `Transpiler::init`, in place of the process's.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
-    /// Overrides `env_loader`. The VM owns it and frees it with its runtime state.
+    /// Overrides `env_loader`. The VM owns it.
     pub owned_env_loader: Option<Box<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     /// `--install=...`; the resolver needs it before `configure_linker()` caches package.json.
@@ -176,7 +174,7 @@ pub struct VirtualMachine {
     /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`]); null when
     /// hot reload is disabled. Read via [`Self::bun_watcher_ptr`].
     pub bun_watcher: Cell<*mut crate::hot_reloader::ImportWatcher>,
-    pub(crate) console: *mut crate::console_object::ConsoleObject,
+    pub(crate) console: AliasableBox<crate::console_object::ConsoleObject>,
     // BORROW_PARAM (`&'a mut bun_ast::Log` per LIFETIMES.tsv) — raw NonNull
     // used because VM is self-referential and cannot carry `<'a>`.
     pub log: Cell<Option<NonNull<bun_ast::Log>>>,
@@ -212,7 +210,7 @@ pub struct VirtualMachine {
     /// Opaque per-VM `bun_runtime` state (boxed `timer::All` +
     /// `Body::Value::HiveAllocator` + …). Set by
     /// `RuntimeHooks::init_runtime_state` in [`init`]; reclaimed by
-    /// `RuntimeHooks::deinit_runtime_state` in [`destroy`]. Null when no high
+    /// `RuntimeHooks::deinit_runtime_state` on drop. Null when no high
     /// tier is installed (e.g. `bun_jsc` unit tests).
     ///
     /// Note: the per-VM timer state and body-value pool live inside this box —
@@ -239,7 +237,6 @@ pub struct VirtualMachine {
     /// wrapper + pending promise when an async handler suspends the rewrite).
     /// Saved and restored LIFO around every lol-html call, so a handler body
     /// that synchronously starts a nested `transform()` nests correctly.
-    /// All-zero bytes decode as `None` (null niche).
     pub html_rewriter_active_sink: Cell<Option<core::ptr::NonNull<c_void>>>,
     // Note: layering — the concrete `bun_standalone_graph::Graph` lives
     // in a higher-tier crate. The resolver already broke that cycle with the
@@ -292,10 +289,8 @@ pub struct VirtualMachine {
     pub(crate) had_errors: Cell<bool>,
 
     pub macros: JsCell<MacroMap>,
-    /// Never freed.
-    pub macro_entry_points: JsCell<
-        bun_collections::ArrayHashMap<i32, &'static bun_bundler::entry_points::MacroEntryPoint>,
-    >,
+    pub macro_entry_points:
+        JsCell<bun_collections::ArrayHashMap<i32, Box<bun_bundler::entry_points::MacroEntryPoint>>>,
     pub macro_mode: Cell<bool>,
     /// Depth of live [`MacroModeGuard`]s on this thread. Nonzero exactly while
     /// macro JS may be executing — both `MacroContext::call` and `Macro::init`
@@ -378,6 +373,8 @@ pub struct VirtualMachine {
     pub aggressive_garbage_collection: Cell<GCLevel>,
 
     pub module_loader: ModuleLoader::ModuleLoader,
+    /// Kept between calls of `Bun.TOML.parse` and its siblings.
+    pub text_format_arena: Cell<Option<bun_alloc::Arena>>,
 
     pub(crate) gc_controller: crate::GarbageCollectionController,
     /// The `WebWorker` whose thread this VM runs on (`None` on the main thread).
@@ -387,11 +384,11 @@ pub struct VirtualMachine {
     /// only: `WebWorker::create` pushes, `release_parent_poll_ref` removes,
     /// `teardown` takes the rest for `join_child_workers`.
     pub child_workers: JsCell<Vec<*mut crate::web_worker::WebWorker>>,
-    /// This VM's live pool jobs (`bun_jsc::job`); JS thread only, zero-valid.
+    /// This VM's live pool jobs (`bun_jsc::job`); JS thread only.
     pub(crate) jobs: JsCell<crate::job::JobList>,
     /// The door out of this thread (`bun_jsc::vm_handle`): tickets for work
     /// that leaves it are taken here, and `teardown` waits on it.
-    handle: core::mem::ManuallyDrop<crate::VmHandle>,
+    handle: crate::VmHandle,
     pub pending_ipc: Cell<Option<PendingIpc>>,
     pub hot_reload_counter: Cell<u32>,
 
@@ -426,7 +423,7 @@ pub struct VirtualMachine {
     pub(crate) graph_contexts: JsCell<
         bun_collections::ArrayHashMap<
             crate::ContextId,
-            bun_ptr::AliasableBox<crate::ScriptExecutionContext>,
+            AliasableBox<crate::ScriptExecutionContext>,
         >,
     >,
     /// The context native code has entered ([`enter_context`](Self::enter_context)) and not yet
@@ -442,6 +439,14 @@ pub struct VirtualMachine {
     /// made under an earlier count is the finished file's, and is dropped.
     pub test_isolation_generation: Cell<u32>,
     pub test_isolation_state: TestIsolationState,
+
+    // Last: `transpiler` points into these.
+    _transpiler_arena: AliasableBox<bun_alloc::Arena>,
+    _owned_env_loader: Option<AliasableBox<bun_dotenv::Loader>>,
+    _owned_log: Option<AliasableBox<bun_ast::Log>>,
+    _ast_stores: bun_ast::OwnedStores,
+    /// What is dropped with the VM still reaches it through [`get`](Self::get).
+    _pin: core::marker::PhantomPinned,
 }
 
 #[derive(Default)]
@@ -1020,7 +1025,7 @@ impl VirtualMachine {
     /// on this VM's behalf takes a [`ticket`](Self::ticket) instead.
     #[inline]
     pub fn handle(&self) -> crate::VmHandle {
-        (*self.handle).clone()
+        self.handle.clone()
     }
 
     #[inline]
@@ -1276,7 +1281,7 @@ impl VirtualMachine {
     /// Every `Bun.ModuleGraph` context of the realm goes with it.
     pub fn stop_context_handles(&self, reason: crate::StopReason) -> SweepResult {
         let mut result = self.root_context.stop_handles(reason);
-        result = result.and(self.dead_context.stop_handles(reason));
+        result = result.and(self.dead_context.stop(reason));
         // By index: an owner's callback may create or free a context.
         let mut i = 0;
         while let Some(context) = self.graph_contexts.get().values().get(i) {
@@ -1493,23 +1498,10 @@ impl VirtualMachine {
         self.event_loop().enter_scope_without_checkpoint()
     }
 
-    /// Safe shared-reference accessor for the process-lifetime dotenv loader
-    /// (`vm.transpiler.env`). The loader is allocated once during VM init and
-    /// never freed; callers previously open-coded `unsafe { &*vm.transpiler.env }`.
+    /// `vm.transpiler.env`, which lasts at least as long as the VM.
     #[inline]
     pub fn env_loader(&self) -> &'static bun_dotenv::Loader {
-        self.env_loader_opt()
-            .expect("transpiler.env set during Transpiler::init")
-    }
-
-    /// Nullable variant of [`Self::env_loader`] for the early-boot window where
-    /// `Transpiler::init` has not yet run (e.g. `GarbageCollectionController::init`
-    /// is reached from `JSGlobalObject::create` before `init_runtime_state`).
-    #[inline]
-    pub(crate) fn env_loader_opt(&self) -> Option<&'static bun_dotenv::Loader> {
-        // SAFETY: when non-null, `transpiler.env` is set during `Transpiler::init`
-        // to a process-lifetime allocation; never freed while a VM is installed.
-        unsafe { self.transpiler.get().env.as_ref() }
+        self.transpiler.get().env()
     }
 
     /// The process-lifetime resolver `FileSystem` singleton.
@@ -1550,8 +1542,7 @@ impl VirtualMachine {
             .swap(0, core::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Safe shared accessor for the per-VM `bun_ast::Log`. The log is
-    /// `Box::leak`ed in `init()` and outlives the VM.
+    /// The VM's own log, or the one its creator keeps alive for it.
     #[inline]
     pub fn log_ref(&self) -> Option<&bun_ast::Log> {
         // Reborrow `&mut Log` → `&Log`; the single `unsafe` deref lives in
@@ -1986,25 +1977,21 @@ impl VirtualMachine {
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         use bun_bundler::entry_points::{Fs, MacroEntryPoint};
         use bun_collections::hash_map::Entry;
-        let entry_point = self.macro_entry_points.with_mut(|entry_points| {
-            crate::CrateResult::<&MacroEntryPoint>::Ok(match entry_points.entry(hash) {
-                Entry::Occupied(e) => *e.get(),
-                Entry::Vacant(v) => {
-                    let mut ep = Box::new(MacroEntryPoint::default());
-                    MacroEntryPoint::generate(
-                        &mut *ep,
-                        &Fs::PathName::init(entry_path),
-                        function_name,
-                        hash,
-                        specifier,
-                    )?;
-                    *v.insert(Box::leak(ep))
-                }
-            })
+        self.macro_entry_points.with_mut(|entry_points| {
+            if let Entry::Vacant(v) = entry_points.entry(hash) {
+                let mut ep = Box::new(MacroEntryPoint::default());
+                MacroEntryPoint::generate(
+                    &mut ep,
+                    &Fs::PathName::init(entry_path),
+                    function_name,
+                    hash,
+                )?;
+                v.insert(ep);
+            }
+            crate::CrateResult::<()>::Ok(())
         })?;
 
-        let path = entry_point.label();
-        let promise = self.run_with_api_lock(|| self._load_macro_entry_point(path));
+        let promise = self.run_with_api_lock(|| self._load_macro_entry_point(specifier));
         promise.ok_or(crate::CrateError::JSError)
     }
 
@@ -2310,13 +2297,19 @@ impl VirtualMachine {
         // doing it causes like 50+ tests to break
         // self.event_loop().tick();
 
-        if self.should_destruct_main_thread_on_exit() {
-            // SAFETY: main-thread VM on the main thread; exit handlers have run.
-            unsafe { Self::teardown(Self::get_mut_ptr(), Teardown::MainThreadExit) };
-        } else {
+        if !self.should_destruct_main_thread_on_exit() {
             self.close_sqlite_databases_for_exit();
+            bun_core::Global::exit(u32::from(self.exit_handler.exit_code.get()))
         }
-        bun_core::Global::exit(u32::from(self.exit_handler.exit_code.get()))
+        let this = Self::get_mut_ptr();
+        // SAFETY: main-thread VM on the main thread; exit handlers have run.
+        let finished = unsafe { Self::teardown(this, Teardown::MainThreadExit) };
+        let exit_code = self.exit_handler.exit_code.get();
+        if finished {
+            // SAFETY: no frame of this thread resumes. The allocation stays for signal handlers.
+            unsafe { core::ptr::drop_in_place(this) };
+        }
+        bun_core::Global::exit(u32::from(exit_code))
     }
 
     /// Ends this thread's VM, which is not the main thread's: its exit handlers,
@@ -2324,31 +2317,19 @@ impl VirtualMachine {
     /// Returns its exit code.
     ///
     /// # Safety
-    /// `this` is this thread's VM, made without a caller's `log`; this thread holds
-    /// its API lock and abandons it; nothing else can reach the VM.
+    /// `this` is this thread's VM, which nothing else can reach; this thread abandons its API lock.
     pub unsafe fn exit_and_free(this: *mut Self) -> u8 {
         // SAFETY: fn contract.
         let vm = unsafe { &*this };
         vm.is_shutting_down.set(true);
         vm.on_exit();
         let exit_code = vm.exit_handler.exit_code.get();
-        // SAFETY: fn contract.
-        unsafe { Self::teardown(this, Teardown::Worker) };
-        // SAFETY: sole owner; nothing past this point dereferences the VM.
+        // SAFETY: fn contract; `init` boxed it.
         unsafe {
-            let console = core::mem::replace(&mut (*this).console, core::ptr::null_mut());
-            if !console.is_null() {
-                bun_core::heap::destroy(console);
-            }
-            if let Some(log) = (*this).log.take() {
-                bun_core::heap::destroy(log.as_ptr());
-            }
-            VMHolder::set_vm(None);
-            // The VM was `alloc_zeroed(Layout::<VirtualMachine>())` in
-            // `init`, NOT `Box::new` — dealloc the raw storage directly so
-            // field `Drop`s do not re-run on already-`deinit`'d state.
-            std::alloc::dealloc(this.cast::<u8>(), core::alloc::Layout::new::<Self>());
+            Self::teardown(this, Teardown::Worker);
+            bun_core::heap::destroy(this);
         }
+        VMHolder::set_vm(None);
         exit_code
     }
 
@@ -2394,13 +2375,13 @@ impl VirtualMachine {
     ///  D. worker: keep-alive delta folded, uSockets loop freed and (Windows)
     ///     the uv loop closed — every handle unlinks while its owner is still
     ///     allocated. Main proceeds to process exit instead.
-    ///  E. `destroy()`: RareData, runtime state, event loop.
+    /// Returns whether the VM can be dropped, which a worker's always can.
     ///
     /// # Safety
     /// `this` is this thread's VM and no other thread can reach it any more
     /// (worker: its handle unpublished); `is_shutting_down` is set and
     /// the exit handlers have run.
-    pub(crate) unsafe fn teardown(this: *mut Self, kind: Teardown) {
+    unsafe fn teardown(this: *mut Self, kind: Teardown) -> bool {
         // SAFETY: per fn contract — sole owner on the owning thread.
         let vm = unsafe { &*this };
         let hooks = runtime_hooks();
@@ -2496,7 +2477,7 @@ impl VirtualMachine {
         // it does not acknowledge (≤1 s), leave the rest to process exit.
         if matches!(kind, Teardown::MainThreadExit) && !bun_http::shutdown_for_exit() {
             teardown_log!("teardown: HTTP thread unresponsive; skipping to process exit");
-            return;
+            return false;
         }
         if let Some(rare) = vm.rare_data.get() {
             rare.release_js_handles();
@@ -2547,10 +2528,25 @@ impl VirtualMachine {
             }
             teardown_log!("teardown: loops closed");
         }
+        true
+    }
+}
 
-        // ---- E. free owners --------------------------------------------------
-        // SAFETY: fn contract; last use of `this`.
-        unsafe { Self::destroy(this) };
+/// After [`teardown`](VirtualMachine::teardown).
+impl Drop for VirtualMachine {
+    /// Releases what calls back into the VM as it goes, while every field is whole.
+    fn drop(&mut self) {
+        debug_assert!(self.regular_event_loop.is_drained() && self.macro_event_loop.is_drained());
+        // Their polls are slots of `rare_data`.
+        self.auto_killer.clear();
+        drop(self.test_isolation_state.at_retirement.take());
+        drop_source_code_printer();
+        drop(self.rare_data.take());
+        if let Some(hooks) = runtime_hooks() {
+            let state = self.runtime_state.replace(core::ptr::null_mut());
+            // SAFETY: what `init_runtime_state` returned, on the thread it ran on.
+            unsafe { (hooks.deinit_runtime_state)(state) };
+        }
     }
 }
 
@@ -2600,9 +2596,8 @@ impl VirtualMachine {
     /// concurrent tasks, pending immediates) while the JSC heap and this
     /// thread's loop are alive: their JS handles and keep-alives drop now. The
     /// macro loop is only ever ticked explicitly, so whatever a macro queued on
-    /// it is still there. Teardown phase B; also the one thing an owner that
-    /// calls `destroy()` without a teardown (bake's build VM) must do first.
-    pub fn release_queued_work(&self) {
+    /// it is still there. Teardown phase B.
+    fn release_queued_work(&self) {
         self.regular_event_loop.release_queued_tasks();
         self.macro_event_loop.release_queued_tasks();
         self.transpiler_store.release_queued_jobs_for_teardown();
@@ -2658,7 +2653,7 @@ pub struct GraphContextStopAndFree(crate::ScriptExecutionContext);
 
 impl bun_event_loop::Taskable for GraphContextStopAndFree {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::GraphContextStopAndFree;
-    /// Still registered: `destroy` frees what teardown left.
+    /// Still registered: dropped with the VM.
     unsafe fn release_unrun(_: *mut Self) {}
     /// Enters no context.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
@@ -2670,7 +2665,7 @@ impl GraphContextStopAndFree {
     /// # Safety
     /// `this` is the context `release_graph_context` queued.
     pub unsafe fn run(vm: &VirtualMachine, this: *mut Self) {
-        // SAFETY: still registered (`destroy` frees what teardown left), so not freed.
+        // SAFETY: still registered, so not freed.
         unsafe {
             let context = NonNull::new_unchecked(this.cast::<crate::ScriptExecutionContext>());
             let _ = vm.stop_graph_context(context, crate::StopReason::Disposed);
@@ -2706,8 +2701,6 @@ impl SweepResult {
         }
     }
 }
-
-extern crate alloc;
 
 // ──────────────────────────────────────────────────────────────────────────
 // §Dispatch — `bun_runtime` vtable.
@@ -2757,21 +2750,9 @@ pub enum CancelHotRunTimers {
 pub struct RuntimeHooks {
     /// `bun.api.Timer.All.init()` + `Body.Value.HiveAllocator.init()` +
     /// `configureDebugger()` — everything `init()` does that names a
-    /// `bun_runtime` type. Called once with the freshly-boxed VM AFTER
-    /// `vm.global` / `vm.jsc_vm` are populated;
-    /// returns the opaque per-VM runtime state pointer (or null). `Err` when
-    /// `Transpiler::init` fails (e.g. a deleted cwd → `getcwd` ENOENT); the
-    /// hook unwinds its own allocations, so [`VirtualMachine::init`] only has to
-    /// propagate the error.
-    pub init_runtime_state: unsafe fn(
-        vm: *mut VirtualMachine,
-        opts: &mut InitOptions,
-    ) -> crate::CrateResult<RuntimeState>,
-    /// Reclaim the per-VM state boxed by `init_runtime_state`. Called from
-    /// [`VirtualMachine::destroy`] (worker teardown) with the exact opaque
-    /// pointer `init_runtime_state` returned (or null). The high tier
-    /// `heap::take`s it and clears its thread-local cache. Without this slot
-    /// every worker leaked one box.
+    /// `bun_runtime` type. Called once, before the global object exists.
+    pub init_runtime_state: fn(vm: &VirtualMachine, opts: &InitOptions) -> RuntimeState,
+    /// Frees what `init_runtime_state` returned and clears the high tier's thread-local.
     pub deinit_runtime_state: unsafe fn(state: RuntimeState),
     /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
     /// preload promise if any, else null. Errors propagate
@@ -3086,191 +3067,210 @@ impl VirtualMachine {
     /// `VirtualMachine.init(opts)` — allocate + wire the per-thread VM.
     ///
     /// Note: every step that names a `bun_runtime` / `bun_webcore` type
-    /// (`Timer.All.init`, `Body.Value.HiveAllocator`, `configureDebugger`,
-    /// `Config.configureTransformOptionsForBunVM`, `ParentDeathWatchdog`) is
+    /// (`Timer.All.init`, `Body.Value.HiveAllocator`, `configureDebugger`) is
     /// dispatched through `RuntimeHooks::init_runtime_state` so `bun_jsc` does
-    /// not name those types directly. The hook receives the boxed VM after the
-    /// JSC-tier fields are populated and finishes the rest.
+    /// not name those types directly.
     pub fn init(mut opts: InitOptions) -> crate::CrateResult<&'static VirtualMachine> {
         jsc::mark_binding();
 
-        let log: *mut bun_ast::Log = match opts.log {
-            Some(l) => l.as_ptr(),
-            None => bun_core::heap::into_raw(Box::new(bun_ast::Log::default())),
-        };
+        let origin_timer = std::time::Instant::now();
+        let origin_timestamp = get_origin_timestamp();
 
-        // SAFETY: VM is large + self-referential; allocate zeroed and fill in
-        // place. The
-        // allocation lives for the thread lifetime (never freed on the main
-        // thread; worker `destroy()` frees it explicitly).
-        //
-        // Note (validity): the zeroed bytes are NOT a valid
-        // `VirtualMachine` — `origin_timer: Instant`, `on_unhandled_rejection:
-        // fn(...)`, every `Vec`/`Box`/
-        // `HashMap`/`ArrayHashMap` field (NonNull dangling-when-empty), `URL`
-        // (`&[u8]` references), and `Option<bool>` (bool-niche → zero = Some)
-        // have no all-zero repr. We therefore never materialize
-        // a value of one until all such fields have been `ptr::write`n
-        // via `addr_of_mut!`; remaining fields are zero-valid
-        // (integers/raw-ptr/atomic-mutex/`Option<NonNull>`/`Option<Box>`) so
-        // the zero-fill stands in for the struct-init defaults.
-        let layout = core::alloc::Layout::new::<VirtualMachine>();
-        // SAFETY: `layout` is non-zero-sized; `alloc_zeroed` returns either a
-        // valid aligned ptr or null (handled by `handle_alloc_error`).
-        let vm: *mut VirtualMachine = unsafe {
-            let p = alloc::alloc::alloc_zeroed(layout);
-            if p.is_null() {
-                alloc::alloc::handle_alloc_error(layout);
-            }
-            p.cast()
-        };
-        VM.set(Some(vm));
-        if opts.is_main_thread {
-            MAIN_THREAD_VM.store(vm, core::sync::atomic::Ordering::Release);
-        }
-
-        // ConsoleObject is self-referential (buffers + adapters) — allocate
-        // stable storage and init in place.
-        // `console.init(Output.rawErrorWriter(), Output.rawWriter())` must
-        // happen BEFORE the pointer is stored/passed; the previous port left
-        // it as raw `MaybeUninit` (UB on first C++ read).
-        let mut console_box: Box<core::mem::MaybeUninit<crate::console_object::ConsoleObject>> =
-            Box::new(core::mem::MaybeUninit::uninit());
+        let mut console = Box::new_uninit();
         crate::console_object::ConsoleObject::init_in_place(
-            &mut console_box,
+            &mut console,
             bun_core::Output::raw_error_writer(),
             bun_core::Output::raw_writer(),
         );
-        let console =
-            bun_core::heap::into_raw(console_box).cast::<crate::console_object::ConsoleObject>();
+        // SAFETY: just initialized.
+        let console = AliasableBox::from(unsafe { console.assume_init() });
 
         let context_id = opts
             .context_id
             .unwrap_or(if opts.is_main_thread { 1 } else { i32::MAX });
+        if let Some(graph) = opts.graph {
+            let _ = STANDALONE_MODULE_GRAPH.set(graph);
+        }
 
-        // SAFETY: `vm` is a fresh unique zeroed allocation on this thread. All
-        // writes go through `addr_of_mut!` so no `&VirtualMachine` is
-        // formed while non-zero-valid fields are still zero. Every target is
-        // either zero-valid (no Drop on the overwritten bytes) or written via
-        // `ptr::write` (no Drop of the uninit bytes).
-        unsafe {
-            use core::ptr::addr_of_mut;
-            addr_of_mut!((*vm).global).write(Cell::new(core::ptr::null_mut()));
-            addr_of_mut!((*vm).console).write(console);
-            // `log` is a fresh leaked Box; outlives the VM.
-            addr_of_mut!((*vm).log).write(Cell::new(NonNull::new(log)));
-            addr_of_mut!((*vm).main).write(JsCell::new(None));
-            addr_of_mut!((*vm).main_hash).write(Cell::new(0));
-            addr_of_mut!((*vm).main_entry_point).write(Cell::new(MainEntryPoint::File));
-            addr_of_mut!((*vm).main_resolved_path).write(JsCell::new(bun_core::String::EMPTY));
-            addr_of_mut!((*vm).bake_config_plugin_names).write(JsCell::default());
-            addr_of_mut!((*vm).bake_pages).write(Cell::new(false));
-            addr_of_mut!((*vm).hide_bun_stackframes).write(Cell::new(true));
-            addr_of_mut!((*vm).is_main_thread).write(Cell::new(opts.is_main_thread));
-            // Left at the
-            // zeroed default this aliases `hot_reload_counter`'s initial 0, so a
-            // watcher event that races the very first entry-point load makes
-            // `reload()` think the rejection was already reported and proceed
-            // (replacing `pending_internal_promise`) instead of deferring,
-            // dropping the error on the floor.
-            addr_of_mut!((*vm).pending_internal_promise_reported_at).write(Cell::new(u32::MAX));
-            addr_of_mut!((*vm).on_unhandled_rejection)
-                .write(Cell::new(VirtualMachine::default_on_unhandled_rejection));
-            addr_of_mut!((*vm).origin_timer).write(std::time::Instant::now());
-            addr_of_mut!((*vm).origin_timestamp).write(get_origin_timestamp());
-            addr_of_mut!((*vm).smol).write(opts.smol);
-            // `Option<{CPU,Heap}ProfilerConfig>` are NOT zero-valid: each
-            // payload contains a `bool`, and rustc picks that field's invalid
-            // range (not the `&[u8]` null-ptr) as the enum niche, so all-zero
-            // bytes decode as `Some` with null-ref slices. Write `None`
-            // explicitly.
-            addr_of_mut!((*vm).cpu_profiler_config).write(Cell::new(None));
-            addr_of_mut!((*vm).heap_profiler_config).write(Cell::new(None));
-            addr_of_mut!((*vm).sampling_profiler_directory).write(Cell::new(None));
-            // `Option<bool>` uses the bool's invalid range (2) as the niche, so
-            // all-zero bytes decode as `Some(false)` — for TLS that would
-            // silently disable certificate verification. Write `None` explicitly.
-            addr_of_mut!((*vm).default_tls_reject_unauthorized).write(Cell::new(None));
-            addr_of_mut!((*vm).pending_ipc).write(Cell::new(None));
-            // Non-zero-valid container fields: `Vec`/`Box`/`HashMap`/
-            // `ArrayHashMap` all carry a `NonNull` (dangling when empty), and
-            // `URL` is a struct of `&[u8]` references — all-zero bytes violate
-            // their validity invariants even when len/cap are 0. Write the
-            // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
-            addr_of_mut!((*vm).preload).write(JsCell::default());
-            addr_of_mut!((*vm).child_workers).write(JsCell::default());
-            addr_of_mut!((*vm).handle)
-                .write(core::mem::ManuallyDrop::new(crate::VmHandle::new(vm)));
-            addr_of_mut!((*vm).argv).write(opts.argv);
-            addr_of_mut!((*vm).macros).write(JsCell::default());
-            addr_of_mut!((*vm).macro_entry_points).write(JsCell::default());
-            addr_of_mut!((*vm).auto_killer).write(Default::default());
-            addr_of_mut!((*vm).root_context).write(crate::ScriptExecutionContext::root());
-            addr_of_mut!((*vm).graph_contexts).write(JsCell::default());
-            addr_of_mut!((*vm).entered_context).write(Cell::new(None));
-            addr_of_mut!((*vm).dead_context).write(crate::ScriptExecutionContext::dead());
-            addr_of_mut!((*vm).commonjs_custom_extensions).write(JsCell::default());
-            addr_of_mut!((*vm).entry_point).write(Default::default());
-            addr_of_mut!((*vm).origin).write(Default::default());
-            addr_of_mut!((*vm).ref_strings).write(JsCell::default());
-            addr_of_mut!((*vm).modules).write(Default::default());
-            addr_of_mut!((*vm).macro_event_loop).write(EventLoop::new(NonNull::new_unchecked(vm)));
-            addr_of_mut!((*vm).proxy_env_storage).write(Default::default());
-            addr_of_mut!((*vm).gc_controller).write(Default::default());
-            addr_of_mut!((*vm).channel_ref).write(Default::default());
-            addr_of_mut!((*vm).rare_data).write(OnceCell::new());
-            addr_of_mut!((*vm).module_loader).write(Default::default());
-            addr_of_mut!((*vm).test_isolation_state).write(Default::default());
-            if let Some(graph) = opts.graph {
-                let _ = STANDALONE_MODULE_GRAPH.set(graph);
-            }
-            addr_of_mut!((*vm).standalone_module_graph).write(opts.graph);
-            addr_of_mut!((*vm).finds_entry_points_by_path).write(opts.graph.is_some_and(|graph| {
+        let mut owned_log = None;
+        let log = opts.log.unwrap_or_else(|| {
+            (owned_log.insert(AliasableBox::new(bun_ast::Log::default()))).as_non_null()
+        });
+        let owned_env_loader = opts.owned_env_loader.take().map(AliasableBox::from);
+        let env_loader = (owned_env_loader.as_ref())
+            .map(AliasableBox::as_non_null)
+            .or(opts.env_loader);
+        // On the main heap, which saves a `mi_heap_new`/`mi_heap_destroy` pair.
+        let transpiler_arena = AliasableBox::new(bun_alloc::Arena::borrowing_default());
+        let ast_stores = bun_ast::OwnedStores::create();
+
+        let mut args = core::mem::take(&mut opts.transform_options);
+        let preserve_symlinks = args.preserve_symlinks.unwrap_or(false);
+        args.write = Some(false);
+        args.target = Some(bun_options_types::schema::api::Target::Bun);
+        let transpiler = Transpiler::init(
+            // SAFETY: the VM drops the arena after the transpiler.
+            unsafe { &*transpiler_arena.as_ptr() },
+            log.as_ptr(),
+            args,
+            env_loader.map(NonNull::as_ptr),
+        )?;
+
+        let this = Box::into_non_null(Box::<VirtualMachine>::new_uninit()).cast::<VirtualMachine>();
+        let mut regular_event_loop = EventLoop::new(this);
+        let _ = (regular_event_loop.tasks.get_mut()).ensure_unused_capacity(64);
+        let vm = VirtualMachine {
+            global: Cell::new(core::ptr::null_mut()),
+            transpiler: JsCell::new(transpiler),
+            bun_watcher: Cell::new(core::ptr::null_mut()),
+            console,
+            log: Cell::new(Some(log)),
+            main: JsCell::new(None),
+            main_entry_point: Cell::new(MainEntryPoint::File),
+            did_look_for_server: Cell::new(false),
+            main_resolved_path: JsCell::new(bun_core::String::EMPTY),
+            main_hash: Cell::new(0),
+            overridden_main: JsCell::default(),
+            bake_config_plugins: JsCell::default(),
+            bake_config_plugin_names: JsCell::default(),
+            bake_pages: Cell::new(false),
+            bake_framework: JsCell::default(),
+            entry_point: JsCell::default(),
+            origin: Default::default(),
+            runtime_state: Cell::new(core::ptr::null_mut()),
+            event_loop_handle: Cell::new(None),
+            pending_unref_counter: Default::default(),
+            preload: JsCell::default(),
+            unhandled_pending_rejection_to_capture: None,
+            html_rewriter_active_sink: Cell::new(None),
+            standalone_module_graph: opts.graph,
+            finds_entry_points_by_path: opts.graph.is_some_and(|graph| {
                 graph
                     .compiled_program()
                     .is_some_and(|program| !program.entry_points.is_empty())
-            }));
-            addr_of_mut!((*vm).initial_script_execution_context_identifier).write(context_id);
-            // Mutex fields: zeroed atomics ARE valid-unlocked, but write the
-            // canonical value so the invariant is explicit.
-            addr_of_mut!((*vm).remap_stack_frames_mutex).write(bun_threading::Mutex::new());
-
-            addr_of_mut!((*vm).transpiler_store)
-                .write(crate::runtime_transpiler_store::RuntimeTranspilerStore::init());
-
-            // Event-loop wiring (self-pointers).
-            let regular = addr_of_mut!((*vm).regular_event_loop);
-            regular.write(EventLoop::new(NonNull::new_unchecked(vm)));
-            let _ = (*regular).tasks.get_mut().ensure_unused_capacity(64);
-            addr_of_mut!((*vm).event_loop).write(Cell::new(regular));
-
-            addr_of_mut!((*vm).source_mappings).write(SavedSourceMap::default());
+            }),
+            smol: opts.smol,
+            dns_result_order: Cell::new(0),
+            cpu_profiler_config: Cell::new(None),
+            heap_profiler_config: Cell::new(None),
+            sampling_profiler_directory: Cell::new(None),
+            counters: Default::default(),
+            hot_reload: Cell::new(HotReload::None),
+            jsc_vm: Cell::new(core::ptr::null_mut()),
+            hide_bun_stackframes: Cell::new(true),
+            is_shutting_down: Cell::new(false),
+            has_run_cleanup_hooks: Cell::new(false),
+            is_main_thread: Cell::new(opts.is_main_thread),
+            exit_handler: Default::default(),
+            default_tls_reject_unauthorized: Cell::new(None),
+            default_verbose_fetch: Cell::new(None),
+            source_mappings: Default::default(),
+            has_loaded: Cell::new(false),
+            entry_evaluation_started: Cell::new(false),
+            had_errors: Cell::new(false),
+            macros: JsCell::default(),
+            macro_entry_points: JsCell::default(),
+            macro_mode: Cell::new(false),
+            macro_guard_depth: Cell::new(0),
+            auto_killer: Default::default(),
+            has_any_macro_remappings: Cell::new(false),
+            is_from_devserver: false,
+            has_enabled_macro_mode: Cell::new(false),
+            is_in_preload: Cell::new(false),
+            preload_hash: Cell::new(0),
+            preloads_kept_for_reload: Cell::new(false),
+            has_patched_run_main: Cell::new(false),
+            transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore::init(),
+            after_event_loop_callback_ctx: Cell::new(None),
+            after_event_loop_callback: Cell::new(None),
+            remap_stack_frames_mutex: bun_threading::Mutex::new(),
+            argv: opts.argv,
+            origin_timer,
+            origin_timestamp,
+            overridden_performance_now: Cell::new(None),
+            overridden_time_origin: Cell::new(None),
+            macro_event_loop: EventLoop::new(this),
+            regular_event_loop,
+            // SAFETY: a field of the allocation.
+            event_loop: Cell::new(unsafe { &raw const (*this.as_ptr()).regular_event_loop }),
+            ref_strings: JsCell::default(),
+            active_tasks: Cell::new(0),
+            rare_data: OnceCell::new(),
+            proxy_env_storage: Default::default(),
+            pending_internal_promise: JsCell::default(),
+            // Not `hot_reload_counter`'s 0, or a reload that races the first load drops its error.
+            pending_internal_promise_reported_at: Cell::new(u32::MAX),
+            hot_reload_deferred: Cell::new(false),
+            entry_point_result: Default::default(),
+            on_unhandled_rejection: Cell::new(VirtualMachine::default_on_unhandled_rejection),
+            on_unhandled_rejection_ctx: Cell::new(None),
+            on_unhandled_rejection_exception_list: Cell::new(None),
+            unhandled_error_counter: Cell::new(0),
+            is_running_vitest_entry: Cell::new(false),
+            on_print_error_zig_exception: Cell::new(None),
+            on_print_error_zig_exception_ctx: Cell::new(core::ptr::null_mut()),
+            is_handling_uncaught_exception: Cell::new(false),
+            exit_on_uncaught_exception: Cell::new(false),
+            hot_run_failed: Cell::new(false),
+            timers_ran_after_error: Cell::new(false),
+            modules: Default::default(),
+            aggressive_garbage_collection: Default::default(),
+            module_loader: Default::default(),
+            text_format_arena: Cell::new(None),
+            gc_controller: Default::default(),
+            worker: Cell::new(None),
+            child_workers: JsCell::default(),
+            jobs: JsCell::default(),
+            handle: crate::VmHandle::new(this.as_ptr()),
+            pending_ipc: Cell::new(None),
+            hot_reload_counter: Cell::new(0),
+            debugger: Cell::new(None),
+            has_started_debugger: Cell::new(false),
+            is_inside_deferred_task_queue: Cell::new(false),
+            suppress_microtask_drain: Cell::new(false),
+            has_pending_test_step: Cell::new(false),
+            channel_ref: Default::default(),
+            channel_ref_overridden: Cell::new(false),
+            channel_ref_should_ignore_one_disconnect_event_listener: Cell::new(false),
+            commonjs_custom_extensions: JsCell::default(),
+            has_mutated_built_in_extensions: Cell::new(0),
+            initial_script_execution_context_identifier: context_id,
+            root_context: crate::ScriptExecutionContext::root(),
+            dead_context: crate::ScriptExecutionContext::dead(),
+            graph_contexts: JsCell::default(),
+            entered_context: Cell::new(None),
+            is_in_on_resolve: Cell::new(false),
+            test_isolation_enabled: Cell::new(false),
+            test_isolation_generation: Cell::new(0),
+            test_isolation_state: Default::default(),
+            _transpiler_arena: transpiler_arena,
+            _owned_env_loader: owned_env_loader,
+            _owned_log: owned_log,
+            _ast_stores: ast_stores,
+            _pin: core::marker::PhantomPinned,
+        };
+        // SAFETY: a fresh allocation for a `VirtualMachine`, which lasts as `get` says.
+        let vm: &'static VirtualMachine = unsafe {
+            this.write(vm);
+            this.as_ref()
+        };
+        VM.set(Some(this.as_ptr()));
+        if opts.is_main_thread {
+            MAIN_THREAD_VM.store(this.as_ptr(), core::sync::atomic::Ordering::Release);
         }
 
-        // High-tier per-VM state — Transpiler / Timer::All.
-        // Note (init order): the transpiler and per-VM timer state must be
-        // built BEFORE `JSGlobalObject` creation. The C++ body
-        // of `Zig__GlobalObject__create` re-enters via `WTFTimer__create`/
-        // `WTFTimer__update` (JSC's GC scheduler), which dereferences
-        // `runtime_state().timer` — so this hook MUST run first or that path
-        // null-derefs.
+        vm.transpiler.with_mut(|t| {
+            t.options.emit_dce_annotations = false;
+            t.options.global_cache = opts.global_cache;
+            t.resolver.opts.global_cache = opts.global_cache;
+            t.resolver.opts.preserve_symlinks = preserve_symlinks;
+            t.resolver.prefer_module_field = false;
+        });
+
+        // Before the global object, whose creation arms `WTFTimer`s on the runtime state's heap.
         if let Some(hooks) = runtime_hooks() {
-            // SAFETY: hook contract — `vm` is the unique live VM on this thread.
-            //
-            // `?`: on `Err` (e.g. a deleted cwd → `getcwd` ENOENT out of
-            // `Transpiler::init`) the hook already unwound its own per-VM state,
-            // so abort `init` here — `vm.transpiler` was never written, and
-            // bailing out before the CLI reads it turns the old segfault into a
-            // clean error + non-zero exit.
-            unsafe {
-                (*vm)
-                    .runtime_state
-                    .set((hooks.init_runtime_state)(vm, &mut opts)?)
-            };
+            vm.runtime_state.set((hooks.init_runtime_state)(vm, &opts));
         }
-
-        // SAFETY: the hook wrote the last field. The allocation lasts as `get` says.
-        let vm: &'static VirtualMachine = unsafe { &*vm };
 
         // JSGlobalObject creation. `ensure_waker()` must run before the FFI.
         vm.regular_event_loop.ensure_waker();
@@ -3283,7 +3283,7 @@ impl VirtualMachine {
         // the new global. `worker_ptr` is the C++ `WebCore::Worker*` (or null on
         // the main thread).
         let global = Zig__GlobalObject__create(
-            console.cast(),
+            vm.console.as_ptr().cast(),
             context_id,
             opts.mini_mode,
             opts.eval_mode,
@@ -4032,7 +4032,7 @@ fn drop_source_code_printer() {
 /// Free this thread's [`SOURCE_CODE_PRINTER`] Box only if
 /// [`enable_macro_mode`](VirtualMachine::enable_macro_mode) allocated it.
 /// Called from `js_parser_jsc::Macro::__bun_macro_context_deinit` on bundler
-/// worker teardown — the macro VM never reaches `VirtualMachine::deinit`, so
+/// worker teardown — the macro VM is never dropped, so
 /// the box would otherwise leak when the worker thread's TLS block is torn down
 /// before LSan scans (issue 03830 on debian-13-asan after the
 /// `leak:bun_js_parser_jsc::Macro` suppression was removed in #30875). A no-op
@@ -4061,7 +4061,7 @@ pub fn drop_source_code_printer_if_macro_owned() {
 
 /// Run a synchronous GC sweep on this thread's VM iff it was created for a
 /// bundler-worker macro (via `Macro::init`) and is otherwise quiescent. The
-/// macro VM is intentionally never `destroy()`'d (per-worker dealloc is
+/// macro VM is intentionally never dropped (per-worker dealloc is
 /// unimplemented), so JS-wrapper-owned native boxes — e.g. a
 /// `new Bun.Transpiler()` constructed inside a macro body — would otherwise
 /// outlive the worker thread's TLS root and be reported by LSan once the
@@ -4847,7 +4847,7 @@ impl VirtualMachine {
         // swap the global.
         let vm = Self::init(init_opts)?;
         // `console` is the opaque round-trip pointer C++ stores into the new global.
-        let new_global = BakeCreateProdGlobal(vm.console.cast());
+        let new_global = BakeCreateProdGlobal(vm.console.as_ptr().cast());
         vm.global.set(new_global);
         VMHolder::set_cached_global_object(Some(new_global));
         vm.regular_event_loop.global.set(NonNull::new(new_global));
@@ -5601,62 +5601,6 @@ impl VirtualMachine {
 
         Ok(Ok(bun_core::String::clone_utf8(result.path)))
     }
-    /// SAFETY: `this` is this thread's VM, and it runs nothing afterwards. The allocation stays.
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: fn contract. What is dropped here can reach the VM through `get()`, so each
-        // `&mut` is of one field, and those drops read only other fields.
-        unsafe {
-            (*this).regular_event_loop.deinit();
-            (*this).macro_event_loop.deinit();
-            // The shared inner goes when the last outside holder lets go.
-            core::mem::ManuallyDrop::drop(&mut (*this).handle);
-
-            drop(core::mem::take(&mut (*this).auto_killer));
-
-            // A graph context whose release was still queued: teardown stopped what it owned.
-            drop((*this).graph_contexts.take());
-            drop_source_code_printer();
-
-            drop(core::mem::take(&mut (*this).source_mappings));
-
-            if let Some(hooks) = runtime_hooks() {
-                (hooks.stop_watches_for_vm_teardown)(&*this);
-            }
-            if let Some(rare) = (*this).rare_data.take() {
-                // Paired with `rare_data()`'s `register_root_region`.
-                bun_core::asan::unregister_root_region(
-                    core::ptr::from_ref::<RareData>(&*rare).cast(),
-                    core::mem::size_of::<RareData>(),
-                );
-                drop(rare);
-            }
-
-            drop(core::mem::take(&mut (*this).proxy_env_storage));
-
-            // `exit_and_free` runs no field `Drop`.
-            drop(core::mem::take(&mut (*this).module_loader));
-
-            drop((*this).preload.take());
-            drop((*this).entry_point.take());
-
-            (*this).transpiler.as_mut().deinit();
-
-            drop((*this).main_resolved_path.take());
-            drop((*this).ref_strings.take());
-            drop((*this).sampling_profiler_directory.take());
-
-            drop((*this).overridden_main.take());
-            drop((*this).bake_config_plugins.take());
-            drop((*this).bake_config_plugin_names.take());
-            drop((*this).bake_framework.take());
-            drop((*this).pending_internal_promise.take());
-
-            if let Some(hooks) = runtime_hooks() {
-                let state = (*this).runtime_state.replace(core::ptr::null_mut());
-                (hooks.deinit_runtime_state)(state);
-            }
-        }
-    }
 
     /// Note: takes the concrete
     /// `bun_core::io::Writer` since every call site passes
@@ -6066,7 +6010,7 @@ impl VirtualMachine {
         // `console` is the live per-VM ConsoleObject.
         let new_global: *mut JSGlobalObject = JSGlobalObject::create_for_test_isolation(
             JSGlobalObject::opaque_ref(old_global),
-            self.console.cast(),
+            self.console.as_ptr().cast(),
         );
         self.global.set(new_global);
         VMHolder::set_cached_global_object(Some(new_global));

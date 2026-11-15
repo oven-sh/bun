@@ -941,7 +941,7 @@ impl BunxCommand {
         };
         bun_output::scoped_log!(bunx, "initial_bin_name: {}", BStr::new(initial_bin_name));
 
-        let mut this_transpiler_slot = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
+        let mut this_transpiler_slot = None;
 
         let (this_transpiler, root_dir_info) = Run::configure_env_for_run(
             ctx,

@@ -1026,29 +1026,13 @@ impl EventLoop {
         }
     }
 
-    pub fn deinit(&mut self) {
-        // Everything queued was released by `release_queued_tasks` (which
-        // also made later enqueues release on arrival) and refused posts never
-        // reach `concurrent_tasks`; nothing can be left to leak with the VM box.
-        debug_assert!(
-            self.tasks.get_mut().readable_length() == 0
-                && self.concurrent_tasks.is_empty()
-                && self.plugin_requests.get_mut().readable_length() == 0
-                && self.concurrent_plugin_requests.is_empty(),
-            "queued tasks must be released (release_queued_tasks) before the loop is destroyed"
-        );
-        debug_assert!(
-            self.immediate_tasks.get_mut().is_empty(),
-            "pending immediates must be released (release_queued_tasks) while the loop is alive"
-        );
-        *self.tasks.get_mut() = Queue::init();
-        *self.plugin_requests.get_mut() = Queue::init();
-        // Free the deferred-task map's storage. The tasks must not be run, and an
-        // entry owns nothing but a `Copy` ctx pointer whose owner released it when
-        // the JSC teardown before this finalized it. A worker's VM box is
-        // `dealloc`'d without running `Drop` (WebWorker::shutdown), so nothing
-        // else frees it.
-        self.deferred_tasks = DeferredTaskQueue::DeferredTaskQueue::default();
+    /// As `release_queued_tasks` leaves the loop: later tasks are released on arrival.
+    pub(crate) fn is_drained(&mut self) -> bool {
+        self.tasks.get_mut().readable_length() == 0
+            && self.concurrent_tasks.is_empty()
+            && self.plugin_requests.get_mut().readable_length() == 0
+            && self.concurrent_plugin_requests.is_empty()
+            && self.immediate_tasks.get_mut().is_empty()
     }
 
     /// Note (§Dispatch): `task` is an erased

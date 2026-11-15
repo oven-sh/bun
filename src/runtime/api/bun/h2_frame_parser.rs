@@ -854,7 +854,7 @@ thread_local! {
     static CORKED_H2: Cell<ManuallyDrop<Option<RefPtr<H2FrameParser>>>> =
         const { Cell::new(ManuallyDrop::new(None)) };
     // `ManuallyDrop` inside the `Box`: the TLS destructor runs after
-    // `WebWorker::destroy` has raw-deallocated the VM, so `HiveArray::Drop`
+    // `exit_and_free` has freed the worker's VM, so `HiveArray::Drop`
     // on any leaked parser would touch freed JSC/uws state. Skip slot
     // teardown (a leaked parser is a bug anyway) while still freeing the
     // pool allocation itself.

@@ -65,8 +65,9 @@ const BANNED =
 const EXCLUSIVE_VM =
   /&\s*(?:'\w+\s+)?mut\s+(?:(?:\w+::)*VirtualMachine(?:Ref)?\b|\*(?:\w+::)*get_mut_ptr\(|\*(?:jsc_)?vm(?:_ptr|_instance)?\b(?!\s*[.(]))/g;
 const VM_IMPL = /^impl(?:<[^>]*>)? (?:[\w:]+ for )?(?:\w+::)*VirtualMachine \{\n(?:(?!\}).*\n)*\}/gm;
+// `Drop::drop` has no other signature. The VM is `!Unpin`, so that borrow does not claim to be unique.
 const EXCLUSIVE_SELF =
-  /^ {4}(?:pub(?:\(\w+\))? )?(?:(?:const|unsafe|extern "C") )*fn \w+(?:<.*>)?\(\s*&(?:'\w+ )?mut self\b|&(?:'\w+ )?mut Self\b(?!::)/gm;
+  /^ {4}(?:pub(?:\(\w+\))? )?(?:(?:const|unsafe|extern "C") )*fn (?!drop\()\w+(?:<.*>)?\(\s*&(?:'\w+ )?mut self\b|&(?:'\w+ )?mut Self\b(?!::)/gm;
 
 // Documented, ratcheted exceptions: files allowed to keep exactly N of the
 // shape, with a stated reason. Empty by design — the whole tree is at zero.

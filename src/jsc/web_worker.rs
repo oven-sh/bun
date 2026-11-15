@@ -974,7 +974,7 @@ impl WebWorker {
         //   - a concurrent request_termination() (parent, or an exiting ancestor) can
         //     wake us once JS starts running, and
         //   - early returns below reach spin()/shutdown() with this.vm set,
-        //     so teardownJSCVM/vm.deinit() run and the just-built JSC::VM
+        //     so `exit_and_free` runs and the just-built JSC::VM
         //     heap is not leaked.
         // We do NOT call shutdown() directly from here: shutdown() with a
         // non-null vm runs vm.onExit() (JS), which requires holdAPILock.
@@ -1245,7 +1245,7 @@ impl WebWorker {
     /// Phase 3: unpublish the VM's handle (a racing `requestTermination` now
     /// finds none), run the user 'exit' handlers, then the shared
     /// [`VirtualMachine::teardown`] (stop → forbid script → ~VM → loops →
-    /// destroy), free the thread's remaining state, and last of all report
+    /// drop), free the thread's remaining state, and last of all report
     /// `workerGlobalScopeDestroyed` — the parent joins this thread from that
     /// task, so nothing after it may touch the parent.
     fn shutdown(&self) {
@@ -1259,12 +1259,11 @@ impl WebWorker {
         drop(self.vm_handle.lock().take());
         let vm_ptr = self.vm.replace(core::ptr::null_mut());
 
-        // ---- 2–5. User exit handlers; stop, forbid script, wait, ~VM, loops, destroy
+        // ---- 2–5. User exit handlers; stop, forbid script, wait, ~VM, loops, drop
         let mut exit_code: i32 = 0;
         if !vm_ptr.is_null() {
             // SAFETY: this thread's VM, whose API lock `thread_main` took; no other
-            // thread holds a pointer to it (they only ever held its handle);
-            // `init_worker` always passes `log: None`.
+            // thread holds a pointer to it (they only ever held its handle).
             exit_code = i32::from(unsafe { VirtualMachine::exit_and_free(vm_ptr) });
         }
         log!(

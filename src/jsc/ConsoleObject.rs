@@ -234,10 +234,7 @@ impl MessageType {
 
 use bun_threading::Mutex;
 
-/// `globalThis.bunVM().console` — `VirtualMachine.console` is typed
-/// `*mut c_void` (erased so `virtual_machine.rs` need not name this module's
-/// type). This is the single re-entry point that casts it back; every body
-/// below goes through it instead of touching the field directly.
+/// `globalThis.bunVM().console`.
 #[inline]
 fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
     // SAFETY: `VirtualMachine.console` is initialized once at VM construction
@@ -246,7 +243,7 @@ fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
     // before that. Returned as a raw pointer (not `&'static mut`) so callers
     // dereference at each use site without holding overlapping `&mut`
     // references.
-    global.bun_vm().console.cast::<ConsoleObject>()
+    global.bun_vm().console.as_ptr()
 }
 
 /// `&mut ConsoleObject` accessor for the set-once `VirtualMachine.console`

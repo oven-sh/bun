@@ -338,7 +338,7 @@ impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
         }
         self.app.set(None);
 
-        // Before `config`, which owns the arena the dev server's transpilers and views live in.
+        // Before `config`, which owns the arena the dev server's transpilers borrow.
         drop(self.dev_server.take());
         if let Some(plugins) = self.plugins.get() {
             // SAFETY: the intrusive refcount permits mutation through any owner. Each server has its

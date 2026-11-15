@@ -526,6 +526,25 @@ export default function () {
     expect(exitCode).toBe(1);
   });
 
+  test("a build without routes exits cleanly with a DNS query in flight", async () => {
+    using dir = tempDir("bake-production-dns-in-flight-ok", {
+      "app.ts": `
+        import dns from "node:dns";
+        const silent = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+        dns.setServers(["127.0.0.1:" + silent.port]);
+        dns.promises.resolve4("never-answered.invalid").catch(() => {});
+        export default { app: { framework: ${JSON.stringify(minimalFramework)} } };
+      `,
+    });
+
+    const { exitCode, stdout } = await Bun.$`${bunExe()} build --app ./app.ts`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .throws(false);
+    expect(stdout.toString()).toBe("done\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("handles build with no pages directory without crashing", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-no-pages", {
       "app.ts": `export default { app: { framework: "react" } };`,

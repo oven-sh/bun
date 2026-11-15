@@ -301,13 +301,11 @@ pub(crate) fn filter<'a>(
     // release the graph columns and the bundler-owned worker pool now that
     // everything needed has been copied out above. The scan transpiler itself
     // is in the CLI arena (the `&'a mut Transpiler<'a>` invariant forces a
-    // `'static` borrow), so its Drop never runs either; free its heap-backed
-    // options through the borrow `bundle` held.
+    // `'static` borrow), so it is dropped through the borrow `bundle` held.
     let scan_transpiler = &raw mut *bundle.transpiler;
     drop(bundle);
-    // SAFETY: the arena-backed `&'static mut` noted above — its `Drop` never
-    // runs, so `deinit` cannot lead to a double-drop.
-    unsafe { (*scan_transpiler).deinit() };
+    // SAFETY: the arena-backed `&'static mut` noted above, which nothing else drops.
+    unsafe { core::ptr::drop_in_place(scan_transpiler) };
 
     Ok(Result {
         test_files: &mut test_files[0..write],

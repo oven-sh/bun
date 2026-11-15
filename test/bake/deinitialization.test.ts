@@ -237,6 +237,42 @@ test.skipIf(isWindows)(
   60_000,
 );
 
+test.skipIf(isWindows)("a dev server that fails to start leaves no descriptor open", async () => {
+  using dir = tempDir("bake-failed-start-descriptors", {
+    "bunfig.toml": `[serve.static]\ndefine = { A = "{{" }`,
+    "index.html": `<!DOCTYPE html>`,
+    "fixture.ts": `
+      import { readdirSync } from "node:fs";
+      import html from "./index.html";
+
+      const openDescriptors = () => readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
+      function start() {
+        try {
+          Bun.serve({ port: 0, development: true, routes: { "/": html } });
+        } catch (error) {
+          return error.message;
+        }
+      }
+      console.log(start());
+      const before = openDescriptors();
+      for (let i = 0; i < 20; i++) start();
+      console.log(openDescriptors() - before < 10 ? "closed" : "left open");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toBe("ParserError while initializing development server\nclosed\n");
+  expect(exitCode).toBe(0);
+});
+
 test("a request that crosses maxRequestBodySize while it waits for a bundle that fails", async () => {
   using dir = tempDir("dev-server-deferred-limit", {
     "server.ts": `export function render(req: Request, meta: any) { return meta.pageModule.default(req, meta); }`,

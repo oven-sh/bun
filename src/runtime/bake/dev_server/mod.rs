@@ -313,14 +313,6 @@ impl DevServer {
     fn global(&self) -> &'static JSGlobalObject {
         self.vm().global()
     }
-
-    #[inline]
-    pub(crate) fn ssr_transpiler_mut(&mut self) -> Option<&mut Transpiler<'static>> {
-        let server_components = self.framework.server_components.as_ref()?;
-        // SAFETY: `init()` writes it if the SSR graph is separate.
-        (server_components.separate_ssr_graph)
-            .then(|| unsafe { self.ssr_transpiler.assume_init_mut() })
-    }
 }
 pub(super) use crate::bake::dev_server::route_bundle::RouteBundle;
 pub(super) use crate::bake::dev_server::source_map_store::SourceMapStore;
@@ -521,24 +513,24 @@ pub(crate) struct DevServer {
     pub(crate) bundles_since_last_error: usize,
 
     pub(crate) framework: bake::Framework,
-    pub(crate) bundler_framework_views: Vec<*mut bun_bundler::bake_types::Framework>,
-    pub(crate) bundler_options: bake::SplitBundlerOptions,
+    pub(crate) _bundler_options: bake::SplitBundlerOptions,
     // Each logical graph gets its own bundler configuration.
     // Note: `'static` is the DevServer-self lifetime stand-in (see
     // `CurrentBundle.bv2`). `Transpiler<'a>` borrows the global
     // `Fs::FileSystem` singleton + `dot_env::Loader`, both of which outlive
     // the server.
-    // `ManuallyDrop`: dropped in `Drop for DevServer`, before the framework views they borrow.
-    pub(crate) server_transpiler: ::core::mem::ManuallyDrop<Transpiler<'static>>,
-    pub(crate) client_transpiler: ::core::mem::ManuallyDrop<Transpiler<'static>>,
-    // Initialized only with a separate SSR graph.
-    pub(crate) ssr_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
+    pub(crate) server_transpiler: Transpiler<'static>,
+    pub(crate) client_transpiler: Transpiler<'static>,
+    /// With a separate SSR graph.
+    pub(crate) ssr_transpiler: Option<Transpiler<'static>>,
+    /// After the transpilers, whose `options.framework` it is.
+    pub(crate) bundler_framework_view: bun_ptr::AliasableBox<bun_bundler::bake_types::Framework>,
     /// The log used by all `server_transpiler`, `client_transpiler` and `ssr_transpiler`.
     /// Note that it is rarely correct to write messages into it. Instead, associate
     /// messages with the IncrementalGraph file or Route using `SerializedFailure`
     pub(crate) log: Log,
     pub(crate) plugin_state: PluginState,
-    /// Owned by `bundler_options` or by the server.
+    /// Owned by `_bundler_options` or by the server.
     pub(crate) plugins: Option<::core::ptr::NonNull<crate::api::js_bundler::Plugin>>,
     /// See `CurrentBundle` doc comment.
     pub(crate) current_bundle: Option<CurrentBundle>,

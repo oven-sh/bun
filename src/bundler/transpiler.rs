@@ -82,33 +82,6 @@ impl<'a> Transpiler<'a> {
         // resolver/lib.rs `// arena: dropped`), so nothing left to thread.
     }
 
-    /// VM-teardown: the owning `VirtualMachine` is raw-allocated and never `Drop`'d,
-    /// so free `BundleOptions` here. `log`/`env` are aliased/singletons; left alone.
-    /// `resolver` is a value field whose caches alias process-global BSSMaps, so the
-    /// resolver itself stays put — only its owned `opts` projection (cloned in
-    /// `resolver_bundle_options_subset`) is released.
-    ///
-    /// # Safety
-    /// Calls `drop_in_place` on `options` / `result` / `resolver.opts` /
-    /// `resolve_results`, leaving them logically uninitialized. After this
-    /// returns, `self` must never be dropped (or `deinit`'d again) — every
-    /// caller holds a `Transpiler` that bypasses `Drop`: a raw-`dealloc`'d
-    /// `VirtualMachine` field, a `MaybeUninit` stack slot, or an arena-backed
-    /// `&'static mut`. Owned `Transpiler`s from [`Self::for_worker`] must use
-    /// normal `Drop` instead.
-    pub unsafe fn deinit(&mut self) {
-        self.macro_context = None;
-        // SAFETY: `options`, `result`, and `resolver.opts` are init'd and never
-        // read past `destroy()` / the `--changed` scan teardown. Caller upholds
-        // the no-auto-drop contract above.
-        unsafe {
-            core::ptr::drop_in_place(&raw mut self.options);
-            core::ptr::drop_in_place(&raw mut self.result);
-            core::ptr::drop_in_place(&raw mut self.resolver.opts);
-            core::ptr::drop_in_place(&raw mut self.resolve_results);
-        }
-    }
-
     /// Shared read-only borrow of the `Log`. Use for `has_errors()` /
     /// `.errors` / `.warnings` checks; prefer [`Self::log_mut`] for writes.
     #[inline]
@@ -1045,8 +1018,7 @@ pub(crate) fn resolver_bundle_options_subset(
 }
 
 impl<'a> Transpiler<'a> {
-    /// Called by [`init_runtime_state`](../runtime/jsc_hooks.rs)
-    /// to write `vm.transpiler`. Builds on:
+    /// Builds on:
     ///   * [`options::BundleOptions::from_api`] — `bun_bundler::options`
     ///   * [`Resolver::init1`] — `bun_resolver`
     ///

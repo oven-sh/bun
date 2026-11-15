@@ -99,8 +99,7 @@ impl Framework {
     /// Project the runtime-side `bake::Framework` into the bundler crate's
     /// TYPE_ONLY view (`bun_bundler::bake_types::Framework`). The bundler is a
     /// lower-tier crate and cannot name `bun_runtime::bake::Framework`; this is
-    /// the value `init_transpiler` arena-allocates and hands to
-    /// `out.options.framework`.
+    /// what a transpiler's `options.framework` borrows.
     pub(in crate::bake) fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
         use bun_bundler::bake_types as bt;
         let built_in_modules = bun_core::handle_oom(self.built_in_modules.clone());

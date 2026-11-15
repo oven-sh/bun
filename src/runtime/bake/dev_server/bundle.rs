@@ -378,9 +378,9 @@ impl DevServer {
         let (ssr_transpiler, server_transpiler, client_transpiler) = unsafe {
             use bun_ptr::detach_lifetime_mut as detach;
             (
-                self.ssr_transpiler_mut().map(|ssr| detach(ssr)),
-                detach(&mut *self.server_transpiler),
-                detach(&mut *self.client_transpiler),
+                self.ssr_transpiler.as_mut().map(|ssr| detach(ssr)),
+                detach(&mut self.server_transpiler),
+                detach(&mut self.client_transpiler),
             )
         };
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(

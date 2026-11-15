@@ -4,7 +4,7 @@
 
 use bun_paths::strings;
 use core::cell::UnsafeCell;
-use core::mem::MaybeUninit;
+use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use std::io::Write as _;
 use std::sync::OnceLock;
@@ -116,12 +116,6 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
         smol: ctx.runtime_options.smol,
         ..Default::default()
     })?;
-    scopeguard::defer! {
-        // Its loop is alive, so queued work is released here rather than by a thread teardown.
-        vm.release_queued_work();
-        // SAFETY: what borrows from the VM is declared below, so it has been dropped.
-        unsafe { VirtualMachine::destroy(VirtualMachine::get_mut_ptr()) };
-    }
 
     vm.event_loop().ensure_waker();
     vm.preload.set(ctx.preloads.clone());
@@ -192,7 +186,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
 
     // Note: `PerThread` owns its data. Start with an empty placeholder so Drop
     // (which detaches the C++-side per-thread pointer) runs in this frame's
-    // LIFO order — under the API lock, before the VM is destroyed.
+    // LIFO order — under the API lock.
     let mut pt = PerThread::placeholder(vm);
 
     match build_with_vm(ctx, &cwd, &mut pt) {
@@ -206,12 +200,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
             vm.on_exit();
             vm.global_exit();
         }
-        Err(e) => {
-            // Lookups can still be in flight, and `destroy` frees what their channel closes into.
-            vm.forbid_script();
-            let _ = crate::jsc_hooks::stop_dns_for_vm_teardown();
-            return Err(e);
-        }
+        Err(e) => return Err(e),
     }
     Ok(())
 }
@@ -397,43 +386,31 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     loader.map.put(b"NODE_ENV", b"production")?;
     dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader>(loader));
 
-    // In-place init via `MaybeUninit` (`init_transpiler`
-    // keeps the out-param shape shared with the dev-server path).
-    let mut client_transpiler = MaybeUninit::<Transpiler>::uninit();
-    let mut server_transpiler = MaybeUninit::<Transpiler>::uninit();
-    let mut ssr_transpiler = MaybeUninit::<Transpiler>::uninit();
     // `vm.log` is set from `ctx.log` (non-null, process-lifetime);
     // `log_mut()` is the safe accessor encapsulating the NonNull deref.
     let vm_log = vm.log_mut().unwrap();
-    let (server_transpiler, _) = framework.init_transpiler(
-        &options.arena,
-        vm_log,
-        crate::bake::Mode::ProductionStatic,
-        crate::bake::Graph::Server,
-        &mut server_transpiler,
-        &options.bundler_options.server,
-    )?;
-    let (client_transpiler, _) = framework.init_transpiler(
-        &options.arena,
-        vm_log,
-        crate::bake::Mode::ProductionStatic,
-        crate::bake::Graph::Client,
-        &mut client_transpiler,
-        &options.bundler_options.client,
-    )?;
-    let mut ssr_transpiler = if separate_ssr_graph {
-        let (ssr_transpiler, _) = framework.init_transpiler(
-            &options.arena,
-            vm_log,
-            crate::bake::Mode::ProductionStatic,
-            crate::bake::Graph::Ssr,
-            &mut ssr_transpiler,
-            &options.bundler_options.ssr,
-        )?;
-        Some(ssr_transpiler)
-    } else {
-        None
+    let unresolved_framework = framework.as_bundler_view();
+    let mut init_transpiler = |renderer, bundler_options| {
+        framework
+            .init_transpiler(
+                &options.arena,
+                vm_log,
+                crate::bake::Mode::ProductionStatic,
+                renderer,
+                &unresolved_framework,
+                bundler_options,
+            )
+            // The bundle borrows it for its own lifetime parameter, which rules out a drop.
+            .map(ManuallyDrop::new)
     };
+    let server_transpiler =
+        &mut *init_transpiler(bake::Graph::Server, &options.bundler_options.server)?;
+    let client_transpiler =
+        &mut *init_transpiler(bake::Graph::Client, &options.bundler_options.client)?;
+    let mut ssr_transpiler = separate_ssr_graph
+        .then(|| init_transpiler(bake::Graph::Ssr, &options.bundler_options.ssr))
+        .transpose()?;
+    let mut ssr_transpiler = ssr_transpiler.as_deref_mut();
 
     if ctx.bundler_options.bake_debug_disable_minify {
         let mut targets: Vec<&mut Transpiler> =

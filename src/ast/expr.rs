@@ -9,7 +9,7 @@ use bun_alloc::{AllocError, Arena as Bump};
 use bun_collections::VecExt;
 use bun_core::{self};
 
-use crate::{DebugOnlyDisabler, E, G, Op, Ref};
+use crate::{AstArena, DebugOnlyDisabler, E, G, Op, Ref};
 use bun_alloc::ArenaVecExt as _;
 // Re-export so downstream crates can name `ast::expr::StoreRef` (some callers
 // route through `expr::`).
@@ -102,24 +102,17 @@ impl Expr {
     pub fn data_store_reset() {
         data::Store::reset();
     }
-
-    /// Initializes the thread-local expression-data `Store` for the current
-    /// thread; counterpart of `data_store_reset()`.
-    #[inline]
-    pub fn data_store_create() {
-        data::Store::create();
-    }
 }
 
 impl Expr {
-    pub fn deep_clone(&self, bump: &Bump) -> Result<Expr, crate::Error> {
+    pub fn deep_clone(&self, bump: &AstArena) -> Result<Expr, crate::Error> {
         let _g = bun_alloc::ast_alloc::DetachAstHeap::new();
         self.deep_clone_no_detach(bump, bun_core::StackCheck::init())
     }
     #[inline]
     pub fn deep_clone_no_detach(
         &self,
-        bump: &Bump,
+        bump: &AstArena,
         stack_check: bun_core::StackCheck,
     ) -> Result<Expr, crate::Error> {
         Ok(Expr {
@@ -148,11 +141,11 @@ pub struct Query {
 impl Expr {
     #[inline]
     pub fn is_array(&self) -> bool {
-        matches!(self.data, Data::EArray(_) | Data::EArrayJSON(_))
+        matches!(self.data, Data::EArray(_))
     }
     #[inline]
     pub fn is_object(&self) -> bool {
-        matches!(self.data, Data::EObject(_) | Data::EObjectJSON(_))
+        matches!(self.data, Data::EObject(_))
     }
     #[inline]
     pub fn is_string(&self) -> bool {
@@ -160,12 +153,13 @@ impl Expr {
     }
 
     /// Materialize an immutable JSON leaf/container value as an `Expr`.
-    pub fn from_json_value(value: &E::JsonValue, loc: Loc) -> Expr {
+    pub fn from_json_value(bump: &AstArena, value: &E::JsonValue, loc: Loc) -> Expr {
         match value {
             E::JsonValue::Null => Expr::init(E::Null, loc),
             E::JsonValue::Boolean(value) => Expr::init(E::Boolean { value: *value }, loc),
             E::JsonValue::Number(n) => Expr::init(*n, loc),
-            E::JsonValue::String(s) => Expr::init(
+            E::JsonValue::String(s) => Expr::allocate(
+                bump,
                 E::String {
                     data: *s,
                     ..Default::default()
@@ -183,7 +177,7 @@ impl Expr {
         }
     }
 
-    /// Visit every property of an object expression (`E::Object` or `E::ObjectJSON`) in source order.
+    /// Visit every property of an `E::Object` in source order.
     pub fn for_each_property(&self, mut f: impl FnMut(&[u8], Loc, Expr)) {
         let _: Result<(), core::convert::Infallible> =
             self.try_for_each_property(|key, loc, value| {
@@ -197,67 +191,43 @@ impl Expr {
         &self,
         mut f: impl FnMut(&[u8], Loc, Expr) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        match &self.data {
-            Data::EObject(obj) => {
-                for property in obj.properties.slice() {
-                    let (Some(key_expr), Some(value)) =
-                        (property.key.as_ref(), property.value.as_ref())
-                    else {
-                        continue;
-                    };
-                    let Some(key) = key_expr.as_utf8_string_literal() else {
-                        continue;
-                    };
-                    f(key, key_expr.loc, *value)?;
-                }
-            }
-            Data::EObjectJSON(obj) => {
-                for property in obj.get().properties() {
-                    f(
-                        property.key.slice(),
-                        property.key_loc,
-                        Expr::from_json_value(&property.value, property.key_loc),
-                    )?;
-                }
-            }
-            _ => {}
+        let Some(obj) = self.as_e_object() else {
+            return Ok(());
+        };
+        for property in obj.properties.slice() {
+            let (Some(key_expr), Some(value)) = (property.key.as_ref(), property.value.as_ref())
+            else {
+                continue;
+            };
+            let Some(key) = key_expr.as_utf8_string_literal() else {
+                continue;
+            };
+            f(key, key_expr.loc, *value)?;
         }
         Ok(())
     }
 
-    /// Number of properties of an object expression in either representation; 0 otherwise.
-    pub fn property_count(&self) -> usize {
+    fn as_e_object(&self) -> Option<&E::Object> {
         match &self.data {
-            Data::EObject(obj) => obj.properties.len_u32() as usize,
-            Data::EObjectJSON(obj) => obj.get().properties().len(),
-            _ => 0,
+            Data::EObject(obj) => Some(obj),
+            other => {
+                debug_assert!(
+                    !matches!(other, Data::EObjectJSON(_)),
+                    "read `E::ObjectJSON` through `JsonView`"
+                );
+                None
+            }
         }
+    }
+
+    /// Number of properties of an `E::Object`; 0 otherwise.
+    pub fn property_count(&self) -> usize {
+        self.as_e_object().map_or(0, |obj| obj.properties.len())
     }
 
     /// Look up `name` among the properties of an object-literal expression.
     pub fn as_property(&self, name: &[u8]) -> Option<Query> {
-        match &self.data {
-            Data::EObject(obj) => {
-                if obj.properties.len_u32() == 0 {
-                    return None;
-                }
-                obj.as_property(name)
-            }
-            Data::EObjectJSON(obj) => {
-                let (i, prop) = obj
-                    .get()
-                    .properties()
-                    .iter()
-                    .enumerate()
-                    .find(|(_, p)| p.key.slice() == name)?;
-                Some(Query {
-                    expr: Expr::from_json_value(&prop.value, prop.key_loc),
-                    loc: prop.key_loc,
-                    i: i as u32,
-                })
-            }
-            _ => None,
-        }
+        self.as_e_object()?.as_property(name)
     }
 
     pub fn get(&self, name: &[u8]) -> Option<Expr> {
@@ -275,22 +245,18 @@ impl Expr {
                 if array.items.len_u32() == 0 {
                     return None;
                 }
-                Some(ArrayIterator::Full {
+                Some(ArrayIterator {
                     array: *array,
                     index: 0,
                 })
             }
-            Data::EArrayJSON(array) => {
-                if array.get().items().is_empty() {
-                    return None;
-                }
-                Some(ArrayIterator::Json {
-                    array: *array,
-                    index: 0,
-                    loc: self.loc,
-                })
+            other => {
+                debug_assert!(
+                    !matches!(other, Data::EArrayJSON(_)),
+                    "read `E::ArrayJSON` through `JsonView`"
+                );
+                None
             }
-            _ => None,
         }
     }
 
@@ -338,14 +304,7 @@ impl Expr {
 
 impl Expr {
     pub fn has_any_property_named(&self, names: &'static [&'static [u8]]) -> bool {
-        if let Data::EObjectJSON(obj) = &self.data {
-            return obj
-                .get()
-                .properties()
-                .iter()
-                .any(|p| bun_core::eql_any_comptime(p.key.slice(), names));
-        }
-        let Data::EObject(obj) = &self.data else {
+        let Some(obj) = self.as_e_object() else {
             return false;
         };
         if obj.properties.len_u32() == 0 {
@@ -373,7 +332,7 @@ impl Expr {
     /// Don't use this if you care about performance.
     ///
     /// Sets the value of a property, creating it if it doesn't exist.
-    pub fn set(&mut self, _bump: &Bump, name: &[u8], value: Expr) -> Result<(), AllocError> {
+    pub fn set(&mut self, bump: &AstArena, name: &[u8], value: Expr) -> Result<(), AllocError> {
         debug_assert!(matches!(self.data, Data::EObject(_)));
         let Data::EObject(obj) = &mut self.data else {
             unreachable!()
@@ -393,7 +352,8 @@ impl Expr {
         VecExt::append(
             &mut obj.properties,
             G::Property {
-                key: Some(Expr::init(
+                key: Some(Expr::allocate(
+                    bump,
                     E::String {
                         data: Str::new(name),
                         ..Default::default()
@@ -412,7 +372,7 @@ impl Expr {
     /// Sets the value of a property to a string, creating it if it doesn't exist.
     pub fn set_string(
         expr: &mut Expr,
-        _bump: &Bump,
+        bump: &AstArena,
         name: &[u8],
         value: &[u8],
     ) -> Result<(), AllocError> {
@@ -427,7 +387,8 @@ impl Expr {
                 continue;
             };
             if key_str.eql_bytes(name) {
-                prop.value = Some(Expr::init(
+                prop.value = Some(Expr::allocate(
+                    bump,
                     E::String {
                         data: Str::new(value),
                         ..Default::default()
@@ -441,14 +402,16 @@ impl Expr {
         VecExt::append(
             &mut obj.properties,
             G::Property {
-                key: Some(Expr::init(
+                key: Some(Expr::allocate(
+                    bump,
                     E::String {
                         data: Str::new(name),
                         ..Default::default()
                     },
                     Loc::EMPTY,
                 )),
-                value: Some(Expr::init(
+                value: Some(Expr::allocate(
+                    bump,
                     E::String {
                         data: Str::new(value),
                         ..Default::default()
@@ -494,37 +457,18 @@ impl Expr {
 // ArrayIterator
 // ───────────────────────────────────────────────────────────────────────────
 
-pub enum ArrayIterator {
+pub struct ArrayIterator {
     /// Arena-backed handle (`StoreRef` invariant: pointee lives until arena
     /// reset). Stored by value so the iterator carries no borrowed lifetime.
-    Full {
-        array: StoreRef<E::Array>,
-        index: u32,
-    },
-    Json {
-        array: StoreRef<E::ArrayJSON>,
-        index: u32,
-        loc: Loc,
-    },
+    array: StoreRef<E::Array>,
+    index: u32,
 }
 
 impl ArrayIterator {
     pub fn next(&mut self) -> Option<Expr> {
-        match self {
-            ArrayIterator::Full { array, index } => {
-                if *index >= array.items.len_u32() {
-                    return None;
-                }
-                let result = array.items.slice()[*index as usize];
-                *index += 1;
-                Some(result)
-            }
-            ArrayIterator::Json { array, index, loc } => {
-                let item = array.get().items().get(*index as usize)?;
-                *index += 1;
-                Some(Expr::from_json_value(item, *loc))
-            }
-        }
+        let result = *self.array.items.get(self.index as usize)?;
+        self.index += 1;
+        Some(result)
     }
 }
 
@@ -540,47 +484,6 @@ impl Expr {
             return None;
         };
         s.string(bump).ok()
-    }
-
-    /// `as_string_hash` for JSON-parsed trees (always UTF-8, no rope) where no
-    /// `Bump` is in scope. Debug-asserts the UTF-8 invariant; release falls
-    /// back to a transient arena for the UTF-16 path.
-    #[inline]
-    pub fn as_string_hash_utf8(
-        &self,
-        hash_fn: fn(&[u8]) -> u64,
-    ) -> Result<Option<u64>, AllocError> {
-        match &self.data {
-            Data::EString(str) if str.is_utf8() => Ok(Some(hash_fn(&str.data))),
-            Data::EString(_) => {
-                debug_assert!(
-                    false,
-                    "as_string_hash_utf8: UTF-16 EString from JSON parser"
-                );
-                let bump = Bump::new();
-                self.as_string_hash(&bump, hash_fn)
-            }
-            _ => Ok(None),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn as_string_hash(
-        &self,
-        bump: &Bump,
-        hash_fn: fn(&[u8]) -> u64,
-    ) -> Result<Option<u64>, AllocError> {
-        match &self.data {
-            Data::EString(str) => {
-                if str.is_utf8() {
-                    return Ok(Some(hash_fn(&str.data)));
-                }
-                let utf8_str = str.string(bump)?;
-                // bump-allocated, freed on reset
-                Ok(Some(hash_fn(utf8_str)))
-            }
-            _ => Ok(None),
-        }
     }
 }
 
@@ -754,7 +657,7 @@ pub trait IntoExprData: Sized {
     fn into_data_store(self) -> Data;
     /// Construct `Data` using a caller-supplied arena.
     /// Be careful to free the memory (or use an arena that does it for you).
-    fn into_data_alloc(self, bump: &Bump) -> Data;
+    fn into_data_alloc(self, bump: &AstArena) -> Data;
 }
 
 macro_rules! impl_into_expr_data_boxed {
@@ -766,8 +669,8 @@ macro_rules! impl_into_expr_data_boxed {
                     Data::$variant(data::Store::append(self))
                 }
                 #[inline]
-                fn into_data_alloc(self, bump: &Bump) -> Data {
-                    Data::$variant(StoreRef::from_bump(bump.alloc(self)))
+                fn into_data_alloc(self, bump: &AstArena) -> Data {
+                    Data::$variant(bump.alloc_node(self))
                 }
             }
         )*
@@ -781,7 +684,7 @@ macro_rules! impl_into_expr_data_inline {
                 #[inline]
                 fn into_data_store(self) -> Data { Data::$variant(self) }
                 #[inline]
-                fn into_data_alloc(self, _bump: &Bump) -> Data { Data::$variant(self) }
+                fn into_data_alloc(self, _bump: &AstArena) -> Data { Data::$variant(self) }
             }
         )*
     };
@@ -837,7 +740,7 @@ impl IntoExprData for E::Identifier {
         Data::EIdentifier(self)
     }
     #[inline]
-    fn into_data_alloc(self, _bump: &Bump) -> Data {
+    fn into_data_alloc(self, _bump: &AstArena) -> Data {
         Data::EIdentifier(self)
     }
 }
@@ -848,7 +751,7 @@ impl IntoExprData for E::ImportIdentifier {
         Data::EImportIdentifier(self)
     }
     #[inline]
-    fn into_data_alloc(self, _bump: &Bump) -> Data {
+    fn into_data_alloc(self, _bump: &AstArena) -> Data {
         Data::EImportIdentifier(self)
     }
 }
@@ -859,7 +762,7 @@ impl IntoExprData for E::CommonJSExportIdentifier {
         Data::ECommonjsExportIdentifier(self)
     }
     #[inline]
-    fn into_data_alloc(self, _bump: &Bump) -> Data {
+    fn into_data_alloc(self, _bump: &AstArena) -> Data {
         // `base` rides inside `ref_`, so a single-word copy carries both.
         Data::ECommonjsExportIdentifier(self)
     }
@@ -878,14 +781,14 @@ impl IntoExprData for E::EString {
         }
         Data::EString(data::Store::append(self))
     }
-    fn into_data_alloc(self, bump: &Bump) -> Data {
+    fn into_data_alloc(self, bump: &AstArena) -> Data {
         #[cfg(debug_assertions)]
         {
             if !self.data.is_empty() && self.is_utf8() {
                 debug_assert!(self.data.as_ptr() as usize > 0);
             }
         }
-        Data::EString(StoreRef::from_bump(bump.alloc(self)))
+        Data::EString(bump.alloc_node(self))
     }
 }
 
@@ -897,8 +800,8 @@ impl IntoExprData for &E::EString {
         Data::EString(data::Store::append(self.shallow_clone()))
     }
     #[inline]
-    fn into_data_alloc(self, bump: &Bump) -> Data {
-        Data::EString(StoreRef::from_bump(bump.alloc(self.shallow_clone())))
+    fn into_data_alloc(self, bump: &AstArena) -> Data {
+        Data::EString(bump.alloc_node(self.shallow_clone()))
     }
 }
 
@@ -907,8 +810,7 @@ impl Expr {
     /// Be careful to free the memory (or use an arena that does it for you)
     /// Also, prefer Expr.init or Expr.alloc when possible. This will be slower.
     #[inline]
-    pub fn allocate<T: IntoExprData>(bump: &Bump, st: T, loc: Loc) -> Expr {
-        data::Store::assert();
+    pub fn allocate<T: IntoExprData>(bump: &AstArena, st: T, loc: Loc) -> Expr {
         Expr {
             loc,
             data: st.into_data_alloc(bump),
@@ -917,7 +819,6 @@ impl Expr {
 
     #[inline]
     pub fn init<T: IntoExprData>(st: T, loc: Loc) -> Expr {
-        data::Store::assert();
         Expr {
             loc,
             data: st.into_data_store(),
@@ -1677,7 +1578,7 @@ impl Data {
 fn json_value_deep_clone(
     value: &E::JsonValue,
     loc: Loc,
-    bump: &Bump,
+    bump: &AstArena,
     stack_check: bun_core::StackCheck,
 ) -> Result<Expr, crate::Error> {
     Ok(match value {
@@ -1693,7 +1594,7 @@ fn json_value_deep_clone(
             loc,
             data: Data::EArrayJSON(*a).deep_clone_no_detach(bump, stack_check)?,
         },
-        _ => Expr::from_json_value(value, loc),
+        _ => Expr::from_json_value(bump, value, loc),
     })
 }
 
@@ -1721,7 +1622,7 @@ impl Data {
 impl Data {
     fn deep_clone_no_detach(
         &self,
-        bump: &Bump,
+        bump: &AstArena,
         stack_check: bun_core::StackCheck,
     ) -> Result<Data, crate::Error> {
         if !stack_check.is_safe_to_recurse() {
@@ -1733,7 +1634,7 @@ impl Data {
                 let items = el
                     .items
                     .try_deep_clone_with(|e| e.deep_clone_no_detach(bump, stack_check))?;
-                let item = bump.alloc(E::Array {
+                let item = bump.alloc_node(E::Array {
                     items,
                     comma_after_spread: el.comma_after_spread,
                     was_originally_macro: el.was_originally_macro,
@@ -1741,7 +1642,7 @@ impl Data {
                     is_parenthesized: el.is_parenthesized,
                     close_bracket_loc: el.close_bracket_loc,
                 });
-                Ok(Data::EArray(StoreRef::from_bump(item)))
+                Ok(Data::EArray(item))
             }
             Data::EObjectJSON(el) => {
                 let el = el.get();
@@ -1769,13 +1670,13 @@ impl Data {
                         ..Default::default()
                     });
                 }
-                let item = bump.alloc(E::Object {
+                let item = bump.alloc_node(E::Object {
                     properties,
                     is_single_line: el.is_single_line,
                     close_brace_loc: el.close_brace_loc,
                     ..Default::default()
                 });
-                Ok(Data::EObject(StoreRef::from_bump(item)))
+                Ok(Data::EObject(item))
             }
             Data::EArrayJSON(el) => {
                 let el = el.get();
@@ -1787,29 +1688,29 @@ impl Data {
                     let loc = item_locs.map_or(crate::Loc::EMPTY, |l| l[i]);
                     items.push(json_value_deep_clone(value, loc, bump, stack_check)?);
                 }
-                let item = bump.alloc(E::Array {
+                let item = bump.alloc_node(E::Array {
                     items,
                     is_single_line: el.is_single_line,
                     close_bracket_loc: el.close_bracket_loc,
                     ..Default::default()
                 });
-                Ok(Data::EArray(StoreRef::from_bump(item)))
+                Ok(Data::EArray(item))
             }
             Data::EUnary(el) => {
-                let item = bump.alloc(E::Unary {
+                let item = bump.alloc_node(E::Unary {
                     op: el.op,
                     value: el.value.deep_clone_no_detach(bump, stack_check)?,
                     flags: el.flags,
                 });
-                Ok(Data::EUnary(StoreRef::from_bump(item)))
+                Ok(Data::EUnary(item))
             }
             Data::EBinary(el) => {
-                let item = bump.alloc(E::Binary {
+                let item = bump.alloc_node(E::Binary {
                     op: el.op,
                     left: el.left.deep_clone_no_detach(bump, stack_check)?,
                     right: el.right.deep_clone_no_detach(bump, stack_check)?,
                 });
-                Ok(Data::EBinary(StoreRef::from_bump(item)))
+                Ok(Data::EBinary(item))
             }
             Data::EClass(el) => {
                 // `properties` is an arena-owned `StoreSlice<Property>`.
@@ -1820,7 +1721,7 @@ impl Data {
                 }
                 let properties = crate::StoreSlice::new_mut(properties.into_bump_slice_mut());
 
-                let item = bump.alloc(E::Class {
+                let item = bump.alloc_node(E::Class {
                     class_keyword: el.class_keyword,
                     ts_decorators: G::deep_clone_decorators(&el.ts_decorators, bump, stack_check)?,
                     class_name: el.class_name,
@@ -1836,10 +1737,10 @@ impl Data {
                     assigns_fields_in_constructor: el.assigns_fields_in_constructor,
                     inner_class_ref: el.inner_class_ref,
                 });
-                Ok(Data::EClass(StoreRef::from_bump(item)))
+                Ok(Data::EClass(item))
             }
             Data::ENew(el) => {
-                let item = bump.alloc(E::New {
+                let item = bump.alloc_node(E::New {
                     target: el.target.deep_clone_no_detach(bump, stack_check)?,
                     args: el
                         .args
@@ -1847,16 +1748,16 @@ impl Data {
                     can_be_unwrapped_if_unused: el.can_be_unwrapped_if_unused,
                     close_parens_loc: el.close_parens_loc,
                 });
-                Ok(Data::ENew(StoreRef::from_bump(item)))
+                Ok(Data::ENew(item))
             }
             Data::EFunction(el) => {
-                let item = bump.alloc(E::Function {
+                let item = bump.alloc_node(E::Function {
                     func: el.func.deep_clone(bump, stack_check)?,
                 });
-                Ok(Data::EFunction(StoreRef::from_bump(item)))
+                Ok(Data::EFunction(item))
             }
             Data::ECall(el) => {
-                let item = bump.alloc(E::Call {
+                let item = bump.alloc_node(E::Call {
                     target: el.target.deep_clone_no_detach(bump, stack_check)?,
                     args: el
                         .args
@@ -1867,10 +1768,10 @@ impl Data {
                     can_be_unwrapped_if_unused: el.can_be_unwrapped_if_unused,
                     was_jsx_element: el.was_jsx_element,
                 });
-                Ok(Data::ECall(StoreRef::from_bump(item)))
+                Ok(Data::ECall(item))
             }
             Data::EDot(el) => {
-                let item = bump.alloc(E::Dot {
+                let item = bump.alloc_node(E::Dot {
                     target: el.target.deep_clone_no_detach(bump, stack_check)?,
                     name: el.name,
                     name_loc: el.name_loc,
@@ -1879,23 +1780,23 @@ impl Data {
                     call_can_be_unwrapped_if_unused: el.call_can_be_unwrapped_if_unused,
                     is_import_property_use: el.is_import_property_use,
                 });
-                Ok(Data::EDot(StoreRef::from_bump(item)))
+                Ok(Data::EDot(item))
             }
             Data::EIndex(el) => {
-                let item = bump.alloc(E::Index {
+                let item = bump.alloc_node(E::Index {
                     target: el.target.deep_clone_no_detach(bump, stack_check)?,
                     index: el.index.deep_clone_no_detach(bump, stack_check)?,
                     optional_chain: el.optional_chain,
                     is_import_property_use: el.is_import_property_use,
                 });
-                Ok(Data::EIndex(StoreRef::from_bump(item)))
+                Ok(Data::EIndex(item))
             }
             Data::EArrow(el) => {
                 let mut args = bun_alloc::ArenaVec::with_capacity_in(el.args.len(), bump);
                 for i in 0..el.args.len() {
                     args.push(el.args[i].deep_clone(bump, stack_check)?);
                 }
-                let item = bump.alloc(E::Arrow {
+                let item = bump.alloc_node(E::Arrow {
                     args: crate::StoreSlice::new(args.into_bump_slice()),
                     body: G::FnBody {
                         loc: el.body.loc,
@@ -1906,10 +1807,10 @@ impl Data {
                     prefer_expr: el.prefer_expr,
                     has_react_hooks_suppression: el.has_react_hooks_suppression,
                 });
-                Ok(Data::EArrow(StoreRef::from_bump(item)))
+                Ok(Data::EArrow(item))
             }
             Data::EJsxElement(el) => {
-                let item = bump.alloc(E::JSXElement {
+                let item = bump.alloc_node(E::JSXElement {
                     tag: match &el.tag {
                         Some(tag) => Some(tag.deep_clone_no_detach(bump, stack_check)?),
                         None => None,
@@ -1924,10 +1825,10 @@ impl Data {
                     flags: el.flags,
                     close_tag_loc: el.close_tag_loc,
                 });
-                Ok(Data::EJsxElement(StoreRef::from_bump(item)))
+                Ok(Data::EJsxElement(item))
             }
             Data::EObject(el) => {
-                let item = bump.alloc(E::Object {
+                let item = bump.alloc_node(E::Object {
                     properties: el
                         .properties
                         .try_deep_clone_with(|p| p.deep_clone(bump, stack_check))?,
@@ -1937,16 +1838,16 @@ impl Data {
                     was_originally_macro: el.was_originally_macro,
                     close_brace_loc: el.close_brace_loc,
                 });
-                Ok(Data::EObject(StoreRef::from_bump(item)))
+                Ok(Data::EObject(item))
             }
             Data::ESpread(el) => {
-                let item = bump.alloc(E::Spread {
+                let item = bump.alloc_node(E::Spread {
                     value: el.value.deep_clone_no_detach(bump, stack_check)?,
                 });
-                Ok(Data::ESpread(StoreRef::from_bump(item)))
+                Ok(Data::ESpread(item))
             }
             Data::ETemplate(el) => {
-                let item = bump.alloc(E::Template {
+                let item = bump.alloc_node(E::Template {
                     tag: match &el.tag {
                         Some(tag) => Some(tag.deep_clone_no_detach(bump, stack_check)?),
                         None => None,
@@ -1956,54 +1857,54 @@ impl Data {
                     // safe field-wise copy.
                     head: el.head.shallow_clone(),
                 });
-                Ok(Data::ETemplate(StoreRef::from_bump(item)))
+                Ok(Data::ETemplate(item))
             }
             Data::ERegExp(el) => {
-                let item = bump.alloc(E::RegExp {
+                let item = bump.alloc_node(E::RegExp {
                     value: el.value,
                     flags_offset: el.flags_offset,
                 });
-                Ok(Data::ERegExp(StoreRef::from_bump(item)))
+                Ok(Data::ERegExp(item))
             }
             Data::EAwait(el) => {
-                let item = bump.alloc(E::Await {
+                let item = bump.alloc_node(E::Await {
                     value: el.value.deep_clone_no_detach(bump, stack_check)?,
                 });
-                Ok(Data::EAwait(StoreRef::from_bump(item)))
+                Ok(Data::EAwait(item))
             }
             Data::EYield(el) => {
-                let item = bump.alloc(E::Yield {
+                let item = bump.alloc_node(E::Yield {
                     value: match &el.value {
                         Some(value) => Some(value.deep_clone_no_detach(bump, stack_check)?),
                         None => None,
                     },
                     is_star: el.is_star,
                 });
-                Ok(Data::EYield(StoreRef::from_bump(item)))
+                Ok(Data::EYield(item))
             }
             Data::EIf(el) => {
-                let item = bump.alloc(E::If {
+                let item = bump.alloc_node(E::If {
                     test: el.test.deep_clone_no_detach(bump, stack_check)?,
                     yes: el.yes.deep_clone_no_detach(bump, stack_check)?,
                     no: el.no.deep_clone_no_detach(bump, stack_check)?,
                 });
-                Ok(Data::EIf(StoreRef::from_bump(item)))
+                Ok(Data::EIf(item))
             }
             Data::EImport(el) => {
-                let item = bump.alloc(E::Import {
+                let item = bump.alloc_node(E::Import {
                     expr: el.expr.deep_clone_no_detach(bump, stack_check)?,
                     options: el.options.deep_clone_no_detach(bump, stack_check)?,
                     import_record_index: el.import_record_index,
                     namespace_ref: el.namespace_ref,
                 });
-                Ok(Data::EImport(StoreRef::from_bump(item)))
+                Ok(Data::EImport(item))
             }
             Data::EBigInt(el) => {
-                let item = bump.alloc(E::BigInt { value: el.value });
-                Ok(Data::EBigInt(StoreRef::from_bump(item)))
+                let item = bump.alloc_node(E::BigInt { value: el.value });
+                Ok(Data::EBigInt(item))
             }
             Data::EString(el) => {
-                let item = bump.alloc(E::String {
+                let item = bump.alloc_node(E::String {
                     data: el.data,
                     prefer_template: el.prefer_template,
                     next: el.next,
@@ -2012,14 +1913,14 @@ impl Data {
                     is_utf16: el.is_utf16,
                     toml_datetime: el.toml_datetime,
                 });
-                Ok(Data::EString(StoreRef::from_bump(item)))
+                Ok(Data::EString(item))
             }
             Data::EInlinedEnum(el) => {
-                let item = bump.alloc(E::InlinedEnum {
+                let item = bump.alloc_node(E::InlinedEnum {
                     value: el.value,
                     comment: el.comment,
                 });
-                Ok(Data::EInlinedEnum(StoreRef::from_bump(item)))
+                Ok(Data::EInlinedEnum(item))
             }
             _ => Ok(this),
         }

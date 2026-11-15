@@ -461,7 +461,15 @@ fn append_package_json(
     };
     let mut package = LockfilePackage::default();
     let features = workspace_path.map_or(Features::main(), |_| Features::WORKSPACE);
-    package.parse_with_json(this, manager, log, &source, json, &mut (), features)?;
+    package.parse_with_json(
+        this,
+        manager,
+        log,
+        &source,
+        bun_ast::JsonView::from(&json),
+        &mut (),
+        features,
+    )?;
     if let Some(workspace_path) = workspace_path {
         package.resolution = Resolution::init(ResolutionValue::Workspace(workspace_path));
     }
@@ -599,7 +607,6 @@ pub(crate) fn migrate_yarn_lockfile(
     yarn_lock.parse(data)?;
 
     this.init_empty();
-    install::initialize_store();
     bun_core::analytics::Features::yarn_migration_inc(1);
 
     let root = append_package_json(this, manager, log, None)?;

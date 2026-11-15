@@ -452,7 +452,7 @@ impl Snapshots {
             js_parser::ParserOptions::init(vm.transpiler.get().options.jsx.clone(), bun_ast::Loader::Js);
         opts.features.no_macros = true;
         // Thread a per-call arena — js_parser is bump-allocated.
-        let arena = bun_alloc::Arena::new();
+        let arena = bun_ast::AstArena::new();
         let temp_log = bun_ast::Log::init();
 
         let source = bun_ast::Source::init_path_string(snapshot_file_path, self.file_buf.as_slice());
@@ -737,7 +737,7 @@ impl Snapshots {
         let vm = VirtualMachine::get();
 
         // The arena is reset() inside the loop, bulk-freeing per-iteration scratch.
-        let mut arena = bun_alloc::Arena::new();
+        let mut arena = bun_ast::AstArena::new();
 
         for InlineSnapshotsOfFile { path: test_file_path, snapshots: ils_info } in self.inline_snapshots_to_write.values_mut() {
             arena.reset();

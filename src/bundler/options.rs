@@ -917,7 +917,7 @@ pub(crate) fn defines_from_transform_options(
     node_env: Option<&[u8]>,
     drop: &[&[u8]],
     omit_unused_global_calls: bool,
-    bump: &bun_alloc::Arena,
+    bump: &bun_ast::AstArena,
 ) -> Result<Box<defines::Define>, crate::Error> {
     let (input_keys, input_values): (&[Box<[u8]>], &[Box<[u8]>]) = match maybe_input_define {
         Some(m) => (&m.keys, &m.values),
@@ -1704,7 +1704,7 @@ impl<'a> BundleOptions<'a> {
     pub(crate) fn load_defines(
         &mut self,
         log: &bun_ast::Log,
-        arena: &bun_alloc::Arena,
+        arena: &bun_ast::AstArena,
         loader_: Option<&mut DotEnv::Loader>,
     ) -> Result<(), crate::Error> {
         // Forwarding the env as an `Option<&Env>` parameter forced the

@@ -1,3 +1,5 @@
+use core::sync::SyncView;
+
 use crate::BundledAst as JSAst;
 use bun_alloc::Arena as ThreadLocalArena;
 use bun_alloc::{AstAlloc, AstVec};
@@ -10,7 +12,7 @@ use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::options;
 use crate::{AdditionalFile, BundleV2, ThreadPool};
 
-use bun_ast::Index;
+use bun_ast::{AstArena, Index};
 use bun_css::BundlerStyleSheet;
 
 // `bun.ast.Index.Int` — the underlying integer repr of `Index`.
@@ -21,7 +23,10 @@ pub struct Graph<'a> {
     pub(crate) css_asts: CssAsts<'a>,
     /// Drops before the fields below, which tasks borrow. Boxed: its threads use it while the bundle thread changes the graph.
     pool: Box<ThreadPool>,
+    /// `ast_arena.heap()`.
     pub(crate) heap: &'a ThreadLocalArena,
+    /// `SyncView`: workers share `&Graph`, and `AstArena` is `!Sync`.
+    ast_arena: SyncView<&'a AstArena>,
 
     /// Mapping user-specified entry points to their Source Index
     pub entry_points: Vec<Index>,
@@ -169,11 +174,12 @@ bitflags::bitflags! {
 }
 
 impl<'a> Graph<'a> {
-    pub(crate) fn new(heap: &'a ThreadLocalArena, pool: ThreadPool) -> Self {
+    pub(crate) fn new(ast_arena: &'a AstArena, pool: ThreadPool) -> Self {
         Self {
             css_asts: CssAsts::default(),
             pool: Box::new(pool),
-            heap,
+            heap: ast_arena.heap(),
+            ast_arena: SyncView::new(ast_arena),
             entry_points: Vec::new(),
             entry_point_original_names: IndexStringMap::default(),
             input_files: MultiArrayList::default(),
@@ -198,6 +204,11 @@ impl<'a> Graph<'a> {
     #[inline]
     pub(crate) fn pool(&self) -> &ThreadPool {
         &self.pool
+    }
+
+    #[inline]
+    pub(crate) fn ast_arena(&mut self) -> &'a AstArena {
+        self.ast_arena.as_mut()
     }
 
     #[inline]

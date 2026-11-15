@@ -3,13 +3,12 @@
 //! undoes the tricks minifiers use to save bytes — `var a = 1, b = 2, …` chains and `a(), b(), c()` comma statements
 //! — so a bundle reads one thing per line. All of it is meaning-preserving.
 
-use bun_alloc::Arena;
 use bun_ast::binding::Data as B;
 use bun_ast::expr::Data as E;
 use bun_ast::stmt::Data as S;
-use bun_ast::{Binding, Expr, Stmt, StoreSlice};
+use bun_ast::{AstArena, Binding, Expr, Stmt, StoreSlice};
 
-pub(crate) fn relayout(arena: &Arena, ast: &mut bun_ast::Ast<'_>, split: bool) {
+pub(crate) fn relayout(arena: &AstArena, ast: &mut bun_ast::Ast<'_>, split: bool) {
     let cx = Cx { arena, split };
     for part in ast.parts.iter_mut() {
         stmt_list(&cx, &mut part.stmts);
@@ -17,7 +16,7 @@ pub(crate) fn relayout(arena: &Arena, ast: &mut bun_ast::Ast<'_>, split: bool) {
 }
 
 struct Cx<'a> {
-    arena: &'a Arena,
+    arena: &'a AstArena,
     split: bool,
 }
 type C<'c, 'a> = &'c Cx<'a>;

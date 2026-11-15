@@ -248,7 +248,7 @@ impl<'h> Resolver<'h> {
         let session: &'h Session = self.session;
         let arena = session.arena();
         let text = self.read_manifest_text(&path)?;
-        let json = self.code_host().parse_runtime_package_json(arena, &text)?;
+        let json = self.code_host().parse_runtime_package_json(&text)?;
         let manifest = read_manifest(arena, directory, &json)?;
         let manifest: &'h CodeManifest<'h> = arena.alloc(manifest);
         Some(manifest)

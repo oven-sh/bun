@@ -52,7 +52,6 @@ macro_rules! delegate_host_services_to_disk {
             ) -> Option<bun_sema::hir::File<'tree>>;
             fn parse_package_json(
                 &self,
-                arena: &bun_sema::session::Arena,
                 text: &[u8],
             ) -> Option<bun_sema::json::Json>;
             fn extended_config(&self, path: &[u8]) -> Option<bun_sema::resolve::CachedConfig>;
@@ -88,12 +87,10 @@ macro_rules! delegate_runtime_config_parsers_to_disk {
         crate::load::disk_delegation::forward_to_disk! { CodeHost, $disk,
             fn parse_runtime_package_json(
                 &self,
-                arena: &bun_sema::session::Arena,
                 text: &[u8],
             ) -> Option<bun_sema::json::Json>;
             fn parse_runtime_tsconfig(
                 &self,
-                arena: &bun_sema::session::Arena,
                 text: &[u8],
             ) -> Option<bun_sema::json::Json>;
         }

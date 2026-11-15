@@ -2,14 +2,14 @@
 
 use super::{BuildConfigSubset, Framework};
 use crate::bake::{Graph, Mode, Side, dev_server};
-use bun_alloc::Arena;
+use bun_ast::AstArena;
 use bun_options_types::schema as bun_schema;
 
 impl Framework {
     /// Returns `out`, initialized, and the arena slot of the `bake_types::Framework` view (never dropped by the arena).
     pub(crate) fn init_transpiler<'a, 'out>(
         &self,
-        arena: &'a Arena,
+        arena: &'a AstArena,
         log: &'a bun_ast::Log,
         mode: Mode,
         renderer: Graph,

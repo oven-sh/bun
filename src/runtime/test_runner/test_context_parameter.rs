@@ -88,7 +88,7 @@ impl ContextParameter {
     }
 
     fn parse(text: &[u8], loader: bun_ast::Loader, is_arrow_function: bool, index: usize) -> Option<ContextParameter> {
-        let arena = bun_alloc::Arena::new();
+        let arena = bun_ast::AstArena::new();
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
         let source = bun_ast::Source::init_path_string(&b"function.js"[..], text);

@@ -6,6 +6,7 @@ use core::cell::OnceCell;
 use core::sync::SyncView;
 
 use bun_alloc::Arena;
+use bun_ast::AstArena;
 use bun_collections::HashMap;
 use bun_collections::VecExt;
 use bun_dotenv as dot_env;
@@ -40,9 +41,8 @@ pub struct Transpiler<'a> {
     pub options: options::BundleOptions<'a>,
     /// `SyncView`: other threads share `&Self`, and `Log` is not `Sync`.
     log: SyncView<&'a bun_ast::Log>,
-    // Bundler is an AST crate per PORTING.md, so an arena is threaded even
-    // though callers usually pass `bun.default_allocator`.
-    pub arena: &'a Arena,
+    /// `SyncView` for the same reason as `log`.
+    arena: SyncView<&'a AstArena>,
     pub(crate) result: options::TransformResult,
     pub resolver: Resolver<'a>,
     pub(crate) output_files: Vec<options::OutputFile>,
@@ -61,8 +61,8 @@ impl<'a> Transpiler<'a> {
     }
 
     // TODO: remove this method. it does not make sense
-    pub fn set_arena(&mut self, arena: &'a Arena) {
-        self.arena = arena;
+    pub fn set_arena(&mut self, arena: &'a AstArena) {
+        self.arena = SyncView::new(arena);
         // `Resolver` dropped its `arena` field (global mimalloc; see
         // resolver/lib.rs `// arena: dropped`), so nothing left to thread.
     }
@@ -141,7 +141,7 @@ impl<'a> Transpiler<'a> {
     /// callers.
     pub(crate) fn for_worker(
         from: &Transpiler<'a>,
-        arena: &'a Arena,
+        arena: &'a AstArena,
         log: &'a bun_ast::Log,
     ) -> Transpiler<'a> {
         let options = from.options.for_worker();
@@ -151,7 +151,7 @@ impl<'a> Transpiler<'a> {
         Transpiler {
             options,
             log: SyncView::new(log),
-            arena,
+            arena: SyncView::new(arena),
             // Per-worker scratch — workers never read the parent's accumulated state.
             result: options::TransformResult::default(),
             resolver,
@@ -407,21 +407,12 @@ impl<'a> Transpiler<'a> {
                         .any(|k| &**k == options::default_user_defines::node_env::KEY)
                 });
 
-        // `parse_env_json` needs a thread-local AST store to build
-        // `E::String` nodes in. That work
-        // is now done lazily inside `DefineData::parse`, only on the JSON-parse
-        // slow path — the common case (`bun run` with no user `--define`)
-        // resolves every define through the literal fast path and never
-        // allocates an AST store. A store lazily created on the slow path is
-        // reclaimed by the next `Store::begin()` (every subsequent file parse),
-        // so the dropped `defer reset` is a no-op in practice.
-
         // Spec passed `&this.options.env` as a separate arg; `load_defines` now
         // reads `&self.env` internally so the disjoint borrow is resolved
         // inside the `&mut self` scope without `unsafe`.
         let log = self.log();
         self.options
-            .load_defines(log, self.arena, Some(env_loader))?;
+            .load_defines(log, self.arena.as_mut(), Some(env_loader))?;
 
         let mut is_development = false;
         if had_explicit_node_env {
@@ -704,7 +695,7 @@ impl ParseOptions<'_, '_> {
 }
 
 pub struct ParseOptions<'a, 'b> {
-    pub arena: &'a Arena,
+    pub arena: &'a AstArena,
     pub dirname_fd: FD,
     pub file_descriptor: Option<FD>,
 
@@ -916,32 +907,13 @@ impl<'a> Transpiler<'a> {
     ///
     /// `env_loader_` is a raw pointer (not `&'a mut`) to match the struct field type.
     pub fn init(
-        arena: &'a Arena,
+        arena: &'a AstArena,
         log: &'a bun_ast::Log,
         opts: api::TransformOptions,
         env_loader_: Option<*mut dot_env::Loader>,
     ) -> crate::Result<Transpiler<'a>> {
         bun_ast::expr::data::Store::create();
         bun_ast::stmt::data::Store::create();
-        // These two `create()`s are eager (not deferred to the first `parse()`)
-        // because option setup below needs the AST stores *unconditionally*:
-        // `from_api` → `defines_from_transform_options` always materialises at
-        // least `process.env.NODE_ENV` via `parse_env_json`, whose `E::String`
-        // payload lands in the thread-local Expr store (then a `StoreResetGuard`
-        // resets it — which `expect()`s the store exists). So there is no
-        // "transpile nothing" spawn that skips them. They are *cheap*, though:
-        // `Store::init()` only allocates the small `Store` header — the first
-        // `~BLOCK_SIZE` `Block` buffer is malloc'd lazily on the first
-        // `append()` (`ast/new_store.rs`), so a store that is `create()`d but
-        // never written to here (the `Stmt` store — `load_defines` only emits
-        // `E::String` expression nodes) costs nothing beyond that header.
-        // `store_ast_alloc_heap::enter()` is NOT called here: `--define`
-        // object-literal JSON is parsed below (during option setup) and the
-        // bundler holds its `StoreRef<E::Object>` across every `reset_store()`,
-        // so its embedded `Vec<Property>` must stay on the global heap.
-        // `reset_store()`'s first call lazily `enter()`s (the side arena's
-        // `reset()` branches to `enter()` on null ARENA), so per-file ASTs
-        // *do* get the side arena from the first parsed file onward.
 
         // `FileSystem::init` wants `&'static [u8]`. Intern via `DirnameStore`
         // (the same path `FileSystem::init` already uses for the
@@ -1001,7 +973,7 @@ impl<'a> Transpiler<'a> {
         Ok(Transpiler {
             options: bundle_options,
             log: SyncView::new(log),
-            arena,
+            arena: SyncView::new(arena),
             result: options::TransformResult {
                 outbase,
                 ..Default::default()
@@ -1554,7 +1526,7 @@ fn parse_data_loader<'a>(
     source: &bun_ast::Source<'a>,
     loader: options::Loader,
     source_backing: resolver::cache::Contents,
-    arena: &'a Arena,
+    arena: &'a AstArena,
     log: &bun_ast::Log,
     keep_json_and_toml_as_one_statement: bool,
 ) -> Option<ParseResult<'a>> {
@@ -2440,13 +2412,16 @@ impl<'a> Transpiler<'a> {
         outstream: TransformOutstream,
     ) -> crate::Result<()> {
         let macro_load_states = MacroLoadStates::default();
+        let mut arena = AstArena::new();
         while let Some(item) = self.resolve_queue.pop_front() {
+            arena.reset_retain_with_limit(8 * 1024 * 1024);
             bun_ast::Expr::data_store_reset();
             bun_ast::Stmt::data_store_reset();
             bun_ast::store_ast_alloc_heap::reset();
 
             let errors_before = self.log().errors.get();
             let output_file = match self.build_with_resolve_result_eager(
+                &arena,
                 &item,
                 import_path_format,
                 outstream,
@@ -2533,6 +2508,7 @@ impl<'a> Transpiler<'a> {
 
     fn build_with_resolve_result_eager(
         &mut self,
+        arena: &AstArena,
         resolve_result: &resolver::Result,
         import_path_format: options::ImportPathFormat,
         _outstream: TransformOutstream,
@@ -2602,7 +2578,7 @@ impl<'a> Transpiler<'a> {
                 };
 
                 let parse_opts = ParseOptions {
-                    arena: self.arena,
+                    arena,
                     path: bun_paths::fs::Path::init(file_path_text),
                     loader,
                     dirname_fd,
@@ -2660,22 +2636,15 @@ impl<'a> Transpiler<'a> {
                 let buffer_writer = js_printer::BufferWriter::init();
                 let mut writer = js_printer::BufferPrinter::init(buffer_writer);
 
-                // Same `self.arena` that `parse_opts.arena` used to build
-                // `result.ast` above. (`bun build` is one-shot — `self.arena`
-                // here is `cli_arena()` and lives for the process.)
-                let print_arena: &Arena = self.arena;
                 output_file.size = match self.options.target {
                     options::Target::Browser | options::Target::Node => {
-                        self.print(print_arena, result, &mut writer, js_printer::Format::Esm)?
+                        self.print(arena, result, &mut writer, js_printer::Format::Esm)?
                     }
                     options::Target::Bun
                     | options::Target::BunMacro
-                    | options::Target::ServerComponentsSsr => self.print(
-                        print_arena,
-                        result,
-                        &mut writer,
-                        js_printer::Format::EsmAscii,
-                    )?,
+                    | options::Target::ServerComponentsSsr => {
+                        self.print(arena, result, &mut writer, js_printer::Format::EsmAscii)?
+                    }
                 };
                 output_file.value = crate::output_file::Value::Buffer {
                     bytes: writer.ctx.written().to_vec().into_boxed_slice(),
@@ -2822,7 +2791,7 @@ impl<'a> Transpiler<'a> {
             opts.css_modules = Some(bun_css::CssModuleConfig::default());
         }
 
-        let alloc = self.arena;
+        let alloc = self.arena.as_mut().heap();
 
         let (mut sheet, extra) = match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
             alloc,

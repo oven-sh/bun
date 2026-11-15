@@ -1,6 +1,6 @@
 use core::ffi::{CStr, c_int};
 
-use bun_core::vec::BorrowedBuf;
+use bun_core::compress::Ranges;
 use bun_zlib as c;
 
 use crate::node::node_zlib_binding::{CompressionContext, Error};
@@ -298,17 +298,17 @@ impl Context {
     }
 
     /// Resolves `UNZIP` to `GUNZIP` or `INFLATE` once the first bytes tell which it is.
-    fn detect_gzip_header(&mut self, input: &[u8]) {
-        let mut header = input.iter();
+    fn detect_gzip_header(&mut self, ranges: &Ranges<'_>) {
+        let mut header = (0..2).map_while(|index| ranges.input_byte(index));
         if self.gzip_id_bytes_read == 0 {
             match header.next() {
-                Some(&Self::GZIP_HEADER_ID1) => self.gzip_id_bytes_read = 1,
+                Some(Self::GZIP_HEADER_ID1) => self.gzip_id_bytes_read = 1,
                 Some(_) => return self.mode = c::NodeMode::INFLATE,
                 None => return,
             }
         }
         match header.next() {
-            Some(&Self::GZIP_HEADER_ID2) => self.mode = c::NodeMode::GUNZIP,
+            Some(Self::GZIP_HEADER_ID2) => self.mode = c::NodeMode::GUNZIP,
             Some(_) => self.mode = c::NodeMode::INFLATE,
             None => {}
         }
@@ -348,50 +348,42 @@ impl CompressionContext for Context {
         };
     }
 
-    fn do_work(&mut self, mut input: &[u8], out: &mut [u8]) {
+    fn do_work(&mut self, mut ranges: Ranges<'_>) {
         if self.mode == c::NodeMode::UNZIP {
-            self.detect_gzip_header(input);
+            self.detect_gzip_header(&ranges);
         }
 
-        let mut out = BorrowedBuf::from(out);
         match &mut self.engine {
             None => self.err = c::ReturnCode::StreamError,
             Some(Engine::Deflate(encoder)) => {
-                let (consumed, err) = encoder.step_into(input, out.unfilled(), self.flush);
-                input = &input[consumed..];
-                self.err = err;
+                self.err = encoder.step_with(&mut ranges, self.flush).1;
             }
             Some(Engine::Inflate(decoder)) => {
-                let mut inflate = |decoder: &mut c::InflateDecoder, input: &mut &[u8]| {
-                    let (consumed, err) = decoder.step_into(input, out.unfilled(), self.flush);
-                    *input = &input[consumed..];
-                    err
-                };
-                self.err = inflate(decoder, &mut input);
+                self.err = decoder.step_with(&mut ranges, self.flush).1;
 
                 if self.mode != c::NodeMode::INFLATERAW
                     && self.err == c::ReturnCode::NeedDict
                     && !self.dictionary.is_empty()
                 {
                     self.err = match decoder.set_dictionary(&self.dictionary) {
-                        c::ReturnCode::Ok => inflate(decoder, &mut input),
+                        c::ReturnCode::Ok => decoder.step_with(&mut ranges, self.flush).1,
                         c::ReturnCode::DataError => c::ReturnCode::NeedDict,
                         err => err,
                     };
                 }
                 while self.mode == c::NodeMode::GUNZIP
                     && self.err == c::ReturnCode::StreamEnd
-                    && input.first().is_some_and(|&byte| byte != 0)
+                    && ranges.input_byte(0).is_some_and(|byte| byte != 0)
                 {
                     // Another member of the archive, or trailing garbage. Trailing zero bytes are padding.
                     let _ = decoder.reset();
-                    self.err = inflate(decoder, &mut input);
+                    self.err = decoder.step_with(&mut ranges, self.flush).1;
                 }
             }
         }
 
-        self.avail_in = input.len();
-        self.avail_out = out.capacity() - out.len();
+        self.avail_in = ranges.input_len();
+        self.avail_out = ranges.out_len();
     }
 
     fn write_result(&mut self) -> Result<[u32; 2], Error> {

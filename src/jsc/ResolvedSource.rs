@@ -89,7 +89,7 @@ pub struct Bytecode {
     ptr: *mut u8,
     len: usize,
     owned: bool,
-    /// The bytes outlive every VM (executable section, retired compile-cache blob), so JSC may alias them instead of copying.
+    /// The bytes outlive every VM (executable section, compile-cache blob), so JSC may alias them instead of copying.
     persistent: bool,
     /// Where the module's cache entry starts in the bytes: non-zero when they are one payload shared by every module
     /// of an executable (`JSC::BytecodeLinkEncoder`).
@@ -109,13 +109,7 @@ impl Default for Bytecode {
 }
 
 impl Bytecode {
-    /// # Safety
-    /// `bytes` is never changed, freed or unmapped for the rest of the process (NodeCompileCache's retired blobs).
-    pub unsafe fn persistent(bytes: *const [u8]) -> Self {
-        // SAFETY: forwarded.
-        Self::persistent_at(unsafe { &*bytes }, 0)
-    }
-    /// For a module whose cache entry starts `entry_offset` into a payload it shares with others.
+    /// `entry_offset`: where the module's cache entry starts in a payload it shares with others.
     pub fn persistent_at(payload: &'static [u8], entry_offset: u32) -> Self {
         if payload.is_empty() {
             return Self::default();

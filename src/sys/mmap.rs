@@ -1,3 +1,4 @@
+use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use crate::{E, Error, Fd, Maybe, Tag};
@@ -27,6 +28,13 @@ impl Mmap {
     pub unsafe fn as_slice(&self) -> &[u8] {
         // SAFETY: the caller's contract. The pages stay mapped until `drop`.
         unsafe { core::slice::from_raw_parts(self.as_ptr(), self.len) }
+    }
+
+    /// SAFETY: as [`Self::as_slice`], for the rest of the process.
+    pub unsafe fn leak(self) -> &'static [u8] {
+        let this = ManuallyDrop::new(self);
+        // SAFETY: the caller's contract. The pages are never unmapped.
+        unsafe { core::slice::from_raw_parts(this.as_ptr(), this.len) }
     }
 
     /// SAFETY: as [`Self::as_slice`], and the mapping is writable.

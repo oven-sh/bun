@@ -14,10 +14,7 @@
     ]
   },
   "src/jsc/NodeCompileCache.rs": {
-    "thread spawn": 1,
-    "unsafe impl Send": [
-      "AlignedBlob"
-    ]
+    "thread spawn": 1
   },
   "src/jsc/RuntimeTranspilerStore.rs": {
     "WorkPool::schedule*": 1

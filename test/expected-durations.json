@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-constructor-inside-what-an-entry-exports-keeps-its-features.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/options-of-the-run-that-need-nothing.test.ts": {
     "default": 60000,
     "asan": 240000

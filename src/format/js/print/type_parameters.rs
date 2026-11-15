@@ -173,12 +173,6 @@ fn has_comment_that_breaks<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> bool {
             .is_some_and(|comment| comment.has_newline_after())
 }
 
-impl Spanned for FormatTSTypeParameters<'_> {
-    fn span(&self) -> Span {
-        AstNodes::TSTypeParameterDeclaration(self.owner).span()
-    }
-}
-
 impl<'a> Format<'a> for FormatTSTypeParameters<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         if self.params.is_empty() {

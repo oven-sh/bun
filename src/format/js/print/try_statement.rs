@@ -10,7 +10,7 @@ use crate::write;
 /// See [`comments_stay_between_head_and_body`]: oxfmt keeps the comments between the two on their lines. They're
 /// `node`'s trailing comments, which `part` prints, plus `comments_before_keyword`.
 fn write_part_before_keyword<'a>(
-    part: &(impl Format<'a> + Spanned),
+    part: &impl Format<'a>,
     node: AstNodes<'a>,
     comments_before_keyword: impl FnOnce(&Formatter<'a>) -> CommentList<'a>,
     f: &mut Formatter<'a>,
@@ -85,12 +85,6 @@ struct FormatCatchClause<'a> {
 impl<'a> FormatCatchClause<'a> {
     fn node(self) -> AstNodes<'a> {
         AstNodes::CatchClause(self.statement)
-    }
-}
-
-impl Spanned for FormatCatchClause<'_> {
-    fn span(&self) -> Span {
-        self.node().span()
     }
 }
 

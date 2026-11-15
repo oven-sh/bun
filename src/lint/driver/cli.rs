@@ -534,7 +534,6 @@ pub struct Options {
     pub suppressions_location: Option<Vec<u8>>,
     pub prune_suppressions: bool,
     pub pass_on_unpruned_suppressions: bool,
-    pub stats: bool,
     pub env_info: bool,
     pub version: bool,
     pub help: bool,
@@ -653,7 +652,6 @@ impl Default for Options {
             suppressions_location: None,
             prune_suppressions: false,
             pass_on_unpruned_suppressions: false,
-            stats: false,
             env_info: false,
             version: false,
             help: false,
@@ -919,7 +917,6 @@ impl Options {
             }
             b"prune-suppressions" => self.prune_suppressions = is_on,
             b"pass-on-unpruned-suppressions" => self.pass_on_unpruned_suppressions = is_on,
-            b"stats" => self.stats = is_on,
             b"env-info" => self.env_info = is_on,
             b"parser" => self.parser = owned(),
             b"plugin" => self.plugin.extend(list(text)),
@@ -984,7 +981,8 @@ impl Options {
                     b"' not one of metadata or content.",
                 ]);
             }
-            b"debug" | b"flag" | b"cache-file" | b"cache-location" | b"cache-strategy" => {}
+            b"debug" | b"flag" | b"cache-file" | b"cache-location" | b"cache-strategy"
+            | b"stats" => {}
             _ => {
                 if is_on && !self.ignored_flags.contains(&name) {
                     self.ignored_flags.push(name);
@@ -1294,7 +1292,7 @@ impl Options {
     fn with(self, args: &[&[u8]]) -> Result<Options, UsageError> {
         let mut options = self;
         // Flags that oxlint spells differently.
-        let (mut rewritten, count): (Vec<&[u8]>, usize) = (Vec::new(), args.len());
+        let mut rewritten: Vec<&[u8]> = Vec::new();
         for (at, arg) in args.iter().copied().enumerate() {
             match arg {
                 b"-V" => rewritten.push(b"--version"),
@@ -1326,10 +1324,7 @@ impl Options {
                     }
                 }
                 // Used without a file, as with oxlint.
-                b"--print-config"
-                    if args.get(at + 1).is_none_or(|next| next.starts_with(b"-"))
-                        || at + 1 == count =>
-                {
+                b"--print-config" if args.get(at + 1).is_none_or(|next| next.starts_with(b"-")) => {
                     rewritten.push(b"--print-config=");
                 }
                 arg => rewritten.push(arg),

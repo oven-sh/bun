@@ -245,21 +245,10 @@ pub fn get_fix_or_suggest<'a, F: IntoFix>(
     message: &'static Message,
     fix: impl FnOnce(Fixer<'a>) -> F,
 ) -> Report<'a> {
-    get_fix_or_suggest_with(report, fix_or_suggest, message, &[], fix)
-}
-
-/// typescript-eslint's `getFixOrSuggest`, for a suggestion whose message has `{{placeholders}}`.
-pub fn get_fix_or_suggest_with<'a, F: IntoFix>(
-    report: Report<'a>,
-    fix_or_suggest: FixOrSuggest,
-    message: &'static Message,
-    data: &[(&'static str, &[u8])],
-    fix: impl FnOnce(Fixer<'a>) -> F,
-) -> Report<'a> {
     match fix_or_suggest {
         FixOrSuggest::Fix => report.fix(fix),
         FixOrSuggest::None => report,
-        FixOrSuggest::Suggest => report.suggest_with(message, data, fix),
+        FixOrSuggest::Suggest => report.suggest(message, fix),
     }
 }
 

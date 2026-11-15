@@ -1145,19 +1145,12 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         name: &[u8],
     ) -> Option<SymbolRef> {
         let name = self.c.atoms().lookup(name)?;
-        let found = self
-            .copy_symbols_in_scope(node, meaning, Some(name))
-            .pop()?;
+        let found = self.copy_symbols_in_scope(node, meaning, name).pop()?;
         Some(self.symbol(found))
     }
 
-    /// With `only`, collects just the symbol with that name.
-    fn copy_symbols_in_scope(
-        &self,
-        node: NodeRef,
-        meaning: SymbolFlags,
-        only: Option<Atom>,
-    ) -> Vec<Sym> {
+    /// Collects just the symbol named `name`.
+    fn copy_symbols_in_scope(&self, node: NodeRef, meaning: SymbolFlags, name: Atom) -> Vec<Sym> {
         let Some((hir, at)) = self.valid(node) else {
             return Vec::new();
         };
@@ -1199,16 +1192,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 _ => meaning,
             };
             if !is_global_source_file && !meaning_of_locals.is_empty() {
-                match only {
-                    Some(name) => {
-                        if let Some(id) = bound.lookup(at.locals, name) {
-                            copy(name, Sym { file, id }, meaning_of_locals);
-                        }
-                    }
-                    None => bound
-                        .table(at.locals)
-                        .iter()
-                        .for_each(|&(name, id)| copy(name, Sym { file, id }, meaning_of_locals)),
+                if let Some(id) = bound.lookup(at.locals, name) {
+                    copy(name, Sym { file, id }, meaning_of_locals);
                 }
             }
             let meaning_of_exports = match at.kind {
@@ -1226,23 +1211,11 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     matches!(at.kind, ScopeKind::Enum(_))
                         || name != known::default && !files.decls_of(symbol).iter().any(is_reexport)
                 };
-                match only {
-                    Some(name) => {
-                        if let Some(symbol) = files
-                            .export(container, name)
-                            .filter(|&it| is_visible(name, it))
-                        {
-                            copy(name, symbol, meaning_of_exports);
-                        }
-                    }
-                    None => {
-                        for (name, symbol) in files
-                            .each_export(container)
-                            .filter(|&(name, it)| is_visible(name, it))
-                        {
-                            copy(name, symbol, meaning_of_exports);
-                        }
-                    }
+                if let Some(symbol) = files
+                    .export(container, name)
+                    .filter(|&it| is_visible(name, it))
+                {
+                    copy(name, symbol, meaning_of_exports);
                 }
             }
             is_static = at.kind == ScopeKind::StaticMember;
@@ -1252,16 +1225,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 break;
             }
         }
-        match only {
-            Some(name) => {
-                if let Some(&symbol) = files.globals.get(name) {
-                    copy(name, symbol, meaning);
-                }
-            }
-            None => files
-                .globals
-                .iter()
-                .for_each(|&(name, symbol)| copy(name, symbol, meaning)),
+        if let Some(&symbol) = files.globals.get(name) {
+            copy(name, symbol, meaning);
         }
         found
     }

@@ -2,8 +2,10 @@
 //! callback returns; lsquic frees the underlying `lsquic_conn` immediately
 //! after, so callers must drop the pointer inside that callback.
 
-use core::ffi::{c_int, c_uint, c_void};
-use core::ptr::NonNull;
+use core::cell::Cell;
+use core::ffi::{c_int, c_uint};
+
+use super::Stream;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle (`us_quic_socket_t`). `!Send + !Sync + !Unpin`.
@@ -15,16 +17,18 @@ bun_opaque::opaque_ffi! {
 // attribute. Shims taking only the handle + value types are `safe fn`; the
 // (ptr,len) writer keeps a raw signature.
 unsafe extern "C" {
-    safe fn us_quic_socket_make_stream(s: &mut Socket);
+    safe fn us_quic_socket_make_stream(s: &mut Socket) -> Option<&mut Stream>;
     safe fn us_quic_socket_streams_avail(s: &mut Socket) -> c_uint;
     fn us_quic_socket_status(s: *mut Socket, buf: *mut u8, len: c_uint) -> c_int;
-    safe fn us_quic_socket_ext(s: &mut Socket) -> *mut c_void;
+    /// `Context::create_client` asks for these bytes.
+    safe fn us_quic_socket_ext(s: &Socket) -> &Cell<u64>;
     safe fn us_quic_socket_close(s: &mut Socket);
 }
 
 impl Socket {
+    /// `None`: `on_stream_open` fires from a later engine tick, once the peer allows one more stream.
     #[inline]
-    pub fn make_stream(&mut self) {
+    pub fn make_stream(&mut self) -> Option<&mut Stream> {
         us_quic_socket_make_stream(self)
     }
 
@@ -58,18 +62,9 @@ impl Socket {
         self.status(&mut []) == LSCONN_ST_CONNECTED
     }
 
-    /// `conn_ext_size` bytes of caller storage co-allocated with the socket.
-    /// Unset until the caller writes to it after `connect`/`on_open`; the
-    /// `Option<NonNull<T>>` slot pattern lets callbacks early-return on a null ext.
+    /// Caller storage co-allocated with the socket, 0 until the caller writes to it.
     #[inline]
-    pub fn ext<T>(&mut self) -> &mut Option<NonNull<T>> {
-        // SAFETY: us_quic_socket_ext returns conn_ext_size bytes co-allocated with
-        // the socket, sized and aligned for a single nullable-pointer slot.
-        // Option<NonNull<T>> is niche-optimized to a single nullable pointer.
-        // Uniqueness: the ext bytes are caller-only storage that the C library
-        // never reads or writes, and every Rust access goes through this method
-        // behind `&mut self`; the elided return lifetime reborrows `self`, so the
-        // borrow checker forbids a second live `&mut` to the slot.
-        unsafe { &mut *us_quic_socket_ext(self).cast::<Option<NonNull<T>>>() }
+    pub fn ext(&self) -> &Cell<u64> {
+        us_quic_socket_ext(self)
     }
 }

@@ -337,7 +337,7 @@ extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
 /// Unpack the `AnyServer` tagged-pointer u64 handed across FFI from C++.
 ///
 /// The packed repr is bits 0..49 = ptr,
-/// bits 49..64 = tag, with tag = `1024 - index` (see `bun_ptr::tagged_pointer`).
+/// bits 49..64 = tag, with tag = `1024 - index`.
 /// The Rust `AnyServer` stores `(tag, ptr)` unpacked, so map the wire tag back
 /// to `AnyServerTag` here.
 #[inline]

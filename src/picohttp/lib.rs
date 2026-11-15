@@ -1,6 +1,7 @@
 #![warn(unused_must_use)]
 use core::ffi::c_int;
 use core::fmt;
+use core::mem::MaybeUninit;
 
 use bstr::BStr;
 
@@ -437,7 +438,10 @@ impl<'a> Response<'a> {
         headers.map(|header| header.clone(builder)).collect()
     }
 
-    pub fn parse(buf: &'a [u8], src: &'a mut [Header]) -> Result<Response<'a>, ParseResponseError> {
+    pub fn parse(
+        buf: &'a [u8],
+        src: &'a mut [MaybeUninit<Header>],
+    ) -> Result<Response<'a>, ParseResponseError> {
         let mut minor_version: c_int = 1;
         let mut status_code: c_int = 0;
         let mut status_ptr: *const u8 = b"".as_ptr();
@@ -473,10 +477,9 @@ impl<'a> Response<'a> {
                 // field value, and silently dropping it corrupts the value
                 // (and, for Transfer-Encoding / Content-Length, the message
                 // framing). Treat the fold as malformed; Node does the same.
-                if src[0..num_headers.min(src.len())]
-                    .iter()
-                    .any(Header::is_multiline)
-                {
+                // SAFETY: on success, picohttpparser has written the first `num_headers` entries.
+                let list = unsafe { src[0..num_headers.min(src.len())].assume_init_ref() };
+                if list.iter().any(Header::is_multiline) {
                     bun_core::debug!("obs-fold in HTTP response:\n{}", BStr::new(buf));
                     return Err(ParseResponseError::MalformedHttpResponse);
                 }
@@ -485,9 +488,7 @@ impl<'a> Response<'a> {
                     status_code: u32::try_from(status_code).expect("int cast"),
                     // SAFETY: on success, ptr/len point into `buf`.
                     status: unsafe { bun_core::ffi::slice(status_ptr, status_len) },
-                    headers: HeaderList {
-                        list: &src[0..num_headers.min(src.len())],
-                    },
+                    headers: HeaderList { list },
                     // > 0 here: -1/-2 were handled above and 0 is not a
                     // return value of phr_parse_response.
                     bytes_read: rc as usize,

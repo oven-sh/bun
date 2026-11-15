@@ -1,8 +1,8 @@
 //! One in-flight HTTP/3 request. Created when the request is enqueued on a
 //! `ClientSession`; the lsquic stream is bound later from
-//! `callbacks.onStreamOpen` (lsquic creates streams asynchronously once
+//! `ClientSession::bind_stream` (lsquic creates streams once
 //! MAX_STREAMS credit is available). Owned by the session's `pending` list
-//! until `ClientSession.detach`.
+//! until then, and by `streams` until `ClientSession.detach`.
 
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
@@ -10,16 +10,13 @@ use core::sync::atomic::Ordering;
 use bun_picohttp as picohttp;
 use bun_uws::quic;
 
-use super::ClientSession;
 use crate::InFlightRequest;
 use crate::h3_client as h3;
 
 pub struct Stream {
-    // BACKREF: owned by `session.pending`; session outlives every Stream it holds.
-    pub(crate) session: bun_ptr::BackRef<ClientSession, bun_ptr::Mut>,
     pub(crate) client: Option<InFlightRequest>,
-    // FFI handle into lsquic; bound in `callbacks.onStreamOpen`, reset in `ClientSession::detach`.
-    pub(crate) qstream: Option<NonNull<quic::Stream>>,
+    /// Its ext slot holds the [`StreamSlot`] of `self`.
+    qstream: Option<NonNull<quic::Stream>>,
 
     /// Slices into the lsquic-owned hset buffer; valid only for the duration
     /// of the `onStreamHeaders` callback that populated it. `cloneMetadata`
@@ -43,9 +40,8 @@ pub struct Stream {
 }
 
 impl Stream {
-    pub(crate) fn new(session: &mut ClientSession, client: InFlightRequest) -> Stream {
+    pub(crate) fn new(client: InFlightRequest) -> Stream {
         Stream {
-            session: bun_ptr::BackRef::new_mut(session),
             client: Some(client),
             qstream: None,
             decoded_headers: Vec::new(),
@@ -61,33 +57,63 @@ impl Stream {
         }
     }
 
-    /// Mutable access to the bound lsquic stream handle.
-    ///
-    /// INVARIANT: `qstream` is set in `callbacks::on_stream_open` and remains
-    /// valid until `callbacks::on_stream_close` / `ClientSession::detach`
-    /// nulls it. The `quic::Stream` is an FFI-owned allocation distinct from
-    /// `self`, so the returned `&mut` does not alias `self`. HTTP-thread-only.
-    #[inline]
-    pub(crate) fn qstream_mut<'s>(&self) -> Option<&'s mut quic::Stream> {
-        // Route through the shared `client_session::quic_stream_mut` accessor;
-        // see INVARIANT above.
-        self.qstream
-            .map(|qs| super::client_session::quic_stream_mut(qs.as_ptr()))
+    pub(super) fn is_for(&self, async_http_id: u32) -> bool {
+        (self.client.as_ref()).is_some_and(|client| client.async_http_id == async_http_id)
     }
 
-    /// Mutable access to the owning `ClientSession`.
-    ///
-    /// INVARIANT: `session` is a set-once `BackRef` recorded in
-    /// `Stream::new`; the session owns this `Stream` (in `pending`) and
-    /// strictly outlives it. The session is a distinct heap allocation from
-    /// `self`, so the returned `&mut` does not alias any borrow of `self`.
-    /// HTTP-thread-only — sole live `&mut ClientSession`. Centralises the
-    /// `BackRef::get_mut` upgrade repeated in every lsquic callback.
+    /// `slot` is where the caller keeps `self`.
+    pub(super) fn bind(&mut self, qs: &mut quic::Stream, slot: StreamSlot) {
+        slot.store_in(qs);
+        self.qstream = Some(NonNull::from(qs));
+    }
+
+    pub(super) fn unbind(&mut self, reset: bool) {
+        if let Some(qs) = self.qstream_mut() {
+            qs.ext().set(0);
+            if reset {
+                qs.reset();
+            }
+        }
+        self.qstream = None;
+    }
+
+    /// Mutable access to the bound lsquic stream handle.
     #[inline]
-    pub(crate) fn session_mut<'s>(&self) -> &'s mut ClientSession {
-        // Route through the shared `client_session::session_mut` accessor
-        // (one centralised unsafe); see INVARIANT above.
-        super::client_session::session_mut(self.session.as_ptr())
+    pub(super) fn qstream_mut(&mut self) -> Option<&mut quic::Stream> {
+        // SAFETY: lsquic frees a stream after `on_stream_close`, which finds `self` through the
+        // ext slot and unbinds it. The handle is zero-sized.
+        self.qstream.as_mut().map(|qs| unsafe { qs.as_mut() })
+    }
+
+    /// For a caller that goes on to use the other fields of `self`.
+    pub(super) fn with_qstream(&mut self, f: impl FnOnce(&mut Stream, &mut quic::Stream)) {
+        if let Some(mut qs) = self.qstream {
+            // SAFETY: as in `qstream_mut`; only an engine tick calls `on_stream_close`.
+            f(self, unsafe { qs.as_mut() });
+        }
+    }
+}
+
+/// An entry of `ClientSession::streams`.
+#[derive(Clone, Copy)]
+pub(super) struct StreamSlot {
+    /// `ClientSession::registry_index`.
+    pub(super) session_index: u32,
+    pub(super) index: usize,
+}
+
+impl StreamSlot {
+    pub(super) fn store_in(self, qs: &quic::Stream) {
+        qs.ext()
+            .set((u64::from(self.session_index) + 1) << u32::BITS | self.index as u64);
+    }
+
+    pub(super) fn load_from(qs: &quic::Stream) -> Option<Self> {
+        let ext = qs.ext().get();
+        Some(Self {
+            session_index: ((ext >> u32::BITS) as u32).checked_sub(1)?,
+            index: ext as u32 as usize,
+        })
     }
 }
 

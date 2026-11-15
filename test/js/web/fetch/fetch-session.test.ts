@@ -107,6 +107,35 @@ describe("Bun.FetchSession", () => {
     }
   });
 
+  test("close() closes an idle connection after its SSL context was evicted", async () => {
+    const counting = connectionCountingServer();
+    const port = await counting.listen();
+    // Never answers the ClientHello.
+    await using silent = net.createServer(socket => socket.on("error", () => {})).listen(0, "127.0.0.1");
+    await once(silent, "listening");
+    const silentUrl = `https://127.0.0.1:${(silent.address() as net.AddressInfo).port}/`;
+    const session = new Bun.FetchSession({ tls: { ca: tlsCert.cert } });
+    const controller = new AbortController();
+    const pending: Promise<unknown>[] = [];
+    try {
+      const closed = Promise.withResolvers<void>();
+      counting.server.once("secureConnection", socket => socket.once("close", () => closed.resolve()));
+      expect(await (await fetch(`https://localhost:${port}/`, { session })).text()).toBe("ok");
+      // A request keeps the context in use, and ssl_context_cache_max_size more configs evict it.
+      for (let config = 0; config <= 60; config++) {
+        const options = config === 0 ? { session } : { tls: { serverName: `host-${config}.test` } };
+        pending.push(fetch(silentUrl, { ...options, signal: controller.signal }).catch(() => {}));
+        await once(silent, "connection");
+      }
+      session.close();
+      await closed.promise;
+    } finally {
+      controller.abort();
+      await Promise.all(pending);
+      counting.close();
+    }
+  });
+
   test("keepAlive: false closes each connection", async () => {
     const counting = connectionCountingServer();
     const port = await counting.listen();

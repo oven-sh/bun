@@ -26,7 +26,6 @@ use bun_paths::{DELIMITER, PathBuffer, SEP};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
-use bun_transpiler as transpiler;
 use bun_url::URL;
 
 // `bun.spawn.process.WaiterThread` — the force-waiter-thread flag was moved
@@ -228,13 +227,13 @@ use directories::attempt_to_create_package_json_and_open;
 pub use directories::{
     attempt_to_create_package_json, cached_git_folder_name, cached_git_folder_name_print,
     cached_git_folder_name_print_auto, cached_github_folder_name, cached_github_folder_name_print,
-    cached_github_folder_name_print_auto, cached_npm_package_folder_name,
-    cached_npm_package_folder_name_print, cached_npm_package_folder_print_basename,
-    cached_tarball_folder_name, cached_tarball_folder_name_print, compute_cache_dir_and_subpath,
-    fetch_cache_directory_path, get_cache_directory, get_cache_directory_and_abs_path,
-    get_temporary_directory, global_link_dir, global_link_dir_path, is_folder_in_cache,
-    path_for_cached_npm_path, path_for_resolution, save_lockfile, setup_global_dir,
-    update_lockfile_if_needed, write_yarn_lock,
+    cached_github_folder_name_print_auto, cached_npm_package_folder_name_print,
+    cached_npm_package_folder_print_basename, cached_tarball_folder_name,
+    cached_tarball_folder_name_print, compute_cache_dir_and_subpath, fetch_cache_directory_path,
+    get_cache_directory, get_cache_directory_and_abs_path, get_temporary_directory,
+    global_link_dir, global_link_dir_path, is_folder_in_cache, path_for_cached_npm_path,
+    path_for_resolution, save_lockfile, setup_global_dir, update_lockfile_if_needed,
+    write_yarn_lock,
 };
 
 pub use self::package_manager_enqueue as enqueue;
@@ -544,6 +543,7 @@ pub struct PackageManager {
     pub pending_lifecycle_script_tasks: AtomicU32,
     pub(crate) finished_installing: AtomicBool,
     pub(crate) total_scripts: usize,
+    has_configured_env_for_scripts: bool,
 
     pub(crate) root_lifecycle_scripts: Option<Package::scripts::List>,
 
@@ -938,27 +938,6 @@ impl PackageManager {
 // Main-thread-only, so `Relaxed` suffices.
 static TIME_PASSER_LAST_TIME: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
-thread_local! {
-    // bun.ThreadlocalBuffers: heap-backed so only a pointer lives in TLS
-    // (see test/js/bun/binary/tls-segment-size).
-    static CACHED_PACKAGE_FOLDER_NAME_BUFS: core::cell::Cell<*mut PathBuffer> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
-}
-
-#[inline]
-pub(crate) fn cached_package_folder_name_buf() -> *mut PathBuffer {
-    // bun.ThreadlocalBuffers semantics: lazily heap-allocate, return raw ptr into
-    // thread-local storage. Callers reborrow per-field; valid for the thread's lifetime.
-    CACHED_PACKAGE_FOLDER_NAME_BUFS.with(|c| {
-        let mut p = c.get();
-        if p.is_null() {
-            p = bun_core::heap::into_raw(Box::new(PathBuffer::ZEROED));
-            c.set(p);
-        }
-        p
-    })
-}
-
 mod holder {
     use super::PackageManager;
     use bun_dotenv as dot_env;
@@ -1068,23 +1047,12 @@ impl PackageManager {
         false
     }
 
-    pub(crate) fn configure_env_for_scripts(
-        &mut self,
-        ctx: Command::Context,
-    ) -> Result<&mut transpiler::Transpiler<'static>, Error> {
-        // Compute once and return the cached value on
-        // subsequent calls. `Transpiler` is non-`Copy` (and self-referential via
-        // `macro_context`), so cache by pointer in a process-static.
-        // SAFETY: `PackageManager` is a leaked singleton; main-thread-only call site.
-        let mut ptr = CONFIGURE_ENV_FOR_SCRIPTS_ONCE.load(core::sync::atomic::Ordering::Acquire);
-        if ptr.is_null() {
-            let t = configure_env_for_scripts_run(self, ctx)?;
-            ptr = bun_core::heap::into_raw(Box::new(t));
-            CONFIGURE_ENV_FOR_SCRIPTS_ONCE.store(ptr, core::sync::atomic::Ordering::Release);
+    pub(crate) fn configure_env_for_scripts(&mut self) -> Result<(), Error> {
+        if !self.has_configured_env_for_scripts {
+            configure_env_for_scripts_run(self)?;
+            self.has_configured_env_for_scripts = true;
         }
-        // SAFETY: `ptr` is a leaked `Box<Transpiler>`; main-thread-only so the
-        // `&mut` is exclusive for the caller's scope.
-        Ok(unsafe { &mut *ptr })
+        Ok(())
     }
 
     pub fn http_proxy(&self, url: &URL<'_>) -> Option<URL<'static>> {
@@ -1218,26 +1186,14 @@ impl PackageManager {
 // run-once wrappers
 // ──────────────────────────────────────────────────────────────────────────
 
-// `Transpiler` is non-`Copy` and self-referential, so cache
-// a process-static raw pointer.
-// PORTING.md §Global mutable state: init-once ptr → AtomicPtr.
-static CONFIGURE_ENV_FOR_SCRIPTS_ONCE: core::sync::atomic::AtomicPtr<
-    transpiler::Transpiler<'static>,
-> = core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+fn configure_env_for_scripts_run(this: &mut PackageManager) -> Result<(), Error> {
+    RunCommand::seed_script_env(this.env_mut());
 
-fn configure_env_for_scripts_run(
-    this: &mut PackageManager,
-    ctx: Command::Context,
-) -> Result<transpiler::Transpiler<'static>, Error> {
-    // We need to figure out the PATH and other environment variables
-    // to do that, we re-use the code from bun run
-    // this is expensive, it traverses the entire directory tree going up to the root
-    // so we really only want to do it when strictly necessary
-    // `self.env` is `Option<BackRef<Loader>>`; pass the raw pointer so
-    // the shim's `Transpiler::init` reuses the manager's loader instead of
-    // allocating a fresh singleton.
-    let env_ptr: Option<*mut dot_env::Loader> = this.env.map(|p| p.as_ptr());
-    let this_transpiler = RunCommand::configure_env_for_run(ctx, env_ptr)?;
+    // Overwritten like npm does: an outer `bun run` in another project may have left a stale value.
+    (this.env_mut().map).put(
+        b"npm_config_local_prefix",
+        FileSystem::get().top_level_dir(),
+    )?;
 
     let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
     if !init_cwd_entry.found_existing {
@@ -1258,7 +1214,7 @@ fn configure_env_for_scripts_run(
         // https://github.com/nodejs/node-gyp/blob/7d883b5cf4c26e76065201f85b0be36d5ebdcc0e/lib/build.js#L150-L184
         let thread_count = bun_core::get_thread_count();
         if thread_count > 2 {
-            let t_env = this_transpiler.env_mut();
+            let t_env = this.env_mut();
             if !t_env.has(b"JOBS") {
                 let mut int_buf = bun_core::fmt::ItoaBuf::new();
                 let jobs_str = bun_core::fmt::itoa(&mut int_buf, thread_count);
@@ -1294,8 +1250,7 @@ fn configure_env_for_scripts_run(
     }
 
     package_manager_lifecycle::resolve_bin_dirs_in_path(this.env_mut())?;
-
-    Ok(this_transpiler)
+    Ok(())
 }
 
 static ENSURE_TEMP_NODE_GYP_SCRIPT_ONCE: AtomicBool = AtomicBool::new(false);
@@ -1601,6 +1556,7 @@ fn allocate_package_manager(
         wr!(pending_lifecycle_script_tasks, AtomicU32::new(0));
         wr!(finished_installing, AtomicBool::new(false));
         wr!(total_scripts, 0);
+        wr!(has_configured_env_for_scripts, false);
         wr!(root_lifecycle_scripts, None);
         wr!(node_gyp_tempdir_name, Box::default());
         wr!(preinstall_state, Vec::new());
@@ -2497,7 +2453,6 @@ pub fn init(
     bun_sys::chdir(&top_level_dir_z)?;
     // `loadConfig` was moved down into `bun_bunfig`
     // (MOVE_DOWN b0) so install can call it directly — no fn-pointer hook.
-    // (`::`-qualified because `crate::bun_bunfig` is a legacy local shim mod.)
     if !(cli.global && cli.config.is_some()) {
         ::bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
     }

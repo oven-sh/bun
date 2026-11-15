@@ -20,8 +20,8 @@ use bun_install::{
 };
 // Import the *module* under the `Task` name so `Task::Id` resolves as a path.
 use super::{
-    Command, ManifestFailure, PackageInstaller, PackageManager, ProgressStrings, RemoteTurn,
-    Subcommand, TaskCallbackList,
+    ManifestFailure, PackageInstaller, PackageManager, ProgressStrings, RemoteTurn, Subcommand,
+    TaskCallbackList,
 };
 use super::{directories, enqueue};
 use crate::isolated_install::installer as store_installer;
@@ -387,12 +387,9 @@ pub fn run_tasks(
             let list_val = (installer.tasks[entry_id.get() as usize].scripts.as_deref())
                 .expect("a queued entry has a scripts list")
                 .clone();
-            // reborrow instead of moving the field out of `*installer`
-            let command_ctx: Command::Context<'_> = &mut *installer.command_ctx;
             // `installer.manager == manager`, so this is called through the reborrow of
             // `manager_ptr`.
             let spawn_res = manager.spawn_package_lifecycle_scripts(
-                command_ctx,
                 list_val,
                 optional,
                 false,
@@ -428,10 +425,10 @@ pub fn run_tasks(
         match &mut task.callback {
             NetworkTaskCallback::PackageManifest {
                 loaded_manifest,
-                name,
+                name: stored_name,
                 is_extended_manifest,
             } => {
-                let name = name.slice();
+                let name = stored_name.slice();
                 let is_extended_manifest = *is_extended_manifest;
                 name_progress(manager, name, DOWNLOAD);
 
@@ -690,17 +687,17 @@ pub fn run_tasks(
                     }
                 }
 
-                // reshaped — `enqueue_parse_npm_package` takes
-                // `StringOrTinyString` by value; reconstruct from the slice we
-                // captured (the original lives in `task.callback`, which the
-                // enqueued resolve Task takes ownership of via `network`).
-                let name_tiny = stored_string(name);
                 // reshaped for borrowck — split the nested `&mut
                 // manager` borrows (`task_batch.push` vs. `enqueue_*`).
                 // SAFETY: `task_ptr` is non-null (checked by the iterator loop guard)
                 // and exclusively owned by this batch; `manager` is the live PackageManager.
                 let queued = unsafe {
-                    enqueue::enqueue_parse_npm_package(manager, task.task_id, name_tiny, task_ptr)
+                    enqueue::enqueue_parse_npm_package(
+                        manager,
+                        task.task_id,
+                        *stored_name,
+                        task_ptr,
+                    )
                 };
                 manager.task_batch.push(ThreadPoolBatch::from(queued));
             }
@@ -1841,7 +1838,7 @@ pub fn generate_network_task_for_tarball<'a>(
         github_resolved: if package.resolution.tag == bun_install::ResolutionTag::Github {
             stored_string(this.lockfile.str(&package.resolution.github().resolved))
         } else {
-            strings::StringOrTinyString::init(b"")
+            strings::StringOrTinyString::EMPTY
         },
     };
 

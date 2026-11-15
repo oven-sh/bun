@@ -41,7 +41,6 @@ use bun_sys::{self as sys, Fd};
 use bun_wyhash::{Wyhash, Wyhash11};
 
 use crate::analytics;
-use crate::bun_bunfig::Arguments as Command;
 use crate::bun_progress::Progress;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{self, Lockfile};
@@ -1687,7 +1686,6 @@ fn check_link_entries(manager: &mut PackageManager, lockfile: &Lockfile, store: 
 /// Runs on main thread
 pub(crate) fn install_isolated_packages(
     manager: &mut PackageManager,
-    command_ctx: Command::Context,
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
     packages_to_install: Option<&[PackageID]>,
@@ -2167,7 +2165,6 @@ pub(crate) fn install_isolated_packages(
         let mut installer = store::Installer {
             lockfile: lockfile_ptr,
             manager: manager_ptr,
-            command_ctx,
             installed,
             store: &store,
             tasks,
@@ -2250,6 +2247,7 @@ pub(crate) fn install_isolated_packages(
         };
         let links = (0..store.entries.len()).filter(is_link);
         let others = (0..store.entries.len()).filter(|entry| !is_link(entry));
+        let mut folder_name_buf = bun_paths::path_buffer_pool::get();
         for _entry_id in links.chain(others) {
             let entry_id = store::entry::Id::from(u32::try_from(_entry_id).expect("int cast"));
             let store::Ids { dep_id, pkg_id } = store.ids(entry_id);
@@ -2472,7 +2470,8 @@ pub(crate) fn install_isolated_packages(
                     }
 
                     // Downloads only produce the unpatched folder; `apply_package_patch` derives the rest.
-                    let cache_subpath_z = installer.cached_folder_name(entry_id, None);
+                    let cache_subpath_z =
+                        installer.cached_folder_name(&mut **folder_name_buf, entry_id, None);
                     let cache_dir = installer.manager_mut().get_cache_directory();
 
                     let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)

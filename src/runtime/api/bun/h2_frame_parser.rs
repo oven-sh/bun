@@ -2558,7 +2558,13 @@ impl H2FrameParser {
                 Some(BunSocket::Tls(s)) => s.socket.get().socket,
                 Some(BunSocket::Tcp(s)) => s.socket.get().socket,
             };
-            matches!(transport, bun_uws::InternalSocket::UpgradedDuplex(_))
+            match transport {
+                bun_uws::InternalSocket::UpgradedDuplex(_) => true,
+                // A failed write reports its error, and TLS dispatches reads, before it returns.
+                #[cfg(windows)]
+                bun_uws::InternalSocket::Pipe(_) => true,
+                _ => false,
+            }
         })
     }
 

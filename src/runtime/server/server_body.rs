@@ -1050,7 +1050,11 @@ impl ServePlugins {
             bun_core::handle_oom(route.on_plugins_rejected());
         }
         if let Some(server) = self.dev_server.take() {
-            server.with_dev_server(|dev| bun_core::handle_oom(dev.on_plugins_rejected()));
+            // Completing the last request on a stopped server frees the DevServer, which owns `requests`.
+            let server = super::PendingRequest::new(server);
+            if let Some(requests) = server.with_dev_server(|dev| dev.on_plugins_rejected()) {
+                requests.fail_all();
+            }
         }
     }
 
@@ -1779,12 +1783,10 @@ where
         }
 
         // These get re-applied when we set the static routes again.
-        self.dev_server.with_taken(|dev_server| {
-            if let Some(dev_server) = dev_server.as_deref_mut() {
-                // Prevent a use-after-free in the hash table keys.
-                dev_server.html_router.clear();
-                dev_server.html_router.fallback = None;
-            }
+        self.with_dev_server(|dev_server| {
+            // Prevent a use-after-free in the hash table keys.
+            dev_server.html_router.clear();
+            dev_server.html_router.fallback = None;
         });
 
         // NOTE: `Vec<StaticRouteEntry>` impls `Drop`, so
@@ -2784,7 +2786,9 @@ where
             // attacker's hostname in `Host`. Apply the same Host allowlist as
             // the `/_bun/*` routes before disclosing the project root path.
             if !self.dev_server.with_taken(|dev_server| {
-                (dev_server.as_deref()).is_some_and(|dev| bake::is_allowed_dev_host(dev, req))
+                dev_server
+                    .as_deref()
+                    .is_some_and(|dev| bake::is_allowed_dev_host(dev, req))
             }) {
                 break 'brk false;
             }

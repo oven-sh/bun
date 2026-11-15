@@ -2477,6 +2477,30 @@ pub mod ffi {
     // unchanged.
     pub use bun_opaque::ffi::{slice, slice_mut, wcslen, wstr_units};
 
+    pub use bun_simd::SharedU8;
+    use core::sync::atomic::AtomicU8;
+
+    /// [`slice`] for bytes that other threads may write meanwhile, as they may those of any JS buffer.
+    ///
+    /// # Safety
+    /// `ptr` is valid for reading `len` initialized bytes for `'a`, or `len` is 0. No `&mut` covers them.
+    #[inline(always)]
+    pub unsafe fn shared_bytes<'a>(ptr: *const u8, len: usize) -> &'a [SharedU8] {
+        // SAFETY: the caller's. `AtomicU8` has the layout of `u8`, and `SharedU8` only loads from it.
+        SharedU8::from_slice(unsafe { slice(ptr.cast::<AtomicU8>(), len) })
+    }
+
+    /// The same for [`slice_mut`].
+    ///
+    /// # Safety
+    /// `ptr` is valid for writing `len` bytes for `'a`, or `len` is 0. No `&[u8]` or `&mut` covers
+    /// them. What is not initialized is not loaded.
+    #[inline(always)]
+    pub unsafe fn atomic_bytes<'a>(ptr: *mut u8, len: usize) -> &'a [AtomicU8] {
+        // SAFETY: the caller's. `AtomicU8` has the layout of `u8`.
+        unsafe { slice(ptr.cast(), len) }
+    }
+
     /// Borrow a NUL-terminated C string from an FFI pointer.
     ///
     /// Single audited wrapper over `CStr::from_ptr` so the ~180 raw call

@@ -104,7 +104,7 @@ interface Param {
   cTy: string;
   /** expression to pass into the impl from the thunk param `name` */
   callExpr: string;
-  /** `&[T]` param: the C signature carries a trailing `name_len: usize` */
+  /** slice param: the C signature carries a trailing `name_len: usize` */
   extraLen?: boolean;
 }
 
@@ -129,20 +129,37 @@ const fnHeadRe = /^\s*pub(?:\([^)]*\))?\s+(unsafe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_
 function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraLen?: boolean } {
   ty = ty.trim();
   // `&[T]` — C passes `(const T* name, size_t name_len)`; the thunk rebuilds
-  // the slice (null/0 → empty).
+  // the slice (null/0 → empty). The bytes of a JS buffer are `&[SharedU8]` to
+  // read and `&[AtomicU8]` to write.
   const slice = /^&\s*\[\s*([^;]+?)\s*\]$/.exec(ty);
   if (slice) {
     const elem = slice[1].trim();
+    const [cTy, rebuild] =
+      elem === "SharedU8"
+        ? ["*const u8", "shared_bytes"]
+        : elem === "AtomicU8"
+          ? ["*mut u8", "atomic_bytes"]
+          : [`*const ${elem}`, "slice"];
     return {
-      cTy: `*const ${elem}`,
+      cTy,
       extraLen: true,
       deref: n =>
-        `{\n        // SAFETY: C++ caller passes \`${n}_len\` live elements at \`${n}\` (or 0).\n        unsafe { ::bun_core::ffi::slice(${n}, ${n}_len) }\n    }`,
+        `{\n        // SAFETY: C++ caller passes \`${n}_len\` live elements at \`${n}\` (or 0).\n        unsafe { ::bun_core::ffi::${rebuild}(${n}, ${n}_len) }\n    }`,
+    };
+  }
+  // `&mut [MaybeUninit<T>]` — room for a result: `(T* name, size_t name_len)`.
+  const room = /^&\s*mut\s*\[\s*MaybeUninit\s*<\s*(\w+)\s*>\s*\]$/.exec(ty);
+  if (room) {
+    return {
+      cTy: `*mut ${room[1]}`,
+      extraLen: true,
+      deref: n =>
+        `{\n        // SAFETY: C++ caller lends room for \`${n}_len\` elements at \`${n}\` (or 0) to this call alone.\n        unsafe { ::bun_core::ffi::slice_mut(${n}.cast(), ${n}_len) }\n    }`,
     };
   }
   // Other slice shapes (`&mut [T]`, `&'a [T]`) and `&str` are NOT FFI-safe; reject.
   if (/^&[^\[]*\[/.test(ty) || /^&\s*str\b/.test(ty)) {
-    throw new Error(`slice/str param \`${ty}\` is not FFI-safe; use \`&[T]\` (const) or (ptr, len)`);
+    throw new Error(`slice/str param \`${ty}\` is not FFI-safe; use \`&[T]\`, \`&mut [MaybeUninit<T>]\` or (ptr, len)`);
   }
   // `&mut T` / `&T` — keep as a reference in the thunk signature. `&T` and
   // `*const T` (resp. `&mut T`/`*mut T`) are ABI-identical for `extern "C"`

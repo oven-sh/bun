@@ -319,6 +319,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   bytesOfRefusingUndefined: $bindgen("bindgen_test.bind.ts", "bytesOfRefusingUndefined"),
   bytesOfThen: $bindgen("bindgen_test.bind.ts", "bytesOfThen"),
   bytesOfThenCopyingShared: $bindgen("bindgen_test.bind.ts", "bytesOfThenCopyingShared"),
+  bytesOfThenAtomic: $bindgen("bindgen_test.bind.ts", "bytesOfThenAtomic"),
   bytesOfThenCopied: $bindgen("bindgen_test.bind.ts", "bytesOfThenCopied"),
   bytesOfAreSameMemory: $bindgen("bindgen_test.bind.ts", "bytesOfAreSameMemory"),
   bytesOfAreSameMemoryCopyingShared: $bindgen("bindgen_test.bind.ts", "bytesOfAreSameMemoryCopyingShared"),

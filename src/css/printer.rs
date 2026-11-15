@@ -624,7 +624,7 @@ impl<'a> Printer<'a> {
         self.write_char(b' ')
     }
 
-    /// Ends the output that `printed` is the result of.
+    /// Writes the final newline; returns the recorded error if `printed` failed.
     pub fn finish(mut self, printed: PrintResult<()>) -> Result<(), css::PrinterError> {
         match printed.and_then(|()| self.newline()) {
             Ok(()) => Ok(()),

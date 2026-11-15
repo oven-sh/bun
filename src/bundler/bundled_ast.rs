@@ -187,8 +187,8 @@ impl<'arena> BundledAst<'arena> {
         }
     }
 
-    pub(crate) fn for_printer(&self) -> bun_js_printer::BundledFile<'_> {
-        bun_js_printer::BundledFile {
+    pub(crate) fn as_printer_view(&self) -> bun_js_printer::BundledAstView<'_> {
+        bun_js_printer::BundledAstView {
             approximate_newline_count: self.approximate_newline_count as usize,
             has_lazy_export: self.flags.contains(Flags::HAS_LAZY_EXPORT),
             has_top_level_await: !self.top_level_await_keyword.is_empty(),

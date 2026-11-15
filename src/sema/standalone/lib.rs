@@ -3,6 +3,9 @@
 
 #![feature(linkage)]
 
+// Defines the `__bun_crash_handler_*` symbols that `bun_alloc` and `bun_core` declare.
+use bun_crash_handler as _;
+
 pub mod native;
 pub mod native_libraries;
 #[cfg(any(test, feature = "test_support"))]

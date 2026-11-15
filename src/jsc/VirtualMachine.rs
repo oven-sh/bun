@@ -298,8 +298,8 @@ pub struct VirtualMachine {
     >,
     pub macro_mode: Cell<bool>,
     /// Depth of live [`MacroModeGuard`]s on this thread. Nonzero exactly while
-    /// macro JS may be executing — both `MacroContext::call` and `Macro::init`
-    /// (whose `load_macro_entry_point` runs the macro module's top-level via
+    /// macro JS may be executing — both calling and loading a macro
+    /// (`load_macro_entry_point` runs the macro module's top-level via
     /// `wait_for_promise`) hold a guard. `enable_/disable_macro_mode` are gated
     /// on the 0↔1 transition so the guard is reentrant; this is the signal
     /// [`drop_source_code_printer_if_macro_owned`] uses.
@@ -372,7 +372,6 @@ pub struct VirtualMachine {
     /// The watcher's loop turned after an unhandled error, so that error did not stop the timers.
     pub timers_ran_after_error: Cell<bool>,
 
-    pub modules: crate::async_module::Queue,
     pub aggressive_garbage_collection: Cell<GCLevel>,
 
     pub module_loader: ModuleLoader::ModuleLoader,
@@ -1841,7 +1840,7 @@ impl VirtualMachine {
                 .set(NonNull::new(self.global.get()));
         }
         // Idempotent; outside the `has_enabled_macro_mode` guard because
-        // `__bun_macro_context_deinit` runs per-job (RuntimeTranspilerStore
+        // a `MacroLoadStates` is dropped per-job (RuntimeTranspilerStore
         // job, JSTranspiler TransformTask, bundler `Worker::deinit`) and
         // frees the printer while this VM survives with the flag still set —
         // the next macro on the same pool thread would otherwise skip re-init
@@ -3198,7 +3197,6 @@ impl VirtualMachine {
             addr_of_mut!((*vm).entry_point).write(Default::default());
             addr_of_mut!((*vm).origin).write(Default::default());
             addr_of_mut!((*vm).ref_strings).write(JsCell::default());
-            addr_of_mut!((*vm).modules).write(Default::default());
             addr_of_mut!((*vm).macro_event_loop).write(EventLoop::new(NonNull::new_unchecked(vm)));
             addr_of_mut!((*vm).proxy_env_storage).write(Default::default());
             addr_of_mut!((*vm).gc_controller).write(Default::default());
@@ -3665,33 +3663,13 @@ pub fn process_fetch_log(
 
     match log.msgs.len() {
         0 => {
-            let msg = if err == crate::CrateError::UnexpectedPendingResolution {
-                bun_ast::Msg {
-                    data: bun_ast::range_data(
-                        None,
-                        bun_ast::Range::NONE,
-                        format!(
-                            "Unexpected pending import in \"{specifier}\". To automatically \
-                             install npm packages with Bun, please use an import statement \
-                             instead of require() or dynamic import().\nThis error can also \
-                             happen if dependencies import packages which are not referenced \
-                             anywhere. Worst case, run `bun install` and opt-out of the \
-                             node_modules folder until we come up with a better way to handle \
-                             this error."
-                        )
-                        .into_bytes(),
-                    ),
-                    ..Default::default()
-                }
-            } else {
-                bun_ast::Msg {
-                    data: bun_ast::range_data(
-                        None,
-                        bun_ast::Range::NONE,
-                        format!("{} while building {specifier}", err.name()).into_bytes(),
-                    ),
-                    ..Default::default()
-                }
+            let msg = bun_ast::Msg {
+                data: bun_ast::range_data(
+                    None,
+                    bun_ast::Range::NONE,
+                    format!("{} while building {specifier}", err.name()).into_bytes(),
+                ),
+                ..Default::default()
             };
             take(BuildMessage::create(global_this, msg))
         }
@@ -3958,7 +3936,7 @@ pub(crate) static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::Buffe
 /// allocated [`SOURCE_CODE_PRINTER`] on this thread and no runtime VM has since
 /// claimed it via [`VirtualMachine::load_extra_env_and_source_code_printer`]
 /// (i.e. a bundler worker thread running a macro). Lets
-/// `__bun_macro_context_deinit` free the printer on worker teardown without
+/// `MacroLoadStates::drop` free the printer on worker teardown without
 /// touching the runtime VM's printer when an inline `Bun.build()` macro ran on
 /// the JS thread.
 #[thread_local]
@@ -4001,7 +3979,7 @@ fn drop_source_code_printer() {
 
 /// Free this thread's [`SOURCE_CODE_PRINTER`] Box only if
 /// [`enable_macro_mode`](VirtualMachine::enable_macro_mode) allocated it.
-/// Called from `js_parser_jsc::Macro::__bun_macro_context_deinit` on bundler
+/// Called from `MacroLoadStates::drop` on bundler
 /// worker teardown — the macro VM never reaches `VirtualMachine::deinit`, so
 /// the box would otherwise leak when the worker thread's TLS block is torn down
 /// before LSan scans (issue 03830 on debian-13-asan after the
@@ -4011,13 +3989,12 @@ fn drop_source_code_printer() {
 /// keep their printer.
 ///
 /// Also a no-op while a [`MacroModeGuard`] is still active on this thread:
-/// `__bun_macro_context_deinit` can fire *inside* the guard scope (e.g. a
-/// macro that calls `new Bun.Transpiler().transformSync(...)` —
-/// `TranspilerStateGuard::drop` drops the nested `MacroContext`), and freeing
+/// a `MacroLoadStates` can be dropped *inside* the guard scope (e.g. by a
+/// macro that calls `new Bun.Transpiler().transformSync(...)`), and freeing
 /// here would panic the next module fetch at
 /// `SOURCE_CODE_PRINTER.get().expect(...)` with no intervening
 /// `enable_macro_mode()`. Gated on `macro_guard_depth`: nonzero exactly while a
-/// guard is on the stack (both `MacroContext::call` and `Macro::init` hold one,
+/// guard is on the stack (both calling and loading a macro hold one,
 /// so the macro module's top-level is covered too).
 pub fn drop_source_code_printer_if_macro_owned() {
     if !SOURCE_CODE_PRINTER_FROM_MACRO.get() {
@@ -4030,7 +4007,7 @@ pub fn drop_source_code_printer_if_macro_owned() {
 }
 
 /// Run a synchronous GC sweep on this thread's VM iff it was created for a
-/// bundler-worker macro (via `Macro::init`) and is otherwise quiescent. The
+/// bundler-worker macro and is otherwise quiescent. The
 /// macro VM is intentionally never `destroy()`'d (per-worker dealloc is
 /// unimplemented), so JS-wrapper-owned native boxes — e.g. a
 /// `new Bun.Transpiler()` constructed inside a macro body — would otherwise
@@ -4038,10 +4015,9 @@ pub fn drop_source_code_printer_if_macro_owned() {
 /// `leak:bun_js_parser_jsc::Macro` suppression is gone.
 ///
 /// Only invoked from `bun_bundler::ThreadPool::Worker::deinit` (the call site
-/// is the discriminant — JS `Worker` threads never reach it), after both
-/// per-worker `MacroContext` boxes are freed. Not called from
-/// `__bun_macro_context_deinit`: that path is reached from
-/// `TranspilerStateGuard::drop` and a `JSTranspiler`'s drop (during a sweep),
+/// is the discriminant — JS `Worker` threads never reach it). Not called from
+/// `MacroLoadStates::drop`: that path is reached from
+/// `transformSync` and a `JSTranspiler`'s drop (during a sweep),
 /// where re-entering `run_gc` would be a recursion hazard.
 pub fn collect_macro_vm_garbage() {
     let Some(vm_ref) = VirtualMachine::get_or_null() else {
@@ -4242,7 +4218,7 @@ impl VirtualMachine {
 
         ensure_source_code_printer();
         // The runtime VM owns the printer from here on — even if a macro had
-        // allocated it first, `__bun_macro_context_deinit` must not free it.
+        // allocated it first, `MacroLoadStates::drop` must not free it.
         SOURCE_CODE_PRINTER_FROM_MACRO.set(false);
 
         if map.get(b"BUN_SHOW_BUN_STACKFRAMES").is_some() {
@@ -4554,19 +4530,12 @@ impl VirtualMachine {
     /// `PackageManager` is exactly that struct, just type-erased at a lower
     /// tier.
     ///
-    /// Panics when the lazy init fails (unreadable top-level dir). Production
-    /// callers (AsyncModule's pending-task machinery) only run after a pending
-    /// dependency was enqueued, which requires a previously successful
-    /// `get_package_manager`, so the init error is surfaced as a resolve
-    /// failure in `Resolver::load_node_modules` long before reaching here.
-    /// The one caller outside that machinery is the `bun:internal-for-testing`
-    /// `parseLockfile` binding (`install_jsc/install_binding.rs`), which may
-    /// lazy-init here and accepts the panic on its test-only surface.
+    /// Panics when the lazy init fails. Only for `bun:internal-for-testing`'s `parseLockfile`.
     #[inline]
     pub fn package_manager(&self) -> *mut bun_install::PackageManager {
         self.transpiler
             .with_mut(Transpiler::get_package_manager)
-            .expect("package manager init already succeeded when the pending task was enqueued")
+            .expect("package manager init")
             .cast()
     }
 
@@ -4969,9 +4938,6 @@ impl VirtualMachine {
             .get()
             .expect("source_code_printer not initialized");
 
-        // Note: the §Dispatch shim takes path/loader/module_type/printer/
-        // promise_ptr bundled as `TranspileExtra` behind `args.extra` (see
-        // ModuleLoader.rs `TranspileArgs`).
         let extra = ModuleLoader::TranspileExtra {
             path: lr.path,
             loader: Cell::new(loader.or(lr.loader).unwrap_or(if lr.is_main {
@@ -4981,8 +4947,6 @@ impl VirtualMachine {
             })),
             module_type: Cell::new(module_type),
             source_code_printer: printer.as_ptr(),
-            // `fetchWithoutOnLoadPlugins` forbids the async path.
-            promise_ptr: core::ptr::null_mut(),
         };
         let args = ModuleLoader::TranspileArgs {
             specifier: lr.specifier,
@@ -5095,7 +5059,7 @@ impl VirtualMachine {
             }) {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
-                ResultUnion::Pending(_) | ResultUnion::NotFound => {
+                ResultUnion::NotFound => {
                     // Not found on disk. Look it up in the executable.
                     if (self.transpiler)
                         .with_mut(|t| core::mem::take(&mut t.resolver.resolves_for_code_from_disk))
@@ -6022,10 +5986,9 @@ impl VirtualMachine {
             return;
         }
 
-        // Loaded macros are functions of the outgoing realm. The macro context
-        // remembers which ones are loaded, so the next file loads its own.
+        // Loaded macros are functions of the outgoing realm, so the next file loads its own.
         self.macros.with_mut(MacroMap::clear_retaining_capacity);
-        drop(self.transpiler.with_mut(|t| t.macro_context.take()));
+        self.module_loader.macro_load_states.clear();
 
         let old_global = self.global.get();
         // `old_global` valid for VM lifetime (safe ZST-handle deref);

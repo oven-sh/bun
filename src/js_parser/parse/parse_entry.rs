@@ -30,7 +30,7 @@ type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
 
 /// What `Parser::parse_only` parsed.
 pub struct ParsedOnly<'p, 'a> {
-    pub stmts: &'p [js_ast::Stmt],
+    pub stmts: &'p [js_ast::Stmt<'a>],
     p: &'p P<'a, 'p, false, false>,
 }
 
@@ -108,7 +108,7 @@ pub struct Parser<'a, 'log> {
     pub(crate) options: Options<'a>,
     pub(crate) lexer: js_lexer::Lexer<'a, 'log>,
     pub(crate) source: &'a bun_ast::Source<'a>,
-    pub(crate) define: &'a Define,
+    pub(crate) define: &'a Define<'a>,
     pub(crate) bump: &'a bun_ast::AstArena,
     /// `log.errors` before the priming `lexer.next()` in `init`.
     pub(crate) orig_error_count: u32,
@@ -125,7 +125,7 @@ pub struct Options<'a> {
     pub preserve_unused_imports_ts: bool,
     pub use_define_for_class_fields: bool,
     pub suppress_warnings_about_weird_code: bool,
-    pub features: RuntimeFeatures,
+    pub features: RuntimeFeatures<'a>,
 
     pub tree_shaking: bool,
     pub bundle: bool,
@@ -311,7 +311,7 @@ impl<'a> Options<'a> {
         self.bundle && !self.features.is_library
     }
 
-    pub fn init(jsx: options::JSX::Pragma, loader: options::Loader) -> Options<'static> {
+    pub fn init(jsx: options::JSX::Pragma, loader: options::Loader) -> Self {
         let mut opts = Options {
             ts: loader.is_typescript(),
             jsx,
@@ -626,7 +626,7 @@ impl<'a> Parser<'a, '_> {
 
     pub(crate) fn into_lazy_export_ast(
         self,
-        expr: Expr,
+        expr: Expr<'a>,
         runtime_api_call: &'static [u8],
         symbols: js_ast::symbol::List<'a>,
     ) -> Result<crate::Result<'a>, Error> {
@@ -710,9 +710,9 @@ impl<'a> Parser<'a, '_> {
 }
 
 /// A container queued by `lower_date_time_literals`' worklist.
-enum DateTimeLowerContainer {
-    Object(js_ast::StoreRef<E::Object>),
-    Array(js_ast::StoreRef<E::Array>),
+enum DateTimeLowerContainer<'a> {
+    Object(js_ast::StoreRef<'a, E::Object<'a>>),
+    Array(js_ast::StoreRef<'a, E::Array<'a>>),
 }
 
 /// Rewrites every `toml_datetime`-tagged `E::String` in `expr` (in place)
@@ -722,7 +722,7 @@ enum DateTimeLowerContainer {
 /// objects far beyond safe recursion depth.
 fn lower_date_time_literals<'a>(
     p: &mut JavaScriptParser<'a, '_>,
-    expr: &mut Expr,
+    expr: &mut Expr<'a>,
     temporal_ref: &mut Option<js_ast::Ref>,
 ) -> Result<(), Error> {
     let mut work: Vec<DateTimeLowerContainer> = Vec::new();
@@ -748,9 +748,9 @@ fn lower_date_time_literals<'a>(
 
 fn lower_one_date_time_literal<'a>(
     p: &mut JavaScriptParser<'a, '_>,
-    expr: &mut Expr,
+    expr: &mut Expr<'a>,
     temporal_ref: &mut Option<js_ast::Ref>,
-    work: &mut Vec<DateTimeLowerContainer>,
+    work: &mut Vec<DateTimeLowerContainer<'a>>,
 ) -> Result<(), Error> {
     match expr.data {
         js_ast::ExprData::EString(str) if str.toml_datetime.is_some() => {
@@ -1322,10 +1322,10 @@ impl<'a> Parser<'a, '_> {
             .is_empty()
         {
             #[derive(Default)]
-            struct PerRecord {
+            struct PerRecord<'a> {
                 escaped: bool,
-                aliases: Vec<bun_ast::StoreStr>,
-                items: Vec<bun_ast::ast_result::DynamicImportItem>,
+                aliases: Vec<bun_ast::StoreStr<'a>>,
+                items: Vec<bun_ast::ast_result::DynamicImportItem<'a>>,
                 /// A name is read some other way (a `{...rest}` copy, a local
                 /// that stays one), so the call's value must hold it.
                 needs_value: bool,
@@ -1445,8 +1445,8 @@ impl<'a> Parser<'a, '_> {
                     p.ast_arena,
                     import_record_id,
                     bun_ast::ast_result::DynamicImportUse {
-                        aliases: bun_ast::StoreSlice::new(aliases),
-                        items: bun_ast::StoreSlice::new(items),
+                        aliases: bun_ast::StoreSlice::new_mut(aliases),
+                        items: bun_ast::StoreSlice::new_mut(items),
                         needs_namespace_object: rec.needs_value
                             || p.dynamic_import_needs_object
                                 .contains_key(&import_record_id),
@@ -1594,8 +1594,8 @@ impl<'a> Parser<'a, '_> {
             //
             // When tree-shaking is enabled, each statement becomes its own part, so we need
             // to look across all parts to find the single meaningful statement.
-            struct StmtAndPart {
-                stmt: Stmt,
+            struct StmtAndPart<'a> {
+                stmt: Stmt<'a>,
                 part_idx: usize,
             }
             let stmt_and_part: Option<StmtAndPart> = 'brk: {
@@ -1704,12 +1704,12 @@ impl<'a> Parser<'a, '_> {
             && p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate == 1
             && p.symbols.as_slice()[p.exports_ref.inner_index() as usize].use_count_estimate == 0
         {
-            struct ModuleExportsOfNamespace {
+            struct ModuleExportsOfNamespace<'a> {
                 part_idx: usize,
                 stmt_idx: usize,
                 /// `checkDCE(), module.exports = ns` (the `if` block folded by
                 /// minification): the operand before the assignment.
-                leading: Option<Expr>,
+                leading: Option<Expr<'a>>,
                 assign_loc: bun_ast::Loc,
                 namespace_ref: js_ast::Ref,
                 import_record_index: u32,

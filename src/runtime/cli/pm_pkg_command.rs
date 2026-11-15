@@ -1,8 +1,8 @@
 use std::io::Write as _;
 
 use crate::Error;
-use crate::cli::cli_arena;
 use crate::cli::command::Context;
+use crate::cli::{cli_adopt, cli_arena};
 use bun_ast::{E, Expr, ExprData};
 use bun_ast::{Loc, Log, Source};
 use bun_collections::StringArrayHashMap;
@@ -26,17 +26,10 @@ enum SubCommand {
     Help,
 }
 
-struct PackageJson {
-    path: Box<[u8]>,
-    root: Expr,
-    contents: Box<[u8]>,
+struct PackageJson<'a> {
+    source: &'a Source<'a>,
+    root: Expr<'a>,
     indentation: bun_ast::Indentation,
-}
-
-impl PackageJson {
-    fn source(&self) -> Source<'_> {
-        Source::init_path_string(&self.path[..], &self.contents[..])
-    }
 }
 
 /// One step of a key path such as `contributors[0].name` or `keywords[]`.
@@ -159,10 +152,10 @@ impl PmPkgCommand {
     }
 
     /// The nearest package.json at or above `cwd`. Its root is an object.
-    fn load_package_json(ctx: &Context, cwd: &[u8]) -> PackageJson {
-        let path = Self::find_package_json(cwd);
-        let contents: Box<[u8]> = match bun_sys::File::read_from(bun_sys::Fd::cwd(), &path) {
-            Ok(b) => b.into(),
+    fn load_package_json<'a>(ctx: &Context, cwd: &[u8]) -> PackageJson<'a> {
+        let path = cli_adopt(Self::find_package_json(cwd));
+        let contents = match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
+            Ok(b) => cli_adopt(b.into()),
             Err(e) => {
                 Output::err_generic(
                     "Failed to read package.json: {s}",
@@ -172,7 +165,7 @@ impl PmPkgCommand {
             }
         };
 
-        let source = Source::init_path_string(&path[..], &contents[..]);
+        let source: &Source = cli_arena().alloc(Source::init_path_string(path, contents));
         let log: &Log = ctx.log();
         let result = match json::parse_package_json_utf8_with_opts(
             json::JSONOptions {
@@ -180,7 +173,7 @@ impl PmPkgCommand {
                 guess_indentation: true,
                 ..json::PACKAGE_JSON_OPTS
             },
-            &source,
+            source,
             log,
             cli_arena(),
         ) {
@@ -197,9 +190,8 @@ impl PmPkgCommand {
         }
 
         PackageJson {
-            path,
+            source,
             root: result.root,
-            contents,
             indentation: result.indentation,
         }
     }
@@ -352,7 +344,8 @@ impl PmPkgCommand {
                     continue;
                 };
                 let bin_path = str.slice8();
-                let mut pkg_dir = path::resolve_path::dirname::<path::platform::Auto>(&pkg.path);
+                let mut pkg_dir =
+                    path::resolve_path::dirname::<path::platform::Auto>(pkg.source.path.text);
                 if pkg_dir.is_empty() {
                     pkg_dir = cwd;
                 }
@@ -383,6 +376,7 @@ impl PmPkgCommand {
 
         js_printer::print_json(
             &mut printer,
+            cli_arena(),
             expr,
             &Source::init_empty_file(b"expression.json"),
             js_printer::PrintJsonOptions {
@@ -404,10 +398,10 @@ impl PmPkgCommand {
 
     /// Like in npm, a name that's applied to an array (`maintainers.name`) returns
     /// `maintainers[0].name`, and so on.
-    pub(crate) fn query(
-        root: Expr,
+    pub(crate) fn query<'a>(
+        root: Expr<'a>,
         key: &[u8],
-        out: &mut StringArrayHashMap<Expr>,
+        out: &mut StringArrayHashMap<Expr<'a>>,
     ) -> Result<(), Error> {
         let path = Self::parse_key_path(key)?;
         if path.iter().any(|segment| segment.is_append()) {
@@ -418,13 +412,13 @@ impl PmPkgCommand {
 
     /// `label` is the path walked so far. Once an array was `expanded`, the value is labeled with
     /// it instead of `key`.
-    fn query_in(
-        value: Expr,
+    fn query_in<'a>(
+        value: Expr<'a>,
         path: &[Segment<'_>],
         key: &[u8],
         label: &mut Vec<u8>,
         expanded: bool,
-        out: &mut StringArrayHashMap<Expr>,
+        out: &mut StringArrayHashMap<Expr<'a>>,
     ) -> Result<(), Error> {
         let [segment, rest @ ..] = path else {
             out.put(if expanded { label.as_slice() } else { key }, value)?;
@@ -499,7 +493,12 @@ impl PmPkgCommand {
         Ok(segments)
     }
 
-    fn set_value(root: &mut Expr, key: &[u8], value: &[u8], parse_json: bool) -> Result<(), Error> {
+    fn set_value<'a>(
+        root: &mut Expr<'a>,
+        key: &'a [u8],
+        value: &[u8],
+        parse_json: bool,
+    ) -> Result<(), Error> {
         let path = Self::parse_key_path(key)?;
         if path.is_empty() {
             return Err(crate::Error::EmptyKey);
@@ -511,12 +510,12 @@ impl PmPkgCommand {
 
     /// Like in npm, only the final segment may replace a value. Any other value in the way is an
     /// error.
-    fn set_in_container(
-        container: &mut Expr,
+    fn set_in_container<'a>(
+        container: &mut Expr<'a>,
         container_name: &[u8],
         key: &[u8],
-        path: &[Segment<'_>],
-        value: Expr,
+        path: &[Segment<'a>],
+        value: Expr<'a>,
     ) -> Result<(), Error> {
         let [segment, rest @ ..] = path else {
             return Ok(());
@@ -581,12 +580,12 @@ impl PmPkgCommand {
     }
 
     /// A missing or `null` slot gets a new container shaped for `next`.
-    fn child_container(
-        existing: Option<Expr>,
+    fn child_container<'a>(
+        existing: Option<Expr<'a>>,
         next: Segment<'_>,
         key: &[u8],
         slot_name: &[u8],
-    ) -> Expr {
+    ) -> Expr<'a> {
         match existing {
             Some(expr) if matches!(expr.data, ExprData::EArray(_) | ExprData::EObject(_)) => expr,
             Some(expr) if !matches!(expr.data, ExprData::ENull(_)) => {
@@ -604,15 +603,14 @@ impl PmPkgCommand {
     }
 
     /// With `--json` a value that is not JSON is an error, as in `npm pkg set --json`.
-    fn parse_value(key: &[u8], value: &[u8], parse_json: bool) -> Expr {
+    fn parse_value<'a>(key: &[u8], value: &[u8], parse_json: bool) -> Expr<'a> {
         let data: &[u8] = cli_arena().alloc_slice_copy(value);
         if !parse_json {
             return Expr::allocate(cli_arena(), E::String::init(data), Loc::EMPTY);
         }
 
-        let source = Source::init_path_string(key, data);
         let mut log = Log::init();
-        match json::parse_utf8_impl::<true>(&source, &log, cli_arena()) {
+        match json::parse_utf8_document(key, data, &log, cli_arena()) {
             Ok(expr) if Self::has_only_json_literals(expr, data) => expr,
             _ => {
                 let reason: &[u8] = log
@@ -720,18 +718,22 @@ impl PmPkgCommand {
     }
 
     fn save_package_json(root: Expr, pkg: &PackageJson, dry_run: bool) {
-        let preserve_newline = pkg.contents.last() == Some(&b'\n');
+        let preserve_newline = pkg.source.contents.last() == Some(&b'\n');
 
         let mut buffer_writer = js_printer::BufferWriter::init();
-        buffer_writer.buffer.list.reserve(pkg.contents.len() + 1);
+        buffer_writer
+            .buffer
+            .list
+            .reserve(pkg.source.contents.len() + 1);
         buffer_writer.append_newline = preserve_newline;
 
         let mut writer = js_printer::BufferPrinter::init(buffer_writer);
 
         if let Err(e) = js_printer::print_json(
             &mut writer,
+            cli_arena(),
             root,
-            &pkg.source(),
+            pkg.source,
             js_printer::PrintJsonOptions {
                 indent: pkg.indentation,
                 mangled_props: None,
@@ -751,7 +753,7 @@ impl PmPkgCommand {
             Output::flush();
             return;
         }
-        let path_z = bun_core::ZBox::from_bytes(&pkg.path);
+        let path_z = bun_core::ZBox::from_bytes(pkg.source.path.text);
         if let Err(e) = bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z.as_zstr(), content) {
             Output::err_generic(
                 "Failed to write package.json: {s}",

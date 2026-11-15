@@ -81,7 +81,7 @@ pub struct ImportInfo<'a> {
     /// bundle_v2.graph.ast.items(.url_for_css)
     pub ast_urls_for_css: &'a [&'a [u8]],
     /// bundle_v2.graph.input_files.items(.unique_key_for_additional_file)
-    pub ast_unique_key_for_additional_file: &'a [StoreStr],
+    pub ast_unique_key_for_additional_file: &'a [StoreStr<'a>],
 }
 
 impl<'a> ImportInfo<'a> {
@@ -157,7 +157,7 @@ pub struct Printer<'a> {
     pub(crate) scratchbuf: BumpVec<'a, u8>,
     pub(crate) error_kind: Option<css::PrinterError>,
     pub(crate) import_info: Option<ImportInfo<'a>>,
-    pub(crate) symbols: &'a SymbolMap,
+    pub(crate) symbols: &'a SymbolMap<'a>,
     pub(crate) local_names: Option<&'a css::LocalsResultsMap>,
     /// NOTE This should be the same mimalloc heap arena arena
     pub(crate) arena: &'a Bump,
@@ -175,7 +175,6 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // `original_name` is `StoreStr` (arena-erased); `.slice()` yields `&'a [u8]`.
         symbols.get_const(final_ref).unwrap().original_name.slice()
     }
 
@@ -724,4 +723,4 @@ impl<'a> Printer<'a> {
 }
 
 // bun.ast.Symbol.Map — lives in bun_logger.
-type SymbolMap = bun_ast::symbol::Map;
+type SymbolMap<'a> = bun_ast::symbol::Map<'a>;

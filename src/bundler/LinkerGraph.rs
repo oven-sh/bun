@@ -73,40 +73,40 @@ pub mod js_meta {
     use crate::{ImportTracker, Index, WrapKind};
 
     #[derive(Default)]
-    pub struct ImportData {
-        pub(crate) re_exports: AstVec<Dependency>,
+    pub struct ImportData<'a> {
+        pub(crate) re_exports: AstVec<'a, Dependency>,
         pub(crate) data: ImportTracker,
     }
-    pub(crate) type ImportToBind = ImportData;
+    pub(crate) type ImportToBind<'a> = ImportData<'a>;
 
     #[derive(Default)]
-    pub struct ExportData {
-        pub(crate) potentially_ambiguous_export_star_refs: AstVec<ImportData>,
+    pub struct ExportData<'a> {
+        pub(crate) potentially_ambiguous_export_star_refs: AstVec<'a, ImportData<'a>>,
         pub(crate) data: ImportTracker,
     }
-    pub(crate) type ResolvedExport = ExportData;
+    pub(crate) type ResolvedExport<'a> = ExportData<'a>;
 
-    pub type RefImportData = AstArrayHashMap<Ref, ImportData>;
-    pub type ResolvedExports = AstStringArrayHashMap<ExportData>;
-    pub type ProbablyTypescriptType = AstArrayHashMap<Ref, ()>;
-    pub type SortedAndFilteredExportAliases = AstVec<StoreStr>;
-    pub type CjsExportCopies = AstVec<Ref>;
+    pub type RefImportData<'a> = AstArrayHashMap<'a, Ref, ImportData<'a>>;
+    pub type ResolvedExports<'a> = AstStringArrayHashMap<'a, ExportData<'a>>;
+    pub type ProbablyTypescriptType<'a> = AstArrayHashMap<'a, Ref, ()>;
+    pub type SortedAndFilteredExportAliases<'a> = AstVec<'a, StoreStr<'a>>;
+    pub type CjsExportCopies<'a> = AstVec<'a, Ref>;
     /// Union, per file, of the export names its importers can observe: named
     /// static imports, tracked `import()` / `require()` reads. `None` until an
     /// importer is seen; `All` once any importer can see the whole namespace
     /// (sticky). Keys borrow parser-arena strings; nothing is copied.
     #[derive(Default)]
-    pub enum DynamicImportReferencedAliases {
+    pub enum DynamicImportReferencedAliases<'a> {
         #[default]
         None,
-        Partial(AstArrayHashMap<&'static [u8], ()>),
+        Partial(AstArrayHashMap<'a, &'a [u8], ()>),
         All,
     }
-    impl DynamicImportReferencedAliases {
+    impl<'a> DynamicImportReferencedAliases<'a> {
         pub fn merge_all(&mut self) {
             *self = Self::All;
         }
-        pub fn insert(&mut self, arena: &AstArena, alias: &'static [u8]) {
+        pub fn insert(&mut self, arena: &'a AstArena, alias: &'a [u8]) {
             match self {
                 Self::All => {}
                 Self::None => {
@@ -117,7 +117,7 @@ pub mod js_meta {
                 Self::Partial(set) => set.put(arena, alias, ()),
             }
         }
-        pub fn merge_partial(&mut self, arena: &AstArena, aliases: &[StoreStr]) {
+        pub fn merge_partial(&mut self, arena: &'a AstArena, aliases: &[StoreStr<'a>]) {
             if aliases.is_empty() && matches!(self, Self::None) {
                 *self = Self::Partial(Default::default());
             }
@@ -126,7 +126,7 @@ pub mod js_meta {
             }
         }
     }
-    pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
+    pub use bun_ast::ast_result::TopLevelSymbolToParts;
 
     #[derive(Clone, Copy, Default)]
     pub struct Flags {
@@ -140,23 +140,23 @@ pub mod js_meta {
     }
     pub use crate::WrapKind as Wrap;
 
-    pub struct JSMeta {
-        pub probably_typescript_type: ProbablyTypescriptType,
-        pub imports_to_bind: RefImportData,
-        pub resolved_exports: ResolvedExports,
-        pub resolved_export_star: ExportData,
-        pub sorted_and_filtered_export_aliases: SortedAndFilteredExportAliases,
-        pub top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
-        pub cjs_export_copies: CjsExportCopies,
+    pub struct JSMeta<'a> {
+        pub probably_typescript_type: ProbablyTypescriptType<'a>,
+        pub imports_to_bind: RefImportData<'a>,
+        pub resolved_exports: ResolvedExports<'a>,
+        pub resolved_export_star: ExportData<'a>,
+        pub sorted_and_filtered_export_aliases: SortedAndFilteredExportAliases<'a>,
+        pub top_level_symbol_to_parts_overlay: TopLevelSymbolToParts<'a>,
+        pub cjs_export_copies: CjsExportCopies<'a>,
         pub wrapper_part_index: Index,
-        pub dynamic_import_referenced_aliases: DynamicImportReferencedAliases,
+        pub dynamic_import_referenced_aliases: DynamicImportReferencedAliases<'a>,
         /// The parameter of the setters on a lifted CommonJS module's namespace
         /// object (`set: (value) => $foo = value`). `Ref::NONE` for other files.
         pub lifted_setter_param: Ref,
         pub flags: Flags,
     }
 
-    impl Default for JSMeta {
+    impl Default for JSMeta<'_> {
         fn default() -> Self {
             Self {
                 probably_typescript_type: ProbablyTypescriptType::default(),
@@ -175,16 +175,16 @@ pub mod js_meta {
     }
 
     bun_collections::multi_array_columns! {
-        pub trait JSMetaColumns for JSMeta {
-            probably_typescript_type: ProbablyTypescriptType,
-            imports_to_bind: RefImportData,
-            resolved_exports: ResolvedExports,
-            resolved_export_star: ExportData,
-            sorted_and_filtered_export_aliases: SortedAndFilteredExportAliases,
-            top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
-            cjs_export_copies: CjsExportCopies,
+        pub trait JSMetaColumns ['a] for JSMeta<'a> {
+            probably_typescript_type: ProbablyTypescriptType<'a>,
+            imports_to_bind: RefImportData<'a>,
+            resolved_exports: ResolvedExports<'a>,
+            resolved_export_star: ExportData<'a>,
+            sorted_and_filtered_export_aliases: SortedAndFilteredExportAliases<'a>,
+            top_level_symbol_to_parts_overlay: TopLevelSymbolToParts<'a>,
+            cjs_export_copies: CjsExportCopies<'a>,
             wrapper_part_index: Index,
-            dynamic_import_referenced_aliases: DynamicImportReferencedAliases,
+            dynamic_import_referenced_aliases: DynamicImportReferencedAliases<'a>,
             lifted_setter_param: Ref,
             flags: Flags,
         }
@@ -197,7 +197,7 @@ pub use js_meta::{
 };
 
 pub struct LinkerGraph<'a> {
-    pub files: FileList,
+    pub files: FileList<'a>,
     pub(crate) files_live: BitSet,
     /// Per-part liveness — `parts_live[source_index].is_set(part_index)`.
     /// One bitset per source file, sized to that file's `parts.len()`.
@@ -208,7 +208,7 @@ pub struct LinkerGraph<'a> {
     /// cache for a 1-bit answer.
     pub(crate) parts_live: Vec<AutoBitSet>,
     pub(crate) entry_points: entry_point::List,
-    pub(crate) symbols: symbol::Map,
+    pub(crate) symbols: symbol::Map<'a>,
 
     /// The bundle's arena, `BundleV2.graph.heap`.
     bump: &'a Arena,
@@ -220,7 +220,7 @@ pub struct LinkerGraph<'a> {
     // This is an alias from Graph
     // it is not a clone!
     pub(crate) ast: MultiArrayList<JSAst<'a>>,
-    pub meta: MultiArrayList<JSMeta>,
+    pub meta: MultiArrayList<JSMeta<'a>>,
 
     /// We should avoid traversing all files in the bundle, because the linker
     /// should be able to run a linking operation on a large bundle where only
@@ -239,8 +239,8 @@ pub struct LinkerGraph<'a> {
     /// This is for cross-module inlining of detected inlinable constants
     // const_values: bun_ast::Ast::ConstValuesMap,
     /// This is for cross-module inlining of TypeScript enum constants
-    pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
-    pub(crate) import_member_bindings: bun_ast::ast_result::ImportMemberBindings,
+    pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap<'a>,
+    pub(crate) import_member_bindings: bun_ast::ast_result::ImportMemberBindings<'a>,
 
     /// The files to copy to the output directory, which `AdditionalFile::OutputFile` refers to.
     pub(crate) additional_output_files: Vec<crate::options::OutputFile>,
@@ -311,13 +311,13 @@ fn runtime_function(named_exports: &[bundled_ast::NamedExports], name: &[u8]) ->
         .ref_
 }
 
-pub(crate) fn generate_new_symbol(
-    arena: &AstArena,
-    symbols: &mut symbol::Map,
-    module_scopes: &mut [bun_ast::Scope],
+pub(crate) fn generate_new_symbol<'a>(
+    arena: &'a AstArena,
+    symbols: &mut symbol::Map<'a>,
+    module_scopes: &mut [bun_ast::Scope<'a>],
     source_index: u32,
     kind: symbol::Kind,
-    original_name: &[u8],
+    original_name: &'a [u8],
 ) -> Ref {
     let source_symbols = &mut symbols.symbols_for_source.slice_mut()[source_index as usize];
 
@@ -330,9 +330,6 @@ pub(crate) fn generate_new_symbol(
     // TODO: will this crash on resize due to using threadlocal mimalloc heap?
     source_symbols.push(Symbol {
         kind,
-        // Note: `Symbol.original_name` is a `StoreStr` —
-        // arena-owned slice whose lifetime is erased;
-        // caller guarantees it outlives the symbol table.
         original_name: bun_ast::StoreStr::new(original_name),
         ..Default::default()
     });
@@ -358,13 +355,13 @@ pub(crate) fn top_level_symbol_to_parts<'a>(
     &[]
 }
 
-pub(crate) fn add_part_to_file(
-    arena: &AstArena,
-    parts: &mut [part::List<'_>],
-    top_level_symbol_to_parts_overlay: &mut [TopLevelSymbolToParts],
-    top_level_symbols_to_parts: &[bundled_ast::TopLevelSymbolToParts],
+pub(crate) fn add_part_to_file<'a>(
+    arena: &'a AstArena,
+    parts: &mut [part::List<'a>],
+    top_level_symbol_to_parts_overlay: &mut [TopLevelSymbolToParts<'a>],
+    top_level_symbols_to_parts: &[bundled_ast::TopLevelSymbolToParts<'a>],
     id: u32,
-    part: Part,
+    part: Part<'a>,
 ) -> Result<u32, bun_alloc::AllocError> {
     let part_id = parts[id as usize].len() as u32;
     parts[id as usize].push(part);
@@ -374,9 +371,9 @@ pub(crate) fn add_part_to_file(
     let declared_symbols: &mut DeclaredSymbolList =
         &mut parts[id as usize][part_id as usize].declared_symbols;
 
-    struct Ctx<'a> {
-        overlay: &'a mut [TopLevelSymbolToParts],
-        ast_tlsp: &'a [bundled_ast::TopLevelSymbolToParts],
+    struct Ctx<'a, 'ast> {
+        overlay: &'a mut [TopLevelSymbolToParts<'ast>],
+        ast_tlsp: &'a [bundled_ast::TopLevelSymbolToParts<'ast>],
         id: u32,
         part_id: u32,
     }
@@ -409,10 +406,10 @@ pub(crate) struct SymbolUseColumns<'s, 'a> {
     pub(crate) ast_flags: &'s mut [bundled_ast::Flags],
     pub(crate) exports_ref: &'s [Ref],
     pub(crate) module_ref: &'s [Ref],
-    pub(crate) named_exports: &'s [bundled_ast::NamedExports],
-    pub(crate) top_level_symbols_to_parts: &'s [bundled_ast::TopLevelSymbolToParts],
-    pub(crate) top_level_symbol_to_parts_overlay: &'s mut [TopLevelSymbolToParts],
-    pub(crate) imports_to_bind: &'s mut [RefImportData],
+    pub(crate) named_exports: &'s [bundled_ast::NamedExports<'a>],
+    pub(crate) top_level_symbols_to_parts: &'s [bundled_ast::TopLevelSymbolToParts<'a>],
+    pub(crate) top_level_symbol_to_parts_overlay: &'s mut [TopLevelSymbolToParts<'a>],
+    pub(crate) imports_to_bind: &'s mut [RefImportData<'a>],
 }
 
 impl SymbolUseColumns<'_, '_> {
@@ -549,7 +546,7 @@ impl<'a> LinkerGraph<'a> {
     /// Shared-ref view of a symbol that is known to exist (the `Ref` was
     /// produced by the symbol table itself).
     #[inline]
-    pub(crate) fn symbol(&self, ref_: Ref) -> &Symbol {
+    pub(crate) fn symbol(&self, ref_: Ref) -> &Symbol<'a> {
         self.symbols
             .get_const(ref_)
             .expect("infallible: ref in symbol table")
@@ -559,7 +556,7 @@ impl<'a> LinkerGraph<'a> {
         &mut self,
         source_index: u32,
         kind: symbol::Kind,
-        original_name: &[u8],
+        original_name: &'a [u8],
     ) -> Ref {
         generate_new_symbol(
             self.ast_arena.as_mut(),
@@ -606,7 +603,7 @@ impl<'a> LinkerGraph<'a> {
     pub(crate) fn add_part_to_file(
         &mut self,
         id: u32,
-        part: Part,
+        part: Part<'a>,
     ) -> Result<u32, bun_alloc::AllocError> {
         let ast = self.ast.split_mut();
         add_part_to_file(
@@ -798,7 +795,7 @@ impl<'a> LinkerGraph<'a> {
 
         {
             // Note: `Vec::clone` requires `T: Clone` which `Symbol` does not
-            // derive (it carries a raw `*const [u8]`), so spell out the
+            // derive, so spell out the
             // bitwise copy explicitly — `Symbol` has no `Drop` impl.
             let src_symbols: &[symbol::List] = self.ast.items_symbols();
             let mut symbols: symbol::NestedList = Vec::with_capacity(src_symbols.len());
@@ -971,22 +968,22 @@ impl<'a> LinkerGraph<'a> {
 }
 
 /// Not `Copy`: the bytes are freed with the worker that quoted them, so they are only lent through `&self`.
-pub struct QuotedSourceContents(bun_ast::StoreStr);
+pub struct QuotedSourceContents<'a>(bun_ast::StoreStr<'a>);
 
-impl QuotedSourceContents {
-    pub(crate) fn new(in_worker_arena: &[u8]) -> Self {
+impl<'a> QuotedSourceContents<'a> {
+    pub(crate) fn new(in_worker_arena: &'a [u8]) -> Self {
         Self(bun_ast::StoreStr::new(in_worker_arena))
     }
 }
 
-impl core::ops::Deref for QuotedSourceContents {
+impl core::ops::Deref for QuotedSourceContents<'_> {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
         &self.0
     }
 }
 
-pub struct File {
+pub struct File<'a> {
     pub entry_bits: AutoBitSet,
 
     /// This file is an entry point if and only if this is not ".none".
@@ -1003,11 +1000,11 @@ pub struct File {
     /// a Source.Index to its output path inb reakOutputIntoPieces
     pub entry_point_chunk_index: u32,
 
-    pub line_offset_table: bun_sourcemap::line_offset_table::AstList,
-    pub quoted_source_contents: Option<QuotedSourceContents>,
+    pub line_offset_table: bun_sourcemap::line_offset_table::AstList<'a>,
+    pub quoted_source_contents: Option<QuotedSourceContents<'a>>,
 }
 
-impl Default for File {
+impl Default for File<'_> {
     fn default() -> Self {
         Self {
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
@@ -1019,14 +1016,14 @@ impl Default for File {
     }
 }
 
-pub(crate) type FileList = MultiArrayList<File>;
+pub(crate) type FileList<'a> = MultiArrayList<File<'a>>;
 
 bun_collections::multi_array_columns! {
-    pub trait FileColumns for File {
+    pub trait FileColumns ['a] for File<'a> {
         entry_bits: AutoBitSet,
         entry_point_kind: EntryPoint::Kind,
         entry_point_chunk_index: u32,
-        line_offset_table: bun_sourcemap::line_offset_table::AstList,
-        quoted_source_contents: Option<QuotedSourceContents>,
+        line_offset_table: bun_sourcemap::line_offset_table::AstList<'a>,
+        quoted_source_contents: Option<QuotedSourceContents<'a>>,
     }
 }

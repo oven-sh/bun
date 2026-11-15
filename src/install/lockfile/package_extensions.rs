@@ -84,7 +84,7 @@ impl Edge {
 impl Rule {
     fn parse(
         key: &[u8],
-        value: JsonView<'_>,
+        value: JsonView<'_, '_>,
         arena: &bun_alloc::Arena,
     ) -> Result<Rule, &'static str> {
         let Ok(selector) = parse_package_segment(key) else {
@@ -177,7 +177,7 @@ pub(crate) fn key_matches(
 }
 
 /// Why an install would ignore this rule, if it would.
-pub(crate) fn rule_problem(key: &[u8], value: JsonView<'_>) -> Option<&'static str> {
+pub(crate) fn rule_problem(key: &[u8], value: JsonView<'_, '_>) -> Option<&'static str> {
     Rule::parse(key, value, &bun_alloc::Arena::new()).err()
 }
 
@@ -278,7 +278,7 @@ impl PackageExtensions {
         &mut self,
         log: &bun_ast::Log,
         source: &bun_ast::Source,
-        root_package_json: JsonView<'_>,
+        root_package_json: JsonView<'_, '_>,
     ) {
         self.rules.clear();
         if let Some(extensions) = root_package_json.get(b"packageExtensions") {
@@ -288,7 +288,12 @@ impl PackageExtensions {
 
     #[cold]
     #[inline(never)]
-    fn parse_rules(&mut self, log: &bun_ast::Log, source: &bun_ast::Source, rules: JsonView<'_>) {
+    fn parse_rules(
+        &mut self,
+        log: &bun_ast::Log,
+        source: &bun_ast::Source,
+        rules: JsonView<'_, '_>,
+    ) {
         if !rules.is_object() {
             log.add_warning(
                 Some(source),
@@ -337,7 +342,7 @@ impl PackageExtensions {
     /// dependency counts as declared by the package.
     #[cold]
     #[inline(never)]
-    pub(crate) fn parse_applied(&mut self, section: JsonView<'_>) {
+    pub(crate) fn parse_applied(&mut self, section: JsonView<'_, '_>) {
         section.for_each_property(|label, _, lists| {
             for (kind, key) in KINDS {
                 let Some(names) = lists.get(key.as_bytes()).and_then(|list| list.as_array()) else {

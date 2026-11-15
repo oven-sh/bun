@@ -34,24 +34,24 @@ const MAX_LINEAR_KEY_SEARCH: usize = 8;
 type NodeAddress = Option<*const ()>;
 
 #[derive(Copy, Clone)]
-enum PropertyKey<'e> {
-    String(&'e E::EString),
+enum PropertyKey<'e, 'ast> {
+    String(&'e E::EString<'ast>),
     Number(f64),
     Boolean(bool),
     Null,
 }
 
-enum Step<'e> {
-    Expr(&'e Expr),
+enum Step<'e, 'ast> {
+    Expr(&'e Expr<'ast>),
     Hole,
-    Json(E::JsonValue),
-    Key(PropertyKey<'e>),
-    JsonKey(E::Str),
+    Json(E::JsonValue<'e>),
+    Key(PropertyKey<'e, 'ast>),
+    JsonKey(E::Str<'e>),
     EndArray(usize, NodeAddress),
     EndObject(usize, NodeAddress),
 }
 
-impl Step<'_> {
+impl Step<'_, '_> {
     fn is_value(&self) -> bool {
         match self {
             Step::Expr(_) | Step::Hole | Step::Json(_) => true,
@@ -60,8 +60,8 @@ impl Step<'_> {
     }
 }
 
-struct ExprWriter<'e, 'a, S> {
-    stack: Vec<Step<'e>>,
+struct ExprWriter<'e, 'a, 'ast, S> {
+    stack: Vec<Step<'e, 'ast>>,
     open_nodes: ArenaHashSet<'a, *const ()>,
     scratch: &'a AstArena,
     sink: &'a mut S,
@@ -96,9 +96,9 @@ pub(crate) fn write_expr(
     Ok(())
 }
 
-impl<'e, S: ValueSink> ExprWriter<'e, '_, S> {
+impl<'e, 'ast, S: ValueSink> ExprWriter<'e, '_, 'ast, S> {
     #[allow(clippy::needless_pass_by_value)] // popped off the stack of steps
-    fn run_step(&mut self, step: Step<'e>) -> Result<(), NotData> {
+    fn run_step(&mut self, step: Step<'e, 'ast>) -> Result<(), NotData> {
         match step {
             Step::Expr(expr) => return self.write_value(expr),
             Step::Hole => self.sink.undefined(),
@@ -120,7 +120,7 @@ impl<'e, S: ValueSink> ExprWriter<'e, '_, S> {
         Ok(())
     }
 
-    fn write_value(&mut self, expr: &'e Expr) -> Result<(), NotData> {
+    fn write_value(&mut self, expr: &'e Expr<'ast>) -> Result<(), NotData> {
         match &expr.data {
             Data::EUndefined(_) => self.sink.undefined(),
             Data::ENull(_) => self.sink.null(),
@@ -161,7 +161,7 @@ impl<'e, S: ValueSink> ExprWriter<'e, '_, S> {
         Ok(())
     }
 
-    fn write_json(&mut self, value: E::JsonValue) {
+    fn write_json(&mut self, value: E::JsonValue<'e>) {
         match value {
             E::JsonValue::Null => self.sink.null(),
             E::JsonValue::Boolean(value) => self.sink.boolean(value),
@@ -172,7 +172,7 @@ impl<'e, S: ValueSink> ExprWriter<'e, '_, S> {
         }
     }
 
-    fn open_array(&mut self, array: &'e StoreRef<E::Array>) -> Result<(), NotData> {
+    fn open_array(&mut self, array: &'e StoreRef<'ast, E::Array<'ast>>) -> Result<(), NotData> {
         let address = self.enter_node(array.as_ptr().cast_const().cast())?;
         let items = &array.get().items;
         self.stack.push(Step::EndArray(items.len(), address));
@@ -185,7 +185,7 @@ impl<'e, S: ValueSink> ExprWriter<'e, '_, S> {
         Ok(())
     }
 
-    fn open_object(&mut self, object: &'e StoreRef<E::Object>) -> Result<(), NotData> {
+    fn open_object(&mut self, object: &'e StoreRef<'ast, E::Object<'ast>>) -> Result<(), NotData> {
         let address = self.enter_node(object.as_ptr().cast_const().cast())?;
         let properties = &object.get().properties;
         self.stack.push(Step::EndObject(properties.len(), address));
@@ -202,7 +202,7 @@ impl<'e, S: ValueSink> ExprWriter<'e, '_, S> {
         Ok(())
     }
 
-    fn open_json_object(&mut self, object: StoreRef<E::ObjectJSON>) {
+    fn open_json_object(&mut self, object: E::ObjectJSONRef<'e>) {
         let properties = object.get().properties();
         self.stack.push(Step::EndObject(properties.len(), None));
         for property in properties.iter().rev() {
@@ -211,7 +211,7 @@ impl<'e, S: ValueSink> ExprWriter<'e, '_, S> {
         }
     }
 
-    fn open_json_array(&mut self, array: StoreRef<E::ArrayJSON>) {
+    fn open_json_array(&mut self, array: E::ArrayJSONRef<'e>) {
         let items = array.get().items();
         self.stack.push(Step::EndArray(items.len(), None));
         self.stack
@@ -239,7 +239,7 @@ fn check_tape_encoding(tape: &E::JsonTape) -> Result<(), NotData> {
     }
 }
 
-fn property_key(key: &Expr) -> Result<PropertyKey<'_>, NotData> {
+fn property_key<'a, 'ast>(key: &'a Expr<'ast>) -> Result<PropertyKey<'a, 'ast>, NotData> {
     match &key.data {
         Data::EString(text) => Ok(PropertyKey::String(text.get())),
         Data::ENumber(number) => Ok(PropertyKey::Number(number.value())),
@@ -252,7 +252,7 @@ fn property_key(key: &Expr) -> Result<PropertyKey<'_>, NotData> {
 }
 
 fn property_key_text<'t>(
-    key: PropertyKey<'t>,
+    key: PropertyKey<'t, '_>,
     scratch: &'t AstArena,
 ) -> Result<Cow<'t, [u8]>, NotData> {
     let keyword: &[u8] = match key {
@@ -272,7 +272,10 @@ fn string_text<'t>(
     if string.is_utf16 {
         return Ok(Cow::Owned(wtf16_to_wtf8(string.slice16())));
     }
-    Ok(to_canonical_wtf8(string.flattened(scratch).data.slice()))
+    Ok(to_canonical_wtf8(match string.next {
+        Some(_) => string.flatten_rope(scratch),
+        None => string.data.slice(),
+    }))
 }
 
 fn to_canonical_wtf8(text: &[u8]) -> Cow<'_, [u8]> {

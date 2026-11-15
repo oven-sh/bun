@@ -1663,7 +1663,7 @@ impl<T> PkgMap<T> {
     }
 }
 
-fn object_rows<'t>(expr: JsonView<'t>) -> &'t [JSON::E::PropertyJSON] {
+fn object_rows<'t>(expr: JsonView<'t, '_>) -> &'t [JSON::E::PropertyJSON<'t>] {
     match expr.as_e_object_json() {
         Some(o) => o.properties(),
         None => {
@@ -1673,7 +1673,7 @@ fn object_rows<'t>(expr: JsonView<'t>) -> &'t [JSON::E::PropertyJSON] {
     }
 }
 
-fn array_items<'t>(expr: JsonView<'t>) -> &'t [JSON::E::JsonValue] {
+fn array_items<'t>(expr: JsonView<'t, '_>) -> &'t [JSON::E::JsonValue<'t>] {
     match expr.as_e_array_json() {
         Some(a) => a.items(),
         None => &[],
@@ -1711,7 +1711,7 @@ fn parse_integrity(
     Ok(Integrity::default())
 }
 
-fn parse_bin(info: JsonView<'_>, lockfile: &mut BinaryLockfile) -> Result<Bin, ParseError> {
+fn parse_bin(info: JsonView<'_, '_>, lockfile: &mut BinaryLockfile) -> Result<Bin, ParseError> {
     Ok(if let Some(bin) = info.get(b"bin") {
         Bin::parse_append(
             bin,
@@ -1797,7 +1797,7 @@ fn parse_catalog(
 
 pub(crate) fn parse_into_binary_lockfile(
     lockfile: &mut BinaryLockfile,
-    root: JsonView<'_>,
+    root: JsonView<'_, '_>,
     source: &bun_ast::Source,
     log: &bun_ast::Log,
     options: Option<&PackageManagerOptions>,
@@ -2102,7 +2102,7 @@ pub(crate) fn parse_into_binary_lockfile(
         );
     };
 
-    let mut maybe_root_pkg: Option<JsonView<'_>> = None;
+    let mut maybe_root_pkg: Option<JsonView<'_, '_>> = None;
     // The (last) row of each name, in the order of `workspace_paths`.
     let mut member_rows: Vec<&JSON::E::PropertyJSON> = Vec::new();
 
@@ -3340,7 +3340,7 @@ fn dependency_resolution_failure(
 
 fn parse_append_dependencies(
     lockfile: &mut BinaryLockfile,
-    obj: JsonView<'_>,
+    obj: JsonView<'_, '_>,
     log: &bun_ast::Log,
     source: &bun_ast::Source,
     optional_peers_buf: &mut HashMap<u64, ()>,

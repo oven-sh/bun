@@ -12,6 +12,7 @@ use crate::diagnostics::CompilerError;
 use crate::diagnostics::CompilerErrorDetail;
 use crate::diagnostics::ErrorCategory;
 use crate::diagnostics::Position;
+use crate::hir;
 use crate::hir::cfg_utils::mark_instruction_ids;
 use crate::hir::cfg_utils::mark_predecessors;
 use crate::hir::cfg_utils::remove_dead_do_while_statements;
@@ -132,20 +133,20 @@ fn convert_binding_kind(kind: symbol::Kind) -> BindingKind {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
-pub enum FunctionNode<'a> {
-    Function(&'a G::Fn),
-    Arrow(&'a E::Arrow),
+pub enum FunctionNode<'a, 'ast> {
+    Function(&'a G::Fn<'ast>),
+    Arrow(&'a E::Arrow<'ast>),
 }
 
-impl<'a> FunctionNode<'a> {
-    pub(crate) fn args(&self) -> &'a [G::Arg] {
+impl<'a, 'ast> FunctionNode<'a, 'ast> {
+    pub(crate) fn args(&self) -> &'a [G::Arg<'ast>] {
         match self {
             FunctionNode::Function(f) => f.args.slice(),
             FunctionNode::Arrow(a) => a.args.slice(),
         }
     }
 
-    pub(crate) fn body(&self) -> &'a G::FnBody {
+    pub(crate) fn body(&self) -> &'a G::FnBody<'ast> {
         match self {
             FunctionNode::Function(f) => &f.body,
             FunctionNode::Arrow(a) => &a.body,
@@ -284,7 +285,7 @@ pub(crate) struct HirBuilder<'h> {
     /// Resolved bindings: maps a `Ref` to the HIR IdentifierId created for it.
     bindings: IndexMap<Ref, IdentifierId>,
     env: &'h mut Environment,
-    host: &'h dyn Host,
+    host: &'h dyn Host<'static>,
     type_casts: &'h [(Loc, Loc)],
     targets_with_defaults: &'h [(Loc, Loc)],
     parentheses: &'h [(Loc, Loc)],
@@ -292,14 +293,14 @@ pub(crate) struct HirBuilder<'h> {
     /// Flat instruction table being built up.
     instruction_table: HirVec<Instruction>,
     /// The scope of the function being compiled (for context identifier checks).
-    function_scope: &'h ast::Scope,
+    function_scope: &'h hir::Scope,
     /// The scope of the outermost component/hook function.
-    component_scope: &'h ast::Scope,
+    component_scope: &'h hir::Scope,
     /// Current lexical scope stack (top = innermost). Used by `resolve_ref` to
     /// resolve `RefTag::SourceContentsSlice` identifier references — this hook
     /// runs before the visit pass that would normally rewrite them to
     /// `RefTag::Symbol`.
-    scope_stack: Vec<&'h ast::Scope>,
+    scope_stack: Vec<&'h hir::Scope>,
     /// Set of `Ref`s for variables declared in scopes between component_scope
     /// and any inner function scope, that are referenced from an inner function scope.
     /// These need StoreContext/LoadContext instead of StoreLocal/LoadLocal.
@@ -309,7 +310,7 @@ pub(crate) struct HirBuilder<'h> {
     /// can return `ImportSpecifier`/`ImportDefault`/`ImportNamespace` (and thus
     /// reach `Environment::resolve_module_type`) when `Symbol::namespace_alias`
     /// is absent — which it is for plain `import {x} from 'm'` outside HMR.
-    import_bindings: &'h IndexMap<Ref, VariableBinding>,
+    import_bindings: &'h IndexMap<Ref, VariableBinding<'static>>,
 }
 
 impl<'h> HirBuilder<'h> {
@@ -320,12 +321,12 @@ impl<'h> HirBuilder<'h> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         env: &'h mut Environment,
-        host: &'h dyn Host,
-        function_scope: &'h ast::Scope,
-        component_scope: &'h ast::Scope,
+        host: &'h dyn Host<'static>,
+        function_scope: &'h hir::Scope,
+        component_scope: &'h hir::Scope,
         context_identifiers: Rc<RefSet>,
         bindings: Option<IndexMap<Ref, IdentifierId>>,
-        import_bindings: &'h IndexMap<Ref, VariableBinding>,
+        import_bindings: &'h IndexMap<Ref, VariableBinding<'static>>,
         entry_block_kind: Option<BlockKind>,
     ) -> Self {
         let entry = env.next_block_id();
@@ -360,7 +361,7 @@ impl<'h> HirBuilder<'h> {
         self.env
     }
 
-    pub(crate) fn host(&self) -> &'h dyn Host {
+    pub(crate) fn host(&self) -> &'h dyn Host<'static> {
         self.host
     }
 
@@ -383,15 +384,15 @@ impl<'h> HirBuilder<'h> {
         at.ok().and_then(|at| all.get(at)).map_or(target, |it| it.1)
     }
 
-    pub(crate) fn import_bindings(&self) -> &'h IndexMap<Ref, VariableBinding> {
+    pub(crate) fn import_bindings(&self) -> &'h IndexMap<Ref, VariableBinding<'static>> {
         self.import_bindings
     }
 
-    pub(crate) fn function_scope(&self) -> &'h ast::Scope {
+    pub(crate) fn function_scope(&self) -> &'h hir::Scope {
         self.function_scope
     }
 
-    pub(crate) fn component_scope(&self) -> &'h ast::Scope {
+    pub(crate) fn component_scope(&self) -> &'h hir::Scope {
         self.component_scope
     }
 
@@ -414,7 +415,7 @@ impl<'h> HirBuilder<'h> {
         self.scope_stack.pop();
     }
 
-    pub(crate) fn current_scope(&self) -> &'h ast::Scope {
+    pub(crate) fn current_scope(&self) -> &'h hir::Scope {
         *self.scope_stack.last().expect("scope_stack never empty")
     }
 
@@ -458,7 +459,7 @@ impl<'h> HirBuilder<'h> {
         Rc::make_mut(&mut self.context_identifiers).insert(ref_);
     }
 
-    pub(crate) fn host_and_env_mut(&mut self) -> (&'h dyn Host, &mut Environment) {
+    pub(crate) fn host_and_env_mut(&mut self) -> (&'h dyn Host<'static>, &mut Environment) {
         (self.host, self.env)
     }
 
@@ -830,7 +831,7 @@ impl<'h> HirBuilder<'h> {
     // M3: Binding resolution methods
     // -----------------------------------------------------------------------
 
-    fn symbol(&self, ref_: Ref) -> Option<&'h Symbol> {
+    fn symbol(&self, ref_: Ref) -> Option<&'h Symbol<'static>> {
         let ref_ = self.resolve_ref(ref_);
         if !ref_.is_symbol() {
             return None;
@@ -956,7 +957,7 @@ impl<'h> HirBuilder<'h> {
         &mut self,
         ref_: Ref,
         loc: Option<SourceLocation>,
-    ) -> Result<VariableBinding, CompilerError> {
+    ) -> Result<VariableBinding<'static>, CompilerError> {
         let ref_ = self.resolve_ref(ref_);
         let Some(sym) = self.symbol(ref_) else {
             return Err(crate::diagnostics::cold_todo(

@@ -127,13 +127,16 @@ impl WorkspaceMap {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum NamesArray<'a> {
-    Mutable(&'a js_ast::E::Array),
-    Immutable(&'a js_ast::E::ArrayJSON, bun_ast::Loc),
+pub(crate) enum NamesArray<'a, 'ast> {
+    Mutable(&'a js_ast::E::Array<'ast>),
+    Immutable(&'a js_ast::E::ArrayJSON<'a>, bun_ast::Loc),
 }
 
-impl<'a> NamesArray<'a> {
-    pub(crate) fn from_json(expr: js_ast::JsonView<'a>, value_loc: bun_ast::Loc) -> Option<Self> {
+impl<'a, 'ast> NamesArray<'a, 'ast> {
+    pub(crate) fn from_json(
+        expr: js_ast::JsonView<'a, 'ast>,
+        value_loc: bun_ast::Loc,
+    ) -> Option<Self> {
         match expr.as_e_array_json() {
             Some(arr) => Some(NamesArray::Immutable(arr, value_loc)),
             None => expr.as_e_array().map(NamesArray::Mutable),
@@ -379,7 +382,7 @@ impl WorkspaceMap {
         &mut self,
         json_cache: &mut WorkspacePackageJSONCache,
         log: &bun_ast::Log,
-        arr: NamesArray<'_>,
+        arr: NamesArray<'_, '_>,
         source: &bun_ast::Source,
         loc: bun_ast::Loc,
         mut string_builder: Option<&mut StringBuilder<'_>>,
@@ -677,7 +680,7 @@ impl WorkspaceMap {
     /// Returns true if [`Self::process_names_array`] would make `abs_dir` a workspace, given that
     /// `abs_dir` has a named package.json. It never reads the disk, so `**` also matches through a
     /// symlink.
-    pub(crate) fn lists(arr: NamesArray<'_>, source: &bun_ast::Source, abs_dir: &[u8]) -> bool {
+    pub(crate) fn lists(arr: NamesArray<'_, '_>, source: &bun_ast::Source, abs_dir: &[u8]) -> bool {
         let root_dir: &[u8] = package_json_dir(source);
         let mut dir_buf = path::path_buffer_pool::get();
         let dir = relative_workspace_path(&mut dir_buf.0, root_dir, abs_dir);

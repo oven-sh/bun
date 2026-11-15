@@ -312,7 +312,7 @@ fn description_of(converted: &Converted, it: &CompilerDiagnostic) -> Option<Stri
     }
 }
 
-fn findings(converted: &Converted, error: CompilerError) -> impl Iterator<Item = Finding> + '_ {
+fn findings(converted: &Converted, error: CompilerError) -> impl Iterator<Item = Finding> {
     error.details.into_iter().map(move |it| match it {
         CompilerErrorOrDiagnostic::Diagnostic(it) => Finding {
             category: it.category,

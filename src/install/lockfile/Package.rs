@@ -41,16 +41,16 @@ use workspace_map::MissingWorkspace;
 bun_output::declare_scope!(Lockfile, hidden);
 
 #[derive(Clone)]
-enum JsonObjectStringRows<'a> {
+enum JsonObjectStringRows<'a, 'ast> {
     Classic(
-        core::slice::Iter<'a, bun_ast::G::Property>,
+        core::slice::Iter<'a, bun_ast::G::Property<'ast>>,
         &'a bun_alloc::Arena,
     ),
-    Json(core::slice::Iter<'a, E::PropertyJSON>),
+    Json(core::slice::Iter<'a, E::PropertyJSON<'a>>),
 }
 
-impl<'a> JsonObjectStringRows<'a> {
-    fn new(expr: JsonView<'a>, bump: &'a bun_alloc::Arena) -> Option<Self> {
+impl<'a, 'ast> JsonObjectStringRows<'a, 'ast> {
+    fn new(expr: JsonView<'a, 'ast>, bump: &'a bun_alloc::Arena) -> Option<Self> {
         match expr.as_e_object_json() {
             Some(obj) => Some(Self::Json(obj.properties().iter())),
             None => expr
@@ -67,7 +67,7 @@ impl<'a> JsonObjectStringRows<'a> {
     }
 }
 
-impl<'a> Iterator for JsonObjectStringRows<'a> {
+impl<'a> Iterator for JsonObjectStringRows<'a, '_> {
     type Item = (&'a [u8], Option<&'a [u8]>, bun_ast::Loc);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -174,7 +174,7 @@ pub(crate) fn parse_append_trusted_dependencies(
     trusted_dependencies: &mut Option<TrustedDependenciesSet>,
     log: &bun_ast::Log,
     source: &bun_ast::Source,
-    json: JsonView<'_>,
+    json: JsonView<'_, '_>,
     bump: &bun_alloc::Arena,
 ) -> crate::Result<()> {
     let Some(q) = json.as_property(b"trustedDependencies") else {
@@ -205,7 +205,7 @@ pub(crate) fn parse_append_trusted_dependencies(
 /// already recorded.
 pub(crate) fn append_patched_dependencies(
     lockfile: &mut Lockfile,
-    json: Expr,
+    json: Expr<'_>,
     bump: &bun_alloc::Arena,
 ) -> Result<(), bun_alloc::AllocError> {
     let Some(q) = json.as_property(b"patchedDependencies") else {
@@ -290,13 +290,13 @@ pub trait ResolverContext {
     }
 
     /// Counts strings to be appended by `resolve`.
-    fn count(&mut self, _builder: &mut StringBuilder<'_>, _json: JsonView<'_>) {}
+    fn count(&mut self, _builder: &mut StringBuilder<'_>, _json: JsonView<'_, '_>) {}
 
     /// Produces the package's `Resolution`. Only called when `!is_void()`.
     fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
-        json: JsonView<'_>,
+        json: JsonView<'_, '_>,
     ) -> crate::Result<ResolutionType<u64>>;
 
     /// Name to store when the package.json has no name, or has one that is not safe to use as a
@@ -314,7 +314,7 @@ impl ResolverContext for () {
     fn resolve(
         &mut self,
         _builder: &mut StringBuilder<'_>,
-        _json: JsonView<'_>,
+        _json: JsonView<'_, '_>,
     ) -> crate::Result<ResolutionType<u64>> {
         Ok(ResolutionType::default())
     }
@@ -1357,7 +1357,7 @@ impl Diff {
                         to_lockfile,
                         &mut ParseFields::for_package(&pm.options, &mut pm.project),
                         log,
-                        &entry.source,
+                        entry.source,
                         JsonView::from(&entry.root),
                         &mut (),
                         Features::WORKSPACE,
@@ -1970,7 +1970,7 @@ pub struct ParseFields<'a> {
 }
 
 pub(crate) struct WorkspaceFields<'a> {
-    pub(crate) json_cache: &'a mut WorkspacePackageJSONCache,
+    pub(crate) json_cache: &'a mut WorkspacePackageJSONCache<'static>,
     missing: MissingWorkspace<'a>,
 }
 
@@ -2515,7 +2515,7 @@ impl Package<u64> {
         fields: &mut ParseFields<'_>,
         log: &bun_ast::Log,
         source: &bun_ast::Source,
-        json: JsonView<'_>,
+        json: JsonView<'_, '_>,
         resolver: &mut dyn ResolverContext,
         features: Features,
     ) -> crate::Result<()> {

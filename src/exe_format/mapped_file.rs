@@ -33,7 +33,9 @@ impl MappedFile {
             let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
             let pages = Mmap::new(size, access, flags, Fd::from_native(-1), 0).ok()?;
             let flags = libc::MAP_PRIVATE | libc::MAP_FIXED;
-            bun_sys::mmap(pages.as_ptr(), length, access, flags, file.handle(), 0).ok()?;
+            // SAFETY: `pages` was just mapped, and is longer than `length`.
+            unsafe { bun_sys::mmap(pages.as_ptr(), length, access, flags, file.handle(), 0) }
+                .ok()?;
             pages
         };
         Some(MappedFile {

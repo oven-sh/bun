@@ -4,6 +4,7 @@
 
 #include "GeneratedTextDecoder.h"
 #include "JSTextEncoder.h"
+#include "headers-handwritten.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <array>
@@ -135,10 +136,12 @@ static NEVER_INLINE size_t invalidSequenceLength(std::span<const uint8_t> bytes)
     return length;
 }
 
+static constexpr size_t minVectorizedBytes = 16;
+
+// `bytes` must not change during the call, unless they are too few to be vectorized.
 static size_t decodeWithReplacement(std::span<const uint8_t> bytes, std::span<char16_t> output, bool& hasInvalidByte)
 {
     RELEASE_ASSERT(output.size() >= bytes.size());
-    constexpr size_t minVectorizedBytes = 16;
     constexpr unsigned maxVectorizedPrefixes = 2;
     char16_t* unit = output.data();
     const uint8_t* byte = bytes.data();
@@ -217,23 +220,31 @@ static JSC::JSString* tryDecodeUTF8(JSC::VM& vm, std::span<const uint8_t> bytes,
         return nullptr;
     if (WTF::charactersAreAllASCII(byteCast<Latin1Character>(bytes)))
         return tryCreateString(vm, byteCast<Latin1Character>(bytes));
+    auto* characters = reinterpret_cast<const char*>(bytes.data());
     if (bytes.size() <= maxStackDecodedBytes) {
         std::array<char16_t, maxStackDecodedBytes> output;
+        std::array<uint8_t, maxStackDecodedBytes> copy;
+        if (bytes.size() >= minVectorizedBytes) {
+            // Writes at most one unit per byte, even if the bytes change meanwhile.
+            if (size_t length = simdutf::convert_utf8_to_utf16le(characters, bytes.size(), output.data())) [[likely]]
+                return tryCreateString(vm, std::span<const char16_t> { output }.first(length));
+            memcpy(copy.data(), bytes.data(), bytes.size());
+            bytes = std::span<const uint8_t> { copy }.first(bytes.size());
+        }
         bool hasInvalidByte = false;
         size_t length = decodeWithReplacement(bytes, output, hasInvalidByte);
         if (hasInvalidByte && !replacesInvalidBytes)
             return nullptr;
         return tryCreateString(vm, std::span<const char16_t> { output }.first(length));
     }
-    auto* characters = reinterpret_cast<const char*>(bytes.data());
-    if (!simdutf::validate_utf8(characters, bytes.size()))
+    size_t length = simdutf::utf16_length_from_utf8(characters, bytes.size());
+    // Valid UTF-8 that is not ASCII has fewer units than bytes.
+    if (length >= bytes.size())
         return nullptr;
     std::span<char16_t> units;
-    RefPtr<StringImpl> impl = StringImpl::tryCreateUninitialized(simdutf::utf16_length_from_utf8(characters, bytes.size()), units);
-    if (!impl) [[unlikely]]
+    RefPtr<StringImpl> impl = StringImpl::tryCreateUninitialized(length, units);
+    if (!impl || !Bun__encoding__fillUTF16FromUTF8(bytes.data(), bytes.size(), units.data(), units.size())) [[unlikely]]
         return nullptr;
-    size_t written = simdutf::convert_valid_utf8_to_utf16le(characters, bytes.size(), units.data());
-    RELEASE_ASSERT(written == units.size());
     return JSC::jsString(vm, String(impl.releaseNonNull()));
 }
 

@@ -403,9 +403,7 @@ impl<const SHORT: bool> Display for IntegrityFormatter<SHORT> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         const BUF_LEN: usize = SHA512_DIGEST.div_ceil(3) * 4;
         let mut buf = [0u8; BUF_LEN];
-        let count =
-            bun_simdutf_sys::simdutf::base64::encode(&self.bytes[..SHA512_DIGEST], &mut buf, false);
-        let encoded = &buf[..count];
+        let encoded = crate::base64::standard_encode(&mut buf, &self.bytes);
         if SHORT {
             write!(
                 f,

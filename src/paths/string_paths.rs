@@ -475,21 +475,13 @@ pub use bun_core::strings::remove_leading_dot_slash;
 mod tests {
     use super::*;
 
-    use bun_simdutf_sys::simdutf::{SIMDUTFResult, Status};
-
-    /// Scalar `simdutf::convert::utf8::to::utf16::with_errors::le`: writes
-    /// the UTF-16LE form of the valid prefix to `utf16_output` and returns
-    /// SUCCESS + units written, or a nonzero status + the input position of
-    /// the first invalid sequence. Mirrors the semantics
-    /// `try_convert_utf8_to_utf16_in_buffer` relies on: the output buffer
-    /// length is never communicated, and on error only the valid prefix's
-    /// units (≤ the `utf16_length_from_utf8` estimate) have been written.
+    /// Scalar `simdutf::convert_utf8_to_utf16le`: returns the units written, or 0 for invalid input.
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn simdutf__convert_utf8_to_utf16le_with_errors(
+    unsafe extern "C" fn simdutf__convert_utf8_to_utf16le(
         buf: *const u8,
         len: usize,
         utf16_output: *mut u16,
-    ) -> SIMDUTFResult {
+    ) -> usize {
         // SAFETY: test stub; callers pass a valid (ptr, len) input pair.
         let input = unsafe { core::slice::from_raw_parts(buf, len) };
         let mut written = 0usize;
@@ -509,10 +501,7 @@ mod tests {
                     | (u32::from(input[i + 1] & 0x3F) << 6)
                     | u32::from(input[i + 2] & 0x3F);
                 if (0xD800..=0xDFFF).contains(&cp) {
-                    return SIMDUTFResult {
-                        status: Status::SURROGATE,
-                        count: i,
-                    };
+                    return 0;
                 }
                 (cp, 3)
             } else if (0xF0..0xF5).contains(&b) && cont(1) && cont(2) && cont(3) {
@@ -524,10 +513,7 @@ mod tests {
                     4,
                 )
             } else {
-                return SIMDUTFResult {
-                    status: Status::TOO_SHORT,
-                    count: i,
-                };
+                return 0;
             };
             // SAFETY: test stub mirroring simdutf — the caller guarantees
             // capacity for the full conversion before calling (that is the
@@ -547,10 +533,7 @@ mod tests {
             }
             i += adv;
         }
-        SIMDUTFResult {
-            status: Status::SUCCESS,
-            count: written,
-        }
+        written
     }
 
     /// Scalar `simdutf::length::utf16::from::utf8`: one unit per

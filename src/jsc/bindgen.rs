@@ -8,6 +8,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::Environment;
 
+use crate::virtual_machine::VirtualMachine;
 use crate::{
     ArrayBuffer, CommonString, ErrorCode, JSArray, JSGlobalObject, JSObject, JSString, JSValue,
     JsError, JsThread, PinnedArrayBuffer, Strong, ThreadIsolated, ThreadIsolatedArg,
@@ -1161,36 +1162,37 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
 }
 
 /// A [`JsWrapper`] that outlives its call: a GC root that lends the payload it keeps alive.
-pub struct StrongWrapper<T> {
-    wrapper: Strong,
-    payload: NonNull<T>,
-}
+pub struct StrongWrapper<T>(Strong, PhantomData<*const T>);
 
-// SAFETY: a `Strong`, and a pointer that is only followed with a `JsThread`.
+// SAFETY: a `Strong`.
 unsafe impl<T> crate::job::JsAffine for StrongWrapper<T> {}
+
+/// Panics once the VM is closed: what is left of its teardown destroys rooted cells too.
+fn rooted_value(root: &Strong) -> JSValue {
+    assert!(VirtualMachine::get_or_null().is_some_and(|vm| !vm.closed()));
+    root.get()
+}
 
 impl<T: JsPayload> StrongWrapper<T> {
     pub fn new(wrapper: JsWrapper<'_, T>, global: &JSGlobalObject) -> Self {
         const { assert!(T::SHARED_THIS) };
-        Self {
-            wrapper: Strong::create(wrapper.to_js(), global),
-            payload: wrapper.payload_ptr(),
-        }
+        Self(Strong::create(wrapper.to_js(), global), PhantomData)
     }
 
     pub fn to_js(&self) -> JSValue {
-        self.wrapper.get()
+        rooted_value(&self.0)
     }
 
-    pub fn payload<'a>(&'a self, _: &JsThread<'a>) -> &'a T {
-        // SAFETY: the heap is alive and `wrapper` roots the cell, so the payload was not dropped.
-        // `new` checked that it is only ever shared.
-        unsafe { self.payload.as_ref() }
+    pub fn payload(&self) -> &T {
+        // SAFETY: `to_js` checked that the root holds. No borrow is used after a later teardown:
+        // `global_exit` does not return, and the caller of `exit_and_free` vouches for it. `new`
+        // checked that the payload is only ever shared.
+        unsafe { &*(self.to_js().encoded() as *const T).byte_add(T::PAYLOAD_OFFSET) }
     }
 
     /// The global object of the wrapper's class, which a `ShadowRealm` has its own of.
-    pub fn global<'a>(&'a self, _: &JsThread<'a>) -> &'a JSGlobalObject {
-        // SAFETY: `wrapper` roots the cell, and every structure the cell takes holds this global object.
+    pub fn global(&self) -> &JSGlobalObject {
+        // SAFETY: as `payload`. Every structure that the cell takes holds this global object.
         unsafe {
             &*extern_types::Bun__Bindgen__globalObjectOf(self.to_js().encoded() as *mut c_void)
         }

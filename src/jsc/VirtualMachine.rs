@@ -3981,21 +3981,6 @@ fn normalize_specifier_for_resolution<'a>(
     }
 }
 
-/// Heap-backed so only a pointer lives in TLS; see test/js/bun/binary/tls-segment-size.
-#[thread_local]
-static SPECIFIER_CACHE_RESOLVER_BUF: core::cell::Cell<*mut bun_paths::PathBuffer> =
-    core::cell::Cell::new(core::ptr::null_mut());
-
-#[inline]
-fn specifier_cache_resolver_buf() -> *mut bun_paths::PathBuffer {
-    let mut p = SPECIFIER_CACHE_RESOLVER_BUF.get();
-    if p.is_null() {
-        p = bun_core::heap::into_raw(Box::new(bun_paths::PathBuffer::ZEROED));
-        SPECIFIER_CACHE_RESOLVER_BUF.set(p);
-    }
-    p
-}
-
 fn ensure_source_code_printer() {
     if SOURCE_CODE_PRINTER.get().is_none() {
         let writer = bun_js_printer::BufferWriter::init();
@@ -5129,9 +5114,8 @@ impl VirtualMachine {
                     }
                     retry_on_not_found = false;
 
-                    // SAFETY: thread-local heap allocation; sole `&mut` on the JS
-                    // thread for the duration of the bust below.
-                    let buf = unsafe { &mut *specifier_cache_resolver_buf() }.as_mut_slice();
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let buf = buf.as_mut_slice();
                     let mut busted_as_spelled = false;
                     let mut busted_working_directory = false;
                     let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {

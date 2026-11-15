@@ -66,10 +66,9 @@ impl CondExpr {
                     continue;
                 }
                 CondExprState::ExpandingArgs { idx } => {
-                    if (idx as usize) >= n.args.len() {
+                    let Some(atom) = n.args.slice().get(idx as usize) else {
                         return Self::command_impl_start(interp, this, n.op);
-                    }
-                    let atom = n.args.get_const(idx as usize);
+                    };
                     let child = Expansion::init(interp, shell, atom, this, false);
                     return Expansion::start(interp, child);
                 }

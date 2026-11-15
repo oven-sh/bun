@@ -742,16 +742,22 @@ impl DevServer {
         Ok(())
     }
 
-    /// Returns true if a catch-all handler was attached. uWS keeps `this`, which `self` is borrowed from.
-    pub(crate) fn set_routes<const SSL: bool, const DEBUG: bool>(
-        &mut self,
+    /// Returns true if a catch-all handler was attached.
+    ///
+    /// # Safety
+    /// `this` is not borrowed, and is live until the routes of `server` are gone: uWS keeps it.
+    pub(crate) unsafe fn set_routes<const SSL: bool, const DEBUG: bool>(
         this: *mut Self,
         server: &crate::server::NewServer<SSL, DEBUG>,
     ) -> crate::Result<bool> {
         // TODO: all paths here must be prefixed with publicPath if set.
-        self.server = Some(AnyServer::from(server));
+        // SAFETY: fn contract.
+        let self_ = unsafe {
+            (*this).server = Some(AnyServer::from(server));
+            &*this
+        };
         // The server has its routes now; the scan of the pages ran before it had them.
-        self.report_pages_hidden_by_server_routes();
+        self_.report_pages_hidden_by_server_routes();
         let app = server.app().unwrap();
         let dev = this.cast::<c_void>();
 
@@ -802,7 +808,7 @@ impl DevServer {
 
         // Only attach a catch-all handler if the framework has filesystem
         // router types. Otherwise, this can just be Bun.serve's default handler.
-        if !self.framework.file_system_router_types.is_empty() {
+        if !self_.framework.file_system_router_types.is_empty() {
             route!(any, b"/*", DevHandlerId::Request);
             Ok(true)
         } else {

@@ -947,11 +947,11 @@ impl ServePlugins {
     }
 
     /// Runs no JS: `server.stop(true)` would free the response that the caller has not deferred yet.
-    pub(crate) fn get_or_start_load<'a>(
-        this: &'a RefPtr<Self>,
+    pub(crate) fn get_or_start_load(
+        this: &RefPtr<Self>,
         cb: ServePluginsCallback,
         server: super::AnyServer,
-    ) -> GetOrStartLoadResult<'a> {
+    ) -> GetOrStartLoadResult<'_> {
         match this.state.get() {
             ServePluginsState::Unqueued => {
                 this.state.set(ServePluginsState::Pending);
@@ -959,7 +959,7 @@ impl ServePlugins {
                     plugins: this.clone(),
                     server: super::PendingRequest::new(server),
                 }));
-                server.vm().event_loop().enqueue_task(task);
+                server.vm().enqueue_task(task);
             }
             ServePluginsState::Pending => {}
             ServePluginsState::Loaded => {
@@ -1061,11 +1061,7 @@ impl ServePlugins {
             bun_core::handle_oom(route.on_plugins_rejected());
         }
         if let Some(server) = self.dev_server.take() {
-            // Completing the last request on a stopped server frees the DevServer, which owns `requests`.
-            let server = super::PendingRequest::new(server);
-            if let Some(requests) = server.with_dev_server(|dev| dev.on_plugins_rejected()) {
-                requests.fail_all();
-            }
+            drop(server.with_dev_server(|dev| dev.on_plugins_rejected()));
         }
     }
 
@@ -2805,11 +2801,11 @@ where
             // DNS-rebound origin connects from 127.0.0.1 but presents the
             // attacker's hostname in `Host`. Apply the same Host allowlist as
             // the `/_bun/*` routes before disclosing the project root path.
-            if !self.dev_server.with_taken(|dev_server| {
-                dev_server
-                    .as_deref()
+            let allowed_host = self.dev_server.with_taken(|dev| {
+                dev.as_deref()
                     .is_some_and(|dev| bake::is_allowed_dev_host(dev, req))
-            }) {
+            });
+            if !allowed_host {
                 break 'brk false;
             }
 
@@ -2828,6 +2824,15 @@ where
             return;
         }
 
+        let json_string = self
+            .dev_server
+            .with_taken(|dev| self.chrome_dev_tools_json(&dev.as_ref().unwrap().graphs.root));
+        resp.write_status(b"200 OK");
+        resp.write_header(b"Content-Type", b"application/json");
+        resp.end(&json_string, resp.should_close_connection());
+    }
+
+    fn chrome_dev_tools_json(&self, root: &[u8]) -> Vec<u8> {
         // They need a 16 byte uuid. It needs to be somewhat consistent. We don't want to store this field anywhere.
 
         // So we first use a hash of the main field:
@@ -2841,12 +2846,12 @@ where
         };
 
         // And then we use a hash of their project root directory:
-        let second_hash_segment: [u8; 8] = self.dev_server.with_taken(|dev_server| {
+        let second_hash_segment: [u8; 8] = 'brk: {
             let mut buffer = paths::path_buffer_pool::get();
-            let root = &dev_server.as_ref().unwrap().graphs.root;
             let len = root.len().min(buffer.len());
-            hash(strings::copy_lowercase(&root[..len], &mut buffer[..len])).to_ne_bytes()
-        });
+            break 'brk hash(strings::copy_lowercase(&root[..len], &mut buffer[..len]))
+                .to_ne_bytes();
+        };
 
         // We combine it together to get a 16 byte uuid.
         let mut hash_bytes = [0u8; 16];
@@ -2861,21 +2866,13 @@ where
         //   }
         // }
         let mut json_string = Vec::new();
-        let _ = self.dev_server.with_taken(|dev_server| {
-            write!(
-                &mut json_string,
-                "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}",
-                bun_fmt::format_json_string_utf8(
-                    &dev_server.as_ref().unwrap().graphs.root,
-                    Default::default()
-                ),
-                uuid,
-            )
-        });
-
-        resp.write_status(b"200 OK");
-        resp.write_header(b"Content-Type", b"application/json");
-        resp.end(&json_string, resp.should_close_connection());
+        let _ = write!(
+            &mut json_string,
+            "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}",
+            bun_fmt::format_json_string_utf8(root, Default::default()),
+            uuid,
+        );
+        json_string
     }
 
     pub(crate) fn on_client_error_callback(

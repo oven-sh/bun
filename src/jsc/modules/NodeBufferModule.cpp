@@ -181,13 +181,6 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
     if (length == 0)
         RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createEmptyBuffer(globalObject)));
 
-    // Another thread can write to shared bytes between the passes below. The copy is a Buffer so that no return path has to free it.
-    if (view->isShared()) [[unlikely]] {
-        auto* copy = WebCore::createUninitializedBuffer(globalObject, length);
-        RETURN_IF_EXCEPTION(scope, {});
-        memcpy(copy->typedVector(), view->typedVector(), length);
-        view = copy;
-    }
     JSC::EnsureStillAliveScope keepAlive { view };
     const std::span<const uint8_t> input { view->typedVector(), length };
     const auto* data = reinterpret_cast<const char*>(input.data());
@@ -217,7 +210,7 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
         const size_t expected = simdutf::utf16_length_from_utf8(data, length);
         result = WebCore::createUninitializedBuffer(globalObject, expected * 2);
         RETURN_IF_EXCEPTION(scope, {});
-        if (!Bun__encoding__fillUTF16FromUTF8(input.data(), length, reinterpret_cast<char16_t*>(result->typedVector()), expected)) {
+        if (!Bun__encoding__convertUTF8ToUTF16Exact(input.data(), length, reinterpret_cast<char16_t*>(result->typedVector()), expected)) {
             errorCode = U_INVALID_CHAR_FOUND_ERRNO;
             errorName = "U_INVALID_CHAR_FOUND"_s;
         }
@@ -263,12 +256,15 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
             memcpy(result->typedVector(), units.begin(), units.size() * 2);
             break;
         case TranscodeEncoding::Utf8: {
-            // `units` is well-formed UTF-16, so this conversion cannot fail.
             const size_t expected = simdutf::utf8_length_from_utf16le(units.begin(), units.size());
             result = WebCore::createUninitializedBuffer(globalObject, expected);
             RETURN_IF_EXCEPTION(scope, {});
             const size_t actual = simdutf::convert_utf16le_to_utf8(units.begin(), units.size(), reinterpret_cast<char*>(result->typedVector()));
-            RELEASE_ASSERT(actual == expected);
+            // `units` can contain a lone surrogate if `input` changed while it was decoded.
+            if (actual != expected) [[unlikely]] {
+                errorCode = U_INVALID_CHAR_FOUND_ERRNO;
+                errorName = "U_INVALID_CHAR_FOUND"_s;
+            }
             break;
         }
         default:

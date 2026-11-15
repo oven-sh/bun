@@ -1677,7 +1677,7 @@ fn encode_text_module(
     string_builder: &mut bun_core::StringBuilder,
     utf8: &[u8],
 ) -> (StringPointer, Encoding, u32) {
-    if strings::first_non_ascii(utf8).is_none() {
+    if strings::is_all_ascii(utf8) {
         let hash = if utf8.is_empty() {
             0
         } else {

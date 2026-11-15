@@ -13,11 +13,6 @@ bool simdutf__validate_utf8(const char* buf, size_t len) {
   return simdutf::validate_utf8(buf, len);
 }
 
-SIMDUTFResult simdutf__validate_utf8_with_errors(const char* buf, size_t len) {
-  auto r = simdutf::validate_utf8_with_errors(buf, len);
-  return {r.error, r.count};
-}
-
 bool simdutf__validate_ascii(const char* buf, size_t len) {
   return simdutf::validate_ascii(buf, len);
 }

@@ -1,5 +1,8 @@
 #include "wtf/SIMDUTF.h"
 
+static_assert(simdutf::SIMDUTF_VERSION_MAJOR == 9 && simdutf::SIMDUTF_VERSION_MINOR == 0 && simdutf::SIMDUTF_VERSION_REVISION == 0,
+    "The SAFETY comments in simdutf.rs describe the kernels of simdutf 9.0.0. Check them against the new version.");
+
 typedef struct SIMDUTFResult {
     int error;
     size_t count;
@@ -10,12 +13,6 @@ extern "C" {
 bool simdutf__validate_utf8(const char* buf, size_t len)
 {
     return simdutf::validate_utf8(buf, len);
-}
-
-SIMDUTFResult simdutf__validate_utf8_with_errors(const char* buf, size_t len)
-{
-    auto res = simdutf::validate_utf8_with_errors(buf, len);
-    return { res.error, res.count };
 }
 
 bool simdutf__validate_ascii(const char* buf, size_t len)
@@ -37,6 +34,14 @@ bool simdutf__validate_utf16le(const char16_t* buf, size_t len)
 size_t simdutf__convert_utf8_to_utf16le(const char* buf, size_t len, char16_t* utf16_output)
 {
     return simdutf::convert_utf8_to_utf16le(buf, len, utf16_output);
+}
+
+SIMDUTFResult
+simdutf__convert_utf8_to_utf16le_with_errors(const char* buf, size_t len,
+    char16_t* utf16_output)
+{
+    auto res = simdutf::convert_utf8_to_utf16le_with_errors(buf, len, utf16_output);
+    return { res.error, res.count };
 }
 
 SIMDUTFResult simdutf__convert_utf16le_to_utf8_with_errors(const char16_t* buf,

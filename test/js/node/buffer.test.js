@@ -1,8 +1,21 @@
 import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
+import { CString, ptr } from "bun:ffi";
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gc, isASAN, isDebug, nodeExe, tempDir, withoutAggressiveGC } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  gc,
+  isASAN,
+  isDebug,
+  isLinux,
+  isWindows,
+  nodeExe,
+  tempDir,
+  withoutAggressiveGC,
+} from "harness";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import vm from "node:vm";
@@ -5804,12 +5817,13 @@ it("UTF-8 decoders don't write out of bounds while another thread writes to the 
   expect(exitCode).toBe(0);
 });
 
-// One pass over the input sizes the output and another fills it. In between, fs.read() replaces the input with text that
-// needs more or less room. AddressSanitizer reports a write past the output, and fills what is never written with 0xbe.
-describe.concurrent("decoding a Buffer while fs.read() writes to it", () => {
+// fs.read() replaces the input between the length pass and the conversion pass. ASAN reports the overflow and fills
+// uninitialized heap memory with 0xbe.
+describe.concurrent("decoders don't write out of bounds while fs.read() writes to the input", () => {
   const text = (before, fill, after = "", encoding = "utf8") =>
     Buffer.concat([Buffer.from(before, encoding), Buffer.alloc(60_000, fill, encoding), Buffer.from(after, encoding)]);
   const utf8 = [text("é", "€"), text("é", "a")];
+  const json = [text(`"é`, "€", `"\n`), text(`"é`, "a", `"\n`)];
   const xml = `<?xml version="1.0" encoding="ISO-8859-1"?><a>é`;
 
   it.each([
@@ -5820,7 +5834,13 @@ describe.concurrent("decoding a Buffer while fs.read() writes to it", () => {
     [`new StringDecoder().write(buffer)`, ...utf8],
     [`transcode(buffer, "utf8", "ucs2").toString("ucs2")`, ...utf8],
     [`transcode(buffer, "utf8", "latin1").toString("latin1")`, ...utf8],
-    [`Bun.JSONL.parse(buffer)[0]`, text(`"é`, "€", `"\n`), text(`"é`, "a", `"\n`)],
+    [`new CString(ptr(buffer), 0, buffer.length).toString()`, ...utf8],
+    [`await Bun.readableStreamToText(ReadableStream.from([buffer]))`, ...utf8],
+    [`Bun.markdown.render(buffer, { text: text => text })`, ...utf8],
+    [`Bun.JSONL.parse(buffer)[0]`, ...json],
+    [`Bun.JSONL.parseChunk(buffer).values[0]`, ...json],
+    [`Bun.JSONC.parse(buffer)`, ...json],
+    [`Bun.TOML.parse(buffer).a`, text(`a = "é`, "€", `"`), text(`a = "é`, "a", `"`)],
     [`Bun.XML.parse(buffer).a`, text(xml, "a", "</a>", "latin1"), text(xml, "é", "</a>", "latin1")],
     [
       `Bun.unsafe.arrayBufferToString(new Uint16Array(buffer.buffer))`,
@@ -5832,6 +5852,7 @@ describe.concurrent("decoding a Buffer while fs.read() writes to it", () => {
       a,
       b,
       "fixture.mjs": `
+        import { CString, ptr } from "bun:ffi";
         import { transcode } from "node:buffer";
         import { openSync, read, readFileSync } from "node:fs";
         import { StringDecoder } from "node:string_decoder";
@@ -5842,12 +5863,13 @@ describe.concurrent("decoding a Buffer while fs.read() writes to it", () => {
         while (performance.now() < deadline) {
           for (const [before, fd] of rounds) {
             buffer.set(before);
-            const { promise, resolve } = Promise.withResolvers();
-            read(fd, buffer, 0, buffer.length, 0, resolve);
+            const { promise, resolve, reject } = Promise.withResolvers();
+            read(fd, buffer, 0, buffer.length, 0, error => (error ? reject(error) : resolve()));
             try {
               if (/\\ubebe|\\xbe\\xbe/.test(${decode})) unwritten++;
             } catch (e) {
-              if (e.code !== "U_INVALID_CHAR_FOUND" && e.code !== "ERR_ENCODING_INVALID_ENCODED_DATA") throw e;
+              const isInvalid = e.code === "U_INVALID_CHAR_FOUND" || e.code === "ERR_ENCODING_INVALID_ENCODED_DATA";
+              if (!isInvalid && e.name !== "SyntaxError") throw e;
             }
             await promise;
           }
@@ -5874,7 +5896,55 @@ describe.concurrent("decoding a Buffer while fs.read() writes to it", () => {
   });
 });
 
-describe("UTF-8 decoders at the lengths where they change how they convert", () => {
+// The input has to change between two loads of the same byte, so a Worker rewrites the first byte in a loop.
+describe.concurrent.skipIf(isWindows)("decoders don't crash while a Worker writes to the Bun.mmap() input", () => {
+  it.each([
+    // simdutf validates U+2800 and then converts U+D800.
+    [`transcode(bytes, "utf8", "utf8")`, 0xe2, 0xed, Buffer.alloc(120, "\u2800")],
+    // simdutf's validate_utf8_with_errors rewinds to the 0xff byte before the input.
+    [`Bun.TOML.parse(bytes)`, 0x61, 0x80, Buffer.alloc(120, 0x80)],
+  ])("%s", async (decode, a, b, input) => {
+    using dir = tempDir("buffer-mmap-decode-race", {
+      mapped: Buffer.concat([Buffer.of(0xff), input]),
+      "fixture.mjs": `
+        import { transcode } from "node:buffer";
+        import { once } from "node:events";
+        import { Worker, isMainThread, parentPort } from "node:worker_threads";
+        const bytes = Bun.mmap("mapped").subarray(1);
+        if (isMainThread) {
+          await once(new Worker(import.meta.path), "message");
+          const deadline = performance.now() + 500;
+          while (performance.now() < deadline) {
+            try {
+              ${decode};
+            } catch (e) {
+              if (e.code !== "U_INVALID_CHAR_FOUND" && e.name !== "SyntaxError") throw e;
+            }
+          }
+          console.log("ok");
+          process.exit(0);
+        }
+        parentPort.postMessage("go");
+        for (;;) {
+          Atomics.store(bytes, 0, ${a});
+          Atomics.store(bytes, 0, ${b});
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "ok\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("UTF-8 decoders return the same text on both sides of each length threshold", () => {
   const byteAtATime = bytes => {
     const decoder = new TextDecoder();
     let text = "";
@@ -5910,6 +5980,43 @@ describe("UTF-8 decoders at the lengths where they change how they convert", () 
         expect(() => new TextDecoder("utf-8", { fatal: true }).decode(damaged)).toThrow(TypeError);
         expect(() => BufferModule.transcode(damaged, "utf8", "ucs2")).toThrow("U_INVALID_CHAR_FOUND");
       }
+    }
+  });
+
+  const repeatText = (text, count) => Buffer.alloc(count * text.length * 2, text, "ucs2").toString("ucs2");
+  const inputs = [8, 1023, 1024, 1025, 4000].flatMap(length => [
+    [Buffer.alloc(length, "a"), repeatText("a", length)],
+    [Buffer.from(repeatText("a", length - 2) + "é"), repeatText("a", length - 2) + "é"],
+    // utf16_length_from_utf8 returns 0, the byte length and twice the byte length for these three.
+    [Buffer.alloc(length, 0x80), repeatText("\ufffd", length)],
+    [
+      Buffer.concat([Buffer.alloc(length - 3, "a"), Buffer.of(0xc3, 0xa9, 0xf0)]),
+      repeatText("a", length - 3) + "é\ufffd",
+    ],
+    [Buffer.alloc(length, 0xf0), repeatText("\ufffd", length)],
+    [
+      Buffer.concat([Buffer.from("€€"), Buffer.alloc(length - 7, "a"), Buffer.of(0xe2)]),
+      `€€${repeatText("a", length - 7)}\ufffd`,
+    ],
+  ]);
+
+  it.each([
+    ["transcode", bytes => BufferModule.transcode(bytes, "utf8", "utf8").toString()],
+    ["CString", bytes => new CString(ptr(bytes), 0, bytes.length).toString()],
+    ["readableStreamToText with one chunk", bytes => Bun.readableStreamToText(ReadableStream.from([bytes]))],
+    [
+      "readableStreamToText with two chunks",
+      bytes => Bun.readableStreamToText(ReadableStream.from([bytes.subarray(0, 3), bytes.subarray(3)])),
+    ],
+    ["Blob", bytes => new Blob([bytes]).text()],
+    ["bun:sqlite", bytes => new Database(":memory:").query("SELECT CAST(? AS TEXT) AS text").get(bytes).text],
+    ["readFileSync", (bytes, path) => (writeFileSync(path, bytes), readFileSync(path, "utf8"))],
+    ["Bun.file", (bytes, path) => (writeFileSync(path, bytes), Bun.file(path).text())],
+    ...(isLinux ? [["readlinkSync", (bytes, path) => (symlinkSync(bytes, path), readlinkSync(path))]] : []),
+  ])("%s", async (_, decode) => {
+    using dir = tempDir("buffer-decode-lengths", {});
+    for (const [i, [bytes, expected]] of inputs.entries()) {
+      expect(await decode(bytes, join(String(dir), String(i)))).toBe(expected);
     }
   });
 });

@@ -205,7 +205,11 @@ fn utf16_source(input: &[u8], first_non_ascii: usize) -> BunString {
         if string.is_dead() {
             bun_alloc::out_of_memory();
         }
-        assert!(strings::fill_utf16_from_utf8(units.into(), input));
+        // SAFETY: `input` is a chunk that the bundler has finished writing, and `len` is its UTF-16 length.
+        let converted = unsafe {
+            strings::ImmutableBytes::new_unchecked(input).convert_to_utf16_exact(units.into())
+        };
+        debug_assert!(converted);
         return string;
     }
     // A lone surrogate or an invalid byte: the scalar path decides the length.

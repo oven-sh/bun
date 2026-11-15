@@ -138,7 +138,7 @@ static NEVER_INLINE size_t invalidSequenceLength(std::span<const uint8_t> bytes)
 
 static constexpr size_t minVectorizedBytes = 16;
 
-// `bytes` must not change during the call, unless they are too few to be vectorized.
+// `bytes` must not change during the call, unless it is shorter than `minVectorizedBytes`.
 static size_t decodeWithReplacement(std::span<const uint8_t> bytes, std::span<char16_t> output, bool& hasInvalidByte)
 {
     RELEASE_ASSERT(output.size() >= bytes.size());
@@ -225,7 +225,7 @@ static JSC::JSString* tryDecodeUTF8(JSC::VM& vm, std::span<const uint8_t> bytes,
         std::array<char16_t, maxStackDecodedBytes> output;
         std::array<uint8_t, maxStackDecodedBytes> copy;
         if (bytes.size() >= minVectorizedBytes) {
-            // Writes at most one unit per byte, even if the bytes change meanwhile.
+            // Writes at most one unit per byte, even if `bytes` changes during the call.
             if (size_t length = simdutf::convert_utf8_to_utf16le(characters, bytes.size(), output.data())) [[likely]]
                 return tryCreateString(vm, std::span<const char16_t> { output }.first(length));
             memcpy(copy.data(), bytes.data(), bytes.size());
@@ -243,7 +243,7 @@ static JSC::JSString* tryDecodeUTF8(JSC::VM& vm, std::span<const uint8_t> bytes,
         return nullptr;
     std::span<char16_t> units;
     RefPtr<StringImpl> impl = StringImpl::tryCreateUninitialized(length, units);
-    if (!impl || !Bun__encoding__fillUTF16FromUTF8(bytes.data(), bytes.size(), units.data(), units.size())) [[unlikely]]
+    if (!impl || !Bun__encoding__convertUTF8ToUTF16Exact(bytes.data(), bytes.size(), units.data(), units.size())) [[unlikely]]
         return nullptr;
     return JSC::jsString(vm, String(impl.releaseNonNull()));
 }

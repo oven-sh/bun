@@ -9,6 +9,12 @@ impl<T> AliasableBox<T> {
         Self(bun_core::heap::alloc_nn(value))
     }
 
+    /// # Safety
+    /// `ptr` meets the contract of [`Box::from_non_null`], or the result is never dropped.
+    pub(crate) unsafe fn from_non_null(ptr: NonNull<T>) -> Self {
+        Self(ptr)
+    }
+
     /// As [`Box::into_raw`].
     pub fn into_raw(self) -> *mut T {
         self.into_non_null().as_ptr()

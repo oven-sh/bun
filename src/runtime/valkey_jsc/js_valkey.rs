@@ -292,7 +292,7 @@ pub(crate) struct JSValkeyClient {
 
     pub(crate) timer: RefCountedTimer,
     pub(crate) reconnect_timer: RefCountedTimer,
-    pub(crate) ref_count: bun_ptr::RefCount<JSValkeyClient>,
+    pub(crate) ref_count: bun_ptr::RefCount,
     /// The context whose script created the client: every dial, the retries
     /// its own timer starts included, joins that context's sockets.
     pub(crate) context: bun_jsc::ContextId,
@@ -382,7 +382,6 @@ impl Drop for JSValkeyClient {
         debug_assert!(self.timer.held_ref.get().is_none());
         debug_assert!(self.reconnect_timer.held_ref.get().is_none());
         self.client_mut().shutdown(None);
-        self.ref_count.assert_no_refs();
     }
 }
 

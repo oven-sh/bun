@@ -216,11 +216,7 @@ pub(crate) fn braces(
     let mut arena = bun_alloc::Arena::new();
     let _ = &mut arena;
 
-    let mut lexer_output = if strings::is_all_ascii(brace_slice) {
-        Braces::Lexer::tokenize(brace_slice)
-    } else {
-        Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice)
-    };
+    let mut lexer_output = Braces::tokenize(brace_slice);
 
     let expansion_count = Braces::calculate_expanded_amount(&lexer_output.tokens[..]);
 
@@ -274,7 +270,6 @@ pub(crate) fn braces(
         lexer_output.contains_nested,
     ) {
         Ok(()) => {}
-        Err(Braces::ParserError::OutOfMemory) => return Err(jsc::JsError::OutOfMemory),
         Err(Braces::ParserError::UnexpectedToken) => {
             return Err(global.throw(format_args!("Unexpected token while expanding braces")));
         }

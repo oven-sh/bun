@@ -866,7 +866,7 @@ impl Cmd {
                     // Stop any still-active stdio before the drop (only the
                     // VM-shutdown path reaches here in flight).
                     #[cfg(not(windows))]
-                    ShellSubprocess::deinit_in_flight_io(child);
+                    (*child).deinit_in_flight_io();
                     drop(bun_core::heap::take(child));
                 }
             }

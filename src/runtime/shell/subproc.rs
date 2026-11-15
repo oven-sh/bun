@@ -19,6 +19,7 @@ use bun_core::{CStrList, CStrRef};
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult, ReadState};
 use bun_jsc::{self as jsc, EventLoopHandle};
 use bun_ptr::RefPtr;
+use bun_spawn::subprocess::PipeState;
 use bun_sys::{self, SystemError};
 use enumset::EnumSet;
 
@@ -70,8 +71,8 @@ fn read_state_str(s: ReadState) -> &'static str {
     }
 }
 
+use JscSubprocess::StaticPipeWriter;
 pub(crate) use JscSubprocess::StdioKind;
-use JscSubprocess::{StaticPipeWriter, static_pipe_writer::PipeState};
 
 use crate::shell::ShellErr;
 
@@ -200,10 +201,11 @@ impl ShellSubprocess {
 
     #[must_use]
     fn on_stdin_state(&mut self, state: PipeState) -> Option<CmdHandle> {
-        (state == PipeState::Closed).then(|| {
-            self.stdin = Writable::Ignore;
-            self.cmd_parent
-        })
+        if state == PipeState::Open {
+            return None;
+        }
+        self.stdin = Writable::Ignore;
+        Some(self.cmd_parent)
     }
 
     pub(crate) fn has_exited(&self) -> bool {
@@ -359,17 +361,10 @@ impl ShellSubprocess {
     /// `on_reader_done`, queued capture chunks are cancelled (the `IOWriter`
     /// queue holds a raw pointer into the freed `PipeReader`). POSIX-only, same tradeoff as
     /// [`Self::abort_after_failed_start`].
-    ///
-    /// # Safety
-    /// `this` must be the live `heap::alloc`'d subprocess with no outstanding
-    /// borrows; single-threaded shell.
     #[cfg(not(windows))]
-    pub(crate) unsafe fn deinit_in_flight_io(this: *mut Self) {
-        // SAFETY: disjoint field projections of the live subprocess.
-        let slots = unsafe { [&raw mut (*this).stdout, &raw mut (*this).stderr] };
-        for slot in slots {
-            // SAFETY: `slot` projects from `this`; borrow scoped to the match.
-            let pipe: *mut PipeReader = match unsafe { &*slot } {
+    pub(crate) fn deinit_in_flight_io(&mut self) {
+        for slot in [&self.stdout, &self.stderr] {
+            let pipe: *mut PipeReader = match slot {
                 Readable::Pipe(pipe) => rc_as_mut_ptr(pipe),
                 _ => continue,
             };
@@ -737,16 +732,17 @@ impl Writable {
 }
 
 impl Writable {
-    /// SAFETY: the result becomes the `stdin` of `subprocess`.
+    /// # Safety
+    /// The result becomes the `stdin` of `subprocess`.
     unsafe fn init(
         stdio: Stdio,
         #[cfg(windows)] event_loop: EventLoopHandle,
         subprocess: *mut Subprocess,
         result: StdioResult,
     ) -> Writable {
-        let owner = Owner::new(PollTag::ShellStaticPipeWriter, subprocess.cast());
+        let owner = Owner::new(PollTag::ShellStdinWriter, subprocess.cast());
         // SAFETY: fn contract.
-        let buffer = |result, blob| unsafe { StaticPipeWriter::create(owner, result, blob) };
+        let create_writer = |result, blob| unsafe { StaticPipeWriter::create(owner, result, blob) };
         #[cfg(windows)]
         {
             match stdio {
@@ -764,7 +760,7 @@ impl Writable {
                 }
 
                 Stdio::Blob(blob) => {
-                    return Writable::Buffer(buffer(result, blob));
+                    return Writable::Buffer(create_writer(result, blob));
                 }
                 Stdio::Fd(_) | Stdio::Dup2(_) => {
                     return Writable::Fd;
@@ -796,7 +792,7 @@ impl Writable {
                     panic!("Unimplemented stdin pipe");
                 }
 
-                Stdio::Blob(blob) => Writable::Buffer(buffer(result, blob)),
+                Stdio::Blob(blob) => Writable::Buffer(create_writer(result, blob)),
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 Stdio::Memfd(_) => unreachable!("the shell makes no memfd"),
                 Stdio::Fd(_) => Writable::Fd,

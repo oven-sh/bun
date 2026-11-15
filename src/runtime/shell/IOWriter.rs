@@ -17,7 +17,9 @@ use bun_collections::VecExt;
 use core::cell::Cell;
 use core::cell::UnsafeCell;
 
-use bun_io::{BufferedWriteHandler, BufferedWriter, IoEvent, Owner, PollTag, WriteHandler};
+use bun_io::{
+    BufferedWriteHandler, BufferedWriter, IoEvent, Owner, PollTag, WriteHandler, WriteStatus,
+};
 use bun_sys::{self as sys, E, Fd};
 
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId};
@@ -184,8 +186,9 @@ struct State {
 
 pub(crate) struct IOWriter {
     writer: BufferedWriter,
+    /// Held while a write is in flight.
     #[cfg(windows)]
-    write_ref: Cell<Option<std::rc::Rc<IOWriter>>>,
+    inflight_write_ref: Cell<Option<std::rc::Rc<IOWriter>>>,
     state: UnsafeCell<State>,
 }
 
@@ -223,9 +226,9 @@ impl IOWriter {
     pub(crate) fn init(fd: Fd, flags: Flags, evtloop: EventLoopHandle) -> std::rc::Rc<IOWriter> {
         let this = std::rc::Rc::new_cyclic(|w| IOWriter {
             // `Drop` closes the file descriptor.
-            writer: BufferedWriter::new(false),
+            writer: BufferedWriter::borrowing_fd(),
             #[cfg(windows)]
-            write_ref: Cell::new(None),
+            inflight_write_ref: Cell::new(None),
             state: UnsafeCell::new(State {
                 fd,
                 writers: Writers::new(),
@@ -242,8 +245,8 @@ impl IOWriter {
             }),
         });
         let ptr = std::rc::Rc::as_ptr(&this).cast_mut();
-        let owner = Owner::new(PollTag::ShellBufferedWriter, ptr.cast());
-        // SAFETY: a field of its owner.
+        let owner = Owner::new(PollTag::ShellIoWriter, ptr.cast());
+        // SAFETY: `owner` points to the heap allocation that holds this writer.
         unsafe { this.writer.set_owner(owner) };
         crate::shell_log!("IOWriter(0x{:x}, fd={}) init", ptr as usize, fd);
         this
@@ -627,7 +630,7 @@ impl IOWriter {
 
     /// The `BufferedWriter.onWrite` hook. Runs on the event loop when the fd
     /// is writable.
-    fn on_write_pollable(&self, amount: usize, status: bun_io::WriteStatus) {
+    fn on_write_pollable(&self, amount: usize, status: WriteStatus) {
         // NOTE: `set_writing` re-derives `state()` on Windows, which would
         // invalidate `s` under Stacked Borrows; do it before binding `s`
         // (matches the ordering in `on_error`).
@@ -647,7 +650,7 @@ impl IOWriter {
             s.writers[idx].tee(&s.buf[lo..lo + amount]);
             s.total_bytes_written += amount;
             s.writers[idx].written += amount;
-            if status == bun_io::WriteStatus::EndOfFile {
+            if status == WriteStatus::EndOfFile {
                 // NOTE: inline `is_last_idx` instead of calling
                 // `self.is_last_idx(idx)` — that re-derives `state()` while `s`
                 // is still live, which is two simultaneous `&mut State` (UB).
@@ -778,7 +781,7 @@ impl IOWriter {
     // ── enqueue ─────────────────────────────────────────────────────────
 
     /// A writer that already reported a fatal error must not accept new
-    /// chunks: `PosixBufferedWriter::report_error` closes the handle after
+    /// chunks: `PosixBufferedWriter::report_error_and_close` closes the handle after
     /// `on_error` returns, so a chunk queued from inside the completion
     /// callbacks (or any later one) would wait on a poll that is being torn
     /// down, and a later `write()` would run with `handle == Closed` (the
@@ -929,7 +932,7 @@ impl BufferedWriteHandler for IOWriter {
 }
 
 impl WriteHandler for IOWriter {
-    fn on_write(&self, amount: usize, status: bun_io::WriteStatus) {
+    fn on_write(&self, amount: usize, status: WriteStatus) {
         self.on_write_pollable(amount, status);
     }
 
@@ -943,8 +946,8 @@ impl WriteHandler for IOWriter {
     }
 
     #[cfg(windows)]
-    fn on_write_in_flight(&self, in_flight: bool) {
-        self.write_ref.set(in_flight.then(|| self.keepalive()));
+    fn set_has_inflight_write(&self, value: bool) {
+        self.inflight_write_ref.set(value.then(|| self.keepalive()));
     }
 }
 

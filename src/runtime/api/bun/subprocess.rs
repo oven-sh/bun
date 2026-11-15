@@ -45,9 +45,9 @@ pub(crate) use readable::Readable;
 pub(crate) mod writable;
 pub(crate) use writable::Writable;
 
-pub(crate) use bun_spawn::static_pipe_writer;
-use static_pipe_writer::PipeState;
+use bun_spawn::static_pipe_writer::{self, PipeState};
 
+use bun_io::IoEvent;
 pub(crate) use bun_io::MaxBuf;
 
 bun_output::declare_scope!(Subprocess, visible);
@@ -134,7 +134,7 @@ bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_t
 // spawn_maybe_sync` fills every field explicitly (see note there), and
 // `*mut Process` has no sound placeholder anyway.
 
-impl<'a> Subprocess<'a> {
+impl Subprocess<'_> {
     #[inline]
     pub(crate) fn process(&self) -> &Process {
         &self.process
@@ -324,21 +324,14 @@ impl Subprocess<'_> {
         false
     }
 
-    pub(crate) fn on_close_stdin(&self) {
-        self.stdin.with_mut(|stdin| match stdin {
-            Writable::Pipe(_) => {
-                let Writable::Pipe(pipe) = core::mem::replace(stdin, Writable::Ignore) else {
-                    unreachable!()
-                };
-                pipe.source.set(SourceHandle::None);
-            }
-            Writable::Buffer(_) => drop(core::mem::replace(stdin, Writable::Ignore)),
-            _ => {}
-        });
-        self.update_has_pending_activity();
+    pub(crate) fn close_stdin_buffer(&self) {
+        if matches!(self.stdin.get(), Writable::Buffer(_)) {
+            self.stdin.set(Writable::Ignore);
+            self.update_has_pending_activity();
+        }
     }
 
-    pub(crate) fn on_stdin_io(&self, event: bun_io::IoEvent) {
+    pub(crate) fn on_stdin_io(&self, event: IoEvent) {
         if let Writable::Buffer(buffer) = self.stdin.get() {
             self.on_stdin_state(buffer.on_io(event));
         }
@@ -346,7 +339,7 @@ impl Subprocess<'_> {
 
     pub(crate) fn on_stdin_state(&self, state: PipeState) {
         if state == PipeState::Closed {
-            self.on_close_stdin();
+            self.close_stdin_buffer();
         }
     }
 
@@ -766,9 +759,7 @@ impl Subprocess<'_> {
         }
 
         // We won't be sending any more data.
-        if matches!(self.stdin.get(), Writable::Buffer(_)) {
-            self.on_close_stdin();
-        }
+        self.close_stdin_buffer();
 
         if !existing_stdin_value.is_empty() {
             crate::webcore::file_sink::JSSink::forget_subprocess(existing_stdin_value);

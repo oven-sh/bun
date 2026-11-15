@@ -117,7 +117,7 @@ pub mod sync {
 //
 // MOVE_DOWN from `bun_runtime::api::bun::subprocess`: `bun_install::
 // security_scanner` constructs a `StaticPipeWriter<Box<[u8]>>` to
-// stream a JSON blob to the scanner's stdin.
+// stream a JSON blob to the scanner's fd 4.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod subprocess {
     pub use crate::static_pipe_writer::{PipeState, StaticPipeWriter};

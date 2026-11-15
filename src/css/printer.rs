@@ -2,8 +2,7 @@ use core::fmt;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVec as BumpVec;
-use bun_alloc::AstAlloc;
-use bun_ast::ImportRecord;
+use bun_ast::{ImportRecord, StoreStr};
 use bun_core::strings;
 
 use crate::css_parser as css;
@@ -82,7 +81,7 @@ pub struct ImportInfo<'a> {
     /// bundle_v2.graph.ast.items(.url_for_css)
     pub ast_urls_for_css: &'a [&'a [u8]],
     /// bundle_v2.graph.input_files.items(.unique_key_for_additional_file)
-    pub ast_unique_key_for_additional_file: &'a [Box<[u8], AstAlloc>],
+    pub ast_unique_key_for_additional_file: &'a [StoreStr],
 }
 
 impl<'a> ImportInfo<'a> {

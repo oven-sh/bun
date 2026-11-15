@@ -1859,7 +1859,7 @@ impl<'a, 'log> Parser<'a, 'log> {
                             cur = self.append_aot_elem(arr, seg.pos)?;
                         } else {
                             // Descend into the most recent element.
-                            let items = arr.items.as_slice();
+                            let items = arr.items.slice();
                             let last_elem = items.last().expect("AoT arrays are never empty");
                             cur = last_elem.data.e_object().expect("AoT elements are tables");
                         }
@@ -2107,7 +2107,7 @@ impl<'a, 'log> Parser<'a, 'log> {
                 key_loc,
             )
         };
-        obj.append_property(key_expr, value);
+        obj.append_property(self.bump, key_expr, value);
         Ok(())
     }
 }

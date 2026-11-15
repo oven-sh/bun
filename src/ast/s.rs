@@ -1,13 +1,13 @@
 //! Statement node payloads (`S.*`).
 //!
 //! All slice fields in this module are arena-owned by the parser's
-//! `Stmt.Data.Store` / AST arena and are bulk-freed; they are represented as
+//! AST arena and are bulk-freed; they are represented as
 //! `StoreSlice<T>` / `StoreStr` (lifetime-erased arena slice newtypes — see
 //! `crate::StoreSlice` doc).
 
 use crate::g as G;
 use crate::{
-    Case, Catch, ClauseItem, EnumValue, ExprNodeIndex, Finally, LocRef, Ref, StmtData,
+    AstVec, Case, Catch, ClauseItem, EnumValue, ExprNodeIndex, Finally, LocRef, Ref, StmtData,
     StmtNodeIndex, StmtNodeList, StmtOrExpr,
 };
 use crate::{StoreSlice, StoreStr};
@@ -250,7 +250,7 @@ impl Default for Local {
     fn default() -> Self {
         Self {
             kind: Kind::default(),
-            decls: bun_alloc::AstAlloc::vec(),
+            decls: AstVec::new(),
             is_export: false,
             origin: LocalOrigin::Normal,
         }

@@ -302,10 +302,8 @@ fn finalize_bundle_inner(
             code: compile_result.code().to_vec().into_boxed_slice(),
             source_map: Some(incremental_graph::ReceiveChunkSourceMap {
                 chunk: source_map,
-                // Copied out of the per-bundle AST heap: stack traces are remapped after the bundle ends.
-                escaped_source: quoted_contents
-                    .as_ref()
-                    .map(|v| v.as_slice().to_vec().into_boxed_slice()),
+                // Copied out of the bundle's arena: stack traces are remapped after the bundle ends.
+                escaped_source: quoted_contents.as_deref().map(Box::from),
             }),
         };
         match targets[part_range.source_index.get() as usize].bake_graph() {

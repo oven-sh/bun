@@ -9,7 +9,7 @@ use crate::load::data_modules::parse_json;
 use crate::load::loaders::loader_name;
 use bstr::BStr;
 use bun_ast::runtime::ReactCompilerMode;
-use bun_ast::{ASTMemoryAllocator, ImportKind, Loader, Loc, Log, Msg, Source};
+use bun_ast::{ImportKind, Loader, Loc, Log, Msg, Source};
 use bun_js_parser::{
     Define, ExpandedImportMetaGlob, ImportMetaGlobHost, Parser, ParserOptions,
     record_import_meta_globs,
@@ -391,8 +391,6 @@ fn parse_without_bundler(
     glob_host: Option<ImportMetaGlobHost>,
 ) -> bool {
     let arena = bun_ast::AstArena::new();
-    let mut store = ASTMemoryAllocator::borrowing(&arena);
-    let _scope = store.enter();
     let source = Source::init_path_string(file.module.path, file.contents);
     let mut pragma = jsx::Pragma::default();
     apply_jsx_settings(&mut pragma, &file.settings.jsx);

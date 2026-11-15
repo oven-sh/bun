@@ -1,10 +1,8 @@
 #![warn(unused_must_use)]
 use crate::p::P;
-use bun_alloc::Arena as Bump;
 use bun_ast::e::CallUnwrap;
 use bun_ast::symbol;
-use bun_ast::{self, Binding, E, Expr, ExprData, G, Op, Stmt, StmtData, StoreRef};
-use bun_collections::VecExt;
+use bun_ast::{self, AstArena, Binding, E, Expr, ExprData, G, Op, Stmt, StmtData, StoreRef};
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -22,7 +20,7 @@ pub struct Known {
 
 #[derive(Clone, Copy)]
 pub struct BinaryExpressionSimplifyVisitor {
-    // ARENA: points into the AST store (see LIFETIMES.tsv)
+    // ARENA: points into the AST arena (see LIFETIMES.tsv)
     pub(crate) bin: StoreRef<E::Binary>,
 }
 
@@ -180,6 +178,7 @@ impl SideEffects {
                 // "foo() ? 1 : bar()" => "foo() || bar()"
                 if ternary.yes.is_empty() {
                     return Some(Expr::join_with_left_associative_op(
+                        p.ast_arena,
                         Op::Code::BinLogicalOr,
                         ternary.test,
                         ternary.no,
@@ -189,6 +188,7 @@ impl SideEffects {
                 // "foo() ? bar() : 2" => "foo() && bar()"
                 if ternary.no.is_empty() {
                     return Some(Expr::join_with_left_associative_op(
+                        p.ast_arena,
                         Op::Code::BinLogicalAnd,
                         ternary.test,
                         ternary.yes,
@@ -303,6 +303,7 @@ impl SideEffects {
                             // Otherwise, preserve at least the structure
                             return Some(Expr::join_with_comma(
                                 left_simplified.unwrap_or_else(|| left.to_empty()),
+                                p.ast_arena,
                                 right_simplified.unwrap_or_else(|| right.to_empty()),
                             ));
                         }
@@ -381,7 +382,7 @@ impl SideEffects {
                         e_object.properties.copy_within(j..=j, end);
                         end += 1;
                     }
-                    e_object.properties.shrink_retaining_capacity(end);
+                    e_object.properties.truncate(end);
                     return Some(expr);
                 }
 
@@ -408,11 +409,12 @@ impl SideEffects {
                             },
                             key_expr.loc,
                         );
-                        result = Expr::join_with_comma(result, bin);
+                        result = Expr::join_with_comma(result, p.ast_arena, bin);
                     }
                     let v = value.unwrap();
                     result = Expr::join_with_comma(
                         result,
+                        p.ast_arena,
                         Self::simplify_unused_expr(p, v).unwrap_or_else(|| v.to_empty()),
                     );
                 }
@@ -445,7 +447,7 @@ impl SideEffects {
                             end += 1;
                         }
                     }
-                    arr.items.shrink_retaining_capacity(end);
+                    arr.items.truncate(end);
                     return Some(expr);
                 }
 
@@ -483,7 +485,7 @@ impl SideEffects {
                 data: ExprData::EMissing(E::Missing {}),
                 loc: item.loc,
             });
-            result = Expr::join_with_comma(result, simplified);
+            result = Expr::join_with_comma(result, p.ast_arena, simplified);
         }
         if result.is_missing() {
             None
@@ -535,7 +537,7 @@ impl SideEffects {
             let top = p.binary_expression_simplify_stack[i];
             let right = top.bin.right;
             let visited_right = Self::simplify_unused_expr(p, right).unwrap_or(Expr::EMPTY);
-            result = Expr::join_with_comma(result, visited_right);
+            result = Expr::join_with_comma(result, p.ast_arena, visited_right);
         }
         p.binary_expression_simplify_stack.truncate(stack_bottom);
 
@@ -568,7 +570,10 @@ impl SideEffects {
         }
     }
 
-    fn should_keep_stmts_in_dead_control_flow(stmts: bun_ast::StmtNodeList, bump: &Bump) -> bool {
+    fn should_keep_stmts_in_dead_control_flow(
+        stmts: bun_ast::StmtNodeList,
+        bump: &AstArena,
+    ) -> bool {
         for child in stmts.slice() {
             if Self::should_keep_stmt_in_dead_control_flow(*child, bump) {
                 return true;
@@ -590,7 +595,7 @@ impl SideEffects {
     /// assign to a global variable instead.
     ///
     /// Caller is expected to first check `p.options.dead_code_elimination` so we only check it once.
-    pub(crate) fn should_keep_stmt_in_dead_control_flow(stmt: Stmt, bump: &Bump) -> bool {
+    pub(crate) fn should_keep_stmt_in_dead_control_flow(stmt: Stmt, bump: &AstArena) -> bool {
         match stmt.data {
             // Omit these statements entirely
             StmtData::SEmpty(_)
@@ -638,7 +643,7 @@ impl SideEffects {
                     return false;
                 }
 
-                local.decls = bun_alloc::AstAlloc::vec_from_iter(decls);
+                local.decls = G::DeclList::from_slice_in(&decls, bump);
                 true
             }
 

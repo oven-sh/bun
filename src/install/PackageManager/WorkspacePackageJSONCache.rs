@@ -83,8 +83,6 @@ fn parse_package_json(
 ) -> Result<json::JsonResult, crate::Error> {
     // Auto-install uses the cache from whichever thread is resolving.
     bump.unlock_thread();
-    // The lists of the tree outlive the `AstAlloc` state of the caller.
-    let _detached = bun_alloc::ast_alloc::DetachAstHeap::new();
     Ok(json::parse_package_json_utf8_with_opts(
         json::JSONOptions {
             json_warn_duplicate_keys: false,

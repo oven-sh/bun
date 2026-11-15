@@ -12,8 +12,6 @@
 pub mod error;
 pub use error::{Error, Result};
 
-use bun_collections::VecExt;
-
 use core::ptr::NonNull;
 
 use bun_ast::{ImportKind, ImportRecord};
@@ -1336,7 +1334,7 @@ pub struct Options<'a> {
     /// source can print into multiple part-ranges/chunks, so the table must
     /// not be consumed. `get_source_map_builder` moves the borrow into the
     /// builder as `LineOffsetTables::Borrowed`.
-    pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
+    pub line_offset_tables: Option<&'a SourceMap::line_offset_table::AstList>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
 }
@@ -1590,7 +1588,7 @@ pub(crate) mod __gated_printer {
 
         /// Arena for transient allocations during printing (rope flattening,
         /// UTF-16→UTF-8 transcoding).
-        pub(crate) bump: &'a bun_alloc::Arena,
+        pub(crate) bump: &'a js_ast::AstArena,
     }
 
     /// The handling of binary expressions is convoluted because we're using
@@ -2216,7 +2214,8 @@ pub(crate) mod __gated_printer {
                             temp_bindings.reserve(2);
                             temp_bindings.push(B::Property {
                                 flags: Default::default(),
-                                key: Expr::init(
+                                key: Expr::allocate(
+                                    self.bump,
                                     E::String::init(&target_e_dot.name),
                                     target_e_dot.name_loc,
                                 ),
@@ -2225,7 +2224,8 @@ pub(crate) mod __gated_printer {
                             });
                             temp_bindings.push(B::Property {
                                 flags: Default::default(),
-                                key: Expr::init(
+                                key: Expr::allocate(
+                                    self.bump,
                                     E::String::init(&second_e_dot.name),
                                     second_e_dot.name_loc,
                                 ),
@@ -2259,7 +2259,11 @@ pub(crate) mod __gated_printer {
 
                                 temp_bindings.push(B::Property {
                                     flags: Default::default(),
-                                    key: Expr::init(E::String::init(&e_dot.name), e_dot.name_loc),
+                                    key: Expr::allocate(
+                                        self.bump,
+                                        E::String::init(&e_dot.name),
+                                        e_dot.name_loc,
+                                    ),
                                     value: decl.binding,
                                     default_value: None,
                                 });
@@ -4017,11 +4021,12 @@ pub(crate) mod __gated_printer {
                         // thread-local `e` above keeps the parts slice alive
                         // through the print loop at the end of this arm.
                         let mut replaced =
-                            bun_alloc::ArenaVec::<E::TemplatePart>::new_in(self.bump);
+                            bun_alloc::ArenaVec::<E::TemplatePart>::new_in(self.bump.heap());
                         for (i, _part) in e.parts().iter().enumerate() {
                             let mut part = part_clone(_part);
                             let inlined_value: Option<Expr> = match &part.value.data {
-                                ExprData::ENameOfSymbol(e2) => Some(Expr::init(
+                                ExprData::ENameOfSymbol(e2) => Some(Expr::allocate(
+                                    self.bump,
                                     E::String::init(self.mangled_prop_name(e2.ref_)),
                                     part.value.loc,
                                 )),
@@ -4073,7 +4078,7 @@ pub(crate) mod __gated_printer {
                                     // below — assigned to the thread-local `e`,
                                     // never written back into the shared AST node
                                     // (see the comment at the top of this arm).
-                                    // Field values are arena/store-backed in both
+                                    // Field values are arena-backed in both
                                     // fold paths (the bail-out path aliases the
                                     // stack `copy`, but its `parts`/`head` payloads
                                     // are bump-allocated above), so copying the
@@ -6658,7 +6663,7 @@ pub(crate) mod __gated_printer {
                 if let Some(symbol) = self.symbols().get_const(ref_) {
                     if symbol.kind == js_ast::symbol::Kind::TsEnum {
                         if let Some(enum_value) = self.options.ts_enums.and_then(|m| m.get(&ref_)) {
-                            if let Some(value) = enum_value.get(name) {
+                            if let Some(value) = enum_value.get().get(name) {
                                 return Some(value.decode());
                             }
                         }
@@ -6895,7 +6900,7 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn init(
             writer: W,
-            bump: &'a bun_alloc::Arena,
+            bump: &'a js_ast::AstArena,
             import_records: &'a [ImportRecord<'a>],
             opts: Options<'a>,
             renamer: rename::Renamer<'a>,
@@ -7561,7 +7566,7 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
 
 pub fn print_ast<'a, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     writer: &mut BufferPrinter,
-    bump: &'a bun_alloc::Arena,
+    bump: &'a js_ast::AstArena,
     tree: &'a Ast,
     mut symbols: js_ast::symbol::Map,
     source: &'a bun_ast::Source<'a>,
@@ -7796,7 +7801,7 @@ pub fn print_json<W: WriterTrait>(
     let writer = _writer;
     // The printer only needs default-empty `import_records` and `symbols` for
     // the no-op renamer; construct them directly without an `Ast`.
-    let bump = bun_alloc::Arena::new();
+    let bump = js_ast::AstArena::new();
     let symbols = js_ast::symbol::Map::init_list(vec![Vec::new()]);
 
     let full_opts = Options {
@@ -7833,7 +7838,7 @@ pub struct BundledAstView<'a> {
 }
 
 pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
-    bump: &'a bun_alloc::Arena,
+    bump: &'a js_ast::AstArena,
     target: bun_ast::Target,
     ast: &BundledAstView,
     source: &'a bun_ast::Source<'a>,
@@ -7864,7 +7869,7 @@ pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
 
 pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
     writer: W,
-    bump: &'a bun_alloc::Arena,
+    bump: &'a js_ast::AstArena,
     target: bun_ast::Target,
     ast: &BundledAstView,
     source: &'a bun_ast::Source<'a>,
@@ -7906,7 +7911,7 @@ pub(crate) fn print_with_writer_and_platform<
     const GENERATE_SOURCE_MAPS: bool,
 >(
     mut writer: W,
-    bump: &'a bun_alloc::Arena,
+    bump: &'a js_ast::AstArena,
     ast: &BundledAstView,
     source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,

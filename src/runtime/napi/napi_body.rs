@@ -138,9 +138,9 @@ impl NapiEnv {
     }
 
     /// Any thread holding an env ref: the env's VM handle.
-    pub(crate) fn vm_handle(&self) -> bun_jsc::vm_handle::BorrowedRef {
+    pub(crate) fn vm_handle(&self) -> bun_jsc::VmHandle {
         // SAFETY: the env holds a reference for its whole lifetime.
-        unsafe { bun_jsc::VmHandle::borrow_ref(NapiEnv__vmHandle(self.as_mut_ptr())) }
+        unsafe { bun_jsc::VmHandle::borrow_ref(NapiEnv__vmHandle(self.as_mut_ptr())) }.clone()
     }
 
     /// Convert err to an extern napi_status, and store the error code in env so that it can be
@@ -321,7 +321,7 @@ impl NapiHandleScope {
     /// Closes the given handle scope, releasing all values inside it, if it is safe to do so.
     /// Asserts that self is the current handle scope in env.
     fn close(self_: *mut NapiHandleScope, env: &NapiEnv) {
-        // SAFETY: NapiHandleScope__close handles null `current`.
+        // SAFETY: C++ dereferences `self_` only once it has found it to be the env's current scope.
         unsafe { NapiHandleScope__close(env.as_mut_ptr(), self_) }
     }
 
@@ -493,7 +493,7 @@ pub(super) type napi_status = c_uint;
 pub(super) type napi_callback = Option<extern "C" fn(napi_env, napi_callback_info) -> napi_value>;
 
 /// expects `napi_env`, `callback_data`, `context`
-pub(super) type NapiFinalizeFunction = extern "C" fn(napi_env, *mut c_void, *mut c_void);
+pub(super) type NapiFinalizeFunction = unsafe extern "C" fn(napi_env, *mut c_void, *mut c_void);
 pub(super) type napi_finalize = Option<NapiFinalizeFunction>;
 
 #[repr(C)]
@@ -2460,7 +2460,6 @@ unsafe extern "C" {
         data: *mut c_void,
     ) -> napi_status;
 
-    fn Bun__napi_cleanup_env_cpp(env: napi_env);
     safe fn Bun__napi_check_gc(env: &NapiEnv);
 
     /// Returns false if the env has already torn down its registry.
@@ -2469,33 +2468,38 @@ unsafe extern "C" {
     fn NapiEnv__unregisterThreadSafeFunction(env: *mut NapiEnv, tsfn: *const c_void) -> bool;
 }
 
-extern "C" fn Bun__napi_register_cleanup_callback(data: *mut c_void) {
-    // SAFETY: data is the napi_env we registered below.
-    unsafe { Bun__napi_cleanup_env_cpp(data as napi_env) };
-}
-
+/// SAFETY: `env` lives until its VM has run its cleanup hooks.
 #[unsafe(no_mangle)]
-extern "C" fn Bun__napi_register_cleanup_zig(env: &NapiEnv) {
-    env.to_js().bun_vm().rare_data().push_cleanup_hook(
-        env.to_js(),
-        env.as_mut_ptr().cast::<c_void>(),
-        Bun__napi_register_cleanup_callback,
-    );
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn Bun__napi_run_finalizers_after_teardown_wait(env: &NapiEnv) {
+unsafe extern "C" fn Bun__napi_register_cleanup_zig(env: &NapiEnv) {
     unsafe extern "C" {
-        safe fn NapiEnv__runFinalizers(env: *mut c_void);
+        fn Bun__napi_cleanup_env_cpp(env: *mut c_void);
     }
-    env.to_js()
-        .bun_vm()
-        .rare_data()
-        .push_cleanup_hook_after_teardown_wait(
+    let rare_data = env.to_js().bun_vm().rare_data();
+    // SAFETY: fn contract.
+    unsafe {
+        rare_data.push_cleanup_hook(
+            env.to_js(),
+            env.as_mut_ptr().cast::<c_void>(),
+            Bun__napi_cleanup_env_cpp,
+        )
+    };
+}
+
+/// SAFETY: as [`Bun__napi_register_cleanup_zig`].
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__napi_run_finalizers_after_teardown_wait(env: &NapiEnv) {
+    unsafe extern "C" {
+        fn NapiEnv__runFinalizers(env: *mut c_void);
+    }
+    let rare_data = env.to_js().bun_vm().rare_data();
+    // SAFETY: fn contract.
+    unsafe {
+        rare_data.push_cleanup_hook_after_teardown_wait(
             env.to_js(),
             env.as_mut_ptr().cast::<c_void>(),
             NapiEnv__runFinalizers,
-        );
+        )
+    };
 }
 
 #[unsafe(no_mangle)]
@@ -2522,23 +2526,25 @@ unsafe extern "C" {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct Finalizer {
-    pub env: NapiEnvRef,
-    pub fun: NapiFinalizeFunction,
-    pub data: *mut c_void,
-    pub hint: *mut c_void,
+    env: NapiEnvRef,
+    fun: NapiFinalizeFunction,
+    data: *mut c_void,
+    hint: *mut c_void,
 }
 
 impl Finalizer {
     /// Run the addon's finalizer. What it raised through napi (latched on the
     /// env) or left on the VM is the `Err`, for the caller's dispatcher to fold.
-    pub(crate) fn run(&self) -> JsResult<()> {
+    pub(crate) fn run(self) -> JsResult<()> {
         let env_ref: &NapiEnv = &self.env;
         let env = env_ref.as_mut_ptr();
         let _hs = NapiHandleScope::open_scoped(env_ref);
 
-        (self.fun)(env, self.data, self.hint);
-        // SAFETY: env is valid; passes the C finalizer back for bookkeeping.
-        unsafe { Bun__napi_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
+        // SAFETY: env is valid, and the addon gave `fun` together with `data` and `hint`.
+        unsafe {
+            (self.fun)(env, self.data, self.hint);
+            Bun__napi_remove_finalizer(env, Some(self.fun), self.hint, self.data);
+        }
 
         env_ref.surface_exception(env_ref.to_js())
     }
@@ -2554,8 +2560,10 @@ impl Finalizer {
 /// For Node-API modules not built with NAPI_EXPERIMENTAL, finalizers should be deferred to the
 /// immediate task queue instead of run immediately. This lets finalizers perform allocations,
 /// which they couldn't if they ran immediately while the garbage collector is still running.
+///
+/// SAFETY: `fun` takes `data` and `hint`, once.
 #[unsafe(no_mangle)]
-extern "C" fn Bun__napi_enqueue_finalizer(
+unsafe extern "C" fn Bun__napi_enqueue_finalizer(
     env: Option<&NapiEnv>,
     fun: napi_finalize,
     data: *mut c_void,
@@ -5209,7 +5217,7 @@ impl NapiFinalizerTask {
             // already torn down the finalizer can never run; free the task but
             // not the env ref — the env's count is not atomic and the env goes
             // with its VM — as the cleanup-hooks-already-ran case below does.
-            let handle = self.finalizer.env.vm_handle().clone();
+            let handle = self.finalizer.env.vm_handle();
             let ct = ConcurrentTask::create_boxed(self);
             if let bun_jsc::vm_handle::Posted::Refused(ct) =
                 handle.post(bun_jsc::LoopKind::Regular, ct)
@@ -5238,18 +5246,22 @@ impl NapiFinalizerTask {
             }
             // Immediate tasks won't run, so we run this as a cleanup hook instead
             let this = bun_core::heap::into_raw(self);
-            vm.rare_data().push_cleanup_hook(
-                vm.global(),
-                this.cast::<c_void>(),
-                Self::run_as_cleanup_hook,
-            );
+            // SAFETY: the hook owns the box from here.
+            unsafe {
+                vm.rare_data().push_cleanup_hook(
+                    vm.global(),
+                    this.cast::<c_void>(),
+                    Self::run_as_cleanup_hook,
+                )
+            };
         } else {
             vm.event_loop().enqueue_task(Task::from_boxed(self));
         }
     }
 
-    extern "C" fn run_as_cleanup_hook(opaque_this: *mut c_void) {
-        // SAFETY: the box that `schedule` registered; a hook runs once.
+    /// SAFETY: `opaque_this` is the box that `schedule` gave up.
+    unsafe extern "C" fn run_as_cleanup_hook(opaque_this: *mut c_void) {
+        // SAFETY: fn contract.
         let this = unsafe { bun_core::heap::take(opaque_this.cast::<NapiFinalizerTask>()) };
         // A cleanup hook returns nothing: `Err` is left pending for the hook
         // runner's fold.

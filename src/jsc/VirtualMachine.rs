@@ -3685,9 +3685,7 @@ pub fn process_fetch_log(
 // SourceMapHandlerGetter
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Holds two fields of the VM so that `get()` can
-/// return an erased `js_printer::SourceMapHandler` borrowing either the VM's
-/// `source_mappings` (fast path) or `self` (debugger / inline-sourcemap path).
+/// `get()` returns the VM's `source_mappings` (fast path) or `self` (debugger / inline-sourcemap path).
 pub struct SourceMapHandlerGetter<'a> {
     source_mappings: &'a SavedSourceMap,
     debugger: Option<&'a crate::debugger::Debugger>,
@@ -3764,8 +3762,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
 
 // ──────────────────────────────────────────────────────────────────────────
 // ──────────────────────────────────────────────────────────────────────────
-// Options / IPC — supporting types referenced by the
-// impl below.
+// Options / IPC — supporting types referenced by the impl below.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `allocator` dropped per §Allocators (global mimalloc).

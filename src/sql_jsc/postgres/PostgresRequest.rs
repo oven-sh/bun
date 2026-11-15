@@ -9,7 +9,6 @@ use bun_sql::postgres::TLSStatus;
 use bun_sql::postgres::postgres_protocol as protocol;
 use bun_sql::postgres::postgres_types as types;
 use bun_sql::postgres::postgres_types::{AnyPostgresError, Int4};
-use bun_sql::postgres::protocol::WriterContext;
 use bun_sql::shared::SSLMode;
 
 use crate::jsc::js_error_to_postgres;
@@ -17,7 +16,7 @@ use crate::postgres::PostgresSQLConnection;
 use crate::postgres::PostgresSQLQuery;
 use crate::postgres::PostgresSQLStatement;
 use crate::postgres::Signature;
-use crate::postgres::postgres_sql_connection::PendingNotification;
+use crate::postgres::postgres_sql_connection::{PendingNotification, ReadState};
 use crate::postgres::types::{date, tag_jsc};
 
 bun_core::declare_scope!(Postgres, visible);
@@ -177,15 +176,15 @@ fn array_literal(global: &JSGlobalObject, list: JSValue, tag: types::Tag) -> JsR
     Ok(literal)
 }
 
-/// Runs no JS once `stage_parameters` has seen `values_array`.
-fn write_bind<Context: WriterContext>(
+/// Can run JS: an accessor at an index, or `toString()` of a value staged for another type.
+fn write_bind(
     name: &[u8],
     global: &JSGlobalObject,
     values_array: JSValue,
     parameter_fields: &[Int4],
     result_fields: &[protocol::FieldDescription],
     formats: types::ResultFormats,
-    writer: protocol::NewWriter<Context>,
+    writer: &mut protocol::NewWriter<'_>,
 ) -> Result<(), AnyPostgresError> {
     let len =
         u16::try_from(parameter_fields.len()).map_err(|_| AnyPostgresError::TooManyParameters)?;
@@ -221,14 +220,14 @@ fn write_bind<Context: WriterContext>(
 
         let l = writer.length()?;
         if write_binary_parameter(global, tag, value, writer)? {
-            format_codes.set_binary(i)?;
+            format_codes.set_binary(i, writer)?;
         } else if value.is_date() {
             date::write_text(global, value, tag, writer)?;
         } else {
             let str = BunString::from_js(value, global).map_err(js_error_to_postgres)?;
             writer.write(str.to_utf8().slice())?;
         }
-        l.write_excluding_self()?;
+        l.write_excluding_self(writer)?;
 
         i += 1;
     }
@@ -245,15 +244,15 @@ fn write_bind<Context: WriterContext>(
         writer.short(0)?;
     }
 
-    length.write()?;
+    length.write(writer)?;
     Ok(())
 }
 
-fn write_binary_parameter<Context: WriterContext>(
+fn write_binary_parameter(
     global: &JSGlobalObject,
     tag: types::Tag,
     value: JSValue,
-    writer: protocol::NewWriter<Context>,
+    writer: &mut protocol::NewWriter<'_>,
 ) -> Result<bool, AnyPostgresError> {
     match tag {
         types::Tag::bool if value.is_boolean() => writer.write(&[value.as_boolean() as u8])?,
@@ -276,10 +275,10 @@ fn write_binary_parameter<Context: WriterContext>(
     Ok(true)
 }
 
-fn write_parse<Context: WriterContext>(
+fn write_parse(
     query: &[u8],
     signature: &Signature,
-    mut writer: protocol::NewWriter<Context>,
+    writer: &mut protocol::NewWriter<'_>,
 ) -> Result<(), AnyPostgresError> {
     bun_core::scoped_log!(Postgres, "Parse: {}", bun_fmt::quote(query));
     protocol::Parse {
@@ -287,12 +286,12 @@ fn write_parse<Context: WriterContext>(
         params: &signature.fields,
         query,
     }
-    .write_internal(&mut writer)
+    .write_internal(writer)
 }
 
-fn write_describe<Context: WriterContext>(
+fn write_describe(
     signature: &Signature,
-    writer: protocol::NewWriter<Context>,
+    writer: &mut protocol::NewWriter<'_>,
 ) -> Result<(), AnyPostgresError> {
     let name = &signature.prepared_statement_name;
     bun_core::scoped_log!(Postgres, "Describe: {}", bun_fmt::quote(name));
@@ -302,22 +301,22 @@ fn write_describe<Context: WriterContext>(
     .write_internal(writer)
 }
 
-pub(crate) fn parse_and_describe<Context: WriterContext>(
+pub(crate) fn parse_and_describe(
     query: &[u8],
     signature: &Signature,
-    writer: protocol::NewWriter<Context>,
+    writer: &mut protocol::NewWriter<'_>,
 ) -> Result<(), AnyPostgresError> {
     write_parse(query, signature, writer)?;
     write_describe(signature, writer)?;
     writer.write(&protocol::SYNC)
 }
 
-pub(crate) fn bind_and_execute<Context: WriterContext>(
+pub(crate) fn bind_and_execute(
     global: &JSGlobalObject,
     statement: &PostgresSQLStatement,
     values: JSValue,
     formats: types::ResultFormats,
-    mut writer: protocol::NewWriter<Context>,
+    writer: &mut protocol::NewWriter<'_>,
 ) -> Result<(), AnyPostgresError> {
     let name = &statement.signature.prepared_statement_name;
     write_bind(
@@ -325,7 +324,7 @@ pub(crate) fn bind_and_execute<Context: WriterContext>(
         global,
         values,
         statement.parameter_types(),
-        &statement.fields,
+        statement.fields(),
         formats,
         writer,
     )?;
@@ -333,20 +332,20 @@ pub(crate) fn bind_and_execute<Context: WriterContext>(
         p: protocol::PortalOrPreparedStatement::PreparedStatement(name),
         ..Default::default()
     }
-    .write_internal(&mut writer)?;
+    .write_internal(writer)?;
     writer.write(&protocol::SYNC)
 }
 
 /// An unnamed statement needs its Parse in the batch of its Bind: PgBouncer in transaction mode
 /// may give the next batch to another backend.
-pub(crate) fn parse_and_bind_and_execute<Context: WriterContext>(
+pub(crate) fn parse_and_bind_and_execute(
     global: &JSGlobalObject,
     query: &[u8],
     statement: &PostgresSQLStatement,
     values: JSValue,
     formats: types::ResultFormats,
     include_describe: bool,
-    writer: protocol::NewWriter<Context>,
+    writer: &mut protocol::NewWriter<'_>,
 ) -> Result<(), AnyPostgresError> {
     write_parse(query, &statement.signature, writer)?;
     if include_describe {
@@ -355,25 +354,25 @@ pub(crate) fn parse_and_bind_and_execute<Context: WriterContext>(
     bind_and_execute(global, statement, values, formats, writer)
 }
 
-pub(crate) fn write_close_statement<Context: WriterContext>(
+pub(crate) fn write_close_statement(
     name: &[u8],
-    writer: protocol::NewWriter<Context>,
+    writer: &mut protocol::NewWriter<'_>,
 ) -> Result<(), AnyPostgresError> {
     writer.write(b"C")?;
     let length = writer.length()?;
     writer.write(b"S")?;
     writer.string(name)?;
-    length.write()
+    length.write(writer)
 }
 
-pub(crate) fn write_copy_fail<Context: WriterContext>(
+pub(crate) fn write_copy_fail(
     message: &[u8],
-    writer: protocol::NewWriter<Context>,
+    writer: &mut protocol::NewWriter<'_>,
 ) -> Result<(), AnyPostgresError> {
     writer.write(b"f")?;
     let length = writer.length()?;
     writer.string(message)?;
-    length.write()
+    length.write(writer)
 }
 
 fn on_ssl_request_reply(
@@ -413,6 +412,7 @@ fn on_ssl_request_reply(
 pub(crate) fn on_data(
     connection: &PostgresSQLConnection,
     reader: &protocol::NewReader<'_>,
+    state: &mut ReadState,
 ) -> Result<Option<PendingNotification>, AnyPostgresError> {
     use MessageType as M;
     loop {
@@ -444,27 +444,27 @@ pub(crate) fn on_data(
         connection.defer_reads.set(after != 0 || c == b'T');
 
         match c {
-            b'D' => connection.on(M::DataRow, reader)?,
-            b'd' => connection.on(M::CopyData, reader)?,
-            b'S' => connection.on(M::ParameterStatus, reader)?,
-            b'Z' => connection.on(M::ReadyForQuery, reader)?,
-            b'C' => connection.on(M::CommandComplete, reader)?,
-            b'2' => connection.on(M::BindComplete, reader)?,
-            b'1' => connection.on(M::ParseComplete, reader)?,
-            b't' => connection.on(M::ParameterDescription, reader)?,
-            b'T' => connection.on(M::RowDescription, reader)?,
-            b'R' => connection.on(M::Authentication, reader)?,
-            b'n' => connection.on(M::NoData, reader)?,
-            b'K' => connection.on(M::BackendKeyData, reader)?,
-            b'E' => connection.on(M::ErrorResponse, reader)?,
-            b's' => connection.on(M::PortalSuspended, reader)?,
-            b'3' => connection.on(M::CloseComplete, reader)?,
-            b'G' => connection.on(M::CopyInResponse, reader)?,
-            b'N' => connection.on(M::NoticeResponse, reader)?,
-            b'I' => connection.on(M::EmptyQueryResponse, reader)?,
-            b'H' => connection.on(M::CopyOutResponse, reader)?,
-            b'c' => connection.on(M::CopyDone, reader)?,
-            b'W' => connection.on(M::CopyBothResponse, reader)?,
+            b'D' => connection.on(M::DataRow, reader, state)?,
+            b'd' => connection.on(M::CopyData, reader, state)?,
+            b'S' => connection.on(M::ParameterStatus, reader, state)?,
+            b'Z' => connection.on(M::ReadyForQuery, reader, state)?,
+            b'C' => connection.on(M::CommandComplete, reader, state)?,
+            b'2' => connection.on(M::BindComplete, reader, state)?,
+            b'1' => connection.on(M::ParseComplete, reader, state)?,
+            b't' => connection.on(M::ParameterDescription, reader, state)?,
+            b'T' => connection.on(M::RowDescription, reader, state)?,
+            b'R' => connection.on(M::Authentication, reader, state)?,
+            b'n' => connection.on(M::NoData, reader, state)?,
+            b'K' => connection.on(M::BackendKeyData, reader, state)?,
+            b'E' => connection.on(M::ErrorResponse, reader, state)?,
+            b's' => connection.on(M::PortalSuspended, reader, state)?,
+            b'3' => connection.on(M::CloseComplete, reader, state)?,
+            b'G' => connection.on(M::CopyInResponse, reader, state)?,
+            b'N' => connection.on(M::NoticeResponse, reader, state)?,
+            b'I' => connection.on(M::EmptyQueryResponse, reader, state)?,
+            b'H' => connection.on(M::CopyOutResponse, reader, state)?,
+            b'c' => connection.on(M::CopyDone, reader, state)?,
+            b'W' => connection.on(M::CopyBothResponse, reader, state)?,
             b'A' => {
                 let notification = protocol::NotificationResponse::decode_internal(reader)?;
                 if reader.peek().len() == after

@@ -23,9 +23,6 @@ pub mod my_sql_value;
 #[path = "mysql/JSMySQLConnection.rs"]
 pub mod js_my_sql_connection;
 
-#[path = "mysql/MySQLConnection.rs"]
-pub mod my_sql_connection;
-
 pub mod protocol {
     #[path = "error_packet_jsc.rs"]
     pub mod error_packet_jsc;

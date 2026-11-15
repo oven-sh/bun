@@ -8,10 +8,7 @@ pub struct SASLInitialResponse<'a> {
 }
 
 impl SASLInitialResponse<'_> {
-    pub fn write_internal<Context: super::new_writer::WriterContext>(
-        &self,
-        writer: NewWriter<Context>,
-    ) -> Result<(), AnyPostgresError> {
+    pub fn write_internal(&self, writer: &mut NewWriter<'_>) -> Result<(), AnyPostgresError> {
         let mechanism = self.mechanism;
         let data = self.data;
         let count: usize = core::mem::size_of::<u32>()

@@ -1,4 +1,6 @@
 use core::cell::Cell;
+use core::ops::Deref;
+use std::rc::Rc;
 
 use crate::jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
 
@@ -6,30 +8,37 @@ use crate::shared::CachedStructure;
 use crate::shared::cached_structure::{column_name_to_js, describe_statement};
 use crate::shared::sql_data_cell::{Flags as DataCellFlags, dedupe_columns};
 
-use bun_ptr::RefPtr;
+use bun_jsc::Weak;
+use bun_ptr::{CellExt as _, VecCellExt as _};
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::column_definition41::ColumnDefinition41;
 use bun_sql::mysql::protocol::prepared_statement::ExecuteParam;
 
 bun_core::declare_scope!(MySQLStatement, hidden);
 
-#[derive(bun_ptr::RefCounted)]
 pub struct MySQLStatement {
-    pub(crate) cached_structure: CachedStructure,
-    ref_count: bun_ptr::RefCount,
-    pub(crate) statement_id: u32,
-    pub(crate) params: Vec<FieldType>,
-    pub(crate) params_received: u32,
+    pub(crate) statement_id: Cell<u32>,
+    pub(crate) params: Cell<Vec<FieldType>>,
+    pub(crate) status: Cell<Status>,
+    result: Cell<Option<ResultState>>,
+    /// Of `result`, as the last `ResultStateGuard` left it.
+    has_columns: Cell<bool>,
+    /// `result.statement`, kept alive only by the results that hold it.
+    description: Cell<Weak<()>>,
+    /// What its executions declare for each parameter. `None`: only NULL so far.
+    parameter_types: Box<[Cell<Option<ParameterType>>]>,
+}
 
+/// What the packets of a result set, or of the reply to COM_STMT_PREPARE, change.
+#[derive(Default)]
+pub(crate) struct ResultState {
+    pub(crate) cached_structure: CachedStructure,
+    pub(crate) params_received: u32,
     pub(crate) columns: Vec<ColumnDefinition41>,
     pub(crate) columns_received: u32,
-
-    pub(crate) status: Status,
     pub(crate) execution_flags: ExecutionFlags,
     pub(crate) fields_flags: DataCellFlags,
     pub(crate) result_count: u64,
-    /// What its executions declare for each parameter. `None`: only NULL so far.
-    parameter_types: Box<[Cell<Option<ParameterType>>]>,
 }
 
 /// Type and signedness, as COM_STMT_EXECUTE declares them.
@@ -48,17 +57,12 @@ impl MySQLStatement {
 
     fn new(status: Status, parameter_types: Box<[Cell<Option<ParameterType>>]>) -> Self {
         Self {
-            cached_structure: CachedStructure::default(),
-            ref_count: bun_ptr::RefCount::init(),
-            statement_id: 0,
-            params: Vec::new(),
-            params_received: 0,
-            columns: Vec::new(),
-            columns_received: 0,
-            status,
-            execution_flags: ExecutionFlags::default(),
-            fields_flags: DataCellFlags::default(),
-            result_count: 0,
+            statement_id: Cell::new(0),
+            params: Cell::default(),
+            status: Cell::new(status),
+            result: Cell::new(None),
+            has_columns: Cell::new(false),
+            description: Cell::default(),
             parameter_types,
         }
     }
@@ -112,7 +116,7 @@ impl Default for ExecutionFlags {
 
 pub use bun_sql::shared::statement_status::Status;
 
-impl MySQLStatement {
+impl ResultState {
     pub(crate) fn reset(&mut self) {
         self.result_count = 0;
         self.columns_received = 0;
@@ -133,16 +137,9 @@ impl MySQLStatement {
             dedupe_columns(self.columns.iter_mut().rev().map(|c| &mut c.name_or_index));
     }
 
-    // Returning `&CachedStructure`
-    // to avoid moving out of `self`; callers may need `.clone()` if they require
-    // an owned copy.
-    pub(crate) fn structure(
-        &mut self,
-        owner: JSValue,
-        global_object: &JSGlobalObject,
-    ) -> &CachedStructure {
+    pub(crate) fn build_structure(&mut self, owner: JSValue, global_object: &JSGlobalObject) {
         if self.cached_structure.has() {
-            return &self.cached_structure;
+            return;
         }
         self.check_for_duplicate_fields();
         self.cached_structure.build_from_columns(
@@ -150,36 +147,83 @@ impl MySQLStatement {
             owner,
             self.columns.iter().map(|c| &c.name_or_index),
         );
-        &self.cached_structure
+    }
+}
+
+/// The `result` of a statement, which gets it back on drop.
+pub(crate) struct ResultStateGuard {
+    statement: Rc<MySQLStatement>,
+    result: Option<ResultState>,
+}
+
+impl Deref for ResultStateGuard {
+    type Target = MySQLStatement;
+
+    fn deref(&self) -> &MySQLStatement {
+        &self.statement
+    }
+}
+
+impl Drop for ResultStateGuard {
+    fn drop(&mut self) {
+        let has_columns = matches!(&self.result, Some(result) if !result.columns.is_empty());
+        self.statement.has_columns.set(has_columns);
+        self.statement.result.put_back(self.result.take());
+    }
+}
+
+impl ResultStateGuard {
+    pub(crate) fn new(statement: Rc<MySQLStatement>) -> Self {
+        Self {
+            result: statement.result.take(),
+            statement,
+        }
     }
 
-    /// `result.statement` of a result of a prepared statement. Without `has_columns`,
-    /// `self.columns` are an earlier result set's.
+    pub(crate) fn split(&mut self) -> (&MySQLStatement, &mut ResultState) {
+        (&self.statement, self.result.get_or_insert_default())
+    }
+}
+
+impl MySQLStatement {
+    /// `result.statement` of a result set of a prepared statement.
     pub(crate) fn description(
-        &mut self,
+        &self,
         global_object: &JSGlobalObject,
         query: &bun_core::String,
-        has_columns: bool,
+        columns: &[ColumnDefinition41],
     ) -> JsResult<JSValue> {
-        if !has_columns && !self.columns.is_empty() {
-            return describe(global_object, query, &self.params, &[]);
-        }
-        if let Some(description) = self.cached_structure.description() {
+        let weak = self.description.take();
+        let cached = weak.get();
+        self.description.put_back(weak);
+        if let Some(description) = cached {
             return Ok(description);
         }
-        let description = describe(global_object, query, &self.params, &self.columns)?;
-        self.cached_structure
-            .set_description(global_object, description);
+        let description = self
+            .params
+            .with_taken(|params| describe(global_object, query, params, columns))?;
+        self.description
+            .set(Weak::create_passive(description, global_object));
         Ok(description)
     }
 
-    /// The columns of the result that just ended, for `describe`.
-    pub(crate) fn take_columns(&mut self, has_columns: bool) -> Vec<ColumnDefinition41> {
-        if has_columns {
-            core::mem::take(&mut self.columns)
-        } else {
-            Vec::new()
+    /// As `description`, for an OK packet without a result set.
+    pub(crate) fn description_without_columns(
+        &self,
+        global_object: &JSGlobalObject,
+        query: &bun_core::String,
+    ) -> JsResult<JSValue> {
+        // The cached description is of an earlier result set.
+        if self.has_columns.get() {
+            return self
+                .params
+                .with_taken(|params| describe(global_object, query, params, &[]));
         }
+        self.description(global_object, query, &[])
+    }
+
+    pub(crate) fn clear_description(&self) {
+        self.description.set(Weak::default());
     }
 }
 
@@ -226,28 +270,24 @@ impl StatementCache {
     pub(crate) const MAX_STATEMENTS: usize = 256;
 
     pub(crate) fn get<P: ExecuteParam>(
-        &mut self,
+        &self,
         query: &[u8],
         params: &[P],
-    ) -> Option<RefPtr<MySQLStatement>> {
+    ) -> Option<Rc<MySQLStatement>> {
         let statement = self.find(query, |statement| statement.accepts(params))?;
         statement.settle(params);
         Some(statement)
     }
 
-    pub(crate) fn insert<P: ExecuteParam>(
-        &mut self,
-        query: &[u8],
-        params: &[P],
-    ) -> RefPtr<MySQLStatement> {
-        let statement = RefPtr::new(MySQLStatement::new(
+    pub(crate) fn insert<P: ExecuteParam>(&self, query: &[u8], params: &[P]) -> Rc<MySQLStatement> {
+        let statement = Rc::new(MySQLStatement::new(
             Status::Parsing,
             params
                 .iter()
                 .map(|param| Cell::new(parameter_type(param)))
                 .collect(),
         ));
-        self.add(query, statement.clone());
+        self.add(query, Rc::clone(&statement));
         statement
     }
 }

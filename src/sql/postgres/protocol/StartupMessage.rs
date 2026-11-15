@@ -12,10 +12,7 @@ pub struct StartupMessage<'a> {
 }
 
 impl StartupMessage<'_> {
-    pub fn write_internal<Context: super::new_writer::WriterContext>(
-        &self,
-        writer: NewWriter<Context>,
-    ) -> Result<(), AnyPostgresError> {
+    pub fn write_internal(&self, writer: &mut NewWriter<'_>) -> Result<(), AnyPostgresError> {
         let user = self.user;
         let database = self.database;
         let options = self.options;

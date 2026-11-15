@@ -122,8 +122,8 @@ public:
     void removeAllEventListeners();
     // The owning Zig::GlobalObject cell is being destroyed; from here on there is no global/VM.
     void globalObjectDestroyed();
-    // Nothing roots the global: there is none from the collection that finds it dead, which is before it is destroyed.
-    void globalObjectCanBeCollected();
+    // For a ShadowRealm: globalObject() is null once the GC finds the global dead, before globalObjectDestroyed() runs.
+    void makeGlobalObjectWeak();
 
     bool isJSExecutionForbidden();
     void reportException(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, JSC::Exception* exception, RefPtr<void*>&&, CachedScript* = nullptr, bool = false)
@@ -191,7 +191,7 @@ private:
     RefPtr<Bun::SharedEnvStore> m_sharedEnvStore;
     JSC::VM* m_vm = nullptr;
     Zig::GlobalObject* m_globalObject = nullptr;
-    std::optional<JSC::Weak<JSC::JSObject>> m_collectableGlobalObject;
+    std::optional<JSC::Weak<JSC::JSObject>> m_weakGlobalObject;
     // The thread's Bun VM; outlives every global created on it and, during teardown, the JSC::VM.
     void* const m_bunVM;
     // What other threads use to reach the VM (see JSVMClientData::vmHandle).

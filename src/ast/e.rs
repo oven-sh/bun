@@ -6,13 +6,13 @@ use core::fmt;
 use bun_alloc::Arena as Bump;
 
 use bun_alloc::AllocError;
-use bun_collections::{VecExt, index_sort};
+use bun_collections::index_sort;
 use bun_core::strings;
 
-use crate::{AstArena, Expr, ExprNodeIndex, ExprNodeList, G, OptionalChain, Ref, StoreRef};
+use crate::{AstArena, AstVec, Expr, ExprNodeIndex, ExprNodeList, G, OptionalChain, Ref, StoreRef};
 use bun_alloc::ArenaVecExt as _;
 
-// AST string fields are arena-owned (bulk-freed via Store/arena reset; never
+// AST string fields are arena-owned (bulk-freed via arena reset; never
 // individually freed). `StoreStr` is `StoreRef`'s `[u8]` sibling: a thin
 // lifetime-erased pointer with safe construction (no `transmute`) and
 // `Deref<Target=[u8]>` under the same valid-until-arena-reset contract.
@@ -49,7 +49,7 @@ pub struct Array {
 impl Default for Array {
     fn default() -> Self {
         Self {
-            items: bun_alloc::AstAlloc::vec(),
+            items: AstVec::new(),
             comma_after_spread: crate::Loc::EMPTY,
             is_single_line: false,
             is_parenthesized: false,
@@ -60,10 +60,8 @@ impl Default for Array {
 }
 // Live subset of `Array` accessors needed by downstream crates.
 impl Array {
-    /// `Vec::append` uses the global arena; `_bump` is kept
-    /// for call-site shape parity and the eventual bump-arena Vec.
-    pub fn push(&mut self, _bump: &Bump, item: Expr) -> Result<(), AllocError> {
-        VecExt::append(&mut self.items, item);
+    pub fn push(&mut self, bump: &AstArena, item: Expr) -> Result<(), AllocError> {
+        self.items.push(bump, item);
         Ok(())
     }
 
@@ -76,7 +74,7 @@ impl Array {
 impl Array {
     pub fn inline_spread_of_array_literals(
         &mut self,
-        _bump: &Bump,
+        bump: &AstArena,
         estimated_count: usize,
     ) -> Result<ExprNodeList, AllocError> {
         // This over-allocates a little but it's fine
@@ -85,7 +83,7 @@ impl Array {
         // over invalid bit patterns. Push into reserved capacity instead —
         // same allocation profile (one upfront `with_capacity`), no uninit.
         let mut out: ExprNodeList =
-            ExprNodeList::init_capacity(estimated_count + self.items.len_u32() as usize);
+            ExprNodeList::with_capacity_in(estimated_count + self.items.len_u32() as usize, bump);
         // Reshaped for borrowck — iterate items via index so the &mut
         // borrow of `out` does not overlap a shared borrow of `self`.
         let items_len = self.items.len_u32() as usize;
@@ -96,9 +94,9 @@ impl Array {
                     if let crate::expr::Data::EArray(inner) = &val.value.data {
                         for inner_item in inner.items.slice() {
                             if matches!(inner_item.data, crate::expr::Data::EMissing(_)) {
-                                out.push(Expr::init(Undefined {}, inner_item.loc));
+                                out.push(bump, Expr::init(Undefined {}, inner_item.loc));
                             } else {
-                                out.push(*inner_item);
+                                out.push(bump, *inner_item);
                             }
                         }
                         // skip empty arrays
@@ -110,7 +108,7 @@ impl Array {
                 _ => {}
             }
 
-            out.push(item);
+            out.push(bump, item);
         }
         Ok(out)
     }
@@ -226,7 +224,7 @@ impl Default for New {
     fn default() -> Self {
         Self {
             target: ExprNodeIndex::EMPTY,
-            args: bun_alloc::AstAlloc::vec(),
+            args: AstVec::new(),
             can_be_unwrapped_if_unused: CallUnwrap::Never,
             close_parens_loc: crate::Loc::EMPTY,
         }
@@ -278,7 +276,7 @@ impl Default for Call {
     fn default() -> Self {
         Self {
             target: ExprNodeIndex::EMPTY,
-            args: bun_alloc::AstAlloc::vec(),
+            args: AstVec::new(),
             optional_chain: None,
             is_direct_eval: false,
             close_paren_loc: crate::Loc::EMPTY,
@@ -300,7 +298,7 @@ pub struct Dot {
     // target is Node
     pub target: ExprNodeIndex,
     // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
-    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
+    // with the arena — see `nodes.rs` StoreStr docs).
     pub name: Str,
     pub name_loc: crate::Loc,
     pub optional_chain: Option<OptionalChain>,
@@ -636,8 +634,8 @@ impl Default for JSXElement {
     fn default() -> Self {
         Self {
             tag: None,
-            properties: bun_alloc::AstAlloc::vec(),
-            children: bun_alloc::AstAlloc::vec(),
+            properties: AstVec::new(),
+            children: AstVec::new(),
             key_prop_index: -1,
             flags: crate::flags::JSXElementBitset::default(),
             close_tag_loc: crate::Loc::EMPTY,
@@ -809,7 +807,7 @@ impl_number_cast!(usize);
 
 pub struct BigInt {
     // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
-    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
+    // with the arena — see `nodes.rs` StoreStr docs).
     pub value: Str,
 }
 impl BigInt {
@@ -1280,7 +1278,7 @@ pub struct Object {
 impl Default for Object {
     fn default() -> Self {
         Self {
-            properties: bun_alloc::AstAlloc::vec(),
+            properties: AstVec::new(),
             comma_after_spread: crate::Loc::EMPTY,
             is_single_line: false,
             is_parenthesized: false,
@@ -1372,8 +1370,8 @@ impl Object {
             self.properties.slice_mut()[q.i as usize].value = Some(expr);
         } else {
             let key = Expr::allocate(bump, EString::init(key), expr.loc);
-            VecExt::append(
-                &mut self.properties,
+            self.properties.push(
+                bump,
                 G::Property {
                     flags: own_key_property_flags(&key),
                     key: Some(key),
@@ -1439,8 +1437,8 @@ impl Object {
                 crate::expr::Data::EObject(mut o) => o.get_or_put_object(next, bump)?,
                 _ => unreachable!(),
             };
-            VecExt::append(
-                &mut self.properties,
+            self.properties.push(
+                bump,
                 G::Property {
                     key: Some(rope.head),
                     value: Some(obj),
@@ -1452,8 +1450,8 @@ impl Object {
         }
 
         let out = Expr::allocate(bump, Object::default(), rope.head.loc);
-        VecExt::append(
-            &mut self.properties,
+        self.properties.push(
+            bump,
             G::Property {
                 key: Some(rope.head),
                 value: Some(out),
@@ -1482,9 +1480,9 @@ impl Object {
     /// Appends a property without checking for an existing key. Callers that
     /// need duplicate detection must check `as_property` with UTF-8 bytes
     /// first — a UTF-16 EString key's raw `data` view is not byte-comparable.
-    pub fn append_property(&mut self, key: Expr, value: Expr) {
-        VecExt::append(
-            &mut self.properties,
+    pub fn append_property(&mut self, bump: &AstArena, key: Expr, value: Expr) {
+        self.properties.push(
+            bump,
             G::Property {
                 flags: own_key_property_flags(&key),
                 key: Some(key),
@@ -1574,7 +1572,7 @@ pub struct EString {
     // It did not improve benchmarks. Neither did converting this from a heap-allocated type to a stack-allocated type.
     // TODO: change this to *const anyopaque and change all uses to either .slice8() or .slice16()
     // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
-    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
+    // with the arena — see `nodes.rs` StoreStr docs).
     pub data: Str,
 
     // A very simple rope implementation
@@ -1671,7 +1669,7 @@ impl EString {
             toml_datetime: None,
         }
     }
-    /// `data` is arena-owned (source text or `Expr.Data.Store` / bump arena)
+    /// `data` is arena-owned (source text or the arena)
     /// and bulk-freed; `StoreStr` records it under the `StoreRef` contract.
     pub fn init(data: &[u8]) -> Self {
         Self {
@@ -1810,8 +1808,8 @@ impl EString {
         self.next = None;
     }
 
-    /// `self` if not a rope, else a copy flattened into `bump`. Never writes to `self`.
-    pub fn flattened(&self, bump: &Bump) -> Flattened<'_> {
+    /// `self` if not a rope, else a copy flattened into `bump`. Never writes to `self`. Only a rope creates the heap of `bump`.
+    pub fn flattened(&self, bump: &AstArena) -> Flattened<'_> {
         if self.next.is_none() || !self.is_utf8() {
             return Flattened::Borrowed(self);
         }
@@ -1938,9 +1936,7 @@ impl EString {
 
     /// Link `other` onto this string's rope tail. Mutates both ropes: neither may have another owner.
     ///
-    /// `other` MUST be Store/arena-allocated (callers pass
-    /// `Expr::init(EString, ...).data.e_string_mut()` or a freshly
-    /// `Store::append`ed node); its address is captured as a `StoreRef`.
+    /// `other` MUST be arena-allocated: its address is captured as a `StoreRef`.
     pub(crate) fn push(&mut self, other: &mut EString) {
         debug_assert!(self.is_utf8());
         debug_assert!(other.is_utf8());
@@ -1953,7 +1949,7 @@ impl EString {
         }
         self.rope_len += other.rope_len;
 
-        // Caller contract — `other` lives in the AST Store/arena and outlives
+        // Caller contract — `other` lives in the AST arena and outlives
         // the next reset, so capturing its address as a `StoreRef` is sound.
         let other_ref = StoreRef::from_bump(other);
         if self.next.is_none() {
@@ -1964,7 +1960,7 @@ impl EString {
             while end.get().next.is_some() {
                 end = end.get().end.unwrap();
             }
-            // `end` points into the live Store; rope nodes are mutated in
+            // `end` points into the live arena; rope nodes are mutated in
             // place via `StoreRef::DerefMut` (single-threaded visitor).
             end.next = Some(other_ref);
             self.end = Some(other_ref);
@@ -2074,12 +2070,12 @@ impl TemplateContents {
 
 impl Template {
     /// "`a${'b'}c`" => "`abc`"
-    pub fn fold(&mut self, bump: &Bump, loc: crate::Loc) -> Expr {
+    pub fn fold(&mut self, bump: &AstArena, loc: crate::Loc) -> Expr {
         if self.tag.is_some()
             || (matches!(self.head, TemplateContents::Cooked(_)) && !self.head.cooked().is_utf8())
         {
             // we only fold utf-8/ascii for now
-            // `self` is Store/arena-allocated, so capturing its address as a
+            // `self` is arena-allocated, so capturing its address as a
             // `StoreRef` is sound.
             return Expr {
                 data: crate::expr::Data::ETemplate(StoreRef::from_bump(self)),
@@ -2090,12 +2086,12 @@ impl Template {
         debug_assert!(matches!(self.head, TemplateContents::Cooked(_)));
 
         if self.parts().is_empty() {
-            return Expr::init(core::mem::take(self.head.cooked_mut()), loc);
+            return Expr::allocate(bump, core::mem::take(self.head.cooked_mut()), loc);
         }
 
         let mut parts =
             bun_alloc::ArenaVec::<TemplatePart>::with_capacity_in(self.parts().len(), bump);
-        let mut head = Expr::init(core::mem::take(self.head.cooked_mut()), loc);
+        let mut head = Expr::allocate(bump, core::mem::take(self.head.cooked_mut()), loc);
         for part_src in self.parts() {
             // Field-wise copy (TemplatePart is not `Copy` only
             // because `EString` does not derive it; all fields are structurally `Copy`).
@@ -2111,24 +2107,26 @@ impl Template {
             match &part.value.data {
                 crate::expr::Data::ENumber(n) => {
                     if let Some(s) = n.to_string(bump) {
-                        part.value = Expr::init(EString::init(&s), part.value.loc);
+                        part.value = Expr::allocate(bump, EString::init(&s), part.value.loc);
                     }
                 }
                 crate::expr::Data::ENull(_) => {
-                    part.value = Expr::init(EString::init(b"null"), part.value.loc);
+                    part.value = Expr::allocate(bump, EString::init(b"null"), part.value.loc);
                 }
                 crate::expr::Data::EBoolean(b) => {
-                    part.value = Expr::init(
+                    part.value = Expr::allocate(
+                        bump,
                         EString::init(if b.value { &b"true"[..] } else { &b"false"[..] }),
                         part.value.loc,
                     );
                 }
                 crate::expr::Data::EUndefined(_) => {
-                    part.value = Expr::init(EString::init(b"undefined"), part.value.loc);
+                    part.value = Expr::allocate(bump, EString::init(b"undefined"), part.value.loc);
                 }
                 crate::expr::Data::EBigInt(value) => {
                     if !BigInt::has_radix(&value.value) {
-                        part.value = Expr::init(EString::init(&value.value), part.value.loc);
+                        part.value =
+                            Expr::allocate(bump, EString::init(&value.value), part.value.loc);
                     }
                 }
                 _ => {}
@@ -2156,7 +2154,8 @@ impl Template {
                             .e_string_mut()
                             .expect("infallible: variant checked")
                             .push(
-                                Expr::init(
+                                Expr::allocate(
+                                    bump,
                                     part.value
                                         .data
                                         .e_string()
@@ -2175,10 +2174,14 @@ impl Template {
                             .e_string_mut()
                             .expect("infallible: variant checked")
                             .push(
-                                Expr::init(core::mem::take(part.tail.cooked_mut()), part.tail_loc)
-                                    .data
-                                    .e_string_mut()
-                                    .unwrap(),
+                                Expr::allocate(
+                                    bump,
+                                    core::mem::take(part.tail.cooked_mut()),
+                                    part.tail_loc,
+                                )
+                                .data
+                                .e_string_mut()
+                                .unwrap(),
                             );
                     }
 
@@ -2197,7 +2200,8 @@ impl Template {
                             > 0
                         {
                             prev_part.tail.cooked_mut().push(
-                                Expr::init(
+                                Expr::allocate(
+                                    bump,
                                     part.value
                                         .data
                                         .e_string()
@@ -2213,10 +2217,14 @@ impl Template {
 
                         if part.tail.cooked().len() > 0 {
                             prev_part.tail.cooked_mut().push(
-                                Expr::init(core::mem::take(part.tail.cooked_mut()), part.tail_loc)
-                                    .data
-                                    .e_string_mut()
-                                    .unwrap(),
+                                Expr::allocate(
+                                    bump,
+                                    core::mem::take(part.tail.cooked_mut()),
+                                    part.tail_loc,
+                                )
+                                .data
+                                .e_string_mut()
+                                .unwrap(),
                             );
                         }
                     } else {
@@ -2239,7 +2247,8 @@ impl Template {
 
         // Arena-owned mutable slice; `into_bump_slice_mut()` preserves write
         // provenance for downstream mutators.
-        Expr::init(
+        Expr::allocate(
+            bump,
             Template {
                 tag: None,
                 parts: crate::StoreSlice::from_bump(parts),
@@ -2257,7 +2266,7 @@ impl Template {
 
 pub struct RegExp {
     // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
-    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
+    // with the arena — see `nodes.rs` StoreStr docs).
     pub value: Str,
 
     /// This exists for JavaScript bindings
@@ -2331,7 +2340,7 @@ pub struct RequireResolveString {
 pub struct InlinedEnum {
     pub value: ExprNodeIndex,
     // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
-    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
+    // with the arena — see `nodes.rs` StoreStr docs).
     pub comment: Str,
 }
 

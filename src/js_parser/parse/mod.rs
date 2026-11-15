@@ -10,8 +10,6 @@ pub(crate) mod parse_stmt;
 pub mod parse_suffix;
 pub(crate) mod parse_typescript;
 
-use bun_collections::VecExt;
-
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
 use crate::Error;
@@ -279,9 +277,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             extends,
             close_brace_loc,
             // `class_opts` holds a shared slice; the visit pass writes to this one.
-            ts_decorators: ExprNodeList::from_arena_slice(class_opts.ts_decorators)
-                .leak()
-                .into(),
+            ts_decorators: ExprNodeList::from_slice_in(class_opts.ts_decorators, p.ast_arena)
+                .into_store_slice(),
             class_keyword,
             body_loc,
             properties: bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut()),
@@ -384,7 +381,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         let close_paren_loc = p.lexer.loc();
         p.lexer.expect(T::TCloseParen)?;
         Ok(ExprListLoc {
-            list: ExprNodeList::from_arena_slice(&args),
+            list: ExprNodeList::from_slice_in(&args, p.ast_arena),
             loc: close_paren_loc,
         })
     }
@@ -484,7 +481,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             {
                 p.lexer.next()?;
                 let rhs = p.parse_expr(Level::Comma)?;
-                item = Expr::assign(item, rhs);
+                item = Expr::assign(p.ast_arena, item, rhs);
             }
 
             items_list.push(item);
@@ -635,7 +632,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             return Ok(p.new_expr(
                 E::Call {
                     target: async_expr,
-                    args: ExprNodeList::from_arena_slice(items),
+                    args: ExprNodeList::from_slice_in(items, p.ast_arena),
                     ..Default::default()
                 },
                 loc,
@@ -651,7 +648,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 return Err(crate::Error::SyntaxError);
             }
 
-            let mut value = Expr::join_all_with_comma(items);
+            let mut value = Expr::join_all_with_comma(p.ast_arena, items);
             p.mark_expr_as_parenthesized(&mut value);
             return Ok(value);
         }
@@ -1338,7 +1335,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             p.lexer.next()?;
         }
 
-        Ok(G::DeclList::from_arena_slice(&decls))
+        Ok(G::DeclList::from_slice_in(&decls, p.ast_arena))
     }
 
     pub(crate) fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {
@@ -1534,7 +1531,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                     p.module_scope_directive_loc = stmt.loc;
                                 }
                                 if let Some(as_written) = as_written {
-                                    stmt = Stmt::alloc(
+                                    stmt = p.s(
                                         S::Directive {
                                             value: bun_ast::StoreStr::new(as_written),
                                         },
@@ -1557,7 +1554,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                     Some(as_written) => as_written,
                                     None => str_.string(p.arena).expect("OOM"),
                                 };
-                                stmt = Stmt::alloc(
+                                stmt = p.s(
                                     S::Directive {
                                         value: bun_ast::StoreStr::new(bytes),
                                     },

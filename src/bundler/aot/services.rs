@@ -9,7 +9,7 @@ use bun_aot::load::source_provider::{
     PathsOfProgram, RefusedText, Resolution, ResolveRequest, SourceFile,
 };
 use bun_aot::{SourceProvider, WithoutServices};
-use bun_ast::{ASTMemoryAllocator, AstArena, Loader, Log, Msg, SideEffects};
+use bun_ast::{Loader, Log, Msg, SideEffects};
 use bun_core::ZBox;
 use bun_js_parser::{Define, ExpandedImportMetaGlob};
 use bun_paths::resolve_path::posix_to_platform_in_place;
@@ -61,15 +61,8 @@ impl BuildContext {
 
     pub(crate) fn with_worker<R>(&self, work: impl FnOnce(&mut Transpiler<'static>) -> R) -> R {
         let mut worker = Worker::get(self.bundle());
-        with_ast_scope(|_| work(&mut worker.transpiler))
+        work(&mut worker.transpiler)
     }
-}
-
-pub(crate) fn with_ast_scope<R>(work: impl FnOnce(&AstArena) -> R) -> R {
-    let arena = AstArena::new();
-    let mut store = ASTMemoryAllocator::borrowing(&arena);
-    let _scope = store.enter();
-    work(&arena)
 }
 
 /// Bun's resolver, asked which file runs for an import.
@@ -105,11 +98,6 @@ impl FileFinder {
     }
 
     pub fn find(&mut self, search: &FileSearch<'_>) -> FoundCode {
-        with_ast_scope(|_| self.find_in_ast_scope(search))
-    }
-
-    // The resolver reads `package.json` and `tsconfig.json` into the thread's store of trees.
-    fn find_in_ast_scope(&mut self, search: &FileSearch<'_>) -> FoundCode {
         let resolver = &mut self.0;
         let kind = match search.kind {
             CodeImportKind::EntryPoint => bun_ast::ImportKind::EntryPointBuild,
@@ -184,7 +172,7 @@ pub(crate) fn with_test_context<R>(
     OUTPUT.call_once(bun_core::output::stdio::init);
     let log = Log::init();
     let event_loop = bun_event_loop::AnyEventLoop::default();
-    let arena = AstArena::new();
+    let arena = bun_ast::AstArena::new();
     let transform_options = crate::options::TransformOptions {
         absolute_working_dir: Some(Box::from(&b"/project"[..])),
         target: Some(bun_options_types::schema::api::Target::Bun),
@@ -736,23 +724,20 @@ impl SourceProvider for BundlerServices {
                 .resolver
         };
         let mut names = NamesOfPackages::default();
-        with_ast_scope(|_| {
-            // A program that runs in place asks the disk, and one entry point is loaded by nobody.
-            if !wanted.runs_in_place && entry_points.len() > 1 {
-                names.of_entry_points_and_folders =
-                    resolver.find_package_names(&entry_points, &folders);
-                names.path_aliases = resolver.find_path_aliases(&folders);
-            }
-            if !wanted.runs_in_place {
-                names.nearer = resolver.find_nearer_packages(&folders);
-                names.that_lead_outside =
-                    resolver.find_names_that_lead_outside(&files, &entry_points);
-            }
-            if wanted.loads_code_from_disk && !files.is_empty() {
-                let root = pair(&wanted.root_directory, &self.context.module_prefix);
-                names.further = resolver.find_further_package_names(&files, root);
-            }
-        });
+        // A program that runs in place asks the disk, and one entry point is loaded by nobody.
+        if !wanted.runs_in_place && entry_points.len() > 1 {
+            names.of_entry_points_and_folders =
+                resolver.find_package_names(&entry_points, &folders);
+            names.path_aliases = resolver.find_path_aliases(&folders);
+        }
+        if !wanted.runs_in_place {
+            names.nearer = resolver.find_nearer_packages(&folders);
+            names.that_lead_outside = resolver.find_names_that_lead_outside(&files, &entry_points);
+        }
+        if wanted.loads_code_from_disk && !files.is_empty() {
+            let root = pair(&wanted.root_directory, &self.context.module_prefix);
+            names.further = resolver.find_further_package_names(&files, root);
+        }
         *self.names_of_packages.lock() = names;
     }
 
@@ -1181,14 +1166,9 @@ impl SourceProvider for BundlerServices {
 
 #[cfg(test)]
 mod tests {
-    use super::{BundlerServices, NamesWanted, with_ast_scope, with_test_context};
+    use super::{BundlerServices, NamesWanted, with_test_context};
     use bun_aot::SourceProvider;
     use bun_aot::load::source_provider::ModuleName;
-    use bun_ast::{E, Expr, ExprData, Loc};
-
-    fn allocate_array() -> Expr {
-        Expr::init(E::Array::default(), Loc::EMPTY)
-    }
 
     #[test]
     #[cfg_attr(miri, ignore)]
@@ -1215,22 +1195,5 @@ mod tests {
                 assert!(services.shut_down().is_empty());
             },
         );
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn nested_ast_scopes_restore_outer_store() {
-        with_ast_scope(|_| {
-            let before = allocate_array();
-            with_ast_scope(|_| {
-                with_ast_scope(|_| {
-                    assert!(matches!(allocate_array().data, ExprData::EArray(_)));
-                });
-                assert!(matches!(allocate_array().data, ExprData::EArray(_)));
-            });
-            let after = allocate_array();
-            assert!(matches!(before.data, ExprData::EArray(_)));
-            assert!(matches!(after.data, ExprData::EArray(_)));
-        });
     }
 }

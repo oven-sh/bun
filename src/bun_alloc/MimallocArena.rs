@@ -25,8 +25,14 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering, fence};
 
-use crate::ast_alloc::thread_key;
 use crate::mimalloc;
+
+/// Unique among running threads.
+fn thread_key() -> usize {
+    #[thread_local]
+    static KEY: u8 = 0;
+    (&raw const KEY).addr()
+}
 
 // ── Debug-only thread-ownership guard ─────────────────────────────────────
 //
@@ -464,7 +470,7 @@ impl MimallocArena {
     /// `mi_heap_new()` — non-null by `NonNull`, and destroyed exactly once in
     /// `Drop`/`reset()`.
     #[inline]
-    pub fn heap_ptr(&self) -> *mut mimalloc::Heap {
+    fn heap_ptr(&self) -> *mut mimalloc::Heap {
         self.heap.as_ptr()
     }
 
@@ -504,8 +510,7 @@ impl MimallocArena {
 
     /// Retains the warm heap while its in-use footprint is `<= limit`, and
     /// only then falls back to a full [`Self::reset`] (`mi_heap_destroy` +
-    /// `mi_heap_new`). Returns `true` when the heap was retained, `false` when
-    /// it was recycled.
+    /// `mi_heap_new`).
     ///
     /// **Why this isn't a no-op-or-full-reset.** The ideal behavior would be
     /// "free every block but keep the warm pages (up to `limit`)" — but
@@ -514,8 +519,7 @@ impl MimallocArena {
     /// to mimalloc (which may purge/decommit them). So the policy is
     /// "keep the *whole* heap — blocks and all — while it is still small;
     /// recycle it once it grows past `limit`". The retained blocks are dead
-    /// (arena callers never `mi_free`; `AstAlloc::deallocate` is a no-op by
-    /// design), so they *are* garbage — but `limit` bounds that garbage, and
+    /// (arena callers never `mi_free`), so they *are* garbage — but `limit` bounds that garbage, and
     /// in exchange the per-cycle `mi_heap_destroy` + `mi_heap_new` (and the
     /// re-commit + memset its first allocation pays when mimalloc has since
     /// purged the arena page) is amortised away for the common case of many
@@ -535,16 +539,15 @@ impl MimallocArena {
     /// heap footprint is already near zero at this point, so the limit is never
     /// hit and the heap is retained for free. The one caller where the limit
     /// *does* fire is the transpiler's per-module AST arena (`jsc_hooks`): it
-    /// also backs `AstAlloc`, whose `deallocate` is a deliberate no-op (the AST
-    /// graph is abandoned, not freed), so that heap's footprint only ever
+    /// is abandoned, not freed, so that heap's footprint only ever
     /// grows. `mi_heap_collect(force=true)` cannot reclaim it — it returns only
-    /// *empty* pages, and the dead AST blocks pin every page. The only bulk
+    /// *empty* pages, and the dead blocks pin every page. The only bulk
     /// reclaim is `mi_heap_destroy` (the `reset()` path). So for that caller the
     /// `limit` is purely a "how much dead AST do we tolerate before paying a
     /// `mi_heap_destroy`" knob; raising it trades steady-state RSS for fewer
     /// destroys per transpile batch.
     #[inline]
-    pub fn reset_retain_with_limit(&mut self, limit: usize) -> bool {
+    pub fn reset_retain_with_limit(&mut self, limit: usize) {
         // `borrowing_default()` arenas (`!owns`) wrap `mi_heap_main()`, whose
         // footprint is the whole process — they always fall through to
         // `reset()`, which debug-asserts `owns` (recycling the main heap is a
@@ -559,10 +562,9 @@ impl MimallocArena {
             #[cfg(debug_assertions)]
             self.owning_thread
                 .store(debug_thread_stamp(), Ordering::Relaxed);
-            return true;
+            return;
         }
         self.reset();
-        false
     }
 
     /// `bumpalo::Bump::allocated_bytes` parity — total bytes currently in use

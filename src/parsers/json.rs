@@ -1023,8 +1023,7 @@ impl Materializer<'_> {
             return E::Object::default();
         }
         let rows = o.properties();
-        let mut properties: G::PropertyList =
-            Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
+        let mut properties = G::PropertyList::with_capacity_in(rows.len(), self.bump);
         let value_locs = o.value_locs();
         for (i, row) in rows.iter().enumerate() {
             let key = Expr::allocate(
@@ -1039,14 +1038,17 @@ impl Materializer<'_> {
                 Some(locs) => locs[i],
                 None => property_value_loc_or_key(self.contents, row.key_loc),
             };
-            properties.push(G::Property {
-                flags: E::own_key_property_flags(&key),
-                key: Some(key),
-                value: Some(self.json_value(&row.value, value_loc)),
-                kind: G::PropertyKind::Normal,
-                initializer: None,
-                ..Default::default()
-            });
+            properties.push(
+                self.bump,
+                G::Property {
+                    flags: E::own_key_property_flags(&key),
+                    key: Some(key),
+                    value: Some(self.json_value(&row.value, value_loc)),
+                    kind: G::PropertyKind::Normal,
+                    initializer: None,
+                    ..Default::default()
+                },
+            );
         }
         E::Object {
             properties,
@@ -1063,8 +1065,7 @@ impl Materializer<'_> {
             return E::Array::default();
         }
         let rows = a.items();
-        let mut items: js_ast::ExprNodeList =
-            Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
+        let mut items = js_ast::ExprNodeList::with_capacity_in(rows.len(), self.bump);
         let item_locs = a.item_locs();
         let mut cursor = match item_locs {
             Some(_) => None,
@@ -1077,7 +1078,7 @@ impl Materializer<'_> {
                 Some(locs) => locs[i],
                 None => cursor.map_or(loc, bun_ast::usize2loc),
             };
-            items.push(self.json_value(item, item_loc));
+            items.push(self.bump, self.json_value(item, item_loc));
             if item_locs.is_none() {
                 cursor = cursor.and_then(|p| array_next_item(self.contents, p));
             }

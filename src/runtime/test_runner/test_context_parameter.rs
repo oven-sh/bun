@@ -89,8 +89,6 @@ impl ContextParameter {
 
     fn parse(text: &[u8], loader: bun_ast::Loader, is_arrow_function: bool, index: usize) -> Option<ContextParameter> {
         let arena = bun_ast::AstArena::new();
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-        let _ast_scope = ast_memory_allocator.enter();
         let source = bun_ast::Source::init_path_string(&b"function.js"[..], text);
         let mut options = bun_js_parser::ParserOptions::init(Default::default(), loader);
         options.features.no_macros = true;
@@ -105,7 +103,7 @@ impl ContextParameter {
                     };
                     let mut function = &only.value.data;
                     if let Data::EObject(object) = function
-                        && let [G::Property { value: Some(method), .. }] = object.properties.as_slice()
+                        && let [G::Property { value: Some(method), .. }] = object.properties.slice()
                     {
                         function = &method.data;
                     }

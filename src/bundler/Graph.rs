@@ -2,7 +2,6 @@ use core::sync::SyncView;
 
 use crate::BundledAst as JSAst;
 use bun_alloc::Arena as ThreadLocalArena;
-use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::server_component_boundary;
 use bun_collections::MultiArrayList;
 use enum_map::EnumMap;
@@ -12,7 +11,7 @@ use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::options;
 use crate::{AdditionalFile, BundleV2, ThreadPool};
 
-use bun_ast::{AstArena, Index};
+use bun_ast::{AstArena, AstVec, Index, StoreStr};
 use bun_css::BundlerStyleSheet;
 
 // `bun.ast.Index.Int` — the underlying integer repr of `Index`.
@@ -124,10 +123,8 @@ pub struct InputFile<'a> {
     pub(crate) secondary_path: AstVec<u8>,
     pub(crate) loader: options::Loader,
     pub side_effects: SideEffects,
-    // No `arena` field — the owned fields
-    // (Box/Vec) carry their allocator.
     pub additional_files: AstVec<AdditionalFile>,
-    pub unique_key_for_additional_file: Box<[u8], AstAlloc>,
+    pub unique_key_for_additional_file: StoreStr,
     pub content_hash_for_additional_file: u64,
     pub flags: InputFileFlags,
 }
@@ -136,11 +133,11 @@ impl Default for InputFile<'_> {
     fn default() -> Self {
         Self {
             source: bun_ast::Source::default(),
-            secondary_path: AstAlloc::vec(),
+            secondary_path: AstVec::new(),
             loader: options::Loader::default(),
             side_effects: SideEffects::default(),
-            additional_files: AstAlloc::vec(),
-            unique_key_for_additional_file: AstAlloc::vec().into_boxed_slice(),
+            additional_files: AstVec::new(),
+            unique_key_for_additional_file: StoreStr::EMPTY,
             content_hash_for_additional_file: 0,
             flags: InputFileFlags::default(),
         }
@@ -157,7 +154,7 @@ bun_collections::multi_array_columns! {
         loader: options::Loader,
         side_effects: SideEffects,
         additional_files: AstVec<AdditionalFile>,
-        unique_key_for_additional_file: Box<[u8], AstAlloc>,
+        unique_key_for_additional_file: StoreStr,
         content_hash_for_additional_file: u64,
         flags: InputFileFlags,
     }
@@ -209,6 +206,11 @@ impl<'a> Graph<'a> {
     #[inline]
     pub(crate) fn ast_arena(&mut self) -> &'a AstArena {
         self.ast_arena.as_mut()
+    }
+
+    pub(crate) fn add_additional_file(&mut self, source_index: IndexInt, file: AdditionalFile) {
+        self.input_files.items_additional_files_mut()[source_index as usize]
+            .push(self.ast_arena.as_mut(), file);
     }
 
     #[inline]

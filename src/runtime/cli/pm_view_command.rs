@@ -1,7 +1,7 @@
 use bstr::BStr;
 use bun_alloc::Arena as Bump;
 use bun_ast::AstArena;
-use bun_collections::{StringArrayHashMap, VecExt};
+use bun_collections::StringArrayHashMap;
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
 use bun_core::fmt::escape_control_chars;
@@ -316,7 +316,10 @@ pub(crate) fn view(
         let versions_array = ast::Expr::allocate(
             &bump,
             ast::E::Array {
-                items: bun_alloc::AstAlloc::vec_from_iter(keys.into_iter().map(|(_, _, key)| key)),
+                items: ast::ExprNodeList::from_iter_in(
+                    keys.into_iter().map(|(_, _, key)| key),
+                    &bump,
+                ),
                 ..Default::default()
             },
             bun_ast::Loc { start: -1 },

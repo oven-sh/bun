@@ -1,5 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, isDebug, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  expectRssDeltaBelow,
+  hideFromStackTrace,
+  integersThatNeedRounding,
+  isDebug,
+  tempDir,
+} from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -2755,6 +2764,23 @@ export const after = { a: 1 };
         exitCode: 0,
         signalCode: null,
       });
+    });
+
+    it("does not leak the value when the transpiler is collected", async () => {
+      const code = `
+        const define = { BIG: "[" + Buffer.alloc(98_000, '{"":1},').toString() + "1]" };
+        function rssAfterCreating(times) {
+          for (let i = 0; i < times; i++) {
+            new Bun.Transpiler({ define });
+            Bun.gc(true);
+          }
+          return process.memoryUsage.rss();
+        }
+        const before = rssAfterCreating(3);
+        console.log(JSON.stringify({ deltaMiB: (rssAfterCreating(10) - before) / 1024 / 1024 }));
+      `;
+      // A leak keeps 4.5 MiB per transpiler.
+      await expectRssDeltaBelow(["-e", code], { release: 12, debug: 15 });
     });
   });
 

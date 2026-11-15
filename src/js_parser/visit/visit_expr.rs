@@ -1,5 +1,4 @@
 #![warn(unused_must_use)]
-use bun_collections::VecExt;
 use std::io::Write as _;
 
 use bstr::BStr;
@@ -238,7 +237,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     ..Default::default()
                 }]);
 
-                let is_error = p.const_values.contains_key(&result.r#ref) || p.options.bundle;
+                let is_error = p.const_values.contains(&result.r#ref) || p.options.bundle;
                 match is_error {
                     true => p.log().add_range_error_fmt_with_notes(
                         Some(p.source),
@@ -413,25 +412,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 // That would reduce the amount of allocations a little
                 if runtime == options::JSX::Runtime::Classic || is_key_after_spread {
                     // Arguments to createElement()
-                    let mut args = ExprNodeList::init_capacity(2 + children_count as usize);
-                    VecExt::append(&mut args, tag);
+                    let mut args =
+                        ExprNodeList::with_capacity_in(2 + children_count as usize, p.ast_arena);
+                    args.push(p.ast_arena, tag);
 
                     let num_props = e_.properties.len_u32();
                     if num_props > 0 {
-                        // PropertyList = Vec<Property> is already arena-backed and the
-                        // JSX node is consumed; reuse in place.
-                        VecExt::append(
-                            &mut args,
+                        // The JSX node is consumed, so its list is reused.
+                        args.push(
+                            p.ast_arena,
                             p.new_expr(
                                 E::Object {
-                                    properties: bun_alloc::AstAlloc::take(&mut e_.properties),
+                                    properties: core::mem::take(&mut e_.properties),
                                     ..Default::default()
                                 },
                                 expr.loc,
                             ),
                         );
                     } else {
-                        VecExt::append(&mut args, p.new_expr(E::Null {}, expr.loc));
+                        args.push(p.ast_arena, p.new_expr(E::Null {}, expr.loc));
                     }
 
                     let children_elements = &e_.children.slice()[0..children_count as usize];
@@ -439,7 +438,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         let mut arg = *child;
                         p.visit_expr(&mut arg);
                         if !matches!(arg.data, Data::EMissing(..)) {
-                            VecExt::append(&mut args, arg);
+                            args.push(p.ast_arena, arg);
                         }
                     }
 
@@ -484,7 +483,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     // --- These must be done in all cases --
                     let maybe_key_value: Option<ExprNodeIndex> = if e_.key_prop_index > -1 {
                         let idx = e_.key_prop_index as u32 as usize;
-                        e_.properties.ordered_remove(idx).value
+                        e_.properties.remove(idx).value
                     } else {
                         None
                     };
@@ -546,13 +545,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     let mut props: G::PropertyList = match spread_object {
                         // Another expression can reference the same spread object (e.g. a macro result), so copy its list.
                         Some(object) => {
-                            let mut props = G::PropertyList::init_capacity(
+                            let mut props = G::PropertyList::with_capacity_in(
                                 object.properties.len() + usize::from(!e_.children.is_empty()),
+                                p.ast_arena,
                             );
-                            props.extend_from_slice(&object.properties);
+                            props.extend_from_slice(p.ast_arena, &object.properties);
                             props
                         }
-                        None => bun_alloc::AstAlloc::take(&mut e_.properties),
+                        None => core::mem::take(&mut e_.properties),
                     };
 
                     // Typescript defines static jsx as children.len > 1 or single spread
@@ -565,24 +565,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         // Capture before `mem::take` zeroes `e_.children.len` (struct-literal
                         // fields evaluate in written order; spec reads original len).
                         let children_single_line = e_.children.len_u32() < 2;
-                        props.push(G::Property {
-                            key: Some(children_key),
-                            value: Some(p.new_expr(
-                                E::Array {
-                                    items: bun_alloc::AstAlloc::take(&mut e_.children),
-                                    is_single_line: children_single_line,
-                                    ..Default::default()
-                                },
-                                e_.close_tag_loc,
-                            )),
-                            ..Default::default()
-                        });
+                        props.push(
+                            p.ast_arena,
+                            G::Property {
+                                key: Some(children_key),
+                                value: Some(p.new_expr(
+                                    E::Array {
+                                        items: core::mem::take(&mut e_.children),
+                                        is_single_line: children_single_line,
+                                        ..Default::default()
+                                    },
+                                    e_.close_tag_loc,
+                                )),
+                                ..Default::default()
+                            },
+                        );
                     } else if e_.children.len_u32() == 1 {
-                        props.push(G::Property {
-                            key: Some(children_key),
-                            value: Some(e_.children.slice()[0]),
-                            ..Default::default()
-                        });
+                        props.push(
+                            p.ast_arena,
+                            G::Property {
+                                key: Some(children_key),
+                                value: Some(e_.children.slice()[0]),
+                                ..Default::default()
+                            },
+                        );
                     }
 
                     // Either:
@@ -593,11 +599,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     } else {
                         2usize + usize::from(maybe_key_value.is_some())
                     };
-                    let mut args = ExprNodeList::init_capacity(args_len);
-                    VecExt::append(&mut args, tag);
+                    let mut args = ExprNodeList::with_capacity_in(args_len, p.ast_arena);
+                    args.push(p.ast_arena, tag);
 
-                    VecExt::append(
-                        &mut args,
+                    args.push(
+                        p.ast_arena,
                         p.new_expr(
                             E::Object {
                                 properties: props,
@@ -608,11 +614,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     );
 
                     if let Some(key) = maybe_key_value {
-                        VecExt::append(&mut args, key);
+                        args.push(p.ast_arena, key);
                     } else if p.options.jsx.development {
                         // if (maybeKey !== undefined)
-                        VecExt::append(
-                            &mut args,
+                        args.push(
+                            p.ast_arena,
                             Expr {
                                 loc: expr.loc,
                                 data: Data::EUndefined(E::Undefined {}),
@@ -624,8 +630,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         // is the return type of the first child an array?
                         // It's dynamic
                         // Else, it's static
-                        VecExt::append(
-                            &mut args,
+                        args.push(
+                            p.ast_arena,
                             Expr {
                                 loc: expr.loc,
                                 data: Data::EBoolean(E::Boolean {
@@ -634,9 +640,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                             },
                         );
 
-                        VecExt::append(&mut args, p.new_expr(E::Undefined {}, expr.loc));
-                        VecExt::append(
-                            &mut args,
+                        args.push(p.ast_arena, p.new_expr(E::Undefined {}, expr.loc));
+                        args.push(
+                            p.ast_arena,
                             Expr {
                                 data: prefill::data::THIS,
                                 loc: expr.loc,
@@ -680,7 +686,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             p.template_tag = tag.data;
             p.visit_expr(tag);
             if p.options.features.inject_jest_globals
-                && drop_namespace_of_lowered_callee(&p.symbols, tag)
+                && drop_namespace_of_lowered_callee(p.ast_arena, &p.symbols, tag)
             {
                 p.did_apply_test_feature = true;
             }
@@ -772,7 +778,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         // it may no longer be a template literal after this point (it may turn into
         // a plain string literal instead).
         if p.should_fold_typescript_constant_expressions || p.options.features.inlining {
-            *e = e_.fold(p.arena, expr.loc);
+            *e = e_.fold(p.ast_arena, expr.loc);
             return;
         }
     }
@@ -838,24 +844,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         args.push(expr);
         for part in template.parts_mut() {
             if let E::TemplateContents::Raw(tail) = &part.tail {
-                raw.push(Expr::init(E::String::init(tail.slice()), part.tail_loc));
+                raw.push(Expr::allocate(
+                    self.ast_arena,
+                    E::String::init(tail.slice()),
+                    part.tail_loc,
+                ));
             }
             args.push(part.value);
             part.value = Expr::init(E::Number::new(0.0), part.value.loc);
         }
         let raw = self.new_expr(
             E::Array {
-                items: ExprNodeList::from_bump_vec(raw),
+                items: ExprNodeList::from_slice_in(&raw, self.ast_arena),
                 ..Default::default()
             },
             expr.loc,
         );
-        template.tag =
-            Some(self.call_runtime(expr.loc, b"__rawTemplate", ExprNodeList::init_one(raw)));
+        template.tag = Some(self.call_runtime(
+            expr.loc,
+            b"__rawTemplate",
+            ExprNodeList::from_slice_in(&[raw], self.ast_arena),
+        ));
         Some(self.new_expr(
             E::Call {
                 target: tag,
-                args: ExprNodeList::from_bump_vec(args),
+                args: ExprNodeList::from_slice_in(&args, self.ast_arena),
                 ..Default::default()
             },
             expr.loc,
@@ -1185,7 +1198,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                 // "[obj.m][0]()" => "(0, obj.m)()"
                                 *e = if is_call_target && inlined.has_value_for_this_in_call() {
                                     p.new_expr(E::Number::new(0.0), expr.loc)
-                                        .join_with_comma(inlined)
+                                        .join_with_comma(p.ast_arena, inlined)
                                 } else {
                                     inlined
                                 };
@@ -1275,7 +1288,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         loc: e_.value.loc,
                         data: prefill::data::ZERO,
                     }
-                    .join_with_comma(e_.value);
+                    .join_with_comma(p.ast_arena, e_.value);
                 }
 
                 if matches!(e_.value.data, Data::ERequireCallTarget) {
@@ -1338,7 +1351,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         }
 
                         if p.options.features.minify_syntax {
-                            if let Some(exp) = Expr::maybe_simplify_not(&e_.value, p.arena) {
+                            if let Some(exp) = Expr::maybe_simplify_not(&e_.value, p.ast_arena) {
                                 *e = exp;
                                 return;
                             }
@@ -1400,14 +1413,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     if !matches!(e_.op, Op::UnDelete | Op::UnTypeof) {
                         if let Data::EBinary(comma) = &e_.value.data {
                             if comma.op == Op::BinComma {
-                                *e = comma.left.join_with_comma(p.new_expr(
-                                    E::Unary {
-                                        op: e_.op,
-                                        value: comma.right,
-                                        flags: e_.flags,
-                                    },
-                                    comma.right.loc,
-                                ));
+                                *e = comma.left.join_with_comma(
+                                    p.ast_arena,
+                                    p.new_expr(
+                                        E::Unary {
+                                            op: e_.op,
+                                            value: comma.right,
+                                            flags: e_.flags,
+                                        },
+                                        comma.right.loc,
+                                    ),
+                                );
                                 return;
                             }
                         }
@@ -1605,7 +1621,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
                 *e = SideEffects::simplify_unused_expr(p, e_.test)
                     .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
-                    .join_with_comma(e_.yes);
+                    .join_with_comma(p.ast_arena, e_.yes);
                 return;
             }
 
@@ -1615,7 +1631,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             if is_call_target && e_.yes.has_value_for_this_in_call() {
                 *e = p
                     .new_expr(E::Number::new(0.0), e_.test.loc)
-                    .join_with_comma(e_.yes);
+                    .join_with_comma(p.ast_arena, e_.yes);
                 return;
             }
 
@@ -1632,7 +1648,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
                 *e = SideEffects::simplify_unused_expr(p, e_.test)
                     .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
-                    .join_with_comma(e_.no);
+                    .join_with_comma(p.ast_arena, e_.no);
                 return;
             }
 
@@ -1642,7 +1658,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             if is_call_target && e_.no.has_value_for_this_in_call() {
                 *e = p
                     .new_expr(E::Number::new(0.0), e_.test.loc)
-                    .join_with_comma(e_.no);
+                    .join_with_comma(p.ast_arena, e_.no);
                 return;
             }
             *e = e_.no;
@@ -1752,7 +1768,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             && spread_item_count > 0
             && in_.assign_target == js_ast::AssignTarget::None
         {
-            if let Ok(items) = e_.inline_spread_of_array_literals(p.arena, spread_item_count) {
+            if let Ok(items) = e_.inline_spread_of_array_literals(p.ast_arena, spread_item_count) {
                 e_.items = items;
             }
         }
@@ -2048,7 +2064,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         }
 
         if p.options.features.inject_jest_globals
-            && drop_namespace_of_lowered_callee(&p.symbols, &mut e_.target)
+            && drop_namespace_of_lowered_callee(p.ast_arena, &p.symbols, &mut e_.target)
         {
             p.did_apply_test_feature = true;
         }
@@ -2572,7 +2588,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
         if p.options.features.minify_syntax {
             if let Some(minified) = js_ast::known_global::KnownGlobal::minify_global_constructor(
-                p.arena,
+                p.ast_arena,
                 &mut *e_,
                 &p.symbols,
                 expr.loc,

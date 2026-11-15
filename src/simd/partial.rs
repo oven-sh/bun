@@ -2,70 +2,93 @@
 use crate::source::Memory;
 use crate::swizzle::Repeat;
 use crate::{Int, Isa, Lane, Mask, Out, Source, Vector, portable};
-use core::array::from_ref;
-use core::simd::{Simd, Swizzle, ToBytes, u8x16, u8x32, u16x8, u32x8};
+use core::array::{from_fn, from_ref};
+use core::simd::{Simd, Swizzle, ToBytes, u8x16, u8x32, u16x8, u32x4, u32x8};
 use core::sync::atomic::AtomicU8;
 
-/// A slice shorter than a vector. The order of the lanes depends on the target and the length.
+/// A slice shorter than a vector.
 #[derive(Clone, Copy)]
-pub struct Partial<T: Lane, const N: usize, I> {
-    /// The slice padded with zeros, or its first `half` and last `half` elements, alternating.
+pub struct Padded<T: Lane, const N: usize, I> {
+    /// The slice, then zeros.
     pub lanes: Vector<T, N, I>,
-    half: usize,
     len: usize,
 }
 
-impl<T: Int<N>, const N: usize, I: Isa> Partial<T, N, I> {
-    #[inline(always)]
-    fn index_of(self, lane: usize) -> usize {
-        let lane = lane & (2 * self.half - 1);
-        if lane < self.half {
-            lane
-        } else {
-            lane + self.len - 2 * self.half
-        }
-    }
-
+impl<T: Int<N>, const N: usize, I: Isa> Padded<T, N, I> {
     /// The first index into the slice for which `mask` is set.
     #[inline(always)]
     pub fn first_set(self, mask: Mask<T, N, I>) -> Option<usize> {
-        if I::HAS_MASK_REGISTERS {
-            let lane = mask.to_bitmask().trailing_zeros() as usize;
-            return (lane < self.len).then_some(lane);
-        }
-        mask.first_set().map(|lane| self.index_of(lane))
+        let (bits, bits_per_lane) = I::movemask(mask);
+        let lane = bits.trailing_zeros() as usize / bits_per_lane;
+        (lane < self.len).then_some(lane)
     }
 
     /// The last index into the slice for which `mask` is set.
     #[inline(always)]
     pub fn last_set(self, mask: Mask<T, N, I>) -> Option<usize> {
-        if I::HAS_MASK_REGISTERS {
-            let lane = 63usize.wrapping_sub(self.to_bitmask(mask).leading_zeros() as usize);
-            return (lane < self.len).then_some(lane);
-        }
-        mask.last_set().map(|lane| self.index_of(lane))
+        let (bits, bits_per_lane) = I::movemask(mask);
+        let bits = bits << (64 - self.len * bits_per_lane);
+        (bits != 0).then(|| self.len - 1 - bits.leading_zeros() as usize / bits_per_lane)
+    }
+
+    /// The number of indices into the slice for which `mask` is set.
+    #[inline(always)]
+    pub fn count(self, mask: Mask<T, N, I>) -> usize {
+        mask.count_before(self.len)
     }
 
     /// One bit for each index into the slice.
     #[inline(always)]
     pub fn to_bitmask(self, mask: Mask<T, N, I>) -> u64 {
-        let bits = mask.to_bitmask();
-        if I::HAS_MASK_REGISTERS {
-            return bits & ((1 << self.len) - 1);
-        }
-        let half = (1 << self.half) - 1;
-        bits & half | (bits >> self.half & half) << (self.len - self.half)
+        mask.to_bitmask() & !(u64::MAX << self.len)
     }
+}
+
+/// Where four pieces start that cover `piece..=4 * piece` elements.
+#[inline(always)]
+const fn quarters(len: usize, piece: usize) -> [usize; 4] {
+    let room = len - piece;
+    let inset = if room < piece { room } else { piece };
+    [0, inset, room - inset, room]
+}
+
+#[repr(align(16))]
+struct Shuffles([[u8; 16]; 16]);
+
+/// From the quarters of so many bytes, or from the bytes if they are less than 4, to those bytes.
+static JOIN: Shuffles = Shuffles(from_fn(const |size| {
+    let (mut shuffle, mut i) = ([0x80; 16], 0);
+    while i < if size < 4 { size } else { 16 } {
+        let at = if size < 4 {
+            i
+        } else {
+            quarters(size, 4)[i / 4] + i % 4
+        };
+        shuffle[at] = i as u8;
+        i += 1;
+    }
+    shuffle
+}));
+
+/// From `n` on, it moves bytes down by `n`.
+static SLIDE: [u8; 32] = from_fn(const |i| if i < 16 { i as u8 } else { 0x80 });
+
+/// A slice shorter than a vector. The order of the lanes depends on the target and the length.
+#[derive(Clone, Copy)]
+pub struct Partial<T: Lane, const N: usize, I> {
+    /// The slice padded with zeros, or its first and last elements, alternating.
+    pub lanes: Vector<T, N, I>,
+    len: usize,
 }
 
 impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I> {
     const IS_MASKED: bool = {
         let has_other_way = matches!(size_of::<Self>(), 16 | 32);
         assert!(
-            I::HAS_MASK_REGISTERS || has_other_way,
+            I::HAS_MASKED_MEMORY || has_other_way,
             "needs 16 or 32 bytes"
         );
-        I::HAS_MASK_REGISTERS
+        I::HAS_MASKED_MEMORY
     };
 
     /// The inverse of `load_partial` for a slice of the same length.
@@ -177,9 +200,73 @@ mod simd {
     use crate::portable as shared;
     #[cfg(not(miri))]
     use isa as shared;
-    use isa::Vector;
+    use isa::{Vector, x128};
 
     impl<T: Int<N>, const N: usize> Vector<T, N> {
+        /// `None` if `from` is empty.
+        pub fn load_padded<S: Source<Lane = T>>(from: &[S]) -> Option<Padded<T, N, isa::Isa>> {
+            Self::load_padded_inline(from)
+        }
+
+        #[inline(always)]
+        pub(crate) fn load_padded_inline<S: Source<Lane = T>>(
+            from: &[S],
+        ) -> Option<Padded<T, N, isa::Isa>> {
+            debug_assert!(from.len() < N);
+            let lanes = match const { size_of::<T>() } {
+                _ if Self::IS_MASKED => Self::load_partial_inline(from)?.lanes,
+                1 => Self::join::<S, 4, 16>(from)?,
+                2 => Self::join::<S, 2, 8>(from)?,
+                4 => Self::join::<S, 1, 4>(from)?,
+                _ => Self::join::<S, 1, 2>(from)?,
+            };
+            let len = from.len();
+            Some(Padded { lanes, len })
+        }
+
+        /// Lengths are hard to predict, so few of them have a path of their own.
+        #[inline(always)]
+        fn join<S: Source<Lane = T>, const IN_4: usize, const IN_16: usize>(
+            from: &[S],
+        ) -> Option<Self> {
+            let (len, size) = (from.len(), size_of_val(from));
+            if N > IN_16
+                && let Some((first, last)) = ends::<S, IN_16>(from)
+            {
+                let [first, last] = [Self::load_bytes(first), Self::load_bytes(last)];
+                let slide = x128::U8::load(SLIDE.get(32 - size..)?.first_chunk()?);
+                let rest = x128::U8::new(last).lookup(slide).0;
+                let both: u8x32 = Repeat::<32>::concat_swizzle(first, rest);
+                return Some(Self::from_first_bytes(both));
+            }
+            let pieces = if size_of::<T>() <= 4
+                && let Some((a, d)) = ends::<S, IN_4>(from)
+            {
+                let inset = quarters(len, IN_4)[1];
+                let b = from[inset..].first_chunk()?;
+                let c = from[..len - inset].split_last_chunk()?.1;
+                let word = |piece| u32::from_ne_bytes(Self::load_bytes(piece).to_array());
+                u32x4::from_array([word(a), word(b), word(c), word(d)]).to_ne_bytes()
+            } else {
+                let mut lanes = Self::from_first(from.first()?.get());
+                if size_of::<T>() > 1 {
+                    return Some(lanes);
+                }
+                (lanes.0[1], lanes.0[2]) = (from[len / 2].get(), from[len - 1].get());
+                lanes.first_bytes()
+            };
+            let joined = x128::U8::new(pieces).lookup(x128::U8::load(JOIN.0.get(size)?));
+            Some(Self::from_first_bytes::<32>(joined.0.resize(0)))
+        }
+
+        #[inline(always)]
+        fn load_bytes<S: Source<Lane = T>, const LEN: usize, const BYTES: usize>(
+            from: &[S; LEN],
+        ) -> Simd<u8, BYTES> {
+            let lanes = Vector::load_nth_of_any_width::<S, 1, 0>(from_ref(from));
+            Self::new(lanes.0.resize(T::default())).first_bytes()
+        }
+
         /// `None` if `from` is empty.
         pub fn load_partial<S: Source<Lane = T>>(from: &[S]) -> Option<Partial<T, N, isa::Isa>> {
             Self::load_partial_inline(from)
@@ -192,11 +279,11 @@ mod simd {
         ) -> Option<Partial<T, N, isa::Isa>> {
             debug_assert!(from.len() < N);
             let len = from.len();
-            let (lanes, half) = if Self::IS_MASKED {
+            let lanes = if Self::IS_MASKED {
                 if len == 0 {
                     return None;
                 }
-                let lanes = match S::memory(from) {
+                match S::memory(from) {
                     Memory::Plain(lanes) => Self::load_masked(lanes),
                     Memory::Shared(bytes)
                         if is_slow_with_mask::<_, 64>(bytes.as_ptr(), bytes.len()) =>
@@ -204,22 +291,21 @@ mod simd {
                         Self::from_shared(portable::load_shared_masked(bytes))
                     }
                     Memory::Shared(bytes) => Self::from_shared(shared::load_shared_masked(bytes)),
-                };
-                (lanes, 0)
+                }
             } else if N > 8 && len >= 8 {
                 if N > 16 && len >= 16 {
-                    (Self::load_ends::<S, 16>(from)?, 16)
+                    Self::load_ends::<S, 16>(from)?
                 } else {
-                    (Self::load_ends::<S, 8>(from)?, 8)
+                    Self::load_ends::<S, 8>(from)?
                 }
             } else if N > 4 && len >= 4 {
-                (Self::load_ends::<S, 4>(from)?, 4)
+                Self::load_ends::<S, 4>(from)?
             } else if N > 2 && len >= 2 {
-                (Self::load_ends::<S, 2>(from)?, 2)
+                Self::load_ends::<S, 2>(from)?
             } else {
-                (Self::splat(from.first()?.get()), 1)
+                Self::splat(from.first()?.get())
             };
-            Some(Partial { lanes, half, len })
+            Some(Partial { lanes, len })
         }
 
         #[inline(always)]
@@ -244,6 +330,28 @@ mod simd {
             }
             let indices = Vector::load_partial_inline(&INDICES[..self.len]);
             indices.map_or_else(Vector::zero, |it| it.lanes)
+        }
+    }
+
+    impl isa::U8 {
+        /// `from`, which has less than 64 bytes, then zeros. Loads of it need not wait for the cache.
+        pub fn pad_block(from: &[u8]) -> [u8; 64] {
+            if Self::LEN == 64 {
+                let padded = Self::load_padded_inline(from).map(|it| it.lanes.0);
+                return padded.unwrap_or_default().resize(0).to_array();
+            }
+            let Some(last) = from.len().checked_sub(16) else {
+                let padded = x128::U8::load_padded_inline(from).map(|it| it.lanes.0);
+                return padded.unwrap_or_default().resize(0).to_array();
+            };
+            let quarter = |i: usize| {
+                let at = last.min(16 * i);
+                let slide = x128::U8::from_slice(&SLIDE[(16 * i - at).min(16)..]);
+                x128::U8::from_slice(&from[at..]).lookup(slide).0
+            };
+            let low: u8x32 = Repeat::<32>::concat_swizzle(quarter(0), quarter(1));
+            let high: u8x32 = Repeat::<32>::concat_swizzle(quarter(2), quarter(3));
+            Repeat::<64>::concat_swizzle(low, high).to_array()
         }
     }
 

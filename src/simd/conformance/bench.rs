@@ -3,18 +3,41 @@
 use crate::pairs::{self, Pairs};
 use crate::room::Room;
 use crate::{Random, columns, highway, shared, write_line};
-use bun_simd_kernels::{self as rust, Filter::Lanczos3};
+use bun_simd_kernels::{self as rust, Filter};
 use core::fmt::Arguments;
 use core::hint::black_box as opaque;
 use core::mem::MaybeUninit;
 use core::sync::atomic::AtomicU8;
+use std::sync::OnceLock;
 use std::time::Instant;
 
-/// Prints the best of many short runs of `run(is_second, times)`.
-fn compare(name: Arguments<'_>, run: &mut dyn FnMut(bool, u32)) {
+/// Part of the name of each line to run.
+pub(crate) static ONLY: OnceLock<Vec<u8>> = OnceLock::new();
+
+/// `dyn FnMut` has a second copy of the code, for `FnOnce`.
+trait Run {
+    fn run(&mut self, is_second: bool, times: u32);
+}
+
+impl<F: FnMut(bool, u32)> Run for F {
+    fn run(&mut self, is_second: bool, times: u32) {
+        self(is_second, times);
+    }
+}
+
+/// Prints the best of many short runs.
+#[optimize(size)]
+fn compare(name: Arguments<'_>, both: &mut dyn Run) {
+    let name = name.to_string();
+    if ONLY
+        .get()
+        .is_some_and(|part| rust::memmem(name.as_bytes(), part).is_none())
+    {
+        return;
+    }
     let mut time = |side, times| {
         let start = Instant::now();
-        run(side, times);
+        both.run(side, times);
         start.elapsed().as_secs_f64() * 1e9 / f64::from(times)
     };
     let mut times = 1;
@@ -34,6 +57,17 @@ fn compare(name: Arguments<'_>, run: &mut dyn FnMut(bool, u32)) {
     write_line(format_args!("{name}\t{:.2}\t{:.2}", best[0], best[1]));
 }
 
+/// M2 waits for a result if the store of it touches the place of the next arguments.
+#[repr(C)]
+struct Apart<T>(MaybeUninit<u64>, T, MaybeUninit<u64>);
+
+impl<T> Apart<T> {
+    #[inline(always)]
+    fn new(result: T) -> Self {
+        Self(MaybeUninit::uninit(), result, MaybeUninit::uninit())
+    }
+}
+
 macro_rules! compare {
     // The same code, with `$k` as the name of either module.
     ($name:literal, |$k:ident| $code:expr) => {
@@ -50,17 +84,24 @@ macro_rules! compare {
         )
     };
     ($name:literal, $first:expr, $second:expr) => {
-        compare(format_args!($name), &mut |is_second, times| {
-            if is_second {
-                for _ in 0..times {
-                    opaque($second);
+        compare(
+            format_args!($name),
+            &mut #[optimize(speed)]
+            |is_second: bool, times: u32| {
+                let (mut first, mut second);
+                if is_second {
+                    for _ in 0..times {
+                        second = Apart::new($second);
+                        opaque(&mut second);
+                    }
+                } else {
+                    for _ in 0..times {
+                        first = Apart::new($first);
+                        opaque(&mut first);
+                    }
                 }
-            } else {
-                for _ in 0..times {
-                    opaque($first);
-                }
-            }
-        })
+            },
+        )
     };
 }
 
@@ -71,6 +112,7 @@ impl<T> Pairs<T> for &[T] {
     }
 }
 
+#[optimize(size)]
 fn searches(plain: &[u8]) {
     for n in [16, 24, 48, 64, 100, 1000, 65536] {
         compare!("index_of_char miss {n}", |k| {
@@ -138,14 +180,49 @@ fn searches(plain: &[u8]) {
         pairs::of_bytes(&mut t);
         pairs::of_units(&mut wide);
     }
-    for n in [1, 3, 1000] {
-        let colored = &b"\x1B[1;31merror\x1B[0m: not found ".repeat(n);
-        compare!("width of {n} colored words", |k| {
-            k::visible_latin1_width_exclude_ansi(opaque(colored))
+}
+
+/// What terminals are sent, and text in another encoding.
+#[optimize(size)]
+fn escapes() {
+    for (name, text) in [
+        ("colored words", &b"\x1B[1;31merror\x1B[0m: not found "[..]),
+        (
+            "links",
+            b"see \x1B]8;;https://bun.com/docs\x1B\\the docs\x1B]8;;\x1B\\ ",
+        ),
+        ("resets", b"\x1B[1mbold\x1B(B\x1B[m "),
+        ("saved cursors", b"\x1B7"),
+        ("8-bit colors", b"\x9B1mbold\x9Bm "),
+        ("8-bit titles and colors", b"\x9D\x07\x9Bm"),
+        ("C1 bytes", b"\x92"),
+        ("control bytes", b"\x11"),
+        ("lines", b"a line of text\n"),
+        ("accented words", b"caf\xE9 au lait "),
+        (
+            "curly quotes",
+            b"it\x92s a sentence with a single such byte. ",
+        ),
+    ] {
+        for n in [1, 3, 1000] {
+            let text = &text.repeat(n);
+            compare!("width of {n} {name}", |k| {
+                k::visible_latin1_width_exclude_ansi(opaque(text))
+            });
+        }
+        for n in [2, 1000] {
+            let text = &text.repeat(n);
+            compare!("width with escapes of {n} {name}", |k| {
+                k::visible_latin1_width(opaque(text))
+            });
+        }
+        let text = &text.repeat(1000);
+        compare!("index_of_escape_char8 hops through 1000 {name}", |k| {
+            hop(text, k::index_of_escape_char8)
         });
-        let links = &b"see \x1B]8;;https://bun.com/docs\x1B\\the docs\x1B]8;;\x1B\\ ".repeat(n);
-        compare!("width of {n} links", |k| {
-            k::visible_latin1_width_exclude_ansi(opaque(links))
+        let wide: &Vec<u16> = &text.iter().map(|&byte| byte.into()).collect();
+        compare!("index_of_escape_char16 hops through 1000 {name}", |k| {
+            hop(wide, k::index_of_escape_char16)
         });
     }
 }
@@ -164,7 +241,48 @@ fn branch_on(found: Option<usize>) {
     }
 }
 
+/// Too many for a branch predictor to learn.
+#[optimize(size)]
+fn styled_words(js: &[u8]) {
+    let (styles, random) = (["31", "1", "2", "38;5;208", "1;4;36"], &mut Random(3));
+    let words = js.split(|byte| !byte.is_ascii_alphanumeric());
+    let mut words = words.filter(|it| !it.is_empty()).cycle();
+    let mut word = || words.next().unwrap_or_default();
+    for (name, start, end) in [
+        ("colored", "\x1B[", "\x1B[0m"),
+        ("reset", "\x1B[", "\x1B(B\x1B[m"),
+        ("linked", "\x1B]8;;a\x1B\\\x1B[", "\x1B]8;;\x07"),
+    ] {
+        let line = |_| {
+            let style = [start, random.one_of(&styles), "m"].concat();
+            let words = [style.as_bytes(), word(), end.as_bytes(), b" ", word()].concat();
+            words.repeat(1 + random.below(3) / 2)
+        };
+        let lines: Vec<_> = (0..20_000).map(line).collect();
+        let lines: &Vec<_> = &lines.iter().map(Vec::as_slice).collect();
+        compare!("width of 20000 {name} words", |k| {
+            each(lines, k::visible_latin1_width_exclude_ansi)
+        });
+    }
+    for (name, letter, stop) in [("boxes", 0, 0x2502), ("CJK", 0x4E00, 0x3002)] {
+        let units = |word: &[u8]| -> Vec<u16> {
+            let letters = word.iter().map(|&byte| letter + u16::from(byte));
+            letters.chain([stop]).collect()
+        };
+        let text: &Vec<_> = &(0..20_000).flat_map(|_| units(word())).collect();
+        compare!("visible_utf16_width hops through {name}", |k| {
+            hop(text, |t| {
+                Some(k::visible_utf16_width(t).0).filter(|&len| len < t.len())
+            })
+        });
+        compare!("first_non_ascii16 hops through {name}", |k| {
+            hop(&text[..100_000], k::first_non_ascii16)
+        });
+    }
+}
+
 /// The words and the lines of a program, in their order.
+#[optimize(size)]
 fn pieces(js: &[u8]) {
     let words: fn(&u8) -> bool = |byte| !byte.is_ascii_alphanumeric();
     let lines: fn(&u8) -> bool = |byte| matches!(byte, b'\n' | b'\r');
@@ -246,6 +364,7 @@ fn hop<T>(text: &[T], find: impl Fn(&[T]) -> Option<usize>) -> &[T] {
 }
 
 /// Many short searches in a long text, like those of a lexer.
+#[optimize(size)]
 fn hops(js: &[u8]) {
     compare!("index_of_char hops through 1 MB", |k| {
         hop(js, |t| k::index_of_char(t, b'\n'))
@@ -261,8 +380,107 @@ fn hops(js: &[u8]) {
     compare!("memmem hops through 1 MB", |k| {
         hop(js, |t| k::memmem(t, b"function"))
     });
+    compare!("newline_or_non_ascii hops through 1 MB", |k| {
+        hop(js, k::index_of_newline_or_non_ascii)
+    });
+    compare!("multiline_comment hops through 1 MB", |k| {
+        hop(js, k::index_of_interesting_character_in_multiline_comment)
+    });
+    compare!("last_index_of_char hops through 1 MB", |k| {
+        let mut rest = opaque(js);
+        while let Some(at) = k::last_index_of_char(rest, b'\n') {
+            rest = &rest[..at];
+        }
+    });
 }
 
+impl Pairs<u8> for (&str, &[&[u8]]) {
+    fn pair<R>(&mut self, highway: impl Fn(&[u8]) -> R, rust: impl Fn(&[u8]) -> R) {
+        let (name, (kind, all)) = (pairs::name_of(&rust), *self);
+        let n = all.len();
+        compare!(
+            "{name} of {n} {kind}",
+            each(all, &highway),
+            each(all, &rust)
+        );
+    }
+}
+
+/// From the `byte` before it, and to the end.
+fn split_at_each(mut text: &[u8], byte: u8) -> impl Iterator<Item = (&[u8], &[u8])> {
+    core::iter::from_fn(move || {
+        let (before, rest) = text.split_at(rust::index_of_char(text, byte)?);
+        text = &rest[1..];
+        Some((before, text))
+    })
+}
+
+/// The lengths and the distances to the match are like those of Bun's own calls.
+#[optimize(size)]
+fn shapes_of_calls(js: &[u8], lockfile: &[u8]) {
+    let after = |byte| split_at_each(js, byte).map(|(_, after)| after);
+    let strings: &Vec<_> = &after(b'"').step_by(2).take(20_000).collect();
+    let n = strings.len();
+    compare!("string_literal after {n} quotes", |k| {
+        each(strings, |t| {
+            branch_on(k::index_of_interesting_character_in_string_literal(t, b'"'))
+        })
+    });
+    let words: &Vec<_> = &after(b' ').take(20_000).collect();
+    compare!("newline_or_non_ascii at 20000 words", |k| {
+        each(words, |t| branch_on(k::index_of_newline_or_non_ascii(t)))
+    });
+    compare!("multiline_comment at 20000 words", |k| {
+        each(words, |t| {
+            branch_on(k::index_of_interesting_character_in_multiline_comment(t))
+        })
+    });
+
+    let quoted = || split_at_each(lockfile, b'"').map(|(before, _)| before);
+    let packages = quoted().filter(|it| it.starts_with(b"node_modules/"));
+    let files = ["/package.json", "/lib/index.js", "/./a.mjs", "", "/dist/"];
+    let paths: Vec<_> = packages
+        .flat_map(|package| files.map(|file| [b"/home/me/app/", package, file.as_bytes()].concat()))
+        .collect();
+    let random = &mut Random(5);
+    let paths: &Vec<_> = &(0..20_000)
+        .map(|_| &paths[random.below(paths.len())][..])
+        .collect();
+    pairs::of_paths(&mut ("paths", &paths[..]));
+    compare!("last_index_of_char of 20000 paths", |k| {
+        each(paths, |t| branch_on(k::last_index_of_char(t, b'.')))
+    });
+    compare!("common_prefix_length of 20000 paths", |k| {
+        each(paths, |t| k::common_prefix_length(t, paths[0]))
+    });
+    for needle in [
+        &b"/node_modules/"[..],
+        b"/node_modules/.cache/",
+        b"/node_modules/typescript/lib/tsc.js",
+    ] {
+        let len = needle.len();
+        compare!("memmem of {len} of 20000 paths", |k| {
+            each(paths, |t| branch_on(k::memmem(t, needle)))
+        });
+        compare!("memrmem of {len} of 20000 paths", |k| {
+            each(paths, |t| branch_on(k::memrmem(t, needle)))
+        });
+    }
+
+    let versions = quoted().filter(|it| it.len() < 16 && it.last().is_some_and(u8::is_ascii_digit));
+    let parts: &Vec<_> = &versions
+        .flat_map(|version| (0..=version.len()).map(move |at| &version[at..]))
+        .take(20_000)
+        .collect();
+    compare!("any of 2 of 20000 ends of versions", |k| {
+        each(parts, |t| branch_on(k::index_of_any_char(t, b"-+")))
+    });
+    compare!("any of 4 of 20000 ends of versions", |k| {
+        each(parts, |t| branch_on(k::index_of_any_char(t, b" |<>")))
+    });
+}
+
+#[optimize(size)]
 fn whole_files(js: &[u8], json: &[u8], map: &[u8]) {
     let url = b"//# sourceMappingURL=data:";
     compare!("memmem miss 1 MB", |k| k::memmem(opaque(js), opaque(url)));
@@ -365,6 +583,7 @@ fn whole_files(js: &[u8], json: &[u8], map: &[u8]) {
     }
 }
 
+#[optimize(size)]
 fn conversions(js: &[u8]) {
     for n in [12, 32, 64, 100, 16384] {
         let (t, out, wide_out) = (&js[..n], &mut vec![0; 2 * n], &mut vec![0; n]);
@@ -414,6 +633,7 @@ fn conversions(js: &[u8]) {
     });
 }
 
+#[optimize(size)]
 fn images() {
     const WIDTH: usize = 1024;
     let random = &mut Random(9);
@@ -449,10 +669,10 @@ fn images() {
             });
         }
     }
-    for size in [1, 4, 8] {
-        let row = &mut row.as_flattened().to_vec();
-        compare!("png_unfilter {size} paeth below one color", |k| {
-            k::png_unfilter(4, size, opaque(row), &[7; 4 * WIDTH])
+    for (size, n) in [(1, 4096), (4, 4096), (8, 4096), (4, 128)] {
+        let row = &mut row.as_flattened()[..n].to_vec();
+        compare!("png_unfilter {size} paeth of {n} below one color", |k| {
+            k::png_unfilter(4, size, opaque(row), &[7; 4 * WIDTH][..n])
         });
     }
     for n in [3, 8, 16, 256] {
@@ -460,7 +680,20 @@ fn images() {
             k::nearest_in_palette(opaque(&row[..n]), opaque([9, 8, 7, 255]))
         });
     }
-    for (width, height) in [(30, 20), (1000, 750), (1024, 1024), (4032, 3024)] {
+    for (width, height) in [
+        (3, 3),
+        (16, 16),
+        (30, 20),
+        (127, 129),
+        (1, 4000),
+        (3, 4000),
+        (4000, 1),
+        (4000, 3),
+        (8, 70_000),
+        (1000, 750),
+        (1024, 1024),
+        (4032, 3024),
+    ] {
         let (image, out) = (
             &vec![[1; 4]; width * height],
             &mut vec![[0; 4]; width * height],
@@ -474,21 +707,31 @@ fn images() {
         }
     }
     let (mut a, mut b) = (highway::Resizer::default(), rust::Resizer::default());
-    let out = &mut vec![[0; 4]; 400 * 300];
-    compare!(
-        "lanczos3 1024x768 to 400x300",
-        a.resize(Lanczos3, opaque(image), WIDTH, out, 400),
-        b.resize(
-            Lanczos3,
-            opaque(image),
-            WIDTH,
-            out.as_mut_slice().into(),
-            400
-        )
-    );
+    let sizes = [
+        ([WIDTH, 768], [400, 300]),
+        ([WIDTH, 768], [32, 24]),
+        ([200, 150], [800, 600]),
+        ([17, 13], [9, 7]),
+    ];
+    for filter in [
+        Filter::Lanczos3,
+        Filter::Nearest,
+        Filter::Bilinear,
+        Filter::Mks2021,
+    ] {
+        for ([from_w, from_h], [w, h]) in sizes {
+            let (from, out) = (&image[..from_w * from_h], &mut vec![[0; 4]; w * h]);
+            compare!(
+                "{filter:?} {from_w}x{from_h} to {w}x{h}",
+                a.resize(filter, opaque(from), from_w, out, w),
+                b.resize(filter, opaque(from), from_w, out.as_mut_slice().into(), w)
+            );
+        }
+    }
 }
 
 /// Highway has the same kernels for shared memory.
+#[optimize(size)]
 fn from_shared(js: &[u8]) {
     for n in [12, 64, 100, 1000, 65536] {
         let (t, out) = (&mut vec![b'a'; n], &mut vec![0; 2 * n]);
@@ -574,6 +817,7 @@ fn from_shared(js: &[u8]) {
     }
 }
 
+#[optimize(size)]
 fn to_shared() {
     let shared = AtomicU8::from_mut_slice;
     for n in [12, 32, 64, 100, 1000, 65536] {
@@ -609,11 +853,15 @@ fn to_shared() {
 }
 
 /// Highway, then Rust.
+#[optimize(size)]
 pub(crate) fn against_highway(js: &[u8], json: &[u8], map: &[u8]) {
+    shapes_of_calls(&js[js.len() / 4..], json);
     let js = &js[js.len() / 2..][..1 << 20];
     searches(&vec![b'a'; 1 << 16]);
     pieces(js);
     hops(js);
+    escapes();
+    styled_words(js);
     whole_files(js, json, map);
     conversions(js);
     images();
@@ -631,6 +879,7 @@ fn both<R>(name: &str, texts: &mut [&mut [u8]; 2], mut kernel: impl FnMut(&mut [
 }
 
 /// In the middle of a page, then before an inaccessible page.
+#[optimize(size)]
 pub(crate) fn at_the_end_of_a_page() {
     let [mut a, mut b] = [(); 2].map(|()| Room::new());
     for n in [5, 20, 40] {

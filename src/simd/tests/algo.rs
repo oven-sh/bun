@@ -60,26 +60,30 @@ mod simd {
         T: Int<N> + From<u8>,
         S: Source<Lane = T>,
     {
-        let (mut room, zero, one) = (Room::new(T::from(1)), T::from(0), T::from(1));
+        let (padding, other, suspect) = (T::from(0), T::from(1), T::from(2));
+        let mut room = Room::new(padding);
         let room = room.all();
-        let test = |v: Vector<T, N>| v.simd_eq(one);
+        let test = |v: Vector<T, N>| v.simd_eq(padding);
         for range in ranges::<T>(N, alignments) {
             let len = range.len();
-            room[range.clone()].fill(zero);
             for first in (0..len).map(Some).chain([None]) {
+                room[range.clone()].fill(other);
+                for at in range.clone().step_by(5 * N) {
+                    room[at] = suspect;
+                }
                 let last = first.map(|first| first + (len - first) / 2);
-                let mut set = |lane| {
-                    for at in first.into_iter().chain(last) {
-                        room[range.start + at] = lane;
-                    }
-                };
-                set(one);
+                for at in first.into_iter().chain(last) {
+                    room[range.start + at] = padding;
+                }
                 let slice = black_box(view(&mut room[range.clone()]));
                 assert_eq!(Vector::position(slice, test), first);
+                assert_eq!(
+                    Vector::position_refined(slice, |v| [v.simd_ne(other), test(v)]),
+                    first
+                );
                 assert_eq!(Vector::rposition(slice, test), last);
-                room[range.clone()].fill(zero);
             }
-            room[range].fill(one);
+            room[range].fill(padding);
         }
     }
 
@@ -139,9 +143,6 @@ mod simd {
                         assert_eq!(found, want.get(stop_at).copied());
                         assert_eq!(seen, want[..want.len().min(stop_at.saturating_add(1))]);
                     };
-                    check(&in_a, &|f| {
-                        Vector::find_map(a, test, |it| some(it).find(|&at| f(at)))
-                    });
                     check(&in_both, &|f| {
                         Vector::zip_find_map(a, longer, both, |it| some(it).find(|&at| f(at)))
                     });
@@ -170,18 +171,30 @@ mod simd {
             for at in range.clone() {
                 let slice = black_box(view(&mut room[range.clone()]));
                 assert_eq!(Vector::count(slice, test), range.end - at);
-                let both = Vector::count_each(slice, |v| [test(v), !test(v)]);
-                assert_eq!(both, [range.end - at, at - range.start]);
+                assert_eq!(Vector::count(slice, |v| !test(v)), at - range.start);
                 room[at] = zero;
             }
             room[range].fill(one);
         }
         let (len, long) = (600 * N + 5, &mut vec![one; 600 * N + 5]);
         assert_eq!(Vector::count(view(long), test), len);
-        assert_eq!(
-            Vector::count_each(view(long), |v| [!test(v), test(v)]),
-            [0, len]
-        );
+        assert_eq!(Vector::count(view(long), |v| !test(v)), 0);
+    }
+
+    fn sums(alignments: usize) {
+        let (mut bytes, mut words) = (Room::new(7), Room::new(0x0707));
+        let (bytes, words) = (bytes.all(), words.all());
+        for range in ranges::<u8>(U8::LEN, alignments) {
+            let slice = black_box(&bytes[range]);
+            assert_eq!(U8::sum_of_bytes::<_, 7>(slice, |v| v), 7 * slice.len());
+        }
+        for range in ranges::<u16>(U16::LEN, alignments) {
+            let slice = black_box(&words[range]);
+            let sum = U16::sum_of_bytes::<_, 7>(slice, |v| v.bitcast());
+            assert_eq!(sum, 14 * slice.len());
+        }
+        let long = &vec![63; 600 * U8::LEN + 5];
+        assert_eq!(U8::sum_of_bytes::<_, 63>(long, |v| v), 63 * long.len());
     }
 
     /// `run(from, to)` has to add 1.
@@ -266,6 +279,8 @@ mod simd {
         searches::<u8, _, { U8::LEN }>(alignments, shared);
         searches::<u8, _, 16>(alignments, plain);
         searches::<u8, _, 16>(alignments, shared);
+        searches::<u8, _, 32>(alignments, plain);
+        searches::<u16, _, 16>(alignments, plain);
         searches::<u16, _, { U16::LEN }>(alignments, plain);
         searches::<u32, _, { isa::U32::LEN }>(alignments, plain);
         searches::<u64, _, { isa::U64::LEN }>(alignments, plain);
@@ -279,6 +294,7 @@ mod simd {
         counts::<u8, _, { U8::LEN }>(alignments, plain);
         counts::<u8, _, { U8::LEN }>(alignments, shared);
         counts::<u16, _, { U16::LEN }>(alignments, plain);
+        sums(alignments);
     }
 
     #[export]
@@ -325,6 +341,43 @@ mod simd {
         });
     }
 
+    fn padded<T, S, const N: usize>(view: fn(&mut [T]) -> &[S])
+    where
+        T: Int<N> + From<u8> + PartialEq + Debug,
+        S: Source<Lane = T>,
+    {
+        let mut room = Room::new(T::from(0));
+        let room = room.all();
+        for (i, lane) in room.iter_mut().enumerate() {
+            *lane = T::from(1 + (i % 251) as u8);
+        }
+        for range in ranges::<T>(N, N).filter(|it| it.len() < N) {
+            let (mut want, len) = ([T::from(0); N], range.len());
+            want[..len].copy_from_slice(&room[range.clone()]);
+            let Some(padded) = Vector::<T, N>::load_padded(black_box(view(&mut room[range])))
+            else {
+                assert_eq!(len, 0);
+                continue;
+            };
+            assert_eq!(padded.lanes.to_array(), want);
+            let is_padding = padded.lanes.simd_eq(T::from(0));
+            let all = is_padding | !is_padding;
+            assert_eq!(
+                [is_padding, all].map(|it| padded.first_set(it)),
+                [None, Some(0)]
+            );
+            assert_eq!(
+                [is_padding, all].map(|it| padded.last_set(it)),
+                [None, Some(len - 1)]
+            );
+            assert_eq!([is_padding, all].map(|it| padded.count(it)), [0, len]);
+            assert_eq!(
+                [is_padding, all].map(|it| padded.to_bitmask(it)),
+                [0, (1 << len) - 1]
+            );
+        }
+    }
+
     #[export]
     pub fn groups_stay_together() {
         for (size, count) in [2, 4, 8]
@@ -347,10 +400,21 @@ mod simd {
     #[export]
     pub fn short_slices() {
         assert!(U8::load_partial::<u8>(&[]).is_none());
+        padded::<u8, _, { U8::LEN }>(plain);
+        padded::<u8, _, { U8::LEN }>(shared);
+        padded::<u8, _, 16>(plain);
+        padded::<u16, _, { U16::LEN }>(plain);
+        padded::<u32, _, { isa::U32::LEN }>(plain);
+        padded::<u64, _, { isa::U64::LEN }>(plain);
         let (mut from, mut to) = (Room::new(0), Room::new(0));
         let (from, to) = (from.all(), to.all());
         for (i, from) in from.iter_mut().enumerate() {
             *from = 1 + (i % 251) as u8;
+        }
+        for range in ranges::<u8>(64, 64).filter(|it| it.len() < 64) {
+            let mut want = [0; 64];
+            want[..range.len()].copy_from_slice(&from[range.clone()]);
+            assert_eq!(U8::pad_block(black_box(&from[range])), want);
         }
         for range in ranges::<u8>(U8::LEN, U8::LEN).filter(|it| it.len() < U8::LEN) {
             let (slice, len) = (black_box(&from[range.clone()]), range.len());
@@ -358,9 +422,6 @@ mod simd {
                 assert_eq!(len, 0);
                 continue;
             };
-            for (i, &byte) in slice.iter().enumerate() {
-                assert_eq!(partial.to_bitmask(partial.lanes.simd_eq(byte)), 1 << i);
-            }
             let at = |index: u8| slice.get(usize::from(index)).copied().unwrap_or(0);
             assert_eq!(
                 partial.indices().to_array().map(at),
@@ -369,13 +430,6 @@ mod simd {
             to[range.clone()].copy_from_slice(slice);
             let of_shared = U8::load_partial(shared(&mut to[range.clone()])).unwrap();
             assert_eq!(of_shared.lanes.to_array(), partial.lanes.to_array());
-            assert_eq!(partial.to_bitmask(partial.lanes.simd_eq(0)), 0);
-            assert_eq!(partial.first_set(partial.lanes.simd_eq(0)), None);
-            assert_eq!(partial.last_set(partial.lanes.simd_eq(0)), None);
-            assert_eq!(
-                partial.to_bitmask(partial.lanes.simd_lt(255)),
-                (1 << len) - 1
-            );
             if len < U16::LEN {
                 let wide: Vec<u16> = slice.iter().map(|&byte| 0x700 | u16::from(byte)).collect();
                 let lanes = U16::load_partial(black_box(&wide)).unwrap().lanes;

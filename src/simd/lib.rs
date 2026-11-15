@@ -49,7 +49,7 @@ pub use dispatch::limit_to;
 pub use isa::Isa;
 pub use mask::Mask;
 pub use matches::Matches;
-pub use partial::Partial;
+pub use partial::{Padded, Partial};
 #[cfg(any(feature = "test_support", not(target_arch = "x86_64")))]
 pub use portable::{portable32, portable64};
 pub use sink::{SharedWriter, Sink};

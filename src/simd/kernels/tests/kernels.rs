@@ -1171,8 +1171,17 @@ fn check_paeth<const SIZE: usize>() {
 fn paeth_predictions() {
     for target in [Target::ALL[0], Target::Portable] {
         limit_to(target);
+        check_paeth::<2>();
         check_paeth::<4>();
         check_paeth::<8>();
+    }
+}
+
+#[test]
+#[ignore = "slow"]
+fn paeth_predictions_of_bytes() {
+    for _ in targets() {
+        check_paeth::<1>();
     }
 }
 
@@ -1702,9 +1711,9 @@ fn resized_images() {
 
 #[test]
 fn moved_pixels() {
-    let sizes = [1, 2, 3, 4, 5, 15, 16, 17, 64, 65, 70, 135];
+    let sizes = [1, 2, 3, 4, 5, 15, 16, 17, 64, 65, 67, 68, 70, 135];
     let all = sizes.iter().flat_map(|&w| sizes.map(|h| (w, h)));
-    for (w, h) in sample(all.chain([(41, 9001), (5, 70_000)]), 51) {
+    for (w, h) in sample(all.chain([(41, 9001), (5, 70_000)]), 57) {
         // What follows the last whole row does not count.
         let src: Vec<_> = (0..(w * h + w / 2) as u32).map(u32::to_le_bytes).collect();
         let image = |width: usize, from: &dyn Fn(usize, usize) -> [usize; 2]| -> Vec<_> {

@@ -20,8 +20,8 @@ use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{
-    MacroImportReplacementMap, MacroMap, MacroOptions, RESETS_BEFORE_EACH_TEST, ReactCompilerScope,
-    TestEnvironment, TestGlobals,
+    CONSOLE_DEPTH, MacroImportReplacementMap, MacroMap, MacroOptions, RESETS_BEFORE_EACH_TEST,
+    ReactCompilerScope, SILENT, TestEnvironment, TestGlobals,
 };
 use bun_options_types::global_cache::GlobalCache;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
@@ -955,7 +955,7 @@ impl<'a> Parser<'a, '_> {
             if let Some(run_expr) = json.get(b"run") {
                 if let Some(silent) = run_expr.get(b"silent") {
                     if let Some(value) = silent.as_bool() {
-                        self.ctx.debug.silent = value;
+                        SILENT.store(value, Ordering::Relaxed);
                     } else {
                         self.add_error(silent.loc, b"Expected boolean")?;
                     }
@@ -1011,11 +1011,14 @@ impl<'a> Parser<'a, '_> {
                     if let Some(n) = depth.as_number() {
                         let depth_value = n as u16;
                         // Treat depth=0 as maxInt(u16) for infinite depth
-                        self.ctx.runtime_options.console_depth = Some(if depth_value == 0 {
-                            u16::MAX
-                        } else {
-                            depth_value
-                        });
+                        CONSOLE_DEPTH.store(
+                            if depth_value == 0 {
+                                u16::MAX
+                            } else {
+                                depth_value
+                            },
+                            Ordering::Relaxed,
+                        );
                     } else {
                         self.add_error(depth.loc, b"Expected number")?;
                     }
@@ -1281,19 +1284,10 @@ impl Bunfig {
         source: &bun_ast::Source,
         is_project_file: bool,
         ctx: &mut ContextData,
+        log: &bun_ast::Log,
         tool: Option<&mut crate::ToolReader<'_>>,
         counts: Counts,
     ) -> crate::Result<()> {
-        // SAFETY: ctx.log is populated by `create_context_data()` before any
-        // bunfig load; single-threaded CLI startup invariant. The raw pointer
-        // is copied out so the resulting `&mut Log` does not borrow `ctx`
-        // (Parser later needs `&mut ctx` alongside `&mut log`).
-        let log_ptr: *const bun_ast::Log = ctx.log;
-        debug_assert!(!log_ptr.is_null());
-        // SAFETY: `log_ptr` is non-null (asserted above) and points to the Log
-        // owned by single-threaded CLI startup; Parser only touches the log via
-        // this borrow (never via `ctx.log`), so the `&mut` is exclusive.
-        let log: &bun_ast::Log = unsafe { &*log_ptr };
         let log_count = log.errors.get() + log.warnings.get();
 
         // This previously called `Arena::new()` (= `mi_heap_new` +
@@ -1344,10 +1338,7 @@ impl Bunfig {
 
         // Parser cannot hold both `&mut ctx` and `&mut ctx.args`
         // simultaneously, so bunfig
-        // writes route through `self.ctx.args` directly. `log` is derived from the
-        // copied raw pointer above so it does not overlap the `&mut ctx` borrow.
-        // SAFETY: Parser never reaches `ctx.log` (only `self.log`), so no two
-        // live `&mut` to the same `Log` coexist.
+        // writes route through `self.ctx.args` directly.
         let mut parser = Parser {
             json: expr,
             log,
@@ -1380,12 +1371,9 @@ impl Bunfig {
         // parsing a module whose nodes live in the same store.
         bun_ast::initialize_store();
         let log = bun_ast::Log::init();
-        let mut ctx = ContextData {
-            log: &raw const log,
-            ..Default::default()
-        };
+        let mut ctx = ContextData::default();
         let cmd = CommandTag::InstallCommand;
-        Self::parse(cmd, source, true, &mut ctx, None, Counts::OnlyInstall)?;
+        Self::parse(cmd, source, true, &mut ctx, &log, None, Counts::OnlyInstall)?;
         Ok(ctx.install)
     }
 }

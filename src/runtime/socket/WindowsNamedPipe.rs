@@ -945,9 +945,9 @@ impl bun_io::pipe_writer::WriterParent for WindowsNamedPipe {
 
 impl bun_io::pipe_writer::WindowsWriterParent for WindowsNamedPipe {
     #[inline]
-    unsafe fn loop_(this: *mut Self) -> *mut uv::Loop {
+    unsafe fn loop_(this: *mut Self) -> &'static bun_uws::Loop {
         // SAFETY: BACKREF set via `set_parent`; shared-only read.
-        unsafe { (*this).vm.uv_loop() }
+        unsafe { (*this).vm.uws_loop() }
     }
 }
 

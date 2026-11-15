@@ -966,7 +966,7 @@ describe("bounded output per input chunk", () => {
     await expect(writer.closed).rejects.toMatchObject({ name: "AbortError" });
   });
 
-  // On the readable it leaves the writable open, so the sink that detaches gives the chunk up and the next one arrives.
+  // addAbortSignal() on the readable leaves the writable open: the chunk is abandoned and the next write still arrives.
   test.concurrent.each([
     ["on the thread pool", `new CompressionStream("gzip")`, `require("node:crypto").randomBytes(4 << 20)`, ""],
     [
@@ -1451,11 +1451,11 @@ describe("CompressionStream level option", () => {
 });
 
 // Chunks > 128 KiB run the codec on a WorkPool thread. VM teardown
-// (Heap::lastChanceToFinalize) must not free
-// the coder under the pool thread (heap-use-after-free in the brotli encoder,
-// caught by ASAN). BUN_DESTRUCT_VM_ON_EXIT=1 (which CI's test runner sets)
-// makes process.exit() take that teardown path on the main thread. ASAN-only:
-// without ASAN the stray write into freed pages is not reliably observable.
+// (Heap::lastChanceToFinalize) must not free the coder under the pool thread
+// (heap-use-after-free in the brotli encoder, caught by ASAN).
+// BUN_DESTRUCT_VM_ON_EXIT=1 (which CI's test runner sets) makes process.exit()
+// take that teardown path on the main thread. ASAN-only: without ASAN the
+// stray write into freed pages is not reliably observable.
 // The 30s timeout covers the debug/ASAN child's startup plus teardown.
 test.skipIf(!isASAN)(
   "process.exit during an in-flight off-thread transform does not free the coder under the pool thread",

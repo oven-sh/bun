@@ -4,6 +4,7 @@
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
 #include "ErrorCode.h"
+#include "JSBuffer.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMWrapperCache.h"
@@ -23,7 +24,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/MallocSpan.h>
 
 // TextDecoder.rs
 extern "C" void* TextDecoder__createForStream(JSC::JSGlobalObject*, JSC::EncodedJSValue label, bool fatal, bool ignoreBOM, bool* outUtf8FastPath, uint8_t* outEncoding);
@@ -351,20 +351,6 @@ static std::optional<std::span<const uint8_t>> textDecoderStreamBytes(JSGlobalOb
     return std::nullopt;
 }
 
-// Copies bytes out of a SharedArrayBuffer, which another thread can write to. Throws OutOfMemoryError if the copy fails.
-static WTF::MallocSpan<uint8_t> copySharedBytes(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, std::span<const uint8_t> bytes)
-{
-    if (bytes.empty())
-        return {};
-    auto copy = WTF::MallocSpan<uint8_t>::tryMalloc(bytes.size());
-    if (!copy) [[unlikely]] {
-        JSC::throwOutOfMemoryError(globalObject, scope);
-        return {};
-    }
-    memcpySpan(copy.mutableSpan(), bytes);
-    return copy;
-}
-
 // The transform/flush algorithms return a promise, so a throw from decode or enqueue is that
 // promise's rejection (promiseFromSteps), never a synchronous throw into ProcessWrite/ProcessClose.
 static void decodeAndEnqueue(JSGlobalObject* globalObject, JSTextDecoderStream* stream, JSTransformStreamDefaultController* controller, const uint8_t* input, size_t inputLen, bool streaming)
@@ -391,7 +377,7 @@ JSPromise* textDecoderStreamTransform(JSGlobalObject* globalObject, JSTextDecode
         std::optional<std::span<const uint8_t>> bytes = textDecoderStreamBytes(globalObject, chunk, isShared);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (isShared) [[unlikely]] {
-            auto copy = copySharedBytes(globalObject, scope, *bytes);
+            auto copy = Bun::copySharedBytes(globalObject, scope, *bytes);
             RETURN_IF_EXCEPTION(scope, nullptr);
             decodeAndEnqueue(globalObject, stream, controller, copy.span().data(), copy.span().size(), true);
         } else

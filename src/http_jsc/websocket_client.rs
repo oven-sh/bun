@@ -522,13 +522,10 @@ impl<const SSL: bool> WebSocket<SSL> {
                 out.did_receive_bytes(data, kind as u8);
             }
             Opcode::Text => {
-                // SAFETY: only `feed` passes an `ArrayBuffer`, and `init_over_stream` asserts `ws_mode`, which
-                // takes the arm above. Other `data` is in a buffer of the socket, the tunnel, `self` or the inflate scratch.
-                let stable = unsafe { strings::StableBytes::new(data) };
                 // this function encodes to UTF-16 if > 127
                 // so we don't need to worry about latin1 non-ascii code points
                 // we avoid trim since we wanna keep the utf8 validation intact
-                let utf16_bytes = match stable.to_utf16_alloc(true) {
+                let utf16_bytes = match strings::to_utf16_alloc(data, true, false) {
                     Ok(v) => v,
                     Err(strings::ToUTF16Error::InvalidByteSequence) => {
                         self.fail(ErrorCode::InvalidUtf8);
@@ -1718,7 +1715,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         options: &ConnectedOptions,
         deflate_params: Option<&websocket_deflate::Params>,
     ) -> *mut Self {
-        assert!(options.ws_mode);
         let ws = Self::new_raw(
             global_this,
             deflate_params,

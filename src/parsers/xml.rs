@@ -1259,9 +1259,11 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         {
             return Ok(());
         }
-        match strings::index_of_invalid_utf8(U::bytes(self.src)) {
-            None => Ok(()),
-            Some(at) => Err(self.err(at, "Invalid UTF-8")),
+        let result = simdutf::validate::with_errors::utf8(U::bytes(self.src));
+        if result.is_successful() {
+            Ok(())
+        } else {
+            Err(self.err(result.count, "Invalid UTF-8"))
         }
     }
 
@@ -1350,13 +1352,8 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                     "",
                 ));
             }
-            let latin1 = U::bytes(&self.src[self.pos..]);
-            if !strings::is_all_ascii(latin1) {
-                let input = WithUtf8Len::latin1_worst_case(latin1);
-                let mut utf8 =
-                    BorrowedBuf::from(self.bump.alloc_uninit_slice::<u8>(input.utf8_len()));
-                simdutf::convert::latin1::to::utf8(input, utf8.unfilled());
-                self.src = U::from_bytes(utf8.into_filled());
+            if let Some(utf8) = strings::to_utf8_from_latin1(U::bytes(&self.src[self.pos..])) {
+                self.src = U::from_bytes(self.bump.alloc_slice_copy(&utf8));
                 self.pos = 0;
                 self.content_start = usize::MAX;
                 self.transcoded = true;

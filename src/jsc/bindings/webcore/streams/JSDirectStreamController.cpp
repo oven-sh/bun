@@ -548,7 +548,7 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
         throwOutOfMemoryError(globalObject, scope);
         return String();
     }
-    String text = Zig::convertUTF8ToString(bytes.span(), Zig::BytesAreStable::Yes);
+    String text = Zig::convertUTF8ToString(bytes.span());
     if (text.isNull() && !bytes.isEmpty()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return String();

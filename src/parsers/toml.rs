@@ -465,8 +465,9 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// Returns the position of the first content byte.
     fn init_document(&mut self) -> PResult<usize> {
         // A TOML document must be valid UTF-8 as a whole.
-        if let Some(at) = bun_core::strings::index_of_invalid_utf8(self.src) {
-            return Err(self.err(at, b"Invalid UTF-8 byte sequence"));
+        let validation = bun_simdutf_sys::simdutf::validate::with_errors::utf8(self.src);
+        if !validation.is_successful() {
+            return Err(self.err(validation.count, b"Invalid UTF-8 byte sequence"));
         }
         // Skip a leading byte-order mark.
         if self.src.starts_with(b"\xEF\xBB\xBF") {

@@ -1003,14 +1003,36 @@ unsafe extern "C" fn simdutf__validate_utf8(p: *const u8, len: usize) -> bool {
     core::str::from_utf8(unsafe { bytes(p, len) }).is_ok()
 }
 #[unsafe(no_mangle)]
-unsafe extern "C" fn simdutf__convert_utf8_to_utf16le(
+unsafe extern "C" fn simdutf__validate_utf8_with_errors(p: *const u8, len: usize) -> SimdutfResult {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    match core::str::from_utf8(unsafe { bytes(p, len) }) {
+        Ok(_) => SimdutfResult {
+            status: 0,
+            count: len,
+        },
+        // simdutf's HEADER_BITS
+        Err(error) => SimdutfResult {
+            status: 1,
+            count: error.valid_up_to(),
+        },
+    }
+}
+#[unsafe(no_mangle)]
+unsafe extern "C" fn simdutf__convert_utf8_to_utf16le_with_errors(
     p: *const u8,
     len: usize,
     out: *mut u16,
-) -> usize {
+) -> SimdutfResult {
     // SAFETY: the caller passes a slice, as a pointer and a length.
-    let Ok(text) = core::str::from_utf8(unsafe { bytes(p, len) }) else {
-        return 0;
+    let text = match core::str::from_utf8(unsafe { bytes(p, len) }) {
+        Ok(text) => text,
+        // simdutf's HEADER_BITS
+        Err(error) => {
+            return SimdutfResult {
+                status: 1,
+                count: error.valid_up_to(),
+            };
+        }
     };
     let mut written = 0;
     for unit in text.encode_utf16() {
@@ -1019,7 +1041,10 @@ unsafe extern "C" fn simdutf__convert_utf8_to_utf16le(
         unsafe { out.add(written).write(unit) };
         written += 1;
     }
-    written
+    SimdutfResult {
+        status: 0,
+        count: written,
+    }
 }
 #[unsafe(no_mangle)]
 unsafe extern "C" fn simdutf__validate_ascii(p: *const u8, len: usize) -> bool {

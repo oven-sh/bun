@@ -10,7 +10,7 @@ use crate::CrateError as Error;
 use crate::vec::{BorrowedBuf, BorrowedCursor};
 use bun_alloc::AllocError;
 use bun_highway as highway;
-use bun_simdutf_sys::simdutf;
+use bun_simdutf_sys::simdutf::{self, WithUtf16Len};
 
 pub use self::unicode::{
     CodepointIterator, Cursor, NewCodePointIterator, UnsignedCodepointIterator,
@@ -77,9 +77,8 @@ pub use unicode_draft::{
     copy_latin1_into_ascii, copy_latin1_into_utf8_stop_on_non_ascii, copy_latin1_into_utf16,
     copy_u8_into_u16, copy_u16_into_u8, copy_utf16_into_utf8_impl,
     element_length_cp1252_into_utf16, element_length_utf8_into_utf16, push_codepoint_wtf8,
-    to_utf8_list_with_type_bun, to_utf16_alloc_maybe_buffered, try_convert_utf8_to_utf16_exact,
-    u16_is_lead, u16_is_trail, utf8_codepoint_with_fffd, utf16_codepoint,
-    utf16_codepoint_with_fffd, wtf8_sequence,
+    to_utf8_list_with_type_bun, to_utf16_alloc_maybe_buffered, u16_is_lead, u16_is_trail,
+    utf8_codepoint_with_fffd, utf16_codepoint, utf16_codepoint_with_fffd, wtf8_sequence,
 };
 
 /// `bun.strings.visible` — terminal-visible-width helpers. The implementation
@@ -1274,14 +1273,6 @@ pub fn is_valid_utf8(slice: &[u8]) -> bool {
     simdutf::validate::utf8(slice)
 }
 
-/// Not simdutf's `validate_utf8_with_errors`: it can read before `slice` if `slice` changes.
-pub fn index_of_invalid_utf8(slice: &[u8]) -> Option<usize> {
-    if is_valid_utf8(slice) {
-        return None;
-    }
-    Some(slice.utf8_chunks().next()?.valid().len())
-}
-
 /// SIMD-validated `&str` view of `bytes`; `None` if not valid UTF-8.
 ///
 /// This is the codebase-wide replacement for `core::str::from_utf8` — every
@@ -2376,16 +2367,25 @@ pub fn try_convert_utf8_to_utf16_in_buffer<'a>(
     buf: &'a mut [u16],
     input: &[u8],
 ) -> Option<&'a mut [u16]> {
-    if input.len() > buf.len() && element_length_utf8_into_utf16(input) > buf.len() {
-        return None;
-    }
     let mut buf = BorrowedBuf::from(buf);
     try_write_wtf8_as_utf16(input, buf.unfilled()).then(|| buf.into_filled_mut())
 }
 
 /// Returns false if `out` is too short (invalid byte → U+FFFD; lone surrogates pass through).
 fn try_write_wtf8_as_utf16(input: &[u8], mut out: BorrowedCursor<'_, u16>) -> bool {
-    let mut rest = unicode_draft::write_utf8_prefix_as_utf16(input, out.reborrow());
+    if input.is_empty() {
+        return true;
+    }
+    let measured = WithUtf16Len::utf8_worst_case(input, out.capacity())
+        .unwrap_or_else(|| WithUtf16Len::utf8(input));
+    if measured.utf16_len() > out.capacity() {
+        return false;
+    }
+    if simdutf::convert::utf8::to::utf16::with_errors::le(measured, out.reborrow()).is_successful()
+    {
+        return true;
+    }
+    let mut rest = input;
     while let [byte, after @ ..] = rest {
         if byte.is_ascii() && out.capacity() >= 1 {
             out.append(&[u16::from(*byte)]);
@@ -2466,84 +2466,38 @@ pub fn to_utf16_alloc(
     fail_if_invalid: bool,
     sentinel: bool,
 ) -> Result<Option<Vec<u16>>, ToUTF16Error> {
-    let Some(first) = first_non_ascii_usize(bytes) else {
+    let Some(_first) = first_non_ascii(bytes) else {
         return Ok(None);
     };
 
+    let input = WithUtf16Len::utf8(bytes);
+    let out_length = input.utf16_len();
+    let cap = out_length + if sentinel { 1 } else { 0 };
+    // Hot path: allocate uninitialised and let simdutf write directly into the
+    // spare capacity — avoids the redundant zero-fill of `vec![0u16; cap]`,
+    // which for large source files (build/create-next benches) is a measurable
+    // memset. `.max(1)` keeps the buffer pointer non-dangling so simdutf never
+    // sees `Vec::new()`'s dangling `0x2` sentinel.
     let mut out: Vec<u16> = Vec::new();
-    let remaining =
-        unicode_draft::append_utf8_prefix_as_utf16(&mut out, bytes, first, sentinel as usize)?;
-    if !remaining.is_empty() {
-        if fail_if_invalid {
-            return Err(ToUTF16Error::InvalidByteSequence);
-        }
-        append_utf8_as_utf16_with_fffd(&mut out, remaining, sentinel as usize)?;
-    }
-    if sentinel {
-        out.push(0);
-    }
-    Ok(Some(out))
-}
-
-/// Bytes that no other thread or process writes to. A `&[u8]` into an `ArrayBuffer` does not guarantee that.
-#[derive(Copy, Clone)]
-pub struct StableBytes<'a>(&'a [u8]);
-
-impl<'a> From<&'a Vec<u8>> for StableBytes<'a> {
-    fn from(bytes: &'a Vec<u8>) -> Self {
-        Self(bytes)
-    }
-}
-
-impl<'a> StableBytes<'a> {
-    /// # Safety
-    /// Nothing writes to `bytes` during `'a`.
-    pub unsafe fn new(bytes: &'a [u8]) -> Self {
-        Self(bytes)
-    }
-
-    pub fn slice(self) -> &'a [u8] {
-        self.0
-    }
-
-    pub fn substring(self, start_index: usize) -> Self {
-        Self(&self.0[start_index..])
-    }
-
-    /// [`to_utf16_alloc`] without chunks or a copy from the stack.
-    pub fn to_utf16_alloc(self, fail_if_invalid: bool) -> Result<Option<Vec<u16>>, ToUTF16Error> {
-        let bytes = self.0;
-        if first_non_ascii(bytes).is_none() {
-            return Ok(None);
-        }
-
-        let len = element_length_utf8_into_utf16(bytes);
-        let mut out: Vec<u16> = Vec::new();
-        // At least one unit, so that simdutf does not get a dangling pointer.
-        out.try_reserve_exact(len.max(1))
-            .map_err(|_| ToUTF16Error::OutOfMemory)?;
-        let result = crate::vec::append_with(&mut out, usize::MAX, |out| {
-            // SAFETY: `len` units were just reserved, and `self` guarantees that `bytes` does not change.
-            unsafe { simdutf::convert::utf8::to::utf16::with_errors::le(bytes, out) }
-        });
-        if !result.is_successful() {
-            if fail_if_invalid {
-                return Err(ToUTF16Error::InvalidByteSequence);
-            }
-            append_utf8_as_utf16_with_fffd(&mut out, bytes, 0)?;
-        }
-        Ok(Some(out))
-    }
-}
-
-/// Slow path: invalid sequences and surrogates become U+FFFD.
-fn append_utf8_as_utf16_with_fffd(
-    out: &mut Vec<u16>,
-    mut remaining: &[u8],
-    additional: usize,
-) -> Result<(), ToUTF16Error> {
-    out.try_reserve(remaining.len() + additional)
+    out.try_reserve_exact(cap.max(1))
         .map_err(|_| ToUTF16Error::OutOfMemory)?;
+    let res = crate::vec::append_with(&mut out, usize::MAX, |out| {
+        simdutf::convert::utf8::to::utf16::with_errors::le(input, out)
+    });
+    if res.is_successful() {
+        if sentinel {
+            out.push(0);
+        }
+        return Ok(Some(out));
+    }
+    if fail_if_invalid {
+        return Err(ToUTF16Error::InvalidByteSequence);
+    }
+    // Slow path: WTF-8 decode with replacement. `out` is still len 0 (we never
+    // committed the failed fast-path write); reuse its capacity.
+    out.try_reserve(bytes.len() + if sentinel { 1 } else { 0 })
+        .map_err(|_| ToUTF16Error::OutOfMemory)?;
+    let mut remaining = bytes;
     while let Some(i) = first_non_ascii(remaining) {
         let i = i as usize;
         // Copy ASCII prefix as-is (one u16 per byte).
@@ -2554,10 +2508,13 @@ fn append_utf8_as_utf16_with_fffd(
         // `replacement.len.max(1)`, not 1.
         let replacement = unicode_draft::convert_utf8_bytes_into_utf16(remaining);
         remaining = &remaining[(replacement.len as usize).max(1)..];
-        push_codepoint_utf16(out, replacement.code_point);
+        push_codepoint_utf16(&mut out, replacement.code_point);
     }
     out.extend(remaining.iter().map(|&b| u16::from(b)));
-    Ok(())
+    if sentinel {
+        out.push(0);
+    }
+    Ok(Some(out))
 }
 
 /// WTF-8 → UTF-16LE iff `bytes` contains any non-ASCII byte; pure-ASCII inputs return `None`.

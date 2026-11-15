@@ -2108,15 +2108,7 @@ impl BlobExt for Blob {
         raw_bytes: *mut [u8],
     ) -> JsResult<JSValue> {
         // SAFETY: fn contract.
-        let raw_bytes = unsafe { &*raw_bytes };
-        let bytes = match self.store().map(|store| &store.data) {
-            Some(store::Data::Bytes(bytes)) if !bytes.can_change_under_borrow() => {
-                // SAFETY: fn contract. JS only gets to write to a store after a `Transfer` took its last reference.
-                TextBytes::Stable(unsafe { strings::StableBytes::new(raw_bytes) })
-            }
-            _ => TextBytes::Mapped(raw_bytes),
-        };
-        match decode_text::<true>(self, global, bytes)? {
+        match decode_text::<true>(self, global, unsafe { &*raw_bytes })? {
             Text::Decoded(value) => Ok(value),
             Text::Utf16(external) => {
                 if LIFETIME == Lifetime::Transfer {
@@ -5136,22 +5128,12 @@ enum Text<'a> {
     Ascii(&'a [u8]),
 }
 
-#[derive(Copy, Clone)]
-enum TextBytes<'a> {
-    Stable(strings::StableBytes<'a>),
-    Mapped(&'a [u8]),
-}
-
 /// `IN_STORE`: what the scan finds holds for the next read too.
 fn decode_text<'a, const IN_STORE: bool>(
     blob: &Blob,
     global: &JSGlobalObject,
-    bytes: TextBytes<'a>,
+    raw_bytes: &'a [u8],
 ) -> JsResult<Text<'a>> {
-    let raw_bytes = match bytes {
-        TextBytes::Stable(bytes) => bytes.slice(),
-        TextBytes::Mapped(bytes) => bytes,
-    };
     let (bom, buf) = strings::BOM::detect_and_split(raw_bytes);
     if buf.is_empty() {
         return Ok(Text::Decoded(JSValue::js_empty_string(global)));
@@ -5163,13 +5145,8 @@ fn decode_text<'a, const IN_STORE: bool>(
     if could_be_all_ascii(blob) == Some(true) {
         return Ok(Text::Ascii(buf));
     }
-    let converted = match bytes {
-        TextBytes::Stable(bytes) => bytes
-            .substring(raw_bytes.len() - buf.len())
-            .to_utf16_alloc(false),
-        TextBytes::Mapped(_) => strings::to_utf16_alloc(buf, false, false),
-    }
-    .map_err(|_| bun_string_jsc::throw_utf16_transcode_failure(global, buf))?;
+    let converted = strings::to_utf16_alloc(buf, false, false)
+        .map_err(|_| bun_string_jsc::throw_utf16_transcode_failure(global, buf))?;
     if IN_STORE {
         blob.set_is_ascii_flag(converted.is_none());
     }
@@ -5185,8 +5162,7 @@ pub(crate) struct ToFormDataWithBytesFn;
 
 impl read_file::ReadFileToJs for ToStringWithBytesFn {
     fn from_owned(b: &Blob, g: &JSGlobalObject, by: Box<[u8]>) -> JsResult<JSValue> {
-        let by = by.into_vec();
-        match decode_text::<false>(b, g, TextBytes::Stable(strings::StableBytes::from(&by)))? {
+        match decode_text::<false>(b, g, &by)? {
             Text::Decoded(value) => Ok(value),
             Text::Utf16(external) => {
                 drop(by);
@@ -5194,7 +5170,7 @@ impl read_file::ReadFileToJs for ToStringWithBytesFn {
             }
             // An external string can't start past a BOM.
             Text::Ascii(buf) if buf.len() != by.len() => BunString::clone_latin1(buf).into_js(g),
-            Text::Ascii(_) => bun_string_jsc::owned_latin1_into_js(g, by),
+            Text::Ascii(_) => bun_string_jsc::owned_latin1_into_js(g, by.into_vec()),
         }
     }
     unsafe fn from_store(b: &Blob, g: &JSGlobalObject, by: *mut [u8]) -> JsResult<JSValue> {
@@ -5650,10 +5626,7 @@ impl Internal {
         if bom_len == 0 {
             return bun_string_jsc::owned_utf8_into_js(global_this, bytes);
         }
-        match strings::StableBytes::from(&bytes)
-            .substring(bom_len)
-            .to_utf16_alloc(false)
-        {
+        match strings::to_utf16_alloc(&bytes[bom_len..], false, false) {
             Ok(Some(utf16)) => bun_string_jsc::owned_utf16_into_js(global_this, utf16),
             Ok(None) => {
                 bytes.drain(..bom_len);

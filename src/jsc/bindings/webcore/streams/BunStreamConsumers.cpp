@@ -799,7 +799,7 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
         throwOutOfMemoryError(globalObject, scope);
         return WTF::String();
     }
-    WTF::String text = Zig::convertUTF8ToString(bytes.span(), Zig::BytesAreStable::Yes);
+    WTF::String text = Zig::convertUTF8ToString(bytes.span());
     if (text.isNull() && !bytes.isEmpty()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return WTF::String();

@@ -7,6 +7,7 @@
 #include "BunClientData.h"
 #include "BunStreamSource.h"
 #include "GeneratedSink.h"
+#include "JSBuffer.h"
 #include "JSDOMWrapperCache.h"
 #include "JSDirectStreamController.h"
 #include "JSDirectStreamSource.h"
@@ -1066,12 +1067,17 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
     // WebIDL "get a copy of the bytes held by the buffer source": a detached
     // buffer is still a BufferSource whose bytes are the empty sequence.
     std::span<const uint8_t> bytes;
+    bool isShared = false;
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
-        if (!view->isDetached())
+        if (!view->isDetached()) {
             bytes = view->span();
+            isShared = view->isShared();
+        }
     } else if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
-        if (buffer->impl() && !buffer->impl()->isDetached())
+        if (buffer->impl() && !buffer->impl()->isDetached()) {
             bytes = buffer->impl()->span();
+            isShared = buffer->impl()->isShared();
+        }
     } else {
         auto* error = createTypeError(globalObject, "Body.textStream() received a chunk that is not a BufferSource"_s);
         RETURN_IF_EXCEPTION(scope, void());
@@ -1093,7 +1099,13 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
         }
         return;
     }
-    JSString* decoded = streamingUTF8Decode(globalObject, bytes, controller->m_algorithms.textDecodeState, /* flush */ false);
+    JSString* decoded;
+    if (isShared) [[unlikely]] {
+        auto copy = Bun::copySharedBytes(globalObject, scope, bytes);
+        RETURN_IF_EXCEPTION(scope, void());
+        decoded = streamingUTF8Decode(globalObject, copy.span(), controller->m_algorithms.textDecodeState, /* flush */ false);
+    } else
+        decoded = streamingUTF8Decode(globalObject, bytes, controller->m_algorithms.textDecodeState, /* flush */ false);
     RETURN_IF_EXCEPTION(scope, void());
     if (!decoded || !decoded->length()) {
         // No output from this chunk (held back as an incomplete sequence). Arm

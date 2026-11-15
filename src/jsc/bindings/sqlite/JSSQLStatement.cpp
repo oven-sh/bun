@@ -700,7 +700,7 @@ static JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Source sourc
             return jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ text, len }));
         }
 
-        auto encoded = Bun__encoding__toStringStableUTF8(text, len, globalObject);
+        auto encoded = Bun__encoding__toStringUTF8(text, len, globalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
         return JSC::JSValue::decode(encoded);
     }

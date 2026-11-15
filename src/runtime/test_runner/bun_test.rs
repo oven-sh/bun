@@ -571,8 +571,7 @@ pub(crate) struct Step {
     pub(crate) next: Cell<Option<StepId>>,
     /// if this entry fails, go to the entry 'failure_skip_past.next'
     pub(crate) failure_skip_past: Cell<Option<StepId>>,
-    /// '.epoch' = not set
-    /// when this entry begins executing, the timespec will be set to the current time plus the timeout(ms).
+    /// When the entry began executing, plus its timeout. `EPOCH` = not set.
     pub(crate) timespec: Cell<Timespec>,
 }
 
@@ -1004,7 +1003,7 @@ impl BunTest {
 
     fn handle_timeout(&self, global_this: &JSGlobalObject) {
         let _g = group_begin!();
-        self.kill_dangling_processes_on_timeout(global_this);
+        Execution::Execution::kill_dangling_processes_on_timeout(self, global_this);
         self.add_result(RefDataValue::Start);
     }
 
@@ -1156,8 +1155,7 @@ impl BunTest {
                 // seed — not on which worker ran it or what files preceded it
                 // on that worker. This is what makes --parallel --randomize
                 // reproducible via --seed=N.
-                // Basename only so the hash is platform-independent (path
-                // separators and absolute prefixes differ on Windows).
+                // Basename only: path separators and absolute prefixes differ on Windows.
                 let seed = bun_wyhash::hash(bun_paths::basename(self.file.path)).wrapping_add(u64::from(jest.seed));
 
                 let mut order = Order::Order::init(self, Order::Config {

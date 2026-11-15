@@ -34,6 +34,7 @@ use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::{ConcurrentPoster, GlobalRef, JsRef};
 use bun_options_types::context::ContextData;
+use bun_paths::resolve_path::SpillBuf;
 use bun_ptr::{AliasableBox, CellExt as _};
 use bun_threading::work_pool::{OwnedTask, WorkPool};
 use core::cell::Cell;
@@ -1969,13 +1970,15 @@ pub(crate) fn shell_join_path(
     syscall: bun_sys::Tag,
     parts: &[&[u8]],
 ) -> bun_sys::Result<bun_core::ZBox> {
-    let mut spill = Vec::new();
-    let joined =
-        bun_paths::resolve_path::join_spill::<bun_paths::platform::Auto>(&mut spill, parts);
-    if joined.len() >= bun_paths::MAX_PATH_BYTES {
-        return Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, syscall).with_path(joined));
-    }
-    Ok(bun_core::ZBox::from_bytes(joined))
+    SpillBuf::with_scratch(|buf| {
+        let joined = bun_paths::resolve_path::join_spill::<bun_paths::platform::Auto>(buf, parts);
+        if joined.len() >= bun_paths::MAX_PATH_BYTES {
+            return Err(
+                bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, syscall).with_path(joined)
+            );
+        }
+        Ok(bun_core::ZBox::from_bytes(joined))
+    })
 }
 
 /// Resolves a builtin's path `operand` against the shell's `cwd`.
@@ -2028,15 +2031,14 @@ fn shell_get_path<'a>(
     }
     // Relative path. Join outside `buf` because `join_z_buf` doesn't bounds-check,
     // then copy the normalized result into `buf` if there's room.
-    let mut spill = Vec::new();
-    let joined = {
+    SpillBuf::with_scratch(|scratch| {
         let dirpath = bun_sys::get_fd_path(dirfd, buf).map_err(|e| e.with_fd(dirfd))?;
-        bun_paths::resolve_path::join_spill::<bun_paths::platform::Auto>(
-            &mut spill,
+        let joined = bun_paths::resolve_path::join_spill::<bun_paths::platform::Auto>(
+            scratch,
             &[dirpath, to.as_bytes()],
-        )
-    };
-    bun_core::strings::copy_z(buf, joined).ok_or_else(name_too_long)
+        );
+        bun_core::strings::copy_z(buf, joined).ok_or_else(name_too_long)
+    })
 }
 
 /// Windows: rewrite the path via `shell_get_path` then `bun_sys::stat`, tagging

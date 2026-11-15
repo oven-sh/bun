@@ -5,6 +5,7 @@ use bun_ast::Loc;
 use bun_collections::MultiArrayList;
 use bun_core::{self, Utf8Bytes};
 use bun_core::{declare_scope, scoped_log};
+use bun_paths::resolve_path::{SpillBuf, join_abs_string_spill};
 use bun_semver::String as SemverString;
 
 use crate::vlq::decode as decode_vlq;
@@ -297,18 +298,20 @@ impl Lookup {
 
         let name: &[u8] = &source_map.external_source_names[source_idx];
 
-        let display = if source_map.standalone_module_graph.is_none()
-            && bun_paths::is_absolute(base_filename)
-        {
+        if source_map.standalone_module_graph.is_none() && bun_paths::is_absolute(base_filename) {
             // `platform::Auto` is a cfg-selected
             // type alias (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
-            bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name)
-        } else {
-            name
-        };
+            return Some(SpillBuf::with_scratch(|buf| {
+                bun_core::String::clone_utf8(join_abs_string_spill::<bun_paths::platform::Auto>(
+                    dir,
+                    buf,
+                    &[name],
+                ))
+            }));
+        }
 
-        Some(bun_core::String::clone_utf8(display))
+        Some(bun_core::String::clone_utf8(name))
     }
 
     /// Only valid if `lookup.source_map.is_external()`

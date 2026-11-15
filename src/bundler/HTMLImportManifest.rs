@@ -40,7 +40,9 @@ use bun_collections::AutoBitSet;
 use bun_core::strings;
 use bun_io::Write;
 use bun_js_printer::Encoding;
-use bun_paths::resolve_path::{platform, platform_to_posix_in_place, relative_normalized};
+use bun_paths::resolve_path::{
+    SpillBuf, platform, platform_to_posix_in_place, relative_normalized_spill,
+};
 use bun_resolver::fs::FileSystem;
 
 use crate::chunk::Content;
@@ -355,10 +357,10 @@ fn source_path_relative_to_root<'b>(
     path: &[u8],
 ) -> &'b [u8] {
     buf.clear();
-    buf.extend_from_slice(strings::remove_leading_dot_slash(relative_normalized::<
-        platform::Auto,
-        false,
-    >(root_dir, path)));
+    SpillBuf::with_scratch(|scratch| {
+        let relative = relative_normalized_spill::<platform::Auto>(scratch, root_dir, path);
+        buf.extend_from_slice(strings::remove_leading_dot_slash(relative));
+    });
     platform_to_posix_in_place(&mut buf[..]);
     buf
 }

@@ -135,9 +135,9 @@ impl Framework {
             .iter()
             .filter(|fsr| fsr.client_pages)
             .map(|fsr| bt::ClientPageDir {
-                dir: Box::<[u8]>::from(bun_paths::resolve_path::join_abs::<
+                dir: Box::<[u8]>::from(bun_paths::resolve_path::join_abs_string_vec::<
                     bun_paths::platform::Auto,
-                >(top_level_dir, &fsr.root)),
+                >(top_level_dir, &[&fsr.root])),
                 server_exports: fsr
                     .server_exports
                     .iter()

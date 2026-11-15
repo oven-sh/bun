@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 use bun_ast::Loader;
 use bun_core::{CodeGenerationFromStrings, strings};
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::join_spill;
+use bun_paths::resolve_path::join_string_vec;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, CodeUnit};
 use bun_sema::hir::{ExprId, ExprKind, Flags, StmtKind};
@@ -593,7 +593,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 let own_folder = self.input.host.directory_of(code.file_name(file));
                 let folders = of_site.iter().map(|it| {
                     let parts = [&own_folder[..], code.atoms().bytes(it.1)];
-                    join_spill::<Posix>(&mut Vec::new(), &parts).to_vec()
+                    join_string_vec::<Posix>(&parts)
                 });
                 let folders: Vec<Vec<u8>> = folders.collect();
                 let name = code.atoms().bytes(of_site[0].0);

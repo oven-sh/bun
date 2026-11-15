@@ -11,6 +11,7 @@ use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{Dependency, Integrity, PackageID, Resolution};
+use bun_paths::resolve_path::SpillBuf;
 use bun_paths::{self as path, PathBuffer, SEP};
 use bun_semver as Semver;
 #[cfg(windows)]
@@ -333,8 +334,11 @@ fn get_temporary_directory_run(
 
     // The node-gyp shim is written via `handle` and put on PATH via `name`.
     let name: &'static [u8] = if tried_dot_tmp {
-        let joined =
-            path::resolve_path::join::<path::platform::Auto>(&[cache.path.as_bytes(), b".tmp"]);
+        let mut joined_buf = SpillBuf::default();
+        let joined = path::resolve_path::join_spill::<path::platform::Auto>(
+            &mut joined_buf,
+            &[cache.path.as_bytes(), b".tmp"],
+        );
         bun_core::handle_oom(FileSystem::get().dirname_store().append(joined))
     } else {
         temp_dir_name
@@ -365,10 +369,15 @@ fn ensure_cache_directory(
     }
 
     let handle = Dir::cwd().make_open_path(b"node_modules/.cache", Default::default())?;
-    let path = ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
-        FileSystem::get().top_level_dir(),
-        &[b"node_modules", b".cache"],
-    ));
+    let path = SpillBuf::with_scratch(|buf| {
+        ZBox::from_bytes(path::resolve_path::join_abs_string_spill::<
+            path::platform::Auto,
+        >(
+            FileSystem::get().top_level_dir(),
+            buf,
+            &[b"node_modules", b".cache"],
+        ))
+    });
     Ok(CACHE_DIRECTORY.get_or_init(|| CacheDirectory { handle, path }))
 }
 
@@ -379,7 +388,7 @@ pub struct CacheDir {
     pub is_cwd_fallback: bool,
 }
 
-/// An empty variable counts as unset, because `abs(&[b""])` would be the project directory.
+/// An empty variable counts as unset, because `abs_buf(&[b""], ..)` would be the project directory.
 pub fn fetch_cache_directory_path(
     env: &DotEnvLoader,
     configured: Option<&[u8]>,

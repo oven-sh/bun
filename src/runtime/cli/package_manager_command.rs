@@ -12,6 +12,7 @@ use bun_install::package_manager_real::{
     package_manager_options::LogLevel, setup_global_dir,
 };
 use bun_install::{DependencyID, PackageID, PackageManager, ResolutionTag, migration};
+use bun_paths::resolve_path::SpillBuf;
 use bun_paths::{self as Path, AutoAbsPath};
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, File};
@@ -339,9 +340,11 @@ impl PackageManagerCommand {
             PmViewCommand::view(pm, spec, fields, json_output)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"bin") {
-            let output_path = Path::resolve_path::join_abs::<Path::platform::Auto>(
+            let mut buf = SpillBuf::default();
+            let output_path = Path::resolve_path::join_abs_string_spill::<Path::platform::Auto>(
                 Fs::FileSystem::get().top_level_dir(),
-                pm.options.bin_path.as_bytes(),
+                &mut buf,
+                &[pm.options.bin_path.as_bytes()],
             );
             bun_core::prettyln!("{}", bstr::BStr::new(output_path));
             if Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal {

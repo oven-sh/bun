@@ -25792,7 +25792,10 @@ describe("project ownership", () => {
         "dep.ts": implicit,
       },
       [parameter("dep.ts")],
-      [["--allowJs", "conf.js"], ["--allowJs", "-p", "tsconfig.node.json", "conf.js"]],
+      [
+        ["--allowJs", "conf.js"],
+        ["--allowJs", "-p", "tsconfig.node.json", "conf.js"],
+      ],
     );
     checks(
       "uses --checkJs when selecting a referenced owner",
@@ -25803,7 +25806,10 @@ describe("project ownership", () => {
         "dep.ts": `export const value = 1;\n`,
       },
       [parameter("conf.js")],
-      [["--checkJs", "conf.js"], ["--checkJs", "-p", "tsconfig.node.json", "conf.js"]],
+      [
+        ["--checkJs", "conf.js"],
+        ["--checkJs", "-p", "tsconfig.node.json", "conf.js"],
+      ],
     );
 
     // tsconfig.json has the tests too, and the configuration file of the build, which is the loose one, leaves them out.

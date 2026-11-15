@@ -6,7 +6,7 @@ use core::ffi::{c_char, c_int};
 use core::mem::size_of;
 use core::ptr::NonNull;
 
-use bun_zlib_sys::shared::{DataType, ReturnCode, uInt, uLong, zStream_struct};
+use bun_zlib_sys::shared::{DataType, ReturnCode, uInt, zStream_struct};
 
 #[allow(non_snake_case)]
 mod ZlibAllocator {
@@ -110,12 +110,6 @@ impl ZStream {
     }
 
     #[inline]
-    pub fn total_out(&self) -> uLong {
-        // SAFETY: see `next_in`.
-        unsafe { (*self.as_ptr()).total_out }
-    }
-
-    #[inline]
     pub fn err_msg(&self) -> *const c_char {
         // SAFETY: see `next_in`.
         unsafe { (*self.as_ptr()).err_msg }
@@ -139,13 +133,6 @@ impl ZStream {
             (*self.as_ptr()).next_in = next_in;
             (*self.as_ptr()).avail_in = avail_in;
         }
-    }
-
-    /// `inflateReset` zeroes it, so an owner that decodes one member after another into one buffer puts the sum back.
-    #[inline]
-    pub fn set_total_out(&mut self, total_out: uLong) {
-        // SAFETY: see `set_input`.
-        unsafe { (*self.as_ptr()).total_out = total_out };
     }
 
     /// Point `next_out`/`avail_out` at the next output window.

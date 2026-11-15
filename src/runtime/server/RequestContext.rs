@@ -211,7 +211,6 @@ use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText, file_
 use crate::webcore::blob::BodyFacts;
 use crate::webcore::sink::ReadableSinkController;
 use crate::webcore::{Blob, ReadableStream, body as Body};
-use bun_collections::VecExt;
 use bun_core::Output;
 use bun_core::strings;
 use bun_http_types as HTTP;
@@ -2996,10 +2995,8 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                             if byte_stream.has_received_last_chunk.get()
                                 && !byte_stream.has_pending_error()
                             {
-                                let mut byte_list = byte_stream.drain();
-                                this.blob.set(AnyBlob::from_owned_slice(
-                                    byte_list.move_to_list_managed(),
-                                ));
+                                this.blob
+                                    .set(AnyBlob::from_owned_slice(byte_stream.drain()));
                                 this.response_body_readable_stream_ref
                                     .set(readable_stream::Strong::Empty);
                                 this.do_render_blob();
@@ -3017,8 +3014,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                                 .set(readable_stream::Strong::init(stream, global_this));
 
                             this.byte_stream.set(Some(byte_stream_nn));
-                            let mut response_buf = byte_stream.take_buffer();
-                            let buffer = response_buf.move_to_list();
+                            let buffer = byte_stream.take_buffer();
                             let has_body_bytes = !buffer.is_empty();
                             this.response_buf_owned.set(buffer);
 

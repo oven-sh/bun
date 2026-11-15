@@ -9,6 +9,11 @@ pub struct Mmap {
     len: usize,
 }
 
+// SAFETY: it owns its pages, and any thread may unmap them.
+unsafe impl Send for Mmap {}
+// SAFETY: safe code gets only the address and the size from a `&Mmap`.
+unsafe impl Sync for Mmap {}
+
 impl Mmap {
     /// Panics if `flags` has `MAP_FIXED`.
     pub fn new(len: usize, prot: i32, flags: i32, fd: Fd, offset: i64) -> Maybe<Mmap> {

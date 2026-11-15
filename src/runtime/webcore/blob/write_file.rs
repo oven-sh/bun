@@ -1,4 +1,6 @@
 use core::ffi::c_void;
+#[cfg(not(windows))]
+use core::ops::Range;
 use core::ptr::NonNull;
 #[cfg(not(windows))]
 use core::sync::atomic::{AtomicU8, Ordering};
@@ -9,11 +11,13 @@ use crate::Error;
 use bun_io::{self as io, IntrusiveIoRequest as _};
 use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
+#[cfg(not(windows))]
+use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd};
 #[cfg(not(windows))]
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
-use crate::webcore::blob::{self, Blob, SizeType};
+use crate::webcore::blob::{self, Blob, SizeType, Store};
 #[cfg(not(windows))]
 use crate::webcore::blob::{
     ClosingState, FileCloser, FileOpener, MkdirpTarget, Retry, mkdir_if_not_exists,
@@ -88,8 +92,10 @@ impl WriteFile {
 
 #[cfg(not(windows))]
 pub(crate) struct WriteFile {
-    pub(crate) file_blob: Blob,
-    pub(crate) bytes_blob: Blob,
+    file_store: RefPtr<Store>,
+    bytes_store: RefPtr<Store>,
+    /// The part of `bytes_store` to write.
+    window: Range<usize>,
 
     pub(crate) opened_fd: Fd,
     pub(crate) system_error: Option<SystemError>,
@@ -134,16 +140,8 @@ impl FileOpener for WriteFile {
     fn set_system_error(&mut self, e: SystemError) {
         self.system_error = Some(e);
     }
-    fn pathlike(&self) -> &PathOrFileDescriptor<'static> {
-        &self
-            .file_blob
-            .store
-            .get()
-            .as_ref()
-            .unwrap()
-            .data
-            .as_file()
-            .pathlike
+    fn pathlike(&self) -> PathOrFileDescriptor<'_> {
+        self.file_store.data.as_file().pathlike()
     }
     fn try_mkdirp(&mut self, err: bun_sys::Error, path: &bun_core::ZStr) -> Retry {
         mkdir_if_not_exists(self, &err, path)
@@ -271,13 +269,15 @@ impl WriteFile {
     }
 
     pub(crate) fn create(
-        file_blob: Blob,
-        bytes_blob: Blob,
+        file_store: RefPtr<Store>,
+        bytes_store: RefPtr<Store>,
+        window: Range<usize>,
         mkdirp_if_not_exists: bool,
     ) -> Result<WriteFile, Error> {
         let write_file = WriteFile {
-            file_blob,
-            bytes_blob,
+            file_store,
+            bytes_store,
+            window,
             opened_fd: Fd::INVALID,
             system_error: None,
             errno: None,
@@ -298,6 +298,10 @@ impl WriteFile {
         Ok(write_file)
     }
 
+    fn bytes(&self) -> &[u8] {
+        &self.bytes_store.shared_view()[self.window.clone()]
+    }
+
     // reshaped for borrowck — take (off, len) here and re-derive the slice
     // internally so callers don't hold a borrow of self across the &mut self call.
     pub(crate) fn do_write(&mut self, off: usize, len: usize) -> WriteStep {
@@ -310,7 +314,7 @@ impl WriteFile {
         // On macOS, it is an error to use pwrite() on a
         // non-seekable file.
         loop {
-            match sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]) {
+            match sys::write(fd, &self.bytes()[off..off + len]) {
                 Ok(wrote) => {
                     self.total_written += wrote;
                     return WriteStep::Wrote(wrote);
@@ -336,7 +340,7 @@ impl WriteFile {
         let system_error = this.system_error.take();
         let total_written = this.total_written;
         if system_error.is_none() {
-            note_written(&this.file_blob);
+            note_written(&this.file_store);
         }
         drop(this);
 
@@ -365,15 +369,7 @@ impl WriteFile {
     }
 
     pub(crate) fn is_allowed_to_close(&self) -> bool {
-        self.file_blob
-            .store
-            .get()
-            .as_ref()
-            .unwrap()
-            .data
-            .as_file()
-            .pathlike
-            .is_path()
+        self.file_store.data.as_file().path().is_some()
     }
 
     fn on_finish(&mut self) {
@@ -398,26 +394,9 @@ impl WriteFile {
 
         let fd = self.opened_fd;
 
-        self.could_block = 'brk: {
-            if let Some(store) = self.file_blob.store.get().as_ref() {
-                if let blob::store::Data::File(file) = &store.data {
-                    if file.pathlike.is_fd() {
-                        // If seekable was set, then so was mode
-                        if file.seekable.is_some() {
-                            // This is mostly to handle pipes which were passsed to the process somehow
-                            // such as stderr, stdout. Bun.stdin and Bun.stderr will automatically set `mode` for us.
-                            break 'brk !bun_sys::is_regular_file(file.mode);
-                        }
-                    }
-                }
-            }
-
-            // We opened the file descriptor with O_NONBLOCK, so we
-            // shouldn't have to worry about blocking reads/writes
-            //
-            // We do not call fstat() because that is very expensive.
-            false
-        };
+        // A path is opened with O_NONBLOCK. This is for pipes passed to the process, such as stdout, and costs no fstat().
+        let file = self.file_store.data.as_file();
+        self.could_block = file.fd().is_some() && file.seekable() == Some(false);
 
         // We have never supported offset in Bun.write().
         // and properly adding support means we need to also support it
@@ -436,11 +415,11 @@ impl WriteFile {
             // We only do this on Linux because the equivalent on macOS
             // seemed to have zero performance impact in
             // microbenchmarks.
-            if !self.could_block && self.bytes_blob.shared_view().len() > 1024 {
+            if !self.could_block && self.window.len() > 1024 {
                 let _ = sys::preallocate_file(
                     fd.native(),
                     0,
-                    i64::try_from(self.bytes_blob.shared_view().len()).expect("int cast"),
+                    i64::try_from(self.window.len()).expect("int cast"),
                 ); // we don't care if it fails.
             }
         }
@@ -467,10 +446,8 @@ impl WriteFile {
 
     fn do_write_loop(&mut self) {
         while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
-            let remain_full = self.bytes_blob.shared_view();
-            // reshaped for borrowck — capture len/offset before mut borrow
-            let off = self.total_written.min(remain_full.len());
-            let remain_len = remain_full.len() - off;
+            let off = self.total_written.min(self.window.len());
+            let remain_len = self.window.len() - off;
 
             if remain_len > 0 && self.errno.is_none() {
                 let wrote = match self.do_write(off, remain_len) {
@@ -579,16 +556,7 @@ mod windows_impl {
             global_this: &JSGlobalObject,
             mkdirp_if_not_exists: bool,
         ) -> jsc::JsResult<()> {
-            let mkdirp = mkdirp_if_not_exists
-                && file_blob
-                    .store
-                    .get()
-                    .as_ref()
-                    .unwrap()
-                    .data
-                    .as_file()
-                    .pathlike
-                    .is_path();
+            let mkdirp = mkdirp_if_not_exists && file_blob.file().unwrap().path().is_some();
             let mut write_file = Box::new(WriteFileWindows {
                 file_blob,
                 bytes_blob,
@@ -606,8 +574,8 @@ mod windows_impl {
             });
             write_file.io_request.loop_ = event_loop.uv_loop();
 
-            let store = write_file.file_blob.store.get().as_ref().unwrap();
-            let PathOrFileDescriptor::Fd(fd) = &store.data.as_file().pathlike else {
+            let store = write_file.file_blob.store().unwrap();
+            let Some(fd) = store.data.as_file().fd() else {
                 return write_file.open();
             };
             write_file.fd = fd.uv();
@@ -616,8 +584,8 @@ mod windows_impl {
         }
 
         fn path(&self) -> &[u8] {
-            let store = self.file_blob.store.get().as_ref().unwrap();
-            store.data.as_file().pathlike.path().slice()
+            let store = self.file_blob.store().unwrap();
+            store.data.as_file().path().unwrap()
         }
 
         fn open(mut self: Box<Self>) -> jsc::JsResult<()> {
@@ -724,7 +692,7 @@ mod windows_impl {
             let result = if let Some(err) = self.to_system_error() {
                 WriteFileResultType::Err(Box::new(err))
             } else {
-                note_written(&self.file_blob);
+                note_written(self.file_blob.store().unwrap());
                 WriteFileResultType::Result(self.total_written as SizeType)
             };
             drop(self);
@@ -741,16 +709,7 @@ mod windows_impl {
         pub(crate) fn to_system_error(&self) -> Option<SystemError> {
             if let Some(err) = &self.err {
                 let mut sys_err = err.clone();
-                sys_err = match &self
-                    .file_blob
-                    .store
-                    .get()
-                    .as_ref()
-                    .unwrap()
-                    .data
-                    .as_file()
-                    .pathlike
-                {
+                sys_err = match &self.file_blob.store().unwrap().data.as_file().pathlike() {
                     PathOrFileDescriptor::Path(path) => sys_err.with_path(path.slice()),
                     PathOrFileDescriptor::Fd(fd) => sys_err.with_fd(*fd),
                 };
@@ -839,12 +798,9 @@ fn settle(
 
 // ──────────────────────────────────────────────────────────────────────────
 
-fn note_written(file: &Blob) {
-    let store = file.store.get().as_ref();
-    if let Some(blob::store::Data::File(file)) = store.map(|it| &it.data)
-        && file.pathlike.is_path()
-    {
-        crate::node::fs::note_opened_for_write(file.pathlike.path().slice(), true);
+pub(super) fn note_written(file_store: &Store) {
+    if let Some(path) = file_store.data.as_file().path() {
+        crate::node::fs::note_opened_for_write(path, true);
     }
 }
 

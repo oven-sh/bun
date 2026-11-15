@@ -1129,14 +1129,17 @@ test("lowering many decorated instance fields into a large constructor body stay
           return (user + system) / 1000;
         }
         // The least of several runs, in turns and in time of the processor: what else the machine does can only add.
-        // No new turn once half of the child's time is gone: the child then ends in time wherever one turn does.
-        // Seven turns take about a minute on a debug build.
+        // Seven turns take about a minute on a debug build, so no turn starts once half of the child's time is gone.
         const [small, large] = [gen(100), gen(50000)];
         let [tSmall, tLarge] = [Infinity, Infinity];
-        for (let i = 0; i < 7 && (i === 0 || performance.now() < ${limit / 2}); i++) {
+        let turns = 0;
+        for (; turns < 7 && (turns === 0 || performance.now() < ${limit / 2}); turns++) {
           tSmall = Math.min(tSmall, time(100, small));
           tLarge = Math.min(tLarge, time(50000, large));
         }
+        // The first transform of a process is slow. After a single turn the small source has no other sample,
+        // and the ratio is then too low to show a quadratic lowering: take one more.
+        if (turns === 1) tSmall = Math.min(tSmall, time(100, small));
         console.log(JSON.stringify({ tSmall, tLarge, ratio: tLarge / tSmall }));
       `,
     ],

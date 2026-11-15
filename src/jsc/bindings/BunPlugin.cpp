@@ -3957,7 +3957,7 @@ static void restoreOverwrittenExports(Zig::GlobalObject* globalObject, JSC::JSMo
         ExportVariable variable = findExportVariable(globalObject, moduleNamespace, name);
         RETURN_IF_EXCEPTION(scope, );
 #if ENABLE(AOT)
-        if (!variable.record) {
+        if (!variable.record && vm.hasCompiledCode()) {
             auto resolution = moduleNamespace->moduleRecord()->resolveExport(globalObject, name);
             RETURN_IF_EXCEPTION(scope, );
             original = resolution.type == JSC::AbstractModuleRecord::Resolution::Type::Resolved ? JSC::AOT::readDeferredExportOfRecord(resolution.moduleRecord, resolution.localName) : JSValue();

@@ -264,6 +264,8 @@ bool JSEnvironmentVariableMap::putByIndex(JSCell* cell, JSGlobalObject* globalOb
 static bool isHandedBackByCompiledObjects(JSObject* environment, JSGlobalObject* globalObject, PropertyName propertyName)
 {
     VM& vm = globalObject->vm();
+    if (!vm.hasCompiledCode()) [[likely]]
+        return false;
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* uid = propertyName.uid();

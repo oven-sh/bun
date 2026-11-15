@@ -10,7 +10,7 @@ impl<T> AliasableBox<T> {
     }
 
     /// # Safety
-    /// As [`Box::from_non_null`], if the result is dropped.
+    /// `ptr` meets the contract of [`Box::from_non_null`], or the result is never dropped.
     pub(crate) unsafe fn from_non_null(ptr: NonNull<T>) -> Self {
         Self(ptr)
     }

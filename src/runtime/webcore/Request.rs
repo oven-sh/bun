@@ -28,8 +28,8 @@ use bun_jsc::AbortSignalRef;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::StringJsc as _;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
-use bun_ptr::RefPtr;
 use bun_ptr::weak_ptr::WeakPtrData;
+use bun_ptr::{RefCount, RefPtr};
 
 // SAFETY: see its `#[ref_count(destroy = …)]`. No field reaches a `WeakRef`.
 unsafe impl bun_ptr::weak_ptr::HasWeakPtrData for Request {
@@ -80,7 +80,7 @@ pub(crate) struct Request {
     pub(crate) flags: Flags,
     pub(crate) request_context: Cell<AnyRequestContext>,
     /// The JS wrapper holds the only ref.
-    ref_count: bun_ptr::RefCount,
+    ref_count: RefCount,
     /// Bun.serve's RequestContext holds a weak reference, which can outlive the wrapper.
     pub(crate) weak_ptr_data: WeakPtrData,
     // We must report a consistent value for this
@@ -397,7 +397,7 @@ impl Request {
             method,
             flags: Flags::default(),
             request_context: Cell::new(AnyRequestContext::NULL),
-            ref_count: bun_ptr::RefCount::init(),
+            ref_count: RefCount::init(),
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         }
@@ -918,7 +918,7 @@ impl Request {
             method: Method::GET,
             flags: Flags::default(),
             request_context: Cell::new(AnyRequestContext::NULL),
-            ref_count: bun_ptr::RefCount::init(),
+            ref_count: RefCount::init(),
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         };
@@ -1298,7 +1298,7 @@ impl Request {
             method: self.method,
             flags: self.flags,
             request_context: Cell::new(AnyRequestContext::NULL),
-            ref_count: bun_ptr::RefCount::init(),
+            ref_count: RefCount::init(),
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         })
@@ -1325,7 +1325,7 @@ impl Request {
                 ..Flags::default()
             },
             request_context: Cell::new(request_context),
-            ref_count: bun_ptr::RefCount::init(),
+            ref_count: RefCount::init(),
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         }

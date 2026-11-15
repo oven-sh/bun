@@ -183,9 +183,9 @@ impl TimerObjectInternals {
     fn ref_(&self) {
         match self.parent_ptr() {
             // SAFETY: `p` is a live container per `parent_ptr()`.
-            TimerParent::Immediate(p) => _ = unsafe { RefPtr::init_ref(p) }.into_raw(),
+            TimerParent::Immediate(p) => unsafe { RefPtr::increment_strong_count(p) },
             // SAFETY: as above.
-            TimerParent::Timeout(p) => _ = unsafe { RefPtr::init_ref(p) }.into_raw(),
+            TimerParent::Timeout(p) => unsafe { RefPtr::increment_strong_count(p) },
         }
     }
 
@@ -194,9 +194,9 @@ impl TimerObjectInternals {
     fn deref(&self) {
         match self.parent_ptr() {
             // SAFETY: `p` is a live container per `parent_ptr()`.
-            TimerParent::Immediate(p) => drop(unsafe { RefPtr::from_raw(p) }),
+            TimerParent::Immediate(p) => unsafe { RefPtr::decrement_strong_count(p) },
             // SAFETY: as above.
-            TimerParent::Timeout(p) => drop(unsafe { RefPtr::from_raw(p) }),
+            TimerParent::Timeout(p) => unsafe { RefPtr::decrement_strong_count(p) },
         }
     }
 

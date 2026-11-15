@@ -896,7 +896,7 @@ impl BunTest {
         let Some(refdata) = Jest::runner().and_then(|runner| runner.bun_test_root.take_pending_then_ref(key)) else {
             return Ok(());
         };
-        let has_one_ref = refdata.has_one_ref();
+        let has_one_ref = RefPtr::has_one_ref(&refdata);
         let Some(this) = refdata.buntest_weak.upgrade() else {
             bun_core::scoped_log!(bun_test_group, "bunTestThenOrCatch -> the BunTest is no longer active");
             return Ok(());
@@ -986,7 +986,7 @@ impl BunTest {
         // dupe the ref and enqueue a task to call the done callback.
         // this makes it so if you do something else after calling done(), the next test doesn't start running until the next tick.
 
-        let has_one_ref = ref_in.has_one_ref();
+        let has_one_ref = RefPtr::has_one_ref(&ref_in);
         let should_run = has_one_ref || was_error;
 
         if !should_run {
@@ -1640,9 +1640,6 @@ impl Drop for RefData {
     }
 }
 impl RefData {
-    pub(crate) fn has_one_ref(&self) -> bool {
-        self.ref_count.has_one_ref()
-    }
     pub(crate) fn bun_test(&self) -> Option<BunTestPtr> {
         self.buntest_weak.upgrade()
     }

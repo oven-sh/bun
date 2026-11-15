@@ -788,9 +788,7 @@ pub trait SourceContext: Sized {
     fn on_cancel(&self);
     /// Per-context teardown side-effects (unref pollers, flush pending callbacks,
     /// release handles). **Must NOT free the enclosing `NewSource<Self>` allocation** —
-    /// that is done by the caller ([`NewSource::decrement_count`]) *after* this
-    /// returns, via `Box::from_raw`, which then runs `Drop` on every field. Freeing
-    /// here would deallocate the storage backing the live `&self` borrow (UAF).
+    /// that is done by the caller ([`NewSource::destroy`]) *after* this returns.
     fn deinit_fn(&self) {}
 
     /// The JS wrapper was collected while native refs remain. Runs inside a GC
@@ -826,11 +824,13 @@ pub trait SourceContext: Sized {
 // With Rust's default repr the field is reordered and the cast reads
 // adjacent fields as the loader, returning empty bodies.
 #[repr(C)]
+#[derive(bun_ptr::RefCounted)]
+#[ref_count(did_ref = Self::did_ref, will_deref = Self::will_deref, destroy = Self::destroy)]
 pub struct NewSource<C: SourceContext> {
     pub context: C,
     pub cancelled: Cell<bool>,
     /// One ref is the JS wrapper's. The rest: a `FileReader` mid-read, a `ByteStream`'s producer, scoped `RefPtr`s.
-    pub ref_count: Cell<u32>,
+    pub ref_count: bun_ptr::RefCount,
     pub pending_err: Option<syscall::Error>,
     /// Upstream producer to notify on cancel/drain/consumer-attach. Replaces
     /// the per-signal fn-ptr + ctx-ptr pairs with one typed handle.
@@ -841,9 +841,9 @@ pub struct NewSource<C: SourceContext> {
     pub global_this: Cell<Option<bun_ptr::BackRef<JSGlobalObject>>>,
     /// Back-reference to the owning `JS{Blob,Bytes,File}InternalReadableStreamSource`
     /// wrapper. Starts `Weak` (set in [`Self::to_readable_stream`]), is
-    /// [`JsRef::upgrade`]d to `Strong` in [`Self::increment_count`] while a
+    /// [`JsRef::upgrade`]d to `Strong` in [`Self::did_ref`] while a
     /// native I/O ref is held (FileReader `io_ref`), and
-    /// [`JsRef::downgrade`]d back to `Weak` in [`Self::decrement_count`] when
+    /// [`JsRef::downgrade`]d back to `Weak` in [`Self::will_deref`] when
     /// only the wrapper's own ref remains. [`Self::finalize`] flips it to
     /// `Finalized` so [`Self::on_close`] reads `None` instead of a
     /// dead-but-unswept cell.
@@ -890,7 +890,7 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
         Self {
             context: C::default(),
             cancelled: Cell::new(false),
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             pending_err: None,
             producer: Cell::new(streams::SourceHandle::None),
             global_this: Cell::new(None),
@@ -964,24 +964,6 @@ macro_rules! source_context_codegen {
     };
 }
 
-impl<C: SourceContext> bun_ptr::AnyRefCounted for NewSource<C> {
-    #[inline]
-    unsafe fn rc_ref(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live.
-        unsafe { (*this).increment_count() }
-    }
-    #[inline]
-    unsafe fn rc_deref(this: *mut Self) {
-        // SAFETY: forwarded caller contract.
-        unsafe { Self::decrement_count(this) }
-    }
-    #[inline]
-    unsafe fn rc_has_one_ref(this: *const Self) -> bool {
-        // SAFETY: caller contract — `this` is live.
-        unsafe { (*this).ref_count.get() == 1 }
-    }
-}
-
 // Enforce the layout invariant `from_js`/`Source` rely on.
 const _: () = assert!(core::mem::offset_of!(NewSource<ByteBlobLoader>, context) == 0);
 const _: () = assert!(core::mem::offset_of!(NewSource<ByteStream>, context) == 0);
@@ -1031,7 +1013,7 @@ impl<C: SourceContext> NewSource<C> {
 
     /// Heap-allocate and hand back the leaked allocation as an unbounded `&mut`.
     ///
-    /// The GC finalizer frees it via [`Self::decrement_count`]: do not use the borrow once the
+    /// The GC finalizer releases its ref: do not use the borrow once the
     /// wrapper from [`Self::to_readable_stream`] can be collected.
     #[inline]
     pub fn new_mut<'a>(init: Self) -> &'a mut Self {
@@ -1095,15 +1077,26 @@ impl<C: SourceContext> NewSource<C> {
         ));
     }
 
-    pub fn increment_count(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
+    fn did_ref(this: &bun_ptr::RefPtr<Self>) {
         // A ref beyond the JS wrapper's own is held (in practice a FileReader
         // `io_ref`). Root the wrapper so
         // `on_close`, reached from `on_reader_done` off the event loop with
         // no JS frame on the stack, never reads a dead-but-unswept cell.
-        if !self.wrapper_unrooted.get() {
-            self.upgrade_wrapper();
+        if !this.wrapper_unrooted.get() {
+            this.upgrade_wrapper();
         }
+    }
+
+    fn will_deref(this: &bun_ptr::RefPtr<Self>) {
+        if this.ref_count.get() == 2 {
+            // Only the JS wrapper's own ref will remain: drop the Strong root so that it is collectable again.
+            this.this_jsvalue.with_mut(jsc::JsRef::downgrade);
+        }
+    }
+
+    fn destroy(last: bun_ptr::AliasableBox<Self>) {
+        last.context.deinit_fn();
+        drop(last);
     }
 
     fn upgrade_wrapper(&self) {
@@ -1126,45 +1119,6 @@ impl<C: SourceContext> NewSource<C> {
         self.wrapper_unrooted.set(false);
         if self.ref_count.get() > 1 {
             self.upgrade_wrapper();
-        }
-    }
-
-    /// Release one reference. If the count hits zero, runs context teardown and
-    /// **frees the allocation**.
-    ///
-    /// Takes a raw pointer (not `&mut self`) because the zero-refcount path
-    /// deallocates `*this`; holding a live `&mut Self` across that drop would be
-    /// a dangling-reference UAF (Stacked Borrows: protected tag on freed memory).
-    ///
-    /// SAFETY: `this` must point at a live `NewSource<C>` produced by
-    /// [`Self::new_mut`] (i.e. `Box::leak`). Caller must not dereference `this`
-    /// — nor any interior pointer such as `&context` — after this returns.
-    pub unsafe fn decrement_count(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live for the duration of this block.
-        let remaining = unsafe {
-            let r = &(*this).ref_count;
-            #[cfg(debug_assertions)]
-            if r.get() == 0 {
-                panic!("Attempted to decrement ref count below zero");
-            }
-            r.set(r.get() - 1);
-            r.get()
-        };
-        if remaining == 1 {
-            // Only the JS wrapper's own ref remains: drop the Strong root so
-            // the wrapper becomes collectable again.
-            // SAFETY: caller contract — `this` is live while remaining > 0.
-            unsafe { (*this).this_jsvalue.with_mut(jsc::JsRef::downgrade) };
-        }
-        if remaining == 0 {
-            // SAFETY: still live; run side-effect teardown while fields are valid.
-            unsafe {
-                (*this).context.deinit_fn();
-            }
-            // SAFETY: `this` originated from `Box::leak` in `Self::new_mut`. No
-            // `&mut` borrow of `*this` is live at this point — reclaim and drop,
-            // which runs `Drop` on `context` and all other fields, then frees.
-            drop(unsafe { bun_core::heap::take(this) });
         }
     }
 
@@ -1205,11 +1159,6 @@ impl<C: SourceContext> NewSource<C> {
     pub fn memory_cost(&self) -> usize {
         self.context.memory_cost_fn()
     }
-
-    // Teardown is folded into [`Self::decrement_count`]'s
-    // zero-refcount path. A `&mut self` deinit here would free the storage
-    // backing the live `self` borrow (dangling UAF), so the drop is performed
-    // there via raw `*mut Self` instead.
 }
 
 // ─── codegen-facing inherent methods ─────────────────────────────────────────

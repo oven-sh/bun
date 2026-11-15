@@ -322,7 +322,7 @@ impl FileReader {
         }
 
         if was_lazy {
-            // The across-read ref roots the JS wrapper (`increment_count`
+            // The across-read ref roots the JS wrapper (`NewSource::did_ref`
             // upgrades `this_jsvalue` to Strong) so an event-loop callback
             // firing with no JS on the stack never lands on a freed box. For a
             // POSIX non-pollable regular file every read is synchronous

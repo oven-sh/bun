@@ -61,7 +61,7 @@ use crate::{self as jsc, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError,
 
 bun_core::define_scoped_log!(log, Worker, hidden);
 
-#[derive(bun_ptr::ThreadSafeRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub struct WebWorker {
     // ---- Immutable after `create()` (any thread) ----------------------------
     /// The C++ `WorkerMessagingProxy`; the thread holds a ref on it, so it is
@@ -97,7 +97,7 @@ pub struct WebWorker {
     name: bun_core::ZBox,
 
     // ---- Cross-thread ----------------------------------------------------------
-    ref_count: bun_ptr::ThreadSafeRefCount<WebWorker>,
+    ref_count: bun_ptr::ThreadSafeRefCount,
     /// Set by the parent (`requestTermination`), by an exiting ancestor, or by
     /// the worker itself (`process.exit()`); polled by the worker loop between
     /// ticks and turned into a JSC TerminationException for running script.
@@ -753,14 +753,10 @@ impl WebWorker {
         WebWorker__workerGlobalScopeDestroyed(self.messaging_proxy, exit_code, false);
     }
 
-    /// Drop one ref; the last one frees the allocation (`Drop` below). Any thread.
-    ///
-    /// # Safety
-    /// `this` came from `create()` and the caller owns one ref on it.
+    /// Drop the ref that `create()` returned; the last one frees the allocation (`Drop` below). Any thread.
     #[unsafe(export_name = "WebWorker__deref")]
-    pub(crate) unsafe extern "C" fn deref(this: *mut WebWorker) {
-        // SAFETY: fn contract.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
+    pub(crate) extern "C" fn deref(this: bun_ptr::RefPtr<WebWorker>) {
+        drop(this);
     }
 
     /// Block until the OS thread has returned. Parent thread; the worker has

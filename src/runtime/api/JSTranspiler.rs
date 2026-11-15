@@ -49,7 +49,7 @@ pub(crate) struct JSTranspiler {
     /// Bulk-frees the config strings.
     _arena: bun_ptr::AliasableBox<Arena>,
     log_level: bun_ast::Level,
-    pub(crate) ref_count: bun_ptr::RefCount<JSTranspiler>,
+    pub(crate) ref_count: bun_ptr::RefCount,
 }
 
 fn default_transform_options() -> api::TransformOptions {

@@ -30,25 +30,20 @@ pub use bun_core::{RawSlice, cast_fn_ptr};
 mod aliasable_box;
 pub use aliasable_box::AliasableBox;
 
-pub mod raw_ref_count;
 pub mod weak_ptr;
 
 pub mod tagged_pointer;
 pub use tagged_pointer::TaggedPtr;
 
 pub mod ref_count;
-pub use ref_count::{
-    AnyRefCounted, CellRefCounted, RefCount, RefCounted, RefPtr, ThreadSafeRefCount,
-    ThreadSafeRefCounted,
-};
-// Derive macros — same names as the traits (separate namespace). The derives
-// expand to `::bun_ptr::…` paths, so this crate is the canonical re-export
-// point: `#[derive(bun_ptr::CellRefCounted)]`.
-pub use bun_core_macros::{CellRefCounted, RefCounted, ThreadSafeRefCounted};
+pub use ref_count::{RefCount, RefCounted, RefPtr, ThreadSafeRefCount};
+// The derive expands to `::bun_ptr::…` paths, so it is re-exported here: `#[derive(bun_ptr::RefCounted)]`.
+pub use bun_core_macros::RefCounted;
+#[cfg(test)]
+extern crate self as bun_ptr;
 
 pub mod parent_ref;
 pub use parent_ref::ParentRef;
-pub use raw_ref_count::RawRefCount;
 pub use weak_ptr::WeakPtr;
 
 // Intrusive parent-from-field recovery — canonical helpers live in `bun_core`

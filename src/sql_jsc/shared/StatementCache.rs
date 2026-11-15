@@ -1,16 +1,16 @@
 use bun_collections::StringHashMap;
 use bun_core::UnwrapOrOom as _;
-use bun_ptr::{AnyRefCounted, CellRefCounted, RefPtr};
+use bun_ptr::{RefCounted, RefPtr};
 
 /// By query text. A text has one statement for each set of parameter types it ran with.
-pub(crate) struct StatementCache<S: AnyRefCounted> {
+pub(crate) struct StatementCache<S: RefCounted> {
     /// Each with the `clock` of its last use.
     statements: StringHashMap<Vec<(RefPtr<S>, u64)>>,
     len: usize,
     clock: u64,
 }
 
-impl<S: AnyRefCounted> Default for StatementCache<S> {
+impl<S: RefCounted> Default for StatementCache<S> {
     fn default() -> Self {
         Self {
             statements: StringHashMap::default(),
@@ -20,7 +20,7 @@ impl<S: AnyRefCounted> Default for StatementCache<S> {
     }
 }
 
-impl<S: AnyRefCounted + CellRefCounted> StatementCache<S> {
+impl<S: RefCounted> StatementCache<S> {
     pub(crate) fn find(&mut self, query: &[u8], accepts: impl Fn(&S) -> bool) -> Option<RefPtr<S>> {
         let (statement, last_used) = self
             .statements
@@ -66,7 +66,7 @@ impl<S: AnyRefCounted + CellRefCounted> StatementCache<S> {
             .statements
             .values()
             .flatten()
-            .filter(|(statement, _)| statement.ref_count().get() == 1)
+            .filter(|(statement, _)| RefPtr::has_one_ref(statement))
             .min_by_key(|(_, last_used)| *last_used)?;
         let oldest = oldest.clone();
         self.remove(&oldest)

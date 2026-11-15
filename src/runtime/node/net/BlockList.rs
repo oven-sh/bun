@@ -42,12 +42,9 @@ fn sockaddr_from_js(
     Ok(SocketAddress::init_from_addr_family(global, value, family)?._addr)
 }
 
-#[derive(bun_ptr::ThreadSafeRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct BlockList {
-    // Intrusive thread-safe refcount.
-    // `ref()`/`deref()` (provided by the derive) bump it; hitting zero drops
-    // the `Box` via the trait's default destructor.
-    ref_count: bun_ptr::ThreadSafeRefCount<BlockList>,
+    ref_count: bun_ptr::ThreadSafeRefCount,
     // R-2: interior mutability so every host_fn takes `&self`. All access is
     // serialized by `mutex` (held across every read and every `with_mut`), so
     // the `JsCell` single-thread invariant is upheld even though `BlockList`
@@ -66,14 +63,6 @@ pub(crate) struct BlockList {
 }
 
 impl BlockList {
-    // Trait impl + default destructor (drops the `Box`) provided by
-    // `#[derive(ThreadSafeRefCounted)]`; inherent forwarder below.
-    #[inline]
-    pub(crate) fn ref_(&self) {
-        // SAFETY: `self` is live; `ref_` only touches the atomic `ref_count` field.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
-    }
-
     pub(crate) fn constructor() -> *mut Self {
         bun_ptr::RefPtr::new(Self {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
@@ -91,8 +80,7 @@ impl BlockList {
 
     /// May be called from any thread.
     pub(crate) fn estimated_size(&self) -> usize {
-        self.estimated_size.load(AtomicOrdering::SeqCst) as usize
-            / (self.ref_count.get().max(1) as usize)
+        self.estimated_size.load(AtomicOrdering::SeqCst) as usize / (self.ref_count.get() as usize)
     }
 
     pub(crate) fn is_block_list(value: JsLocal<'_>) -> bool {
@@ -350,17 +338,20 @@ impl BlockList {
 }
 
 /// Takes the `+1` that [`BlockList__onStructuredCloneDestroy`] releases.
+///
+/// # Safety
+/// `this` is the pointer in a live wrapper.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn BlockList__onStructuredCloneSerialize(
-    this: &BlockList,
+pub(crate) unsafe extern "C" fn BlockList__onStructuredCloneSerialize(
+    this: *mut BlockList,
     serializer: &mut CloneSerializer,
 ) {
     use bun_io::Write as _;
+    // SAFETY: the wrapper holds a ref.
+    let this = core::mem::ManuallyDrop::new(unsafe { bun_ptr::RefPtr::init_ref(this) });
     let _guard = this.mutex.lock_guard();
-    this.ref_();
-    let addr = std::ptr::from_ref::<BlockList>(this) as usize;
+    let addr = this.as_ptr() as usize;
     SERIALIZED_REFS.lock().push((this.serialize_nonce, addr));
-    // Deserialize only calls `ref_()` and `to_js_ptr` on `addr`, so `from_ref` provenance is fine.
     _ = serializer.write_int_le(this.serialize_nonce);
 }
 
@@ -393,10 +384,8 @@ pub(crate) unsafe extern "C" fn BlockList__onStructuredCloneDeserialize(
         let Some(addr) = refs.iter().find_map(|&(n, a)| (n == nonce).then_some(a)) else {
             return JSValue::ZERO;
         };
-        let this = addr as *mut BlockList;
         // SAFETY: the destroy hook removes this entry under the lock before it drops the serialize ref.
-        unsafe { (*this).ref_() };
-        this
+        unsafe { bun_ptr::RefPtr::init_ref(addr as *mut BlockList) }.into_raw()
     };
     // SAFETY: the wrapper adopts the ref taken above.
     unsafe { BlockList::to_js_ptr(this, global) }

@@ -15,7 +15,6 @@
 
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::ptr::NonNull;
 
 use bun_core::strings::AsciiStatus;
 use bun_http_types::MimeType::MimeType;
@@ -152,6 +151,7 @@ impl From<MimeType> for BlobContentType {
 /// `JsCell` (the non-Copy `store`). `Cell<T>` and `JsCell<T>` are both
 /// `#[repr(transparent)]`, so `#[repr(C)]` field layout is unchanged.
 #[repr(C)]
+#[derive(bun_ptr::RefCounted)]
 pub struct Blob {
     pub reported_estimated_size: Cell<usize>,
     pub size: Cell<SizeType>,
@@ -163,11 +163,11 @@ pub struct Blob {
     pub charset: Cell<AsciiStatus>,
     /// Was it created via the `File` constructor?
     pub is_jsdom_file: Cell<bool>,
-    /// Zero for a by-value `Blob`. On a heap one, the JS wrapper, `BlobRefPtr`s and `ExternalShared`s each hold a ref.
+    /// On a heap `Blob`, the JS wrapper, `BlobRefPtr`s and `ExternalShared`s each hold a ref.
     ///
     /// Public so `bun_runtime` can construct `Blob { ref_count: …, .. }`
     /// literals.
-    pub ref_count: bun_ptr::RawRefCount,
+    pub ref_count: bun_ptr::RefCount,
     pub global_this: Cell<*const JSGlobalObject>,
     pub last_modified: Cell<f64>,
     /// Only used by `<input type="file">` / `File` (issue #10178).
@@ -195,7 +195,7 @@ impl Default for Blob {
             content_type_was_set: Cell::new(false),
             charset: Cell::new(AsciiStatus::Unknown),
             is_jsdom_file: Cell::new(false),
-            ref_count: bun_ptr::RawRefCount::init(0),
+            ref_count: bun_ptr::RefCount::init(),
             global_this: Cell::new(core::ptr::null()),
             last_modified: Cell::new(0.0),
             name: bun_ptr::JsCell::new(bun_core::String::DEAD),
@@ -252,15 +252,8 @@ const _: () = {
 impl Blob {
     /// Heap-promote, with the one ref that the caller owns.
     #[inline]
-    pub fn new(mut blob: Blob) -> *mut Blob {
-        blob.ref_count = bun_ptr::RawRefCount::init(1);
-        bun_core::heap::into_raw(Box::new(blob))
-    }
-
-    #[inline]
-    pub fn is_heap_allocated(&self) -> bool {
-        // Single read of `self.ref_count`'s raw value.
-        self.ref_count.unsafe_get_value() != 0
+    pub fn new(blob: Blob) -> *mut Blob {
+        RefPtr::new(blob).into_raw()
     }
 
     #[inline]
@@ -386,7 +379,7 @@ impl Blob {
             content_type_was_set: Cell::new(self.content_type_was_set.get()),
             charset: Cell::new(self.charset.get()),
             is_jsdom_file: Cell::new(self.is_jsdom_file.get()),
-            ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
+            ref_count: bun_ptr::RefCount::init(),
             global_this: Cell::new(self.global_this.get()),
             last_modified: Cell::new(self.last_modified.get()),
             name: self.name.clone(),
@@ -484,27 +477,8 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for Blob {
     }
 }
 
-/// Only for a `Blob` produced by [`Blob::new`].
-impl bun_ptr::AnyRefCounted for Blob {
-    #[inline]
-    unsafe fn rc_ref(this: *mut Self) {
-        // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
-        unsafe { Blob__ref(this) }
-    }
-    #[inline]
-    unsafe fn rc_deref(this: *mut Self) {
-        // SAFETY: as `rc_ref`, and the caller releases a ref it owns.
-        unsafe { Blob__deref(this) }
-    }
-    #[inline]
-    unsafe fn rc_has_one_ref(this: *const Self) -> bool {
-        // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
-        unsafe { (*this).ref_count.unsafe_get_value() == 1 }
-    }
-}
-
 /// Retain half of the refcount protocol behind `BlobImplRefDerefTraits`
-/// (`src/jsc/bindings/blob.h`), [`bun_ptr::ExternalShared`] and [`bun_ptr::AnyRefCounted`].
+/// (`src/jsc/bindings/blob.h`) and [`bun_ptr::ExternalShared`].
 ///
 /// # Safety
 /// `this` must point to a live `Blob` produced by [`Blob::new`], and the call
@@ -512,18 +486,11 @@ impl bun_ptr::AnyRefCounted for Blob {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Blob__ref(this: *mut Blob) {
     // SAFETY: caller contract above.
-    unsafe {
-        debug_assert!(
-            (*this).is_heap_allocated(),
-            "cannot ref: this Blob is not heap-allocated"
-        );
-        (*this).ref_count.increment();
-    }
+    unsafe { RefPtr::init_ref(this) }.into_raw();
 }
 
 /// Release half of the refcount protocol behind `BlobImplRefDerefTraits`
-/// (`src/jsc/bindings/blob.h`), [`bun_ptr::ExternalShared`] and the JS
-/// wrapper's ref ([`bun_ptr::AnyRefCounted`]).
+/// (`src/jsc/bindings/blob.h`) and [`bun_ptr::ExternalShared`].
 ///
 /// # Safety
 /// `this` must point to a live `Blob` produced by [`Blob::new`], the caller
@@ -533,15 +500,7 @@ unsafe extern "C" fn Blob__ref(this: *mut Blob) {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Blob__deref(this: *mut Blob) {
     // SAFETY: caller contract above.
-    unsafe {
-        debug_assert!(
-            (*this).is_heap_allocated(),
-            "cannot deref: this Blob is not heap-allocated"
-        );
-        if (*this).ref_count.decrement() == bun_ptr::raw_ref_count::DecrementResult::ShouldDestroy {
-            drop(bun_core::heap::take(this));
-        }
-    }
+    drop(unsafe { RefPtr::from_raw(this) });
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -553,11 +512,11 @@ pub mod store {
 
     /// Intrusively-refcounted; always
     /// heap-allocated.
-    #[derive(bun_ptr::ThreadSafeRefCounted)]
+    #[derive(bun_ptr::RefCounted)]
     pub struct Store {
         pub data: Data,
         pub mime_type: MimeType,
-        ref_count: bun_ptr::ThreadSafeRefCount<Store>,
+        ref_count: bun_ptr::ThreadSafeRefCount,
         pub is_all_ascii: IsAllAscii,
     }
 
@@ -927,32 +886,18 @@ pub mod store {
             self.ref_count.has_one_ref()
         }
 
-        /// Consumes one reference; on last
-        /// ref, drops & frees the heap `Store`.
-        ///
-        /// # Safety
-        /// `this` must point to a live `Store` originally allocated via
-        /// `RefPtr::new`, and the caller must own one outstanding
-        /// reference being released.
-        #[inline]
-        pub unsafe fn deref(this: NonNull<Store>) {
-            // SAFETY: caller contract.
-            unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this.as_ptr()) };
-        }
-
         /// `JSCArrayBuffer` deallocator hook. Only ever passed as a
         /// callback fn pointer, so no `#[unsafe(no_mangle)]` here.
-        pub extern "C" fn external(
+        ///
+        /// # Safety
+        /// `ptr` is from `RefPtr<Store>::into_raw`, and this releases that ref.
+        pub unsafe extern "C" fn external(
             ptr: *mut core::ffi::c_void,
             _: *mut core::ffi::c_void,
             _: usize,
         ) {
-            let Some(this) = NonNull::new(ptr.cast::<Store>()) else {
-                return;
-            };
-            // SAFETY: caller passes a `*Store` (originally leaked via
-            // `heap::alloc`) as the opaque pointer.
-            unsafe { Store::deref(this) };
+            // SAFETY: fn contract.
+            drop(unsafe { RefPtr::from_raw(ptr.cast::<Store>()) });
         }
 
         /// Mutable access to `data` through a shared handle. The caller must

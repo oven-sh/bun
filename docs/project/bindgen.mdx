@@ -914,7 +914,7 @@ impl CronJob {
 }
 ```
 
-- The struct is intrusively refcounted: `bun_ptr::CellRefCounted`, `RefCounted` or `ThreadSafeRefCounted`.
+- The struct derives `bun_ptr::RefCounted`, over a `ref_count` field of type `RefCount` or `ThreadSafeRefCount`.
 - `mutates: true` is an error.
 - `construct` returns a `*mut Self`, whose ref the object takes over.
 - The pointer in the object never changes and is never null. A class with a closed or detached state tracks it in a

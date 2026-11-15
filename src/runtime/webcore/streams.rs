@@ -2243,45 +2243,34 @@ impl NetworkSink {
     }
 
     /// Raw `*mut Self`: a write that fails the upload frees the sink of a `ByteStream`.
-    pub(crate) fn write_from_stream(this: *mut Self, data: &StreamResult) -> Writable {
-        // SAFETY: `this` is live, and only the write of another source borrows it past this block.
-        let task = unsafe {
-            if (*this).ended || !matches!((*this).source, SourceHandle::ByteStream(_)) {
-                return (*this).write(data);
+    pub(crate) fn write(this: *mut Self, data: &StreamResult) -> Writable {
+        let bytes = data.slice();
+        let len = bytes.len() as BlobSizeType;
+        // SAFETY: `this` is live until the write.
+        let (task, source) = unsafe {
+            if (*this).ended {
+                return Writable::Owned(0);
             }
-            (*this).task.as_ref().map(RefPtr::this_ptr)
+            match &(*this).task {
+                Some(task) => (task.this_ptr(), (*this).source),
+                None => return Writable::Owned(len),
+            }
         };
-        let bytes = data.slice();
-        let len = bytes.len() as BlobSizeType;
-        match task.map(|task| task.write_bytes(bytes, false)) {
-            Some(Ok(bun_s3::UploadBackpressure::Backpressure)) => Writable::Backpressure(len),
-            Some(Ok(bun_s3::UploadBackpressure::Done)) => Writable::Done,
-            Some(Ok(_)) | None => Writable::Owned(len),
-            Some(Err(_)) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
-        }
-    }
-
-    pub fn write(&mut self, data: &StreamResult) -> Writable {
-        if self.ended {
-            return Writable::Owned(0);
-        }
-        let bytes = data.slice();
-        let len = bytes.len() as BlobSizeType;
         // Direct `.writer()` (no source) exposes `write()` as `number`; only
         // the pump paths consume `Backpressure`/`Done`.
-        let has_source = !matches!(self.source, SourceHandle::None);
-
-        let result = match self.task_ref() {
-            Some(task) => task.write_bytes(bytes, false),
-            None => return Writable::Owned(len),
-        };
-        match result {
-            Ok(bun_s3::UploadBackpressure::Backpressure) if has_source => {
-                self.backpressure_result(len)
+        match (task.write_bytes(bytes, false), source) {
+            (Err(_), _) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
+            (Ok(bun_s3::UploadBackpressure::WantMore), _) | (_, SourceHandle::None) => {
+                Writable::Owned(len)
             }
-            Ok(bun_s3::UploadBackpressure::Done) if has_source => Writable::Done,
-            Ok(_) => Writable::Owned(len),
-            Err(_) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
+            (Ok(bun_s3::UploadBackpressure::Done), _) => Writable::Done,
+            (Ok(bun_s3::UploadBackpressure::Backpressure), SourceHandle::ByteStream(_)) => {
+                Writable::Backpressure(len)
+            }
+            // SAFETY: the pump's promise keeps the sink of a JS controller.
+            (Ok(bun_s3::UploadBackpressure::Backpressure), _) => unsafe {
+                (*this).backpressure_result(len)
+            },
         }
     }
 

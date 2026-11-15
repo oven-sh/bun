@@ -634,17 +634,26 @@ impl S3UploadStreamWrapper {
     fn resolve(_: &MultiPartUpload, result: S3UploadResult, this: *mut c_void) -> JsResult<()> {
         bun_output::scoped_log!(S3UploadStream, "resolve");
         let this = this.cast::<Self>();
-        // SAFETY: the upload's `callback_context`, whose ref is released after the borrows below.
-        let (_upload_ref, self_) = unsafe { (RefPtr::from_raw(this), &mut *this) };
-        let global = self_.global;
+        // SAFETY: the upload's `callback_context`, whose ref this adopts. Both refs outlive the borrows.
+        unsafe {
+            let _upload_ref = RefPtr::from_raw(this);
+            let native_pump_ref = (*this)
+                .sink_mut()
+                .and_then(|sink| sink.native_pump_ref.take());
+            (*this).settle(result, native_pump_ref.is_some())
+        }
+    }
+
+    fn settle(&mut self, result: S3UploadResult, ends_native_pump: bool) -> JsResult<()> {
+        let global = self.global;
         // The native teardown (source close, pump-ref release, completion callback)
         // runs on every path; the promise slots are settled until one settle leaves an
         // exception pending, which is what this returns (nothing settles over it).
         let mut settled: JsResult<()> = Ok(());
         match &result {
             S3UploadResult::Success => {
-                let uploaded = JSValue::js_number(self_.task.uploaded_bytes.get() as f64);
-                if let Some(sink) = self_.sink_mut() {
+                let uploaded = JSValue::js_number(self.task.uploaded_bytes.get() as f64);
+                if let Some(sink) = self.sink_mut() {
                     sink.pending.run();
                     if settled.is_ok() && sink.flush_promise.has_value() {
                         settled = sink.flush_promise.resolve(&global, JSValue::js_number(0.0));
@@ -653,28 +662,26 @@ impl S3UploadStreamWrapper {
                         settled = sink.end_promise.resolve(&global, uploaded);
                     }
                 }
-                if self_.end_promise.has_value() {
+                if self.end_promise.has_value() {
                     if settled.is_ok() {
-                        settled = self_.end_promise.resolve(&global, uploaded);
+                        settled = self.end_promise.resolve(&global, uploaded);
                     }
-                    self_.end_promise = bun_jsc::JSPromiseStrong::empty();
+                    self.end_promise = bun_jsc::JSPromiseStrong::empty();
                 }
             }
             S3UploadResult::Failure(err) => {
                 // If the native ByteStream source errored, prefer the original
                 // JS error it stashed on the sink (preserves `.code` /
                 // `.name`) over the generic `UnknownError` passed to `fail()`.
-                let stashed = self_.sink_mut().and_then(|s| s.upstream_error.try_swap());
+                let stashed = self.sink_mut().and_then(|s| s.upstream_error.try_swap());
                 let js_err = stashed
-                    .unwrap_or_else(|| s3_error_to_js(err, &global, Some(self_.path.slice())));
+                    .unwrap_or_else(|| s3_error_to_js(err, &global, Some(self.path.slice())));
                 js_err.ensure_still_alive();
-                let mut native_pump_ref = None;
-                if let Some(sink) = self_.sink_mut() {
+                if let Some(sink) = self.sink_mut() {
                     // Sink pump still in-flight: fire source.close() so the JSSink
                     // controller's onClose cancels the upstream ReadableStream. The
                     // pump promise settles after, triggering the `.then` shim which
                     // calls `detach_sink` and releases the pump ref.
-                    native_pump_ref = sink.native_pump_ref.take();
                     sink.ended = true;
                     sink.done = true;
                     sink.pending.result = crate::webcore::streams::Writable::Done;
@@ -689,21 +696,21 @@ impl S3UploadStreamWrapper {
                 }
                 // The stream is not read again. Unrooted, its pump (which may never settle: the
                 // script running it may be a disposed `Bun.ModuleGraph`'s) can be collected.
-                self_.readable_stream_ref = ReadableStreamStrong::default();
-                if native_pump_ref.is_some() {
-                    self_.detach_sink();
+                self.readable_stream_ref = ReadableStreamStrong::default();
+                if ends_native_pump {
+                    self.detach_sink();
                 }
-                if self_.end_promise.has_value() {
+                if self.end_promise.has_value() {
                     if settled.is_ok() {
-                        settled = self_.end_promise.reject(&global, Ok(js_err));
+                        settled = self.end_promise.reject(&global, Ok(js_err));
                     }
-                    self_.end_promise = bun_jsc::JSPromiseStrong::empty();
+                    self.end_promise = bun_jsc::JSPromiseStrong::empty();
                 }
             }
         }
 
-        if let Some(callback) = self_.callback {
-            callback(result, self_.callback_context);
+        if let Some(callback) = self.callback {
+            callback(result, self.callback_context);
         }
         settled
     }

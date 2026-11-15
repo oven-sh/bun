@@ -365,7 +365,7 @@ impl SinkHandle {
                 unsafe { p.get_mut() }.write(data)
             }),
             SinkHandle::S3Upload(p) => removable_body!(S3Client, Abort, {
-                streams::NetworkSink::write_from_stream(p.as_ptr(), data)
+                streams::NetworkSink::write(p.as_ptr(), data)
             }),
             SinkHandle::FileSink(p) => p.write(data),
             SinkHandle::HTMLRewriter(p) => removable_body!(HtmlRewriter, Abort, { p.write(data) }),

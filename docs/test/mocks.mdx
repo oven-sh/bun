@@ -414,6 +414,10 @@ Outside a factory, use `await vi.importActual("./math")` or `jest.requireActual(
 
 This also works when the mocked module is part of an import cycle. The modules that import it still get the mock.
 
+If you mock the module while that cycle is still loading, and the mocked module's own code has already run to the end, `importOriginal` does not wait for the rest of the cycle. A module of the cycle can `await` the mock. A `const` or `let` that the mocked module re-exports from a module of the cycle that has yet to declare it is left out of the result.
+
+`importOriginal` waits for the whole cycle, as `import()` does, if the mocked module is at a top-level `await` or waits for a module that is. It also does if an earlier mock replaced an export of the module before the module's own code ran. A cycle that waits for such a factory never finishes loading.
+
 If the factory loads another module with `import()`, `require()` or `vi.importActual()`, and that module imports the one being mocked, it gets the original instead of waiting for the mock. That copy is private to the factory. The rest of the program loads the module again and gets the mock.
 
 When one import leads to several mocked modules, Bun calls their factories one at a time, in the order the modules are imported, as Vitest does. A factory that imports another mocked module gets that mock, whose factory is called first if it hasn't been.
@@ -805,6 +809,7 @@ test("lazy import", async () => {
 - Every module outside `node_modules` that imports the mocked module gets the mock. In Vitest, a module that's first loaded while the factory runs gets the original and keeps it.
 - If two factories import each other's modules, the one that asks last gets the original. Vitest calls one of the two factories a second time instead.
 - A factory that uses `importOriginal` is called after the original module is evaluated, not before, so after the factories that don't use it. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
+- A function of the original module throws a `ReferenceError` if the factory calls it while an import cycle of that module is still loading, and the function reads a `const` or `let` of a module that has yet to run. In Vitest it reads `undefined`.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.
 - If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.
 

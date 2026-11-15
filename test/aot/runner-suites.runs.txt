@@ -47,3 +47,10 @@ test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > after it has removed its mock, or all of them
 # This one: the factory has a parameter, so compiled code has an original of its own for it, and the importers that get the original as they are run another. The closing notice names the file.
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > while the test loads a module that waits for that and imports the mock too
+# These: the original of a module that has ended before its import cycle. Plain has it one job after the call. Compiled waits for the whole cycle: a file whose
+# cycle waits for the original never finishes loading, and a factory that nothing waits for gets what the cycle has made of the module since. Compiled also loads a module that mocks itself from its own body.
+test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the original of a module whose import cycle has yet to end > is there before the import cycle ends, also where the cycle could end without it
+test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the original of a module whose import cycle has yet to end > is there in a preload
+test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the original of a module whose import cycle has yet to end > is there when the body of the module has ended, whatever waits for it
+test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the original of a module whose import cycle has yet to end > is there when the body of the module has ended, whoever asks for it
+test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the original of a module whose import cycle has yet to end > waits for the import cycle, which may never end, where the module has yet to end or the mock has no original of an export

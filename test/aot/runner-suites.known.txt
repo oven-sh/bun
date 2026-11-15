@@ -106,6 +106,13 @@ test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is 
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a Vitest test file with no mock call of its own still runs its imports one at a time > the transpiler cache doesn't mix up a file run as a test with the same file imported
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
+# These: the original of a module that has ended before its import cycle. Plain has it one job after the call. Compiled waits for the whole cycle: a file whose
+# cycle waits for the original never finishes loading, and a factory that nothing waits for gets what the cycle has made of the module since. Compiled also loads a module that mocks itself from its own body.
+test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the original of a module whose import cycle has yet to end > is there before the import cycle ends, also where the cycle could end without it
+test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the original of a module whose import cycle has yet to end > is there in a preload
+test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the original of a module whose import cycle has yet to end > is there when the body of the module has ended, whatever waits for it
+test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the original of a module whose import cycle has yet to end > is there when the body of the module has ended, whoever asks for it
+test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the original of a module whose import cycle has yet to end > waits for the import cycle, which may never end, where the module has yet to end or the mock has no original of an export
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
 test/js/bun/test/vitest-flavor.test.ts: [test] globals = "vitest" > is part of the transpiler cache key
 test/js/bun/test/import-meta-env.test.ts: import.meta.env > in other realms

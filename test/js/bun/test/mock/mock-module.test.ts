@@ -3842,6 +3842,402 @@ describe.concurrent("import cycles through a mocked module", () => {
       3,
     );
   });
+
+  // cart.ts is the root of the cycle. The cycle ends with it, and so does an import() of tax.ts, whose own body has ended long before.
+  describe("the original of a module whose import cycle has yet to end", () => {
+    const importsCart = `import { country } from "./cart"; export const where = () => country;`;
+    const read = (original: string) =>
+      `[Object.keys(${original}).sort(), ${original}.rate, ${original}.currency].join()`;
+    const complete = "currency,rate,where,0.2,EUR";
+    const factory = `async importOriginal => {
+      const original = await importOriginal();
+      return { ...original, currency: ${read("original")} };
+    }`;
+    const cycle = (
+      name: string,
+      mocksTax: string,
+      {
+        startOfTax = importsCart,
+        endOfTax = "",
+        importsOfCart = `import { currency, rate } from "./tax";`,
+        importsOfTest = "",
+        expected = [0.2, complete] as unknown[],
+      } = {},
+    ) => ({
+      [`${name}/tax.ts`]: `
+        ${startOfTax}
+        export const rate = 0.2;
+        export let currency = "EUR";
+        ${endOfTax}
+      `,
+      [`${name}/cart.ts`]: `
+        import { jest, mock, vi } from "bun:test";
+        ${importsOfCart}
+        export const country = "DE";
+        ${mocksTax}
+        export const vat = 19;
+        export const seen = () => [rate, currency];
+      `,
+      [`${name}/cycle.test.ts`]: `
+        import { expect, test } from "bun:test";
+        import { seen } from "./cart";
+        ${importsOfTest}
+        test(${JSON.stringify(name)}, () => expect(seen()).toEqual(${JSON.stringify(expected)}));
+      `,
+    });
+    const awaitsMock = (name: string) => ({
+      [`${name}/awaits-mock.ts`]: `import { mock } from "bun:test"; await mock.module("./tax", ${factory});`,
+    });
+    // cart.ts is at an await that the test file ends.
+    const atAwait = (name: string, test: string) => ({
+      [`${name}/tax.ts`]: `${importsCart} export const rate = 0.2; export let currency = "EUR";`,
+      [`${name}/cart.ts`]: `
+        import { currency, rate } from "./tax";
+        export const country = "DE";
+        globalThis.isAtAwait();
+        await globalThis.ended;
+        export const seen = () => [rate, currency];
+      `,
+      [`${name}/cycle.test.ts`]: `
+        import { beforeAll, expect, mock, test } from "bun:test";
+        const ended = Promise.withResolvers<void>();
+        const atAwait = Promise.withResolvers<void>();
+        Object.assign(globalThis, { ended: ended.promise, isAtAwait: atAwait.resolve });
+        const cart = import("./cart");
+        await atAwait.promise;
+        ${test}
+      `,
+    });
+    const endsCycle = `ended.resolve(); expect((await cart).seen()).toEqual([0.2, ${JSON.stringify(complete)}]);`;
+    // A child run that never ends, as these do where the original waits for the cycle, ends with this process.
+    const env = { BUN_FEATURE_FLAG_NO_ORPHANS: "1" };
+    // Runs without the test runner, which nothing here needs.
+    const program = {
+      "tax.ts": `${importsCart} export const rate = 0.2; export let currency = "EUR";`,
+      "cart.ts": `
+        import { mock } from "bun:test";
+        import { currency, rate } from "./tax";
+        export const country = "DE";
+        await mock.module("./tax", ${factory});
+        export const seen = () => [rate, currency];
+      `,
+    };
+
+    // In each of these the cycle waits for the original, so the original can't wait for the cycle.
+    test("is there when the body of the module has ended, whoever asks for it", async () => {
+      await expectFixturesToPass(
+        {
+          ...cycle("mock.module", `await mock.module("./tax", ${factory});`),
+          ...cycle("after another await", `await 0; await mock.module("./tax", ${factory});`),
+          // vi.doMock() patches tax.ts for the test file, which has yet to run.
+          ...cycle("vi.doMock", `await vi.doMock("./tax", ${factory});`, { importsOfTest: `import "./tax";` }),
+          ...cycle("vi.mock", `{ await vi.mock("./tax", ${factory}); }`),
+          ...cycle(
+            "vi.importActual",
+            `
+              mock.module("./tax", () => ({ rate: 0.5, currency: "GBP" }));
+              const actual = await vi.importActual("./tax");
+              mock.module("./tax", () => ({ ...actual, currency: ${read("actual")} }));
+            `,
+          ),
+          ...cycle(
+            "a promise that the factory settles",
+            `
+              await new Promise<void>(done => {
+                jest.doMock("./tax", async importOriginal => {
+                  const original = await importOriginal();
+                  done();
+                  return { ...original, currency: ${read("original")} };
+                });
+              });
+            `,
+          ),
+          // cart.ts has declared what where() reads.
+          ...cycle(
+            "a function of the original",
+            `
+              await mock.module("./tax", async importOriginal => {
+                const original = await importOriginal();
+                return { ...original, currency: original.where() };
+              });
+            `,
+            { expected: [0.2, "DE"] },
+          ),
+          ...cycle(
+            "the original twice",
+            `
+              await mock.module("./tax", async importOriginal => {
+                const [one, two] = await Promise.all([importOriginal(), importOriginal()]);
+                const three = await importOriginal();
+                return { ...one, currency: [${read("one")}, ${read("two")}, ${read("three")}].join(" ") };
+              });
+            `,
+            { expected: [0.2, [complete, complete, complete].join(" ")] },
+          ),
+          ...cycle(
+            "a mock that another replaces",
+            `
+              const first = mock.module("./tax", ${factory});
+              mock.module("./tax", () => ({ currency: "second" }));
+              await first;
+            `,
+            { expected: [0.2, "second"] },
+          ),
+          ...cycle("no cycle", `await mock.module("./tax", ${factory});`, {
+            startOfTax: `export const where = () => "DE";`,
+          }),
+        },
+        10,
+        [],
+        env,
+      );
+    });
+
+    test("is there when the body of the module has ended, whatever waits for it", async () => {
+      await expectFixturesToPass(
+        {
+          ...cycle("an import of the root awaits", `import "./awaits-mock";`),
+          ...awaitsMock("an import of the root awaits"),
+          // tax.ts is linked at the call, and runs right after it.
+          ...cycle("an import of the root awaits first", "", {
+            importsOfCart: `import "./awaits-mock"; import { currency, rate } from "./tax";`,
+          }),
+          ...awaitsMock("an import of the root awaits first"),
+          // The body of tax.ts has ended when cart.ts begins.
+          ...cycle("tax.ts ends at an await", `await mock.module("./tax", ${factory});`, { endOfTax: "await 0;" }),
+          // The namespace of cart.ts is a value, though the exports of cart.ts have none yet.
+          ...cycle("tax.ts exports the namespace of the root", `await mock.module("./tax", ${factory});`, {
+            startOfTax: `export * as cart from "./cart"; ${importsCart}`,
+            expected: [0.2, "cart," + complete],
+          }),
+          // `vat` has no value yet. It is not in the original, so a factory that spreads the original leaves it to cart.ts.
+          ...cycle(
+            "tax.ts hands on an export of the root",
+            `
+              await mock.module("./tax", async importOriginal => {
+                const original = await importOriginal();
+                return { ...original, currency: [Object.keys(original).sort(), original.vat].join() };
+              });
+            `,
+            {
+              startOfTax: `export { vat } from "./cart"; ${importsCart}`,
+              importsOfTest: `import * as tax from "./tax"; test("the export that tax.ts hands on", () => expect(tax.vat).toBe(19));`,
+              expected: [0.2, "currency,rate,where,"],
+            },
+          ),
+          ...atAwait(
+            "before the tests",
+            `
+              mock.module("./tax", ${factory});
+              test("before the tests", async () => { ${endsCycle} });
+            `,
+          ),
+          ...atAwait(
+            "in a test",
+            `
+              test("in a test", async () => {
+                await mock.module("./tax", ${factory});
+                ${endsCycle}
+              });
+            `,
+          ),
+          ...atAwait(
+            "in a hook",
+            `
+              beforeAll(async () => void (await mock.module("./tax", ${factory})));
+              test("in a hook", async () => { ${endsCycle} });
+            `,
+          ),
+          // A timer keeps the event loop alive while the cycle waits.
+          ...cycle("a pending timer", `await mock.module("./tax", ${factory});`, {
+            importsOfCart: `import "./starts-timer"; import { currency, rate } from "./tax";`,
+            importsOfTest: `import { afterAll } from "bun:test"; afterAll(() => clearTimeout(globalThis.timer));`,
+          }),
+          "a pending timer/starts-timer.ts": `globalThis.timer = setTimeout(() => {}, 10_000);`,
+        },
+        10,
+        [],
+        env,
+      );
+    });
+
+    test("is there in a preload", async () => {
+      await expectFixturesToPass(
+        {
+          ...program,
+          "preload.ts": `import { seen } from "./cart"; globalThis.seenByPreload = seen();`,
+          "preload.test.ts": `
+            import { expect, test } from "bun:test";
+            test("in a preload", () => expect(globalThis.seenByPreload).toEqual([0.2, ${JSON.stringify(complete)}]));
+          `,
+        },
+        1,
+        ["--preload", "./preload.ts"],
+        env,
+      );
+    });
+
+    test("is there in a program", async () => {
+      using dir = tempDir("mock-in-script", {
+        ...program,
+        "index.ts": `import { seen } from "./cart"; console.log(JSON.stringify(seen()));`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.ts"],
+        env: { ...bunEnv, ...env },
+        cwd: String(dir),
+        stderr: "inherit",
+        timeout: 60_000,
+      });
+      expect(await proc.stdout.text()).toBe(JSON.stringify([0.2, complete]) + "\n");
+      expect(await proc.exited).toBe(0);
+    });
+
+    // The original comes one job after the call, if the module has ended by then and its cycle has not. Nothing waits for these factories.
+    test("is there before the import cycle ends, also where the cycle could end without it", async () => {
+      const callsWhere = `
+        mock.module("./tax", async importOriginal => {
+          const original = await importOriginal();
+          let where;
+          try { where = original.where(); } catch (error) { where = (error as Error).name; }
+          return { ...original, currency: where };
+        });
+      `;
+      const wasCurrency = `
+        mock.module("./tax", async importOriginal => {
+          const original = await importOriginal();
+          return { ...original, currency: "was " + original.currency };
+        });
+      `;
+      const setsCurrency = `export const setCurrency = (to: string) => { currency = to; };`;
+      const later = `await new Promise(done => setImmediate(done));`;
+      await expectFixturesToPass(
+        {
+          // Nothing of the cycle is at an await: the cycle has ended one job after the call, and the original comes with it.
+          ...cycle("no top-level await", callsWhere, {
+            startOfTax: `import { vat } from "./cart"; export const where = () => vat;`,
+            expected: [0.2, 19],
+          }),
+          // cart.ts has yet to declare what where() reads.
+          ...cycle("a function that reads the root", `${callsWhere} ${later}`, {
+            startOfTax: `import { vat } from "./cart"; export const where = () => vat;`,
+            expected: [0.2, "ReferenceError"],
+          }),
+          // The mock is stored before cart.ts sets the variable, as it is where tax.ts is in no cycle.
+          ...cycle("a let that the root sets later", `${wasCurrency} ${later} setCurrency("CHF");`, {
+            importsOfCart: `import { currency, rate, setCurrency } from "./tax";`,
+            endOfTax: setsCurrency,
+            expected: [0.2, "CHF"],
+          }),
+          ...cycle("a let that the root sets later, no cycle", `${wasCurrency} ${later} setCurrency("CHF");`, {
+            importsOfCart: `import { currency, rate, setCurrency } from "./tax";`,
+            startOfTax: `export const where = () => "DE";`,
+            endOfTax: setsCurrency,
+            expected: [0.2, "CHF"],
+          }),
+          // One job after the call, cart.ts has set the variable. Where tax.ts is in no cycle, the original comes at the call.
+          ...cycle("a let that the root sets at once", `await 0; ${wasCurrency} setCurrency("CHF");`, {
+            importsOfCart: `import { currency, rate, setCurrency } from "./tax";`,
+            endOfTax: setsCurrency,
+            expected: [0.2, "was CHF"],
+          }),
+          ...cycle("a let that the root sets at once, no cycle", `await 0; ${wasCurrency} setCurrency("CHF");`, {
+            importsOfCart: `import { currency, rate, setCurrency } from "./tax";`,
+            startOfTax: `export const where = () => "DE";`,
+            endOfTax: setsCurrency,
+            expected: [0.2, "was EUR"],
+          }),
+        },
+        6,
+      );
+    });
+
+    // The loader's pass over tax.ts is under way at the call, and ends tax.ts in no cycle. The original waits for an import() of tax.ts, as before.
+    test("comes as many jobs after the call as an import() takes, where the module ends in no import cycle", async () => {
+      await expectFixturesToPass(
+        {
+          // tax.ts imports the module that mocks it, so the mock can't evaluate it first.
+          "tax.ts": `import "./mocks-tax"; export const rate = 0.2; export let currency = "EUR";`,
+          "mocks-tax.ts": `
+            import { mock } from "bun:test";
+            export const order: string[] = [];
+            export const mocked = mock.module("./tax", async importOriginal => {
+              const original = await importOriginal();
+              order.push(${read("original")});
+              return original;
+            });
+          `,
+          "awaits.ts": `
+            import { order } from "./mocks-tax";
+            for (let job = 0; job < 8; job++) await 0;
+            order.push("eight jobs");
+            await 0;
+            order.push("nine jobs");
+          `,
+          "linked.test.ts": `
+            import { mocked, order } from "./mocks-tax";
+            import "./awaits";
+            import { expect, test } from "bun:test";
+            import "./tax";
+            test("tax.ts is linked at the call", async () => {
+              await mocked;
+              expect(order).toEqual(["eight jobs", "currency,rate,0.2,EUR", "nine jobs"]);
+            });
+          `,
+        },
+        1,
+      );
+    });
+
+    test("waits for the import cycle, which may never end, where the module has yet to end or the mock has no original of an export", async () => {
+      using dir = tempDir("mock-module-cycle", {
+        // The body of tax.ts is at the await.
+        "own body/tax.ts": `
+          import { mock } from "bun:test";
+          export const rate = 0.2;
+          await mock.module(import.meta.path, ${factory});
+          export let currency = "EUR";
+        `,
+        "own body/cycle.test.ts": `import { test } from "bun:test"; import "./tax"; test("own body", () => {});`,
+        // The mock of mocks-tax.ts stored over exports that had no value yet, and the body of tax.ts over that mock.
+        ...cycle("a mock before the body", `await mock.module("./tax", ${factory});`, {
+          importsOfCart: `import "./mocks-tax"; import { currency, rate } from "./tax";`,
+        }),
+        "a mock before the body/mocks-tax.ts": `
+          import { mock } from "bun:test";
+          mock.module("./tax", () => ({ rate: 0.5, currency: "GBP" }));
+        `,
+        // The body of tax.ts ends later, and nothing asks again then.
+        ...cycle("tax.ts is at an await", "", {
+          importsOfCart: `import "./awaits-mock"; import { currency, rate } from "./tax";`,
+          endOfTax: `await new Promise(done => setImmediate(done));`,
+        }),
+        ...awaitsMock("tax.ts is at an await"),
+        // tax.ts begins when slow.ts has ended, long before cart.ts does.
+        ...cycle("tax.ts has yet to begin", "", {
+          importsOfCart: `import "./awaits-mock"; import { currency, rate } from "./tax";`,
+          startOfTax: `import "./slow"; ${importsCart}`,
+        }),
+        ...awaitsMock("tax.ts has yet to begin"),
+        "tax.ts has yet to begin/slow.ts": `await new Promise(done => setImmediate(done));`,
+        // The test file imports tax.ts first. tax.ts begins when cart.ts has ended, and cart.ts waits for what tax.ts declares.
+        ...cycle("tax.ts is the root", `await mock.module("./tax", ${factory});`),
+        "tax.ts is the root/cycle.test.ts": `import { test } from "bun:test"; import "./tax"; test("tax.ts is the root", () => {});`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 60_000,
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr.match(/cycle\.test\.ts" never finished loading/g)).toHaveLength(5);
+      expect(stderr).toContain(" 0 pass\n 5 fail\n 5 errors\n");
+      expect(exitCode).toBe(1);
+    });
+  });
 });
 
 describe.concurrent("a module that a factory loads while it runs", () => {

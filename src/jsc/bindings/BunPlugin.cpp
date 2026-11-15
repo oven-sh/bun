@@ -1128,7 +1128,10 @@ static JSObject* esmExportsOfCommonJSExports(Zig::GlobalObject* globalObject, JS
     RELEASE_AND_RETURN(scope, objectWithExports(globalObject, names, values));
 }
 
-__attribute__((minsize)) static JSObject* esmExportsBeforePatches(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+// With `endedBeforeItsImportCycle`, the module that `mock` patches (see hasEndedBeforeItsImportCycle()): an export that the module hands on from a
+// module of its import cycle may have no value yet, and is left out. Null then if another module is under the key by now, or if `mock` patched an
+// export before the module gave it a value.
+__attribute__((minsize)) static JSObject* esmExportsBeforePatches(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::AbstractModuleRecord* endedBeforeItsImportCycle = nullptr)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1145,11 +1148,12 @@ __attribute__((minsize)) static JSObject* esmExportsBeforePatches(Zig::GlobalObj
     LoadedModule loaded;
     findLoadedESModule(globalObject, mock->specifier.get(), loaded);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!loaded.esmNamespace)
+    if (!loaded.esmNamespace || (endedBeforeItsImportCycle && loaded.esmNamespace->moduleRecord() != endedBeforeItsImportCycle))
         return nullptr;
 
     JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    loaded.esmNamespace->methodTable()->getOwnPropertyNames(loaded.esmNamespace, globalObject, properties, DontEnumPropertiesMode::Exclude);
+    // Asked for its enumerable names alone, the namespace reads every export, and throws for one that has no value.
+    loaded.esmNamespace->methodTable()->getOwnPropertyNames(loaded.esmNamespace, globalObject, properties, endedBeforeItsImportCycle ? DontEnumPropertiesMode::Include : DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     Vector<JSC::Identifier, 4> names;
@@ -1157,9 +1161,21 @@ __attribute__((minsize)) static JSObject* esmExportsBeforePatches(Zig::GlobalObj
     for (auto& name : properties) {
         JSValue value = overwritten->getIfPropertyExists(globalObject, name);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        if (value == overwritten)
+        if (value == overwritten) {
+            if (endedBeforeItsImportCycle)
+                return nullptr;
             continue;
+        }
         if (!value) {
+            if (endedBeforeItsImportCycle) {
+                ExportVariable variable = findExportVariable(globalObject, loaded.esmNamespace, name);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+                // Only a variable that JavaScript source declares has no value until its declaration runs. The namespace object gives a lazy export
+                // its value, and the namespace of a module its object.
+                bool isDeclaredBySource = variable.record && variable.record->inherits<JSC::JSModuleRecord>() && !variable.record->hasLiveExports() && variable.localName != vm.propertyNames->starNamespacePrivateName;
+                if (isDeclaredBySource && !variable.record->moduleEnvironment()->readVariable(vm, variable.offset))
+                    continue;
+            }
             value = loaded.esmNamespace->get(globalObject, name);
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
@@ -1298,14 +1314,25 @@ static bool anyUnevaluatedImport(JSC::AbstractModuleRecord* start, const Functor
     return false;
 }
 
-// Whether the module that `mock` patches in place hasn't run its body to the end, so some of its exports have no value yet.
-static bool patchesModuleBeingEvaluated(Zig::GlobalObject* globalObject, JSModuleMock* mock, const String& specifier)
+// The module that `mock` patches in place, if that module or the import cycle that it is in has yet to be evaluated to the end. An import() of the
+// module waits for that.
+static JSC::CyclicModuleRecord* patchedModuleBeingEvaluated(Zig::GlobalObject* globalObject, JSModuleMock* mock, const String& specifier)
 {
     if (!mock->originalExports)
-        return false;
+        return nullptr;
     auto* entry = Bun::testFileModuleLoader(globalObject)->getRegisteredMayBeNull(JSC::Identifier::fromString(globalObject->vm(), specifier), JSC::ScriptFetchParameters::Type::JavaScript);
     auto* record = entry ? dynamicDowncast<JSC::CyclicModuleRecord>(entry->record()) : nullptr;
-    return record && !record->hasLiveExports() && record->status() >= JSC::CyclicModuleRecord::Status::Linked && !record->isSCCEvaluated();
+    return record && !record->hasLiveExports() && record->status() >= JSC::CyclicModuleRecord::Status::Linked && !record->isSCCEvaluated() ? record : nullptr;
+}
+
+// Whether `record` has run its own body to the end as a module of an import cycle that has yet to end: the root of the cycle, another module, is at a
+// top-level await or waits for one. The exports that `record` declares have their values. An import() of `record` waits for the root, and the root
+// may wait for whoever asked for those exports.
+static bool hasEndedBeforeItsImportCycle(JSC::CyclicModuleRecord* record)
+{
+    using Status = JSC::CyclicModuleRecord::Status;
+    JSC::CyclicModuleRecord* root = record->cycleRoot();
+    return record->status() == Status::Evaluated && !record->evaluationError() && root && root != record && root->status() == Status::EvaluatingAsync;
 }
 
 // Returns a promise for `next` to settle. `next` is called once `loading` has settled, either way, with (mock, that promise) as its context.
@@ -1318,12 +1345,37 @@ __attribute__((minsize)) static JSC::JSPromise* originalModuleAfter(Zig::GlobalO
     return original;
 }
 
+// Called with the module that a mock patches, one job after importOriginalModule() began to wait for an import() of it. The context is (mock, the
+// promise that waits for the import()). Settles that promise ahead of the import() if the module has ended before its import cycle.
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionModuleMayHaveEndedBeforeItsImportCycle, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* record = dynamicDowncast<JSC::CyclicModuleRecord>(callframe->argument(0));
+    auto [mock, original] = toModuleMockWith<JSC::JSPromise>(globalObject, scope, callframe->argument(1));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!record || !hasEndedBeforeItsImportCycle(record))
+        return JSValue::encode(jsUndefined());
+    JSObject* exports = esmExportsBeforePatches(globalObject, mock, record);
+    // What this has no answer for is left to the import().
+    if (scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException())
+            return {};
+    } else if (exports)
+        original->resolve(globalObject, vm, exports);
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockDidLoadBeforeOriginal, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto [mock, original] = toModuleMockWith<JSC::JSPromise>(lexicalGlobalObject, scope, callframe->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
+    // The module ended before its import cycle, and the original came then.
+    if (original->flags() & JSC::JSPromise::isFirstResolvingFunctionCalledFlag)
+        return JSValue::encode(jsUndefined());
     JSC::JSPromise* loading = importOriginalModule(defaultGlobalObject(lexicalGlobalObject), mock, false, String(), false);
     if (scope.exception()) [[unlikely]]
         original->rejectWithCaughtException(vm, scope);
@@ -1491,10 +1543,19 @@ __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::Global
     }
 #endif
     JSObject* exports = mock->originalNamespace.get();
-    if (!exports && mayLoadDependenciesFirst && patchesModuleBeingEvaluated(globalObject, mock, specifier)) {
+    if (auto* record = !exports && mayLoadDependenciesFirst ? patchedModuleBeingEvaluated(globalObject, mock, specifier) : nullptr) {
         JSC::JSPromise* evaluating = importModuleKey(globalObject, specifier);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        return originalModuleAfter(globalObject, mock, evaluating, jsFunctionModuleMockDidLoadBeforeOriginal);
+        JSC::JSPromise* original = originalModuleAfter(globalObject, mock, evaluating, jsFunctionModuleMockDidLoadBeforeOriginal);
+        // The loader gives a module its import cycle when its pass over that cycle ends. A pass that is under way ends before the next job.
+        bool mayHaveEnded = !record->cycleRoot() || hasEndedBeforeItsImportCycle(record);
+        if (mayHaveEnded && !(vm.hasCompiledCode() && JSC::AOT::isCompiledModuleRecord(record))) {
+            JSC::JSPromise* nextJob = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+            nextJob->fulfill(vm, record);
+            JSC::JSFunction* asksAgain = JSC::JSFunction::create(vm, globalObject, 2, String(), jsFunctionModuleMayHaveEndedBeforeItsImportCycle, ImplementationVisibility::Private);
+            nextJob->performPromiseThenWithContext(vm, globalObject, asksAgain, asksAgain, jsUndefined(), moduleMockWith(globalObject, mock, original));
+        }
+        return original;
     }
     if (exports)
         exports = withoutUninitializedExports(globalObject, exports);

@@ -433,7 +433,7 @@ impl Drop for IOReader {
             #[cfg(not(windows))]
             {
                 // The poll goes before its fd.
-                r.handle = bun_io::pipes::PollOrFd::Closed;
+                r.handle.set_fd(Fd::INVALID);
                 let _ = sys::close(s.fd);
             }
         }

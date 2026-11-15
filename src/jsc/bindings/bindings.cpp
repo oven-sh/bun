@@ -2885,6 +2885,10 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore::FetchHeaders* h
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
     auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
     WebCore::propagateException(*lexicalGlobalObject, throwScope, clone->fill(*headers));
+    if (throwScope.exception()) [[unlikely]] {
+        clone->deref();
+        return nullptr;
+    }
     return clone;
 }
 

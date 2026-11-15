@@ -572,14 +572,12 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         let mut stmts = Vec::<bun_ast::Stmt>::init_capacity(1);
                         let items_ptr =
                             bun_ast::StoreSlice::new_mut(clause_items.into_bump_slice_mut());
-                        // Allocated directly from the arena —
-                        // bypasses Stmt.Data.Store (not pushed on this thread here).
-                        let export_clause = c.arena().alloc(bun_ast::S::ExportClause {
-                            items: items_ptr,
-                            is_single_line: true,
-                        });
-                        stmts.push(bun_ast::Stmt::init(
-                            bun_ast::StoreRef::from_bump(export_clause),
+                        stmts.push(bun_ast::Stmt::allocate(
+                            c.graph.ast_arena(),
+                            bun_ast::S::ExportClause {
+                                items: items_ptr,
+                                is_single_line: true,
+                            },
                             bun_ast::Loc::EMPTY,
                         ));
                         repr.cross_chunk_suffix_stmts = stmts;
@@ -664,16 +662,14 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             chunk_index: imports_from_other_chunks.keys()[index as usize],
                         });
                         let items_ptr = bun_ast::StoreSlice::new_mut(clauses.into_bump_slice_mut());
-                        // Allocated directly from the arena —
-                        // bypasses Stmt.Data.Store (not pushed on this thread here).
-                        let import = c.arena().alloc(bun_ast::S::Import {
-                            items: items_ptr,
-                            import_record_index,
-                            namespace_ref: Ref::NONE,
-                            ..Default::default()
-                        });
-                        cross_chunk_prefix_stmts.push(bun_ast::Stmt::init(
-                            bun_ast::StoreRef::from_bump(import),
+                        cross_chunk_prefix_stmts.push(bun_ast::Stmt::allocate(
+                            c.graph.ast_arena(),
+                            bun_ast::S::Import {
+                                items: items_ptr,
+                                import_record_index,
+                                namespace_ref: Ref::NONE,
+                                ..Default::default()
+                            },
                             bun_ast::Loc::EMPTY,
                         ));
                     }

@@ -4,7 +4,6 @@ use bun_ast::ImportRecordFlags;
 use bun_ast::Loc;
 use bun_ast::{self as js_ast, AstArena, Binding, ExportsKind, Expr, ExprNodeList, Stmt};
 use bun_ast::{B, E, G, S};
-use bun_collections::VecExt;
 use bun_core::FeatureFlags;
 
 use crate::EntryPoint;
@@ -128,7 +127,8 @@ pub(crate) fn convert_stmts_for_chunk(
 
                         if should_strip_exports {
                             // Turn this statement into "import * as ns from 'path'"
-                            stmt = Stmt::alloc(
+                            stmt = Stmt::allocate(
+                                bump,
                                 S::Import {
                                     namespace_ref: s.namespace_ref,
                                     import_record_index: s.import_record_index,
@@ -174,7 +174,8 @@ pub(crate) fn convert_stmts_for_chunk(
                         if is_module_exports_of_wrapped_file {
                             stmts.append(
                                 StmtListWhich::OutsideWrapperPrefix,
-                                Stmt::alloc(
+                                Stmt::allocate(
+                                    bump,
                                     S::Import {
                                         namespace_ref: s.namespace_ref,
                                         import_record_index: s.import_record_index,
@@ -198,7 +199,8 @@ pub(crate) fn convert_stmts_for_chunk(
                             .contains(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN)
                         {
                             // Turn this statement into "import * as ns from 'path'"
-                            stmt = Stmt::alloc(
+                            stmt = Stmt::allocate(
+                                bump,
                                 S::Import {
                                     namespace_ref: s.namespace_ref,
                                     import_record_index: s.import_record_index,
@@ -211,32 +213,39 @@ pub(crate) fn convert_stmts_for_chunk(
                             // Prefix this module with "__reExport(exports, ns, module.exports)"
                             let export_star_ref = c.runtime_function(b"__reExport");
                             let args_len = 2 + usize::from(module_exports_for_export.is_some());
-                            let mut args = ExprNodeList::init_capacity(args_len);
-                            args.push(Expr::init(
-                                E::Identifier {
-                                    ref_: ast.exports_ref,
-                                    ..Default::default()
-                                },
-                                stmt.loc,
-                            ));
-                            args.push(Expr::init(
-                                E::Identifier {
-                                    ref_: s.namespace_ref,
-                                    ..Default::default()
-                                },
-                                stmt.loc,
-                            ));
+                            let mut args = ExprNodeList::with_capacity_in(args_len, bump);
+                            args.push(
+                                bump,
+                                Expr::init(
+                                    E::Identifier {
+                                        ref_: ast.exports_ref,
+                                        ..Default::default()
+                                    },
+                                    stmt.loc,
+                                ),
+                            );
+                            args.push(
+                                bump,
+                                Expr::init(
+                                    E::Identifier {
+                                        ref_: s.namespace_ref,
+                                        ..Default::default()
+                                    },
+                                    stmt.loc,
+                                ),
+                            );
 
                             if let Some(mod_) = module_exports_for_export {
                                 // Per the "__reExport(exports, ns, module.exports)"
                                 // call shape above, this is the third argument,
                                 // so append at index 2.
-                                args.push(mod_);
+                                args.push(bump, mod_);
                             }
 
                             stmts
                                 .inside_wrapper_prefix
-                                .append_non_dependency(Stmt::alloc(
+                                .append_non_dependency(Stmt::allocate(
+                                    bump,
                                     S::SExpr {
                                         value: Expr::allocate(
                                             bump,
@@ -271,11 +280,12 @@ pub(crate) fn convert_stmts_for_chunk(
                             let flag = c.graph.meta.items_flags()[other_source_index];
                             let wrapper_ref = c.graph.ast.items_wrapper_ref()[other_source_index];
                             if flag.wrap == WrapKind::Esm && wrapper_ref.is_valid() {
-                                stmts
-                                    .inside_wrapper_prefix
-                                    .append_non_dependency(Stmt::alloc(
+                                stmts.inside_wrapper_prefix.append_non_dependency(
+                                    Stmt::allocate(
+                                        bump,
                                         S::SExpr {
-                                            value: Expr::init(
+                                            value: Expr::allocate(
+                                                bump,
                                                 E::Call {
                                                     target: Expr::init(
                                                         E::Identifier {
@@ -291,7 +301,8 @@ pub(crate) fn convert_stmts_for_chunk(
                                             ..Default::default()
                                         },
                                         stmt.loc,
-                                    ))?;
+                                    ),
+                                )?;
                             }
                         }
 
@@ -349,25 +360,30 @@ pub(crate) fn convert_stmts_for_chunk(
                             // Prefix this module with "__reExport(exports, require(path), module.exports)"
                             let export_star_ref = c.runtime_function(b"__reExport");
                             let args_len = 2 + usize::from(module_exports_for_export.is_some());
-                            let mut args = ExprNodeList::init_capacity(args_len);
-                            args.push(Expr::init(
-                                E::Identifier {
-                                    ref_: ast.exports_ref,
-                                    ..Default::default()
-                                },
-                                stmt.loc,
-                            ));
-                            args.push(target);
+                            let mut args = ExprNodeList::with_capacity_in(args_len, bump);
+                            args.push(
+                                bump,
+                                Expr::init(
+                                    E::Identifier {
+                                        ref_: ast.exports_ref,
+                                        ..Default::default()
+                                    },
+                                    stmt.loc,
+                                ),
+                            );
+                            args.push(bump, target);
 
                             if let Some(mod_) = module_exports_for_export {
-                                args.push(mod_);
+                                args.push(bump, mod_);
                             }
 
                             stmts
                                 .inside_wrapper_prefix
-                                .append_non_dependency(Stmt::alloc(
+                                .append_non_dependency(Stmt::allocate(
+                                    bump,
                                     S::SExpr {
-                                        value: Expr::init(
+                                        value: Expr::allocate(
+                                            bump,
                                             E::Call {
                                                 target: Expr::init(
                                                     E::Identifier {
@@ -420,7 +436,8 @@ pub(crate) fn convert_stmts_for_chunk(
                             };
                         }
 
-                        stmt = Stmt::alloc(
+                        stmt = Stmt::allocate(
+                            bump,
                             S::Import {
                                 items: items.into(),
                                 import_record_index: s.import_record_index,
@@ -458,7 +475,7 @@ pub(crate) fn convert_stmts_for_chunk(
                     // Strip the "export" keyword while bundling
                     if should_strip_exports && s.func.flags.contains(G::FnFlags::IsExport) {
                         // Be c areful to not modify the original statement
-                        stmt = Stmt::alloc(S::Function { func: s.func }, stmt.loc);
+                        stmt = Stmt::allocate(bump, S::Function { func: s.func }, stmt.loc);
                         stmt.data
                             .s_function_mut()
                             .unwrap()
@@ -472,7 +489,8 @@ pub(crate) fn convert_stmts_for_chunk(
                     // Strip the "export" keyword while bundling
                     if should_strip_exports && s.is_export {
                         // Be careful to not modify the original statement
-                        stmt = Stmt::alloc(
+                        stmt = Stmt::allocate(
+                            bump,
                             S::Class {
                                 class: s.class,
                                 is_export: false,
@@ -488,7 +506,7 @@ pub(crate) fn convert_stmts_for_chunk(
                         // Be careful to not modify the original statement
                         // SAFETY: shallow bitwise copy of arena-backed S::Local.
                         let copied: S::Local = unsafe { core::ptr::read(s.as_ptr()) };
-                        stmt = Stmt::alloc(copied, stmt.loc);
+                        stmt = Stmt::allocate(bump, copied, stmt.loc);
                         stmt.data.s_local_mut().unwrap().is_export = false;
                     } else if FeatureFlags::UNWRAP_COMMONJS_TO_ESM
                         && s.origin.is_commonjs_export()
@@ -501,9 +519,11 @@ pub(crate) fn convert_stmts_for_chunk(
                                 B::B::BIdentifier(id) => id.r#ref,
                                 _ => unreachable!(),
                             };
-                            stmt = Stmt::alloc(
+                            stmt = Stmt::allocate(
+                                bump,
                                 S::SExpr {
-                                    value: Expr::init(
+                                    value: Expr::allocate(
+                                        bump,
                                         E::Binary {
                                             op: js_ast::OpCode::BinAssign,
                                             left: Expr::init(
@@ -536,18 +556,22 @@ pub(crate) fn convert_stmts_for_chunk(
                                 match stmt2.data {
                                     bun_ast::StmtData::SExpr(s2) => {
                                         // "export default foo;" => "var default = foo;"
-                                        stmt = Stmt::alloc(
+                                        stmt = Stmt::allocate(
+                                            bump,
                                             S::Local {
-                                                decls: G::DeclList::from_slice(&[G::Decl {
-                                                    binding: Binding::alloc(
-                                                        bump,
-                                                        B::Identifier {
-                                                            r#ref: s.default_name.ref_,
-                                                        },
-                                                        s2.value.loc,
-                                                    ),
-                                                    value: Some(s2.value),
-                                                }]),
+                                                decls: G::DeclList::from_slice_in(
+                                                    &[G::Decl {
+                                                        binding: Binding::alloc(
+                                                            bump,
+                                                            B::Identifier {
+                                                                r#ref: s.default_name.ref_,
+                                                            },
+                                                            s2.value.loc,
+                                                        ),
+                                                        value: Some(s2.value),
+                                                    }],
+                                                    bump,
+                                                ),
                                                 ..Default::default()
                                             },
                                             stmt.loc,
@@ -558,8 +582,11 @@ pub(crate) fn convert_stmts_for_chunk(
                                         // "export default function foo() {}" => "function foo() {}"
 
                                         // Be careful to not modify the original statement
-                                        stmt =
-                                            Stmt::alloc(S::Function { func: s2.func }, stmt2.loc);
+                                        stmt = Stmt::allocate(
+                                            bump,
+                                            S::Function { func: s2.func },
+                                            stmt2.loc,
+                                        );
                                         stmt.data.s_function_mut().unwrap().func.name =
                                             Some(s.default_name);
                                     }
@@ -569,7 +596,8 @@ pub(crate) fn convert_stmts_for_chunk(
                                         // "export default class foo {}" => "class foo {}"
 
                                         // Be careful to not modify the original statement
-                                        stmt = Stmt::alloc(
+                                        stmt = Stmt::allocate(
+                                            bump,
                                             S::Class {
                                                 class: s2.class,
                                                 is_export: false,
@@ -592,18 +620,22 @@ pub(crate) fn convert_stmts_for_chunk(
                                 }
                             }
                             bun_ast::StmtOrExpr::Expr(e) => {
-                                stmt = Stmt::alloc(
+                                stmt = Stmt::allocate(
+                                    bump,
                                     S::Local {
-                                        decls: G::DeclList::from_slice(&[G::Decl {
-                                            binding: Binding::alloc(
-                                                bump,
-                                                B::Identifier {
-                                                    r#ref: s.default_name.ref_,
-                                                },
-                                                e.loc,
-                                            ),
-                                            value: Some(*e),
-                                        }]),
+                                        decls: G::DeclList::from_slice_in(
+                                            &[G::Decl {
+                                                binding: Binding::alloc(
+                                                    bump,
+                                                    B::Identifier {
+                                                        r#ref: s.default_name.ref_,
+                                                    },
+                                                    e.loc,
+                                                ),
+                                                value: Some(*e),
+                                            }],
+                                            bump,
+                                        ),
                                         ..Default::default()
                                     },
                                     stmt.loc,
@@ -625,9 +657,11 @@ pub(crate) fn convert_stmts_for_chunk(
 
 /// `module.exports = value;`
 fn assign_module_exports(bump: &AstArena, module_ref: bun_ast::Ref, value: Expr, loc: Loc) -> Stmt {
-    Stmt::alloc(
+    Stmt::allocate(
+        bump,
         S::SExpr {
-            value: Expr::init(
+            value: Expr::allocate(
+                bump,
                 E::Binary {
                     op: js_ast::OpCode::BinAssign,
                     left: Expr::allocate(

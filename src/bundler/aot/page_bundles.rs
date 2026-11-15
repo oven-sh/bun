@@ -3,7 +3,7 @@ use std::borrow::Cow;
 
 use bun_alloc::Arena;
 use bun_aot::load::source_provider::Failed;
-use bun_ast::{Loc, Log, Source};
+use bun_ast::{AstArena, Loc, Log, Source};
 use bun_event_loop::AnyEventLoop;
 use bun_js_printer::Encoding;
 use bun_paths::fs::Path;
@@ -11,7 +11,7 @@ use bun_resolver::compiled_program::compare_source_paths;
 use bun_sema::util::SharedSort;
 
 use super::assets::EmbeddedFiles;
-use super::services::{BuildContext, with_ast_scope};
+use super::services::BuildContext;
 use crate::bundle_v2::bv2_impl::generate_unique_key;
 use crate::mal_prelude::*;
 use crate::options::{CompileMode, Loader, ModuleType, OutputFile, OutputKind, Side, Target};
@@ -49,41 +49,40 @@ fn create_page_outputs(
     pages: &[&[u8]],
     log: &Log,
 ) -> Result<PageOutputs, Failed> {
-    with_ast_scope(|ast_arena| {
-        let page_log = Log::init();
-        let mut transpiler = create_page_transpiler(context, ast_arena, &page_log);
-        let any_loop = AnyEventLoop::default();
-        let carrier = context.bundle();
+    let ast_arena = &AstArena::new();
+    let page_log = Log::init();
+    let mut transpiler = create_page_transpiler(context, ast_arena, &page_log);
+    let any_loop = AnyEventLoop::default();
+    let carrier = context.bundle();
 
-        let mut bundle = BundleV2::init(
-            &mut transpiler,
-            None,
-            ast_arena,
-            Some(NonNull::from(&any_loop)),
-            Some(NonNull::from(carrier.graph.pool().worker_pool())),
-            ast_arena,
-        );
-        bundle.plugins = carrier.plugins;
-        bundle.plugin_context = carrier.plugin_context;
-        bundle.completion = carrier.completion;
-        bundle.file_map = carrier.file_map;
+    let mut bundle = BundleV2::init(
+        &mut transpiler,
+        None,
+        ast_arena,
+        Some(NonNull::from(&any_loop)),
+        Some(NonNull::from(carrier.graph.pool().worker_pool())),
+        ast_arena,
+    );
+    bundle.plugins = carrier.plugins;
+    bundle.plugin_context = carrier.plugin_context;
+    bundle.completion = carrier.completion;
+    bundle.file_map = carrier.file_map;
 
-        let result = run(&mut bundle, pages, ast_arena);
-        drop(bundle);
+    let result = run(&mut bundle, pages, ast_arena);
+    drop(bundle);
 
-        let has_page_errors = page_log.has_errors();
-        page_log.append_to(log);
+    let has_page_errors = page_log.has_errors();
+    page_log.append_to(log);
 
-        result.map_err(|error| {
-            if !has_page_errors {
-                log.add_error_fmt(
-                    None,
-                    Loc::EMPTY,
-                    format_args!("{} while bundling HTML imports", error.name()),
-                );
-            }
-            Failed
-        })
+    result.map_err(|error| {
+        if !has_page_errors {
+            log.add_error_fmt(
+                None,
+                Loc::EMPTY,
+                format_args!("{} while bundling HTML imports", error.name()),
+            );
+        }
+        Failed
     })
 }
 
@@ -382,24 +381,23 @@ mod tests {
     }
 
     fn assert_entry_imports_page(pages: &[&[u8]]) {
-        with_ast_scope(|heap| {
-            let source = create_entry_source(pages, heap);
-            assert_eq!(source.path.namespace, ENTRY_NAMESPACE);
+        let heap = &AstArena::new();
+        let source = create_entry_source(pages, heap);
+        assert_eq!(source.path.namespace, ENTRY_NAMESPACE);
 
-            let options = bun_js_parser::ParserOptions::init(Default::default(), Loader::Js);
-            let define = bun_js_parser::Define::default();
-            let log = Log::init();
-            let parser = bun_js_parser::Parser::init(options, &log, &source, &define, heap)
-                .expect("the parser starts");
-            let bun_js_parser::Result::Ast(ast) = parser.parse().expect("the entry parses") else {
-                panic!("the entry is an ordinary module");
-            };
+        let options = bun_js_parser::ParserOptions::init(Default::default(), Loader::Js);
+        let define = bun_js_parser::Define::default();
+        let log = Log::init();
+        let parser = bun_js_parser::Parser::init(options, &log, &source, &define, heap)
+            .expect("the parser starts");
+        let bun_js_parser::Result::Ast(ast) = parser.parse().expect("the entry parses") else {
+            panic!("the entry is an ordinary module");
+        };
 
-            assert_eq!(ast.import_records.len(), pages.len());
-            for (index, page) in pages.iter().enumerate() {
-                assert_eq!(ast.import_records[index].path.text, *page);
-            }
-        });
+        assert_eq!(ast.import_records.len(), pages.len());
+        for (index, page) in pages.iter().enumerate() {
+            assert_eq!(ast.import_records[index].path.text, *page);
+        }
     }
 
     #[test]
@@ -423,10 +421,9 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn entry_is_beside_first_page() {
-        with_ast_scope(|heap| {
-            let source = create_entry_source(&[&b"/q/b.html"[..], b"/p/a.html"], heap);
-            assert_eq!(source.path.text, b"/q/page-entry.js");
-        });
+        let heap = &AstArena::new();
+        let source = create_entry_source(&[&b"/q/b.html"[..], b"/p/a.html"], heap);
+        assert_eq!(source.path.text, b"/q/page-entry.js");
     }
 
     #[test]

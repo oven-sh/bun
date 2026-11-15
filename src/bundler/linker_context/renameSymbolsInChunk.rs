@@ -469,7 +469,5 @@ pub(crate) fn run_nested_rename_task(
         // SAFETY: live arena-allocated scope (see `rename_symbols_in_chunk`).
         nested.assign_names_recursive(unsafe { &*scope }, &mut sorted);
     }
-    let names = nested.into_names();
-    drop(worker);
-    task.names = Some(names);
+    task.names = Some(nested.into_names());
 }

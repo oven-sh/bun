@@ -1734,7 +1734,7 @@ fn env_ignores_scripts(env: &dot_env::Loader) -> bool {
 
 /// Returns true if the configuration makes `bun install` in `cwd`, the working directory, skip
 /// lifecycle scripts even without `--ignore-scripts`. This is for `bun create`, which has no
-/// `PackageManager`. It resets the AST store.
+/// `PackageManager`.
 pub fn config_ignores_scripts(
     ctx: Command::Context,
     env: &dot_env::Loader,

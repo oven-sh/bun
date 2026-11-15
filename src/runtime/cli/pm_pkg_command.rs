@@ -5,7 +5,7 @@ use crate::cli::cli_arena;
 use crate::cli::command::Context;
 use bun_ast::{E, Expr, ExprData};
 use bun_ast::{Loc, Log, Source};
-use bun_collections::{StringArrayHashMap, VecExt};
+use bun_collections::StringArrayHashMap;
 use bun_core::fmt::quote;
 use bun_core::strings;
 use bun_core::{Global, Output};

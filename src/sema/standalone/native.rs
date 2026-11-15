@@ -308,10 +308,6 @@ mod fake_mimalloc {
         unsafe { release(p) }
     }
     #[unsafe(no_mangle)]
-    extern "C" fn mi_expand(_p: *mut c_void, _size: usize) -> *mut c_void {
-        core::ptr::null_mut()
-    }
-    #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_malloc_usable_size(p: *const c_void) -> usize {
         if p.is_null() {
             0

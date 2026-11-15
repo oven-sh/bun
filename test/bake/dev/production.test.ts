@@ -894,4 +894,42 @@ export default function IndexPage() {
     expect(unresolved.stderr.toString()).toContain("Cannot find module './does-not-exist'");
     expect(unresolved.exitCode).toBe(1);
   });
+
+  test("a plugin can require() a module after a route has imported an HTML file", async () => {
+    using dir = tempDir("bake-production-html-import-then-require", {
+      "server.ts": `
+        export async function prerender(meta) {
+          return { files: { "/index.html": meta.pageModule.default() } };
+        }
+      `,
+      "page.html": `<!doctype html><script type="module" src="./client.ts"></script>`,
+      "client.ts": `console.log("client");`,
+      "late.txt": "",
+      "required.ts": Array.from({ length: 50 }, (_, i) => `export const a${i} = "v" + String({ x: ${i} }.x);`).join(
+        "\n",
+      ),
+      "routes/index.ts": `
+        import page from "../page.html";
+        import late from "../late.txt";
+        export default () => JSON.stringify({ late, loaders: page.files.map(file => file.loader).sort() });
+      `,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+        const plugin = {
+          name: "require",
+          setup(build) {
+            build.onLoad({ filter: /late\\.txt$/ }, () => ({ contents: require("./required.ts").a7, loader: "text" }));
+          },
+        };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] }, plugins: [plugin] } };
+      `,
+    });
+
+    const built = await Bun.$`${bunExe()} build --app ./app.ts`.cwd(String(dir)).env(bunEnv).quiet().throws(false);
+    const html = await Bun.file(path.join(String(dir), "dist", "index.html"))
+      .text()
+      .catch(() => built.stderr.toString());
+    expect(html).toBe(JSON.stringify({ late: "v7", loaders: ["html", "js"] }));
+    expect(built.exitCode).toBe(0);
+  });
 });

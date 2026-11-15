@@ -16,7 +16,7 @@ use crate::collections::FxHashMap as HashMap;
 use crate::hir::environment::Environment;
 use crate::hir::object_shape::HookKind;
 use crate::hir::{
-    AstAlloc, FunctionId, HirFunction, IdentifierId, IdentifierName, Instruction, InstructionValue,
+    FunctionId, HirAlloc, HirFunction, IdentifierId, IdentifierName, Instruction, InstructionValue,
     JsxAttribute, JsxTag, PlaceOrSpread, StoreStr,
 };
 use bun_core::BStr;
@@ -77,12 +77,7 @@ pub(crate) fn name_anonymous_functions(func: &mut HirFunction, env: &mut Environ
     }
     let update_map: HashMap<FunctionId, StoreStr> = updates
         .iter()
-        .map(|(fid, name)| {
-            (
-                *fid,
-                StoreStr::new(bun_ast::data_store_dupe_str(name.as_bytes())),
-            )
-        })
+        .map(|(fid, name)| (*fid, HirAlloc::dupe_str(name.as_bytes())))
         .collect();
 
     // Apply name updates to the inner HirFunction in the arena
@@ -96,7 +91,7 @@ pub(crate) fn name_anonymous_functions(func: &mut HirFunction, env: &mut Environ
     // Update name_hint on FunctionExpression instruction values in all arena functions
     for i in 0..env.functions.len() {
         // We need to temporarily take the instructions to avoid borrow issues
-        let mut instructions = AstAlloc::take(&mut env.functions[i].instructions);
+        let mut instructions = HirAlloc::take(&mut env.functions[i].instructions);
         apply_name_hints_to_instructions(&mut instructions, &update_map);
         env.functions[i].instructions = instructions;
     }

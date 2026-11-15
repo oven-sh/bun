@@ -9,9 +9,8 @@
 use crate::collections::{IndexMap, IndexSet, sort_slice_by};
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
-use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::{
-    ClauseItem, ImportKind, ImportRecord, Loc, LocRef, S, Stmt, StoreSlice, StoreStr, Symbol,
+    AstArena, AstVec, ClauseItem, ImportKind, ImportRecord, Loc, LocRef, S, Stmt, StoreStr, Symbol,
 };
 use bun_core::strings::locale_compare;
 
@@ -234,6 +233,7 @@ pub(crate) fn validate_restricted_imports(
 /// import statement for an already-imported module is valid JS; the bundler's
 /// linker (not the printer) merges import records when bundling.
 pub(crate) fn add_imports_to_program(
+    arena: &AstArena,
     stmts: &mut Vec<Stmt>,
     host: &mut dyn Host,
     context: &ProgramContext,
@@ -260,16 +260,19 @@ pub(crate) fn add_imports_to_program(
         let (import_record_index, namespace_ref) =
             host.add_import_record(module_name.as_bytes(), ImportKind::Stmt);
 
-        let mut items: AstVec<ClauseItem> = AstAlloc::vec_with_capacity(sorted_imports.len());
-        for spec in &sorted_imports {
-            items.push(make_import_specifier(spec));
-        }
+        let items = AstVec::from_iter_in(
+            sorted_imports
+                .iter()
+                .map(|spec| make_import_specifier(arena, spec)),
+            arena,
+        );
 
-        new_stmts.push(Stmt::alloc(
+        new_stmts.push(Stmt::allocate(
+            arena,
             S::Import {
                 namespace_ref,
                 default_name: None,
-                items: StoreSlice::new_mut(items.leak()),
+                items: items.into_store_slice(),
                 star_name_loc: Loc::EMPTY,
                 import_record_index,
                 is_single_line: true,
@@ -287,9 +290,9 @@ pub(crate) fn add_imports_to_program(
 }
 
 /// Create a `ClauseItem` AST node from a NonLocalImportSpecifier.
-fn make_import_specifier(spec: &NonLocalImportSpecifier) -> ClauseItem {
+fn make_import_specifier(arena: &AstArena, spec: &NonLocalImportSpecifier) -> ClauseItem {
     ClauseItem {
-        alias: arena_str(spec.imported.as_bytes()),
+        alias: arena.dupe_str(spec.imported.as_bytes()),
         alias_loc: Loc::EMPTY,
         name: LocRef {
             loc: Loc::EMPTY,
@@ -297,12 +300,6 @@ fn make_import_specifier(spec: &NonLocalImportSpecifier) -> ClauseItem {
         },
         original_name: StoreStr::EMPTY,
     }
-}
-
-fn arena_str(bytes: &[u8]) -> StoreStr {
-    let mut v: AstVec<u8> = AstAlloc::vec_with_capacity(bytes.len());
-    v.extend_from_slice(bytes);
-    StoreStr::new(v.leak())
 }
 
 /// Check if a name follows the React hook naming convention (use[A-Z0-9]...).

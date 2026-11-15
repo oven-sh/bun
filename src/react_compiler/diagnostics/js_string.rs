@@ -8,9 +8,10 @@
 use core::fmt;
 use core::hash::{Hash, Hasher};
 
-use bun_alloc::{AstAlloc, AstVec};
-use bun_ast::{E, StoreRef, expr};
+use bun_ast::{E, StoreRef};
 use bun_core::{BStr, strings};
+
+use crate::hir::{HirAlloc, HirVec};
 
 /// Invariant: the wrapped `EString` is never roped (`next.is_none()`).
 /// Lowering flattens the rare rope case so every consumer here can ignore it.
@@ -35,22 +36,26 @@ impl JsString {
     /// encoding convention (so `eql_string`/`hash` agree across sources).
     pub fn from_wtf8_bytes(bytes: &[u8]) -> Self {
         let s = if strings::first_non_ascii(bytes).is_none() {
-            E::EString::init(bun_ast::data_store_dupe_str(bytes))
+            E::EString::init(HirAlloc::dupe_str(bytes).slice())
         } else {
-            let mut buf: AstVec<u16> = AstAlloc::vec_with_capacity(bytes.len());
+            let mut buf: HirVec<u16> = HirAlloc::vec_with_capacity(bytes.len());
             buf.extend(core::iter::repeat_n(0u16, bytes.len()));
             let n = strings::convert_utf8_to_utf16_in_buffer(&mut buf, bytes).len();
             buf.truncate(n);
             E::EString::init_utf16(buf.leak())
         };
-        Self(expr::data::Store::append(s))
+        Self::alloc(s)
     }
 
     /// Arena-allocate an `EString` from UTF-16 code units.
     pub fn from_code_units(units: &[u16]) -> Self {
-        Self(expr::data::Store::append(E::EString::init_utf16(
-            AstAlloc::vec_from_slice(units).leak(),
-        )))
+        Self::alloc(E::EString::init_utf16(
+            HirAlloc::vec_from_slice(units).leak(),
+        ))
+    }
+
+    fn alloc(s: E::EString) -> Self {
+        Self(StoreRef::from_bump(Box::leak(Box::new_in(s, HirAlloc))))
     }
 
     #[inline]

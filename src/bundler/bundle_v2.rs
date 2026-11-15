@@ -327,7 +327,7 @@ pub mod bv2_impl {
     use self::bake_types as bake;
     use crate::Error;
     use bun_ast::server_component_boundary;
-    use bun_ast::{Binding, E, Expr, G, S};
+    use bun_ast::{AstVec, Binding, E, Expr, G, S};
     use bun_ast::{ExportsKind, ImportKind, ImportRecord};
     use bun_collections::{ArrayHashMap, DynamicBitSet, VecExt};
     use bun_core::strings;
@@ -2208,9 +2208,9 @@ pub mod bv2_impl {
             let ReachableFileVisitor { reachable, .. } = visitor;
 
             let input_files_cols = self.graph.input_files.split_mut();
-            let additional_files: &mut [bun_alloc::AstVec<crate::AdditionalFile>] =
+            let additional_files: &mut [AstVec<crate::AdditionalFile>] =
                 input_files_cols.additional_files;
-            let unique_keys: &mut [Box<[u8], bun_alloc::AstAlloc>] =
+            let unique_keys: &mut [bun_ast::StoreStr] =
                 input_files_cols.unique_key_for_additional_file;
             let content_hashes: &mut [u64] = input_files_cols.content_hash_for_additional_file;
             for (index, url_for_css) in all_urls_for_css.iter().enumerate() {
@@ -2220,8 +2220,8 @@ pub mod bv2_impl {
                     if additional_files_imported_by_css_and_inlined.is_set(index)
                         && !additional_files_needed_outside_css.is_set(index)
                     {
-                        additional_files[index].clear_retaining_capacity();
-                        unique_keys[index] = bun_alloc::AstAlloc::vec().into_boxed_slice();
+                        additional_files[index].clear();
+                        unique_keys[index] = bun_ast::StoreStr::EMPTY;
                         content_hashes[index] = 0;
                     }
                 }
@@ -2709,7 +2709,7 @@ pub mod bv2_impl {
                 if let Some(secondary) = &resolve_result.path_pair.secondary {
                     if !secondary.is_disabled && !strings::eql_long(secondary.text, path.text) {
                         self.graph.input_files.items_secondary_path_mut()[idx as usize] =
-                            bun_alloc::AstAlloc::vec_from_slice(secondary.text);
+                            AstVec::from_slice_in(secondary.text, self.graph.ast_arena());
                         // Ensure the determinism pass runs.
                         self.graph.has_any_secondary_paths = true;
                     }
@@ -2813,11 +2813,10 @@ pub mod bv2_impl {
             // Handle onLoad plugins as entry points
             if let Some(task) = self.enqueue_on_load_plugin_if_needed(task) {
                 if loader.should_copy_for_bundling() {
-                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                        &mut self.graph.input_files.items_additional_files_mut()
-                            [source_index.get() as usize];
-                    additional_files
-                        .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
+                    self.graph.add_additional_file(
+                        source_index.get(),
+                        crate::AdditionalFile::SourceIndex(task.source_index.get()),
+                    );
                     self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
                         bun_ast::SideEffects::NoSideEffectsPureData;
                     self.graph.estimated_file_loader_count += 1;
@@ -2897,11 +2896,10 @@ pub mod bv2_impl {
             // Handle onLoad plugins as entry points
             if let Some(task) = self.enqueue_on_load_plugin_if_needed(task) {
                 if loader.should_copy_for_bundling() {
-                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                        &mut self.graph.input_files.items_additional_files_mut()
-                            [source_index.get() as usize];
-                    additional_files
-                        .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
+                    self.graph.add_additional_file(
+                        source_index.get(),
+                        crate::AdditionalFile::SourceIndex(task.source_index.get()),
+                    );
                     self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
                         bun_ast::SideEffects::NoSideEffectsPureData;
                     self.graph.estimated_file_loader_count += 1;
@@ -3375,7 +3373,8 @@ pub mod bv2_impl {
 
         pub(crate) fn create_linker_graph(&mut self) -> Result<LinkerGraph<'a>, Error> {
             let _trace = crate::perf::trace("Bundler.cloneAST");
-            let mut linker_graph = LinkerGraph::new(self.graph.ast_arena());
+            let ast_arena = self.graph.ast_arena();
+            let mut linker_graph = LinkerGraph::new(ast_arena);
             linker_graph.ast = self.graph.ast.clone()?;
 
             for module_scope in linker_graph.ast.items_module_scope_mut() {
@@ -3391,7 +3390,7 @@ pub mod bv2_impl {
                     /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
                 }
 
-                module_scope.generated = module_scope.generated.clone();
+                module_scope.generated = AstVec::from_slice_in(&module_scope.generated, ast_arena);
             }
 
             // Some parts of the AST are owned by worker allocators at this point.
@@ -3415,7 +3414,7 @@ pub mod bv2_impl {
                 return Ok(());
             }
 
-            let alloc = self.arena();
+            let alloc = self.graph.ast_arena();
 
             let hmr = self.transpiler.options.hot_module_reloading;
             let mut server = AstBuilder::init(alloc, &bake::SERVER_VIRTUAL_SOURCE, hmr)?;
@@ -3535,23 +3534,26 @@ pub mod bv2_impl {
                                 ..Default::default()
                             })),
                             value: Some(server.new_expr(E::Object {
-                                properties: bun_alloc::AstAlloc::vec_from_iter([
-                                    G::Property {
-                                        key: Some(id_string),
-                                        value: Some(client_path),
-                                        ..Default::default()
-                                    },
-                                    G::Property {
-                                        key: Some(name_string),
-                                        value: Some(export_name),
-                                        ..Default::default()
-                                    },
-                                    G::Property {
-                                        key: Some(chunks_string),
-                                        value: Some(empty_array),
-                                        ..Default::default()
-                                    },
-                                ]),
+                                properties: bun_ast::g::PropertyList::from_slice_in(
+                                    &[
+                                        G::Property {
+                                            key: Some(id_string),
+                                            value: Some(client_path),
+                                            ..Default::default()
+                                        },
+                                        G::Property {
+                                            key: Some(name_string),
+                                            value: Some(export_name),
+                                            ..Default::default()
+                                        },
+                                        G::Property {
+                                            key: Some(chunks_string),
+                                            value: Some(empty_array),
+                                            ..Default::default()
+                                        },
+                                    ],
+                                    alloc,
+                                ),
                                 ..Default::default()
                             })),
                             ..Default::default()
@@ -3559,18 +3561,21 @@ pub mod bv2_impl {
                         *client_item = G::Property {
                             key: Some(export_name),
                             value: Some(server.new_expr(E::Object {
-                                properties: bun_alloc::AstAlloc::vec_from_iter([
-                                    G::Property {
-                                        key: Some(name_string),
-                                        value: Some(export_name),
-                                        ..Default::default()
-                                    },
-                                    G::Property {
-                                        key: Some(specifier_string),
-                                        value: Some(ssr_path),
-                                        ..Default::default()
-                                    },
-                                ]),
+                                properties: bun_ast::g::PropertyList::from_slice_in(
+                                    &[
+                                        G::Property {
+                                            key: Some(name_string),
+                                            value: Some(export_name),
+                                            ..Default::default()
+                                        },
+                                        G::Property {
+                                            key: Some(specifier_string),
+                                            value: Some(ssr_path),
+                                            ..Default::default()
+                                        },
+                                    ],
+                                    alloc,
+                                ),
                                 ..Default::default()
                             })),
                             ..Default::default()
@@ -3580,7 +3585,10 @@ pub mod bv2_impl {
                     client_manifest_props.push(G::Property {
                         key: Some(client_path),
                         value: Some(server.new_expr(E::Object {
-                            properties: bun_alloc::AstAlloc::vec_from_iter(client_manifest_items),
+                            properties: bun_ast::g::PropertyList::from_slice_in(
+                                &client_manifest_items,
+                                alloc,
+                            ),
                             ..Default::default()
                         })),
                         ..Default::default()
@@ -3593,42 +3601,48 @@ pub mod bv2_impl {
             let server_manifest_ref =
                 server.new_symbol(bun_ast::symbol::Kind::Other, b"serverManifest")?;
             let server_manifest_value = server.new_expr(E::Object {
-                properties: bun_alloc::AstAlloc::vec_from_iter(server_manifest_props),
+                properties: bun_ast::g::PropertyList::from_slice_in(&server_manifest_props, alloc),
                 ..Default::default()
             });
             server.append_stmt(S::Local {
                 kind: bun_ast::s::Kind::KConst,
-                decls: bun_alloc::AstAlloc::vec_from_iter([G::Decl {
-                    binding: Binding::alloc(
-                        alloc,
-                        bun_ast::b::Identifier {
-                            r#ref: server_manifest_ref,
-                        },
-                        bun_ast::Loc::EMPTY,
-                    ),
-                    value: Some(server_manifest_value),
-                }]),
+                decls: bun_ast::g::DeclList::from_slice_in(
+                    &[G::Decl {
+                        binding: Binding::alloc(
+                            alloc,
+                            bun_ast::b::Identifier {
+                                r#ref: server_manifest_ref,
+                            },
+                            bun_ast::Loc::EMPTY,
+                        ),
+                        value: Some(server_manifest_value),
+                    }],
+                    alloc,
+                ),
                 is_export: true,
                 ..Default::default()
             })?;
             let ssr_manifest_ref =
                 server.new_symbol(bun_ast::symbol::Kind::Other, b"ssrManifest")?;
             let ssr_manifest_value = server.new_expr(E::Object {
-                properties: bun_alloc::AstAlloc::vec_from_iter(client_manifest_props),
+                properties: bun_ast::g::PropertyList::from_slice_in(&client_manifest_props, alloc),
                 ..Default::default()
             });
             server.append_stmt(S::Local {
                 kind: bun_ast::s::Kind::KConst,
-                decls: bun_alloc::AstAlloc::vec_from_iter([G::Decl {
-                    binding: Binding::alloc(
-                        alloc,
-                        bun_ast::b::Identifier {
-                            r#ref: ssr_manifest_ref,
-                        },
-                        bun_ast::Loc::EMPTY,
-                    ),
-                    value: Some(ssr_manifest_value),
-                }]),
+                decls: bun_ast::g::DeclList::from_slice_in(
+                    &[G::Decl {
+                        binding: Binding::alloc(
+                            alloc,
+                            bun_ast::b::Identifier {
+                                r#ref: ssr_manifest_ref,
+                            },
+                            bun_ast::Loc::EMPTY,
+                        ),
+                        value: Some(ssr_manifest_value),
+                    }],
+                    alloc,
+                ),
                 is_export: true,
                 ..Default::default()
             })?;
@@ -3678,11 +3692,10 @@ pub mod bv2_impl {
             // Handle onLoad plugins
             if let Some(task) = self.enqueue_on_load_plugin_if_needed(task) {
                 if loader.should_copy_for_bundling() {
-                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                        &mut self.graph.input_files.items_additional_files_mut()
-                            [source_index.get() as usize];
-                    additional_files
-                        .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
+                    self.graph.add_additional_file(
+                        source_index.get(),
+                        crate::AdditionalFile::SourceIndex(task.source_index.get()),
+                    );
                     self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
                         bun_ast::SideEffects::NoSideEffectsPureData;
                     self.graph.estimated_file_loader_count += 1;
@@ -3746,10 +3759,10 @@ pub mod bv2_impl {
             // Handle onLoad plugins
             if let Some(task) = self.enqueue_on_load_plugin_if_needed(task) {
                 if loader.should_copy_for_bundling() {
-                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                        &mut self.graph.input_files.items_additional_files_mut()
-                            [source_index.get() as usize];
-                    additional_files.push(crate::AdditionalFile::SourceIndex(source_index.get()));
+                    self.graph.add_additional_file(
+                        source_index.get(),
+                        crate::AdditionalFile::SourceIndex(source_index.get()),
+                    );
                     self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
                         bun_ast::SideEffects::NoSideEffectsPureData;
                     self.graph.estimated_file_loader_count += 1;
@@ -4282,9 +4295,12 @@ pub mod bv2_impl {
                                 ..Default::default()
                             },
                         ));
-                        additional_files[index].push(crate::AdditionalFile::OutputFile(
-                            (additional_output_files.len() - 1) as u32,
-                        ));
+                        additional_files[index].push(
+                            ast_arena,
+                            crate::AdditionalFile::OutputFile(
+                                (additional_output_files.len() - 1) as u32,
+                            ),
+                        );
                     }
                 }
 
@@ -4447,11 +4463,10 @@ pub mod bv2_impl {
                     // When a plugin returns a file loader, we always need to populate additional_files
                     let should_copy_for_bundling = code.loader.should_copy_for_bundling();
                     if should_copy_for_bundling {
-                        let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                            &mut this.graph.input_files.items_additional_files_mut()
-                                [source_index.get() as usize];
-                        let _ = additional_files
-                            .push(crate::AdditionalFile::SourceIndex(source_index.get()));
+                        this.graph.add_additional_file(
+                            source_index.get(),
+                            crate::AdditionalFile::SourceIndex(source_index.get()),
+                        );
                         this.graph.input_files.items_side_effects_mut()
                             [source_index.get() as usize] =
                             bun_ast::SideEffects::NoSideEffectsPureData;
@@ -4753,13 +4768,10 @@ pub mod bv2_impl {
 
                             if let Some(task) = this.enqueue_on_load_plugin_if_needed(task) {
                                 if loader.should_copy_for_bundling() {
-                                    let additional_files: &mut bun_alloc::AstVec<
-                                        crate::AdditionalFile,
-                                    > = &mut this.graph.input_files.items_additional_files_mut()
-                                        [source_index.get() as usize];
-                                    additional_files.push(crate::AdditionalFile::SourceIndex(
-                                        task.source_index.get(),
-                                    ));
+                                    this.graph.add_additional_file(
+                                        source_index.get(),
+                                        crate::AdditionalFile::SourceIndex(task.source_index.get()),
+                                    );
                                     this.graph.input_files.items_side_effects_mut()
                                         [source_index.get() as usize] =
                                         bun_ast::SideEffects::NoSideEffectsPureData;
@@ -4872,18 +4884,7 @@ pub mod bv2_impl {
                 }
             }
 
-            // Every per-element
-            // payload (file contents, quoted source-map JSON, line-offset tables, …)
-            // lives in `this.graph.heap` / a per-worker `mi_heap_t`, so the
-            // arena teardown bulk-frees them:
-            // `LinkerGraph.File.line_offset_table`
-            // is `List<AstAlloc>` (slab + `columns_for_non_ascii` payloads in the
-            // worker AST heap, see `SourceMapTasks`), and every
-            // `MultiArrayList<BundledAst>` / `JSMeta` / `InputFile` column —
-            // `quoted_source_contents`, `Part`s, `NamedImport`s, `Scope`s,
-            // `ImportData`/`ExportData`, `ArrayHashMap` buckets — is `AstAlloc`-
-            // backed. The slab-only `MultiArrayList::drop` strands nothing on the
-            // global heap; `mi_heap_destroy` on the AST arenas reclaims all of it.
+            // What the `BundledAst`, `JSMeta`, `InputFile` and `File` columns point to is freed with the arenas.
         }
     }
 
@@ -6438,6 +6439,7 @@ pub mod bv2_impl {
             // borrow to the `build_graphs` field so later `self.graph.*` writes don't overlap.
             let self_ptr = Some(bun_ptr::ParentRef::from_ref_mut(self));
             let dev_server_is_none = self.dev_server.is_none();
+            let ast_arena = self.graph.ast_arena();
             for (key, mut new_task) in resolve_queue {
                 let loader = new_task.loader.unwrap_or_else(|| {
                     new_task
@@ -6461,9 +6463,9 @@ pub mod bv2_impl {
                         secondary_path: if let Some(secondary_path) =
                             &new_task.secondary_path_for_commonjs_interop
                         {
-                            bun_alloc::AstAlloc::vec_from_slice(secondary_path.text)
+                            AstVec::from_slice_in(secondary_path.text, ast_arena)
                         } else {
-                            bun_alloc::AstAlloc::vec()
+                            AstVec::new()
                         },
                         ..Default::default()
                     };
@@ -6500,12 +6502,10 @@ pub mod bv2_impl {
                     };
 
                     if loader.should_copy_for_bundling() {
-                        let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                            &mut self.graph.input_files.items_additional_files_mut()
-                                [importer_source_index as usize];
-                        additional_files.push(crate::AdditionalFile::SourceIndex(
-                            new_task.source_index.get(),
-                        ));
+                        self.graph.add_additional_file(
+                            importer_source_index,
+                            crate::AdditionalFile::SourceIndex(new_task.source_index.get()),
+                        );
                         self.graph.input_files.items_side_effects_mut()
                             [new_task.source_index.get() as usize] =
                             bun_ast::SideEffects::NoSideEffectsPureData;
@@ -6515,10 +6515,10 @@ pub mod bv2_impl {
                     self.graph.pool().schedule(new_task);
                 } else if loader.should_copy_for_bundling() {
                     let existing_idx = *existing.value_ptr;
-                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                        &mut self.graph.input_files.items_additional_files_mut()
-                            [importer_source_index as usize];
-                    additional_files.push(crate::AdditionalFile::SourceIndex(existing_idx));
+                    self.graph.add_additional_file(
+                        importer_source_index,
+                        crate::AdditionalFile::SourceIndex(existing_idx),
+                    );
                     self.graph.estimated_file_loader_count += 1;
                 }
             }
@@ -6666,7 +6666,8 @@ pub mod bv2_impl {
                     unsafe { &mut *define_ptr },
                     js_parser_options,
                     log,
-                    Expr::init(
+                    Expr::allocate(
+                        ast_arena,
                         E::EString {
                             data: unique_key.into(),
                             ..Default::default()
@@ -6839,10 +6840,7 @@ pub mod bv2_impl {
                     this.graph
                         .input_files
                         .items_unique_key_for_additional_file_mut()[result_source_index] =
-                        bun_alloc::AstAlloc::vec_from_slice(
-                            result.unique_key_for_additional_file.slice(),
-                        )
-                        .into_boxed_slice();
+                        result.unique_key_for_additional_file;
                     this.graph
                         .input_files
                         .items_content_hash_for_additional_file_mut()[result_source_index] =
@@ -6939,7 +6937,7 @@ pub mod bv2_impl {
                     // `result.ast` is moved into `graph.ast` and `result.source` was
                     // swapped earlier, so snapshot the data the use-directive block
                     // needs *before* the move. Only paid for files that hit the SCB gate.
-                    let named_exports_for_scb = if result.use_directive != crate::UseDirective::None
+                    let export_names_for_scb = if result.use_directive != crate::UseDirective::None
                         && {
                             let separate = this
                                 .framework
@@ -6957,7 +6955,10 @@ pub mod bv2_impl {
                                 is_client != is_browser
                             }
                         } {
-                        Some(result.ast.named_exports.clone().expect("oom"))
+                        Some(AstVec::from_slice_in(
+                            result.ast.named_exports.keys(),
+                            this.graph.ast_arena(),
+                        ))
                     } else {
                         None
                     };
@@ -6975,7 +6976,7 @@ pub mod bv2_impl {
                         .expect("oom");
                     }
 
-                    if let Some(named_exports) = named_exports_for_scb {
+                    if let Some(export_names) = export_names_for_scb {
                         if result.use_directive == crate::UseDirective::Server {
                             bun_core::todo_panic!("\"use server\"");
                         }
@@ -7008,7 +7009,7 @@ pub mod bv2_impl {
                                     crate::ServerComponentParseTask::Data::ClientReferenceProxy(
                                         crate::ServerComponentParseTask::ReferenceProxy {
                                             other_source,
-                                            named_exports,
+                                            export_names,
                                         },
                                     ),
                                     scb_source,

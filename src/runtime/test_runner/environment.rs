@@ -11,6 +11,7 @@ use bun_jsc::{
     StringJsc as _, Strong, bun_string_jsc, js_promise,
 };
 use bun_options_types::context::TestEnvironment;
+use bun_ptr::VecCellExt as _;
 
 #[derive(Default)]
 struct Pragmas<'a> {
@@ -123,7 +124,7 @@ impl Environment {
     pub(crate) fn load_entry_point(
         &mut self,
         vm: &VirtualMachine,
-        path: &[u8],
+        path: &'static [u8],
     ) -> crate::Result<*mut JSInternalPromise> {
         if !core::mem::replace(&mut self.is_entered, true) {
             if let Some(rejected) = self.enter(vm, path)? {
@@ -153,7 +154,7 @@ impl Environment {
     fn enter(
         &mut self,
         vm: &VirtualMachine,
-        path: &[u8],
+        path: &'static [u8],
     ) -> crate::Result<Option<*mut JSInternalPromise>> {
         let kind = match &self.comment {
             None => self.project,
@@ -175,7 +176,7 @@ impl Environment {
 
         // Without --isolate preloads run only once, so run them in the project's environment, not the first file's.
         if !vm.test_isolation_enabled.get()
-            && !vm.preload.get().is_empty()
+            && !vm.preload.is_empty()
             && (kind != self.project || self.options.is_some())
         {
             let project = match setup(vm, self.project, None, path, false) {

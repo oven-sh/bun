@@ -5,7 +5,12 @@ use std::borrow::Cow;
 
 use bun_sema::session::Session;
 
-fn count_imports_written(path: &str, text: &str) -> usize {
+fn parse_and_write<T>(
+    path: &str,
+    text: &str,
+    format: ModuleFormat,
+    read: impl FnOnce(&File<'_>, &Interner<'_>) -> T,
+) -> T {
     let session = Session::new();
     let (arena, atoms) = (session.arena(), Interner::new_in(&session));
     let options = CompileParseOptions {
@@ -18,13 +23,70 @@ fn count_imports_written(path: &str, text: &str) -> usize {
     };
     let mut hir = parse_for_compile(arena, &options, text.as_bytes(), &atoms);
     hir.text = Cow::Borrowed(text.as_bytes());
-    write_import_functions(arena, &atoms, &mut hir);
-    let is_import = |it: &&_| matches!(*it, ExprKind::ImportCall { .. });
-    hir.exprs
-        .iter()
-        .map(|it| &it.kind)
-        .filter(is_import)
-        .count()
+    write_import_functions(arena, &atoms, &mut hir, format);
+    read(&hir, &atoms)
+}
+
+fn count_imports_written(path: &str, text: &str) -> usize {
+    parse_and_write(path, text, ModuleFormat::CommonJs, |hir, _| {
+        let is_import = |it: &&_| matches!(*it, ExprKind::ImportCall { .. });
+        hir.exprs
+            .iter()
+            .map(|it| &it.kind)
+            .filter(is_import)
+            .count()
+    })
+}
+
+fn requires_written(path: &str, text: &str, format: ModuleFormat) -> Vec<String> {
+    parse_and_write(path, text, format, |hir, atoms| {
+        let requires = hir
+            .specifier_uses
+            .iter()
+            .filter(|it| it.kind == SpecifierKind::RequireCall);
+        requires
+            .map(|it| String::from_utf8_lossy(atoms.bytes(it.spec)).into_owned())
+            .collect()
+    })
+}
+
+#[test]
+fn a_require_in_a_text_of_eval_is_the_files_own() {
+    for text in [
+        r#"eval("require('./a.cjs')");"#,
+        r#"eval('require("./a.cjs")').x;"#,
+        r#"const f = () => eval(" require ( './a.cjs' ) ; ");"#,
+        r#"function f() { "use strict"; return eval("require('./a.cjs')"); }"#,
+    ] {
+        assert_eq!(
+            requires_written("/a.cjs", text, ModuleFormat::CommonJs),
+            ["./a.cjs"],
+            "{text}"
+        );
+        assert!(
+            requires_written("/a.mjs", text, ModuleFormat::Esm).is_empty(),
+            "{text}"
+        );
+    }
+    for text in [
+        r#"(0, eval)("require('./a.cjs')");"#,
+        r#"new Function("return require('./a.cjs')")();"#,
+        r#"eval("require('./a.cjs').x");"#,
+        r#"eval("require(name)");"#,
+        r#"eval("require('./a.cjs', 1)");"#,
+        r#"function f(require) { return eval("require('./a.cjs')"); }"#,
+        r#"const require = f; eval("require('./a.cjs')");"#,
+        r#"function eval() {} eval("require('./a.cjs')");"#,
+        r#"o.eval("require('./a.cjs')");"#,
+        r#"eval("var require = f"); eval("require('./a.cjs')");"#,
+        r#"eval(text); eval("require('./a.cjs')");"#,
+        r#"with (o) eval("require('./a.cjs')");"#,
+    ] {
+        assert!(
+            requires_written("/a.cjs", text, ModuleFormat::CommonJs).is_empty(),
+            "{text}"
+        );
+    }
 }
 
 #[test]

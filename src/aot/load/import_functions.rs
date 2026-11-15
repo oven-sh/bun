@@ -3,11 +3,12 @@ mod tests;
 
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::hir::{
-    BinOp, Chain, ExprId, ExprKind, File, FileBuilder, Flags, FnBody, FnKind, Func,
-    FunctionWrittenByLoader, Keyword, ModuleName, Param, ParamId, PatKind, ResolutionMode, Span,
-    SpecifierKind, SpecifierUse, StmtKind, TextRange, TextWrittenByLoader, TypeNodeId,
+    BinOp, Call, Chain, ExprId, ExprKind, File, FileBuilder, Flags, FnBody, FnKind, Func,
+    FunctionWrittenByLoader, Keyword, ListAt, ModuleName, Param, ParamId, PatKind, ResolutionMode,
+    Span, SpecifierKind, SpecifierUse, StmtKind, TextRange, TextWrittenByLoader, TypeNodeId,
     TypeNodeKind,
 };
+use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::TreeChange;
 use bun_sema::session::Arena;
 
@@ -24,6 +25,7 @@ struct EvaluatedImport {
     expression: ExprId,
     function: Option<FunctionParts>,
     argument: Argument,
+    is_require: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -47,12 +49,12 @@ fn trim_end_of_written_text(mut text: &[u8]) -> &[u8] {
     }
 }
 
-fn may_hold_import_in_string(text: &[u8]) -> bool {
+fn may_hold_call_in_string(text: &[u8], callee: &[u8]) -> bool {
     let mut rest = text;
     let mut before = 0;
-    while let Some(at) = bun_core::strings::index_of(rest, b"import") {
+    while let Some(at) = bun_core::strings::index_of(rest, callee) {
         let start = before + at;
-        before = start + b"import".len();
+        before = start + callee.len();
         rest = &text[before..];
         if !matches!(rest.trim_ascii_start().first(), Some(b'(' | b'\\' | b'/')) {
             continue;
@@ -100,9 +102,9 @@ fn is_identifier(name: &[u8]) -> bool {
         && !matches!(name, b"await" | b"arguments" | b"eval")
 }
 
-fn read_import(text: &[u8]) -> Option<&[u8]> {
+fn read_call<'t>(text: &'t [u8], callee: &[u8]) -> Option<&'t [u8]> {
     let skip = |text| skip_spaces(text).map(|it| it.0);
-    let argument = skip(skip(skip(text)?.strip_prefix(b"import")?)?.strip_prefix(b"(")?)?;
+    let argument = skip(skip(skip(text)?.strip_prefix(callee)?)?.strip_prefix(b"(")?)?;
     let length = match *argument.first()? {
         quote @ (b'"' | b'\'') => {
             let is_end = |&byte: &u8| byte == quote || matches!(byte, b'\\' | b'\n' | b'\r');
@@ -141,7 +143,7 @@ fn read_function_body(
     if ends_line || text.len() == rest.len() {
         return None;
     }
-    let argument = read_import(text)?;
+    let argument = read_call(text, b"import")?;
     if let Some(parameter) = parameter
         && atoms.bytes(parameter) == argument
     {
@@ -199,14 +201,22 @@ fn find_evaluated_import(
                 expression,
                 function: Some(FunctionParts { parameter, body }),
                 argument: read_function_body(atoms, parameter, body)?,
+                is_require: false,
             })
         }
         b"eval" if !is_new && texts.next().is_none() => {
-            let specifier = read_plain_string(read_import(atoms.bytes(first))?)?;
+            let text = atoms.bytes(first);
+            let import = read_call(text, b"import");
+            let is_direct = matches!(hir[call.callee].kind, ExprKind::Ident(_));
+            let argument = match import {
+                None if is_direct && hir.is_js => read_call(text, b"require")?,
+                _ => import?,
+            };
             Some(EvaluatedImport {
                 expression,
                 function: None,
-                argument: Argument::Specifier(atoms.intern(specifier)),
+                argument: Argument::Specifier(atoms.intern(read_plain_string(argument)?)),
+                is_require: import.is_none(),
             })
         }
         _ => None,
@@ -264,6 +274,30 @@ impl Writer<'_, '_> {
         };
         let args = self.file.list(&[argument]);
         ExprKind::ImportCall { args }
+    }
+
+    fn require(&mut self, argument: Argument) -> ExprKind {
+        let Argument::Specifier(specifier) = argument else {
+            unreachable!("only a function has a parameter");
+        };
+        self.file.specifier_uses.push(SpecifierUse {
+            spec: specifier,
+            pos: self.pos,
+            kind: SpecifierKind::RequireCall,
+            mode: ResolutionMode::None,
+        });
+        let callee = self.expression(ExprKind::Ident(known::require));
+        let argument = self.expression(ExprKind::String(specifier));
+        let args = self.file.list(&[argument]);
+        let call = self.file.add_call(Call {
+            callee,
+            args,
+            type_args: ListAt::EMPTY,
+            close_pos: self.end.saturating_sub(1),
+            chain: Chain::No,
+            is_pure: false,
+        });
+        ExprKind::Call(call)
     }
 
     fn parameter(&mut self, name: Atom) -> Span<ParamId> {
@@ -331,6 +365,7 @@ impl Writer<'_, '_> {
         (self.pos, self.end) = (written.pos, written.end);
         let kind = match found.function {
             Some(parts) => self.function(parts, found.argument),
+            None if found.is_require => self.require(found.argument),
             None => self.import(None, found.argument),
         };
         let kind = match self.file.is_js {
@@ -349,20 +384,39 @@ pub(crate) fn write_import_functions<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
     hir: &mut File<'s>,
+    format: ModuleFormat,
 ) -> TreeChange {
-    if !hir.texts_written_by_loader.is_empty() || !may_hold_import_in_string(&hir.text) {
+    let may_require = format == ModuleFormat::CommonJs
+        && bun_core::strings::contains(&hir.text, b"eval")
+        && may_hold_call_in_string(&hir.text, b"require");
+    if !hir.texts_written_by_loader.is_empty()
+        || !(may_require || may_hold_call_in_string(&hir.text, b"import"))
+    {
         return TreeChange::Unchanged;
     }
     let mut found: Vec<EvaluatedImport> = (0..hir.exprs.len() as u32)
         .filter_map(|expression| find_evaluated_import(hir, atoms, ExprId(expression)))
         .collect();
-    let (declares_function, declares_eval) = (
+    let (declares_function, declares_eval, declares_require) = (
         declares(hir, atoms.intern(b"Function")),
         declares(hir, atoms.intern(b"eval")),
+        declares(hir, known::require),
     );
+    let is_direct_eval = |it: &&ExprKind| match **it {
+        ExprKind::Call(call) => matches!(hir[hir[call].callee].kind, ExprKind::Ident(known::eval)),
+        _ => false,
+    };
+    let direct_evals = hir
+        .exprs
+        .iter()
+        .map(|it| &it.kind)
+        .filter(is_direct_eval)
+        .count();
+    let requires = found.iter().filter(|it| it.is_require).count();
+    let may_have_other_require = declares_require || requires < direct_evals;
     found.retain(|it| match it.function {
         Some(_) => !declares_function,
-        None => !declares_eval,
+        None => !declares_eval && (!it.is_require || (may_require && !may_have_other_require)),
     });
     if found.is_empty() {
         return TreeChange::Unchanged;

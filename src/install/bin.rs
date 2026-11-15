@@ -904,7 +904,6 @@ impl<'a> Linker<'a> {
             let bunx_suffix = w!(".bunx\x00");
             dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()]
                 .copy_from_slice(bunx_suffix);
-            // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
             let abs_bunx_file =
                 bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
             let had_bunx_file = sys::unlink_w(abs_bunx_file).is_ok();
@@ -914,7 +913,6 @@ impl<'a> Linker<'a> {
             }
             let exe_suffix = w!(".exe\x00");
             dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
-            // SAFETY: dest_buf[abs_dest_w_len + ".exe".len()] == 0 written above
             let abs_exe_file =
                 bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len());
             let _ = sys::unlink_w(abs_exe_file);
@@ -1207,7 +1205,6 @@ impl<'a> Linker<'a> {
         let bunx_suffix = w!(".bunx\x00");
         dest_buf[abs_dest_w_len..abs_dest_w_len + bunx_suffix.len()].copy_from_slice(bunx_suffix);
 
-        // SAFETY: dest_buf[abs_dest_w_len + ".bunx".len()] == 0 written above
         let abs_bunx_file =
             bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
 
@@ -1280,7 +1277,6 @@ impl<'a> Linker<'a> {
         bunx_file.write_all(bun_core::slice_as_bytes(metadata))?;
 
         dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
-        // SAFETY: dest_buf[abs_dest_w_len + ".exe".len()] == 0 written above
         let abs_exe_file = bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len());
 
         if let Err(err) = sys::File::write_file_os_path(
@@ -1422,8 +1418,7 @@ impl<'a> Linker<'a> {
         off += 1;
         buf[off..off + package_name.len()].copy_from_slice(package_name);
         off += package_name.len();
-        buf[off] = 0;
-        let package_dir = ZStr::from_buf(&buf[..], off);
+        let package_dir = ZStr::nul_terminate(buf, off);
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
@@ -1557,8 +1552,8 @@ impl<'a> Linker<'a> {
             }
             let found = join_z_checked::<PlatformAuto>(package_dir, buf, &[candidate])
                 .filter(|abs| sys::exists_z(abs));
-            if let Some(len) = found.map(ZStr::len) {
-                return Some(ZStr::from_buf(buf, len));
+            if found.is_some() {
+                return found;
             }
         }
 
@@ -1639,8 +1634,7 @@ impl<'a> Linker<'a> {
             return None;
         }
         buf[dir_len..len].copy_from_slice(name);
-        buf[len] = 0;
-        Some(ZStr::from_buf(buf, len))
+        Some(ZStr::nul_terminate(buf, len))
     }
 
     // target: what the symlink points to

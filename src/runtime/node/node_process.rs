@@ -674,7 +674,7 @@ mod _impl {
             buf1[0..k.length()].copy_from_slice(k.utf16());
             k.length()
         };
-        buf1[len1] = 0;
+        let str1 = WStr::nul_terminate(&mut buf1, len1);
 
         let str2: Option<&WStr> = if v.tag() != bun_core::Tag::Dead {
             Some('str_: {
@@ -687,12 +687,11 @@ mod _impl {
                     buf2[0..v.length()].copy_from_slice(v.utf16());
                     v.length()
                 };
-                buf2[len2] = 0;
-                WStr::from_buf(&buf2, len2)
+                WStr::nul_terminate(&mut buf2, len2)
             })
         } else {
             None
         };
-        let _ = bun_sys::windows::SetEnvironmentVariableW(WStr::from_buf(&buf1, len1), str2);
+        let _ = bun_sys::windows::SetEnvironmentVariableW(str1, str2);
     }
 } // mod _impl

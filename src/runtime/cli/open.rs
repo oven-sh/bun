@@ -283,30 +283,40 @@ fn bin_path(editor: Editor) -> Option<&'static [&'static ZStr]> {
             Editor::Vscode => Some(
                 const {
                     &[
-                ZStr::from_static(b"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code\0"),
-                ZStr::from_static(b"/Applications/VSCodium.app/Contents/Resources/app/bin/code\0"),
-            ]
+                        bun_core::zstr!(
+                            "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+                        ),
+                        bun_core::zstr!(
+                            "/Applications/VSCodium.app/Contents/Resources/app/bin/code"
+                        ),
+                    ]
                 },
             ),
             Editor::Atom => Some(
                 const {
-                    &[ZStr::from_static(
-                        b"/Applications/Atom.app/Contents/Resources/app/atom.sh\0",
+                    &[bun_core::zstr!(
+                        "/Applications/Atom.app/Contents/Resources/app/atom.sh"
                     )]
                 },
             ),
-            Editor::Sublime => {
-                Some(
-                    const {
-                        &[
-                ZStr::from_static(b"/Applications/Sublime Text 4.app/Contents/SharedSupport/bin/subl\0"),
-                ZStr::from_static(b"/Applications/Sublime Text 3.app/Contents/SharedSupport/bin/subl\0"),
-                ZStr::from_static(b"/Applications/Sublime Text 2.app/Contents/SharedSupport/bin/subl\0"),
-                ZStr::from_static(b"/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl\0"),
-            ]
-                    },
-                )
-            }
+            Editor::Sublime => Some(
+                const {
+                    &[
+                        bun_core::zstr!(
+                            "/Applications/Sublime Text 4.app/Contents/SharedSupport/bin/subl"
+                        ),
+                        bun_core::zstr!(
+                            "/Applications/Sublime Text 3.app/Contents/SharedSupport/bin/subl"
+                        ),
+                        bun_core::zstr!(
+                            "/Applications/Sublime Text 2.app/Contents/SharedSupport/bin/subl"
+                        ),
+                        bun_core::zstr!(
+                            "/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl"
+                        ),
+                    ]
+                },
+            ),
             _ => None,
         }
     }

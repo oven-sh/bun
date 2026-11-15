@@ -1,5 +1,7 @@
 use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
 
+use bun_core::ZStr;
+
 use crate::{LIBUS_SOCKET_DESCRIPTOR, Loop};
 // `sockaddr_storage` is not in `libc` on Windows; route through the leaf
 // ws2_32 shim there. Both definitions are 128-byte 8-aligned POD.
@@ -20,7 +22,7 @@ impl Socket {
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
         recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
-        host: *const c_char,
+        host: &ZStr,
         port: c_ushort,
         options: c_int,
         err: Option<&mut c_int>,
@@ -35,7 +37,7 @@ impl Socket {
                 drain_cb,
                 close_cb,
                 recv_error_cb,
-                host,
+                host.as_ptr(),
                 port,
                 options,
                 match err {
@@ -124,9 +126,9 @@ impl Socket {
         us_udp_socket_close(self)
     }
 
-    pub fn connect(&mut self, hostname: *const c_char, port: c_uint) -> c_int {
-        // SAFETY: thin FFI passthrough; hostname must be NUL-terminated per uSockets.
-        unsafe { us_udp_socket_connect(self, hostname, port) }
+    pub fn connect(&mut self, hostname: &ZStr, port: c_uint) -> c_int {
+        // SAFETY: `hostname` is NUL-terminated (`ZStr`), and is only read during the call.
+        unsafe { us_udp_socket_connect(self, hostname.as_ptr(), port) }
     }
 
     pub fn disconnect(&mut self) -> c_int {

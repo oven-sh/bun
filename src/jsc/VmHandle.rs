@@ -594,7 +594,7 @@ impl<T> VmBound<T> {
 
     /// `None` if `vm` is another VM.
     pub fn get<'a>(&'a self, vm: &'a VirtualMachine) -> Option<&'a T> {
-        Arc::ptr_eq(&self.handle.0, &vm.handle_ref().0).then_some(&*self.value)
+        Arc::ptr_eq(&self.handle.0, &vm.handle_ref().0).then(|| &*self.value)
     }
 }
 

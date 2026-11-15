@@ -266,6 +266,57 @@ describe("HEAD request with a ReadableStream body", () => {
     });
   }
 });
+describe.each(["HEAD", "204", "304", "abort"])("cancel() of a response body that is discarded for %s", discard => {
+  // Wrapped, because what `use` returns can be a promise that never settles.
+  async function inCancel<T>(use: (response: Response) => T) {
+    const entered = Promise.withResolvers<void>();
+    const cancelled = Promise.withResolvers<{ result: T }>();
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        entered.resolve();
+        if (discard === "abort") await once(req.signal, "abort");
+        const response = new Response(
+          new ReadableStream({ cancel: () => cancelled.resolve({ result: use(response) }) }),
+          {
+            status: Number(discard) || 200,
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          },
+        );
+        return response;
+      },
+    });
+    const controller = new AbortController();
+    const request = fetch(server.url, { method: discard === "HEAD" ? "HEAD" : "GET", signal: controller.signal });
+    await entered.promise;
+    if (discard === "abort") controller.abort();
+    expect(await Promise.allSettled([request])).toMatchObject([
+      discard === "abort" ? { reason: { name: "AbortError" } } : { value: { status: Number(discard) || 200 } },
+    ]);
+    return await cancelled.promise;
+  }
+
+  it("reads bodyUsed as true", async () => {
+    expect(await inCancel(response => response.bodyUsed)).toEqual({ result: true });
+  });
+
+  it.each(["text", "json", "blob", "arrayBuffer", "bytes", "formData", "clone", "textStream", "Bun.write"] as const)(
+    "gets ERR_BODY_ALREADY_USED from %s()",
+    async reader => {
+      using dir = tempDir("serve-cancel-reads-discarded-body", {});
+      const result = await inCancel(response => {
+        try {
+          const read = reader === "Bun.write" ? Bun.write(join(String(dir), "out"), response) : response[reader]();
+          Promise.resolve(read).catch(() => {});
+          return Bun.peek(read);
+        } catch (error) {
+          return error;
+        }
+      });
+      expect(result).toMatchObject({ result: { code: "ERR_BODY_ALREADY_USED" } });
+    },
+  );
+});
 for (let withDelay of [true, false]) {
   for (let connectionHeader of ["keepalive", "not keepalive"] as const) {
     it(`should NOT call cancel() on ReadableStream that finished normally for ${connectionHeader} request and ${withDelay ? "with" : "without"} delay`, async () => {
@@ -4423,8 +4474,7 @@ describe("request body backpressure", () => {
   });
 
   it("resumes a paused request body when the handler calls Bun.write(file, req)", async () => {
-    // Bun.write on a Locked body installs on_receive_value without creating a
-    // ByteStream; the pre-stream pause must release via on_start_buffering.
+    // Bun.write streams a Locked body: the pre-stream pause must release when that stream drains.
     const TOTAL = 32 * 1024 * 1024;
     const gate = Promise.withResolvers<void>();
     const serverDone = Promise.withResolvers<number>();

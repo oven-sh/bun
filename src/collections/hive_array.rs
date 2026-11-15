@@ -11,7 +11,7 @@ use bun_core::asan;
 /// `usize`, so for `N > 64` it silently held only 64 usable bits — every
 /// `HiveArray<_, 128/256/2048>` pool degraded to 64 effective slots and spilled
 /// to the heap fallback on the 65th in-flight item. Under HTTP load (the
-/// `Body::Value` 256-slot pool, the `RequestContext` 2048-slot pool) this turned
+/// `Body` 256-slot pool, the `RequestContext` 2048-slot pool) this turned
 /// every request into a `Box::new`.
 ///
 /// We can't spell `[usize; (CAPACITY+63)/64]` without `generic_const_exprs`

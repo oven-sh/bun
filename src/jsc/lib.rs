@@ -863,7 +863,7 @@ pub use self::resolved_source_tag::ResolvedSourceTag;
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "FetchHeaders.rs"]
 pub mod fetch_headers;
-pub use self::fetch_headers::{FetchHeaders, HTTPHeaderName};
+pub use self::fetch_headers::{FetchHeaders, HTTPHeaderName, HeadersInit, HeadersRef};
 
 /// `BuiltinName` — fast-path property keys preallocated as `JSC::Identifier`s
 /// in C++ (`BunBuiltinNames.h`). Passed to `JSValue::fast_get` as a `u8` index
@@ -928,6 +928,29 @@ impl Drop for EnsureStillAlive {
     #[inline]
     fn drop(&mut self) {
         self.0.ensure_still_alive();
+    }
+}
+
+/// What a JS wrapper owns. Keeps the wrapper visible to the conservative stack scan until dropped.
+pub struct Wrapped<T> {
+    native: core::ptr::NonNull<T>,
+    _wrapper: EnsureStillAlive,
+}
+impl<T> Wrapped<T> {
+    /// # Safety
+    /// `native` is null, or valid for as long as `wrapper` is not collected.
+    pub(crate) unsafe fn new(wrapper: JSValue, native: *mut T) -> Option<Self> {
+        Some(Self {
+            native: core::ptr::NonNull::new(native)?,
+            _wrapper: EnsureStillAlive(wrapper),
+        })
+    }
+}
+impl<T> core::ops::Deref for Wrapped<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: the contract of `new`.
+        unsafe { self.native.as_ref() }
     }
 }
 

@@ -5,7 +5,6 @@ use bun_core::{EncodedSlice, strings};
 use bun_jsc::bindgen::JsHeap;
 use bun_jsc::{AnyPromise, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_semver::{self, SlicedString};
-use core::ffi::c_void;
 
 use crate::generated_bindgen::blob::BlobOrBuildArtifact;
 use crate::webcore::Blob;
@@ -137,7 +136,6 @@ pub(crate) fn to_js_from_multipart_data(
     boundary: &[u8],
 ) -> crate::Result<JSValue> {
     let form_data_value = DOMFormData::create(global);
-    form_data_value.ensure_still_alive();
     let Some(form) = DOMFormData::from_js(form_data_value) else {
         scoped_log!(FormData, "failed to create DOMFormData.fromJS");
         return Err(crate::Error::FailedToParseMultipartData);
@@ -145,7 +143,7 @@ pub(crate) fn to_js_from_multipart_data(
 
     struct Wrapper<'a> {
         global: &'a JSGlobalObject,
-        form: &'a mut DOMFormData,
+        form: &'a DOMFormData,
     }
 
     impl<'a> Wrapper<'a> {
@@ -161,7 +159,7 @@ pub(crate) fn to_js_from_multipart_data(
             if field.is_file {
                 let filename_str = field.filename.slice(buf);
 
-                let mut blob = Blob::create(value_str, wrap.global, false);
+                let blob = Blob::create(value_str, wrap.global, false);
                 let filename = EncodedSlice::utf8(filename_str);
 
                 if !field.content_type.is_empty() {
@@ -190,12 +188,7 @@ pub(crate) fn to_js_from_multipart_data(
                     }
                 }
 
-                wrap.form.append_blob(
-                    wrap.global,
-                    &key,
-                    (&raw mut blob).cast::<c_void>(),
-                    &filename,
-                )
+                wrap.form.append_blob(wrap.global, &key, &blob, &filename)
             } else {
                 let value = EncodedSlice::utf8(
                     // > Each part whose `Content-Disposition` header does not
@@ -213,7 +206,10 @@ pub(crate) fn to_js_from_multipart_data(
     }
 
     {
-        let mut wrap = Wrapper { global, form };
+        let mut wrap = Wrapper {
+            global,
+            form: &form,
+        };
 
         if let Err(e) = for_each_multipart_entry(input, boundary, &mut wrap, Wrapper::on_entry) {
             scoped_log!(FormData, "failed to parse multipart data");

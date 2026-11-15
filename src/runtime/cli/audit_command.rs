@@ -1,7 +1,7 @@
 use bstr::BStr;
 use std::io::Write as _;
 
-use bun_ast::{ExprData, e as E};
+use bun_ast::e as E;
 use bun_collections::{DynamicBitSet, HashMap, StringHashMap, index_sort};
 use bun_core::fmt::escape_control_chars;
 use bun_core::{Global, Output, pretty, prettyln};
@@ -905,19 +905,20 @@ fn collect_vulnerabilities(
     let source = bun_ast::Source::init_path_string(b"audit-response.json", response_text);
     let log = bun_ast::Log::init();
 
-    let parsed = match bun_json::ParsedJson::parse_json(&source, &log) {
+    let arena = bun_ast::AstArena::new();
+    let parsed = match bun_json::ParsedJson::parse_json(&source, &log, &arena) {
         Ok(e) => e,
         Err(_) => return Ok(Err(SkipReason::NotJson)),
     };
 
     // The bulk endpoint responds with `{ [package name]: Advisory[] }`. Any other response doesn't
     // count as a clean audit.
-    let ExprData::EObjectJSON(obj) = &parsed.root.data else {
+    let Some(obj) = parsed.root().as_e_object_json() else {
         return Ok(Err(SkipReason::NotAdvisories));
     };
 
     let mut vulnerabilities: Vec<VulnerabilityInfo> = Vec::new();
-    for prop in obj.get().properties() {
+    for prop in obj.properties() {
         let package_name: &[u8] = prop.key.slice();
 
         let Some(arr) = prop.value.as_array() else {

@@ -209,7 +209,7 @@ impl Host for MemoryHost {
         unreachable!("the resolver parses no source file")
     }
 
-    fn parse_package_json(&self, _arena: &Arena, text: &[u8]) -> Option<Json> {
+    fn parse_package_json(&self, text: &[u8]) -> Option<Json> {
         parse_json(text)
     }
 
@@ -221,11 +221,11 @@ impl Host for MemoryHost {
 }
 
 impl CodeHost for MemoryHost {
-    fn parse_runtime_package_json(&self, _arena: &Arena, text: &[u8]) -> Option<Json> {
+    fn parse_runtime_package_json(&self, text: &[u8]) -> Option<Json> {
         parse_json(text)
     }
 
-    fn parse_runtime_tsconfig(&self, _arena: &Arena, text: &[u8]) -> Option<Json> {
+    fn parse_runtime_tsconfig(&self, text: &[u8]) -> Option<Json> {
         parse_json(text)
     }
 

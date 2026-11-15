@@ -4,7 +4,7 @@ use bun_collections::index_sort;
 use bun_core::{Output, strings};
 use bun_semver::{ExternalString, String as SemverString};
 
-use crate::bun_json::Expr;
+use crate::bun_json::{Expr, JsonView};
 use crate::dependency::{TagExt as _, VersionTag};
 use crate::lockfile_real::package::{Diff, Package, PackageColumns, ResolverContext};
 use crate::lockfile_real::{DependencySlice, Lockfile, PackageIDSlice, QueuedRows, StringBuilder};
@@ -41,7 +41,7 @@ impl ResolverContext for OnlyDependencies {
     fn resolve(
         &mut self,
         _builder: &mut StringBuilder<'_>,
-        _json: &Expr,
+        _json: JsonView<'_>,
     ) -> Result<ResolutionType<u64>, crate::Error> {
         Ok(ResolutionType::default())
     }
@@ -65,7 +65,7 @@ impl<'a> ResolverContext for GitResolver<'a> {
         true
     }
 
-    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: &Expr) {
+    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: JsonView<'_>) {
         builder.count(self.resolved);
         builder.count(self.locked_repo.as_deref().unwrap_or_default());
     }
@@ -73,7 +73,7 @@ impl<'a> ResolverContext for GitResolver<'a> {
     fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
-        _json: &Expr,
+        _json: JsonView<'_>,
     ) -> Result<ResolutionType<u64>, crate::Error> {
         // `git` and `github` share the `Repository` payload in the value union,
         // so writing through `.github` is correct for both tags.
@@ -112,14 +112,14 @@ impl<'a> ResolverContext for TarballResolver<'a> {
         true
     }
 
-    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: &Expr) {
+    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: JsonView<'_>) {
         builder.count(self.url);
     }
 
     fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
-        _json: &Expr,
+        _json: JsonView<'_>,
     ) -> Result<ResolutionType<u64>, crate::Error> {
         Ok(ResolutionType::<u64>::init(match self.resolution.tag {
             ResolutionTag::LocalTarball => {
@@ -444,7 +444,7 @@ impl PackageManager {
                         let mut builder = self.lockfile.string_builder();
 
                         builder.count(&fallback_name);
-                        resolver.count(&mut builder, &Expr::default());
+                        resolver.count(&mut builder, JsonView::from(&Expr::default()));
 
                         bun_core::handle_oom(builder.allocate());
 
@@ -453,7 +453,7 @@ impl PackageManager {
                         pkg.name_hash = name.hash;
 
                         pkg.resolution = resolver
-                            .resolve(&mut builder, &Expr::default())
+                            .resolve(&mut builder, JsonView::from(&Expr::default()))
                             .expect("unreachable");
                     }
 

@@ -231,7 +231,9 @@ pub struct P<'a, 'log, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// parser / visitor / lowerer body at startup.
     pub(crate) jsx_transform: JSXTransformType,
     pub(crate) macro_: MacroState<'a>,
+    /// `ast_arena.heap()`.
     pub(crate) arena: &'a Bump,
+    pub(crate) ast_arena: &'a js_ast::AstArena,
     pub(crate) options: ParserOptions<'a>,
     pub(crate) define: &'a Define,
     pub(crate) source: &'a bun_ast::Source<'a>,
@@ -7084,7 +7086,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             // so clone the value.
             js_ast::ExprData::EObject(_) | js_ast::ExprData::EArray(_) => {
                 let shared = Expr { data: value, loc };
-                if let Ok(copy) = shared.deep_clone_no_detach(self.arena, self.stack_check) {
+                if let Ok(copy) = shared.deep_clone_no_detach(self.ast_arena, self.stack_check) {
                     return copy;
                 }
             }
@@ -9432,7 +9434,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 impl<'a, 'log, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, 'log, TYPESCRIPT, SCAN_ONLY> {
     /// PERF: `P` is over 4 KiB. The literal is the tail expression, with no `Result`, so it is written in the caller's frame.
     pub fn init(
-        arena: &'a Bump,
+        ast_arena: &'a js_ast::AstArena,
         source: &'a bun_ast::Source<'a>,
         define: &'a Define,
         mut lexer: js_lexer::Lexer<'a, 'log>,
@@ -9447,6 +9449,7 @@ impl<'a, 'log, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, 'log, TYPESC
         // `source.len() / 16` hint (≈ one symbol per 16 source bytes) covers
         // the vast majority of real files in a single allocation.
         let estimated_symbol_count = source.contents.len() / 16;
+        let arena = ast_arena.heap();
 
         // ~one scope per 64 source bytes covers most files without regrowth.
         let mut scope_order =
@@ -9547,6 +9550,7 @@ impl<'a, 'log, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, 'log, TYPESC
             ts_infer_constraint_backtracks: Vec::new(),
             ts_conditional_arrow_attempts: Vec::new(),
             arena,
+            ast_arena,
             then_catch_chain: ThenCatchChain {
                 next_target: null_expr_data(),
                 has_multiple_args: false,

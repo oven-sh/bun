@@ -1,4 +1,4 @@
-use bun_alloc::Arena as Bump;
+use bun_ast::AstArena;
 use bun_core::strings;
 use bun_js_parser as js_parser;
 
@@ -25,7 +25,7 @@ impl JavaScript {
     // It's probably only relevant when bundling for production.
     pub(crate) fn parse<'a>(
         &self,
-        bump: &'a Bump,
+        bump: &'a AstArena,
         opts: js_parser::ParserOptions<'a>,
         defines: &'a Define,
         log: &bun_ast::Log,
@@ -62,7 +62,7 @@ impl JavaScript {
 
     pub fn scan<'a>(
         &mut self,
-        bump: &'a Bump,
+        bump: &'a AstArena,
         scan_pass_result: &mut js_parser::ScanPassResult<'a>,
         opts: js_parser::ParserOptions<'a>,
         defines: &'a Define,

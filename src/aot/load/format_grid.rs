@@ -1,7 +1,6 @@
 use std::borrow::Cow;
 
-use bun_alloc::Arena as AstArena;
-use bun_ast::{ASTMemoryAllocator, ExportsKind, Loader, Log, Source};
+use bun_ast::{ASTMemoryAllocator, AstArena, ExportsKind, Loader, Log, Source};
 use bun_js_parser::{Define, Parser, ParserOptions};
 use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, RuntimeBindOptions};

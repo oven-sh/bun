@@ -1,11 +1,7 @@
 use std::sync::LazyLock;
 
-use bun_collections::{ArrayHashMap, ArrayIdentityContextU64};
-// `Expr` here is the T2 `bun_ast::Expr` (re-exported via
-// `crate::bun_json`), not the T4 `bun_ast::Expr`. The sole caller
-// (`lockfile::Package::parse_with_json`) holds a JSON-parsed `bun_json::Expr`,
-// so binding to the lower-tier type avoids a cross-tier mismatch.
 use bun_ast as js_ast;
+use bun_collections::{ArrayHashMap, ArrayIdentityContextU64};
 use bun_semver as semver;
 
 use crate::lockfile::package::Meta;
@@ -44,21 +40,18 @@ static DEFAULT_IGNORE: LazyLock<[DefaultIgnore; 1]> = LazyLock::new(|| {
 impl PostinstallOptimizer {
     fn from_string_array_group(
         list: &mut List,
-        expr: &js_ast::Expr,
+        expr: js_ast::JsonView<'_>,
         value: PostinstallOptimizer,
     ) -> Result<bool, bun_alloc::AllocError> {
         // `as_array` returns `None` for `[]`, but an empty list still replaces the built-in list.
-        let Some(mut array) = expr.as_array() else {
+        let Some(array) = expr.as_array() else {
             return Ok(expr.is_array());
         };
 
-        while let Some(entry) = array.next() {
-            let js_ast::ExprData::EString(s) = &entry.data else {
+        for entry in array {
+            let Some(str) = entry.as_utf8_string_literal() else {
                 continue;
             };
-            debug_assert!(s.next.is_none());
-            debug_assert!(s.is_utf8());
-            let str = s.slice8();
             if str.is_empty() {
                 continue;
             }
@@ -71,19 +64,19 @@ impl PostinstallOptimizer {
 
     pub(crate) fn from_package_json(
         list: &mut List,
-        expr: &js_ast::Expr,
+        expr: js_ast::JsonView<'_>,
     ) -> Result<(), bun_alloc::AllocError> {
         if let Some(native_deps_expr) = expr.get(b"nativeDependencies") {
             list.disable_default_native_binlinks = Self::from_string_array_group(
                 list,
-                &native_deps_expr,
+                native_deps_expr,
                 PostinstallOptimizer::NativeBinlink,
             )?;
         }
         if let Some(ignored_scripts_expr) = expr.get(b"ignoreScripts") {
             list.disable_default_ignore = Self::from_string_array_group(
                 list,
-                &ignored_scripts_expr,
+                ignored_scripts_expr,
                 PostinstallOptimizer::Ignore,
             )?;
         }
@@ -153,7 +146,7 @@ impl Default for PkgInfo<'_> {
 impl List {
     /// Whether the installer links the bins of the package `name` into its platform package, in a
     /// project whose package.json is `root`.
-    pub fn is_native_dependency(root: &js_ast::Expr, name: &[u8]) -> bool {
+    pub fn is_native_dependency(root: js_ast::JsonView<'_>, name: &[u8]) -> bool {
         let mut list = List::default();
         PostinstallOptimizer::from_package_json(&mut list, root).is_ok()
             && list.get(&PkgInfo {

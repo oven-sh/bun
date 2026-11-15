@@ -633,12 +633,12 @@ impl ExtractTarball {
                 }
             }
             if let Some(buf) = &json_buf {
-                crate::initialize_mini_store();
                 // Its locations borrow `buf`.
                 let mut json_log = bun_ast::Log::init();
                 if let Err(err) = crate::bun_json::ParsedJson::parse_package_json(
                     &bun_ast::Source::init_path_string("package.json", &buf[..]),
                     &json_log,
+                    &bun_ast::AstArena::new(),
                 ) {
                     log.add_error_fmt(
                         None,

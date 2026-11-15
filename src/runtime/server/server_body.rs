@@ -31,7 +31,7 @@ use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, GlobalRef, HeadersInit, HeadersRef, JSGlobalObject, JSPromise,
-    JSValue, JsError, JsResult, Node, PendingAbortSignal, StringJsc as _, VirtualMachine, host_fn,
+    JSValue, JsError, JsResult, Node, PendingAbortSignal, StringJsc as _, host_fn,
 };
 use bun_paths as paths;
 use bun_ptr::{AsCtxPtr, CellExt as _, RefPtr};
@@ -492,7 +492,7 @@ pub(crate) mod BunInfo {
     use bun_analytics::{OperatingSystem, Platform};
     use bun_ast::Loc;
     use bun_ast::e::EString;
-    use bun_ast::{E, Expr, G};
+    use bun_ast::{AstArena, E, Expr, G};
     use bun_core::Environment::Architecture;
     use bun_core::Global;
 
@@ -521,22 +521,20 @@ pub(crate) mod BunInfo {
     }
 
     #[inline]
-    fn str_expr(s: &[u8]) -> Expr {
-        Expr::init(EString::init(s), Loc::EMPTY)
+    fn str_expr(arena: &AstArena, s: &[u8]) -> Expr {
+        Expr::allocate(arena, EString::init(s), Loc::EMPTY)
     }
 
     #[inline]
-    fn prop(key: &'static [u8], value: Expr) -> G::Property {
+    fn prop(arena: &AstArena, key: &'static [u8], value: Expr) -> G::Property {
         G::Property {
-            key: Some(str_expr(key)),
+            key: Some(str_expr(arena, key)),
             value: Some(value),
             ..G::Property::default()
         }
     }
 
-    /// `_transpiler` is an unused witness; expressions allocate from the
-    /// global expr `Store` used by `Expr::init`.
-    pub(crate) fn generate<B>(_transpiler: B) -> Result<Expr, crate::Error> {
+    pub(crate) fn generate(arena: &AstArena) -> Result<Expr, crate::Error> {
         let info = BunInfo {
             bun_version: Global::package_json_version.as_bytes(),
             platform: generate_platform::for_os(),
@@ -544,14 +542,16 @@ pub(crate) mod BunInfo {
 
         // `JSON.toAST(allocator, BunInfo, info)` — hand-expanded:
         let platform_props = bun_alloc::AstAlloc::vec_from_iter([
-            prop(b"os", str_expr(os_tag_name(info.platform.os))),
+            prop(arena, b"os", str_expr(arena, os_tag_name(info.platform.os))),
             prop(
+                arena,
                 b"arch",
-                str_expr(arch_tag_name(bun_core::Environment::ARCH)),
+                str_expr(arena, arch_tag_name(bun_core::Environment::ARCH)),
             ),
-            prop(b"version", str_expr(info.platform.version)),
+            prop(arena, b"version", str_expr(arena, info.platform.version)),
         ]);
-        let platform_expr = Expr::init(
+        let platform_expr = Expr::allocate(
+            arena,
             E::Object {
                 properties: platform_props,
                 is_single_line: false,
@@ -561,10 +561,11 @@ pub(crate) mod BunInfo {
         );
 
         let root_props = bun_alloc::AstAlloc::vec_from_iter([
-            prop(b"bun_version", str_expr(info.bun_version)),
-            prop(b"platform", platform_expr),
+            prop(arena, b"bun_version", str_expr(arena, info.bun_version)),
+            prop(arena, b"platform", platform_expr),
         ]);
-        Ok(Expr::init(
+        Ok(Expr::allocate(
+            arena,
             E::Object {
                 properties: root_props,
                 is_single_line: false,
@@ -2273,10 +2274,10 @@ where
         let buffer_writer = bun_js_printer::BufferWriter::init();
         let mut writer = bun_js_printer::BufferPrinter::init(buffer_writer);
         let source = bun_ast::Source::init_empty_file(b"info.json");
-        let transpiler = VirtualMachine::VirtualMachine::get().transpiler.get();
+        let arena = bun_ast::AstArena::new();
         let _ = bun_js_printer::print_json(
             &mut writer,
-            BunInfo::generate(transpiler).expect("unreachable"),
+            BunInfo::generate(&arena).expect("unreachable"),
             &source,
             bun_js_printer::PrintJsonOptions {
                 mangled_props: None,

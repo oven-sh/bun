@@ -10,7 +10,7 @@ use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_alloc::Arena as ThreadLocalArena;
+use bun_ast::AstArena;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, output as Output};
 use bun_ptr::{AliasableBox, BackRef};
@@ -279,7 +279,7 @@ pub struct Worker {
     other_transpiler: Option<Box<Transpiler<'static>>>,
     pub(crate) macro_load_states: js_ast::Macro::MacroLoadStates,
 
-    pub(crate) temporary_arena: bun_alloc::Arena,
+    pub(crate) temporary_arena: AstArena,
     pub(crate) stmt_list: StmtList,
     ast_memory_store: bun_ast::ASTMemoryAllocator,
 
@@ -291,13 +291,13 @@ pub struct Worker {
     drop_task: ThreadPoolLib::Task,
 
     /// Last: the fields above borrow it.
-    heap: AliasableBox<ThreadLocalArena>,
+    heap: AliasableBox<AstArena>,
 }
 
 impl Worker {
     /// What is allocated here lives until the very end of bundling.
     #[inline]
-    pub(crate) fn arena(&self) -> &'static ThreadLocalArena {
+    pub(crate) fn arena(&self) -> &'static AstArena {
         // SAFETY: callers are task callbacks, which complete before `ThreadPool::drop` releases
         // the worker. What they return goes to the bundle, which owns that pool.
         unsafe { &*self.heap.as_ptr() }
@@ -360,9 +360,9 @@ impl Worker {
     fn new(ctx: &BundleV2<'_>) -> AliasableBox<Worker> {
         WORKER_LIVE_COUNT.fetch_add(1, Ordering::SeqCst);
         Output::Source::configure_thread();
-        let heap = AliasableBox::new(ThreadLocalArena::new());
+        let heap = AliasableBox::new(AstArena::new());
         // SAFETY: `heap` is the last field to drop.
-        let arena: &'static ThreadLocalArena = unsafe { &*heap.as_ptr() };
+        let arena: &'static AstArena = unsafe { &*heap.as_ptr() };
         let log: &bun_ast::Log = arena.alloc(bun_ast::Log::init());
 
         // `'static` stands for the bundle's lifetime, here and in the transpilers made from `ctx`.
@@ -372,7 +372,7 @@ impl Worker {
             transpiler: Transpiler::for_worker(ctx.transpiler(), arena, log),
             other_transpiler: None,
             macro_load_states: Default::default(),
-            temporary_arena: bun_alloc::Arena::new(),
+            temporary_arena: AstArena::new(),
             stmt_list: StmtList::init(),
             // Shares `heap` with the parser: mimalloc caches only the last heap a thread touched.
             ast_memory_store: bun_ast::ASTMemoryAllocator::borrowing(arena),

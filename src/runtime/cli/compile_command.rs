@@ -76,7 +76,7 @@ pub(crate) enum CompileProduct<'r> {
 
 pub(crate) struct BundlerInputs<'a> {
     pub(crate) transpiler: &'a mut Transpiler<'a>,
-    pub(crate) arena: &'a bun_alloc::Arena,
+    pub(crate) arena: &'a bun_ast::AstArena,
     pub(crate) event_loop: EventLoop,
     pub(crate) worker_pool: Option<NonNull<bun_threading::ThreadPool>>,
     pub(crate) plugins: Option<PluginSetup<'a>>,

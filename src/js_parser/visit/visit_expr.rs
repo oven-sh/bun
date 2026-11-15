@@ -785,7 +785,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     ) -> Result<Expr, crate::Error> {
         let record = &self.import_records.items()[import_record_id as usize];
         self.options.macro_context.expect("macro_context").call(
-            self.arena,
+            self.ast_arena,
             record.path.text,
             self.source.path.source_dir(),
             self.log(),

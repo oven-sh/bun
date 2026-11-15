@@ -45,7 +45,7 @@ const PATTERNS: [name: string, re: RegExp][] = [
   ["unsafe impl Send", /\bunsafe\s+impl(?:\s*<[^>]*>)?\s+Send\s+for\s+([A-Za-z_][\w:<>, ']*)/g],
   ["unsafe impl Sync", /\bunsafe\s+impl(?:\s*<[^>]*>)?\s+Sync\s+for\s+([A-Za-z_][\w:<>, ']*)/g],
   ["owned_task!", /\b(?:bun_threading::)?owned_task!\s*\(\s*(?:\[[^\]]*\]\s*)?([A-Za-z_]\w*)/g],
-  ["intrusive_work_task!", /\b(?:bun_threading::)?intrusive_work_task!\s*\(\s*([A-Za-z_]\w*)/g],
+  ["intrusive_work_task!", /\b(?:bun_threading::)?intrusive_work_task!\s*\(\s*(?:\[[^\]]*\]\s*)?([A-Za-z_]\w*)/g],
   ["VmBound<", /\bVmBound<\s*(\w+)/g],
   ["WorkPool::schedule*", /\bWorkPool::(?:schedule|schedule_new|schedule_owned|go)\b/g],
   ["worker_pool.schedule(Batch)", /\)\s*\.schedule\(\s*(?:bun_threading::thread_pool::)?Batch::from/g],

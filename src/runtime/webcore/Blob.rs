@@ -7,6 +7,7 @@
 use core::cell::Cell;
 use core::ffi::{c_char, c_void};
 use core::ptr::NonNull;
+use std::sync::Arc;
 
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
@@ -480,7 +481,7 @@ impl BlobExt for Blob {
                     None
                 };
                 crate::webcore::__s3_client::download_slice(
-                    s3.get_credentials(),
+                    &s3.credentials,
                     cx.context(),
                     s3.path(),
                     self.offset.get() as usize,
@@ -490,7 +491,7 @@ impl BlobExt for Blob {
                 )?;
             } else {
                 crate::webcore::__s3_client::download(
-                    s3.get_credentials(),
+                    &s3.credentials,
                     cx.context(),
                     s3.path(),
                     callback,
@@ -1103,9 +1104,9 @@ impl BlobExt for Blob {
             // credentials to the upload.
             return crate::webcore::__s3_client::upload_stream(
                 if extra_options.is_some() {
-                    aws_options.credentials.dupe()
+                    Arc::new(aws_options.credentials)
                 } else {
-                    s3.get_credentials().clone()
+                    Arc::clone(&s3.credentials)
                 },
                 path,
                 readable_stream,
@@ -1299,10 +1300,8 @@ impl BlobExt for Blob {
                 let credentials_with_options =
                     s3.get_credentials_with_options(Some(options), global_this)?;
                 // `defer credentialsWithOptions.deinit()` → Drop handles slices.
-                // `writable_stream` adopts the dup'd ref by value; the
-                // MultiPartUpload derefs on done.
                 return crate::webcore::s3::client::writable_stream(
-                    credentials_with_options.credentials.dupe(),
+                    Arc::new(credentials_with_options.credentials),
                     path,
                     &cx,
                     credentials_with_options.options,
@@ -1315,7 +1314,7 @@ impl BlobExt for Blob {
             }
 
             return crate::webcore::s3::client::writable_stream(
-                s3.get_credentials().clone(),
+                Arc::clone(&s3.credentials),
                 path,
                 &cx,
                 Default::default(),
@@ -2645,11 +2644,14 @@ impl BlobExt for Blob {
                 if p.slice().starts_with(b"s3://") {
                     let vm = global_this.bun_vm();
                     // `bun_dotenv::Loader` (T2) returns its local POD mirror by
-                    // reference; lift it into the refcounted
+                    // reference; lift it into the
                     // `bun_s3_signing::S3Credentials` here at the T6 call site
                     // (dotenv cannot name the s3_signing type — upward dep).
                     let env_creds = vm.env_loader().get_s3_credentials();
-                    let credentials = crate::webcore::fetch::s3_credentials_from_env(env_creds);
+                    let aws_options = s3_client::S3CredentialsWithOptions {
+                        credentials: crate::webcore::fetch::s3_credentials_from_env(env_creds),
+                        ..Default::default()
+                    };
                     let copy = core::mem::replace(
                         path_or_fd,
                         PathOrFileDescriptor::Path(PathLike::default()),
@@ -2658,7 +2660,7 @@ impl BlobExt for Blob {
                         unreachable!()
                     };
                     return Blob::init_with_store(
-                        bun_core::handle_oom(Store::init_s3(path, None, credentials)),
+                        bun_core::handle_oom(Store::init_s3(path, aws_options)),
                         global_this,
                     );
                 }
@@ -3625,9 +3627,9 @@ pub(crate) fn write_file_with_source_destination(
                     )? {
                         return s3_client::upload_stream(
                             if options.extra_options.is_some() {
-                                aws_options.credentials.dupe()
+                                Arc::new(aws_options.credentials)
                             } else {
-                                s3.get_credentials().clone()
+                                Arc::clone(&s3.credentials)
                             },
                             s3.path(),
                             stream,
@@ -3698,9 +3700,9 @@ pub(crate) fn write_file_with_source_destination(
                 )? {
                     return s3_client::upload_stream(
                         if options.extra_options.is_some() {
-                            aws_options.credentials.dupe()
+                            Arc::new(aws_options.credentials)
                         } else {
-                            s3.get_credentials().clone()
+                            Arc::clone(&s3.credentials)
                         },
                         s3.path(),
                         stream,
@@ -3990,9 +3992,9 @@ pub(crate) fn write_file_internal(
                             }
                             return Ok(ControlFlow::Break(s3_client::upload_stream(
                                 if options.extra_options.is_some() {
-                                    aws_options.credentials.dupe()
+                                    Arc::new(aws_options.credentials)
                                 } else {
-                                    s3.get_credentials().clone()
+                                    Arc::clone(&s3.credentials)
                                 },
                                 s3.path(),
                                 readable,
@@ -4705,7 +4707,7 @@ impl S3BlobDownloadTask {
         else {
             unreachable!("S3BlobDownloadTask::init on non-S3 blob")
         };
-        let credentials = s3_store.get_credentials();
+        let credentials = &s3_store.credentials;
         let path = s3_store.path();
 
         if blob.offset.get() > 0 {

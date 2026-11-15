@@ -880,7 +880,7 @@ impl Response {
                     });
 
                     let s3 = blob.store.get().as_ref().unwrap().data.as_s3();
-                    let credentials = s3.get_credentials();
+                    let credentials = &s3.credentials;
 
                     let result = match credentials.sign_request::<false>(
                         &bun_s3_signing::SignOptions {

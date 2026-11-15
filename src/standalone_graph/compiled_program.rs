@@ -23,8 +23,8 @@ use crate::Error;
 #[cfg(windows)]
 use crate::StandaloneModuleGraph::normalize_file_key;
 use crate::StandaloneModuleGraph::{
-    BASE_PUBLIC_PATH, BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, File, StandaloneModuleGraph, dir_stat,
-    is_bun_standalone_file_path,
+    BASE_PUBLIC_PATH, BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, File, StandaloneModuleGraph,
+    align_next_append, dir_stat, is_bun_standalone_file_path,
 };
 use crate::payload::{Payload, RawPayload};
 
@@ -220,17 +220,16 @@ pub(crate) fn append_image(
     {
         return Err(Error::ImageMisaligned);
     }
-    let unaligned_start = PAYLOAD_HEADER_SIZE + builder.len;
-    let padding = unaligned_start.next_multiple_of(alignment) - unaligned_start;
-    builder.writable()[..padding].fill(0);
-    let offset = builder.len + padding;
-    builder.len = offset;
-    let destination = &mut builder.writable()[..image.len()];
-    if place == ImagePlace::InGraph {
-        let mut destination = bun_core::vec::BorrowedBuf::from(destination);
-        bun_core::append_in_parallel(destination.unfilled(), image);
-    }
-    builder.len += image.len();
+    align_next_append(builder, alignment);
+    let offset = builder.len();
+    builder.append_with(|mut cursor| match place {
+        ImagePlace::InGraph => bun_core::append_in_parallel(cursor, image),
+        ImagePlace::OutsideGraph => {
+            assert!(image.len() <= cursor.capacity());
+            // SAFETY: not upheld: the bytes stay uninitialized. `PayloadParts` and `with_graph_slices` skip them.
+            unsafe { cursor.advance(image.len()) };
+        }
+    });
     Ok(StringPointer {
         offset: offset as u32,
         length: image.len() as u32,
@@ -2729,12 +2728,12 @@ pub(crate) mod tests {
         prefix_length: usize,
     ) -> crate::Result<Written> {
         let mut builder = StringBuilder::default();
-        builder.cap = prefix_length + capacity(input);
-        builder.allocate().unwrap();
+        builder.count_len(prefix_length + capacity(input));
+        let mut builder = builder.allocate();
         let _ = builder.append_count(&vec![0xAA; prefix_length]);
         let image = append_image(&mut builder, input, ImagePlace::InGraph)?;
         let paths = append_entry_point_paths(&mut builder, input);
-        let record_at = builder.len;
+        let record_at = builder.len();
         append_record(&mut builder, input, image, &paths, file_indices)?;
         Ok((builder.written_slice().to_vec(), record_at, image))
     }

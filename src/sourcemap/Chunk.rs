@@ -305,7 +305,7 @@ impl LineOffsetTables<'_> {
     fn columns_for_non_ascii(&self, line: usize) -> &[i32] {
         match self {
             Self::Borrowed(list) => &list.columns_for_non_ascii[line],
-            Self::Owned(table) => &table.0.items::<"columns_for_non_ascii", Box<[i32]>>()[line],
+            Self::Owned(table) => &table.0.items_columns_for_non_ascii()[line],
             Self::None | Self::Deferred { .. } => &[],
         }
     }
@@ -618,10 +618,6 @@ impl NewBuilder<'_, VLQSourceMap> {
         );
         let idx = original_line.max(0) as usize;
 
-        // PERF: read the three columns directly instead of `list.get(idx)`.
-        // `MultiArrayList::get` gathers *every* field via `ptr::read`; for the
-        // hot per-token path that dominated `add_source_mapping`. Each
-        // `items::<>` is a single `base + CONST*cap` pointer add.
         let mut original_column = loc.start - byte_offsets[idx] as i32;
         {
             // `first_non_ascii` is `i32::MAX as u32` for ASCII-only lines, so the

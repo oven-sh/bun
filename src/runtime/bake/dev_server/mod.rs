@@ -314,9 +314,11 @@ impl DevServer {
     }
 
     #[inline]
-    pub(crate) fn ssr_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
-        // SAFETY: written in `init()` before any access.
-        unsafe { self.ssr_transpiler.assume_init_mut() }
+    pub(crate) fn ssr_transpiler_mut(&mut self) -> Option<&mut Transpiler<'static>> {
+        let server_components = self.framework.server_components.as_ref()?;
+        // SAFETY: `init()` writes it if the SSR graph is separate.
+        (server_components.separate_ssr_graph)
+            .then(|| unsafe { self.ssr_transpiler.assume_init_mut() })
     }
 }
 pub(super) use crate::bake::dev_server::route_bundle::RouteBundle;
@@ -380,11 +382,10 @@ pub(crate) enum TestingBatchEvents {
 pub(crate) struct CurrentBundle {
     /// The `BundleV2<'static>`: `dyn`, so trimming the bundler takes its drop along. Drops before `_heap`.
     /// Note: `'static` is a stand-in for the DevServer-self lifetime —
-    /// `BundleV2<'a>` borrows the three `Transpiler<'_>` fields stored inline
+    /// `BundleV2<'a>` borrows the `Transpiler<'_>` fields stored inline
     /// in `DevServer`, so the true bound is the `Box<DevServer>` allocation
     /// (stable address, never moved post-init). Threading a real `'dev` would
-    /// make `DevServer` self-referential; raw-ptr aliasing inside `BundleV2`
-    /// already encodes that contract.
+    /// make `DevServer` self-referential.
     pub(crate) _bv2: Box<dyn ::core::any::Any>,
     /// Owns the arena that `bv2.graph.heap` borrows (`'static` self-ref via the
     /// boxed allocation's stable address; same erasure as `bv2` above).
@@ -521,7 +522,7 @@ pub(crate) struct DevServer {
     // `ManuallyDrop`: dropped in `Drop for DevServer`, before the framework views they borrow.
     pub(crate) server_transpiler: ::core::mem::ManuallyDrop<Transpiler<'static>>,
     pub(crate) client_transpiler: ::core::mem::ManuallyDrop<Transpiler<'static>>,
-    // Without a separate SSR graph, a bitwise copy of `server_transpiler`, not a value of its own.
+    // Initialized only with a separate SSR graph.
     pub(crate) ssr_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
     /// The log used by all `server_transpiler`, `client_transpiler` and `ssr_transpiler`.
     /// Note that it is rarely correct to write messages into it. Instead, associate

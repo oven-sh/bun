@@ -883,6 +883,11 @@ impl Transport for WindowsNamedPipe {
         i32::try_from(encoded_data.len()).expect("int cast")
     }
 
+    /// A failed write reports its error, and TLS dispatches reads, before it returns.
+    fn write_runs_js(&self) -> bool {
+        true
+    }
+
     fn shutdown(&self) {
         if let Some(w) = self.wrapper_ref() {
             let _ = w.shutdown(false);

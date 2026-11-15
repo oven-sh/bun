@@ -2469,7 +2469,7 @@ trait AnyRequestPool: Any {
 
 impl<T: 'static, const N: usize> AnyRequestPool for bun_collections::hive_array::Fallback<T, N> {
     fn is_in_use(&self) -> bool {
-        self.hive.used.iter_set().next().is_some()
+        Self::is_in_use(self)
     }
 }
 

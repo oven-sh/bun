@@ -1614,8 +1614,8 @@ fn retroactively_report_discovered_tests(
     next_test_id: i32,
 ) -> i32 {
     use crate::test_runner::bun_test::{Phase, ScopeId, TestScheduleEntry, clone_active_strong};
-    use crate::test_runner::cells::CellExt as _;
     use bun_jsc::debugger::TestType;
+    use bun_ptr::CellExt as _;
 
     let Some(active_file) = clone_active_strong() else {
         return next_test_id;

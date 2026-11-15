@@ -176,6 +176,10 @@ const functionsProvenToArrive = (tables: string) =>
     ([, functions]) => functions.split("|").length,
   );
 
+// A build here runs on one thread, and that of the largest program takes over a minute in a debug build: it gets more time than a command gets unless it
+// says so (../harness/commands.ts). That is half the limit of a case, which waits for two builds at most: its own, and that of its program as written.
+const limitOfABuild = 300_000;
+
 describe("compile/aot/independent-statements-change-places", () => {
   const folder = String(tempDir("aot-statements-change-places", {}));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
@@ -190,7 +194,8 @@ describe("compile/aot/independent-statements-change-places", () => {
     writeFileSync(join(own, "entry.js"), text);
     const wire = join(own, "program.ir");
     const flags = [withThreads(1), withProgramOutput(wire), buildFlags.withoutExecutable];
-    built(await slot(() => spawned([bunExe(), ...compileCommand, ...flags, "./entry.js"], own, bunEnv)));
+    const command = [bunExe(), ...compileCommand, ...flags, "./entry.js"];
+    built(await slot(() => spawned(command, own, bunEnv, limitOfABuild)));
     // The table of functions has a row for the body of the module and one for each function that the text writes.
     const functionsWritten = text.match(/\bfunction\b/g)!.length;
     const readings = { proving: "", held: "" };

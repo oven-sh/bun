@@ -1,5 +1,4 @@
-use bun_core::strings::EncodingNonAscii;
-use bun_core::{String as BunString, StringView, strings};
+use bun_core::{EncodedUnits, String as BunString, StringView, strings};
 use bun_jsc::bindgen::{self, JsHeap, JsLocal};
 use bun_jsc::{JSValue, bun_string_jsc};
 use bun_sys::UV_E;
@@ -71,11 +70,12 @@ pub(crate) fn ecanceled_error_code() -> i32 {
 pub(crate) fn extracted_split_new_lines_fast_path_strings_only(
     value: &BunString,
 ) -> Option<Vec<BunString>> {
-    match value.encoding() {
-        EncodingNonAscii::Utf16 => Some(split(value.utf16(), BunString::clone_utf16)),
-        EncodingNonAscii::Latin1 => Some(split(value.byte_slice(), BunString::clone_latin1)),
-        EncodingNonAscii::Utf8 => strings::is_all_ascii(value.byte_slice())
-            .then(|| split(value.byte_slice(), BunString::clone_utf8)),
+    match value.encoded_units() {
+        EncodedUnits::Utf16(units) => Some(split(units, BunString::clone_utf16)),
+        EncodedUnits::Latin1(bytes) => Some(split(bytes, BunString::clone_latin1)),
+        EncodedUnits::Utf8(bytes) => {
+            strings::is_all_ascii(bytes).then(|| split(bytes, BunString::clone_utf8))
+        }
     }
 }
 

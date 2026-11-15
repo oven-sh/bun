@@ -13,6 +13,7 @@ use crate::webcore::file_sink::FileSink;
 use crate::webcore::streams::{
     self, HTTPServerWritable, NetworkSink, Result::Temporary, SourceHandle,
 };
+use bun_core::EncodedUnits;
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload, JsScope, JsWrapper};
 use bun_jsc::{
     ErrorCode, JSGlobalObject, JSValue, JsClass, JsError, JsResult, JsThread, SysErrorJsc as _,
@@ -183,8 +184,12 @@ fn write_chunk<'a, T: JsSinkType>(
             sink.write_bytes(&Temporary(bytes))
         }),
         SinkChunk::Text(text) if text.is_empty() => return Ok(JSValue::js_number(0.0)),
-        SinkChunk::Text(text) if text.is_utf16() => sink.write_utf16(text.utf16()),
-        SinkChunk::Text(text) => sink.write_latin1(&Temporary(text.latin1())),
+        SinkChunk::Text(text) => match text.encoded_units() {
+            EncodedUnits::Utf16(units) => sink.write_utf16(units),
+            EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => {
+                sink.write_latin1(&Temporary(bytes))
+            }
+        },
         SinkChunk::Other(value) => return Err(throw_invalid_chunk(cx.global(), value.to_js())),
     };
     Ok(written.to_js(&cx.js_thread()))

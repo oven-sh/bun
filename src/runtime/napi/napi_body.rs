@@ -823,10 +823,7 @@ unsafe extern "C" fn napi_create_string_latin1(
         return env.ok();
     }
 
-    let (string, bytes) = bun_core::String::create_uninitialized_latin1(slice.len());
-    bytes.copy_from_slice(slice);
-
-    let js = match string.into_js(env.to_js()) {
+    let js = match bun_core::String::clone_latin1(slice).into_js(env.to_js()) {
         Ok(v) => v,
         Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
     };
@@ -918,15 +915,16 @@ unsafe extern "C" fn napi_create_string_utf16(
         return env.ok();
     }
 
-    let (string, chars) = bun_core::String::create_uninitialized_utf16(slice.len());
-    bun_core::slice_as_bytes_mut(chars).copy_from_slice(bun_core::slice_as_bytes(slice));
+    let string = bun_core::String::create_utf16_with(slice.len(), |mut bytes| {
+        bytes.append(bun_core::slice_as_bytes(slice))
+    });
 
     if cfg!(debug_assertions) {
         bun_output::scoped_log!(
             napi,
             "napi_create_string_utf16: {} {}",
-            chars.len(),
-            bun_core::fmt::utf16(&chars[..chars.len().min(512)])
+            slice.len(),
+            string.trunc(512)
         );
     }
 

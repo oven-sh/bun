@@ -265,7 +265,7 @@ impl<I: Zmm> Vector<f32, 16, I> {
 pub mod sse4 {
     pub(crate) use crate::native::{load_shared, store_shared};
     pub use crate::portable::{bit_indices, prefix_xor};
-    pub(crate) use crate::portable::{load_shared_masked, store_shared_masked};
+    pub(crate) use crate::portable::{load_shared_masked, rotate_bytes, store_shared_masked};
 
     crate::isa::vector_types!(super::Sse4, 16);
 }
@@ -273,7 +273,7 @@ pub mod sse4 {
 pub mod avx2 {
     use super::*;
     pub use crate::portable::bit_indices;
-    pub(crate) use crate::portable::{load_shared_masked, store_shared_masked};
+    pub(crate) use crate::portable::{load_shared_masked, rotate_bytes, store_shared_masked};
 
     crate::isa::vector_types!(Avx2, 32);
 
@@ -310,6 +310,7 @@ pub mod avx2 {
 
 mod avx512 {
     pub(crate) use super::shared::load64_masked as load_shared_masked;
+    pub(crate) use super::shared::store64_masked as store_shared_masked;
     use super::*;
 
     #[inline]
@@ -332,20 +333,24 @@ mod avx512 {
             _ => avx2::store_shared::<N, K, AT>(v, to),
         }
     }
-
-    #[inline]
-    #[target_feature(enable = "avx512bw")]
-    pub(crate) fn store_shared_masked<const N: usize>(v: Simd<u8, N>, to: &[AtomicU8]) {
-        shared::store64_masked(v.resize(0), to);
-    }
 }
 
 pub mod avx512_skx {
     pub use super::avx2::prefix_xor;
     pub(crate) use super::avx512::*;
+    use super::*;
     pub use crate::portable::bit_indices;
 
-    crate::isa::vector_types!(super::Avx512Skx, 64);
+    crate::isa::vector_types!(Avx512Skx, 64);
+
+    #[inline]
+    #[target_feature(enable = "avx512f")]
+    pub(crate) fn rotate_bytes(v: u8x64, by: usize) -> u8x64 {
+        let words = _mm512_permutexvar_epi64((U64::iota() - by as u64 / 8).0.into(), v.into());
+        let before = _mm512_alignr_epi64::<7>(words, words);
+        let bits = by as u64 % 8 * 8;
+        (u64x8::from(words) << bits | u64x8::from(before) >> 1 >> (63 - bits)).to_ne_bytes()
+    }
 }
 
 pub mod avx512_icl {
@@ -362,5 +367,11 @@ pub mod avx512_icl {
         let all = U8::iota().0.into();
         let compressed = Some(U8::new(_mm512_mask_compress_epi8(all, bits, all)).to_array());
         BitIndices { bits, compressed }
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx512vbmi")]
+    pub(crate) fn rotate_bytes(v: u8x64, by: usize) -> u8x64 {
+        _mm512_permutexvar_epi8((U8::iota() - by as u8).0.into(), v.into()).into()
     }
 }

@@ -119,28 +119,36 @@ pub fn bit_indices(bits: u64) -> BitIndices {
     BitIndices { bits, compressed }
 }
 
-/// Pads with zeros if `from` is too short.
+/// To the first or the last lanes if `from` is too short. The others are zero.
 #[inline(always)]
-pub(crate) fn load_shared_masked(from: &[SharedU8]) -> u8x64 {
+pub(crate) fn load_shared_masked<const TO_LAST: bool>(from: &[SharedU8]) -> u8x64 {
+    let skipped = if TO_LAST { 64 - from.len().min(64) } else { 0 };
     let mut bytes = [0; 64];
-    for (to, from) in bytes.iter_mut().zip(from) {
+    for (to, from) in bytes[skipped..].iter_mut().zip(from) {
         *to = from.get();
     }
     Simd::from_array(bytes)
 }
 
-/// Stores as many bytes as fit.
+/// As many of the first or the last lanes as fit.
 #[inline(always)]
-pub(crate) fn store_shared_masked<const N: usize>(v: Simd<u8, N>, to: &[AtomicU8]) {
-    for (to, byte) in to.iter().zip(v.to_array()) {
+pub(crate) fn store_shared_masked<const FROM_LAST: bool>(v: u8x64, to: &[AtomicU8]) {
+    let skipped = if FROM_LAST { 64 - to.len().min(64) } else { 0 };
+    for (to, &byte) in to.iter().zip(&v[skipped..]) {
         to.store(byte, Relaxed);
     }
+}
+
+/// Lane `i` goes to lane `(i + by) % 64`.
+#[inline(always)]
+pub(crate) fn rotate_bytes(v: u8x64, by: usize) -> u8x64 {
+    Simd::from_array(array::from_fn(|i| v[i.wrapping_sub(by) % 64]))
 }
 
 /// The `A` at index `AT`, followed by zeros.
 #[inline(always)]
 pub(crate) fn load_shared<A, const K: usize, const AT: usize>(from: &[SharedU8]) -> u8x64 {
-    load_shared_masked(&from[AT * size_of::<A>()..][..size_of::<A>()])
+    load_shared_masked::<false>(&from[AT * size_of::<A>()..][..size_of::<A>()])
 }
 
 #[inline(always)]
@@ -148,13 +156,14 @@ pub(crate) fn store_shared<const N: usize, const K: usize, const AT: usize>(
     v: Simd<u8, N>,
     to: &[AtomicU8],
 ) {
-    store_shared_masked(v, &to[AT * N..]);
+    store_shared_masked::<false>(v.resize(0), &to[AT * N..][..N]);
 }
 
 crate::isa::vector_types!(Portable<16>, 16);
 
 #[cfg(any(feature = "test_support", not(target_arch = "x86_64")))]
 pub mod portable32 {
+    pub(crate) use super::rotate_bytes;
     pub use super::{bit_indices, prefix_xor};
     pub(crate) use super::{load_shared, load_shared_masked, store_shared, store_shared_masked};
 
@@ -164,6 +173,7 @@ pub mod portable32 {
 #[cfg(any(feature = "test_support", not(target_arch = "x86_64")))]
 pub mod portable64 {
     pub use super::prefix_xor;
+    pub(crate) use super::rotate_bytes;
     pub(crate) use super::{load_shared, load_shared_masked, store_shared, store_shared_masked};
 
     crate::isa::vector_types!(super::Portable<64>, 64);

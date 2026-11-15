@@ -1,10 +1,11 @@
 //! Slices that are shorter than a vector.
 use crate::source::Memory;
 use crate::swizzle::Repeat;
-use crate::{Int, Isa, Lane, Mask, Out, Source, Vector, portable};
+use crate::{Int, Isa, Lane, Mask, Out, Source, Vector};
+use bun_simd_trusted::load_masked_to_last;
 use core::array::{from_fn, from_ref};
 use core::hint::unlikely;
-use core::simd::{Simd, Swizzle, ToBytes, u8x16, u8x32, u16x8, u32x4, u32x8};
+use core::simd::{Simd, Swizzle, ToBytes, u8x16, u8x32, u8x64, u16x8, u32x4, u32x8};
 use core::sync::atomic::AtomicU8;
 
 /// A slice shorter than a vector.
@@ -89,55 +90,13 @@ impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I> {
         I::MASKED_BYTES > 0
     };
 
-    /// For an instruction that covers `size` bytes.
+    /// For an instruction that covers `size` bytes, and a slice that is not empty.
     #[inline(always)]
-    fn is_slow_with_mask<E>(size: usize, start: *const E, len: usize) -> bool {
+    fn is_slow_with_mask<E>(size: usize, start: *const E) -> bool {
         let size = size.next_power_of_two().max(16);
         let is_at_end_of_page = start.addr().wrapping_add(size) & (4096 - size) == 0;
         size_of::<Self>() > I::MASKED_BYTES
-            || I::IS_SLOW_TO_SKIP_PAGE && unlikely(is_at_end_of_page || len == 0)
-    }
-
-    /// The inverse of `load_partial` for a slice of the same length.
-    #[inline(always)]
-    pub fn store_partial(self, to: Out<'_, T>) -> &mut [T] {
-        #[inline(always)]
-        fn put<'a, T: Copy, const HALF: usize>(lanes: &[T], to: Out<'a, T>) -> Filled<'a, T> {
-            match *lanes.as_chunks::<HALF>().0 {
-                [first, last, ..] => to.fill_ends(first, last),
-                _ => Err(to),
-            }
-        }
-        debug_assert!(to.len() < N);
-        if Self::IS_MASKED {
-            return self.store_masked(to);
-        }
-        let lanes = &self.to_array();
-        put::<T, 16>(lanes, to)
-            .or_else(|to| put::<T, 8>(lanes, to))
-            .or_else(|to| put::<T, 4>(lanes, to))
-            .or_else(|to| put::<T, 2>(lanes, to))
-            .or_else(|to| put::<T, 1>(lanes, to))
-            .unwrap_or_default()
-    }
-
-    #[inline(always)]
-    fn store_masked(self, to: Out<'_, T>) -> &mut [T] {
-        if !Self::is_slow_with_mask(size_of::<Self>(), to.as_ptr(), to.len()) {
-            return to.fill_masked(self.0);
-        }
-        let to = to.take(N);
-        copy_short(&self.to_array()[..to.len()], to)
-    }
-
-    #[inline(always)]
-    fn load_masked(from: &[T]) -> Self {
-        if !Self::is_slow_with_mask(size_of::<Self>(), from.as_ptr(), from.len()) {
-            return Self::new(Simd::load_or_default(from));
-        }
-        let (mut lanes, len) = ([T::default(); N], from.len().min(N));
-        copy_short(&from[..len], lanes[..len].as_mut().into());
-        Self::from_array(lanes)
+            || I::IS_SLOW_TO_SKIP_PAGE && unlikely(is_at_end_of_page)
     }
 }
 
@@ -173,6 +132,23 @@ fn ends<T, const N: usize>(slice: &[T]) -> Option<(&[T; N], &[T; N])> {
 }
 
 type Filled<'a, T> = Result<&'a mut [T], Out<'a, T>>;
+
+#[inline(always)]
+fn store_ends<'a, T: Copy>(lanes: &[T], to: Out<'a, T>) -> &'a mut [T] {
+    #[inline(always)]
+    fn put<'a, T: Copy, const HALF: usize>(lanes: &[T], to: Out<'a, T>) -> Filled<'a, T> {
+        match *lanes.as_chunks::<HALF>().0 {
+            [first, last, ..] => to.fill_ends(first, last),
+            _ => Err(to),
+        }
+    }
+    put::<T, 16>(lanes, to)
+        .or_else(|to| put::<T, 8>(lanes, to))
+        .or_else(|to| put::<T, 4>(lanes, to))
+        .or_else(|to| put::<T, 2>(lanes, to))
+        .or_else(|to| put::<T, 1>(lanes, to))
+        .unwrap_or_default()
+}
 
 /// For two slices of the same length, up to 64.
 #[inline(always)]
@@ -266,6 +242,43 @@ mod simd {
             Self::new(lanes.0.resize(T::default())).first_bytes()
         }
 
+        /// The inverse of `load_partial` for a slice of the same length.
+        pub fn store_partial(self, to: Out<'_, T>) -> &mut [T] {
+            self.store_partial_inline(to)
+        }
+
+        #[inline(always)]
+        pub(crate) fn store_partial_inline(self, to: Out<'_, T>) -> &mut [T] {
+            debug_assert!(to.len() < N);
+            if !Self::IS_MASKED {
+                return store_ends(&self.to_array(), to);
+            }
+            if to.is_empty() {
+                return &mut [];
+            }
+            if !Self::is_slow_with_mask(size_of::<Self>(), to.as_ptr()) {
+                return to.fill_masked(self.0);
+            }
+            let skipped = N.wrapping_sub(to.len());
+            to.fill_masked_from_last(self.rotate(skipped).0)
+        }
+
+        #[inline(always)]
+        fn load_masked(from: &[T]) -> Self {
+            if !Self::is_slow_with_mask(size_of::<Self>(), from.as_ptr()) {
+                return Self::new(Simd::load_or_default(from));
+            }
+            Self::new(load_masked_to_last(from)).rotate(from.len().wrapping_sub(N))
+        }
+
+        /// In a vector of 64 bytes that has zeros after `self`.
+        #[inline(always)]
+        fn rotate(self, by: usize) -> Self {
+            let mut bytes = u8x64::splat(0);
+            bytes[..size_of::<Self>()].copy_from_slice(self.0.to_ne_bytes().as_ref());
+            Self::from_first_bytes(isa::rotate_bytes(bytes, by.wrapping_mul(size_of::<T>())))
+        }
+
         /// `None` if `from` is empty.
         pub fn load_partial<S: Source<Lane = T>>(from: &[S]) -> Option<Partial<T, N, isa::Isa>> {
             Self::load_partial_inline(from)
@@ -284,12 +297,13 @@ mod simd {
                 }
                 match S::memory(from) {
                     Memory::Plain(lanes) => Self::load_masked(lanes),
-                    Memory::Shared(bytes)
-                        if Self::is_slow_with_mask(64, bytes.as_ptr(), bytes.len()) =>
-                    {
-                        Self::from_shared(portable::load_shared_masked(bytes))
+                    Memory::Shared(bytes) if Self::is_slow_with_mask(64, bytes.as_ptr()) => {
+                        let last = shared::load_shared_masked::<true>(bytes);
+                        Self::from_shared(isa::rotate_bytes(last, bytes.len()))
                     }
-                    Memory::Shared(bytes) => Self::from_shared(shared::load_shared_masked(bytes)),
+                    Memory::Shared(bytes) => {
+                        Self::from_shared(shared::load_shared_masked::<false>(bytes))
+                    }
                 }
             } else if N > 8 && len >= 8 {
                 if N > 16 && len >= 16 {
@@ -364,10 +378,12 @@ mod simd {
                     || self.store_ends_shared::<4>(to)
                     || self.store_ends_shared::<2>(to)
                     || self.store_ends_shared::<1>(to);
-            } else if Self::is_slow_with_mask(64, to.as_ptr(), to.len()) {
-                portable::store_shared_masked(self.0, to);
+            } else if to.is_empty() {
+            } else if Self::is_slow_with_mask(64, to.as_ptr()) {
+                let last = isa::rotate_bytes(self.0.resize(0), to.len().wrapping_neg());
+                shared::store_shared_masked::<true>(last, to);
             } else {
-                shared::store_shared_masked(self.0, to);
+                shared::store_shared_masked::<false>(self.0.resize(0), to);
             }
         }
 

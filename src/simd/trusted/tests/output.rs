@@ -1,7 +1,7 @@
 //! Each allocation has its exact size and is not initialized, for Miri.
 #![feature(portable_simd)]
 #![forbid(unsafe_code)]
-use bun_simd_trusted::{Out, extend_vec, spare_capacity};
+use bun_simd_trusted::{Out, extend_vec, load_masked_to_last, spare_capacity};
 use core::simd::Simd;
 use core::sync::atomic::{AtomicPtr, Ordering::Relaxed};
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
@@ -64,6 +64,23 @@ fn fill_masked() {
         assert_eq!(got, lanes[..len.min(64)]);
         let got = filled(len, |out| out.fill_masked(Simd::from_array([5u64, 6])));
         assert_eq!(got, [5, 6][..len.min(2)]);
+    }
+}
+
+#[test]
+fn last_lanes() {
+    let lanes: [u8; 64] = core::array::from_fn(|i| i as u8);
+    for len in [0, 1, 2, 3, 63, 64, 65, 256, 257] {
+        let got = filled(len, |out| {
+            out.fill_masked_from_last(Simd::from_array(lanes))
+        });
+        assert_eq!(got, lanes[64 - len.min(64)..]);
+        let got = filled(len, |out| {
+            out.fill_masked_from_last(Simd::from_array([5u64, 6]))
+        });
+        assert_eq!(got, [5, 6][2 - len.min(2)..]);
+        let got: Simd<u16, 4> = load_masked_to_last(&counting(len + 1)[1..].to_vec());
+        assert_eq!(got.as_array(), &[0, 0, 0, 0, 1, 2, 3, 4][len.min(4)..][..4]);
     }
 }
 

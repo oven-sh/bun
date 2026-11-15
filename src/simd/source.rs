@@ -73,7 +73,7 @@ impl Source for [SharedU8; 2] {
 
     #[inline(always)]
     fn get(&self) -> u16 {
-        u16::from_le_bytes([self[0].get(), self[1].get()])
+        u16::from_le_bytes(SharedU8::get_two(self))
     }
 
     #[inline(always)]

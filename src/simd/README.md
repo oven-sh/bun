@@ -195,7 +195,7 @@ What you have to trust:
 
 | Not emitted                                | Why                                                                                                                                  |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| An AVX-512 mask near the end of a page     | 160 ns instead of 3 on Cascade Lake if the next page is missing or untouched                                                         |
+| An AVX-512 mask that skips another page    | 160 ns instead of 3 on Cascade Lake if that page is missing or untouched                                                             |
 | `vpcompress*` to memory                    | [Microcoded on Zen 4](https://lemire.me/blog/2025/02/14/avx-512-gotcha-avoid-compressing-words-to-memory-with-amd-zen-4-processors/) |
 | `vpcompress*` that zeroes                  | [False dependency on Zen 4 and 5](https://github.com/golang/go/issues/81609)                                                         |
 | `pext`, `pdep`                             | Microcoded on AMD before Zen 3                                                                                                       |

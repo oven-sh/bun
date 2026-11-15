@@ -27,7 +27,7 @@ macro_rules! load_and_store {
             unsafe {
                 asm!(
                     $load_asm,
-                    v = out($class) v,
+                    v = lateout($class) v,
                     p = in(reg) from,
                     at = const AT * size_of::<$T>(),
                     options(readonly, nostack, preserves_flags),
@@ -82,6 +82,24 @@ cfg_select! {
     }
 }
 
+#[inline(always)]
+pub fn load2(from: &[SharedU8; 2]) -> u16 {
+    let v: u32;
+    // SAFETY: reads the bytes of `from`, with an instruction that needs no feature.
+    unsafe {
+        asm!(
+            cfg_select! {
+                target_arch = "x86_64" => "movzx {v:e}, word ptr [{p}]",
+                target_arch = "aarch64" => "ldrh {v:w}, [{p}]",
+            },
+            v = lateout(reg) v,
+            p = in(reg) from,
+            options(readonly, nostack, preserves_flags),
+        )
+    };
+    v as u16
+}
+
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn low_bits(count: usize) -> u64 {
@@ -92,37 +110,52 @@ fn low_bits(count: usize) -> u64 {
     }
 }
 
-/// Pads with zeros if `from` is too short.
+/// The mask and the address of lane 0. Lane `i` has a bit only if `address + i` is in `bytes`.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn lanes_for<B, const ARE_LAST: bool>(bytes: &[B]) -> (u64, *const u8) {
+    const { assert!(size_of::<B>() == 1) };
+    let start = bytes.as_ptr().cast::<u8>();
+    if !ARE_LAST {
+        return (low_bits(bytes.len()), start);
+    }
+    let skipped = 64 - bytes.len().min(64);
+    (!low_bits(skipped), start.wrapping_sub(skipped))
+}
+
+/// To the first or the last lanes if `from` is too short. The others are zero.
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[target_feature(enable = "avx512bw")]
-pub fn load64_masked(from: &[SharedU8]) -> u8x64 {
+pub fn load64_masked<const TO_LAST: bool>(from: &[SharedU8]) -> u8x64 {
+    let (mask, address) = lanes_for::<_, TO_LAST>(from);
     let v;
     // SAFETY: reads the bytes of `from` that the mask has a bit for, and touches no others.
     unsafe {
         asm!(
             "vmovdqu8 {v} {{{k}}} {{z}}, [{p}]",
             v = out(zmm_reg) v,
-            k = in(kreg) low_bits(from.len()),
-            p = in(reg) from.as_ptr(),
+            k = in(kreg) mask,
+            p = in(reg) address,
             options(readonly, nostack, preserves_flags),
         )
     };
     v
 }
 
-/// Stores as many bytes as fit.
+/// As many of the first or the last lanes as fit.
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[target_feature(enable = "avx512bw")]
-pub fn store64_masked(v: u8x64, to: &[AtomicU8]) {
+pub fn store64_masked<const FROM_LAST: bool>(v: u8x64, to: &[AtomicU8]) {
+    let (mask, address) = lanes_for::<_, FROM_LAST>(to);
     // SAFETY: writes the bytes of `to` that the mask has a bit for, and touches no others.
     unsafe {
         asm!(
             "vmovdqu8 [{p}] {{{k}}}, {v}",
             v = in(zmm_reg) v,
-            k = in(kreg) low_bits(to.len()),
-            p = in(reg) to.as_ptr(),
+            k = in(kreg) mask,
+            p = in(reg) address,
             options(nostack, preserves_flags),
         )
     }

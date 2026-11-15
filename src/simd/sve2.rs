@@ -1,19 +1,27 @@
 pub(crate) use crate::native::{load_shared, store_shared};
+use crate::portable;
+pub(crate) use crate::portable::rotate_bytes;
 pub use crate::portable::{bit_indices, prefix_xor};
 use bun_simd_trusted::{SharedU8, shared};
-use core::simd::{Simd, u8x64};
+use core::simd::u8x64;
 use core::sync::atomic::AtomicU8;
 
 crate::isa::vector_types!(crate::neon::Neon<true>, 16);
 
 #[inline]
 #[target_feature(enable = "sve")]
-pub(crate) fn load_shared_masked(from: &[SharedU8]) -> u8x64 {
-    shared::load16_masked(from).resize(0)
+pub(crate) fn load_shared_masked<const TO_LAST: bool>(from: &[SharedU8]) -> u8x64 {
+    match TO_LAST {
+        true => portable::load_shared_masked::<true>(from),
+        false => shared::load16_masked(from).resize(0),
+    }
 }
 
 #[inline]
 #[target_feature(enable = "sve")]
-pub(crate) fn store_shared_masked<const N: usize>(v: Simd<u8, N>, to: &[AtomicU8]) {
-    shared::store16_masked(v.resize(0), to);
+pub(crate) fn store_shared_masked<const FROM_LAST: bool>(v: u8x64, to: &[AtomicU8]) {
+    match FROM_LAST {
+        true => portable::store_shared_masked::<true>(v, to),
+        false => shared::store16_masked(v.resize(0), to),
+    }
 }

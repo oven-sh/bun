@@ -1,5 +1,5 @@
 //! What bytes are appended to.
-use crate::{Out, Writer};
+use crate::{Int, Out, Writer};
 use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
 /// A `Writer` of bytes, to plain or to shared memory. What follows the bytes is left as it is.
@@ -99,7 +99,10 @@ impl Sink for SharedWriter<'_> {
 mod simd {
     use isa::Vector;
 
-    impl<const N: usize> Vector<u8, N> {
+    impl<const N: usize> Vector<u8, N>
+    where
+        u8: Int<N>,
+    {
         /// Like `Out::fill_chunks`, but returns the count. `from` may be where the bytes go.
         pub fn append_chunks<A>(
             to: &mut impl Sink,
@@ -148,7 +151,7 @@ mod simd {
         pub fn append_partial(self, to: &mut impl Sink, len: usize) {
             assert!(len < N && len <= to.remaining());
             to.append_either(
-                |to| self.store_partial(to.take(len)),
+                |to| self.store_partial_inline(to.take(len)),
                 |to| {
                     self.store_partial_shared(&to[..len]);
                     len

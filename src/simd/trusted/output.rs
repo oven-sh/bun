@@ -1,7 +1,7 @@
 //! Output to memory that may be uninitialized. A `&mut [T]` comes back for the part that was written.
 use alloc::vec::Vec;
 use core::mem::MaybeUninit;
-use core::simd::{Simd, SimdElement, cmp::SimdPartialOrd};
+use core::simd::{Mask, MaskElement, Simd, SimdElement, cmp::SimdPartialOrd};
 
 /// A slice that can only be written to, and only with initialized values.
 pub struct Out<'a, T>(&'a mut [MaybeUninit<T>]);
@@ -24,6 +24,23 @@ impl<'a, T: Copy> From<&'a mut [MaybeUninit<T>]> for Out<'a, T> {
 #[inline(always)]
 fn write<T: Copy, const N: usize>(to: &mut [MaybeUninit<T>; N], values: [T; N]) {
     to.write_copy_of_slice(&values);
+}
+
+/// `len` is at most `N`.
+#[inline(always)]
+fn last_lanes<M: MaskElement, const N: usize>(len: usize) -> Mask<M, N> {
+    const { assert!(N < 256) };
+    let index = Simd::from_array(core::array::from_fn(|i| i as u8));
+    index.simd_ge(Simd::splat((N - len) as u8)).cast()
+}
+
+/// To the last lanes if `from` is too short, after zeros. What the load skips is before `from`.
+#[inline(always)]
+pub fn load_masked_to_last<T: SimdElement + Default, const N: usize>(from: &[T]) -> Simd<T, N> {
+    let len = from.len().min(N);
+    let lane_0 = from.as_ptr().wrapping_sub(N - len);
+    // SAFETY: lane `i` comes from `lane_0.wrapping_add(i)`, which is in `from` for the last `len` lanes.
+    unsafe { Simd::load_select_ptr(lane_0, last_lanes(len), Simd::default()) }
 }
 
 impl<'a, T: Copy> Out<'a, T> {
@@ -130,6 +147,19 @@ impl<'a, T: Copy> Out<'a, T> {
         let enable = index.simd_lt(Simd::splat(len as u8)).cast();
         // SAFETY: the first `len` lanes are enabled, and `self` has that many.
         unsafe { lanes.store_select_ptr(self.0.as_mut_ptr().cast(), enable) };
+        Writer { all: self.0, len }.finish()
+    }
+
+    /// The same for the last lanes. What the store skips is before `self`.
+    #[inline(always)]
+    pub fn fill_masked_from_last<const N: usize>(self, lanes: Simd<T, N>) -> &'a mut [T]
+    where
+        T: SimdElement,
+    {
+        let len = self.len().min(N);
+        let lane_0 = self.0.as_mut_ptr().cast::<T>().wrapping_sub(N - len);
+        // SAFETY: lane `i` goes to `lane_0.wrapping_add(i)`, which is in `self` for the last `len` lanes.
+        unsafe { lanes.store_select_ptr(lane_0, last_lanes(len)) };
         Writer { all: self.0, len }.finish()
     }
 }

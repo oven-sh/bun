@@ -511,7 +511,7 @@ mod simd {
                 return to.fill_chunks(from, |_, chunk| Some(f(Self::load(chunk)).to_array()));
             }
             match Self::load_partial_inline(&from[..to.len()]) {
-                Some(partial) => f(partial.lanes).store_partial(to),
+                Some(partial) => f(partial.lanes).store_partial_inline(to),
                 None => &mut [],
             }
         }
@@ -520,7 +520,7 @@ mod simd {
         pub fn map_in_place(slice: &mut [T], f: impl Fn(Self) -> Self) {
             let Some((_, last)) = slice.split_last_chunk() else {
                 if let Some(partial) = Self::load_partial_inline(slice) {
-                    f(partial.lanes).store_partial(slice.into());
+                    f(partial.lanes).store_partial_inline(slice.into());
                 }
                 return;
             };
@@ -546,7 +546,7 @@ mod simd {
                     Self::load_partial_inline(other),
                 );
                 if let (Some(a), Some(b)) = (a, b) {
-                    f(a.lanes, b.lanes).store_partial(slice.into());
+                    f(a.lanes, b.lanes).store_partial_inline(slice.into());
                 }
                 return;
             };

@@ -12,7 +12,7 @@ use bun_core::{CStrList, Output, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_io::BufferedReader;
 #[cfg(unix)]
-use bun_io::{FilePollFlag, PosixFlags};
+use bun_io::PosixFlags;
 use bun_paths as Path;
 use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 #[cfg(unix)]
@@ -1237,11 +1237,6 @@ impl GitSubprocess {
                 r.flags.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
                 r.start(fd, true)
             })?;
-            reader.with_mut(|r| {
-                if let Some(poll) = r.handle.get_poll() {
-                    poll.set_flag(FilePollFlag::Socket);
-                }
-            });
         }
         #[cfg(windows)]
         for (reader, pipe) in [

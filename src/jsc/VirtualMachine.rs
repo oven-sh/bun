@@ -1702,7 +1702,7 @@ impl VirtualMachine {
         // e.g. `process.stdout` on a pipe with nothing left to write.
         let disarmed = rare
             .and_then(|rare| rare.file_polls.get())
-            .map_or(0, |polls| polls.get().disarmed_count());
+            .map_or(0, |polls| polls.disarmed_count());
         let fires_nothing = i32::from(timers_hold_loop_ref) + i32::from(has_coordinator) + disarmed;
         self.platform_loop_opt()
             .is_some_and(|h| h.num_polls.get() > fires_nothing)
@@ -2891,7 +2891,7 @@ pub struct RuntimeHooks {
 bun_io::link_impl_EventLoopCtx! {
     Js for VirtualMachine => |this| {
         loop_() => (*this).uws_loop(),
-        file_polls_ptr() => (*this).rare_data().file_polls_ptr(),
+        file_polls_ptr() => (*this).rare_data().file_polls(),
         // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick`.
         increment_pending_unref_counter() => {
             (*this)

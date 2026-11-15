@@ -1547,9 +1547,6 @@ impl PipeReader {
                 #[cfg(unix)]
                 {
                     // TODO: are these flags correct
-                    if let Some(poll) = self.reader.handle.get_poll() {
-                        poll.set_flag(bun_io::FilePollFlag::Socket);
-                    }
                     self.reader
                         .flags
                         .insert(bun_io::pipe_reader::PosixFlags::SOCKET);

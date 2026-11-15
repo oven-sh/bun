@@ -223,13 +223,7 @@ impl<'a> Writable<'a> {
                     }
                 }
 
-                // `handle` is `PollOrFd` (enum); flag mutation goes
-                // through the FilePoll vtable shim.
-                pipe_ref.writer.with_mut(|w| {
-                    if let Some(poll) = w.handle.get_poll() {
-                        poll.set_flag(bun_io::FilePollFlag::Socket);
-                    }
-                });
+                (pipe_ref.writer.get().handle).set_poll_flag(bun_io::FilePollFlag::Socket);
 
                 subprocess
                     .weak_file_sink_stdin_ptr

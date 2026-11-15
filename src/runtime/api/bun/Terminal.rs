@@ -434,11 +434,10 @@ impl Terminal {
                 #[cfg(unix)]
                 {
                     terminal.reader.with_mut(|r| {
-                        if let Some(poll) = r.handle.get_poll() {
+                        if r.handle.has_poll() {
                             // PTY behaves like a pipe, not a socket
                             r.flags
                                 .insert(PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
-                            poll.set_flag(bun_io::FilePollFlag::Nonblocking);
                         }
                     });
                 }
@@ -661,8 +660,7 @@ impl Terminal {
     #[cfg(windows)]
     pub(crate) fn unref_after_inline_child_exit(&self) {
         if !self.flags.get().contains(Flags::CLOSED) {
-            let ctx = self.event_loop_handle.as_event_loop_ctx();
-            self.writer.with_mut(|w| w.update_ref(ctx, false));
+            self.writer.with_mut(|w| w.update_ref(false));
         }
     }
 
@@ -1491,8 +1489,7 @@ impl Terminal {
         // POSIX `update_ref` takes `&self`; Windows takes `&mut self` — route
         // both through `with_mut` so the body is target-agnostic.
         self.reader.with_mut(|r| r.update_ref(add));
-        let ctx = self.event_loop_handle.as_event_loop_ctx();
-        self.writer.with_mut(|w| w.update_ref(ctx, add));
+        self.writer.with_mut(|w| w.update_ref(add));
     }
 
     /// Close the terminal
@@ -1841,9 +1838,6 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
         Self::from_parent_ptr(this)
             .event_loop_handle
             .as_event_loop_ctx()
-    }
-    unsafe fn loop_(this: *mut Self) -> LoopRef {
-        Self::from_parent_ptr(this).event_loop_handle.r#loop()
     }
 }
 

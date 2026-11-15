@@ -5994,6 +5994,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     }
 
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), factory, specifierString, writtenString, function);
+    ASSERT(!requirePath || (!mock->isOfVitest() && !vm.hasCompiledCode() && requirePath->tryGetValue().data != specifier));
+    mock->requirePath.setMayBeNull(vm, mock, requirePath);
     mock->spy = spy;
     mock->isFromPreload = JSMock__isInPreload(globalObject);
     if (!mock->isFromPreload)

@@ -9,9 +9,10 @@ use crate::hir::{
     ObjectProperty, ObjectPropertyKey, ObjectPropertyType, Place, StoreStr, VariableBinding,
 };
 use bun_ast::expr::Data;
-use bun_ast::{self as ast, E, Expr, G, Loc, Ref};
+use bun_ast::{self as ast, E, Expr, G, Loc};
 use std::rc::Rc;
 
+use super::super::function_bindings::LocalRef;
 use super::super::hir_builder::{HirBuilder, convert_loc};
 use super::FunctionNode;
 use super::helpers::{lower_expression_to_temporary, lower_value_to_temporary};
@@ -60,13 +61,14 @@ fn lower_function(
     let import_bindings = builder.import_bindings();
 
     // Gather captured context
+    let function_bindings = builder.function_bindings();
     let captured_context = gather_captured_context(
         builder.host(),
         &func,
         builder.current_scope(),
-        component_scope,
+        function_bindings,
     )?;
-    let merged_context: IndexMap<Ref, Option<SourceLocation>> = {
+    let merged_context: IndexMap<LocalRef, Option<SourceLocation>> = {
         let mut merged = builder.context().clone();
         for (k, v) in captured_context {
             merged.insert(k, v);
@@ -87,6 +89,7 @@ fn lower_function(
         parent_function_scope,
         component_scope,
         context_ids,
+        function_bindings,
         import_bindings,
         false, // nested function
     )?;
@@ -117,13 +120,14 @@ pub(super) fn lower_function_declaration(
     let import_bindings = builder.import_bindings();
 
     // Gather captured context
+    let function_bindings = builder.function_bindings();
     let captured_context = gather_captured_context(
         builder.host(),
         &func,
         builder.current_scope(),
-        component_scope,
+        function_bindings,
     )?;
-    let merged_context: IndexMap<Ref, Option<SourceLocation>> = {
+    let merged_context: IndexMap<LocalRef, Option<SourceLocation>> = {
         let mut merged = builder.context().clone();
         for (k, v) in captured_context {
             merged.insert(k, v);
@@ -143,6 +147,7 @@ pub(super) fn lower_function_declaration(
         parent_function_scope,
         component_scope,
         context_ids,
+        function_bindings,
         import_bindings,
         false, // nested function
     )?;
@@ -241,13 +246,14 @@ fn lower_function_for_object_method(
     let context_ids = Rc::clone(builder.context_identifiers());
     let import_bindings = builder.import_bindings();
 
+    let function_bindings = builder.function_bindings();
     let captured_context = gather_captured_context(
         builder.host(),
         &func,
         builder.current_scope(),
-        component_scope,
+        function_bindings,
     )?;
-    let merged_context: IndexMap<Ref, Option<SourceLocation>> = {
+    let merged_context: IndexMap<LocalRef, Option<SourceLocation>> = {
         let mut merged = builder.context().clone();
         for (k, v) in captured_context {
             merged.insert(k, v);
@@ -267,6 +273,7 @@ fn lower_function_for_object_method(
         parent_function_scope,
         component_scope,
         context_ids,
+        function_bindings,
         import_bindings,
         false, // nested function
     )?;

@@ -196,6 +196,7 @@ keys!(ById:
 );
 keys!(Hashed:
     bun_ast::Ref,
+    crate::lowering::LocalRef,
     String,
     &str,
     &[u8],

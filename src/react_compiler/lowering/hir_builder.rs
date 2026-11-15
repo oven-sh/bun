@@ -22,6 +22,7 @@ use crate::hir::environment::Environment;
 use crate::hir::*;
 use bun_ast::{self as ast, E, G, Loc, Ref, Symbol, symbol};
 
+use super::function_bindings::{FunctionBindings, LocalRef};
 use crate::program::Host;
 use std::rc::Rc;
 
@@ -280,7 +281,7 @@ pub(crate) struct HirBuilder<'h> {
     scopes: Vec<Scope>,
     /// Context identifiers: variables captured from an outer scope.
     /// Maps the outer scope's binding `Ref` to the source location where it was referenced.
-    context: IndexMap<Ref, Option<SourceLocation>>,
+    context: IndexMap<LocalRef, Option<SourceLocation>>,
     /// Resolved bindings: maps a `Ref` to the HIR IdentifierId created for it.
     bindings: IndexMap<Ref, IdentifierId>,
     env: &'h mut Environment,
@@ -304,6 +305,8 @@ pub(crate) struct HirBuilder<'h> {
     /// and any inner function scope, that are referenced from an inner function scope.
     /// These need StoreContext/LoadContext instead of StoreLocal/LoadLocal.
     context_identifiers: Rc<RefSet>,
+    /// What the outermost function declares. Shared with the builders of the functions in it.
+    function_bindings: &'h FunctionBindings,
     /// ES-module import bindings keyed by clause-item `Ref`. Populated from the
     /// module's `SImport` statements before lowering so `resolve_identifier`
     /// can return `ImportSpecifier`/`ImportDefault`/`ImportNamespace` (and thus
@@ -324,6 +327,7 @@ impl<'h> HirBuilder<'h> {
         function_scope: &'h ast::Scope,
         component_scope: &'h ast::Scope,
         context_identifiers: Rc<RefSet>,
+        function_bindings: &'h FunctionBindings,
         bindings: Option<IndexMap<Ref, IdentifierId>>,
         import_bindings: &'h IndexMap<Ref, VariableBinding>,
         entry_block_kind: Option<BlockKind>,
@@ -348,6 +352,7 @@ impl<'h> HirBuilder<'h> {
             component_scope,
             scope_stack: vec![function_scope],
             context_identifiers,
+            function_bindings,
             import_bindings,
         }
     }
@@ -440,12 +445,16 @@ impl<'h> HirBuilder<'h> {
         ref_
     }
 
-    pub(crate) fn context(&self) -> &IndexMap<Ref, Option<SourceLocation>> {
+    pub(crate) fn context(&self) -> &IndexMap<LocalRef, Option<SourceLocation>> {
         &self.context
     }
 
-    pub(crate) fn set_context(&mut self, context: IndexMap<Ref, Option<SourceLocation>>) {
+    pub(crate) fn set_context(&mut self, context: IndexMap<LocalRef, Option<SourceLocation>>) {
         self.context = context;
+    }
+
+    pub(crate) fn function_bindings(&self) -> &'h FunctionBindings {
+        self.function_bindings
     }
 
     /// Shared with the builders of nested functions until one of them adds to it.
@@ -848,16 +857,19 @@ impl<'h> HirBuilder<'h> {
     ///
     /// On first encounter, creates a new Identifier with the symbol's name and a
     /// fresh id. On subsequent encounters, returns the cached IdentifierId.
-    pub(crate) fn resolve_binding(&mut self, ref_: Ref) -> Result<IdentifierId, CompilerError> {
-        self.resolve_binding_with_loc(ref_, None)
+    pub(crate) fn resolve_binding(
+        &mut self,
+        local: LocalRef,
+    ) -> Result<IdentifierId, CompilerError> {
+        self.resolve_binding_with_loc(local, None)
     }
 
     pub(crate) fn resolve_binding_with_loc(
         &mut self,
-        ref_: Ref,
+        local: LocalRef,
         loc: Option<SourceLocation>,
     ) -> Result<IdentifierId, CompilerError> {
-        let ref_ = self.resolve_ref(ref_);
+        let ref_ = local.get();
         let host = self.host;
         let name = host.ref_name(ref_);
 
@@ -1022,34 +1034,36 @@ impl<'h> HirBuilder<'h> {
             _ => {}
         }
 
-        if self.host.is_module_level(ref_) {
+        // Upstream: `is_scope_within_compiled_function(binding.scope)`.
+        if let Some(local) = self.function_bindings.local(ref_) {
+            let binding_kind = convert_binding_kind(sym.kind);
+            let identifier_id = self.resolve_binding_with_loc(local, loc)?;
+            return Ok(VariableBinding::Identifier {
+                identifier: identifier_id,
+                binding_kind,
+            });
+        }
+
+        if self.host.is_named_by_enclosing_scope(ref_) {
             return Ok(VariableBinding::ModuleLocal { name });
         }
         // Module-scope generated symbols (jsx-runtime `jsx`/`jsxDEV`/`Fragment`,
         // compiler-runtime `c`, etc.) are minted by the parser's visit pass after
         // `collect_import_bindings` runs, so they are absent from both `members`
-        // and `import_bindings`. They are module-level imports, not locals —
-        // classify them as Global so inference initializes them as Frozen instead
-        // of tripping the "Expected value kind to be initialized" invariant.
+        // and `import_bindings`. They are imports of the module: Global.
         if self.host.module_scope().generated.contains(&ref_) {
             return Ok(VariableBinding::Global { name });
         }
-
-        let binding_kind = convert_binding_kind(sym.kind);
-        let identifier_id = self.resolve_binding_with_loc(ref_, loc)?;
-        Ok(VariableBinding::Identifier {
-            identifier: identifier_id,
-            binding_kind,
-        })
+        Err(crate::diagnostics::cold_todo(
+            "(BuildHIR::resolveIdentifier) Handle a binding that no scope names, such as the closure parameter of a TypeScript namespace",
+            loc,
+        ))
     }
 
     /// Check if a `Ref` resolves to a context identifier (captured from an
     /// enclosing function scope).
     pub(crate) fn is_context_identifier(&self, ref_: Ref) -> bool {
         let ref_ = self.resolve_ref(ref_);
-        if ref_.is_symbol() && self.host.is_module_level(ref_) {
-            return false;
-        }
         self.context_identifiers.contains(&ref_)
     }
 

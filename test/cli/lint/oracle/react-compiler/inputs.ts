@@ -123,6 +123,28 @@ export function Alone(props: { a: number }) {
 }
 `;
 
+/** oxlint's compiler takes the name of a function signature without a body for a local that nothing initializes. */
+const signature = `import { useRef } from "react";
+
+export function Declared(props: { a: number }) {
+  declare function helper(x: number): number;
+  const ref = useRef(0);
+  const bad = ref.current;
+  return <div>{bad}{helper(props.a)}</div>;
+}
+
+export function Overloaded(props: { a: number }) {
+  function pick(x: number): number;
+  function pick(x: string): string;
+  function pick(x: any) {
+    return x;
+  }
+  const ref = useRef(0);
+  const bad = ref.current;
+  return <div>{bad}{pick(props.a)}</div>;
+}
+`;
+
 /** `x = d` in a pattern has its own source location, and the value it produces gets that location. */
 const defaults = `import { useState } from "react";
 
@@ -643,7 +665,7 @@ function Component(props) {
     "fbt.jsx": duplicateFbtTags,
     "callback-of-map.jsx": callbackOfMap,
   },
-  lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
+  lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults, "signature.tsx": signature },
   node_modules: {
     ".oxlintrc.json": rc(),
     "a.jsx": impure,

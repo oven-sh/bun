@@ -29,6 +29,7 @@ use bun_ast::stmt::Data as StmtData;
 use bun_ast::{self as ast, Expr, G, Loc, Ref, Stmt, StmtOrExpr, b};
 
 use super::find_context_identifiers::find_context_identifiers;
+use super::function_bindings::{FunctionBindings, LocalRef};
 use super::hir_builder::{
     HirBuilder, convert_loc, create_temporary_place, is_always_reserved_word,
     reserved_identifier_diagnostic,
@@ -53,13 +54,14 @@ pub(super) use super::hir_builder::FunctionNode;
 )]
 type RefSet = crate::collections::FxHashSet<Ref>;
 
-/// Port of upstream `lower()` (build_hir.rs:4257).
+/// Port of upstream `lower()` (build_hir.rs:4257). `own_name`: the name of `func` where it is a function expression.
 pub(crate) fn lower(
     func: &FunctionNode<'_>,
     _id: Option<&str>,
     host: &dyn Host,
     env: &mut Environment,
     import_bindings: &IndexMap<Ref, VariableBinding>,
+    own_name: Option<Ref>,
 ) -> Result<HirFunction, CompilerError> {
     // Extract params, body, generator, is_async, loc, scope_id, and the AST function's own id
     // Note: `id` param may include inferred names (e.g., from `const Foo = () => {}`),
@@ -72,9 +74,7 @@ pub(crate) fn lower(
 
     // Bun has no `node_id`-keyed scope table; the top-level function's scope
     // is a child of `module_scope`, and `G::Fn` does not retain a back-link.
-    // The only consumers of `function_scope`/`component_scope` on the builder
-    // are the fbt-name local-binding check and `is_scope_within_compiled_function`,
-    // both of which behave correctly with `module_scope` for a top-level call.
+    // Upstream's `is_scope_within_compiled_function` is `FunctionBindings::local`.
     let scope = host.module_scope();
 
     // `validate_ts_this_parameters_in_function_range`: Bun's parser strips
@@ -85,10 +85,12 @@ pub(crate) fn lower(
     // read `Ref` + `Loc` straight off the AST node via `convert_loc`.
 
     // Pre-compute context identifiers: variables captured across function boundaries
-    let context_identifiers = Rc::new(find_context_identifiers(func, host, env)?);
+    let (context_identifiers, function_bindings) =
+        find_context_identifiers(func, own_name, host, env)?;
+    let context_identifiers = Rc::new(context_identifiers);
 
     // For top-level functions, context is empty (no captured refs)
-    let context_map: IndexMap<Ref, Option<SourceLocation>> = IndexMap::new();
+    let context_map: IndexMap<LocalRef, Option<SourceLocation>> = IndexMap::new();
 
     let (hir_func, _child_bindings) = lower_inner(
         func,
@@ -101,6 +103,7 @@ pub(crate) fn lower(
         scope,
         scope, // component_scope = function_scope for top-level
         context_identifiers,
+        &function_bindings,
         import_bindings,
         true, // is_top_level
     )?;
@@ -120,10 +123,11 @@ pub(super) fn lower_inner<'h>(
     host: &'h dyn Host,
     env: &'h mut Environment,
     parent_bindings: Option<IndexMap<Ref, IdentifierId>>,
-    context_map: IndexMap<Ref, Option<SourceLocation>>,
+    context_map: IndexMap<LocalRef, Option<SourceLocation>>,
     function_scope: &'h ast::Scope,
     component_scope: &'h ast::Scope,
     context_identifiers: Rc<RefSet>,
+    function_bindings: &'h FunctionBindings,
     import_bindings: &'h IndexMap<Ref, VariableBinding>,
     is_top_level: bool,
 ) -> Result<(HirFunction, IndexMap<Ref, IdentifierId>), CompilerError> {
@@ -142,6 +146,7 @@ pub(super) fn lower_inner<'h>(
         function_scope,
         component_scope,
         context_identifiers,
+        function_bindings,
         parent_bindings,
         import_bindings,
         None,
@@ -155,8 +160,8 @@ pub(super) fn lower_inner<'h>(
 
     // Build context places from the captured refs
     let mut context: HirVec<Place> = AstAlloc::vec();
-    for (&ref_, ctx_loc) in &context_map {
-        let identifier = builder.resolve_binding(ref_)?;
+    for (&local, ctx_loc) in &context_map {
+        let identifier = builder.resolve_binding(local)?;
         context.push(Place {
             identifier,
             effect: Effect::Unknown,
@@ -369,11 +374,7 @@ fn arrow_expression_body<'a>(func: &FunctionNode<'a>) -> Option<&'a Expr> {
 /// and the component scope. These are "free variables" that become the function's `context`.
 ///
 /// Bun has no `node_id`-keyed reference index, so this walks the function body
-/// directly: every `EIdentifier` whose `Ref` resolves to a non-module-level
-/// local binding and is not declared inside the function is captured. The
-/// scope chain between the function and `_component_scope` is implicit —
-/// any non-module-level binding referenced from inside is necessarily declared
-/// in that chain (Bun assigns a fresh `Ref` per declaration site).
+/// directly: every `EIdentifier` whose `Ref` the compiled function declares outside of `func` is captured.
 ///
 /// `enclosing_scope` is the lexical scope at the inner function's declaration
 /// site (the outer builder's `current_scope()`); it seeds the walker's scope
@@ -383,8 +384,8 @@ pub(super) fn gather_captured_context<'h>(
     host: &'h dyn Host,
     func: &FunctionNode<'_>,
     enclosing_scope: &'h ast::Scope,
-    _component_scope: &ast::Scope,
-) -> Result<IndexMap<Ref, Option<SourceLocation>>, CompilerDiagnostic> {
+    function_bindings: &FunctionBindings,
+) -> Result<IndexMap<LocalRef, Option<SourceLocation>>, CompilerDiagnostic> {
     let mut walker = CaptureWalker {
         host,
         stack: bun_core::StackCheck::init(),
@@ -411,7 +412,7 @@ pub(super) fn gather_captured_context<'h>(
         clippy::disallowed_types,
         reason = "vendored react_compiler_hir HashMap<BindingId, _> contract"
     )]
-    let mut captured: crate::collections::FxHashMap<Ref, (i32, Option<SourceLocation>)> =
+    let mut captured: crate::collections::FxHashMap<LocalRef, (i32, Option<SourceLocation>)> =
         crate::collections::FxHashMap::default();
 
     for (ref_, ref_loc) in walker.referenced {
@@ -431,13 +432,14 @@ pub(super) fn gather_captured_context<'h>(
         ) {
             continue;
         }
-        if host.is_module_level(ref_) {
+        // Upstream: `pure_scopes.contains(&binding.scope)`.
+        let Some(local) = function_bindings.local(ref_) else {
             continue;
-        }
+        };
         let pos = ref_loc.start;
         let loc = convert_loc(ref_loc);
         captured
-            .entry(ref_)
+            .entry(local)
             .and_modify(|(min_pos, existing_loc)| {
                 if pos < *min_pos {
                     *min_pos = pos;
@@ -450,11 +452,11 @@ pub(super) fn gather_captured_context<'h>(
     // Sort captured entries by source position so context declarations appear
     // in source order, matching the TS compiler's position-ordered traversal.
     let mut sorted: Vec<_> = captured.into_iter().collect();
-    sorted.sort_unstable_by_key(|(ref_, (pos, _))| (*pos, ref_.inner_index()));
+    sorted.sort_unstable_by_key(|(local, (pos, _))| (*pos, local.get().inner_index()));
 
     Ok(sorted
         .into_iter()
-        .map(|(ref_, (_, loc))| (ref_, loc))
+        .map(|(local, (_, loc))| (local, loc))
         .collect())
 }
 

@@ -76,6 +76,7 @@ hunk, so gratuitous restructuring makes that harder.
 | `Identifier { name, .. }`                                                | `Ref` → `symbols[ref.inner_index()].original_name`                             |
 | `BaseNode { start, node_id, .. }`                                        | `Loc { start: i32 }` (no node_id — use `Ref` for identity)                     |
 | `ScopeInfo` / `BindingId`                                                | `&[Symbol]` + `&Scope` tree; binding identity is `Ref`                         |
+| `is_scope_within_compiled_function(binding.scope)`                       | `FunctionBindings::local(ref)` (`lowering/function_bindings.rs`)               |
 | `FunctionDeclaration` / `FunctionExpression` / `ArrowFunctionExpression` | `G::Fn` / `E::Arrow` (`FunctionNode<'a>` enum wraps a `&G::Fn` or `&E::Arrow`) |
 | `BlockStatement.body: Vec<Statement>`                                    | `G::FnBody.stmts: StoreSlice<Stmt>`                                            |
 | `BinaryExpression`/`LogicalExpression`/`AssignmentExpression`            | one `EBinary` with `OpCode` discriminant                                       |
@@ -93,6 +94,23 @@ So where upstream does `scope_info.get_binding(scope, name)`, the port does a
 direct `Ref` comparison or `symbols[ref]` lookup. The `Builder` carries
 `symbols: &[Symbol]`, `module_scope: &Scope`, and `import_records:
 &[ImportRecord]` instead of `scope_info: &ScopeInfo`.
+
+**Locals.** A `Ref` is a local of the function being compiled only if the
+function declares it. The walk of `find_context_identifiers` records every
+declaration (`FunctionBindings`), and `FunctionBindings::local` is the one way
+to a `LocalRef`, which `HirBuilder::resolve_binding` takes to make an
+identifier. Every other `Ref` is bound outside, and `resolve_identifier` ends
+with what the host knows of it: a member of a scope around the function
+(`Host::is_named_by_enclosing_scope`) is a `ModuleLocal`, a generated symbol of
+the module a `Global`. The parser also binds symbols that no scope names: the
+closure parameter of a TypeScript namespace, of an enum that has a member of
+its own name, and the symbol for a member that another block of a namespace
+exports. A function that reads one is not compiled (a Todo): a function that
+the compiler outlines from it can be declared outside of that closure. The
+name of a function expression is bound in the expression's own scope: the
+caller passes it as `own_name`, and it is a local that nothing declares, as it
+is upstream. A tree that drops a declaration lists it in
+`Host::locals_without_declaration`.
 
 **SourceLocation.** Upstream's HIR `SourceLocation` is `{ start: Position,
 end: Position }`. Bun's `Loc` is start-only. The port constructs
@@ -134,8 +152,7 @@ at module level, such as an outlined `_temp`.
 `outputMode: 'lint'` for one function: lowering, the passes, all validations, no codegen, and every
 error that upstream would log. The function comes from `src/lint/react_compiler/convert.rs`, which
 makes a `bun_ast` tree of the linter's own syntax tree, without a visit pass. In that tree a `Loc` is
-an index into a table of ranges, so that what is reported has an end, and
-`Host::is_module_level` says what is bound outside of the function.
+an index into a table of ranges, so that what is reported has an end.
 
 ### Bail-out semantics
 

@@ -149,6 +149,7 @@ macro_rules! pass {
 pub(crate) fn compile_fn(
     func: &FunctionNode<'_>,
     fn_name: Option<&str>,
+    own_name: Option<bun_ast::Ref>,
     host: &mut dyn Host,
     arena: &bun_alloc::Arena,
     fn_type: ReactFunctionType,
@@ -176,10 +177,10 @@ pub(crate) fn compile_fn(
 
     ensure_timing_dump_registered();
 
-    let mut hir = pass!(
+    let (mut hir, own_name_identifier) = pass!(
         env,
         "Lowering",
-        lowering::lower(func, fn_name, &*host, &mut env, import_bindings)
+        lowering::lower(func, fn_name, &*host, &mut env, import_bindings, own_name)
     )?;
 
     dump_lowered(&hir, &env);
@@ -201,7 +202,13 @@ pub(crate) fn compile_fn(
 
     let (reactive_fn, unique_identifiers) = run_hir_passes(&mut hir, &mut env, context)?;
 
-    let mut cg = Codegen::new(host, arena);
+    let own_name = own_name
+        .zip(own_name_identifier)
+        .map(|(symbol, identifier)| codegen::OwnName {
+            declaration: env.identifiers[identifier.0 as usize].declaration_id,
+            symbol,
+        });
+    let mut cg = Codegen::new(host, arena, own_name);
     let codegen_result = pass!(
         env,
         "Codegen",
@@ -339,7 +346,8 @@ pub(crate) fn compile_outlined_fn(
     };
 
     let func_node = FunctionNode::Function(&outlined_decl);
-    let mut hir = lowering::lower(&func_node, fn_name, &*host, &mut env, import_bindings)?;
+    let (mut hir, _) =
+        lowering::lower(&func_node, fn_name, &*host, &mut env, import_bindings, None)?;
 
     if env.has_errors() {
         return Err(env.take_errors());
@@ -347,7 +355,7 @@ pub(crate) fn compile_outlined_fn(
 
     let (reactive_fn, unique_identifiers) = run_hir_passes(&mut hir, &mut env, context)?;
 
-    let mut cg = Codegen::new(host, arena);
+    let mut cg = Codegen::new(host, arena, None);
     let mut codegen_result =
         codegen::codegen_function(&reactive_fn, &mut env, &mut cg, context, unique_identifiers)?;
 

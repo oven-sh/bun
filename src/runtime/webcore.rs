@@ -364,8 +364,9 @@ impl SinkHandle {
                 // SAFETY: live backref; ByteStream clears sink before free.
                 unsafe { p.get_mut() }.write(data)
             }),
-            SinkHandle::S3Upload(p) => removable_body!(S3Client, Abort, {
-                streams::NetworkSink::write(p.as_ptr(), data)
+            SinkHandle::S3Upload(mut p) => removable_body!(S3Client, Abort, {
+                // SAFETY: live backref; ByteStream clears sink before free.
+                unsafe { p.get_mut() }.write(data)
             }),
             SinkHandle::FileSink(p) => p.write(data),
             SinkHandle::HTMLRewriter(p) => removable_body!(HtmlRewriter, Abort, { p.write(data) }),

@@ -1085,6 +1085,7 @@ describe("scripted server", () => {
       const rows = outcome(sql.unsafe("A").simple());
       socket = await asked.promise;
       await write(socket, reply.subarray(0, 7));
+      // No fence: with kqueue, its connect event is lost if it comes in the batch that reaches the transform.
       socket.write(reply.subarray(7, firstRow + behind));
       expect(await rows).toEqual([{ OWNER: "A" }, { OWNER: "B" }]);
       await built;

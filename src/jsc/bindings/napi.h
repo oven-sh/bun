@@ -308,10 +308,10 @@ public:
         return true;
     }
 
-    bool unregisterThreadSafeFunction(void* tsfn)
+    void unregisterThreadSafeFunction(void* tsfn)
     {
         WTF::Locker locker { m_threadSafeFunctionsLock };
-        return m_threadSafeFunctions.remove(tsfn);
+        m_threadSafeFunctions.remove(tsfn);
     }
 
     void abortThreadSafeFunctions()

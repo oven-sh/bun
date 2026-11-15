@@ -16,7 +16,7 @@ type Bitset = DynamicBitSet;
 
 fn print_installed_workspace_section<W: Write>(
     this: &Printer,
-    manager: &mut PackageManager,
+    manager: &PackageManager,
     writer: &mut W,
     workspace_package_id: PackageID,
     installed: &Bitset,
@@ -130,7 +130,6 @@ fn print_installed_workspace_section<W: Write>(
         }
         if manager.subcommand == Subcommand::Update && !manager.kept_patched_text.is_empty() {
             writer.write_all(&manager.kept_patched_text)?;
-            manager.kept_patched_text.clear();
             *printed_new_install = true;
             printed_update = true;
         }
@@ -306,7 +305,7 @@ fn update_info_of<'a>(
 
 fn print_updated_package<W: Write>(
     this: &Printer,
-    manager: &mut PackageManager,
+    manager: &PackageManager,
     update_info: &PackageUpdatePrintInfo,
     writer: &mut W,
     enable_ansi_colors: bool,
@@ -339,7 +338,7 @@ fn print_updated_package<W: Write>(
 }
 
 fn later_version_text(
-    manager: &mut PackageManager,
+    manager: &PackageManager,
     package_name: &[u8],
     name_hash: PackageNameHash,
     resolution: &Resolution,
@@ -398,7 +397,7 @@ fn write_updated_row<W: Write>(
 /// catalog entries too.
 fn print_catalog_entry_updates<W: Write>(
     this: &Printer,
-    manager: &mut PackageManager,
+    manager: &PackageManager,
     installed: &Bitset,
     pkg_metas: &[PackageMeta],
     update_dedupe: &mut HashMap<PackageNameHash, ()>,
@@ -430,7 +429,7 @@ fn print_catalog_entry_updates<W: Write>(
 /// The transitive half of `bun update` registers packages that are rows of no walked workspace.
 fn print_transitive_updates<W: Write>(
     this: &Printer,
-    manager: &mut PackageManager,
+    manager: &PackageManager,
     update_owners: &[PackageID],
     installed: &Bitset,
     writer: &mut W,
@@ -514,7 +513,7 @@ fn print_transitive_updates<W: Write>(
 
 fn print_installed_package<W: Write>(
     this: &Printer,
-    manager: &mut PackageManager,
+    manager: &PackageManager,
     dependency: &Dependency,
     package_id: PackageID,
     writer: &mut W,
@@ -614,20 +613,21 @@ fn print_installed_update_request<W: Write>(
 
 /// - Prints an empty newline with no diffs
 /// - Prints a leading and trailing blank newline with diffs
+/// - Returns the first bin it prints if `track_installed_bin` is `Pending`
 #[inline(never)]
 pub(crate) fn print<W: Write>(
     this: &Printer,
-    manager: &mut PackageManager,
+    manager: &PackageManager,
     writer: &mut W,
     log_level: install::package_manager::Options::LogLevel,
     enable_ansi_colors: bool,
-) -> Result<(), crate::Error> {
+) -> Result<Option<Box<[u8]>>, crate::Error> {
     writer.write_str("\n")?;
     let packages = &this.lockfile.packages;
     let bins: &[Bin] = packages.items_bin();
     let resolved: &[Resolution] = packages.items_resolution();
     if resolved.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let string_buf = this.lockfile.buffers.string_bytes.as_slice();
     let resolutions_list = packages.items_resolutions();
@@ -635,7 +635,7 @@ pub(crate) fn print<W: Write>(
     let resolutions_buffer: &[PackageID] = this.lockfile.buffers.resolutions.as_slice();
     let dependencies_buffer: &[Dependency] = this.lockfile.buffers.dependencies.as_slice();
     if dependencies_buffer.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let mut id_map: Vec<DependencyID> = vec![INVALID_PACKAGE_ID; this.updates.len()];
 
@@ -763,7 +763,7 @@ pub(crate) fn print<W: Write>(
             resolutions_buffer,
             reachable::Options {
                 bundled: true,
-                ..reachable::Options::install(manager)
+                ..reachable::Options::install(this.options)
             },
         );
         let mut listed = Bitset::init_empty(resolved.len())?;
@@ -790,7 +790,7 @@ pub(crate) fn print<W: Write>(
                 debug_assert_eq!(this.updates.len(), id_map.len());
                 for (update, dependency_id) in this.updates.iter().zip(id_map.iter_mut()) {
                     if update.failed {
-                        return Ok(());
+                        return Ok(None);
                     }
                     if !is_update && update.matches(dependency, string_buf) {
                         if *dependency_id == INVALID_PACKAGE_ID {
@@ -821,6 +821,7 @@ pub(crate) fn print<W: Write>(
         writer.write_str("\n")?;
     }
 
+    let mut first_bin = None;
     let mut printed_installed_update_request = false;
     for &dependency_id in &id_map {
         if dependency_id == INVALID_PACKAGE_ID {
@@ -881,7 +882,7 @@ pub(crate) fn print<W: Write>(
                 escape_control_chars(bin_name),
             )?;
             if matches!(manager.track_installed_bin, TrackInstalledBin::Pending) {
-                manager.track_installed_bin = TrackInstalledBin::Basename(Box::from(bin_name));
+                first_bin.get_or_insert_with(|| Box::from(bin_name));
             }
         }
     }
@@ -890,5 +891,5 @@ pub(crate) fn print<W: Write>(
         writer.write_str("\n")?;
     }
 
-    Ok(())
+    Ok(first_bin)
 }

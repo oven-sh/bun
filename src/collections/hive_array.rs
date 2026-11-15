@@ -168,8 +168,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     /// Placement-new constructor: write the empty state directly into `*out`
     /// without materializing `Self` on the stack.
     ///
-    /// `Self` embeds `[MaybeUninit<T>; CAPACITY]` inline, which for the
-    /// install pools (`NetworkTask` × 128, `Task` × 64) is hundreds of KB.
+    /// `Self` embeds `[MaybeUninit<T>; CAPACITY]` inline, which can be hundreds of KB.
     /// Rust has no result-location semantics, so `out.write(Self::init())`
     /// first builds the value in the caller's frame and `memcpy`s it — LLVM
     /// does **not** elide that temporary. This entry point only writes the
@@ -274,7 +273,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         debug_assert!(self.ptr_at(index as usize).cast_const() == value.cast_const());
 
         // Several `T` carry owned heap data (e.g. `NumberScope.name_counts:
-        // StringHashMap`, `NetworkTask.url_buf: Box<[u8]>`); drop the slot
+        // StringHashMap`); drop the slot
         // before recycling so the put/get cycle does not leak it.
         // SAFETY: caller contract — `value` is a fully-initialized `T` in `buffer`.
         unsafe { core::ptr::drop_in_place(value) };
@@ -411,7 +410,7 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
     /// `out` must be non-null, properly aligned, and valid for writes of
     /// `size_of::<Self>()` bytes. The previous contents are not dropped.
     #[inline]
-    pub unsafe fn init_in_place(out: *mut Self) {
+    unsafe fn init_in_place(out: *mut Self) {
         // SAFETY: caller contract.
         unsafe { HiveArray::<T, CAPACITY>::init_in_place(core::ptr::addr_of_mut!((*out).hive)) };
     }

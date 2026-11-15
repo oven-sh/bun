@@ -14,19 +14,20 @@ use bun_paths::path_options::AssumeOk as _;
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
 use bun_threading::{WaitGroup, WorkPool};
 
-use crate::isolated_install::installer::Installer;
+use crate::isolated_install::installer::SharedInstaller;
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry as store_entry};
 use crate::isolated_install::{Store, build_whole_store};
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{LoadResult, Lockfile, print_log_errors, reachable, tree};
 use crate::lockfile_real::LinkedMembers;
-use crate::lockfile_real::package::{Diff, DiffSummary, DroppedRow, Package};
+use crate::lockfile_real::package::{Diff, DiffSummary, DroppedRow, Package, ParseFields};
 use crate::package_install::{StagingLock, StagingPath};
 use crate::package_manager::Options::{Enable, LogLevel};
 use crate::package_manager::WorkspaceFilter;
 use crate::package_manager::patch_package::{isolated_store_folders, package_for_folder};
 use crate::package_manager::workspace_selection::{self, RootSelection};
+use crate::package_manager_real::directories::global_link_dir_if_open;
 use crate::{DependencyID, Features, PackageID, PackageManager, ResolutionTag, invalid_package_id};
 
 const STORE_DIR: &[u8] = b"node_modules/.bun";
@@ -612,37 +613,27 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
     let mut to_lockfile = Lockfile::default();
     let mut to_root = Package::default();
     let mut resolver: () = ();
-    let pm: *mut PackageManager = manager;
-    // SAFETY: same split as `hoist_tree`. `from_lockfile` is only live for `Diff::generate`, which
-    // does not reach `lockfile` through `pm`.
-    let summary = unsafe {
-        let parsed = to_root.parse_with_json(
-            &mut to_lockfile,
-            &mut *pm,
+    let parsed = to_root.parse_with_json(
+        &mut to_lockfile,
+        &mut ParseFields::new(manager),
+        log,
+        &source,
+        bun_ast::JsonView::from(&json),
+        &mut resolver,
+        Features::main(),
+    );
+    let summary = parsed.and_then(|()| {
+        let mut mapping = vec![invalid_package_id; to_root.dependencies.len as usize];
+        Diff::generate(
+            manager,
             log,
-            &source,
-            bun_ast::JsonView::from(&json),
-            &mut resolver,
-            Features::main(),
-        );
-        match parsed {
-            Ok(()) => {
-                let mut mapping = vec![invalid_package_id; to_root.dependencies.len as usize];
-                let from_lockfile: *mut Lockfile = &raw mut *(*pm).lockfile;
-                Diff::generate(
-                    &mut *pm,
-                    log,
-                    &mut *from_lockfile,
-                    &mut to_lockfile,
-                    &root,
-                    &to_root,
-                    false,
-                    Some(&mut mapping[..]),
-                )
-            }
-            Err(err) => Err(err),
-        }
-    };
+            &mut to_lockfile,
+            &root,
+            &to_root,
+            false,
+            Some(&mut mapping[..]),
+        )
+    });
     let summary = match summary {
         Ok(summary) => summary,
         Err(err) => {
@@ -838,22 +829,13 @@ fn hoist_tree(
         hoisted_dependencies: core::mem::take(&mut manager.lockfile.buffers.hoisted_dependencies),
         resolutions: manager.lockfile.buffers.resolutions.clone(),
     };
-    let log = manager.log();
-    let pm: *mut PackageManager = manager;
-    // SAFETY: same split as `PackageManager::load_lockfile_from_cwd` — `lockfile` is its own `Box`
-    // allocation and the Filter builder only reads `manager.options`/`subcommand`/`summary`.
-    let result = unsafe {
-        let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
-        let options = (!all_rows).then_some(&*pm);
-        (*lf).hoist::<{ tree::BuilderMethod::Filter }>(
-            log,
-            options,
-            install_root_dependencies,
-            workspace_filters,
-            None,
-            layout,
-        )
-    };
+    let result = manager.filter_lockfile(
+        all_rows,
+        install_root_dependencies,
+        workspace_filters,
+        None,
+        layout,
+    );
     match result {
         Ok(_) => Ok(saved),
         Err(err) => {
@@ -1732,7 +1714,9 @@ pub(crate) fn remove_copies_of_the_older_layout(
     workspace_filters: &[WorkspaceFilter],
     mut places: Vec<(u64, PackageID)>,
 ) {
-    let Ok(cache) = crate::package_manager::directories::try_get_cache_directory(manager) else {
+    let Ok(cache) =
+        crate::package_manager::directories::try_get_cache_directory(&manager.install_fields())
+    else {
         return;
     };
     places.sort_unstable_by_key(|&(key, _)| key);
@@ -1766,16 +1750,19 @@ fn tarball_may_contain(
         ResolutionTag::Npm => {
             let name = lockfile.packages.items_name()[pkg_id as usize];
             crate::package_manager::cached_npm_package_folder_name(
-                manager,
+                &manager.options,
                 &mut buf,
                 name.slice(&lockfile.buffers.string_bytes),
                 res.npm().version,
                 None,
             )
         }
-        ResolutionTag::Github => {
-            crate::package_manager::cached_github_folder_name(manager, &mut buf, res.github(), None)
-        }
+        ResolutionTag::Github => crate::package_manager::cached_github_folder_name(
+            &manager.lockfile,
+            &mut buf,
+            res.github(),
+            None,
+        ),
         // A tarball dependency can contain anything.
         _ => return true,
     };
@@ -1878,12 +1865,7 @@ fn remove_planned(mut plan: Plan, layout: Layout, manager: &PackageManager) {
 
 /// Returns true if the symlink `entry` points to where the isolated linker links the package
 /// `pkg_id`.
-fn links_package(
-    manager: &PackageManager,
-    lockfile: &Lockfile,
-    pkg_id: PackageID,
-    entry: &Entry,
-) -> bool {
+fn links_package(lockfile: &Lockfile, pkg_id: PackageID, entry: &Entry) -> bool {
     let Some(res) = lockfile.packages.items_resolution().get(pkg_id as usize) else {
         return false;
     };
@@ -1893,7 +1875,7 @@ fn links_package(
         ResolutionTag::Workspace => res.workspace().slice(buf).into(),
         ResolutionTag::Symlink => match res.symlink().slice(buf) {
             path if crate::dependency::is_link_path(path) => path.into(),
-            name => join(manager.global_link_dir_path, name),
+            name => join(global_link_dir_if_open().map_or(b"", |dir| dir.path), name),
         },
         _ => {
             let Some(found) = store_link_target(entry.dir, entry.name) else {
@@ -1928,12 +1910,12 @@ pub(crate) fn unlink_dropped_dependencies(manager: &mut PackageManager, before: 
         return;
     }
     let old_resolutions = before.packages.items_resolution();
-    // Sets `global_link_dir_path`, the folder that a `link:<name>` dependency points into.
+    // The folder that a `link:<name>` dependency points into.
     if manager.summary.dropped_rows.iter().any(|row| {
         (old_resolutions.get(row.package as usize))
             .is_some_and(|res| res.tag == ResolutionTag::Symlink)
     }) {
-        let _ = crate::package_manager_real::directories::try_global_link_dir(manager);
+        let _ = crate::package_manager_real::directories::try_global_link_dir(&manager.options);
     }
     let manager: &PackageManager = manager;
     let dropped = &manager.summary.dropped_rows;
@@ -1966,7 +1948,7 @@ pub(crate) fn unlink_dropped_dependencies(manager: &mut PackageManager, before: 
                     || !dropped.iter().any(|row| {
                         row.owner == owner
                             && row.name.slice(old_buf) == entry.alias
-                            && links_package(manager, before, row.package, entry)
+                            && links_package(before, row.package, entry)
                     })
             },
             &mut plan,
@@ -2345,7 +2327,7 @@ fn importer_roots(manager: &PackageManager, keep: &dyn Fn(usize) -> bool) -> Vec
 fn wanted_packages(manager: &PackageManager, selection: Option<&Selection>) -> DynamicBitSet {
     let lockfile: &Lockfile = &manager.lockfile;
     let resolutions = lockfile.buffers.resolutions.as_slice();
-    let options = reachable::Options::install(manager);
+    let options = reachable::Options::install(&manager.options);
     let mut wanted = if manager.summary.pruned_workspaces.is_empty() {
         reachable::packages(lockfile, resolutions, options)
     } else {
@@ -2491,7 +2473,6 @@ fn direct_aliases(
 
 fn public_hoist_matches(manager: &PackageManager, alias: &[u8]) -> bool {
     manager
-        .options
         .public_hoist_pattern
         .as_ref()
         .is_some_and(|pattern| pattern.is_match(alias))
@@ -2782,7 +2763,7 @@ fn unlink_links(dir: &Dir, should_unlink: &dyn Fn(&Dir, &[u8], &[u8]) -> bool) -
 /// Removes the links in `node_modules/.bun/node_modules` that an earlier install created for names
 /// that `hoistPattern` no longer matches.
 pub(crate) fn unlink_unhoisted(manager: &PackageManager) {
-    let Some(pattern) = &manager.options.hoist_pattern else {
+    let Some(pattern) = &manager.hoist_pattern else {
         return;
     };
     if let Ok(hidden) = Dir::open(&join(STORE_DIR, b"node_modules")) {
@@ -3144,7 +3125,7 @@ fn hand_over_names(plan: &Plan, lost_bins: &[usize], layout: Layout, manager: &P
         // An entry's folder name depends on its peers, which depend on the options of the install
         // that created it, so this run's name for the entry may not exist on disk.
         if !is_dangling(&store_dir, &package) {
-            Installer::link_hidden_name(store, lockfile, entry_id, name, false);
+            SharedInstaller::link_hidden_name(store, lockfile, entry_id, name, false);
         }
     }
 }

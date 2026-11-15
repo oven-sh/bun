@@ -26,16 +26,6 @@ use bun_sys::{
     self, CloseOnDrop, Dir, Fd, FdDirExt as _, FdExt as _, File, dir_iterator as DirIterator,
 };
 
-/// Returns a raw projection, because `pack()` holds the resulting `&mut MapEntry` across other uses
-/// of `ctx.manager`.
-#[inline]
-fn pm_workspace_cache<'a>(
-    m: *mut PackageManager,
-) -> &'a mut WorkspacePackageJSONCache::WorkspacePackageJSONCache {
-    // SAFETY: `m` is the caller's live `&mut PackageManager`; `pack()` touches the cache only through here.
-    unsafe { &mut (*m).workspace_package_json_cache }
-}
-
 pub(crate) struct PackCommand;
 
 pub(crate) struct Context<'a> {
@@ -1516,12 +1506,21 @@ pub(crate) fn published_files(
 }
 
 /// Reads it through the manager's cache. Exits if it can't be read or parsed.
-pub(crate) fn package_json_entry<'a>(
+pub(crate) fn package_json_root(
     manager: &mut PackageManager,
     abs_package_json_path: &ZStr,
-) -> &'a mut WorkspacePackageJSONCache::MapEntry {
+) -> Expr {
     let log = manager.log();
-    match pm_workspace_cache(manager).get_with_path(
+    let cache = &mut manager.workspace_package_json_cache;
+    package_json_entry(cache, log, abs_package_json_path).root
+}
+
+fn package_json_entry<'a>(
+    cache: &'a mut WorkspacePackageJSONCache::WorkspacePackageJSONCache,
+    log: &bun_ast::Log,
+    abs_package_json_path: &ZStr,
+) -> &'a WorkspacePackageJSONCache::MapEntry {
+    match cache.get_with_path(
         log,
         abs_package_json_path.as_bytes(),
         WorkspacePackageJSONCache::GetJSONOptions {
@@ -1644,13 +1643,13 @@ pub(crate) fn pack(
 ) -> Result<Option<Publish::Context>, PackError> {
     let log_level = ctx.manager.options.log_level;
     let bump = cli_arena();
-    let mut json = package_json_entry(ctx.manager, abs_package_json_path);
+    let mut json = package_json_root(ctx.manager, abs_package_json_path);
 
-    let (mut package_name, mut package_version) = name_and_version(&json.root)?;
+    let (mut package_name, mut package_version) = name_and_version(&json)?;
     // The target from the command line and config files, before `publishConfig` is applied.
     let target_before = for_publish.then(|| ctx.manager.options.publish_target(package_name));
     if for_publish {
-        apply_publish_config(ctx.manager, &json.root, package_name)?;
+        apply_publish_config(ctx.manager, &json, package_name)?;
     }
 
     let mut this_transpiler: core::mem::MaybeUninit<bun_bundler::Transpiler<'static>> =
@@ -1702,7 +1701,7 @@ pub(crate) fn pack(
     let mut publish_script: Option<Box<[u8]>> = None;
     let mut postpublish_script: Option<Box<[u8]>> = None;
     if ctx.manager.options.do_.run_scripts()
-        && let Some(scripts) = json.root.get(b"scripts")
+        && let Some(scripts) = json.get(b"scripts")
         && matches!(scripts.data, ExprData::EObject(_))
     {
         let script = |name: &[u8]| scripts.get(name).and_then(|script| script.as_string(bump));
@@ -1726,12 +1725,12 @@ pub(crate) fn pack(
 
     // The scripts may have edited any package.json in the workspace, and the cache predates them.
     if ran_scripts {
-        pm_workspace_cache(ctx.manager).map.clear();
-        json = package_json_entry(ctx.manager, abs_package_json_path);
-        (package_name, package_version) = name_and_version(&json.root)?;
+        ctx.manager.workspace_package_json_cache.map.clear();
+        json = package_json_root(ctx.manager, abs_package_json_path);
+        (package_name, package_version) = name_and_version(&json)?;
         if let Some(target_before) = &target_before {
             ctx.manager.options.set_publish_target(target_before)?;
-            apply_publish_config(ctx.manager, &json.root, package_name)?;
+            apply_publish_config(ctx.manager, &json, package_name)?;
         }
     }
 
@@ -1742,16 +1741,12 @@ pub(crate) fn pack(
         Publish::PublishCommand::refuse_tag(ctx.manager, package_version);
     }
 
-    ctx.bundled_deps = get_bundled_deps(&json.root, "bundledDependencies")
-        .or_else(|| get_bundled_deps(&json.root, "bundleDependencies"))
+    ctx.bundled_deps = get_bundled_deps(&json, "bundledDependencies")
+        .or_else(|| get_bundled_deps(&json, "bundleDependencies"))
         .unwrap_or_default();
 
     let mut workspace_manifests =
-        needs_workspace_manifests(json.root).then(|| WorkspaceManifests::load(ctx.manager));
-    if workspace_manifests.is_some() {
-        // Loading added the other workspaces' package.json files to the cache `json` points into.
-        json = package_json_entry(ctx.manager, abs_package_json_path);
-    }
+        needs_workspace_manifests(json).then(|| WorkspaceManifests::load(ctx.manager));
 
     let root_dir: Dir = match Dir::cwd().open_dir(abs_workspace_path, ITERABLE) {
         Ok(d) => d,
@@ -1771,11 +1766,11 @@ pub(crate) fn pack(
         .flatten();
 
     let (mut pack_queue, bins) =
-        published_files(&root_dir, abs_workspace_path, &json.root, bump, log_level)?;
+        published_files(&root_dir, abs_workspace_path, &json, bump, log_level)?;
 
     let bundled_files = iterate_bundled_deps(
         &mut ctx.bundled_deps,
-        json.root,
+        json,
         &mut ctx.stats,
         ctx.manager,
         &mut workspace_manifests,
@@ -1784,7 +1779,9 @@ pub(crate) fn pack(
     )?;
 
     // Bundling a workspace can grow the cache, which moves its entries.
-    json = package_json_entry(ctx.manager, abs_package_json_path);
+    let log = ctx.manager.log();
+    let cache = &mut ctx.manager.workspace_package_json_cache;
+    let json = package_json_entry(cache, log, abs_package_json_path);
     // Edit a copy: the next workspace of `bun publish -r` still reads the cached tree.
     let root = json.root.deep_clone(bump);
     let mut root = root.map_err(|_| PackError::OutOfMemory)?;
@@ -2020,8 +2017,10 @@ pub(crate) fn pack(
     }
 
     let normalized_pkg_info: Box<[u8]> = if for_publish {
+        let cache = &mut ctx.manager.workspace_package_json_cache;
+        let json = package_json_entry(cache, log, abs_package_json_path);
         Publish::PublishCommand::normalized_package(
-            ctx.manager,
+            ctx.manager.options.scope_for_package_name(package_name),
             Publish::PackageFiles::Folder {
                 root: Fd::from_std_dir(&root_dir),
                 abs_path: abs_workspace_path,

@@ -201,8 +201,7 @@ pub enum PollTag {
     FilterRunHandle,
     MultiRunPipeReader,
     TestParallelWorker,
-    LifecycleScript,
-    InstallGit,
+    InstallSubprocess,
     SecurityScanReader,
 }
 

@@ -33,17 +33,24 @@ pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsRes
     let mut lockfile_ = Lockfile::default();
 
     let vm = global.bun_vm();
-    vm.transpiler.with_mut(|t| {
+    let load_result = vm.transpiler.with_mut(|t| {
         if t.resolver.env_loader.is_none() {
             t.resolver.env_loader = NonNull::new(t.env);
         }
+        t.resolver.get_package_manager().map(|manager| {
+            let manager = (manager as &mut dyn core::any::Any).downcast_mut();
+            lockfile_.load_or_migrate(dir.fd(), manager.expect("the only `AutoInstaller`"), &log)
+        })
     });
-
-    // as long as we aren't migration from `package-lock.json`, leaving this undefined is okay
-    // SAFETY: loading a lockfile runs no script, so nothing else reaches the manager meanwhile.
-    let manager = unsafe { &mut *vm.package_manager() };
-
-    let load_result: LoadResult = lockfile_.load_from_dir::<true>(dir.fd(), Some(manager), &log);
+    let load_result: LoadResult = match load_result {
+        Ok(load_result) => load_result,
+        Err(err) => {
+            return Err(global.throw(format_args!(
+                "failed to initialize the package manager: {}",
+                err.name(),
+            )));
+        }
+    };
 
     match load_result {
         LoadResult::Err(err) => {

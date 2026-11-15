@@ -173,15 +173,6 @@ impl<'a> Transpiler<'a> {
         unsafe { MacroContext::new(this.cast(), macro_load_states, macro_js_ctx) }
     }
 
-    /// Returns the resolver's auto-install package-manager handle. Errs when
-    /// the one-time init fails (e.g. unreadable top-level directory).
-    #[inline]
-    pub fn get_package_manager(
-        &mut self,
-    ) -> crate::Result<*mut dyn bun_resolver::install_types::AutoInstaller> {
-        self.resolver.get_package_manager().map_err(Into::into)
-    }
-
     fn _resolve_entry_point<'e>(
         &mut self,
         entry_point: &'e [u8],

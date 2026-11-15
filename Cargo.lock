@@ -485,7 +485,6 @@ dependencies = [
  "bun_core_macros",
  "bun_dispatch",
  "bun_hash",
- "bun_highway",
  "bun_opaque",
  "bun_output_tags",
  "bun_pod",
@@ -686,7 +685,6 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_glob",
- "bun_highway",
  "bun_lint",
  "bun_md",
  "bun_parsers",
@@ -726,7 +724,6 @@ dependencies = [
 name = "bun_hash"
 version = "0.0.0"
 dependencies = [
- "bun_highway",
  "bun_simd_kernels",
 ]
 
@@ -789,7 +786,6 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_errno",
- "bun_highway",
  "bun_http",
  "bun_http_types",
  "bun_io",
@@ -960,7 +956,6 @@ dependencies = [
  "bun_core",
  "bun_crash_handler",
  "bun_glob",
- "bun_highway",
  "bun_node_path",
  "bun_options_types",
  "bun_paths",
@@ -1339,7 +1334,6 @@ name = "bun_node_path"
 version = "0.0.0"
 dependencies = [
  "bun_core",
- "bun_highway",
  "bun_paths",
  "bun_simd_kernels",
  "bun_sys",
@@ -1393,7 +1387,6 @@ dependencies = [
  "bun_ast",
  "bun_collections",
  "bun_core",
- "bun_highway",
  "bun_simd",
  "bun_simd_kernels",
  "bun_simdutf_sys",
@@ -1478,7 +1471,6 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_core",
- "bun_highway",
  "bun_simd_kernels",
  "bun_zlib",
  "thiserror",
@@ -1632,7 +1624,6 @@ dependencies = [
  "bun_format_conformance",
  "bun_glob",
  "bun_hash",
- "bun_highway",
  "bun_histogram",
  "bun_http",
  "bun_http_jsc",
@@ -1792,7 +1783,6 @@ dependencies = [
  "bun_alloc",
  "bun_ast",
  "bun_core",
- "bun_highway",
  "bun_sema",
  "bun_sema_standalone",
  "bun_threading",
@@ -1929,7 +1919,6 @@ dependencies = [
  "bun_base64",
  "bun_collections",
  "bun_core",
- "bun_highway",
  "bun_io",
  "bun_opaque",
  "bun_parsers",
@@ -2060,7 +2049,6 @@ dependencies = [
  "bun_dotenv",
  "bun_errno",
  "bun_exe_format",
- "bun_highway",
  "bun_http",
  "bun_opaque",
  "bun_options_types",

@@ -24,6 +24,7 @@
 
 #include "ActiveDOMObject.h"
 #include "BunCPUProfiler.h"
+#include "NodeV8.h"
 #if OS(WINDOWS)
 #include <uv.h>
 #else
@@ -812,7 +813,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapStatisticsBod
         auto& wvm = workerCtx.vm();
         double heapSize = static_cast<double>(wvm.heap.size());
         double capacity = static_cast<double>(wvm.heap.capacity());
-        double extra = static_cast<double>(wvm.heap.extraMemorySize());
+        double extra = static_cast<double>(Bun::externalMemorySize(wvm.heap));
         ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy), heapSize, capacity, extra](ScriptExecutionContext& parentCtx) {
             resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& pvm, JSGlobalObject* go) -> JSValue {
                 JSObject* o = constructEmptyObject(go);

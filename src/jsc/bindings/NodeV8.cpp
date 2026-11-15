@@ -32,6 +32,11 @@ JSC_DEFINE_HOST_FUNCTION(functionIsStringOneByteRepresentation, (JSGlobalObject 
     return JSValue::encode(jsBoolean(asString(argument)->is8Bit()));
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionExternalMemorySize, (JSGlobalObject * globalObject, CallFrame*))
+{
+    return JSValue::encode(jsNumber(Bun::externalMemorySize(JSC::getVM(globalObject).heap)));
+}
+
 static GCProfilerObserver& ensureGCProfilerObserver(JSGlobalObject* globalObject)
 {
     auto* global = defaultGlobalObject(globalObject);
@@ -99,6 +104,7 @@ JSC::JSValue createNodeV8Binding(JSC::JSGlobalObject* globalObject)
     auto& vm = JSC::getVM(globalObject);
     JSC::JSObject* object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "isStringOneByteRepresentation"_s), 1, functionIsStringOneByteRepresentation, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
+    object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "externalMemorySize"_s), 0, functionExternalMemorySize, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "startGCProfiler"_s), 0, functionStartGCProfiler, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "stopGCProfiler"_s), 1, functionStopGCProfiler, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "discardGCProfiler"_s), 1, functionDiscardGCProfiler, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);

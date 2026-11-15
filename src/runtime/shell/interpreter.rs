@@ -57,7 +57,7 @@ use crate::shell::states::script::Script;
 use crate::shell::states::stmt::Stmt;
 use crate::shell::states::subshell::Subshell;
 use crate::shell::util::Slots;
-use crate::shell::yield_::{Action, Deferred, DeferredStack, Yield};
+use crate::shell::yield_::{Deferred, DeferredStack, ReentrantAction, Yield};
 use crate::shell::{EnvStr, ShellErr, ast};
 
 bun_core::declare_scope!(SHELL, visible);
@@ -1057,14 +1057,14 @@ impl ShellInterpreter {
         let mut rejection = None;
         while let Some(action) = (self.with_interp(|interp| y.run(interp, &mut stack))).flatten() {
             let (node, result) = match action {
-                Action::Throw(node, err) => (node, Err(self.throw(*err))),
-                Action::StartBuiltin(cmd, jsbuf, redirect) => (
+                ReentrantAction::Throw(node, err) => (node, Err(self.throw(*err))),
+                ReentrantAction::StartBuiltinWithJsBuf(cmd, jsbuf, redirect) => (
                     cmd,
                     Builtin::start_with_jsbuf_redirection(self, cmd, jsbuf, redirect),
                 ),
-                Action::Spawn(cmd) => (cmd, Cmd::spawn(self, cmd)),
-                Action::TickMiniLoop(cmd) => (cmd, Ok(Yes::tick_mini_loop(self, cmd))),
-                Action::Finish(exit_code) => {
+                ReentrantAction::Spawn(cmd) => (cmd, Cmd::spawn(self, cmd)),
+                ReentrantAction::TickMiniLoop(cmd) => (cmd, Ok(Yes::tick_mini_loop(self, cmd))),
+                ReentrantAction::Finish(exit_code) => {
                     self.finish(exit_code);
                     break;
                 }
@@ -1228,7 +1228,7 @@ impl Interpreter<'_> {
             self.io_writers.count(),
             if self.flags.quiet() { 0 } else { 2 }
         );
-        Yield::Action(Action::Finish(exit_code))
+        Yield::Action(ReentrantAction::Finish(exit_code))
     }
 
     fn take_buffered(&mut self, kind: IoKind) -> Vec<u8> {

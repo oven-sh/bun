@@ -1,7 +1,9 @@
 import { spawn } from "bun";
 import { dlopen } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isLinux, isWindows, libcPathForDlopen, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isLinux, isWindows, libcPathForDlopen, shellExe, tempDir } from "harness";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { getPriority } from "node:os";
 import path from "path";
 
 // The receiver rejects a JSON line that's longer than the UTF-8 encoding of a max-length string can be.
@@ -570,21 +572,63 @@ it("child with unusable NODE_CHANNEL_FD tears down IPC without crashing", async 
 });
 
 describe("every ipc call, then onDisconnect, then exited and onExit", () => {
-  async function callsOf(env: { LEAVE: string; MESSAGES: number; BUSY: boolean; CHILDREN: number }) {
+  // The waiter thread is Linux's fallback without pidfd: it hands the exit to the loop as a task, ahead of the channel.
+  const routes = isLinux ? (["pidfd", "waiter thread"] as const) : (["default"] as const);
+  type Route = (typeof routes)[number];
+  // The flag is only read together with BUN_GARBAGE_COLLECTOR_LEVEL, which bunEnv sets.
+  const waiterThreadEnv = { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" };
+
+  // For a fixture on the waiter thread's route: returns once the thread has handed the exit of each child to the
+  // loop. It posts each exit before it waits for the next process, so `next` is ended and awaited too.
+  const blockUntilExitIsPosted = `
+    function until(condition) {
+      const deadline = Date.now() + 30_000;
+      while (!condition()) {
+        if (Date.now() > deadline) {
+          console.error("30 seconds have passed without " + condition);
+          process.exit(1);
+        }
+        Bun.sleepSync(1);
+      }
+    }
+    function blockUntilExitIsPosted(next, ...children) {
+      const isReaped = ({ pid }) => {
+        try {
+          return !process.kill(pid, 0);
+        } catch {
+          return true;
+        }
+      };
+      until(() => children.every(isReaped));
+      next.kill("SIGKILL");
+      until(() => isReaped(next));
+    }`;
+
+  async function callsOf(env: {
+    LEAVE: string;
+    MESSAGES: number;
+    BUSY: boolean;
+    CHILDREN: number;
+    ROUTE: Route;
+    ASYNC?: boolean;
+  }) {
     using dir = tempDir("spawn-callback-order", {
       "parent.js": `
         const { readFileSync } = require("node:fs");
-        const { LEAVE, MESSAGES, BUSY, CHILDREN } = JSON.parse(process.env.ORDER);
+        const { LEAVE, MESSAGES, BUSY, CHILDREN, ROUTE, ASYNC } = JSON.parse(process.env.ORDER);
+        ${blockUntilExitIsPosted}
         for (let i = 0; i < CHILDREN; i++) {
           const calls = [];
           let left = 3;
           const done = () => --left || console.log(calls.join(", "));
+          const next = BUSY && ROUTE === "waiter thread" && Bun.spawn({ cmd: ["cat"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
           const child = Bun.spawn({
             cmd: [process.execPath, "child.js"],
             stdio: ["ignore", "inherit", "inherit"],
             ipc(message) {
-              if (message !== "ready") return calls.push("ipc");
+              if (message !== "ready") return ASYNC ? Promise.resolve().then(() => calls.push("ipc")) : calls.push("ipc");
               child.send({ leave: LEAVE, messages: MESSAGES });
+              if (next) return blockUntilExitIsPosted(next, child);
               // A zombie with one thread left: the channel has ended and the exit has been reported.
               while (BUSY && !/^\\d+ \\(.*\\) Z (?:-?\\d+ ){16}1 /s.test(readFileSync("/proc/" + child.pid + "/stat", "utf8")));
             },
@@ -608,7 +652,7 @@ describe("every ipc call, then onDisconnect, then exited and onExit", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "parent.js"],
       cwd: String(dir),
-      env: { ...bunEnv, ORDER: JSON.stringify(env) },
+      env: { ...(env.ROUTE === "waiter thread" ? waiterThreadEnv : bunEnv), ORDER: JSON.stringify(env) },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -616,24 +660,238 @@ describe("every ipc call, then onDisconnect, then exited and onExit", () => {
     return { stdout: stdout.trim().split("\n"), stderr, exitCode };
   }
 
+  // An exit that arrives as a task resolves `exited` without running its reactions before onExit.
+  const order = (route: Route, messages: number, exit: string | number) =>
+    "ipc, ".repeat(messages) +
+    (route === "waiter thread" ? `onDisconnect, onExit ${exit}, exited` : `onDisconnect, exited, onExit ${exit}`);
+
   const leaves = ["process.disconnect()", "process.exit()", "SIGKILL"];
-  it.skipIf(!isLinux).concurrent.each(leaves.flatMap(leave => [[leave, 2] as const, [leave, 0] as const]))(
-    "when a busy parent finds them all waiting: %s after %d unread messages",
-    async (LEAVE, MESSAGES) => {
-      expect(await callsOf({ LEAVE, MESSAGES, BUSY: true, CHILDREN: 1 })).toEqual({
-        stdout: [`${"ipc, ".repeat(MESSAGES)}onDisconnect, exited, onExit ${LEAVE === "SIGKILL" ? LEAVE : 0}`],
+  describe.each(routes)("%s", ROUTE => {
+    it.skipIf(!isLinux).concurrent.each(leaves.flatMap(leave => [[leave, 2] as const, [leave, 0] as const]))(
+      "when a busy parent finds them all waiting: %s after %d unread messages",
+      async (LEAVE, MESSAGES) => {
+        expect(await callsOf({ LEAVE, MESSAGES, BUSY: true, CHILDREN: 1, ROUTE })).toEqual({
+          stdout: [order(ROUTE, MESSAGES, LEAVE === "SIGKILL" ? LEAVE : 0)],
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    // What a handler queued for after the call, here the record of the message, is done before the next call too.
+    it.skipIf(!isLinux).concurrent(
+      "when a busy parent finds them all waiting and its ipc handler is async",
+      async () => {
+        const cell = { LEAVE: "process.exit()", MESSAGES: 2, BUSY: true, CHILDREN: 1, ROUTE, ASYNC: true };
+        expect(await callsOf(cell)).toEqual({ stdout: [order(ROUTE, 2, 0)], stderr: "", exitCode: 0 });
+      },
+    );
+
+    it.concurrent("when children of an idle parent exit right after their last message", async () => {
+      expect(await callsOf({ LEAVE: "process.exit()", MESSAGES: 1, BUSY: false, CHILDREN: 8, ROUTE })).toEqual({
+        stdout: Array(8).fill(order(ROUTE, 1, 0)),
         stderr: "",
         exitCode: 0,
       });
-    },
-  );
-
-  it.concurrent("when children of an idle parent exit right after their last message", async () => {
-    expect(await callsOf({ LEAVE: "process.exit()", MESSAGES: 1, BUSY: false, CHILDREN: 8 })).toEqual({
-      stdout: Array(8).fill("ipc, onDisconnect, exited, onExit 0"),
-      stderr: "",
-      exitCode: 0,
     });
+  });
+
+  // A zombie, or gone. macOS finds no zombie for getpriority().
+  function isDead(pid: number) {
+    try {
+      if (isLinux) return readFileSync(`/proc/${pid}/stat`, "latin1").includes(") Z ");
+      getPriority(pid);
+      return false;
+    } catch {
+      return true;
+    }
+  }
+  function blockUntil(what: string, condition: () => boolean) {
+    const deadline = Date.now() + 30_000;
+    while (!condition()) {
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+      Bun.sleepSync(1);
+    }
+  }
+
+  // A process that inherited the child's end of the channel writes to it after the child is gone, while this process
+  // stays off its loop. The exit is then ahead of the channel in the loop's list. What is in the channel is read first
+  // all the same. A channel that ends with it is reported before the exit. One that the other process still holds is
+  // closed after the exit.
+  it.concurrent.skipIf(isWindows).each([
+    ["has exited", false, ["ipc written after the exit", "onDisconnect", "onExit"]],
+    ["still holds the channel", true, ["ipc written after the exit", "onExit", "onDisconnect"]],
+  ])("when another process wrote to the channel after the child exited, and %s", async (_, holds, expected) => {
+    using dir = tempDir("ipc-written-after-exit", {});
+    const [exitNow, writeNow, written, closeNow] = ["exit-now", "write-now", "written", "close-now"].map(name =>
+      path.join(String(dir), name),
+    );
+    const calls: string[] = [];
+    const disconnected = Promise.withResolvers<void>();
+    const exited = Promise.withResolvers<void>();
+    await using child = spawn({
+      // fd 3 is the shell's end of the channel. The background subshell inherits it and outlives the shell. When told
+      // to, it writes one JSON message to the channel, and then it exits. Both give up after 30 seconds.
+      cmd: [
+        shellExe(),
+        "-c",
+        `(i=0; while [ ! -e "$2" ] && [ $i -lt 3000 ]; do sleep 0.01; i=$((i+1)); done
+          echo '"written after the exit"' >&3
+          : > "$3"
+          while [ ! -e "$4" ] && [ $i -lt 3000 ]; do sleep 0.01; i=$((i+1)); done) >/dev/null 2>&1 &
+        echo $!
+        i=0; while [ ! -e "$1" ] && [ $i -lt 3000 ]; do sleep 0.01; i=$((i+1)); done`,
+        "sh",
+        exitNow,
+        writeNow,
+        written,
+        closeNow,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "inherit"],
+      serialization: "json",
+      ipc: message => void calls.push(`ipc ${message}`),
+      onDisconnect() {
+        calls.push("onDisconnect");
+        disconnected.resolve();
+      },
+      onExit() {
+        calls.push("onExit");
+        exited.resolve();
+      },
+    });
+    const writer = parseInt(new TextDecoder().decode((await child.stdout.getReader().read()).value), 10);
+    expect(writer).toBeGreaterThan(0);
+    // A few turns of the loop with the channel idle. Without them the channel is still queued from its first
+    // writable event, ahead of the exit.
+    for (let i = 0; i < 3; i++) await new Promise<void>(resolve => setImmediate(resolve));
+    writeFileSync(exitNow, "");
+    blockUntil("the child to exit", () => isDead(child.pid));
+    if (!holds) writeFileSync(closeNow, "");
+    writeFileSync(writeNow, "");
+    blockUntil("the other process to write", () => existsSync(written));
+    if (!holds) blockUntil("the other process to exit", () => isDead(writer));
+    await Promise.all([disconnected.promise, exited.promise]);
+    if (holds) process.kill(writer, "SIGKILL");
+    expect(calls).toEqual(expected);
+  });
+
+  // An `ipc` handler can turn the event loop before it returns: Bun.build() waits for an async plugin setup() that
+  // way. When the message is read at the exit, that turn finds the end of the channel and closes the socket that the
+  // read still holds. A thread that reaps the child puts the exit ahead of the channel.
+  it.concurrent.skipIf(!isLinux)("when the handler of the last message turns the loop", async () => {
+    using dir = tempDir("ipc-turn-at-exit", {
+      "parent.js": `
+        ${blockUntilExitIsPosted}
+        const calls = [];
+        let left = 3;
+        const done = () => --left || console.log(JSON.stringify(calls));
+        const next = Bun.spawn({ cmd: ["cat"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+        Bun.spawn({
+          cmd: [process.execPath, "child.js"],
+          stdio: ["ignore", "inherit", "inherit"],
+          ipc(message, child) {
+            calls.push("ipc " + message);
+            if (message === "first") {
+              child.send("go on");
+              return blockUntilExitIsPosted(next, child);
+            }
+            Bun.build({
+              entrypoints: ["./none.js"],
+              plugins: [{ name: "turn the loop", setup: () => Bun.sleep(1) }],
+            }).catch(() => {});
+            calls.push("turned the loop");
+            done();
+          },
+          onDisconnect: () => (calls.push("onDisconnect"), done()),
+          onExit: () => (calls.push("onExit"), done()),
+        });`,
+      "child.js": `
+        process.once("message", () => process.send("last", () => process.exit(0)));
+        process.send("first");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      cwd: String(dir),
+      env: waiterThreadEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr.split("\n").filter(line => line && !line.startsWith("WARNING: ASAN interferes"))).toEqual([]);
+    // The turn can report the end of the channel before the handler returns. The exit waits for the handler.
+    const calls: string[] = JSON.parse(stdout);
+    const turned = calls.indexOf("turned the loop");
+    expect({
+      calls: calls.filter(call => call !== "turned the loop"),
+      turnedBeforeTheExit: turned > calls.indexOf("ipc last") && turned < calls.indexOf("onExit"),
+    }).toEqual({
+      calls: ["ipc first", "ipc last", "onDisconnect", "onExit"],
+      turnedBeforeTheExit: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Two children exit with a last message unread, and the thread posts both exits. onExit for the first disconnects
+  // the second. Nothing is read for a channel that the parent has asked to close: the message of the second child is
+  // dropped, as it is when the parent disconnects a child that is running.
+  it.concurrent.skipIf(!isLinux)("when onExit for one child disconnects the next, whose exit is posted", async () => {
+    using dir = tempDir("ipc-disconnect-at-exit", {
+      "parent.js": `
+        ${blockUntilExitIsPosted}
+        const calls = [];
+        const next = Bun.spawn({ cmd: ["cat"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+        const children = [];
+        let ready = 0;
+        let left = 4;
+        let first;
+        const name = i => (i === first ? "first" : "second");
+        const done = () => --left || console.log(JSON.stringify(calls.map(([i, call]) => name(i) + ": " + call)));
+        for (let i = 0; i < 2; i++) {
+          children.push(
+            Bun.spawn({
+              cmd: [process.execPath, "child.js"],
+              stdio: ["ignore", "inherit", "inherit"],
+              ipc(message) {
+                if (message !== "ready") return calls.push([i, "ipc " + message]);
+                if (++ready < 2) return;
+                for (const child of children) child.send("go on");
+                blockUntilExitIsPosted(next, ...children);
+              },
+              onDisconnect() {
+                calls.push([i, "onDisconnect"]);
+                done();
+              },
+              onExit() {
+                first ??= i;
+                calls.push([i, "onExit"]);
+                if (i === first) children[1 - i].disconnect();
+                done();
+              },
+            }),
+          );
+        }`,
+      "child.js": `
+        process.once("message", () => process.send("last", () => process.exit(0)));
+        process.send("ready");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      cwd: String(dir),
+      env: waiterThreadEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr.split("\n").filter(line => line && !line.startsWith("WARNING: ASAN interferes"))).toEqual([]);
+    expect(JSON.parse(stdout)).toEqual([
+      "first: ipc last",
+      "first: onDisconnect",
+      "first: onExit",
+      "second: onDisconnect",
+      "second: onExit",
+    ]);
+    expect(exitCode).toBe(0);
   });
 });
 

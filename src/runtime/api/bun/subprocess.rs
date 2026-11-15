@@ -191,6 +191,8 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
     pub struct Flags: u8 {
         const IS_SYNC                      = 1 << 0;
+        /// The exit is being reported inside `Bun.spawn()`, whose caller has no Subprocess yet.
+        const EXIT_IN_SPAWN                = 1 << 1;
         const HAS_STDIN_DESTRUCTOR_CALLED  = 1 << 2;
         const FINALIZED                    = 1 << 3;
         const IS_STDIN_A_READABLE_STREAM   = 1 << 5;
@@ -881,9 +883,14 @@ impl Subprocess<'_> {
         // The exit is reported to the script that spawned the child.
         let _context = jsc_vm.enter_context(self.context);
         if !is_sync {
-            // A channel that ended before this exit was seen reports its end first.
             if let Some(ipc_data) = self.ipc() {
-                ipc_data.run_pending();
+                if self.flags.get().contains(Flags::EXIT_IN_SPAWN) {
+                    // Nothing can receive the child's messages yet, and the caller of `Bun.spawn()` may be a socket's
+                    // data handler. `close_after_exit()` reads them.
+                    ipc_data.run_pending();
+                } else {
+                    ipc_data.read_before_exit();
+                }
             }
             if !this_jsvalue.is_empty() {
                 if let Some(promise) = js::exited_promise_take_cached(this_jsvalue, global_this) {

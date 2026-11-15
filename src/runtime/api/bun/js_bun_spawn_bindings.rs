@@ -314,7 +314,10 @@ struct ReportUnwatchedExit(bun_ptr::BackRef<SubprocessT<'static>>);
 
 impl Drop for ReportUnwatchedExit {
     fn drop(&mut self) {
-        let process = self.0.process.this_ptr();
+        // SAFETY: the Subprocess is the live heap allocation. The ref holds it until the flag is cleared.
+        let subprocess = unsafe { bun_ptr::RefPtr::init_ref(self.0.as_ctx_ptr()) };
+        let process = subprocess.process.this_ptr();
+        subprocess.update_flags(|f| f.insert(Subprocess::Flags::EXIT_IN_SPAWN));
         if let Some(status) = process.status() {
             // process has already exited, we called wait4(), but we did not call onProcessExit()
             Process::on_exit(process, status.clone(), &bun_core::ffi::zeroed::<Rusage>());
@@ -324,6 +327,8 @@ impl Drop for ReportUnwatchedExit {
             // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
             Process::wait(process, false);
         }
+        // A child that could be watched after all is reported by the loop.
+        subprocess.update_flags(|f| f.remove(Subprocess::Flags::EXIT_IN_SPAWN));
     }
 }
 

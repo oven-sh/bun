@@ -2097,6 +2097,99 @@ if (cluster.isPrimary) {
   30_000,
 );
 
+// Where Linux has no pidfd_open a thread reaps the workers, and the exit of a worker reaches the loop ahead of what
+// the worker wrote to its channel. The primary took a connection that the worker had accepted for one that it had
+// not, and handed it to another worker as well.
+test.skipIf(!isLinux)(
+  "a connection that a worker accepted before it died is not handed to another worker",
+  async () => {
+    using dir = tempDir("cluster-accepted-before-exit", {
+      "main.js": `
+const cluster = require("node:cluster");
+const fs = require("node:fs");
+const net = require("node:net");
+function until(condition) {
+  const deadline = Date.now() + 30_000;
+  while (!condition()) {
+    if (Date.now() > deadline) {
+      console.error("30 seconds have passed without " + condition);
+      process.exit(1);
+    }
+    Bun.sleepSync(1);
+  }
+}
+if (cluster.isPrimary) {
+  const isReaped = ({ pid }) => {
+    try {
+      return !process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+  };
+  const next = Bun.spawn({ cmd: ["cat"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+  // One shared round-robin handle on a pre-picked port. The first worker registers first, so the connection is
+  // handed to it.
+  const pick = net.createServer();
+  pick.listen(0, "127.0.0.1", () => {
+    const port = pick.address().port;
+    pick.close(() => {
+      const first = cluster.fork({ PORT: port });
+      first.once("listening", () => {
+        const second = cluster.fork({ PORT: port });
+        second.once("listening", () => {
+          first.send("stay off your loop until the primary is busy");
+          let answers = "";
+          const client = net.connect(port, "127.0.0.1", () => {
+            // A few turns of the loop, in which the primary accepts the connection and hands it to the first worker.
+            let turns = 3;
+            setImmediate(function turn() {
+              if (--turns) return setImmediate(turn);
+              second.send("answer me");
+            });
+          });
+          second.once("message", () => {
+            fs.writeFileSync("primary-is-busy", "");
+            // The first worker takes the connection, answers it and exits. The thread posts each exit before it
+            // waits for the next process.
+            until(() => isReaped(first.process));
+            next.kill("SIGKILL");
+            until(() => isReaped(next));
+          });
+          client.setEncoding("latin1");
+          client.on("data", data => (answers += data));
+          client.on("close", () => {
+            console.log(JSON.stringify(answers));
+            second.kill();
+          });
+        });
+      });
+    });
+  });
+} else {
+  const id = cluster.worker.id;
+  process.on("message", () => (id === 1 ? until(() => fs.existsSync("primary-is-busy")) : process.send("here")));
+  // Each worker answers with its id. The first one then dies.
+  net
+    .createServer(socket => socket.write(String(id), () => (id === 1 ? process.exit(1) : socket.end())))
+    .listen(+process.env.PORT, "127.0.0.1");
+}
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      // The flag is only read together with BUN_GARBAGE_COLLECTOR_LEVEL, which bunEnv sets.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ answers: stdout.trim(), stderr }).toEqual({ answers: '"1"', stderr: expect.any(String) });
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
 test("round-robin newconn reaches the worker's internalMessage listener via the handle slot", async () => {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L33-L49
   using dir = tempDir("cluster-handle-slot", {

@@ -8292,6 +8292,8 @@ declare module "bun" {
        *   `disconnect()` first, this fires before {@link onExit}; if the
        *   process exits without an explicit disconnect, either may happen
        *   first.
+       * - To act once the process has exited and the channel has closed,
+       *   wait for both this callback and {@link Subprocess.exited}.
        * - Only runs when {@link ipc} is enabled and runs at most once per
        *   subprocess.
        * - If the child becomes a zombie (exited but not yet reaped), the IPC is

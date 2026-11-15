@@ -101,7 +101,8 @@ try {
 // the registration that reports a child's exit. FAIL_EPOLL_CTL_SKIP=n lets the
 // first n of them through. FAIL_EPOLL_CTL=pidfd-and-writer-add fails those and
 // what no mode fails, which is nearer to what running out of watches does.
-// FAIL_EPOLL_CTL=first-pidfd-add fails only the first.
+// FAIL_EPOLL_CTL=first-pidfd-add fails only the first, or the one after the
+// FAIL_EPOLL_CTL_SKIP=n that it lets through.
 //
 // FAIL_EPOLL_CTL=output-reader-add fails the readable EPOLL_CTL_ADD of every
 // socket and pipe: what a child's stdout and stderr are read from.
@@ -158,7 +159,11 @@ static int should_fail(long op, int fd, struct epoll_event *event) {
     const char *skip = getenv("FAIL_EPOLL_CTL_SKIP");
     return pidfd_adds++ >= (skip ? atoi(skip) : 0);
   }
-  if (strcmp(mode, "first-pidfd-add") == 0) return op == EPOLL_CTL_ADD && is_pidfd(fd) && pidfd_adds++ == 0;
+  if (strcmp(mode, "first-pidfd-add") == 0) {
+    if (op != EPOLL_CTL_ADD || !is_pidfd(fd)) return 0;
+    const char *skip = getenv("FAIL_EPOLL_CTL_SKIP");
+    return pidfd_adds++ == (skip ? atoi(skip) : 0);
+  }
   if (strcmp(mode, "output-reader-add") == 0) {
     struct stat info;
     if (op != EPOLL_CTL_ADD || !(event->events & EPOLLIN) || fstat(fd, &info) != 0) return 0;
@@ -293,11 +298,47 @@ function writeToTerminal(writes) {
   return seen;
 }
 
+// The child exits ahead of the end of its channel in the loop's list: a process that it started holds the channel
+// until the child is gone. The child is reachable only from this call.
+async function exitAheadOfTheChannel() {
+  const calls = [];
+  let returned = false;
+  const gone = pid => {
+    try {
+      return readFileSync("/proc/" + pid + "/stat", "utf8").includes(") Z ");
+    } catch {
+      return true;
+    }
+  };
+  const { promise: disconnected, resolve } = Promise.withResolvers();
+  const child = Bun.spawn({
+    cmd: ["sh", "-c", "sleep 1000 >/dev/null 2>&1 & echo $!; wait"],
+    stdio: ["ignore", "pipe", "inherit"],
+    ipc() {},
+    onDisconnect: () => void (calls.push(["onDisconnect", returned]), resolve()),
+    onExit: () => void calls.push(["onExit", returned]),
+  });
+  returned = true;
+  const stdout = child.stdout.getReader();
+  const holder = parseInt(new TextDecoder().decode((await stdout.read()).value), 10);
+  // A few turns of the loop with the channel idle. Without them the channel is still queued from its first
+  // writable event, ahead of the exit.
+  for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve));
+  child.kill("SIGKILL");
+  while (!gone(child.pid));
+  process.kill(holder, "SIGKILL");
+  while (!gone(holder));
+  await disconnected;
+  await stdout.read();
+  return calls;
+}
+
 let error = null;
 let write;
 let sync;
 let onExit;
 let shell;
+let ipc;
 try {
   switch (kind) {
     case "stdin-pipe":
@@ -338,6 +379,34 @@ try {
           onExit++;
         },
       });
+      break;
+    // Each of these children has left two messages in its channel and is gone before the call gets to watching it.
+    case "ipc-gone-unwatched": {
+      ipc = [];
+      let returned = false;
+      const { promise: disconnected, resolve } = Promise.withResolvers();
+      Bun.spawn({
+        cmd: [process.execPath, "ipc-child.js"],
+        stdio: ["ignore", "ignore", "inherit"],
+        ipc: message => void ipc.push([message, returned]),
+        onDisconnect: () => void (ipc.push(["onDisconnect", returned]), resolve()),
+        onExit: () => void ipc.push(["onExit", returned]),
+      });
+      returned = true;
+      await disconnected;
+      break;
+    }
+    case "fork-gone-unwatched": {
+      ipc = [];
+      const { promise: disconnected, resolve } = Promise.withResolvers();
+      const child = require("node:child_process").fork("ipc-child.js", { stdio: ["ignore", "ignore", "inherit", "ipc"] });
+      child.on("message", message => void ipc.push(message));
+      child.on("disconnect", () => void (ipc.push("disconnect"), resolve()));
+      await disconnected;
+      break;
+    }
+    case "ipc-watched-at-the-second-try":
+      ipc = await exitAheadOfTheChannel();
       break;
     case "shell-unwatchable":
       shell = (await Bun.$\`sleep 1000\`.nothrow().quiet()).exitCode;
@@ -394,14 +463,18 @@ while ((openFds() > fdBaseline || wrappers() > wrapperBaseline) && performance.n
   Bun.gc(true);
   await Bun.sleep(5);
 }
-console.log(JSON.stringify({ error, write, sync, onExit, shell, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
+console.log(JSON.stringify({ error, write, sync, onExit, shell, ipc, leakedFds: openFds() - fdBaseline, leakedWrappers: wrappers() - wrapperBaseline }));
 `;
 
 let dir: ReturnType<typeof tempDir> | undefined;
 
 beforeAll(async () => {
   if (!isLinux || !cc) return;
-  dir = tempDir("poll-start-error", { "shim.c": SHIM_C, "fixture.js": FIXTURE });
+  dir = tempDir("poll-start-error", {
+    "shim.c": SHIM_C,
+    "fixture.js": FIXTURE,
+    "ipc-child.js": `process.send("first"); process.send("last");`,
+  });
   await using ccProc = Bun.spawn({
     cmd: [cc, "-shared", "-fPIC", "-o", join(String(dir), "shim.so"), join(String(dir), "shim.c"), "-ldl"],
     env: bunEnv,
@@ -541,6 +614,62 @@ describe.skipIf(!isLinux || !cc)(
         stderr: "",
         exitCode: 0,
       });
+    });
+  },
+);
+
+// Bun.spawn() finds the exit of such a child itself and reports it before it returns. Its caller cannot receive
+// messages yet: fork() has returned no ChildProcess to listen on. They follow the return, and the channel's end after.
+describe.skipIf(!isLinux || !cc)("a child that is gone before it is watched has its IPC messages delivered", () => {
+  // Without a pidfd, Bun.spawn() waits for each child, the fixture's own included, and reports its exit itself.
+  const env = { FAIL_EPOLL_CTL: "pty-writer-mod", PIDFD_OPEN_ESRCH: "1" };
+
+  test.concurrent("to Bun.spawn's ipc, after the call has returned", async () => {
+    expect(await runFixture("ipc-gone-unwatched", env)).toEqual({
+      report: {
+        error: null,
+        ipc: [
+          ["onExit", false],
+          ["first", true],
+          ["last", true],
+          ["onDisconnect", true],
+        ],
+        leakedFds: 0,
+        leakedWrappers: 0,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("to the listeners that follow fork()", async () => {
+    expect(await runFixture("fork-gone-unwatched", env)).toEqual({
+      report: { error: null, ipc: ["first", "last", "disconnect"], leakedFds: 0, leakedWrappers: 0 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// Bun.spawn() tried to report the exit of this child itself, found it running, and could watch it after all. Its exit
+// is then reported like any other: after what its channel holds, and after the end of a channel that has ended.
+test.skipIf(!isLinux || !cc)(
+  "a child that is watched at the second try has its channel read before its exit",
+  async () => {
+    // The one let through is the fixture's own child, which it takes its baseline after.
+    const env = { FAIL_EPOLL_CTL: "first-pidfd-add", FAIL_EPOLL_CTL_SKIP: "1" };
+    expect(await runFixture("ipc-watched-at-the-second-try", env)).toEqual({
+      report: {
+        error: null,
+        ipc: [
+          ["onDisconnect", true],
+          ["onExit", true],
+        ],
+        leakedFds: 0,
+        leakedWrappers: 0,
+      },
+      stderr: "",
+      exitCode: 0,
     });
   },
 );

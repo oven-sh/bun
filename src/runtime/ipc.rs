@@ -1248,6 +1248,32 @@ impl SendQueue {
         self.schedule_deferred();
     }
 
+    /// The peer's process has exited, and the owner reports that next. What it left in the channel is read first, so
+    /// its last messages, and the end of a channel that ends with them, are reported before the exit. Node does the
+    /// same up to libuv 1.51. Since libuv 1.52 (node 24.16) it finds an end behind unread data one loop turn later,
+    /// after 'exit': https://github.com/libuv/libuv/commit/2e2114ed8957a0124bc629c61d034c387b8ce42a
+    ///
+    /// A close that is already pending is not read for, as in `close_after_exit()`: the owner called `disconnect()`,
+    /// and node drops what is unread then too. Runs from the loop's exit report, never under a socket's data handler:
+    /// the read fills the loop's receive buffer. Not on Windows, where the pipe's input only arrives through the loop.
+    pub(crate) fn read_before_exit(&self) {
+        #[cfg(not(windows))]
+        if !self.pending_close.get()
+            && let SocketUnion::Open(socket) = *self.socket.get()
+        {
+            // The read runs `ipc` callbacks, and no queued task holds a ref yet.
+            // SAFETY: the root of the live allocation that holds `self`.
+            let _alive = unsafe { RefPtr::init_ref(self.root_ptr()) };
+            let global = self.get_global_this();
+            socket.read_now();
+            // In a task (a thread reaped the child) no checkpoint follows the handlers that the read ran. What they
+            // queued runs here, ahead of the end of the channel and the exit, as it does after the loop's own read.
+            let _ = global.bun_vm().event_loop().drain_microtasks();
+            return self.run_pending();
+        }
+        self.run_pending();
+    }
+
     /// The peer's process has exited. Its last messages can still be in the socket.
     pub(crate) fn close_after_exit(&self) {
         #[cfg(not(windows))]

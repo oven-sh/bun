@@ -69,6 +69,8 @@ pub mod fs {
     use bun_alloc::BSSStringList;
     use bun_core::ZStr;
 
+    use crate::fs_full::filename_store;
+
     // ── DirnameStore / FilenameStore ─────────────────────────────────────
     // The resolver body interns paths via `dirname_store.append_slice` /
     // `append_parts`.
@@ -79,7 +81,6 @@ pub mod fs {
     fn dirname_store() -> &'static BSSStringList {
         DIRNAME_STORE.get_or_init(|| BSSStringList::new(4096 * 129))
     }
-    use crate::fs_full::filename_store;
 
     /// Port of `FileSystem.DirnameStore`.
     pub struct DirnameStore(());
@@ -1633,8 +1634,7 @@ pub mod dir_entry_accessor {
                 let Some((key, entry)) = value.next() else {
                     return Ok(None);
                 };
-                // This iterator holds a
-                // live `.data` iterator across calls, which `entries_mutex`
+                // This iterator holds a live `.data` iterator across calls, which `entries_mutex`
                 // cannot cover; it is only sound on the single-threaded CLI
                 // glob walk (`bun run --filter`), before any concurrent
                 // resolver exists to rewrite the map.

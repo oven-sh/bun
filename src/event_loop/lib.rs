@@ -6,7 +6,7 @@ pub mod DeferredTaskQueue;
 pub mod EventLoopTimer;
 
 // ────────────────────────────────────────────────────────────────────────────
-// AnyEventLoop / SpawnSyncEventLoop / MiniEventLoop.
+// AnyEventLoop / MiniEventLoop.
 // `EventLoopHandle::set_as_parent_of` wires the parent. The Windows-only `uv_loop` projection
 // lives on `EventLoopHandle::uv_loop` (`#[cfg(windows)]`); the POSIX build is
 // gate-free.
@@ -19,8 +19,6 @@ pub mod MiniEventLoop;
 // Downstream callers use `bun_event_loop::AnyEventLoop` as a type / for
 // associated fns (`::init()`, `::js_current()`, `::as_handle()`), never as a
 // module path, so the snake_case module name is internal.
-#[path = "SpawnSyncEventLoop.rs"]
-pub mod SpawnSyncEventLoop;
 #[path = "AnyEventLoop.rs"]
 pub mod any_event_loop;
 
@@ -55,8 +53,6 @@ bun_dispatch::link_interface! {
         fn auto_tick_active();
         fn global_object() -> *mut ();
         fn bun_vm() -> *mut ();
-        fn stdout() -> *mut ();
-        fn stderr() -> *mut ();
         fn enter();
         fn exit();
         fn enqueue_task(task: Task);

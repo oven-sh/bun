@@ -1025,19 +1025,8 @@ fn create_overlapped_pipe_pair(
         windows::GENERIC_READ
     };
 
-    // SAFETY: name_w is NUL-terminated; all other params are valid per Win32.
-    let client = unsafe {
-        HandleOrInvalid::from_raw_handle(k32::CreateFileW(
-            name_w.as_ptr(),
-            client_access,
-            0,
-            core::ptr::null_mut(),
-            windows::OPEN_EXISTING,
-            0,
-            core::ptr::null_mut(),
-        ))
-    };
-    let client = OwnedHandle::try_from(client).map_err(|_| CreatePtyError::OpenPtyFailed)?;
+    let client = windows::CreateFileW(name_w, client_access, 0, windows::OPEN_EXISTING, 0)
+        .map_err(|_| CreatePtyError::OpenPtyFailed)?;
 
     let server = Fd::from_system(server.into_raw_handle())
         .make_lib_uv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)

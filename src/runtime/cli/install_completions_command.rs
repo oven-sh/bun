@@ -87,7 +87,7 @@ impl InstallCompletionsCommand {
 
         // Symlinks aren't always allowed, so `bunx.exe` is a hard link to `bun.exe` that's
         // recreated every time.
-        let image_path: &[u16] = windows::exe_path_w();
+        let image_path = windows::exe_path_w();
         let last_sep =
             strings::last_index_of_char_t(image_path, u16::from(b'\\')).expect("unreachable");
         let image_dirname = &image_path[..last_sep + 1];
@@ -118,7 +118,7 @@ impl InstallCompletionsCommand {
         let bunx_path = WStr::from_slice_with_nul(&bunx_path_with_z[..]);
         let _ = windows::DeleteFileBun(bunx_path.as_slice(), windows::DeleteFileOptions::default());
 
-        if windows::CreateHardLinkW(bunx_path.as_ptr(), image_path.as_ptr(), None) == 0 {
+        if windows::CreateHardLinkW(bunx_path, image_path).is_err() {
             // if hard link fails, use a cmd script
             const SCRIPT: &[u8] = b"@%~dp0bun.exe x %*\n";
 

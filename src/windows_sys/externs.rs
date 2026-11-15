@@ -912,7 +912,7 @@ pub mod kernel32 {
         /// No pointer preconditions: the handler is an `Option<fn>` (null-safe)
         /// and `Add` is a by-value BOOL.
         pub safe fn SetConsoleCtrlHandler(
-            HandlerRoutine: Option<unsafe extern "system" fn(DWORD) -> BOOL>,
+            HandlerRoutine: Option<extern "system" fn(DWORD) -> BOOL>,
             Add: BOOL,
         ) -> BOOL;
     }
@@ -973,13 +973,10 @@ pub mod kernel32 {
     }
     // Re-export externs declared at the crate root so `kernel32::Foo` resolves.
     pub use super::{
-        CreateFileW, GetCurrentDirectoryW, GetFileAttributesW, GetSystemDirectoryW, GetSystemInfo,
-        SYSTEM_INFO, SetCurrentDirectoryW, SetFilePointerEx,
-    };
-    pub use super::{
         GetConsoleCP, GetConsoleMode, GetConsoleOutputCP, SetConsoleCP, SetConsoleMode,
         SetConsoleOutputCP,
     };
+    pub use super::{GetSystemInfo, SYSTEM_INFO, SetCurrentDirectoryW, SetFilePointerEx};
 }
 pub use kernel32::{GetCurrentProcess, GetExitCodeProcess, GetLastError};
 
@@ -1004,6 +1001,7 @@ impl NTSTATUS {
     pub const OBJECT_PATH_NOT_FOUND: NTSTATUS = NTSTATUS(0xC000_003A);
     pub const OBJECT_NAME_NOT_FOUND: NTSTATUS = NTSTATUS(0xC000_0034);
     pub const OBJECT_NAME_INVALID: NTSTATUS = NTSTATUS(0xC000_0033);
+    pub const NAME_TOO_LONG: NTSTATUS = NTSTATUS(0xC000_0106);
     pub const NOT_A_DIRECTORY: NTSTATUS = NTSTATUS(0xC000_0103);
     pub const RETRY: NTSTATUS = NTSTATUS(0xC000_022D);
     pub const DIRECTORY_NOT_EMPTY: NTSTATUS = NTSTATUS(0xC000_0101);

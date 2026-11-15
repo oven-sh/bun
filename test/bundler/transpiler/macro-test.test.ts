@@ -1134,7 +1134,7 @@ describe("errors in a file that calls a macro", () => {
 
 describe("log level in a macro", () => {
   // Runs `body`, in which macros send `count` requests, and returns the requests that were printed as verbose.
-  async function verboseRequests(files: Record<string, string>, count: number, body: string, env = {}) {
+  async function verboseRequests(files: Record<string, string>, count: number, body: string) {
     using dir = tempDir("macro-log-level", {
       ...files,
       "macro.ts": `
@@ -1158,7 +1158,8 @@ describe("log level in a macro", () => {
     // Not `run`: `bun run` does not apply the logLevel of bunfig.toml.
     const { stdout, stderr, exitCode } = await bunRun(path.join(String(dir), "index.ts"), {
       UV_THREADPOOL_SIZE: "2",
-      ...env,
+      // A Worker does not free its tables of macros, nor a pool thread the `Response`s in its macro VM.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
     });
     return {
       verbose: stderr.split("\n").filter(line => line.includes("/from-macro")).length,
@@ -1189,14 +1190,12 @@ describe("log level in a macro", () => {
     "entry.ts": calls("request"),
     "worker.ts": `require("./entry.ts");`,
   };
-  // A Worker does not free its tables of macros.
-  const noLeakCheck = { ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") };
   test.concurrent.each([
-    ["not by the logLevel of a Bun.Transpiler", {}, 4, transforms("request"), 0, {}],
-    ["by bunfig.toml on the main thread", debug, 1, `require("./entry.ts");`, 1, {}],
-    ["by bunfig.toml on a pool thread", debug, 1, `await import("./entry.ts");`, 1, {}],
-    ["not by bunfig.toml in a Worker", debug, 1, `new Worker("./worker.ts");`, 0, noLeakCheck],
-  ])("fetch is made verbose %s", async (_, files, count, body, verbose, env) => {
-    expect(await verboseRequests(files, count, body, env)).toEqual({ verbose, stdout: "done", exitCode: 0 });
+    ["not by the logLevel of a Bun.Transpiler", {}, 4, transforms("request"), 0],
+    ["by bunfig.toml on the main thread", debug, 1, `require("./entry.ts");`, 1],
+    ["by bunfig.toml on a pool thread", debug, 1, `await import("./entry.ts");`, 1],
+    ["not by bunfig.toml in a Worker", debug, 1, `new Worker("./worker.ts");`, 0],
+  ])("fetch is made verbose %s", async (_, files, count, body, verbose) => {
+    expect(await verboseRequests(files, count, body)).toEqual({ verbose, stdout: "done", exitCode: 0 });
   });
 });

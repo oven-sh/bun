@@ -232,6 +232,17 @@ impl ExtractTarball {
         (name, basename)
     }
 
+    pub(crate) fn warn_about_skipped_header(&self, log: &mut bun_ast::Log) {
+        log.add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "Skipped entries with an invalid header in the tarball for \"{}\"",
+                bun_fmt::for_terminal(bstr::BStr::new(self.name_and_basename().0)),
+            ),
+        );
+    }
+
     fn extract(
         &self,
         log: &mut bun_ast::Log,
@@ -431,11 +442,19 @@ impl ExtractTarball {
                     }
                 }
                 _ => {
+                    struct SkippedHeader(bool);
+                    impl ArchiveAppender for SkippedHeader {
+                        fn on_skipped_header(&mut self) {
+                            self.0 = true;
+                        }
+                    }
+                    let mut skipped_header = SkippedHeader(false);
+
                     let _ = Archiver::extract_to_dir(
                         tar_input,
                         extract_destination.fd(),
                         None,
-                        &mut (),
+                        &mut skipped_header,
                         ExtractOptions {
                             // packages usually have root directory `package/`, and scoped packages usually have root `<scopename>/`
                             // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L442
@@ -446,6 +465,10 @@ impl ExtractTarball {
                             ..Default::default()
                         },
                     )?;
+
+                    if skipped_header.0 {
+                        self.warn_about_skipped_header(log);
+                    }
                 }
             }
 

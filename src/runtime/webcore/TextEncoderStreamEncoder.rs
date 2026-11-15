@@ -2,7 +2,7 @@ use core::cell::Cell;
 
 use bun_alloc::AllocError;
 use bun_core::strings;
-use bun_jsc::{JSGlobalObject, JSUint8Array, JSValue, JsResult};
+use bun_jsc::{ArrayBuffer, JSGlobalObject, JSUint8Array, JSValue, JsResult};
 use bun_simdutf_sys::simdutf;
 
 use crate::webcore::sink::ReadableSinkController;
@@ -196,7 +196,7 @@ impl TextEncoderStreamEncoder {
         if self.pending_lead_surrogate.get().is_none() {
             JSUint8Array::create_empty(global)
         } else {
-            JSUint8Array::from_bytes_copy(global, &[0xef, 0xbf, 0xbd])
+            ArrayBuffer::create_uint8_array(global, &[0xef, 0xbf, 0xbd])
         }
     }
 }

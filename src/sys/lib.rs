@@ -18,6 +18,7 @@ pub extern crate bun_core as bun_str;
 pub extern crate bun_libuv_sys;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor};
 use core::mem::MaybeUninit;
+use std::io::IoSlice;
 #[cfg(windows)]
 use std::os::windows::io::IntoRawHandle as _;
 
@@ -737,12 +738,8 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
     let fd = fd.as_fd();
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        let dirfd = if fd.is_valid() {
-            fd.native()
-        } else {
-            libc::AT_FDCWD
-        };
-        linux_syscall::fstatat(dirfd, path, libc::AT_SYMLINK_NOFOLLOW)
+        let dir = if fd.is_valid() { fd } else { Fd::cwd() };
+        linux_syscall::fstatat(dir, path, libc::AT_SYMLINK_NOFOLLOW)
             .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()))
     }
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
@@ -2485,18 +2482,18 @@ mod posix_impl {
     }
     /// `fcntl(F_DUPFD_CLOEXEC, min)`: the new descriptor is the lowest free one >= `min`.
     pub fn dup_at_least(fd: Fd, min: i32) -> Maybe<Fd> {
-        fcntl(fd, libc::F_DUPFD_CLOEXEC, min as isize).map(|rc| Fd::from_native(rc as i32))
+        fcntl(fd, FcntlCmd::DUPFD_CLOEXEC, min as isize).map(|rc| Fd::from_native(rc as i32))
     }
     /// A descriptor created while fd 0, 1 or 2 is closed gets that number, where [`FdExt::close`] skips it and a spawned child inherits it as stdio. Returns its duplicate at 3 or higher (same `FD_CLOEXEC` state) with `fd` closed, or `fd` itself when it is above stdio already or no higher number is free.
     pub(crate) fn move_above_stdio(fd: Fd) -> Fd {
         if fd.stdio_tag().is_none() {
             return fd;
         }
-        let moved = fcntl(fd, libc::F_GETFD, 0).and_then(|flags| {
+        let moved = fcntl(fd, FcntlCmd::GETFD, 0).and_then(|flags| {
             let dup = if flags & libc::FD_CLOEXEC as isize != 0 {
-                libc::F_DUPFD_CLOEXEC
+                FcntlCmd::DUPFD_CLOEXEC
             } else {
-                libc::F_DUPFD
+                FcntlCmd::DUPFD
             };
             fcntl(fd, dup, 3)
         });
@@ -2866,23 +2863,19 @@ mod posix_impl {
     }
     pub fn fstatat(fd: impl AsFd, path: &ZStr) -> Maybe<Stat> {
         let fd = fd.as_fd();
-        let dirfd = if fd.is_valid() {
-            fd.native()
-        } else {
-            libc::AT_FDCWD
-        };
+        let dir = if fd.is_valid() { fd } else { Fd::cwd() };
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            return super::linux_syscall::fstatat(dirfd, path, 0)
+            return super::linux_syscall::fstatat(dir, path, 0)
                 .map_err(|e| Error::from_code_int(e, Tag::fstatat).with_path(path.as_bytes()));
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let mut st = core::mem::MaybeUninit::<Stat>::uninit();
             check_p!(
-                // SAFETY: `dirfd` is a live fd (or AT_FDCWD); `path` is
+                // SAFETY: `dir` is a live fd (or AT_FDCWD); `path` is
                 // NUL-terminated; `st` is a valid out-param.
-                unsafe { libc::fstatat(dirfd, path.as_ptr(), st.as_mut_ptr(), 0) },
+                unsafe { libc::fstatat(dir.native(), path.as_ptr(), st.as_mut_ptr(), 0) },
                 Tag::fstatat,
                 path
             );
@@ -3078,12 +3071,22 @@ mod posix_impl {
 
     // ── fcntl/dup/pipe/io group ──
     pub type FcntlInt = isize;
-    pub(crate) fn fcntl(fd: Fd, cmd: i32, arg: isize) -> Maybe<FcntlInt> {
+    /// `fcntl(2)` commands (`F_*`) that take an integer argument or none.
+    #[derive(Clone, Copy)]
+    #[repr(i32)]
+    pub(crate) enum FcntlCmd {
+        DUPFD = libc::F_DUPFD,
+        DUPFD_CLOEXEC = libc::F_DUPFD_CLOEXEC,
+        GETFD = libc::F_GETFD,
+        SETFD = libc::F_SETFD,
+        GETFL = libc::F_GETFL,
+        SETFL = libc::F_SETFL,
+    }
+    pub(crate) fn fcntl(fd: Fd, cmd: FcntlCmd, arg: isize) -> Maybe<FcntlInt> {
         // Attach the fd to the error.
         loop {
-            // SAFETY: `fd` is a live descriptor; `arg` is passed by value and
-            // interpreted per `cmd` (no pointer commands flow through here).
-            let rc = unsafe { libc::fcntl(fd.native(), cmd, arg) };
+            // SAFETY: no `FcntlCmd` takes a pointer.
+            let rc = unsafe { libc::fcntl(fd.native(), cmd as i32, arg) };
             if rc < 0 {
                 let e = last_errno();
                 if e == libc::EINTR {
@@ -3164,8 +3167,8 @@ mod posix_impl {
     pub(crate) const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | MSG_NBIO | libc::MSG_NOSIGNAL;
     /// `fcntl(F_GETFD)` then OR in `FD_CLOEXEC`.
     pub fn set_close_on_exec(fd: Fd) -> Maybe<()> {
-        let fl = fcntl(fd, libc::F_GETFD, 0)?;
-        fcntl(fd, libc::F_SETFD, fl | libc::FD_CLOEXEC as isize)?;
+        let fl = fcntl(fd, FcntlCmd::GETFD, 0)?;
+        fcntl(fd, FcntlCmd::SETFD, fl | libc::FD_CLOEXEC as isize)?;
         Ok(())
     }
 
@@ -3283,17 +3286,7 @@ mod posix_impl {
                 state: *mut core::ffi::c_void,
                 flags: u32,
             ) -> i32;
-            // safe: by-value `c_int` fds + `u32` flags; bad fd → `EBADF`/
-            // `EOPNOTSUPP`, never UB. `state` is `Option<NonNull<c_void>>`
-            // (FFI-safe via the null-pointer niche → ABI-identical to a
-            // nullable `copyfile_state_t`); Bun never allocates a state, so
-            // every caller passes `None`.
-            safe fn fcopyfile(
-                from: i32,
-                to: i32,
-                state: Option<core::ptr::NonNull<core::ffi::c_void>>,
-                flags: u32,
-            ) -> i32;
+            fn fcopyfile(from: i32, to: i32, state: *mut core::ffi::c_void, flags: u32) -> i32;
         }
         pub fn clonefile_(from: &ZStr, to: &ZStr) -> Maybe<()> {
             check_p!(
@@ -3332,14 +3325,18 @@ mod posix_impl {
             );
             Ok(())
         }
+        /// Not retried on `EINTR`.
+        pub(crate) fn fcopyfile_once(from: Fd, to: Fd, flags: u32) -> i32 {
+            // SAFETY: a null `copyfile_state_t` is documented as "use defaults".
+            unsafe { fcopyfile(from.native(), to.native(), core::ptr::null_mut(), flags) }
+        }
         pub fn fcopyfile_(from: Fd, to: Fd, flags: u32) -> Maybe<()> {
-            check!(
-                fcopyfile(from.native(), to.native(), None, flags),
-                Tag::fcopyfile
-            );
+            check!(fcopyfile_once(from, to, flags), Tag::fcopyfile);
             Ok(())
         }
     }
+    #[cfg(target_os = "macos")]
+    pub(crate) use darwin_copy::fcopyfile_once;
     #[cfg(target_os = "macos")]
     pub use darwin_copy::{
         clonefile_ as clonefile, clonefileat_ as clonefileat, copyfile_ as copyfile,
@@ -3347,7 +3344,9 @@ mod posix_impl {
     };
 
     // ── mmap/munmap ──
-    pub fn mmap(
+    /// # Safety
+    /// With `MAP_FIXED`, the caller owns the pages that are replaced, and nothing refers to them.
+    pub unsafe fn mmap(
         addr: *mut u8,
         len: usize,
         prot: i32,
@@ -3355,17 +3354,17 @@ mod posix_impl {
         fd: Fd,
         off: i64,
     ) -> Maybe<*mut u8> {
-        // SAFETY: `addr` is a hint (or null) that the kernel validates; `fd`/
-        // `off`/`len` are validated by the kernel and never dereferenced here.
+        // SAFETY: caller contract. Without `MAP_FIXED`, `addr` is only a hint.
         let p = unsafe { libc::mmap(addr.cast(), len, prot, flags, fd.native(), off) };
         if p == libc::MAP_FAILED {
             return Err(err_with(Tag::mmap));
         }
         Ok(p.cast())
     }
-    pub fn munmap(ptr: *mut u8, len: usize) -> Maybe<()> {
-        // SAFETY: caller passes a `(ptr, len)` pair previously returned by
-        // `mmap`; `munmap` only inspects the mapping, never Rust-owned memory.
+    /// # Safety
+    /// The caller owns the pages, and nothing refers to them.
+    pub(crate) unsafe fn munmap(ptr: *mut u8, len: usize) -> Maybe<()> {
+        // SAFETY: caller contract.
         check!(unsafe { libc::munmap(ptr.cast(), len) }, Tag::munmap);
         Ok(())
     }
@@ -3373,13 +3372,13 @@ mod posix_impl {
     /// `bun.sys.mmapFile` — open `path` RDWR, fstat for size, mmap [offset, offset+len).
     /// Returns `(map, delta)` where `map` is the full page-aligned mapping and
     /// `delta = offset % page_size` is the byte offset into `map` at which the
-    /// requested `offset` begins. Caller is responsible for `munmap(map)`.
+    /// requested `offset` begins.
     pub fn mmap_file(
         path: &ZStr,
         flags: libc::c_int,
         wanted_size: Option<usize>,
         offset: usize,
-    ) -> Maybe<(&'static mut [u8], usize)> {
+    ) -> Maybe<(Mmap, usize)> {
         // The mapping outlives the descriptor.
         let file = CloseOnDrop::new(open(path, O::RDWR, 0)?);
 
@@ -3403,23 +3402,9 @@ mod posix_impl {
         // returns EINVAL instead of mapping the leading delta bytes.
         let map_len = if size == 0 { 0 } else { size + delta };
 
-        match mmap(
-            core::ptr::null_mut(),
-            map_len,
-            libc::PROT_READ | libc::PROT_WRITE,
-            flags,
-            file.fd(),
-            aligned_offset as i64,
-        ) {
-            Ok(ptr) => {
-                // SAFETY: mmap returned a valid mapping of `map_len` bytes.
-                Ok((
-                    unsafe { core::slice::from_raw_parts_mut(ptr, map_len) },
-                    delta,
-                ))
-            }
-            Err(err) => Err(err),
-        }
+        let prot = libc::PROT_READ | libc::PROT_WRITE;
+        let map = Mmap::new(map_len, prot, flags, file.fd(), aligned_offset as i64)?;
+        Ok((map, delta))
     }
 
     // ── memfd (Linux only) ──
@@ -4437,7 +4422,9 @@ mod windows_impl {
     pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         send(fd, buf, 0)
     }
-    pub fn mmap(
+    /// # Safety
+    /// As on POSIX.
+    pub(crate) unsafe fn mmap(
         _addr: *mut u8,
         _len: usize,
         _prot: i32,
@@ -4447,7 +4434,9 @@ mod windows_impl {
     ) -> Maybe<*mut u8> {
         Err(Error::new(E::ENOTSUP, Tag::mmap))
     }
-    pub fn munmap(_ptr: *mut u8, _len: usize) -> Maybe<()> {
+    /// # Safety
+    /// As on POSIX.
+    pub(crate) unsafe fn munmap(_ptr: *mut u8, _len: usize) -> Maybe<()> {
         Err(Error::new(E::ENOTSUP, Tag::munmap))
     }
     pub type FcntlInt = isize;
@@ -4506,52 +4495,16 @@ fn read_fill_vec(
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// `bun.PlatformIOVecConst` / `bun.platformIOVecConstCreate` — POSIX
-// `iovec_const` (= `struct iovec` with the writev contract that `base` is
-// not written through). On Windows this aliases `uv_buf_t`;
-// that arm lives in `windows_impl` below.
-// Layout matches `libc::iovec` (`{ *void, usize }`) so a `&[PlatformIoVecConst]`
-// can be passed straight to `pwritev(2)`.
-// ──────────────────────────────────────────────────────────────────────────
-#[cfg(unix)]
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct PlatformIoVecConst {
-    pub(crate) base: *const u8,
-    pub len: usize,
-}
-// SAFETY: `{ *const u8, usize }` — `(null, 0)` is a valid empty iovec (S021).
-#[cfg(unix)]
-unsafe impl bun_core::ffi::Zeroable for PlatformIoVecConst {}
-#[cfg(unix)]
-const _: () = assert!(
-    core::mem::size_of::<PlatformIoVecConst>() == core::mem::size_of::<libc::iovec>()
-        && core::mem::align_of::<PlatformIoVecConst>() == core::mem::align_of::<libc::iovec>()
-);
-
-#[cfg(unix)]
-#[inline]
-pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
-    PlatformIoVecConst {
-        base: buf.as_ptr(),
-        len: buf.len(),
-    }
-}
-
 /// `bun.sys.pwritev` — gather-write at `offset`. Returns bytes written
 /// (may be less than the sum of `vecs` lengths on a short write).
-pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize> {
+pub fn pwritev(fd: Fd, vecs: &[IoSlice<'_>], offset: i64) -> Maybe<usize> {
     #[cfg(unix)]
     {
-        // SAFETY: `PlatformIoVecConst` is layout-compatible with `libc::iovec`
-        // (asserted above); `pwritev(2)` only reads through `iov_base`.
         // Darwin uses `pwritev$NOCANCEL` (avoid cancellation point).
         #[cfg(target_os = "macos")]
         loop {
             // macOS: `pwritev$NOCANCEL`, retried on EINTR.
-            // SAFETY: `fd` is a live descriptor; `vecs` gives an exact
-            // (ptr, len) pair of layout-compatible iovecs (asserted above).
+            // SAFETY: `IoSlice` is ABI-compatible with `iovec`; `pwritev(2)` only reads through `iov_base`.
             let rc = unsafe {
                 nocancel::pwritev(
                     fd.native(),
@@ -4571,14 +4524,12 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            // SAFETY: `PlatformIoVecConst` is layout-identical to `libc::iovec`.
-            return unsafe {
-                linux_syscall::pwritev(fd, vecs.as_ptr().cast::<libc::iovec>(), vecs.len(), offset)
-            }
-            .map_err(|e| Error::from_code_int(e, Tag::pwritev));
+            return linux_syscall::pwritev(fd, vecs, offset)
+                .map_err(|e| Error::from_code_int(e, Tag::pwritev));
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
         loop {
+            // SAFETY: see above.
             let rc = unsafe {
                 libc::pwritev(
                     fd.native(),
@@ -4599,8 +4550,10 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
     }
     #[cfg(windows)]
     {
-        // `PlatformIoVecConst` is layout-identical to `uv_buf_t` on Windows
-        // (asserted below), so the slice forwards as-is.
+        // SAFETY: `IoSlice` has the layout of `uv_buf_t`, as `PlatformIoVecConst` has (asserted below).
+        let vecs = unsafe {
+            core::slice::from_raw_parts(vecs.as_ptr().cast::<PlatformIoVecConst>(), vecs.len())
+        };
         sys_uv::pwritev(fd, vecs, offset)
     }
 }
@@ -4608,7 +4561,7 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
 // ──────────────────────────────────────────────────────────────────────────
 // `bun.PlatformIOVec` — mutable iovec (`{ *void, usize }` on POSIX,
 // `uv_buf_t` on Windows). Layout-compatible with `libc::iovec` so a
-// `&[PlatformIoVec]` can be passed straight to `readv(2)`/`writev(2)`.
+// `&[PlatformIoVec]` can be passed straight to `readv(2)`.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(unix)]
 pub type PlatformIoVec = libc::iovec;
@@ -4617,7 +4570,13 @@ pub type PlatformIoVec = bun_libuv_sys::uv_buf_t;
 // Both casings of `PlatformIOVec` / `PlatformIOVecConst` are provided so
 // existing call sites (`sys_uv.rs`) compile without churn.
 pub use PlatformIoVec as PlatformIOVec;
+#[cfg(windows)]
 pub use PlatformIoVecConst as PlatformIOVecConst;
+// `IoSlice` is ABI-compatible with `iovec` and with `WSABUF`, as `uv_buf_t` is (uv/win.h).
+const _: () = assert!(
+    core::mem::size_of::<PlatformIoVec>() == core::mem::size_of::<IoSlice<'_>>()
+        && core::mem::align_of::<PlatformIoVec>() == core::mem::align_of::<IoSlice<'_>>()
+);
 
 #[inline]
 pub fn platform_iovec_create(buf: &mut [u8]) -> PlatformIoVec {
@@ -4661,9 +4620,6 @@ pub struct PlatformIoVecConst {
     pub len: bun_libuv_sys::ULONG,
     pub(crate) base: *const u8,
 }
-// SAFETY: `{ ULONG, *const u8 }` — `(0, null)` is a valid empty `uv_buf_t` (S021).
-#[cfg(windows)]
-unsafe impl bun_core::ffi::Zeroable for PlatformIoVecConst {}
 #[cfg(windows)]
 const _: () = assert!(
     core::mem::size_of::<PlatformIoVecConst>() == core::mem::size_of::<bun_libuv_sys::uv_buf_t>()
@@ -4682,13 +4638,17 @@ pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
 /// `bun.sys.writev` — gather-write. Retries on EINTR
 /// (macOS uses `writev$NOCANCEL`).
 #[cfg(unix)]
-pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
+pub fn writev(fd: Fd, vecs: &[IoSlice<'_>]) -> Maybe<usize> {
     #[cfg(target_os = "macos")]
     loop {
-        // SAFETY: `PlatformIoVec` is `libc::iovec`; writev(2) only reads
-        // the descriptor table. `writev$NOCANCEL`, retried on EINTR.
-        let rc =
-            unsafe { nocancel::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
+        // SAFETY: see `pwritev`. `writev$NOCANCEL`, retried on EINTR.
+        let rc = unsafe {
+            nocancel::writev(
+                fd.native(),
+                vecs.as_ptr().cast::<libc::iovec>(),
+                vecs.len() as core::ffi::c_int,
+            )
+        };
         if rc < 0 {
             let e = last_errno();
             if e == libc::EINTR {
@@ -4700,15 +4660,19 @@ pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // SAFETY: `PlatformIoVec` is `libc::iovec`.
-        return unsafe { linux_syscall::writev(fd, vecs.as_ptr(), vecs.len()) }
+        return linux_syscall::writev(fd, vecs)
             .map_err(|e| Error::from_code_int(e, Tag::writev).with_fd(fd));
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
     loop {
-        // SAFETY: see above.
-        let rc =
-            unsafe { libc::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int) };
+        // SAFETY: see `pwritev`.
+        let rc = unsafe {
+            libc::writev(
+                fd.native(),
+                vecs.as_ptr().cast::<libc::iovec>(),
+                vecs.len() as core::ffi::c_int,
+            )
+        };
         if rc < 0 {
             let e = last_errno();
             if e == libc::EINTR {
@@ -4722,15 +4686,18 @@ pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
 
 /// `bun.sys.readv` — scatter-read. Retries on EINTR
 /// (macOS uses `readv$NOCANCEL`).
+///
+/// # Safety
+/// Each of `vecs` is valid for writes of its length.
 #[cfg(unix)]
-pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
+pub unsafe fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     #[cfg(debug_assertions)]
     if vecs.is_empty() {
         bun_core::debug_warn!("readv() called with 0 length buffer");
     }
     #[cfg(target_os = "macos")]
     loop {
-        // SAFETY: vecs.ptr is `*const iovec`; the kernel writes through
+        // SAFETY: caller contract; the kernel writes through
         // each `iov_base`, never the array itself. `readv$NOCANCEL`,
         // retried on EINTR.
         let rc =
@@ -4746,7 +4713,7 @@ pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // SAFETY: `PlatformIoVec` is `libc::iovec`.
+        // SAFETY: caller contract.
         return unsafe { linux_syscall::readv(fd, vecs.as_ptr(), vecs.len()) }
             .map_err(|e| Error::from_code_int(e, Tag::readv).with_fd(fd));
     }
@@ -4767,8 +4734,11 @@ pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
 
 /// `bun.sys.preadv` — scatter-read at `position`. Retries on EINTR
 /// (macOS uses `preadv$NOCANCEL`).
+///
+/// # Safety
+/// As for [`readv`].
 #[cfg(unix)]
-pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
+pub unsafe fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     #[cfg(debug_assertions)]
     if vecs.is_empty() {
         bun_core::debug_warn!("preadv() called with 0 length buffer");
@@ -4795,7 +4765,7 @@ pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // SAFETY: `PlatformIoVec` is `libc::iovec`.
+        // SAFETY: caller contract.
         return unsafe { linux_syscall::preadv(fd, vecs.as_ptr(), vecs.len(), position) }
             .map_err(|e| Error::from_code_int(e, Tag::preadv).with_fd(fd));
     }
@@ -5133,7 +5103,7 @@ pub mod c {
         pub fscale: core::ffi::c_long,
     }
     #[cfg(target_os = "macos")]
-    bun_core::impl_zeroable!(struct_loadavg);
+    bun_core::impl_any_bit_pattern!(struct_loadavg);
 
     // ── <mach/mach_init.h> / <mach-o/dyld.h> — declared directly because the
     // `libc` crate has deprecated these in favour of the `mach2` crate. We
@@ -6005,19 +5975,10 @@ impl DynLib {
             None => Err(bun_errno::SystemErrno::ENOENT),
         }
     }
-    /// `dlsym` typed lookup.
-    pub fn lookup<T>(&self, name: &ZStr) -> Option<T> {
-        const { assert!(core::mem::size_of::<T>() == core::mem::size_of::<*mut c_void>()) };
-        let p = dlsym_impl(Some(self.handle), name)?;
-        // SAFETY: irreducible — `dlsym` yields an untyped symbol address as
-        // `*mut c_void`; the caller asserts `T` is a pointer-sized fn pointer
-        // (or `*mut c_void`) whose ABI matches the resolved symbol. fn pointers
-        // are not `Pod` (not zeroable), so no safe cast exists.
-        // `transmute_copy` is used over `transmute` because `T` is generic and
-        // its size cannot be checked at the definition site; the `const` assert
-        // above enforces `size_of::<T>() == size_of::<*mut c_void>()` at
-        // monomorphisation.
-        Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&p) })
+    /// `dlsym(handle, name)`.
+    pub fn lookup(&self, name: &ZStr) -> Option<*mut c_void> {
+        // SAFETY: `self.handle` is open until `close` consumes `self`.
+        unsafe { dlsym_impl(Some(self.handle), name) }
     }
     pub fn close(self) {
         // SAFETY: `self.handle` was returned by `dlopen` in `open()` and has
@@ -6083,23 +6044,28 @@ pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
     }
 }
 /// `dlsym(handle, name)`.
-pub fn dlsym_impl(handle: Option<*mut c_void>, name: &ZStr) -> Option<*mut c_void> {
+///
+/// # Safety
+/// `handle` is `None`, `RTLD_DEFAULT`, or an open handle from [`dlopen`].
+pub unsafe fn dlsym_impl(handle: Option<*mut c_void>, name: &ZStr) -> Option<*mut c_void> {
     #[cfg(unix)]
     {
         let h = handle.unwrap_or(core::ptr::null_mut());
-        // SAFETY: name is NUL-terminated; dlsym accepts NULL handle as RTLD_DEFAULT.
+        // SAFETY: caller contract; name is NUL-terminated.
         let p = unsafe { libc::dlsym(h, name.as_ptr()) };
         if p.is_null() { None } else { Some(p) }
     }
     #[cfg(windows)]
     {
-        // The Windows arm calls `GetProcAddressA` (which widens
-        // `name` to UTF-16 and forwards to kernel32 `GetProcAddress`).
-        windows::GetProcAddressA(handle, name)
+        // SAFETY: caller contract.
+        unsafe { windows::GetProcAddressA(handle, name) }
     }
 }
 /// `bun.c.dlsymWithHandle` — once-cached typed lookup; one expansion per
 /// `(Type, name, handle_getter)` triple.
+///
+/// # Safety
+/// As for [`dlsym_impl`], the handle stays open, and `$T` is the type of the symbol's address.
 #[macro_export]
 macro_rules! dlsym_with_handle {
     ($T:ty, $name:literal, $handle:expr) => {{
@@ -6119,17 +6085,13 @@ macro_rules! dlsym_with_handle {
                 ::core::mem::size_of::<$T>() == ::core::mem::size_of::<*mut ::core::ffi::c_void>()
             )
         };
-        // SAFETY: irreducible — `$T` is a fn-pointer type (caller contract);
-        // fn pointers are not `Pod`, so the `*mut c_void` → `$T`
-        // reinterpretation cannot be expressed safely. `p` is non-null (checked
-        // below) and was obtained from `dlsym`, so it is a valid code address;
-        // `Once` provides happens-before for the store. The `const` assert above
-        // enforces `size_of::<$T>() == size_of::<*mut c_void>()` at expansion.
         let p = PTR.load(::core::sync::atomic::Ordering::Relaxed);
         if p.is_null() {
             None
         } else {
-            Some(unsafe { ::core::mem::transmute_copy::<*mut ::core::ffi::c_void, $T>(&p) })
+            Some(::core::mem::transmute_copy::<*mut ::core::ffi::c_void, $T>(
+                &p,
+            ))
         }
     }};
 }
@@ -7171,7 +7133,7 @@ pub fn directory_exists_at_w(dir: Fd, sub: &[u16]) -> Maybe<bool> {
 /// `fcntl(fd, F_GETFL, 0)`.
 #[cfg(unix)]
 pub fn get_fcntl_flags(fd: Fd) -> Maybe<FcntlInt> {
-    fcntl(fd, libc::F_GETFL, 0)
+    fcntl(fd, FcntlCmd::GETFL, 0)
 }
 #[cfg(windows)]
 pub fn get_fcntl_flags(_fd: Fd) -> Maybe<FcntlInt> {
@@ -7180,7 +7142,7 @@ pub fn get_fcntl_flags(_fd: Fd) -> Maybe<FcntlInt> {
 /// `fcntl(fd, F_SETFL, flags)`.
 #[cfg(unix)]
 pub fn set_fcntl_flags(fd: Fd, flags: i32) -> Maybe<()> {
-    fcntl(fd, libc::F_SETFL, flags as isize).map(drop)
+    fcntl(fd, FcntlCmd::SETFL, flags as isize).map(drop)
 }
 #[inline]
 pub fn set_nonblocking(fd: Fd) -> Maybe<()> {
@@ -7653,9 +7615,7 @@ pub mod posix {
     // macOS/FreeBSD only — Linux dropped sysctl(2) and uses procfs instead.
     /// Typed `sysctlbyname(3)` read of a fixed-size POD value (`hw.ncpu`,
     /// `hw.cpufrequency`, `kern.boottime`, …). Hides the `*mut c_void` /
-    /// `&mut len` dance. The `Zeroable` bound is the workspace's
-    /// "kernel-fillable POD" marker — every impl is integers / raw pointers /
-    /// nested C POD, so any byte pattern the kernel writes is a valid `T`.
+    /// `&mut len` dance.
     #[cfg(any(
         target_os = "macos",
         target_os = "ios",
@@ -7665,27 +7625,11 @@ pub mod posix {
         target_os = "openbsd"
     ))]
     #[inline]
-    pub fn sysctl_read<T: bun_core::ffi::Zeroable>(
+    pub fn sysctl_read<T: bun_core::AnyBitPattern>(
         name: &core::ffi::CStr,
         out: &mut T,
     ) -> super::Maybe<()> {
-        let mut len = core::mem::size_of::<T>();
-        // SAFETY: `out` is `&mut T` → exclusive, valid for `size_of::<T>()`
-        // writes; `T: Zeroable` (POD) so the raw bytes form a valid `T`;
-        // `newp = null` → read-only sysctl, kernel never reads through `oldp`.
-        let rc = unsafe {
-            libc::sysctlbyname(
-                name.as_ptr(),
-                core::ptr::from_mut(out).cast::<c_void>(),
-                &raw mut len,
-                core::ptr::null_mut(),
-                0,
-            )
-        };
-        if rc != 0 {
-            return Err(super::err_with(super::Tag::TODO));
-        }
-        Ok(())
+        sysctl_read_slice(name, core::slice::from_mut(out)).map(drop)
     }
 
     /// Slice-typed `sysctlbyname(3)` read (`kern.cp_times`, string MIBs into a
@@ -7701,13 +7645,13 @@ pub mod posix {
         target_os = "openbsd"
     ))]
     #[inline]
-    pub fn sysctl_read_slice<T: bun_core::ffi::Zeroable>(
+    pub fn sysctl_read_slice<T: bun_core::AnyBitPattern>(
         name: &core::ffi::CStr,
         buf: &mut [T],
     ) -> super::Maybe<usize> {
         let mut len = core::mem::size_of_val(buf);
         // SAFETY: `buf` is `&mut [T]` → exclusive, valid for `len` writes;
-        // `T: Zeroable` (POD) so partial / full kernel writes leave valid `T`s.
+        // `T: AnyBitPattern` so partial / full kernel writes leave valid `T`s.
         let rc = unsafe {
             libc::sysctlbyname(
                 name.as_ptr(),

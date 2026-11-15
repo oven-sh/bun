@@ -54,9 +54,7 @@ pub struct MiniEventLoop {
     concurrent_tasks: ConcurrentTaskQueue,
     pub loop_: &'static UwsLoop,
     file_polls: OnceCell<Box<UnsafeCell<FilePollStore>>>,
-    /// Stored as `NonNull`
-    /// (BACKREF) so [`EventLoopHandle::env`] can hand out a `*mut` with
-    /// mutable provenance.
+    /// `NonNull` so that [`EventLoopHandle::env`] can hand out a `*mut` with mutable provenance.
     env: Option<NonNull<DotEnvLoader>>,
     // Opaque ctx assigned externally; only read/cleared here.
     after_event_loop_callback_ctx: Cell<Option<NonNull<c_void>>>,

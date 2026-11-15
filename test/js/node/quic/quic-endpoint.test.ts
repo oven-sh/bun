@@ -13,6 +13,11 @@ import { connect, listen, QuicEndpoint, type EndpointOptions, type SessionOption
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
 const cert = readFileSync(join(keysDir, "agent1-cert.pem"));
+const lsanEnv = {
+  BUN_DESTRUCT_VM_ON_EXIT: "1",
+  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+  LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "..", "..", "..", "leaksan.supp")}`,
+};
 
 describe("QuicEndpoint client-engine mode", () => {
   test("an explicit endpoint rejects a connect() in the other mode", async () => {
@@ -407,13 +412,7 @@ describe("endpoint.close() with an unsent stateless reset", () => {
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", fixture],
-        env: {
-          ...bunEnv,
-          NODE_NO_WARNINGS: "1",
-          BUN_DESTRUCT_VM_ON_EXIT: "1",
-          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-          LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "..", "..", "..", "leaksan.supp")}`,
-        },
+        env: { ...bunEnv, NODE_NO_WARNINGS: "1", ...lsanEnv },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -429,4 +428,279 @@ describe("endpoint.close() with an unsent stateless reset", () => {
     // LeakSanitizer needs more than the default 5 s on a debug build.
     60_000,
   );
+});
+
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+
+// uSockets closes a UDP socket on a poll error. On Linux it only does so if neither the error queue nor recvmmsg()
+// reports the error, so the shim hides the ICMP error of a closed port from both.
+test.skipIf(!isLinux || !cc)("an endpoint closes with a receive failure if uSockets closes its socket", async () => {
+  using dir = tempDir("quic-receive-failure", {
+    "shim.c": `
+      #define _GNU_SOURCE
+      #include <dlfcn.h>
+      #include <errno.h>
+      #include <sys/types.h>
+
+      #define MSG_ERRQUEUE 0x2000
+
+      static int failed_fd = -1;
+
+      ssize_t recvmsg(int fd, void *msg, int flags) {
+        if (flags & MSG_ERRQUEUE) {
+          failed_fd = fd;
+          errno = EAGAIN;
+          return -1;
+        }
+        return ((ssize_t (*)(int, void *, int)) dlsym(RTLD_NEXT, "recvmsg"))(fd, msg, flags);
+      }
+
+      int recvmmsg(int fd, void *msgs, unsigned len, int flags, void *timeout) {
+        if (fd == failed_fd) {
+          failed_fd = -1;
+          return 0;
+        }
+        return ((int (*)(int, void *, unsigned, int, void *)) dlsym(RTLD_NEXT, "recvmmsg"))(fd, msgs, len, flags, timeout);
+      }
+    `,
+    "fixture.mjs": `
+      import { connect, QuicEndpoint } from "node:quic";
+
+      const gone = await Bun.udpSocket({ hostname: "127.0.0.1" });
+      const address = { address: "127.0.0.1", port: gone.port };
+      gone.close();
+      const endpoint = new QuicEndpoint();
+      const session = await connect(address, { endpoint, alpn: "x" });
+      for (const { status, reason } of await Promise.allSettled([session.opened, session.closed, endpoint.closed])) {
+        console.log(status, reason?.message);
+      }
+    `,
+  });
+  await using compiler = Bun.spawn({
+    cmd: [cc!, "-shared", "-fPIC", "-o", "shim.so", "shim.c", "-ldl"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  expect(await compiler.exited).toBe(0);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      NODE_NO_WARNINGS: "1",
+      LD_PRELOAD: [join(String(dir), "shim.so"), bunEnv.LD_PRELOAD].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.split("\n"), stderr, exitCode }).toEqual({
+    stdout: [
+      "rejected Invalid state: Session was destroyed before it opened",
+      "fulfilled undefined",
+      "rejected QUIC endpoint closed: Receive failure (0)",
+      "",
+    ],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+describe.concurrent("transferred state and stats, and getters on options", () => {
+  async function run(body: string, env = {}) {
+    const fixture = `
+      import { createPrivateKey } from "node:crypto";
+      import { readFileSync } from "node:fs";
+      import { connect, listen, QuicEndpoint } from "node:quic";
+
+      const key = createPrivateKey(readFileSync(${JSON.stringify(join(keysDir, "agent1-key.pem"))}));
+      const cert = readFileSync(${JSON.stringify(join(keysDir, "agent1-cert.pem"))});
+      const identity = { keys: [key], certs: [cert] };
+      const transportParams = { maxIdleTimeout: 2 };
+      const client = { alpn: "x", verifyPeer: "manual", transportParams };
+      const nativeTls = { keys: [key.export({ type: "pkcs8", format: "pem" })], certs: [cert] };
+      const nativeAlpn = Buffer.from("\\x01x");
+      async function until(condition) {
+        const deadline = Date.now() + 4000;
+        while (!condition()) {
+          if (Date.now() > deadline) throw new Error("timed out: " + condition);
+          await new Promise(setImmediate);
+        }
+      }
+      const findSymbol = (object, name) => Object.getOwnPropertySymbols(object).find(s => s.description === name);
+      function ignoreErrors(session) {
+        session.onstream = stream => stream.closed.catch(() => {});
+        session.opened.catch(() => {});
+        session.closed.catch(() => {});
+        return session;
+      }
+      // The first read is the validation in JS, the second read is native code.
+      function onNativeRead(value, callback) {
+        let reads = 0;
+        return Object.defineProperty([], 0, { enumerable: true, get: () => (++reads === 2 && callback(), value) });
+      }
+      const binding = require("internal/test/binding").internalBinding("quic");
+      const server = await listen(ignoreErrors, { sni: { "*": identity }, alpn: "x", transportParams });
+      ${body}
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, NODE_NO_WARNINGS: "1", ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // ASAN only tracks ArrayBuffer memory with Malloc=1. Without ASAN, the write lands in a buffer allocated later.
+  const mallocEnv = isASAN ? { Malloc: "1", ASAN_OPTIONS: bunEnv.ASAN_OPTIONS + ":detect_leaks=0" } : {};
+  const detachAndCopy = `
+    const laterBuffers = [];
+    function detachAndCopy(buffer) {
+      const copy = buffer.slice(0);
+      buffer.transfer(0);
+      for (let i = 0; i < 128; i++) laterBuffers.push(new Uint8Array(new ArrayBuffer(copy.byteLength)));
+      return copy;
+    }
+    const sizes = () => [...new Set(laterBuffers.map(bytes => bytes.length))].sort().join();
+    const written = () => laterBuffers.filter(bytes => bytes.some(Boolean)).length;
+  `;
+
+  test("state isn't written to freed memory after its ArrayBuffer is transferred", async () => {
+    const result = await run(
+      `
+        ${detachAndCopy}
+        const { DataView } = globalThis;
+        globalThis.DataView = function (buffer) {
+          return new DataView(detachAndCopy(buffer));
+        };
+        const endpoint = new QuicEndpoint();
+        const session = ignoreErrors(await connect(server.address, { ...client, endpoint }));
+        await session.opened;
+        (await session.createBidirectionalStream()).destroy();
+        endpoint.busy = true;
+        console.log(sizes(), written());
+        process.exit(0);
+      `,
+      mallocEnv,
+    );
+    expect(result).toEqual({ stdout: "144,24,336 0\n", stderr: "", exitCode: 0 });
+  });
+
+  test("stats aren't written to freed memory after their ArrayBuffer is transferred", async () => {
+    const result = await run(
+      `
+        ${detachAndCopy}
+        const handle = new binding.Endpoint();
+        const session = handle.connect(server.address, { tls: { alpn: nativeAlpn } });
+        const stream = session.openStream(binding.STREAM_DIRECTION_BIDIRECTIONAL);
+        for (const { stats } of [handle, session, stream]) detachAndCopy(stats);
+        stream.destroy();
+        session.destroy();
+        handle.releaseSocket();
+        console.log(sizes(), written());
+        process.exit(0);
+      `,
+      mallocEnv,
+    );
+    expect(result).toEqual({ stdout: "144,152,336 0\n", stderr: "", exitCode: 0 });
+  });
+
+  test("connect() rejects if a getter on ca closes the endpoint", async () => {
+    const result = await run(`
+      const endpoint = new QuicEndpoint();
+      const ca = onNativeRead(cert, () => endpoint.close());
+      const session = await connect(server.address, { ...client, endpoint, ca }).then(ignoreErrors, e => console.log(e.code));
+      await endpoint.closed;
+      await new Promise(setImmediate);
+      session?.destroy(undefined, { code: 1 });
+      process.exit(0);
+    `);
+    expect(result).toEqual({ stdout: "ERR_QUIC_ENDPOINT_CLOSED\n", stderr: "", exitCode: 0 });
+  });
+
+  test.each(["transportParams", "qlog"])("connect() throws if the %s getter releases the socket", async name => {
+    const result = await run(`
+      const handle = new binding.Endpoint();
+      handle.connect(server.address, { tls: { alpn: nativeAlpn } });
+      try {
+        handle.connect(server.address, { tls: { alpn: nativeAlpn }, get ${name}() { handle.releaseSocket(); } });
+      } catch (e) {
+        console.log(e.code);
+      }
+      process.exit(0);
+    `);
+    expect(result).toEqual({ stdout: "ERR_QUIC_ENDPOINT_CLOSED\n", stderr: "", exitCode: 0 });
+  });
+
+  test("listen() from a transportParams getter keeps its ORIGIN frame", async () => {
+    const result = await run(`
+      const endpoint = new QuicEndpoint();
+      let inner;
+      endpoint[findSymbol(QuicEndpoint.prototype, "kListen")](ignoreErrors, {
+        tls: { ...nativeTls, origins: ["https://a.example"] },
+        transportParams: {
+          get maxIdleTimeout() {
+            inner ??= listen(ignoreErrors, { endpoint, sni: { "*": identity, "b.example": identity } });
+          },
+        },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      ignoreErrors(await connect(endpoint.address, { verifyPeer: "manual", transportParams, onorigin: resolve }));
+      console.log((await promise).join());
+      process.exit(0);
+    `);
+    expect(result).toEqual({ stdout: "https://b.example\n", stderr: "", exitCode: 0 });
+  });
+
+  test.skipIf(!isASAN || !isLinux)(
+    "listen() from a getter on certs doesn't leak an engine",
+    async () => {
+      const result = await run(
+        `
+          const endpoint = new QuicEndpoint();
+          const options = certs => ({ endpoint, alpn: "x", sni: { "*": { keys: [key], certs } } });
+          await listen(ignoreErrors, options(onNativeRead(cert, () => console.log(typeof listen(ignoreErrors, options([cert]))))));
+          await Promise.all([endpoint.close(), server.close()]);
+        `,
+        lsanEnv,
+      );
+      expect(result).toEqual({ stdout: "object\n", stderr: "", exitCode: 0 });
+    },
+    // LeakSanitizer needs more than the default 5 s on a debug build.
+    60_000,
+  );
+
+  test("listen() reads its options once, not once per session", async () => {
+    const result = await run(`
+      const handle = new binding.Endpoint();
+      const stats = new BigUint64Array(handle.stats);
+      // onSessionNew throws: the handle has no QuicEndpoint.
+      process.on("uncaughtException", () => {});
+      let listening = false, reads = 0;
+      handle.listen({
+        tls: { ...nativeTls, alpn: nativeAlpn },
+        get qlog() {
+          if (listening) {
+            reads++;
+            handle.releaseSocket();
+          }
+        },
+      });
+      listening = true;
+      // A busy endpoint creates no provisional session, so the session is created in on_new_conn.
+      handle.markBusy(true);
+      ignoreErrors(await connect(handle.address(), client));
+      await until(() => stats[binding.IDX_STATS_ENDPOINT_PACKETS_RECEIVED] > 0n);
+      handle.markBusy(false);
+      await until(() => stats[binding.IDX_STATS_ENDPOINT_SERVER_SESSIONS] > 0n);
+      console.log(reads);
+      process.exit(0);
+    `);
+    expect(result).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
+  });
 });

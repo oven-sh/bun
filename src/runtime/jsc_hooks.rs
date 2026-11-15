@@ -1199,29 +1199,12 @@ fn process_exit(global: &JSGlobalObject, code: u8) {
     crate::node::process::exit(global, code);
 }
 
-/// `graph.find(path).?.sourcemap.load()`.
-/// Reaches the concrete `bun_standalone_graph::Graph` via its `UnsafeCell`
-/// singleton accessor (proper write provenance) and lazily decodes the
-/// embedded source map for `path`. The returned `Arc` is the caller's strong
-/// ref.
-///
-/// Note: do **not** thread the `&'static dyn StandaloneModuleGraph` from
-/// `vm.standalone_module_graph` here and cast it to `&mut Graph` — that
-/// shared-ref provenance has no write permission, so the resulting `&mut` is
-/// instant UB under Stacked Borrows regardless of `INIT_LOCK`. `Graph::get()`
-/// hands out the `*mut` directly from the backing `UnsafeCell`.
-///
-/// `LazySourceMap::load` is the graph's only post-init mutation and is
-/// serialized by `INIT_LOCK`.
+/// Lazily decodes the embedded source map for `path`. The returned `Arc` is
+/// the caller's strong ref.
 fn load_standalone_sourcemap(
     path: &[u8],
 ) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>> {
-    let graph = bun_standalone_graph::Graph::get()?;
-    // SAFETY: `graph` is the `UnsafeCell::get()` pointer to the
-    // process-lifetime singleton. `find`/`load` mutate only per-file lazy
-    // state; this hook runs on the JS thread and `LazySourceMap::load` is
-    // additionally guarded by its own `INIT_LOCK`.
-    unsafe { (*graph).find(path)?.sourcemap.load() }
+    bun_standalone_graph::Graph::get_ref()?.load_sourcemap(path)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -3193,8 +3176,7 @@ export default db;
             });
         }
 
-        // SAFETY: `file.module_info` is a live subrange of the embedded section (set in `Graph::from_bytes`).
-        let module_info = unsafe { &*file.module_info };
+        let module_info = file.module_info;
         let module_info_strings: &'static [u8] = bun_standalone_graph::Graph::get_ref()
             .map_or(&[], |graph| graph.module_info_string_table);
         return Some(ResolvedSource {
@@ -4287,7 +4269,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
         return Some(path.len());
     }
     let file = bun_standalone_graph::Graph::get_ref()?.find_library(input_path)?;
-    let file_contents: &[u8] = file.contents.as_bytes();
+    let file_contents: &[u8] = file.contents;
 
     // `.bun-{uid}-{wyhash(contents)}.{ext}`: the hash dedupes; the uid keeps
     // users on a shared `/tmp` from colliding.
@@ -4403,11 +4385,11 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
     if files.is_empty() {
         return None;
     }
-    let mut hash = bun_wyhash::hash(addon.contents.as_bytes());
+    let mut hash = bun_wyhash::hash(addon.contents);
     for (path, contents) in &files {
         hash = hash.rotate_left(7) ^ bun_wyhash::hash(path) ^ bun_wyhash::hash(contents);
     }
-    files.push((addon.name, addon.contents.as_bytes()));
+    files.push((addon.name, addon.contents));
 
     let uid = extract_owner_uid();
     let mut persistent_folder = [

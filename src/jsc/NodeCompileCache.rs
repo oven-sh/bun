@@ -552,7 +552,8 @@ pub fn fetch(
             return entry
                 .blob
                 .as_ref()
-                .map(|b| crate::resolved_source::Bytecode::persistent(b.as_slice()));
+                // SAFETY: the blob of an entry only leaves it for `RETIRED_BLOBS`.
+                .map(|b| unsafe { crate::resolved_source::Bytecode::persistent(b.as_slice()) });
         }
     }
 
@@ -577,7 +578,8 @@ pub fn fetch(
         entry
             .blob
             .as_ref()
-            .map(|b| crate::resolved_source::Bytecode::persistent(b.as_slice()))
+            // SAFETY: as above; `entry` is inserted below.
+            .map(|b| unsafe { crate::resolved_source::Bytecode::persistent(b.as_slice()) })
     } else {
         cclog!(
             "[compile cache] code cache for {} {} was not initialized, initializing the in-memory entry\n",

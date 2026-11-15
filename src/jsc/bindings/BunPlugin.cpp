@@ -215,6 +215,8 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     auto* virtualModules = global->onLoadPlugins.virtualModules;
 
     virtualModules->set(moduleId, JSC::Strong<JSC::JSObject> { vm, uncheckedDowncast<JSC::JSObject>(functionValue) });
+    // The later of build.module() and a mock has the path: a mock of a name that require() resolves to it answers require() no more, and a mock that stood under it is gone.
+    global->onLoadPlugins.moduleMockKeysByRequirePath.removeIf([&](auto& turn) { return turn.key == moduleId || turn.value == moduleId; });
 #if ENABLE(AOT)
     if (global->vm().hasCompiledCode())
         JSC::AOT::didChangePlugins(global);
@@ -502,6 +504,8 @@ void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSOb
     auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
 
     virtualModules->set(path, JSC::Strong<JSC::JSObject> { vm, mockObject });
+    // The later mock of a path has it: a mock of the path itself takes it from a mock of a name that require() resolves to that path.
+    globalObject->onLoadPlugins.moduleMockKeysByRequirePath.remove(path);
 #if ENABLE(AOT)
     noteMockOutsideRegistry(globalObject, path);
 #endif
@@ -6028,6 +6032,19 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             }
         }
 #endif
+    }
+
+    // The later mock of a path has it. A mock that stands under the path that require() resolves the name to ends as by jest.unmock() of it, and a preload's comes back
+    // when the test file ends. What build.module() put there is gone, as where a mock takes its own key from build.module().
+    if (requirePath) {
+        String path = requirePath->tryGetValue().data;
+        if (auto* standing = registeredModuleMock(globalObject, path)) {
+            if (standing->isFromPreload && !mock->isFromPreload)
+                globalObject->onLoadPlugins.displacedPreloadModuleMocks.append(JSC::Strong<JSC::JSObject> { vm, standing });
+            unmockModule(globalObject, standing, path);
+            RETURN_IF_EXCEPTION(scope, {});
+        } else if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules)
+            virtualModules->remove(path);
     }
 
 #if ENABLE(AOT)

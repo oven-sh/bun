@@ -707,6 +707,10 @@ describe.concurrent("bun fmt", () => {
       ["comment.css", "a {\n  /* b\n}\n", "Unclosed comment", 2, 3],
       ["bracket.css", "a {\n  b: c(1;\n}\n", "Unclosed bracket", 2, 7],
       ["url.css", "a {\n  b: url(c;\n}\n", "Unclosed bracket", 2, 9],
+      ["at-rule-bracket.css", "@media (min-width: 640px {\n  .a {\n    color: red;\n  }\n}\n", "Unclosed bracket", 1, 8],
+      ["at-rule-square-bracket.css", "@media [a {\n  .a {\n    color: red;\n  }\n}\n", "Unclosed bracket", 1, 8],
+      ["at-rule-bracket-in-block.css", "@media (a {\n  b: c);\n}\n", "Unclosed bracket", 1, 8],
+      ["at-rule-at-word.css", '@media (a;\n@import "b";\n', "Unclosed bracket", 1, 8],
       ["word.css", "a {\n  b c;\n}\n", "Expected a declaration or a rule", 2, 3],
       ["at.css", "@ a;\n", 'Expected a name after "@"', 1, 1],
       ["colon.css", "a {\n  b: c: d;\n}\n", 'Unexpected ":"', 2, 7],
@@ -719,8 +723,10 @@ describe.concurrent("bun fmt", () => {
       ["interpolation.scss", "a {\n  b: #{$c;\n", "Unclosed interpolation", 2, 6],
       ["string.scss", 'a {\n  b: "x;\n}\n', "Unclosed string", 2, 6],
       ["nested.scss", "a {\n  b: c: {\n    d: e;\n  }\n}\n", 'Unexpected ":"', 2, 7],
+      ["at-rule-bracket.scss", "@include foo( {\n  .a {\n    color: red;\n  }\n}\n", "Unclosed bracket", 1, 13],
       ["mixin.less", "a {\n  .b(;\n}\n", "Unclosed bracket", 2, 5],
       ["each.less", "each(@a, {\n", "Unclosed bracket", 1, 5],
+      ["at-rule-bracket.less", "@media (a;\n.b {\n  color: blue;\n}\n", "Unclosed bracket", 1, 8],
       ["word.less", "a {\n  b c;\n}\n", "Expected a declaration or a rule", 2, 3],
       ["end.graphql", "query {\n  a\n", "Unexpected end of file", 3, 1],
       ["name.graphql", "query {\n}\n", "Expected a name", 2, 1],
@@ -872,6 +878,21 @@ describe.concurrent("bun fmt", () => {
       const result = await format({ ...configuration, "b.css": files["b.css"] }, ["b.css"]);
       expect(result.stderr).toStartWith(problem("b.css", "Unclosed string", [7, 6, '  e: "f']) + "\n\n");
       expect(result.exitCode).toBe(2);
+    }
+  });
+
+  test("an at-rule whose bracket is open at the end of the file is a syntax error, and the file stays as it is", async () => {
+    // `postcss` takes the rest of the file as the params of the at-rule, so Prettier 3.9.9 prints `@media ;` and
+    // drops both rules. oxfmt 0.72 refuses the file: "expect token `<ident>`, but found `(`".
+    const text = "@media (min-width: 640px {\n  .a {\n    color: red;\n  }\n}\n.b {\n  color: blue;\n}\n";
+    const error = problem("a.css", "Unclosed bracket", [1, 8, "@media (min-width: 640px {"]);
+    for (const configuration of [{}, { ".prettierrc": "{}\n" }, { ".oxfmtrc.json": "{}\n" }]) {
+      for (const flags of [[], ["--check"]]) {
+        const result = await format({ ...configuration, "a.css": text }, [...flags, "a.css"], { reads: ["a.css"] });
+        expect(result.stderr).toStartWith(error);
+        expect(result.files["a.css"]).toBe(text);
+        expect(result.exitCode).toBe(2);
+      }
     }
   });
 

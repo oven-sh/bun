@@ -634,14 +634,18 @@ fn has_extend(text: &[u8], prefix: &[u8]) -> bool {
     false
 }
 
-/// Returns the offset of the first unclosed `(` or `[` in `tokens`.
+/// Returns the offset of the first unclosed `(` or `[` in `tokens`. With `braces_nest`, a `{` inside a bracket
+/// is closed by a `}`, as in the params of an at-rule.
 #[cold]
-fn unclosed_bracket(tokens: &[Token]) -> u32 {
+fn unclosed_bracket(tokens: &[Token], braces_nest: bool) -> u32 {
     let mut open: Vec<(u8, Token)> = Vec::new();
     for &token in tokens {
         match token.kind {
             TokenKind::Control(b'(') => open.push((b')', token)),
             TokenKind::Control(b'[') => open.push((b']', token)),
+            TokenKind::Control(b'{') if braces_nest && !open.is_empty() => {
+                open.push((b'}', token))
+            }
             TokenKind::Control(control) if open.last().is_some_and(|it| it.0 == control) => {
                 open.pop();
             }
@@ -653,6 +657,19 @@ fn unclosed_bracket(tokens: &[Token]) -> u32 {
         .map(|it| it.1)
         .or_else(|| tokens.first().copied());
     at.map_or(0, |it| it.range.start)
+}
+
+/// Whether the params of an at-rule that an unclosed bracket has extended to the end of the file have a block or
+/// another at-rule in them. Prettier's `scss/no-semicolon/url.scss` ends in a `(` followed by a `//` comment,
+/// and is formatted.
+#[cold]
+fn swallowed_statement(params: &[Token]) -> bool {
+    params.iter().any(|token| {
+        matches!(
+            token.kind,
+            TokenKind::Control(b'{') | TokenKind::Control(b'}') | TokenKind::AtWord
+        )
+    })
 }
 
 impl<'a> Parser<'a> {
@@ -902,6 +919,12 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // `postcss` has this check in `other` and not in `atrule`, so an at-rule whose `(` is never closed takes
+        // the rest of the file as its params, and Prettier prints `@media ;` for `@media (a {\n.b {\n}`.
+        if !brackets.is_empty() && swallowed_statement(&params) {
+            return Err(self.reject(Message::UnclosedBracket, unclosed_bracket(&params, true)));
+        }
+
         let between = self.texts.spaces_and_comments_from_end(&mut params);
         self.node(id).between = between;
         if !params.is_empty() {
@@ -988,7 +1011,7 @@ impl<'a> Parser<'a> {
             end = true;
         }
         if !brackets.is_empty() {
-            return Err(self.reject(Message::UnclosedBracket, unclosed_bracket(tokens)));
+            return Err(self.reject(Message::UnclosedBracket, unclosed_bracket(tokens, false)));
         }
         if !(end && colon) {
             return self.unknown_word(tokens);
@@ -1417,7 +1440,7 @@ impl<'a> Parser<'a> {
         let last_paren = tokens
             .iter()
             .rposition(|token| token.is(b')'))
-            .ok_or_else(|| self.reject(Message::UnclosedBracket, unclosed_bracket(tokens)))?;
+            .ok_or_else(|| self.reject(Message::UnclosedBracket, unclosed_bracket(tokens, false)))?;
         let params = self
             .texts
             .range_of(&tokens[first_paren..(first_paren + last_paren).min(tokens.len())]);
@@ -1454,7 +1477,7 @@ impl<'a> Parser<'a> {
             let last_paren = tokens
                 .iter()
                 .rposition(|token| token.is(b')'))
-                .ok_or_else(|| self.reject(Message::UnclosedBracket, unclosed_bracket(tokens)))?;
+                .ok_or_else(|| self.reject(Message::UnclosedBracket, unclosed_bracket(tokens, false)))?;
             // This is the end that `postcss-less` computes. It overshoots if more than the name comes before the
             // parenthesis.
             let contents = tokens

@@ -143,7 +143,7 @@ impl<'a> Installer<'a> {
         unsafe { &*self.manager }
     }
     #[inline]
-    pub(crate) fn manager_mut(&self) -> &'a mut PackageManager {
+    pub(crate) fn manager_mut(&mut self) -> &'a mut PackageManager {
         // SAFETY: BACKREF — never null; disjoint from `*self`. Main thread only.
         unsafe { &mut *self.manager }
     }
@@ -429,11 +429,9 @@ impl<'a> Installer<'a> {
         }
         bun_core::handle_oom(patch_task.apply());
 
-        if let crate::patch_install::Callback::Apply(apply) = &mut patch_task.callback {
+        if let crate::patch_install::Callback::Apply(apply) = &patch_task.callback {
             if apply.logger.has_errors() {
-                let log = Log::init();
-                apply.logger.append_to(&log);
-                return Err(TaskError::Patching(log));
+                return Err(TaskError::patching(&apply.logger));
             }
             let _ = apply.logger.print(Output::error_writer());
         }
@@ -462,9 +460,9 @@ impl<'a> Installer<'a> {
                     pkg,
                 );
             }
-            TaskError::Patching(patch_log) => {
+            TaskError::Patching(printed_log) => {
                 Output::err_generic("failed to patch package: {}@{}", pkg);
-                let _ = patch_log.print(Output::error_writer());
+                let _ = Output::error_writer().write_all(printed_log.as_bytes());
             }
             TaskError::Binaries(err) => {
                 Output::err(*err, "failed to link binaries for package: {}@{}", pkg);
@@ -1022,11 +1020,20 @@ pub enum TaskError {
     Binaries(crate::Error),
     /// (dependency entry, error)
     DependencyBinaries(Box<[(StoreEntryId, crate::Error)]>),
-    Patching(Log),
+    /// Not a `Log`: task threads share `Installer::tasks`.
+    Patching(String),
     Download {
         err: crate::Error,
         url: Box<[u8]>,
     },
+}
+
+impl TaskError {
+    fn patching(log: &Log) -> Self {
+        let mut printed = String::new();
+        let _ = log.print(&mut printed);
+        TaskError::Patching(printed)
+    }
 }
 
 type TaskResult<T> = core::result::Result<T, TaskError>;
@@ -1500,7 +1507,7 @@ impl<'a> Installer<'a> {
                     ),
                     Default::default(),
                 );
-                return Err(TaskError::Patching(log));
+                return Err(TaskError::patching(&log));
             };
             return Ok(PatchInfo::Patch(PatchInfoPatch {
                 name_and_version_hash,

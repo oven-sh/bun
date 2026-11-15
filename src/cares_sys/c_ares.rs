@@ -563,7 +563,7 @@ impl struct_nameinfo {
         // SAFETY: `ctx` is the box that `Channel` released for this query, which c-ares answers once.
         let this = unsafe { bun_core::heap::take(ctx.cast::<T>()) };
         this.on_nameinfo(match Error::get(status) {
-            Some(err) => Err(err),
+            Some(err) => Err(err.for_name_lookup()),
             None => Ok(struct_nameinfo { node, service }),
         });
     }
@@ -629,8 +629,10 @@ impl AddrInfo {
         // SAFETY: `ctx` is the box that `Channel` released for this query, which c-ares answers once.
         let this = unsafe { bun_core::heap::take(ctx.cast::<T>()) };
         if let Some(err) = Error::get(status) {
-            // A failure comes without an `addr_info`.
-            return this.on_addr_info(Err(err));
+            // A failure comes without an `addr_info`. `ares_getaddrinfo`
+            // uses `ARES_ENODATA` when no address was usable; lookup reports
+            // that as ENOTFOUND.
+            return this.on_addr_info(Err(err.for_name_lookup()));
         }
         // SAFETY: c-ares hands `addr_info` over, and the handler's borrow ends with its call.
         unsafe {
@@ -1822,9 +1824,28 @@ impl Error {
         }
     }
 
+    /// `ares_getaddrinfo`, `ares_getnameinfo`, and `ares_gethostbyaddr` report
+    /// "nothing usable" as `ARES_ENODATA`. `dns.lookup`, `dns.lookupService`,
+    /// and `dns.reverse` surface that as `ENOTFOUND`. Record queries do not:
+    /// they keep [`Error::ENODATA`].
+    pub fn for_name_lookup(self) -> Self {
+        if self == Self::ENODATA {
+            Self::ENOTFOUND
+        } else {
+            self
+        }
+    }
+
     pub fn get(rc: i32) -> Option<Error> {
-        // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
-        if rc == ARES_ENODATA || rc == ARES_ENONAME {
+        // `ARES_ENONAME` is c-ares's getaddrinfo/getnameinfo "host unknown"
+        // status, not a record-query status. Node reports it as ENOTFOUND.
+        // `ARES_ENODATA` is what `ares_query` returns when the name exists and
+        // the requested type does not; Node's `ToErrorCodeString` keeps that
+        // as "ENODATA" (nodejs/node `src/cares_wrap.h`). The numeric
+        // getaddrinfo remap of `UV_EAI_NODATA` / `UV_EAI_NONAME` lives in
+        // [`Error::init_eai`].
+        // https://github.com/nodejs/node/blob/v22.23.4/lib/internal/errors.js
+        if rc == ARES_ENONAME {
             return Self::get(ARES_ENOTFOUND);
         }
 

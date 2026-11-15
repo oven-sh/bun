@@ -318,7 +318,9 @@ impl c_ares::HostentHandler for Query {
             Ok(host) => {
                 self.resolve(|global| super::cares_jsc::hostent_to_js_response(host, global, b""))
             }
-            Err(err) => drop(self.reject(err, b"getHostByAddr", true)),
+            // gethostbyaddr's empty PTR answer is ENOTFOUND, same as Node's
+            // `dns.reverse`. Record-query hostents are a different handler.
+            Err(err) => drop(self.reject(err.for_name_lookup(), b"getHostByAddr", true)),
         }
     }
 }

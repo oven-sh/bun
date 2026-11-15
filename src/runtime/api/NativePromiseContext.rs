@@ -97,7 +97,10 @@ impl Tag {
 
 /// Maps a concrete native type to its `Tag`, expressed as a compile-time
 /// mapping via a trait impl per type.
-pub(crate) trait NativePromiseContextType: RefCounted {
+///
+/// # Safety
+/// The destructor of a cell with `TAG` casts its pointer to `Self`.
+pub(crate) unsafe trait NativePromiseContextType: RefCounted {
     const TAG: Tag;
 }
 
@@ -116,31 +119,32 @@ const fn npc_tag_for(ssl: bool, dbg: bool, mux: bool) -> Tag {
         (true, true, true) => Tag::DebugHTTPSServerMuxRequestContext,
     }
 }
-impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> NativePromiseContextType
+// SAFETY: a context is only made for the `NewServer<SSL, DBG>` that the aliases above name.
+unsafe impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> NativePromiseContextType
     for server::NewRequestContext<ThisServer, SSL, DBG, MUX>
 where
     ThisServer: server::ServerLike + 'static,
 {
     const TAG: Tag = npc_tag_for(SSL, DBG, MUX);
 }
-impl NativePromiseContextType for html_rewriter::RewriterPipe {
+// SAFETY: `DeferredDerefTask::run_from_js_thread` casts to this type for this tag.
+unsafe impl NativePromiseContextType for html_rewriter::RewriterPipe {
     const TAG: Tag = Tag::HTMLRewriterSuspension;
 }
-impl NativePromiseContextType for S3UploadStreamWrapper {
+// SAFETY: `DeferredDerefTask::run_from_js_thread` casts to this type for this tag.
+unsafe impl NativePromiseContextType for S3UploadStreamWrapper {
     const TAG: Tag = Tag::S3UploadStream;
 }
-impl NativePromiseContextType for crate::api::cron::CronJob {
+// SAFETY: `DeferredDerefTask::run_from_js_thread` casts to this type for this tag.
+unsafe impl NativePromiseContextType for crate::api::cron::CronJob {
     const TAG: Tag = Tag::CronJob;
 }
 
-// `&JSGlobalObject` is ABI-identical to a non-null pointer. `ctx` is stored
-// opaquely (never dereferenced by the C++ side), so the FFI itself has no
-// pointer-validity precondition.
 unsafe extern "C" {
-    safe fn Bun__NativePromiseContext__create(
+    fn Bun__NativePromiseContext__create(
         global: &JSGlobalObject,
         ctx: *mut c_void,
-        tag: u8,
+        tag: Tag,
         held: JSValue,
     ) -> JSValue;
     safe fn Bun__NativePromiseContext__take(value: JSValue) -> *mut c_void;
@@ -157,7 +161,8 @@ pub(crate) fn create<T: NativePromiseContextType>(
     ctx: RefPtr<T>,
     held: JSValue,
 ) -> JSValue {
-    Bun__NativePromiseContext__create(global, ctx.into_raw().cast(), T::TAG as u8, held)
+    // SAFETY: the cell owns the ref, and `T::TAG` names its type.
+    unsafe { Bun__NativePromiseContext__create(global, ctx.into_raw().cast(), T::TAG, held) }
 }
 
 /// Transfers the ref back to the caller and nulls the cell so the destructor

@@ -1,5 +1,3 @@
-use core::ffi::c_void;
-
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
@@ -12,9 +10,7 @@ struct Items {
     len: u32,
 }
 
-extern "C" fn collect_item(_: *mut VM, global: &JSGlobalObject, items: *mut c_void, item: JSValue) {
-    // SAFETY: `items` is the `&mut Items` passed through `for_each` below; non-null by contract.
-    let items = unsafe { bun_ptr::callback_ctx::<Items>(items) };
+extern "C" fn collect_item(_: &VM, global: &JSGlobalObject, items: &mut Items, item: JSValue) {
     if items.array.put_index(global, items.len, item).is_ok() {
         items.len += 1;
     }
@@ -70,7 +66,7 @@ impl Expect {
             let question = Question { asked: Asked::Items, who: JSValue::UNDEFINED, what: value };
             let items = Pass::once(global, question, &mut || {
                 let mut items = Items { array: JSValue::create_empty_array(global, 0)?, len: 0 };
-                value.for_each(global, (&raw mut items).cast::<c_void>(), collect_item)?;
+                value.for_each(global, &mut items, collect_item)?;
                 Ok(items.array)
             })?;
             let mut itr = items.array_iterator(global)?;

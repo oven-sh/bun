@@ -723,11 +723,7 @@ impl<'a> Run<'a> {
                 if rejected
                     || promise_result.is_error()
                     || promise_result.is_aggregate_error(self.global)
-                    // `JSGlobalObject::vm()` returns `&VM`;
-                    // `is_exception` takes `*mut VM` (FFI passthrough). The
-                    // C++ side never writes through it.
-                    || promise_result
-                        .is_exception(std::ptr::from_ref::<jsc::VM>(self.global.vm()).cast_mut())
+                    || promise_result.is_exception(self.global.vm())
                 {
                     vm.unhandled_rejection(self.global, promise_result, promise.as_value());
                     return Err(MacroError::MacroFailed);
@@ -776,44 +772,18 @@ impl Runner {
         // exception-reporting path); a thread-local sentinel suffices.
         EXCEPTION_HOLDER.with(|h| h.set(true));
 
-        // An RAII guard *owns* the
-        // `Vec<JSValue>` + protected count. All mutation goes through the
-        // guard's fields so there is no aliasing of a raw pointer with later
-        // direct writes (the previous `*mut Vec` capture popped its
-        // Stacked-Borrows tag on reassignment).
-        struct JsArgs {
-            args: Vec<JSValue>,
-            protected_len: usize,
-        }
-        impl Drop for JsArgs {
-            fn drop(&mut self) {
-                for arg in &self.args[0..self.protected_len] {
-                    arg.unprotect();
-                }
-                // `allocator.free(js_args)` — Vec drops with `self`.
-            }
-        }
-        let mut js_args = JsArgs {
-            args: Vec::new(),
-            protected_len: 0,
-        };
+        let mut js_args = Vec::new();
 
         let global_object = vm.global();
 
         match &caller.data {
             ExprData::ECall(call) => {
                 let call_args: &[Expr] = call.args.slice();
-                js_args.args = vec![
-                    JSValue::ZERO;
-                    call_args.len()
-                        + usize::from(javascript_object != JSValue::ZERO)
-                ];
-
-                for (i, in_) in call_args.iter().enumerate() {
-                    let value = in_.to_js(global_object)?;
-                    value.protect();
-                    js_args.args[i] = value;
-                    js_args.protected_len = i + 1;
+                js_args.reserve_exact(
+                    call_args.len() + usize::from(javascript_object != JSValue::ZERO),
+                );
+                for in_ in call_args {
+                    js_args.push(in_.to_js(global_object)?.protected());
                 }
             }
             ExprData::ETemplate(_) => {
@@ -830,11 +800,7 @@ impl Runner {
         }
 
         if javascript_object != JSValue::ZERO {
-            if js_args.args.is_empty() {
-                js_args.args = vec![JSValue::ZERO; 1];
-            }
-            let last = js_args.args.len() - 1;
-            js_args.args[last] = javascript_object;
+            js_args.push(javascript_object.protected());
         }
 
         // The `extern "C" fn()` trampoline (no userdata) reaches the call args +
@@ -876,7 +842,7 @@ impl Runner {
             log,
             bump,
             caller,
-            js_args: &js_args.args,
+            js_args: jsc::ProtectedJSValue::values(&js_args),
             source,
             id,
             result: Err(MacroError::MacroFailed),

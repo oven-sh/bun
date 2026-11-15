@@ -122,7 +122,7 @@ impl AnyPromise {
             f: Option<F>,
         }
 
-        extern "C" fn call<F>(wrap_: *mut c_void, global: &JSGlobalObject) -> JSValue
+        unsafe extern "C" fn call<F>(wrap_: *mut c_void, global: &JSGlobalObject) -> JSValue
         where
             F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
         {
@@ -139,15 +139,15 @@ impl AnyPromise {
         crate::top_scope!(scope, global_object);
 
         let mut ctx = Wrapper { f: Some(f) };
-        // `ctx` lives on the stack for the duration of the synchronous FFI call;
-        // `call::<F>` matches the expected `extern "C" fn(*mut c_void, &JSGlobalObject) -> JSValue`
-        // shape.
-        JSC__AnyPromise__wrap(
-            global_object,
-            self.as_value(),
-            (&raw mut ctx).cast::<c_void>(),
-            call::<F>,
-        );
+        // SAFETY: `ctx` is what `call::<F>` expects, and outlives the synchronous FFI call.
+        unsafe {
+            JSC__AnyPromise__wrap(
+                global_object,
+                self.as_value(),
+                (&raw mut ctx).cast::<c_void>(),
+                call::<F>,
+            )
+        };
         // C++ converts any thrown exception into a rejection, so the only exception that can be
         // pending here is the termination; it stays pending and unwinds.
         scope.assert_no_exception_except_termination()
@@ -155,14 +155,10 @@ impl AnyPromise {
 }
 
 unsafe extern "C" {
-    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to a non-null `*mut` and C++ mutation is interior to the cell);
-    // `ctx` is an opaque round-trip pointer C++ only forwards to `f` (never
-    // dereferenced as Rust data).
-    safe fn JSC__AnyPromise__wrap(
+    fn JSC__AnyPromise__wrap(
         global: &JSGlobalObject,
         promise: JSValue,
         ctx: *mut c_void,
-        f: extern "C" fn(*mut c_void, &JSGlobalObject) -> JSValue,
+        f: unsafe extern "C" fn(*mut c_void, &JSGlobalObject) -> JSValue,
     );
 }

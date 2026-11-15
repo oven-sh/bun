@@ -106,6 +106,35 @@ macro_rules! opaque_ffi {
     };
 }
 
+/// Declare the owner of a handle: it derefs to the handle, and `Drop` passes it to `$free`.
+/// `Option<$name>` is a nullable `$handle *`.
+///
+/// # Safety
+/// The module only makes a `$name` from a handle that stays live until `$free` is called on it.
+#[macro_export]
+macro_rules! owned_handle {
+    ($($(#[$m:meta])* $v:vis struct $name:ident($handle:ty) => unsafe $free:path;)+) => {$(
+        $(#[$m])*
+        #[repr(transparent)]
+        $v struct $name(::core::ptr::NonNull<$handle>);
+
+        impl ::core::ops::Deref for $name {
+            type Target = $handle;
+            fn deref(&self) -> &$handle {
+                // SAFETY: the contract of `owned_handle!`.
+                unsafe { self.0.as_ref() }
+            }
+        }
+
+        impl Drop for $name {
+            fn drop(&mut self) {
+                // SAFETY: the contract of `owned_handle!`.
+                unsafe { $free(self.0.as_ptr()) };
+            }
+        }
+    )+};
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // FFI layout assertions
 // ───────────────────────────────────────────────────────────────────────────

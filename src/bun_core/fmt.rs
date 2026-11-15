@@ -3319,9 +3319,7 @@ unsafe extern "C" {
     // only precondition (≥124-byte writable buffer), so `safe fn` discharges
     // the link-time proof and callers need no `unsafe` block.
     safe fn WTF__dtoa(buf: &mut [u8; 124], number: f64) -> usize;
-    // The same, for the arguments that the callers below let through: at most 100 digits, and for
-    // `toFixed` a number below 1e21.
-    safe fn WTF__numberToFixed(
+    fn WTF__numberToFixed(
         buf: &mut [u8; 124],
         number: f64,
         fraction_digits: core::ffi::c_uint,
@@ -3358,7 +3356,8 @@ impl FormatDouble {
         if number.is_nan() || number.abs() >= 1e21 {
             return Self::dtoa(buf, number);
         }
-        let len = WTF__numberToFixed(buf, number, fraction_digits.min(100));
+        // SAFETY: `ToFixed` takes the count as an `int`, and at most 100 is not negative.
+        let len = unsafe { WTF__numberToFixed(buf, number, fraction_digits.min(100)) };
         &buf[..len]
     }
 

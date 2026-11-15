@@ -517,37 +517,14 @@ impl Drop for OwnedSslCtx {
     }
 }
 
-/// An owner of one reference, released on drop. `Option<$name>` is a nullable `$handle *`.
-macro_rules! owned_handle {
-    ($($name:ident($handle:ident) => $free:ident;)+) => {$(
-        #[doc = concat!("Owns one `", stringify!($handle), "` reference.")]
-        #[repr(transparent)]
-        pub struct $name(core::ptr::NonNull<$handle>);
-
-        impl core::ops::Deref for $name {
-            type Target = $handle;
-            fn deref(&self) -> &$handle {
-                // SAFETY: live until `self` is dropped.
-                unsafe { self.0.as_ref() }
-            }
-        }
-
-        impl Drop for $name {
-            fn drop(&mut self) {
-                // SAFETY: we own exactly one reference, released once.
-                unsafe { $free(self.0.as_ptr()) }
-            }
-        }
-    )+};
-}
-
-owned_handle! {
-    OwnedSslSession(SSL_SESSION) => SSL_SESSION_free;
-    OwnedX509(X509) => X509_free;
-    OwnedX509Crl(X509_CRL) => X509_CRL_free;
-    OwnedX509Store(X509_STORE) => X509_STORE_free;
-    OwnedEvpPkey(EVP_PKEY) => EVP_PKEY_free;
-    OwnedRsa(RSA) => RSA_free;
+// SAFETY: each is made from one reference that BoringSSL handed over.
+bun_opaque::owned_handle! {
+    pub struct OwnedSslSession(SSL_SESSION) => unsafe SSL_SESSION_free;
+    pub struct OwnedX509(X509) => unsafe X509_free;
+    pub struct OwnedX509Crl(X509_CRL) => unsafe X509_CRL_free;
+    pub struct OwnedX509Store(X509_STORE) => unsafe X509_STORE_free;
+    pub struct OwnedEvpPkey(EVP_PKEY) => unsafe EVP_PKEY_free;
+    pub struct OwnedRsa(RSA) => unsafe RSA_free;
 }
 
 impl SSL_CTX {

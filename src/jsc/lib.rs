@@ -186,7 +186,8 @@ pub use self::js_value::{
 // and is wired into `event_loop::tick` directly at link time. No fn-pointer
 // hook is re-exported from the crate root.
 pub use self::array_buffer::{
-    ArrayBuffer, BinaryType, JSCArrayBuffer, MarkedArrayBuffer, PinnedArrayBuffer, TypedArrayType,
+    ArrayBuffer, ArrayBufferPin, ArrayBufferViews, BinaryType, JSCArrayBuffer, MarkedArrayBuffer,
+    OffThreadBytes, PinnedArrayBuffer, TypedArrayType,
 };
 pub use self::console_object as ConsoleObject;
 pub use self::console_object::Formatter;
@@ -385,7 +386,7 @@ pub use self::js_map::JSMap;
 pub use self::js_runtime_type::JSRuntimeType;
 pub use self::js_uint8_array::JSUint8Array;
 pub use self::marked_argument_buffer::MarkedArgumentBuffer;
-pub use self::regular_expression::RegularExpression;
+pub use self::regular_expression::OwnedRegularExpression;
 pub use self::script_execution_status::ScriptExecutionStatus;
 pub use self::source_provider::SourceProvider;
 pub use self::url_search_params::URLSearchParams;

@@ -640,7 +640,7 @@ pub mod store {
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        pub fn memfd(&self) -> Option<bun_sys::Fd> {
+        pub(crate) fn memfd(&self) -> Option<bun_sys::Fd> {
             self.memfd.as_ref().map(|file| file.handle)
         }
 

@@ -24,16 +24,6 @@ bun_opaque::opaque_ffi! {
     pub(crate) struct RunLoopTimer;
 }
 
-impl RunLoopTimer {
-    /// Takes `NonNull` (not `&self`) so callers holding the raw FFI handle
-    /// don't need an `unsafe { as_ref() }` just to forward it — `NonNull<T>`
-    /// is ABI-identical to `*mut T` and the extern is `safe fn`.
-    #[inline]
-    fn fire(this: NonNull<RunLoopTimer>) {
-        WTFTimer__fire(this)
-    }
-}
-
 /// A timer created by WTF code and invoked by Bun's event loop.
 pub(crate) struct WTFTimer {
     // Backref to the owning VirtualMachine (captured from the thread-local VM
@@ -72,7 +62,8 @@ impl WTFTimer {
 
     #[inline]
     fn run_without_removing(&self) {
-        RunLoopTimer::fire(self.run_loop_timer);
+        // SAFETY: `run_loop_timer` owns `self`, which is live.
+        unsafe { WTFTimer__fire(self.run_loop_timer) };
     }
 
     #[bun_uws::uws_callback(export = "WTFTimer__isActive", no_catch)]
@@ -278,5 +269,5 @@ unsafe extern "C" fn WTFTimer__cancel(this: *mut WTFTimer) {
 }
 
 unsafe extern "C" {
-    safe fn WTFTimer__fire(this: NonNull<RunLoopTimer>);
+    fn WTFTimer__fire(this: NonNull<RunLoopTimer>);
 }

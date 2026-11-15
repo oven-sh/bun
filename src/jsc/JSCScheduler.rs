@@ -1,50 +1,44 @@
-use bun_event_loop::{ConcurrentTask::ConcurrentTask, TaskTag, Taskable, task_tag};
+use bun_event_loop::{BoxedTask, ConcurrentTask::ConcurrentTask, TaskTag, task_tag};
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JsResult};
 
 bun_opaque::opaque_ffi! {
-    /// Opaque FFI handle for a JSC deferred work task (constructed/owned on the C++ side).
+    /// Opaque FFI handle for a JSC deferred work task. A `Box` of it owns the C++ job.
     pub struct JSCDeferredWorkTask;
 }
 
-impl Taskable for JSCDeferredWorkTask {
+impl BoxedTask for JSCDeferredWorkTask {
     const TAG: TaskTag = task_tag::JSCDeferredWorkTask;
     /// A cross-thread Atomics.notify / Wasm / FinalizationRegistry completion:
     /// delete the C++ job (its `Ref<Ticket>` drops before ~VM).
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract; heap-allocated by JSCTaskScheduler::onScheduleWorkSoon.
-        unsafe { Bun__deleteDeferredWorkTask(this) }
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// `JSCTaskScheduler::runPendingWork` checks the graph that scheduled the work.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
 
 unsafe extern "C" {
-    // safe: `JSCDeferredWorkTask` is an `opaque_ffi!` ZST handle (`!Freeze`
-    // via `UnsafeCell`); `&mut` is ABI-identical to a non-null `*mut` and the
-    // C++ side consuming it is interior to the opaque cell.
-    safe fn Bun__runDeferredWork(task: &mut JSCDeferredWorkTask);
+    fn Bun__runDeferredWork(task: *mut JSCDeferredWorkTask);
     fn Bun__deleteDeferredWorkTask(task: *mut JSCDeferredWorkTask);
 }
 
-impl JSCDeferredWorkTask {
-    /// Delete the C++ job without running it (its ticket is cancelled with the
-    /// DeferredWorkTimer at VM teardown).
-    ///
-    /// # Safety
-    /// `this` is the job handed over by `onScheduleWorkSoon`, not yet run.
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe { Bun__deleteDeferredWorkTask(this) };
+impl Drop for JSCDeferredWorkTask {
+    fn drop(&mut self) {
+        // SAFETY: only the box that `onScheduleWorkSoon` handed over drops one.
+        unsafe { Bun__deleteDeferredWorkTask(self) };
     }
+}
 
+impl JSCDeferredWorkTask {
     /// The C++ side reports what a job throws at its own boundary; what can
     /// still be pending here is the VM's termination.
-    pub fn run(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        crate::call_check_slow(global, || Bun__runDeferredWork(self))
+    pub fn run(self: Box<Self>, global: &JSGlobalObject) -> JsResult<()> {
+        // SAFETY: C++ deletes the job that the box owned.
+        crate::call_check_slow(global, || unsafe {
+            Bun__runDeferredWork(bun_core::heap::into_raw(self))
+        })
     }
 }
 
@@ -55,17 +49,16 @@ impl JSCDeferredWorkTask {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
     r: *const crate::vm_handle::Shared,
-    task: *mut JSCDeferredWorkTask,
+    task: Box<JSCDeferredWorkTask>,
     kind: crate::LoopKind,
 ) {
     crate::mark_binding!();
     // SAFETY: C++ passes the reference its JSVMClientData holds.
     let handle = unsafe { crate::VmHandle::borrow_ref(r) };
-    let ct = ConcurrentTask::create_from(task);
-    if let crate::Posted::Refused(_) = handle.post(kind, ct) {
-        // SAFETY: `task` is the C++ job handed over for exactly one run/destroy. Its ticket was
-        // already cancelled by the VM teardown (DeferredWorkTimer is shut down before ~VM).
-        unsafe { JSCDeferredWorkTask::destroy(task) };
+    let ct = ConcurrentTask::create_boxed(task);
+    if let crate::Posted::Refused(ct) = handle.post(kind, ct) {
+        // SAFETY: the task made above. Its ticket was already cancelled by the VM teardown.
+        drop(unsafe { ct.task.into_boxed::<JSCDeferredWorkTask>() });
     }
 }
 

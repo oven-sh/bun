@@ -67,7 +67,8 @@ impl StringBuilder {
 
 impl Drop for StringBuilder {
     fn drop(&mut self) {
-        StringBuilder__deinit(self)
+        // SAFETY: `self` is not used again.
+        unsafe { StringBuilder__deinit(self) }
     }
 }
 
@@ -80,7 +81,7 @@ impl Drop for StringBuilder {
 // because the C++ side dereferences the `(ptr, len)` slice.
 unsafe extern "C" {
     fn StringBuilder__init(this: *mut c_void);
-    safe fn StringBuilder__deinit(this: &mut StringBuilder);
+    fn StringBuilder__deinit(this: &mut StringBuilder);
     fn StringBuilder__appendLatin1(this: &mut StringBuilder, str: *const u8, len: usize);
     safe fn StringBuilder__appendDouble(this: &mut StringBuilder, num: f64);
     safe fn StringBuilder__appendInt(this: &mut StringBuilder, num: i32);

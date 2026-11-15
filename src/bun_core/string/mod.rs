@@ -1213,7 +1213,7 @@ const UNTAG_MASK: usize = (1usize << 53) - 1;
 pub struct EncodedSlice<'a> {
     /// Tagged pointer — never dereference directly; use `untagged_ptr()`.
     _unsafe_ptr_do_not_use: *const u8,
-    pub len: usize,
+    len: usize,
     _marker: PhantomData<&'a [u8]>,
 }
 crate::assert_ffi_layout!(EncodedSlice<'static>, 16, 8);
@@ -1240,6 +1240,10 @@ impl<'a> EncodedSlice<'a> {
     #[inline]
     const fn tagged_ptr(self) -> *const u8 {
         self._unsafe_ptr_do_not_use
+    }
+    #[inline]
+    pub const fn len(self) -> usize {
+        self.len
     }
     #[inline]
     pub const fn is_empty(self) -> bool {

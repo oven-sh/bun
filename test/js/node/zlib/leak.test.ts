@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug } from "harness";
 import { join } from "node:path";
 
 // Each method runs in its own leak-fixture.ts process, so that the memory it
@@ -102,9 +102,8 @@ test.concurrent.each([
   ["accepts", `const again = () => init(handle, 15);`],
   ["rejects", `const again = () => init(zlib.createDeflate({ memLevel: 9 })._handle, 99);`],
 ])("a second init() that zlib %s frees the first one's state", async (_, again) => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
+  await expectRssDeltaBelow(
+    [
       "-e",
       `const zlib = require("node:zlib");
        const handle = zlib.createDeflate()._handle;
@@ -112,19 +111,8 @@ test.concurrent.each([
        ${again}
        const residentAfter = calls => { for (let i = 0; i < calls; i++) again(); Bun.gc(true); return process.memoryUsage.rss(); };
        const before = residentAfter(50);
-       console.log((residentAfter(300) - before) / 2 ** 20);`,
+       console.log(JSON.stringify({ deltaMiB: (residentAfter(300) - before) / 2 ** 20 }));`,
     ],
-    env: {
-      ...bunEnv,
-      BUN_JSC_useJIT: "0",
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-        .filter(Boolean)
-        .join(":"),
-    },
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(Number.parseFloat(stdout)).toBeLessThan(isASAN || isDebug ? 40 : 25);
-  expect(exitCode).toBe(0);
+    { release: 25, debug: 40 },
+  );
 });

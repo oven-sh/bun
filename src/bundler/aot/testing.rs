@@ -64,7 +64,7 @@ pub fn with_front_end_inputs<R>(
     }
     FileSystem::get().set_top_level_dir(directory);
     let environment = Some(&raw mut environment);
-    let transpiler = Transpiler::init(&arena, &raw const *log, transform_options, environment);
+    let transpiler = Transpiler::init(&arena, log, transform_options, environment);
     let transpiler = arena.alloc(transpiler.ok()?);
     transpiler.options.compile_mode = crate::options::CompileMode::Executable;
     // As the command line has it without `--env`.

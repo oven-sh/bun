@@ -470,7 +470,7 @@ pub(crate) fn enqueue_peer_rows(
 }
 
 /// Pending log lines go to stderr; `--silent` drops everything but errors. An error among them fails the install here, because the reset below hides it from `install_with_manager`.
-fn print_log(manager: &PackageManager) -> crate::Result<()> {
+fn print_log(manager: &mut PackageManager) -> crate::Result<()> {
     let log = manager.log();
     let failed = log.has_errors();
     if manager.options.log_level != LogLevel::Silent || failed {
@@ -704,9 +704,10 @@ pub(crate) fn print_kept_patched(manager: &mut PackageManager) {
 }
 
 /// `bun update`, once everything is resolved: a dependency whose source could not be read kept the package of bun.lock (`Scratch::refreshing`), which the warning about the failed read does not say. Each such package gets the line that `warn_unchecked` prints for a package whose manifest could not be fetched. A command that has failed by now saves nothing, and gets no such line.
-pub(crate) fn warn_unchecked_sources(manager: &PackageManager) {
+pub(crate) fn warn_unchecked_sources(manager: &mut PackageManager) {
+    let log = manager.log();
     if manager.subcommand != crate::Subcommand::Update
-        || manager.log().has_errors()
+        || log.has_errors()
         || manager.update_requests.iter().any(|request| request.failed)
     {
         return;
@@ -723,7 +724,6 @@ pub(crate) fn warn_unchecked_sources(manager: &PackageManager) {
         })
         .collect();
     index_sort::sort_vec_unstable_by(&mut kept, |a, b| a.cmp(b));
-    let log = manager.log();
     for (name, resolution) in kept {
         log.add_warning_fmt(
             None,
@@ -962,7 +962,7 @@ fn newest_allowed(manager: &mut PackageManager, pkg_id: PackageID) -> Option<Box
 
 /// Pairs each unchecked `(name, version)` with the fetch failure the manifest task logged for it and reports both as one warning; nothing under `--silent`.
 fn warn_unchecked(
-    manager: &PackageManager,
+    manager: &mut PackageManager,
     msgs_before: usize,
     unchecked: &[(Box<[u8]>, Box<[u8]>)],
 ) {

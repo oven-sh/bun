@@ -19,6 +19,13 @@ use core::fmt;
 use bun_alloc::AllocError;
 use bun_core::strings;
 
+/// Empties `list` and returns its allocation, for `U` = `T` with another lifetime. std collects this in place.
+pub fn recycle_vec<T, U>(mut list: Vec<T>) -> Vec<U> {
+    const { assert!(size_of::<T>() == size_of::<U>() && align_of::<T>() == align_of::<U>()) };
+    list.clear();
+    list.into_iter().map(|_| unreachable!()).collect()
+}
+
 pub trait VecExt<T>: Sized {
     // ── constructors ──────────────────────────────────────────────────────
     fn init_capacity(n: usize) -> Self;

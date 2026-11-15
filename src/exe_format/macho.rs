@@ -312,19 +312,9 @@ impl MachoFile {
         // Binary is:
         // [header][...data before __BUN][__BUN][...data after __BUN]
         // We need to shift [...data after __BUN] forward by size_diff bytes.
-        // SAFETY: source and destination overlap; ptr::copy (memmove) handles this.
-        // `original_bun_end <= prev_len` and `original_data_end <= original_bun_end` were
-        // checked above, so the source range stays within the previously-initialized bytes
-        // and the destination range stays within the new length `prev_len + size_diff`.
-        unsafe {
-            let after_bun_dst = self
-                .data
-                .as_mut_ptr()
-                .add(original_data_end + usize::try_from(size_diff).expect("int cast"));
-            let prev_after_bun_src = self.data.as_ptr().add(original_bun_end);
-            let prev_after_bun_len = prev_len - original_bun_end;
-            core::ptr::copy(prev_after_bun_src, after_bun_dst, prev_after_bun_len);
-        }
+        let after_bun_dst = original_data_end + (new_len - prev_len);
+        self.data
+            .copy_within(original_bun_end..prev_len, after_bun_dst);
 
         // Now we copy the u64 size header (8 bytes for alignment)
         self.data[original_fileoff as usize..][..8]

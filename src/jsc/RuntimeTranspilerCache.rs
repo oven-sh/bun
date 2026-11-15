@@ -7,7 +7,7 @@ use bun_ast::ExportsKind;
 use bun_ast::Source;
 use bun_core::{FeatureFlags, env_var};
 use bun_core::{String as BunString, StringView, ZStr};
-use bun_js_parser::ParserOptions;
+use bun_js_parser::{CacheLookup, ParsedForCache, ParserOptions};
 use bun_paths::resolve_path::{self as path_handler, platform};
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::fs::FileSystem;
@@ -562,19 +562,25 @@ impl Entry {
     }
 }
 
+#[derive(Default)]
 pub struct RuntimeTranspilerCache {
-    pub(crate) input_hash: Option<u64>,
-    pub(crate) input_byte_length: Option<u64>,
-    pub(crate) features_hash: Option<u64>,
-    pub(crate) test_features_hash: Option<u64>,
-    pub(crate) vitest_features_hash: Option<u64>,
-    pub(crate) imports_vitest: bool,
-    pub(crate) exports_kind: ExportsKind,
-    pub(crate) entry: Option<Entry>,
-    // `sourcemap` / `esm_record` are owned `Box<[u8]>` (global mimalloc).
-    // The per-call arena that once backed the output code is gone: the UTF-8
-    // load arm preads straight into WTF storage (see `Entry::load`), so no
-    // arena scratch is needed at all.
+    /// `None` if the output is not to be saved.
+    pending_entry: Option<PendingEntry>,
+    /// Set by the parser, or by `get()` when the entry it found has `vitest_features_hash`.
+    pub imports_vitest: bool,
+    pub entry: Option<Entry>,
+}
+
+struct PendingEntry {
+    input_hash: u64,
+    input_byte_length: u64,
+    /// `set_parsed` can replace it with `test_features_hash` or `vitest_features_hash`.
+    features_hash: u64,
+    /// For a file with `uses_test_api`. Also hashes the parser features `bun test` sets.
+    test_features_hash: u64,
+    /// For a file with `imports_vitest`.
+    vitest_features_hash: u64,
+    exports_kind: ExportsKind,
 }
 
 pub(crate) fn hash(bytes: &[u8]) -> u64 {
@@ -641,7 +647,7 @@ impl RuntimeTranspilerCache {
         }
 
         if let Some(dir) = env_var::BUN_RUNTIME_TRANSPILER_CACHE_PATH.get() {
-            if dir.is_empty() || (dir.len() == 1 && dir[0] == b'0') {
+            if Self::is_disabled_by_env() {
                 return 0;
             }
 
@@ -858,39 +864,46 @@ impl RuntimeTranspilerCache {
         IS_DISABLED.load(Ordering::Relaxed)
     }
 
-    pub fn get(
+    pub fn is_disabled_by_env() -> bool {
+        env_var::BUN_RUNTIME_TRANSPILER_CACHE_PATH
+            .get()
+            .is_some_and(|v| v.is_empty() || v == b"0")
+    }
+
+    /// `None` if the output is not to be saved.
+    pub fn for_printer(&self) -> Option<&dyn bun_js_printer::TranspilerCacheWriter> {
+        Some(self.pending_entry.as_ref()?)
+    }
+}
+
+impl bun_js_parser::TranspilerCache for RuntimeTranspilerCache {
+    fn get(
         &mut self,
-        source: &Source,
+        source: &Source<'_>,
         parser_options: &ParserOptions<'_>,
         used_jsx: bool,
-    ) -> bool {
+    ) -> CacheLookup {
         if !FeatureFlags::RUNTIME_TRANSPILER_CACHE {
-            return false;
-        }
-
-        if self.entry.is_some() {
-            return true;
+            return CacheLookup::Skipped;
         }
 
         // The React Compiler costs several times more than the rest of transpiling, even for a small file.
         if source.contents.len() < MINIMUM_CACHE_SIZE && !parser_options.runs_react_compiler() {
-            return false;
+            return CacheLookup::Skipped;
         }
 
         if IS_DISABLED.load(Ordering::Relaxed) {
-            return false;
+            return CacheLookup::Skipped;
         }
 
         // `bun_paths::fs::Path<'static>` is the trimmed TYPE_ONLY mirror and
         // doesn't carry `is_file()`; inline the same check the resolver
         // `Path::is_file` performs (`namespace == "" || namespace == "file"`).
         if !(source.path.namespace.is_empty() || source.path.namespace == b"file") {
-            return false;
+            return CacheLookup::Skipped;
         }
 
-        let input_hash = self.input_hash.unwrap_or_else(|| hash(&source.contents));
-        self.input_hash = Some(input_hash);
-        self.input_byte_length = Some(source.contents.len() as u64);
+        let input_hash = hash(&source.contents);
 
         let mut features_hasher = Wyhash::init(SEED);
         parser_options.hash_for_runtime_transpiler(&mut features_hasher, used_jsx);
@@ -899,9 +912,14 @@ impl RuntimeTranspilerCache {
         let test_features_hash = features_hasher.final_();
         features_hasher.update(b"vitest");
         let vitest_features_hash = features_hasher.final_();
-        self.features_hash = Some(features_hash);
-        self.test_features_hash = Some(test_features_hash);
-        self.vitest_features_hash = Some(vitest_features_hash);
+        self.pending_entry = Some(PendingEntry {
+            input_hash,
+            input_byte_length: source.contents.len() as u64,
+            features_hash,
+            test_features_hash,
+            vitest_features_hash,
+            exports_kind: ExportsKind::None,
+        });
 
         self.entry = match Self::from_file(
             input_hash,
@@ -919,7 +937,7 @@ impl RuntimeTranspilerCache {
                     bstr::BStr::new(source.path.text),
                     err.name()
                 );
-                return false;
+                return CacheLookup::Miss;
             }
         };
         #[cfg(bun_debug)]
@@ -946,90 +964,51 @@ impl RuntimeTranspilerCache {
         {
             if !BUN_DEBUG_RESTORE_FROM_CACHE.load(Ordering::Relaxed) {
                 self.entry = None;
+                return CacheLookup::Miss;
             }
         }
 
-        self.entry.is_some()
+        CacheLookup::Hit
+    }
+
+    fn set_parsed(&mut self, parsed: ParsedForCache) {
+        let Some(pending_entry) = &mut self.pending_entry else {
+            return;
+        };
+        self.imports_vitest = parsed.imports_vitest;
+        pending_entry.exports_kind = parsed.exports_kind;
+        if parsed.imports_vitest {
+            pending_entry.features_hash = pending_entry.vitest_features_hash;
+        } else if parsed.uses_test_api {
+            pending_entry.features_hash = pending_entry.test_features_hash;
+        }
+    }
+
+    fn discard(&mut self) {
+        self.pending_entry = None;
+    }
+}
+
+impl bun_js_printer::TranspilerCacheWriter for PendingEntry {
+    fn put(&self, output_code: &[u8], sourcemap: &[u8], esm_record: &[u8]) {
+        // `Entry::load` rejects an entry with no sourcemap.
+        if RuntimeTranspilerCache::is_disabled() || sourcemap.is_empty() {
+            return;
+        }
+
+        let result = RuntimeTranspilerCache::to_file(
+            self.input_byte_length,
+            self.input_hash,
+            self.features_hash,
+            sourcemap,
+            esm_record,
+            &StringView::ascii(output_code),
+            self.exports_kind,
+        );
+        if let Err(err) = result {
+            bun_core::scoped_log!(cache, "put() = {}", err.name());
+        }
     }
 }
 
 pub static IS_DISABLED: AtomicBool = AtomicBool::new(false);
-
-// ──────────────────────────────────────────────────────────────────────────
-// VTable bridge for the canonical (lower-tier) `bun_ast::RuntimeTranspilerCache`.
-//
-// LAYERING: `ParseOptions.runtime_transpiler_cache` carries the lower-tier
-// type so the parser crate names no `bun_jsc` types. `RuntimeTranspilerStore::run`
-// constructs that lower-tier cache with this vtable so the parser's
-// `cache.get()` reaches the disk-backed `RuntimeTranspilerCache::get()` above.
-// On a hit the concrete `Entry` is boxed and stored type-erased in
-// `bun_ast::RuntimeTranspilerCache.entry`; the store casts it back via
-// `heap::take(ptr.cast::<Entry>())`.
-// ──────────────────────────────────────────────────────────────────────────
-
-bun_ast::link_impl_TranspilerCacheImpl! {
-    Jsc for extern bun_ast::RuntimeTranspilerCache => |this| {
-        get(source, parser_options, used_jsx) => {
-            let this = &mut *this;
-            let parser_options = parser_options.cast::<ParserOptions<'_>>().as_ref();
-
-            let mut jsc = RuntimeTranspilerCache {
-                input_hash: this.input_hash,
-                input_byte_length: this.input_byte_length,
-                features_hash: this.features_hash,
-                test_features_hash: this.test_features_hash,
-                vitest_features_hash: this.vitest_features_hash,
-                imports_vitest: false,
-                exports_kind: this.exports_kind,
-                entry: None,
-            };
-            let hit = jsc.get(source, parser_options, used_jsx);
-            this.input_hash = jsc.input_hash;
-            this.input_byte_length = jsc.input_byte_length;
-            this.features_hash = jsc.features_hash;
-            this.test_features_hash = jsc.test_features_hash;
-            this.vitest_features_hash = jsc.vitest_features_hash;
-            this.imports_vitest = jsc.imports_vitest;
-            this.exports_kind = jsc.exports_kind;
-            if let Some(entry) = jsc.entry {
-                this.entry = Some(bun_core::heap::into_raw(Box::new(entry)).cast::<()>());
-            }
-            hit
-        },
-        put(output_code_bytes, sourcemap, esm_record) => {
-            let this = &mut *this;
-            if this.input_hash.is_none() || IS_DISABLED.load(Ordering::Relaxed) {
-                return;
-            }
-            // `Entry::load` rejects an entry with no sourcemap.
-            if sourcemap.is_empty() {
-                return;
-            }
-            debug_assert!(this.entry.is_none());
-
-            // Borrowed Latin-1 view: `to_file` only reads `byte_slice()` + the encoding
-            // tag (unmarked 8-bit EncodedSlice -> Encoding::LATIN1, same as clone_latin1),
-            // and `output_code_bytes` outlives the synchronous `to_file` call.
-            let output_code = StringView::ascii(output_code_bytes);
-            let result = RuntimeTranspilerCache::to_file(
-                this.input_byte_length.unwrap(),
-                this.input_hash.unwrap(),
-                if this.imports_vitest {
-                    this.vitest_features_hash.unwrap()
-                } else if this.uses_test_api {
-                    this.test_features_hash.unwrap()
-                } else {
-                    this.features_hash.unwrap()
-                },
-                sourcemap,
-                esm_record,
-                &output_code,
-                this.exports_kind,
-            );
-            if let Err(err) = result {
-                bun_core::scoped_log!(cache, "put() = {}", err.name());
-            }
-        },
-        is_disabled() => RuntimeTranspilerCache::is_disabled(),
-    }
-}

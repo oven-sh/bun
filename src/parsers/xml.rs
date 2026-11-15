@@ -969,6 +969,21 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         self.err_here("Invalid character in XML:")
     }
 
+    /// Where the grammar has a required `S` before the current token.
+    fn require_spaced(&mut self) -> PResult<()> {
+        if self.tok.spaced {
+            return Ok(());
+        }
+        let tok = self.tok;
+        Err(self.err_fmt(
+            tok.pos,
+            format_args!(
+                "Whitespace is required before {}",
+                KindDisplay(tok.kind, self.latin1)
+            ),
+        ))
+    }
+
     // ── byte cursor ────────────────────────────────────────────────────────
 
     /// Document position for diagnostics about the byte at the cursor.
@@ -3106,10 +3121,54 @@ impl<'a, U: Unit> AttList<'a, U> {
     }
 }
 
-/// Up to this many attributes on one tag, duplicates are found by comparing
-/// names pairwise (`Parser::attribute_first`); beyond it, through
-/// `Parser::attribute_names`.
+/// Up to this many attributes on one tag, duplicates are found by comparing names pairwise.
 const LINEAR_ATTRIBUTE_LIMIT: usize = 8;
+
+/// The names of the attributes of a start tag.
+struct AttributeNames<'a, U: Unit> {
+    first: [&'a [U]; LINEAR_ATTRIBUTE_LIMIT],
+    /// Filled once there are more than fit in `first`.
+    all: HashMap<&'a [U], ()>,
+    len: usize,
+}
+
+impl<'a, U: Unit> AttributeNames<'a, U> {
+    fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    #[inline(always)]
+    fn contains(&self, name: &[U]) -> bool {
+        if self.len <= LINEAR_ATTRIBUTE_LIMIT {
+            self.first[..self.len]
+                .iter()
+                .any(|&first| name_eq(first, name))
+        } else {
+            self.all.contains_key(name)
+        }
+    }
+
+    #[inline(always)]
+    fn insert(&mut self, name: &'a [U]) {
+        if self.len < LINEAR_ATTRIBUTE_LIMIT {
+            self.first[self.len] = name;
+        } else {
+            self.spill(name);
+        }
+        self.len += 1;
+    }
+
+    #[cold]
+    fn spill(&mut self, name: &'a [U]) {
+        if self.len == LINEAR_ATTRIBUTE_LIMIT {
+            self.all.clear();
+            for first in self.first {
+                self.all.insert(first, ());
+            }
+        }
+        self.all.insert(name, ());
+    }
+}
 
 /// Elements open at once. Parsing is iterative, so this is not about the
 /// native stack; it bounds memory on hostile input and keeps the (recursive)
@@ -3130,11 +3189,7 @@ struct Parser<'a, 'log, U: Unit, S: Sink<'a, U>> {
     attlists: HashMap<&'a [U], AttList<'a, U>>,
     /// The open elements: name and the input frame the start tag was in.
     open: Vec<(&'a [U], u32)>,
-    /// The current start tag's attribute names: the first few in `first`,
-    /// and once there are more than `LINEAR_ATTRIBUTE_LIMIT`, all in `names`.
-    attribute_first: [&'a [U]; LINEAR_ATTRIBUTE_LIMIT],
-    attribute_names: HashMap<&'a [U], ()>,
-    attribute_count: usize,
+    attribute_names: AttributeNames<'a, U>,
     /// Inside the document type declaration, for diagnostics.
     in_dtd: bool,
     sink: S,
@@ -3195,9 +3250,11 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             sink,
             attlists: HashMap::default(),
             open: Vec::new(),
-            attribute_first: [&[]; LINEAR_ATTRIBUTE_LIMIT],
-            attribute_names: HashMap::default(),
-            attribute_count: 0,
+            attribute_names: AttributeNames {
+                first: [&[]; LINEAR_ATTRIBUTE_LIMIT],
+                all: HashMap::default(),
+                len: 0,
+            },
         }
     }
 
@@ -3256,19 +3313,8 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         )
     }
 
-    /// Where the grammar has a required `S` before the current token.
     fn require_spaced(&mut self) -> PResult<()> {
-        if self.scanner.tok.spaced {
-            return Ok(());
-        }
-        let tok = self.scanner.tok;
-        Err(self.scanner.err_fmt(
-            tok.pos,
-            format_args!(
-                "Whitespace is required before {}",
-                KindDisplay(tok.kind, self.scanner.latin1)
-            ),
-        ))
+        self.scanner.require_spaced()
     }
 
     fn expect_name(&mut self, expected: &str) -> PResult<&'a [U]> {
@@ -4161,19 +4207,14 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     /// Returns whether the tag was an empty-element tag.
     #[inline]
     fn parse_attributes(&mut self, element: &'a [U]) -> PResult<bool> {
-        self.attribute_count = 0;
-        // The element's ATTLIST, if any. It is not modified while a start tag
-        // is read (declarations precede the root element), so a raw pointer
-        // sidesteps borrowing `self` for the whole loop.
-        let defs: Option<*const AttList<'a, U>> = if self.attlists.is_empty() {
+        self.attribute_names.clear();
+        let defs = if self.attlists.is_empty() {
             None
         } else {
-            self.attlists.get(element).map(core::ptr::from_ref)
+            self.attlists.get(element)
         };
-        let collapse_for = |_: &HashMap<&'a [U], AttList<'a, U>>, name: &[U]| {
-            // SAFETY: see `defs`.
-            defs.is_some_and(|d| unsafe { &*d }.get(name).is_some_and(|def| !def.cdata))
-        };
+        let collapse_for =
+            |name: &[U]| defs.is_some_and(|d| d.get(name).is_some_and(|def| !def.cdata));
         let empty = loop {
             // The common shapes straight off the bytes; anything else (and
             // so every error) goes through the token path below.
@@ -4181,7 +4222,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                 match self.scanner.tag_step() {
                     TagStep::End { empty } => break empty,
                     TagStep::Attr { name, pos, quote } => {
-                        if self.has_attribute(name) {
+                        if self.attribute_names.contains(name) {
                             return Err(self.scanner.err_named(
                                 pos,
                                 "Duplicate attribute",
@@ -4189,9 +4230,10 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                                 "",
                             ));
                         }
-                        let collapse = collapse_for(&self.attlists, name);
+                        let collapse = collapse_for(name);
                         let value = self.scanner.scan_att_value(quote, collapse)?;
-                        self.push_attribute(name, value);
+                        self.sink.attribute(name, value);
+                        self.attribute_names.insert(name);
                         continue;
                     }
                     TagStep::Slow => {}
@@ -4204,67 +4246,34 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                 Kind::Name(name) => name,
                 _ => return Err(self.unexpected("an attribute name, '>' or '/>' in the start tag")),
             };
-            self.require_spaced()?;
+            self.scanner.require_spaced()?;
             let pos = self.scanner.tok.pos;
-            if self.has_attribute(name) {
+            if self.attribute_names.contains(name) {
                 return Err(self.scanner.err_named(pos, "Duplicate attribute", name, ""));
             }
             self.scanner.next(Literal::None)?;
             if self.scanner.tok.kind != Kind::Eq {
                 return Err(self.unexpected("'=' after the attribute name"));
             }
-            let collapse = collapse_for(&self.attlists, name);
+            let collapse = collapse_for(name);
             self.scanner.next(Literal::AttValue { collapse })?;
             let Kind::Literal(value) = self.scanner.tok.kind else {
                 return Err(self.unexpected("a quoted attribute value"));
             };
-            self.push_attribute(name, value);
+            self.sink.attribute(name, value);
+            self.attribute_names.insert(name);
         };
         if let Some(defs) = defs {
-            // SAFETY: see `defs`.
-            let defs = unsafe { &*defs };
             for def in &defs.defs {
                 if let Some(value) = def.default
-                    && !self.has_attribute(def.name)
+                    && !self.attribute_names.contains(def.name)
                 {
-                    self.push_attribute(def.name, value);
+                    self.sink.attribute(def.name, value);
+                    self.attribute_names.insert(def.name);
                 }
             }
         }
         Ok(empty)
-    }
-
-    #[inline(always)]
-    fn has_attribute(&self, name: &[U]) -> bool {
-        if self.attribute_count <= LINEAR_ATTRIBUTE_LIMIT {
-            self.attribute_first[..self.attribute_count]
-                .iter()
-                .any(|&first| name_eq(first, name))
-        } else {
-            self.attribute_names.contains_key(name)
-        }
-    }
-
-    #[inline(always)]
-    fn push_attribute(&mut self, name: &'a [U], value: &'a [U]) {
-        self.sink.attribute(name, value);
-        if self.attribute_count < LINEAR_ATTRIBUTE_LIMIT {
-            self.attribute_first[self.attribute_count] = name;
-        } else {
-            self.spill_attribute_name(name);
-        }
-        self.attribute_count += 1;
-    }
-
-    #[cold]
-    fn spill_attribute_name(&mut self, name: &'a [U]) {
-        if self.attribute_count == LINEAR_ATTRIBUTE_LIMIT {
-            self.attribute_names.clear();
-            for first in self.attribute_first {
-                self.attribute_names.insert(first, ());
-            }
-        }
-        self.attribute_names.insert(name, ());
     }
 }
 

@@ -354,7 +354,7 @@ impl SinkHandle {
     }
 
     /// SAFETY: every non-None variant's pointee is alive for as long as this handle is installed.
-    pub fn write(&self, data: &streams::Result) -> streams::Writable {
+    pub fn write(&self, data: &streams::Result<'_>) -> streams::Writable {
         match *self {
             SinkHandle::None => streams::Writable::Done,
             SinkHandle::ServerResponse(any) => {

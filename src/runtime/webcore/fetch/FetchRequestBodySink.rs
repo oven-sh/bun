@@ -100,12 +100,12 @@ impl FetchRequestBodySink {
         Writable::Pending(core::ptr::from_mut(&mut self.pending))
     }
 
-    pub fn write(&mut self, data: &StreamResult) -> Writable {
+    pub fn write(&mut self, data: &StreamResult<'_>) -> Writable {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "write({})", data.slice().len());
         self.write_chunk(EncodedChunk::Bytes(data.slice()))
     }
 
-    pub fn write_latin1(&mut self, data: &StreamResult) -> Writable {
+    pub fn write_latin1(&mut self, data: &StreamResult<'_>) -> Writable {
         let bytes = data.slice();
         if bun_core::strings::is_all_ascii(bytes) {
             return self.write_chunk(EncodedChunk::Bytes(bytes));

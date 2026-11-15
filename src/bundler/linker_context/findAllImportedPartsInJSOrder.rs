@@ -1080,7 +1080,7 @@ impl ChunkLayout<'_, '_> {
             return;
         }
 
-        if self.c.graph.is_scb_bitset.bit_length > 0
+        if self.c.graph.is_scb_bitset.bit_length() > 0
             && self.c.graph.is_scb_bitset.is_set(source_index as usize)
         {
             // SAFETY: `entry_point_chunk_indices` is the raw column pointer

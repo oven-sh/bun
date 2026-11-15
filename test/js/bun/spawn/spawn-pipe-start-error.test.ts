@@ -742,7 +742,7 @@ describe.skipIf(!isLinux || !cc)("a child that has to be ended and cannot be sig
   });
 });
 
-// The POSIX reader reports a failed registration by calling on_reader_error
+// The POSIX reader used to report a failed registration by calling on_reader_error
 // from inside start(), and start() still returns Ok. Terminal's reader
 // callbacks end by releasing the reader's ref, which the constructor used to
 // take only after start() returned: the release freed the Terminal while the

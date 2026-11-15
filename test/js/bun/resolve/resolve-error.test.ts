@@ -243,7 +243,7 @@ describe.concurrent("long import path overflow", () => {
 
   it("tsconfig paths wildcard (matched text captured from import path)", async () => {
     using dir = makeDir();
-    // matchTSConfigPaths: bun.concat into fixed tsconfig_match_full_buf3
+    // match_tsconfig_paths substitutes the text in a fixed buffer
     await run(String(dir), `\`@x/${long}\``);
   });
 

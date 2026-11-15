@@ -105,12 +105,15 @@ impl Resolver<'_> {
         } else {
             glob.to_vec()
         };
+        let imports = &package_json.imports.as_ref()?.root;
         let resolution = ESModule {
             conditions: &self.opts.conditions.import,
+            resolve_target_buf: &mut bun_paths::path_buffer_pool::get(),
+            resolve_target_buf2: &mut bun_paths::path_buffer_pool::get(),
             debug_logs: None,
             stack_check: bun_core::StackCheck::init(),
         }
-        .resolve_imports(&specifier, &package_json.imports.as_ref()?.root);
+        .resolve_imports(&specifier, imports);
         matches!(
             resolution.status,
             Status::Exact | Status::ExactEndsWithStar | Status::Inexact

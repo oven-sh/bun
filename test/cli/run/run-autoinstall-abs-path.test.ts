@@ -2,15 +2,15 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, autoInstallTempDir as tempDir } from "harness";
 import { join } from "path";
 
-// dirInfoForResolution stored DirInfo.abs_path as a slice into the threadlocal
-// bufs(.path_in_global_disk_cache) buffer. After auto-installing a second package, that
+// dirInfoForResolution stored DirInfo.abs_path as a slice into a threadlocal
+// scratch buffer. After auto-installing a second package, that
 // buffer is overwritten and the first package's cached DirInfo.abs_path points at stale
 // bytes. When a module inside the first package then resolves its own name (package
 // self-reference), loadNodeModules reads dir_info.abs_path directly and looks up a
 // garbage path. With global_cache=.auto the auto-install fallback is skipped because
 // any_node_modules_folder was set by the self-reference branch, so resolution fails with
 // "Cannot find module". With the fix, abs_path is interned in DirnameStore and stays
-// valid. A debug assertion in dirInfoUncached additionally guards the invariant.
+// valid.
 test("auto-install: DirInfo.abs_path survives threadlocal buffer reuse across resolutions", async () => {
   const packages: Record<string, { manifest: object; tarball: Uint8Array }> = {};
   for (const [name, fields, files] of [

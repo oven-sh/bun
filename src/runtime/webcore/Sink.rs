@@ -880,12 +880,15 @@ impl ReadableSinkController {
             return Ok(JSValue::js_number(0.0));
         }
         let chunk = Temporary(RawSlice::new(bytes));
-        // SAFETY: the controller is attached, so the sink is live.
-        let written = unsafe {
-            match sink {
-                AnyControlledSink::RewriterPipe(sink) => sink.as_ref().write_js_buffer(&chunk),
-                _ => sink.to_sink_handle().write(&chunk),
+        let written = match sink {
+            AnyControlledSink::RewriterPipe(sink) => {
+                removable_body_behind_value!(HtmlRewriter, {
+                    // SAFETY: the controller is attached, so the sink is live.
+                    unsafe { sink.as_ref() }.write_js_buffer(&chunk)
+                })
             }
+            // SAFETY: the controller is attached, so the sink is live.
+            _ => unsafe { sink.to_sink_handle() }.write(&chunk),
         };
         Ok(written.to_js(&cx.js_thread()))
     }

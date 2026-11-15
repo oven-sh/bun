@@ -83,21 +83,6 @@ mod simd {
             found.map(|lane| slice.len() - N + lane)
         }
 
-        /// `position` in `slice[..len]`. Reads past `len`, so that a short `len` needs no branch.
-        pub fn position_within<S: Source<Lane = T>>(
-            slice: &[S],
-            len: usize,
-            test: impl Fn(Self) -> Mask<T, N>,
-        ) -> Option<usize> {
-            if let Some(first) = slice.first_chunk() {
-                let lane = test(Self::load(first)).first_set().unwrap_or(N);
-                if lane < N || len <= N {
-                    return (lane < len).then_some(lane);
-                }
-            }
-            Self::position(&slice[..len.min(slice.len())], test)
-        }
-
         /// The last index for which `test` holds.
         pub fn rposition<S: Source<Lane = T>>(
             slice: &[S],
@@ -167,9 +152,9 @@ mod simd {
         }
 
         /// `find_map` with a test of `a[i]` and `b[i]`.
-        pub fn zip_find_map<R>(
-            a: &[T],
-            b: &[T],
+        pub fn zip_find_map<S: Source<Lane = T>, R>(
+            a: &[S],
+            b: &[S],
             test: impl Fn(Self, Self) -> Mask<T, N>,
             mut f: impl FnMut(Matches) -> Option<R>,
         ) -> Option<R> {
@@ -191,9 +176,9 @@ mod simd {
         }
 
         /// `zip_find_map` with less code, for short slices.
-        pub fn zip_find_map_near<R>(
-            a: &[T],
-            b: &[T],
+        pub fn zip_find_map_near<S: Source<Lane = T>, R>(
+            a: &[S],
+            b: &[S],
             test: impl Fn(Self, Self) -> Mask<T, N>,
             mut f: impl FnMut(Matches) -> Option<R>,
         ) -> Option<R> {
@@ -222,10 +207,10 @@ mod simd {
 
         /// The first chunk with a match, and where it starts. The last one may start before `from`.
         #[inline(always)]
-        fn first_match_from(
+        fn first_match_from<S: Source<Lane = T>>(
             from: usize,
-            a: &[T],
-            b: &[T],
+            a: &[S],
+            b: &[S],
             test: &impl Fn(Self, Self) -> Mask<T, N>,
         ) -> Option<(Mask<T, N>, usize)> {
             let chunks_from = |at: usize| [a, b].map(|it| it[at..it.len() - 1].as_chunks().0);
@@ -240,9 +225,16 @@ mod simd {
                 [(pairs_a, rest_a), (pairs_b, rest_b)] =
                     chunks_from(from + N - past_aligned).map(<[_]>::as_chunks);
                 for (pair_a, pair_b) in pairs_a.iter().zip(pairs_b) {
-                    if Self::holds_in_pair(pair_a, pair_b, test) {
-                        (rest_a, rest_b) = (pair_a, pair_b);
-                        break;
+                    let [first, second] = Self::test_pair(pair_a, pair_b, test);
+                    let either = first | second;
+                    if either.any() {
+                        let start = index_of(&pair_a[0], a);
+                        let is_first = first.any();
+                        return Some(if is_first {
+                            (first, start)
+                        } else {
+                            (either, start + N)
+                        });
                     }
                 }
             }
@@ -258,9 +250,9 @@ mod simd {
         }
 
         /// `zip_find_map` from the end.
-        pub fn zip_rfind_map<R>(
-            a: &[T],
-            b: &[T],
+        pub fn zip_rfind_map<S: Source<Lane = T>, R>(
+            a: &[S],
+            b: &[S],
             test: impl Fn(Self, Self) -> Mask<T, N>,
             mut f: impl FnMut(Matches) -> Option<R>,
         ) -> Option<R> {
@@ -283,10 +275,10 @@ mod simd {
 
         /// The last chunk with a match, and where it starts. The first one may end after `until`.
         #[inline(always)]
-        fn last_match_until(
+        fn last_match_until<S: Source<Lane = T>>(
             until: usize,
-            a: &[T],
-            b: &[T],
+            a: &[S],
+            b: &[S],
             test: &impl Fn(Self, Self) -> Mask<T, N>,
         ) -> Option<(Mask<T, N>, usize)> {
             let chunks_until = |at: usize| [a, b].map(|it| it[1..at].as_rchunks().1);
@@ -301,9 +293,16 @@ mod simd {
                 [(rest_a, pairs_a), (rest_b, pairs_b)] =
                     chunks_until(until - N + to_aligned / size_of::<T>()).map(<[_]>::as_rchunks);
                 for (pair_a, pair_b) in pairs_a.iter().zip(pairs_b).rev() {
-                    if Self::holds_in_pair(pair_a, pair_b, test) {
-                        (rest_a, rest_b) = (pair_a, pair_b);
-                        break;
+                    let [first, second] = Self::test_pair(pair_a, pair_b, test);
+                    let either = first | second;
+                    if either.any() {
+                        let start = index_of(&pair_a[0], a);
+                        let is_second = second.any();
+                        return Some(if is_second {
+                            (second, start + N)
+                        } else {
+                            (either, start)
+                        });
                     }
                 }
             }
@@ -318,18 +317,21 @@ mod simd {
         }
 
         #[inline(always)]
-        fn holds_in_pair(
-            [a, c]: &[[T; N]; 2],
-            [b, d]: &[[T; N]; 2],
+        fn test_pair<S: Source<Lane = T>>(
+            a: &[[S; N]; 2],
+            b: &[[S; N]; 2],
             test: &impl Fn(Self, Self) -> Mask<T, N>,
-        ) -> bool {
-            (test(Self::load(a), Self::load(b)) | test(Self::load(c), Self::load(d))).any()
+        ) -> [Mask<T, N>; 2] {
+            [
+                test(Self::load_nth::<S, 2, 0>(a), Self::load_nth::<S, 2, 0>(b)),
+                test(Self::load_nth::<S, 2, 1>(a), Self::load_nth::<S, 2, 1>(b)),
+            ]
         }
 
         #[inline(always)]
-        fn matches_in_short(
-            a: &[T],
-            b: &[T],
+        fn matches_in_short<S: Source<Lane = T>>(
+            a: &[S],
+            b: &[S],
             test: impl Fn(Self, Self) -> Mask<T, N>,
         ) -> Option<Matches> {
             let (a, b) = (Self::load_partial_inline(a)?, Self::load_partial_inline(b)?);

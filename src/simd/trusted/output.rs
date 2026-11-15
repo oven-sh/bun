@@ -49,6 +49,14 @@ impl<'a, T: Copy> Out<'a, T> {
         Self(&mut self.0[..len])
     }
 
+    /// Without what is left over.
+    #[inline(always)]
+    pub fn into_chunks<const N: usize>(self) -> Out<'a, [T; N]> {
+        let chunks: *mut [[MaybeUninit<T>; N]] = self.0.as_chunks_mut().0;
+        // SAFETY: the layout is the same.
+        Out(unsafe { &mut *(chunks as *mut [MaybeUninit<[T; N]>]) })
+    }
+
     #[inline(always)]
     pub fn into_writer(self) -> Writer<'a, T> {
         Writer {
@@ -194,7 +202,11 @@ impl<'a, T: Copy> Writer<'a, T> {
     /// Panics if `fill` returns anything but a prefix of what it is given.
     #[inline(always)]
     pub fn append(&mut self, fill: impl for<'b> FnOnce(Out<'b, T>) -> &'b mut [T]) {
-        self.len += lend(self.rest(), fill);
+        let rest = self.rest();
+        let (start, room) = (rest.as_ptr().cast(), rest.len());
+        let filled = fill(Out(rest));
+        assert!(filled.is_empty() || filled.as_ptr() == start && filled.len() <= room);
+        self.len += filled.len();
     }
 
     #[inline(always)]
@@ -202,18 +214,6 @@ impl<'a, T: Copy> Writer<'a, T> {
         // SAFETY: `all[..len]` is in bounds and initialized.
         unsafe { self.all.get_unchecked_mut(..self.len).assume_init_mut() }
     }
-}
-
-/// The number of elements that are initialized afterwards.
-#[inline(always)]
-fn lend<T: Copy>(
-    slice: &mut [MaybeUninit<T>],
-    fill: impl for<'b> FnOnce(Out<'b, T>) -> &'b mut [T],
-) -> usize {
-    let (start, len) = (slice.as_ptr().cast(), slice.len());
-    let filled = fill(Out(slice));
-    assert!(filled.is_empty() || filled.as_ptr() == start && filled.len() <= len);
-    filled.len()
 }
 
 /// Like `Writer::append`, with room for `additional` elements.
@@ -224,7 +224,28 @@ pub fn extend_vec<T: Copy>(
     fill: impl for<'b> FnOnce(Out<'b, T>) -> &'b mut [T],
 ) {
     vec.reserve(additional);
-    let len = lend(&mut vec.spare_capacity_mut()[..additional], fill);
-    // SAFETY: that many elements of the spare capacity are initialized.
-    unsafe { vec.set_len(vec.len() + len) };
+    let (spare, rest) = spare_capacity(vec);
+    rest.append(fill(spare.take(additional)));
+}
+
+/// Never allocates, and leaves the length as it is until `Append::append`.
+#[inline(always)]
+pub fn spare_capacity<T: Copy>(vec: &mut Vec<T>) -> (Out<'_, T>, Append<'_, T>) {
+    let spare: *mut [MaybeUninit<T>] = vec.spare_capacity_mut();
+    // SAFETY: `Append` neither touches nor moves the spare capacity.
+    (Out(unsafe { &mut *spare }), Append(vec))
+}
+
+pub struct Append<'a, T>(&'a mut Vec<T>);
+
+impl<'a, T: Copy> Append<'a, T> {
+    /// Panics if `filled` is anything but a prefix of the spare capacity.
+    #[inline(always)]
+    pub fn append(self, filled: &'a mut [T]) {
+        let (len, room) = (self.0.len(), self.0.capacity() - self.0.len());
+        let start = self.0.as_ptr().wrapping_add(len);
+        assert!(filled.is_empty() || filled.as_ptr() == start && filled.len() <= room);
+        // SAFETY: that many elements of the spare capacity are initialized.
+        unsafe { self.0.set_len(len + filled.len()) };
+    }
 }

@@ -1,9 +1,9 @@
 use crate::native::{self, as_group};
 use crate::{BitIndices, Int, Isa, Mask, Vector};
-use bun_simd_trusted::shared;
+use bun_simd_trusted::{SharedU8, shared};
 use core::arch::x86_64::*;
 use core::array::from_fn;
-use core::simd::prelude::{Simd, SimdPartialOrd, SimdUint, simd_swizzle, u64x8};
+use core::simd::prelude::{Simd, SimdPartialOrd, SimdUint, simd_swizzle, u8x64, u64x8};
 use core::simd::{Swizzle, ToBytes};
 use core::sync::atomic::AtomicU8;
 
@@ -286,13 +286,11 @@ pub mod avx2 {
 
     #[inline]
     #[target_feature(enable = "avx")]
-    pub(crate) fn load_shared<const N: usize, const K: usize, const AT: usize>(
-        from: &[AtomicU8],
-    ) -> Simd<u8, N> {
-        match N {
+    pub(crate) fn load_shared<A, const K: usize, const AT: usize>(from: &[SharedU8]) -> u8x64 {
+        match const { size_of::<A>() } {
             32 => shared::load32::<K, AT>(as_group(from)).resize(0),
             16 => shared::load16_vex::<K, AT>(as_group(from)).resize(0),
-            _ => native::load_shared::<N, K, AT>(from),
+            _ => native::load_shared::<A, K, AT>(from),
         }
     }
 
@@ -311,16 +309,15 @@ pub mod avx2 {
 }
 
 mod avx512 {
+    pub(crate) use super::shared::load64_masked as load_shared_masked;
     use super::*;
 
     #[inline]
     #[target_feature(enable = "avx512f")]
-    pub(crate) fn load_shared<const N: usize, const K: usize, const AT: usize>(
-        from: &[AtomicU8],
-    ) -> Simd<u8, N> {
-        match N {
-            64 => shared::load64::<K, AT>(as_group(from)).resize(0),
-            _ => avx2::load_shared::<N, K, AT>(from),
+    pub(crate) fn load_shared<A, const K: usize, const AT: usize>(from: &[SharedU8]) -> u8x64 {
+        match const { size_of::<A>() } {
+            64 => shared::load64::<K, AT>(as_group(from)),
+            _ => avx2::load_shared::<A, K, AT>(from),
         }
     }
 
@@ -334,12 +331,6 @@ mod avx512 {
             64 => shared::store64::<K, AT>(v.resize(0), as_group(to)),
             _ => avx2::store_shared::<N, K, AT>(v, to),
         }
-    }
-
-    #[inline]
-    #[target_feature(enable = "avx512bw")]
-    pub(crate) fn load_shared_masked<const N: usize>(from: &[AtomicU8]) -> Simd<u8, N> {
-        shared::load64_masked(from).resize(0)
     }
 
     #[inline]

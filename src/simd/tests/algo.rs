@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 mod common;
 
-use bun_simd::{Int, Matches, Source};
+use bun_simd::{Int, Matches, Out, SharedU8, SharedWriter, Sink, Source};
 use common::on_each_target;
 use std::fmt::Debug;
 use std::hint::black_box;
@@ -74,14 +74,9 @@ mod simd {
                     }
                 };
                 set(one);
-                let longer = black_box(view(&mut room[range.start..]));
-                let slice = &longer[..len];
+                let slice = black_box(view(&mut room[range.clone()]));
                 assert_eq!(Vector::position(slice, test), first);
                 assert_eq!(Vector::rposition(slice, test), last);
-                assert_eq!(Vector::position_within(longer, len, test), first);
-                assert_eq!(Vector::position_within(slice, len + 3, test), first);
-                let in_half = first.filter(|&at| at < len / 2);
-                assert_eq!(Vector::position_within(slice, len / 2, test), in_half);
                 room[range.clone()].fill(zero);
             }
             room[range].fill(one);
@@ -227,6 +222,44 @@ mod simd {
         &mut to[..len]
     }
 
+    /// In each of the three ways.
+    fn append_plus_one(from: &[u8], to: &mut impl Sink) {
+        let from = &from[..from.len().min(to.remaining())];
+        let (first, second) = from.split_at(from.len() / 2);
+        for part in [first, second] {
+            let done = U8::append_chunks(to, part, |at, chunk| {
+                assert_eq!(part[at..].as_ptr(), chunk.as_ptr());
+                (at < 2 * U8::LEN).then(|| U8::load(chunk) + 1)
+            });
+            let rest = &part[done..];
+            let (short, rest) = rest.split_at(rest.len() % U8::LEN);
+            if let Some(partial) = U8::load_partial(short) {
+                (partial.lanes + 1).append_partial(to, short.len());
+            }
+            to.extend_with(rest, |byte| Some(byte + 1));
+        }
+        assert_eq!(to.len(), from.len());
+    }
+
+    fn shared_pairs(alignments: usize) {
+        let (mut room, test) = (Room::new(1), |v: U16| (v & 0xFF).simd_eq(1));
+        let room = room.all();
+        for range in ranges::<u8>(U8::LEN, alignments).filter(|it| it.len() % 2 == 0) {
+            room[range.clone()].fill(0);
+            for at in (0..range.len()).step_by(2) {
+                room[range.start + at..][..2].copy_from_slice(&[1, 2]);
+                let bytes = SharedU8::from_slice(shared(&mut room[range.clone()]));
+                let pairs: &[[_; 2]] = black_box(bytes.as_chunks().0);
+                assert_eq!(pairs[at / 2].get(), 0x201);
+                assert_eq!(U16::position(pairs, test), Some(at / 2));
+                assert_eq!(U16::rposition(pairs, test), Some(at / 2));
+                assert_eq!(U16::count(pairs, test), 1);
+                room[range.start + at..][..2].fill(0);
+            }
+            room[range].fill(1);
+        }
+    }
+
     #[export]
     pub fn all_searches(alignments: usize) {
         searches::<u8, _, { U8::LEN }>(alignments, plain);
@@ -236,6 +269,7 @@ mod simd {
         searches::<u16, _, { U16::LEN }>(alignments, plain);
         searches::<u32, _, { isa::U32::LEN }>(alignments, plain);
         searches::<u64, _, { isa::U64::LEN }>(alignments, plain);
+        shared_pairs(alignments);
         two_matches::<u8, _, { U8::LEN }>(alignments, plain);
         two_matches::<u8, _, { U8::LEN }>(alignments, shared);
         two_matches::<u16, _, { U16::LEN }>(alignments, plain);
@@ -269,6 +303,18 @@ mod simd {
         maps(bytes(), |from, to| {
             let both = shared(copy(from, to));
             U8::map_to_shared(both, both, |v| v + 1);
+        });
+        maps(bytes(), |from, to| {
+            append_plus_one(from, &mut Out::from(to).into_writer())
+        });
+        maps(bytes(), |from, to| {
+            append_plus_one(from, &mut SharedWriter::new(shared(to)))
+        });
+        maps(bytes().filter(|it| it.len() >= 2 * U8::LEN), |from, to| {
+            let both = shared(copy(from, to));
+            U8::append_chunks(&mut SharedWriter::new(both), both, |_, it| {
+                Some(U8::load(it) + 1)
+            });
         });
         let words = || ranges::<u16>(U16::LEN, alignments);
         maps::<u16>(words(), |from, to| {
@@ -365,14 +411,21 @@ mod simd {
     }
 
     #[export]
-    pub fn first_last_and_count(slice: &[AtomicU8]) -> [Option<usize>; 3] {
-        let test = |v: U8| v.simd_eq(1);
-        let count = U8::count(slice, test);
-        [
+    pub fn firsts_lasts_and_count(slice: &[AtomicU8], stays: usize) -> ([Option<usize>; 5], usize) {
+        let (test, both) = (|v: U8| v.simd_eq(1), |a: U8, b: U8| (a & b).simd_eq(1));
+        let found = [
             U8::position(slice, test),
             U8::rposition(slice, test),
-            Some(count),
-        ]
+            U8::zip_find_map(slice, slice, both, |mut it| it.find(|&at| at == stays)),
+            U8::zip_find_map_near(slice, slice, both, |mut it| it.find(|&at| at == stays)),
+            U8::zip_rfind_map(slice, slice, both, |mut it| it.rfind(|&at| at == stays)),
+        ];
+        (found, U8::count(slice, test))
+    }
+
+    #[export]
+    pub fn append_a_whole_vector(to: &[AtomicU8]) {
+        U8::zero().append_partial(&mut SharedWriter::new(to), U8::LEN);
     }
 }
 
@@ -394,6 +447,12 @@ fn groups_stay_together() {
 #[test]
 fn short_slices() {
     on_each_target(simd::short_slices);
+}
+
+#[test]
+#[should_panic]
+fn append_a_whole_vector() {
+    simd::append_a_whole_vector(shared(&mut [0; 100]));
 }
 
 #[test]
@@ -446,15 +505,16 @@ fn searches_with_a_concurrent_writer() {
                     }
                 });
                 let found: Vec<_> = (0..2000)
-                    .map(|_| simd::first_last_and_count(&slice))
+                    .map(|_| simd::firsts_lasts_and_count(&slice, stays))
                     .collect();
                 is_done.store(true, Relaxed);
                 found
             });
-            for [first, last, count] in found {
+            for ([first, last, others @ ..], count) in found {
                 assert!([Some(flickers.min(stays)), Some(stays)].contains(&first));
                 assert!([Some(flickers.max(stays)), Some(stays)].contains(&last));
-                assert!(matches!(count, Some(1 | 2)));
+                assert_eq!(others, [Some(stays); 3]);
+                assert!(matches!(count, 1 | 2));
             }
         }
     });

@@ -1,6 +1,6 @@
 //! Every kernel on every target, against a plain loop or the portable target.
 #![forbid(unsafe_code)]
-use bun_simd::{Out, Target, limit_to};
+use bun_simd::{Out, SharedU8, Target, limit_to};
 use bun_simd_kernels::{self as kernels, Filter, MappingsState};
 use core::f64::consts::PI;
 use core::fmt::Debug;
@@ -58,12 +58,21 @@ fn check_against_portable<T: PartialEq + Debug>(kernel: impl Fn() -> T) {
     check(kernel(), kernel);
 }
 
-fn shared(bytes: &[u8]) -> Vec<AtomicU8> {
+fn atomic(bytes: &[u8]) -> Vec<AtomicU8> {
     bytes.iter().map(|&byte| AtomicU8::new(byte)).collect()
 }
 
-fn plain(bytes: Vec<AtomicU8>) -> Vec<u8> {
-    bytes.into_iter().map(AtomicU8::into_inner).collect()
+fn from_shared<R>(bytes: &[u8], kernel: impl FnOnce(&[SharedU8]) -> R) -> R {
+    kernel(SharedU8::from_slice(&atomic(bytes)))
+}
+
+/// The result, and what has become of `bytes`.
+fn to_shared<R>(bytes: &[u8], kernel: impl FnOnce(&[AtomicU8]) -> R) -> (R, Vec<u8>) {
+    let bytes = atomic(bytes);
+    (
+        kernel(&bytes),
+        bytes.into_iter().map(AtomicU8::into_inner).collect(),
+    )
 }
 
 /// In an allocation of that size, which is not initialized.
@@ -104,7 +113,7 @@ fn searches() {
     #[rustfmt::skip]
     let firsts: [(First, fn(u8) -> bool); 17] = [
         (|t| kernels::index_of_char(t, b'F'), |b| b == b'F'),
-        (|t| kernels::index_of_char_shared(&shared(t), b'F'), |b| b == b'F'),
+        (|t| from_shared(t, |t| kernels::index_of_char_shared(t, b'F')), |b| b == b'F'),
         (|t| kernels::index_of_not_char(t, b'a'), |b| b != b'a'),
         (|t| kernels::index_of_any_char(t, b"F0"), |b| b"F0".contains(&b)),
         (|t| kernels::index_of_any_char(t, b"F0\xff"), |b| b"F0\xff".contains(&b)),
@@ -129,7 +138,7 @@ fn searches() {
     #[rustfmt::skip]
     let lasts: [(First, &[u8]); 7] = [
         (|t| kernels::last_index_of_char(t, b'F'), b"F"),
-        (|t| kernels::last_index_of_char_shared(&shared(t), b'F'), b"F"),
+        (|t| from_shared(t, |t| kernels::last_index_of_char_shared(t, b'F')), b"F"),
         (|t| kernels::last_index_of_any_char(t, b"F0"), b"F0"),
         (|t| kernels::last_index_of_any_char(t, b"F0<"), b"F0<"),
         (|t| kernels::last_index_of_any_char(t, b"F\x91,\xff"), b"F\x91,\xff"),
@@ -137,9 +146,8 @@ fn searches() {
         (kernels::last_index_of_slash_or_dot, b"/."),
     ];
     #[rustfmt::skip]
-    let counts: [(fn(&[u8]) -> usize, &[u8]); 4] = [
+    let counts: [(fn(&[u8]) -> usize, &[u8]); 3] = [
         (|t| kernels::count_char(t, b'a'), b"a"),
-        (|t| kernels::count_char_shared(&shared(t), b'a'), b"a"),
         (kernels::count_slashes, b"/"),
         (kernels::count_mapping_delims, b",;"),
     ];
@@ -153,10 +161,6 @@ fn searches() {
         for (kernel, set) in counts {
             check(t.iter().filter(|b| set.contains(b)).count(), || kernel(&t));
         }
-        let half = t.len() / 2;
-        check(t[..half].iter().position(|b| b"F".contains(b)), || {
-            kernels::index_of_char_within(&t, half, b'F')
-        });
         check(
             t.iter()
                 .any(|b| !(0x20..=0x7F).contains(b) || b"\"".contains(b)),
@@ -184,6 +188,12 @@ fn searches_in_both_encodings() {
             kernels::html_escape_extra_len8(&t)
         });
         for wide in [latin1, widened(&t)] {
+            check(wide.iter().position(|&unit| unit == 0x46), || {
+                kernels::index_of_char16(&wide, 0x46)
+            });
+            check(wide.iter().rposition(|&unit| unit == 0x46), || {
+                kernels::last_index_of_char16(&wide, 0x46)
+            });
             check(wide.iter().position(is_escape), || {
                 kernels::index_of_escape_char16(&wide)
             });
@@ -230,15 +240,42 @@ fn sets() {
     check((None, None), || both(&all, &[]));
 }
 
-type Search<T> = fn(&[T], &[T]) -> Option<usize>;
+/// At an odd address.
+fn in_pairs<R>(units: &[u16], kernel: impl FnOnce(&[[SharedU8; 2]]) -> R) -> R {
+    let bytes = units.iter().flat_map(|unit| unit.to_le_bytes());
+    let bytes: Vec<u8> = [0].into_iter().chain(bytes).collect();
+    from_shared(&bytes, |it| kernel(it[1..].as_chunks().0))
+}
 
-fn check_memmem<T: Copy + PartialEq>(widen: fn(u8) -> T, forward: Search<T>, back: Search<T>) {
+/// Forward and back.
+type Searches<T> = [&'static [fn(&[T], &[T]) -> Option<usize>]; 2];
+
+const SEARCHES: Searches<u8> = [
+    &[kernels::memmem, |a, b| {
+        from_shared(a, |a| from_shared(b, |b| kernels::memmem_shared(a, b)))
+    }],
+    &[kernels::memrmem, |a, b| {
+        from_shared(a, |a| from_shared(b, |b| kernels::memrmem_shared(a, b)))
+    }],
+];
+
+const SEARCHES16: Searches<u16> = [
+    &[|a, b| in_pairs(a, |a| in_pairs(b, |b| kernels::memmem16_shared(a, b)))],
+    &[kernels::memrmem16, |a, b| {
+        in_pairs(a, |a| in_pairs(b, |b| kernels::memrmem16_shared(a, b)))
+    }],
+];
+
+fn check_memmem<T: PartialEq>(widen: fn(u8) -> T, [forward, back]: Searches<T>) {
     let check_both = |text: &[u8], needle: &[u8]| {
         let [text, needle] =
             [text, needle].map(|it| it.iter().map(|&b| widen(b)).collect::<Vec<_>>());
         let places = || (0..=text.len()).filter(|&at| text[at..].starts_with(&needle));
-        check(places().next(), || forward(&text, &needle));
-        check(places().next_back(), || back(&text, &needle));
+        for (want, kernels) in [(places().next(), forward), (places().next_back(), back)] {
+            kernels
+                .iter()
+                .for_each(|kernel| check(want, || kernel(&text, &needle)));
+        }
     };
     for t in texts(b"ab").chain(texts(b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab")) {
         for len in sample([0, 1, 2, 3, 5, 9, 16, 17, 32, 33, 40], 4).map(|len| t.len().min(len)) {
@@ -289,35 +326,37 @@ fn check_memmem<T: Copy + PartialEq>(widen: fn(u8) -> T, forward: Search<T>, bac
 #[test]
 #[cfg_attr(miri, ignore = "reads only a slice")]
 fn memmem() {
-    check_memmem(|b| b, kernels::memmem, kernels::memrmem);
+    check_memmem(|b| b, SEARCHES);
 }
 
 #[test]
 #[cfg_attr(miri, ignore = "reads only a slice")]
 fn memmem16() {
-    check_memmem(|b| u16::from(b) << 7, kernels::memmem16, kernels::memrmem16);
+    check_memmem(|b| u16::from(b) << 7, SEARCHES16);
 }
 
 /// Does not end unless the time is linear.
-fn check_long_needles<T: Copy + From<u8>>(forward: Search<T>, back: Search<T>) {
+fn check_long_needles<T: Copy + From<u8>>(searches: Searches<T>) {
     let [a, b, c] = b"abc".map(T::from);
     let mut needle = [a, b].repeat(1 << 20);
     let text = needle.repeat(4);
     needle.swap(1 << 20, (1 << 20) + 1);
-    check([None; 2], || {
-        [forward(&text, &needle), back(&text, &needle)]
-    });
+    for search in searches.concat() {
+        check(None, || search(&text, &needle));
+    }
 
     let (needle, mut text) = (&text[..=1 << 21], text.clone());
     (1..=4).for_each(|i| text[(i << 21) - 1] = c);
-    check([None; 2], || [forward(&text, needle), back(&text, needle)]);
+    for search in searches.concat() {
+        check(None, || search(&text, needle));
+    }
 }
 
 #[test]
 #[cfg_attr(miri, ignore = "slow")]
 fn memmem_of_long_needles() {
-    check_long_needles(kernels::memmem, kernels::memrmem);
-    check_long_needles(kernels::memmem16, kernels::memrmem16);
+    check_long_needles(SEARCHES);
+    check_long_needles(SEARCHES16);
 }
 
 #[test]
@@ -508,18 +547,40 @@ fn odd_blocks() {
     }
 }
 
-fn check_bswap<const N: usize>(t: &[u8], kernel: fn(&mut [[u8; N]])) {
+fn check_bswap<const N: usize>(t: &[u8], kernel: fn(&[AtomicU8])) {
     let mut swapped = t.to_vec();
     swapped
         .as_chunks_mut::<N>()
         .0
         .iter_mut()
         .for_each(|word| word.reverse());
-    check(swapped, || {
-        let mut out = t.to_vec();
-        kernel(out.as_chunks_mut().0);
-        out
-    });
+    check(swapped, || to_shared(t, kernel).1);
+}
+
+/// What follows the result stays as it is.
+fn check_prefix<T>(
+    want: &[u8],
+    from: &[T],
+    kernel: for<'a> fn(&[T], Out<'a, u8>) -> &'a mut [u8],
+    kernel_to_shared: fn(&[T], &[AtomicU8]) -> usize,
+) {
+    let rooms = [from.len(), from.len() / 2, from.len() + 3, from.len() + 70];
+    for room in rooms {
+        check(want[..room.min(want.len())].to_vec(), || {
+            filled(room, |out| kernel(from, out))
+        });
+    }
+    for room in sample(rooms, 4) {
+        let (want, ones) = (&want[..room.min(want.len())], vec![0xFF; room]);
+        let all = [want, &ones[want.len()..]].concat();
+        check((want.len(), all.clone()), || {
+            let mut out = ones.clone();
+            (kernel(from, out[..].as_mut().into()).len(), out)
+        });
+        check((want.len(), all), || {
+            to_shared(&ones, |out| kernel_to_shared(from, out))
+        });
+    }
 }
 
 #[test]
@@ -528,18 +589,28 @@ fn conversions() {
         let len = t.len();
         let wide: Vec<u16> = t.iter().map(|&b| u16::from(b) | 0x100).collect();
         let masked: Vec<u8> = (0..len).map(|i| t[i] ^ [1, 2, 3, 4][i % 4]).collect();
+        check_prefix(
+            &t,
+            &wide,
+            kernels::copy_u16_to_u8,
+            kernels::copy_u16_to_shared,
+        );
         for room in [len, len / 2, len + 3] {
-            check(t[..room.min(len)].to_vec(), || {
-                filled(room, |out| kernels::copy_u16_to_u8(&wide, out))
-            });
             check(masked[..room.min(len)].to_vec(), || {
                 filled(room, |out| kernels::fill_with_mask([1, 2, 3, 4], out, &t))
             });
+            check(masked[..room.min(len)].to_vec(), || {
+                filled(room, |out| {
+                    from_shared(&t, |t| {
+                        kernels::fill_with_mask_from_shared([1, 2, 3, 4], out, t)
+                    })
+                })
+            });
         }
         check(masked, || {
-            let out = shared(&vec![0; len]);
-            kernels::fill_shared_with_mask([1, 2, 3, 4], &out, &t);
-            plain(out)
+            let mut out = t.clone();
+            kernels::mask_in_place([1, 2, 3, 4], &mut out);
+            out
         });
 
         let hex: Vec<u8> = t
@@ -551,21 +622,26 @@ fn conversions() {
         });
         check(hex.as_chunks().0.to_vec(), || {
             filled(len, |out| {
-                kernels::encode_hex_lower_shared(&shared(&t), out)
+                from_shared(&t, |t| kernels::encode_hex_lower_shared(t, out))
             })
         });
         for (hex, valid) in [
             (hex.to_ascii_uppercase(), len),
             ([&hex[..len], b"g", &hex[..]].concat(), len / 2),
         ] {
-            check(t[..valid].to_vec(), || {
-                filled(len, |out| kernels::decode_hex(hex.as_chunks().0, out))
-            });
-            check(t[..valid].to_vec(), || {
-                filled(len, |out| {
-                    kernels::decode_hex16(widened(&hex).as_chunks().0, out)
-                })
-            });
+            let (want, wide) = (&t[..valid], widened(&hex));
+            check_prefix(
+                want,
+                hex.as_chunks().0,
+                kernels::decode_hex,
+                kernels::decode_hex_to_shared,
+            );
+            check_prefix(
+                want,
+                wide.as_chunks().0,
+                kernels::decode_hex16,
+                kernels::decode_hex16_to_shared,
+            );
         }
         check(t.to_ascii_lowercase(), || {
             filled(len, |out| kernels::lower_ascii(&t, out))
@@ -573,18 +649,11 @@ fn conversions() {
         let ascii: Vec<u8> = t.iter().map(|b| b & 0x7F).collect();
         for prefix in [len, len / 2, len / 9] {
             let from = [&ascii[..prefix], b"\x80", &ascii[prefix..]].concat();
-            check(
-                (
-                    prefix,
-                    [&ascii[..prefix], &vec![0xFF; len - prefix]].concat(),
-                ),
-                || {
-                    let mut out = vec![0xFF; len];
-                    (
-                        kernels::copy_ascii_prefix(&from, out[..].as_mut().into()).len(),
-                        out,
-                    )
-                },
+            check_prefix(
+                &ascii[..prefix],
+                &from,
+                kernels::copy_ascii_prefix,
+                kernels::copy_ascii_prefix_to_shared,
             );
         }
 
@@ -597,52 +666,33 @@ fn conversions() {
             filled(len, |out| kernels::lower_ascii16(&wide, out))
         });
 
-        check_bswap(&t, kernels::bswap16);
-        check_bswap(&t, kernels::bswap32);
-        check_bswap(&t, kernels::bswap64);
-        check_bswap::<4>(&t, |words| {
-            let out = shared(&[words.as_flattened(), b"xyz"].concat());
-            kernels::bswap32_shared(&out);
-            let out = plain(out);
-            assert!(out.ends_with(b"xyz"));
-            words.copy_from_slice(out.as_chunks().0);
-        });
+        check_bswap::<2>(&t, kernels::bswap16_shared);
+        check_bswap::<4>(&t, kernels::bswap32_shared);
+        check_bswap::<8>(&t, kernels::bswap64_shared);
     }
 }
 
 #[test]
 #[cfg_attr(miri, ignore = "slow")]
 fn nothing_after_a_prefix() {
-    for (at, len) in (0..140).flat_map(|at| [at + 1, at + 40, 200].map(|len| (at, len))) {
+    use kernels::*;
+    for (at, len) in (0..140).flat_map(|at| [at + 1, at + 40, 2 * at + 2, 200].map(|it| (at, it))) {
         let (mut text, mut hex) = (vec![0x7F; len], vec![*b"7f"; len]);
         (text[at / 2], hex[at / 2]) = (0, *b"00");
         let wide: Vec<u16> = text.iter().map(|&byte| byte.into()).collect();
+        check_prefix(&text, &wide, copy_u16_to_u8, copy_u16_to_shared);
+        check_prefix(&text, &hex, decode_hex, decode_hex_to_shared);
         for room in [at, len, len + 70] {
-            check(text[..len.min(room)].to_vec(), || {
-                prefix(vec![1; room], |out| kernels::copy_u16_to_u8(&wide, out))
-            });
             check(hex[..len.min(room)].to_vec(), || {
-                prefix(vec![[1; 2]; room], |out| {
-                    kernels::encode_hex_lower(&text, out)
-                })
-            });
-            check(text[..len.min(room)].to_vec(), || {
-                prefix(vec![1; room], |out| kernels::decode_hex(&hex, out))
+                prefix(vec![[1; 2]; room], |out| encode_hex_lower(&text, out))
             });
         }
         (text[at], hex[at][at % 2]) = (0x80, b'g');
         let wide: Vec<[u16; 2]> = hex.iter().map(|pair| pair.map(u16::from)).collect();
-        for room in [at / 2, len, len + 70] {
-            check(text[..at.min(room)].to_vec(), || {
-                prefix(vec![1; room], |out| kernels::copy_ascii_prefix(&text, out))
-            });
-            check(text[..at.min(room)].to_vec(), || {
-                prefix(vec![1; room], |out| kernels::decode_hex(&hex, out))
-            });
-            check(text[..at.min(room)].to_vec(), || {
-                prefix(vec![1; room], |out| kernels::decode_hex16(&wide, out))
-            });
-        }
+        let want = &text[..at];
+        check_prefix(want, &text, copy_ascii_prefix, copy_ascii_prefix_to_shared);
+        check_prefix(want, &hex, decode_hex, decode_hex_to_shared);
+        check_prefix(want, &wide, decode_hex16, decode_hex16_to_shared);
     }
 }
 
@@ -1004,16 +1054,26 @@ fn xxhash() {
         (2048, 0, 0x64a8e425, 0xa69e05a7eff57800, 0x25339063db861586),
         (2048, 7, 0x97aaf2a5, 0xb59eb111a307393c, 0x8d1c0283d793714b),
     ] {
-        assert_eq!(kernels::xxhash32(seed, &counting[..len]), xxh32);
-        assert_eq!(kernels::xxhash64(seed.into(), &counting[..len]), xxh64);
-        check(xxh3, || kernels::xxhash3_64(seed.into(), &counting[..len]));
+        check(xxh32, || kernels::xxhash32(seed, &counting[..len]));
+        check(xxh64, || kernels::xxhash64(seed.into(), &counting[..len]));
+        from_shared(&counting[..len], |t| {
+            check(xxh32, || kernels::xxhash32_shared(seed, t));
+            check(xxh64, || kernels::xxhash64_shared(seed.into(), t));
+            check(xxh3, || kernels::xxhash3_64_shared(seed.into(), t));
+        });
     }
     for t in texts(MIXED) {
-        check_against_portable(|| [0, 7].map(|seed| kernels::xxhash3_64(seed, &t)));
+        check_against_portable(|| {
+            from_shared(&t, |t| {
+                [0, 7].map(|seed| kernels::xxhash3_64_shared(seed, t))
+            })
+        });
         for size in [1, 31, 32, 33, 100] {
-            let mut state = kernels::XxHash64State::new(7);
-            t.chunks(size).for_each(|part| state.update(part));
-            assert_eq!(state.digest(), kernels::xxhash64(7, &t));
+            check(kernels::xxhash64(7, &t), || {
+                let mut state = kernels::XxHash64State::new(7);
+                t.chunks(size).for_each(|part| state.update(part));
+                state.digest()
+            });
         }
     }
 }
@@ -1021,16 +1081,25 @@ fn xxhash() {
 #[test]
 #[cfg_attr(miri, ignore = "slow")]
 fn xxhash_of_each_length() {
-    let counting: Vec<u8> = (0..3100).map(|i| (i % 251) as u8).collect();
-    let sum = |hash: fn(u64, &[u8]) -> u64| {
+    fn sum<T>(bytes: &[T], hash: impl Fn(u64, &[T]) -> u64) -> u64 {
         let seed = |len: usize| (len as u64 % 3).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-        let hashes = (0..=counting.len()).map(|len| hash(seed(len), &counting[..len]));
+        let hashes = (0..=bytes.len()).map(|len| hash(seed(len), &bytes[..len]));
         hashes.fold(0, u64::wrapping_add)
-    };
-    let xxhash32 = |seed, input: &_| kernels::xxhash32(seed as u32, input).into();
-    assert_eq!(sum(xxhash32), 0x606_88ad_89c9);
-    assert_eq!(sum(kernels::xxhash64), 0x5b38_37bf_69e3_e093);
-    check(0xb3b5_0c44_a8cd_22f2, || sum(kernels::xxhash3_64));
+    }
+    let counting: Vec<u8> = (0..3100).map(|i| (i % 251) as u8).collect();
+    check(0x606_88ad_89c9, || {
+        sum(&counting, |seed, t| {
+            kernels::xxhash32(seed as u32, t).into()
+        })
+    });
+    check(0x5b38_37bf_69e3_e093, || sum(&counting, kernels::xxhash64));
+    from_shared(&counting, |t| {
+        check(0x606_88ad_89c9, || {
+            sum(t, |seed, t| kernels::xxhash32_shared(seed as u32, t).into())
+        });
+        check(0x5b38_37bf_69e3_e093, || sum(t, kernels::xxhash64_shared));
+        check(0xb3b5_0c44_a8cd_22f2, || sum(t, kernels::xxhash3_64_shared));
+    });
 }
 
 /// What the filter subtracts from a byte with these to the left, above, and above to the left.
@@ -1697,18 +1766,27 @@ fn palettes_end_after_256_colors() {
 #[test]
 fn with_a_concurrent_writer() {
     for len in [1, 3, 7, 13, 31, 40, 70, 600] {
-        let text = shared(&vec![0; len]);
+        let bytes = atomic(&vec![0; len]);
+        let (text, needle) = (SharedU8::from_slice(&bytes), atomic(&[2, 0]));
         std::thread::scope(|s| {
-            s.spawn(|| (0..40).for_each(|_| _ = text[len / 2].fetch_xor(2, Relaxed)));
+            s.spawn(|| (0..40).for_each(|_| _ = bytes[len / 2].fetch_xor(2, Relaxed)));
             for _ in targets() {
-                let is_there_or_not = |found: Option<usize>| found.is_none_or(|at| at == len / 2);
-                assert!(is_there_or_not(kernels::index_of_char_shared(&text, 2)));
-                assert!(is_there_or_not(kernels::last_index_of_char_shared(
-                    &text, 2
-                )));
-                assert!(kernels::count_char_shared(&text, 2) <= 1);
-                filled(len, |out| kernels::encode_hex_lower_shared(&text, out));
-                kernels::fill_shared_with_mask([0; 4], &text, &vec![0; len]);
+                let needle = SharedU8::from_slice(&needle);
+                for found in [
+                    kernels::index_of_char_shared(text, 2),
+                    kernels::last_index_of_char_shared(text, 2),
+                    kernels::memmem_shared(text, needle),
+                    kernels::memrmem_shared(text, needle),
+                ] {
+                    assert!(found.is_none_or(|at| at == len / 2));
+                }
+                kernels::memmem_shared(text, &text[len / 3..]);
+                kernels::memmem16_shared(text.as_chunks().0, text[len / 3..].as_chunks().0);
+                kernels::xxhash3_64_shared(0, text);
+                kernels::xxhash64_shared(0, text);
+                filled(len, |out| kernels::encode_hex_lower_shared(text, out));
+                kernels::copy_ascii_prefix_to_shared(&vec![0; len], &bytes);
+                kernels::decode_hex_to_shared(&vec![*b"00"; len], &bytes);
             }
         });
     }

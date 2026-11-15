@@ -101,6 +101,21 @@ pub(crate) fn fill_with_mask(mask: [u8; 4], output: &mut [u8], input: &[u8]) {
 }
 
 #[inline(always)]
+pub(crate) fn mask_in_place(mask: [u8; 4], bytes: &mut [u8]) {
+    fill_with_skip_mask_inplace(mask, bytes, false);
+}
+
+#[inline(always)]
+pub(crate) fn index_of_char16(text: &[u16], unit: u16) -> Option<usize> {
+    memmem16(text, &[unit])
+}
+
+#[inline(always)]
+pub(crate) fn last_index_of_char16(text: &[u16], unit: u16) -> Option<usize> {
+    memrmem16(text, &[unit])
+}
+
+#[inline(always)]
 pub(crate) fn encode_hex_lower(src: &[u8], dst: &mut [[u8; 2]]) {
     bun_highway::encode_hex_lower(src, dst.as_flattened_mut());
 }
@@ -196,21 +211,21 @@ pub(crate) fn lower_ascii16(from: &[u16], to: &mut [u16]) {
 }
 
 #[inline(always)]
-pub(crate) fn bswap16(words: &mut [[u8; 2]]) {
-    // SAFETY: reads and writes `words`.
-    unsafe { highway_bswap16(words.as_mut_ptr().cast(), size_of_val(words)) }
+pub(crate) fn bswap16(bytes: &mut [u8]) {
+    // SAFETY: reads and writes `bytes`.
+    unsafe { highway_bswap16(bytes.as_mut_ptr(), bytes.len() & !1) }
 }
 
 #[inline(always)]
-pub(crate) fn bswap64(words: &mut [[u8; 8]]) {
-    // SAFETY: reads and writes `words`.
-    unsafe { highway_bswap64(words.as_mut_ptr().cast(), size_of_val(words)) }
+pub(crate) fn bswap32(bytes: &mut [u8]) {
+    // SAFETY: reads and writes `bytes`.
+    unsafe { highway_bswap32(bytes.as_mut_ptr(), bytes.len() & !3) }
 }
 
 #[inline(always)]
-pub(crate) fn bswap32(words: &mut [[u8; 4]]) {
-    // SAFETY: reads and writes `words`.
-    unsafe { highway_bswap32(words.as_mut_ptr().cast(), size_of_val(words)) }
+pub(crate) fn bswap64(bytes: &mut [u8]) {
+    // SAFETY: reads and writes `bytes`.
+    unsafe { highway_bswap64(bytes.as_mut_ptr(), bytes.len() & !7) }
 }
 
 #[inline(always)]

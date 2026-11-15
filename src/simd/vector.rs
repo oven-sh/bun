@@ -282,6 +282,12 @@ impl<const N: usize, I: Isa> Vector<u8, N, I> {
 }
 
 impl<const N: usize, I: Isa> Vector<u16, N, I> {
+    /// Converts each lane with `as`.
+    #[inline(always)]
+    pub fn cast<U: Lane>(self) -> Vector<U, N, I> {
+        Vector::new(self.0.cast())
+    }
+
     /// Zero-extends the first half of the lanes.
     #[inline(always)]
     pub fn widen_lower<const M: usize>(bytes: Vector<u8, M, I>) -> Self

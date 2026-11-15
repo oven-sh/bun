@@ -1,6 +1,8 @@
 //! Port of xxhash3.cpp. The constants are those of xxHash.
-use bun_simd::opaque;
+use bun_simd::{SharedU8, Source, opaque};
 use core::slice;
+
+trait Byte = Source<Lane = u8>;
 
 const PRIME32_1: u32 = 0x9E3779B1;
 const PRIME32_2: u32 = 0x85EBCA77;
@@ -46,11 +48,21 @@ const UP_BY_32: [u8; 16] = [
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
-    use isa::{U8, U64};
+    use isa::{U8, U64, Vector};
+
+    #[inline(always)]
+    fn u32_at(bytes: &[impl Byte], at: usize) -> u32 {
+        u32::from_le_bytes(Vector::load(bytes[at..].first_chunk().unwrap()).to_array())
+    }
+
+    #[inline(always)]
+    fn u64_at(bytes: &[impl Byte], at: usize) -> u64 {
+        u64::from_le_bytes(Vector::load(bytes[at..].first_chunk().unwrap()).to_array())
+    }
 
     /// For up to 16 stripes, `K` per iteration.
     #[inline(always)]
-    fn accumulate<const K: usize>(acc: &mut [u64; 8], stripes: &[[u8; 64]], secret: &[u8]) {
+    fn accumulate<const K: usize>(acc: &mut [u64; 8], stripes: &[[SharedU8; 64]], secret: &[u8]) {
         let mut sums = [0; 8];
         for (i, group) in stripes.as_chunks::<K>().0.iter().enumerate() {
             for (j, stripe) in group.iter().enumerate() {
@@ -86,7 +98,7 @@ pub(crate) mod simd {
 
     /// For more than 240 bytes.
     #[export]
-    pub fn hash_long(input: &[u8], secret: &[u8; 192]) -> u64 {
+    pub fn hash_long(input: &[SharedU8], secret: &[u8; 192]) -> u64 {
         let (mut acc, last) = (INIT, input.split_last_chunk().unwrap().1);
         let (blocks, rest) = input[..input.len() - 1].as_chunks::<1024>();
         for block in blocks {
@@ -110,16 +122,205 @@ pub(crate) mod simd {
         }
         avalanche3(hash)
     }
-}
 
-#[inline(always)]
-fn u32_at(bytes: &[u8], at: usize) -> u32 {
-    u32::from_le_bytes(*bytes[at..].first_chunk().unwrap())
-}
+    #[inline(always)]
+    fn mix(data: &[SharedU8; 16], key_at: usize, seed: u64) -> u64 {
+        let low = u64_at(data, 0) ^ u64_at(&SECRET, key_at).wrapping_add(seed);
+        let high = u64_at(data, 8) ^ u64_at(&SECRET, key_at + 8).wrapping_sub(seed);
+        folded_mul(low, high)
+    }
 
-#[inline(always)]
-fn u64_at(bytes: &[u8], at: usize) -> u64 {
-    u64::from_le_bytes(*bytes[at..].first_chunk().unwrap())
+    #[inline(never)]
+    fn hash_129_to_240(seed: u64, input: &[SharedU8]) -> u64 {
+        let (first, others) = input.as_chunks().0.split_first_chunk::<8>().unwrap();
+        let mut hash = (input.len() as u64).wrapping_mul(PRIME64_1);
+        for (i, data) in first.iter().enumerate() {
+            hash = hash.wrapping_add(mix(data, 16 * i, seed));
+        }
+        hash = avalanche3(hash).wrapping_add(mix(input.last_chunk().unwrap(), 136 - 17, seed));
+        for (data, i) in others.iter().zip(0..7) {
+            hash = hash.wrapping_add(mix(data, 16 * i + 3, seed));
+        }
+        avalanche3(hash)
+    }
+
+    #[export(baseline)]
+    pub fn xxhash3_64_shared(seed: u64, input: &[SharedU8]) -> u64 {
+        let len = input.len();
+        let key = |at: usize| u64_at(&SECRET, at) ^ u64_at(&SECRET, at + 8);
+        let mut hash = (len as u64).wrapping_mul(PRIME64_1);
+        match len {
+            0 => avalanche64(seed ^ key(56)),
+            1..=3 => {
+                let [first, middle, last] = [0, len / 2, len - 1].map(|at| input[at].get());
+                let all = u32::from_le_bytes([last, len as u8, first, middle]);
+                let key = u32_at(&SECRET, 0) ^ u32_at(&SECRET, 4);
+                avalanche64(u64::from(all) ^ u64::from(key).wrapping_add(seed))
+            }
+            4..=8 => {
+                let seed = seed ^ u64::from((seed as u32).swap_bytes()) << 32;
+                let ends = u64::from(u32_at(input, 0)) << 32 | u64::from(u32_at(input, len - 4));
+                hash = ends ^ key(8).wrapping_sub(seed);
+                hash = (hash ^ hash.rotate_left(49) ^ hash.rotate_left(24)).wrapping_mul(PRIME_MX2);
+                hash = (hash ^ ((hash >> 35) + len as u64)).wrapping_mul(PRIME_MX2);
+                hash ^ hash >> 28
+            }
+            9..=16 => {
+                let low = u64_at(input, 0) ^ key(24).wrapping_add(seed);
+                let high = u64_at(input, len - 8) ^ key(40).wrapping_sub(seed);
+                hash = (len as u64)
+                    .wrapping_add(low.swap_bytes())
+                    .wrapping_add(high);
+                avalanche3(hash.wrapping_add(folded_mul(low, high)))
+            }
+            17..=128 => {
+                for i in 0..4 {
+                    if len > 32 * i {
+                        let (front, back) = (&input[16 * i..], &input[..len - 16 * i]);
+                        let front = mix(front.first_chunk().unwrap(), 32 * i, seed);
+                        let back = mix(back.split_last_chunk().unwrap().1, 32 * i + 16, seed);
+                        hash = hash.wrapping_add(front).wrapping_add(back);
+                    }
+                }
+                avalanche3(hash)
+            }
+            129..=240 => hash_129_to_240(seed, input),
+            _ if seed == 0 => super::hash_long(input, &SECRET),
+            _ => hash_long_with_seed(seed, input),
+        }
+    }
+
+    #[inline(always)]
+    fn hash32(seed: u32, input: &[impl Byte]) -> u32 {
+        let (stripes, rest) = input.as_chunks::<16>();
+        let mut hash = seed.wrapping_add(PRIME32_5);
+        if !stripes.is_empty() {
+            let from_seed = [
+                PRIME32_1.wrapping_add(PRIME32_2),
+                PRIME32_2,
+                0,
+                PRIME32_1.wrapping_neg(),
+            ];
+            let mut acc = from_seed.map(|it| it.wrapping_add(seed));
+            for stripe in stripes {
+                for (i, acc) in acc.iter_mut().enumerate() {
+                    let sum = acc.wrapping_add(u32_at(stripe, 4 * i).wrapping_mul(PRIME32_2));
+                    // In a vector, each step takes longer.
+                    *acc = opaque(sum.rotate_left(13).wrapping_mul(PRIME32_1).into()) as u32;
+                }
+            }
+            let rotated = acc
+                .iter()
+                .zip([1, 7, 12, 18])
+                .map(|(acc, by)| acc.rotate_left(by));
+            hash = rotated.fold(0, u32::wrapping_add);
+        }
+        hash = hash.wrapping_add(input.len() as u32);
+        let (words, bytes) = rest.as_chunks::<4>();
+        #[rustc_unroll(never)]
+        for word in words {
+            hash = hash.wrapping_add(u32_at(word, 0).wrapping_mul(PRIME32_3));
+            hash = hash.rotate_left(17).wrapping_mul(PRIME32_4);
+        }
+        #[rustc_unroll(never)]
+        for byte in bytes {
+            hash = hash.wrapping_add(u32::from(byte.get()).wrapping_mul(PRIME32_5));
+            hash = hash.rotate_left(11).wrapping_mul(PRIME32_1);
+        }
+        hash = (hash ^ hash >> 15).wrapping_mul(PRIME32_2);
+        hash = (hash ^ hash >> 13).wrapping_mul(PRIME32_3);
+        hash ^ hash >> 16
+    }
+
+    #[export(baseline)]
+    pub fn xxhash32(seed: u32, input: &[u8]) -> u32 {
+        hash32(seed, input)
+    }
+
+    #[export(baseline)]
+    pub fn xxhash32_shared(seed: u32, input: &[SharedU8]) -> u32 {
+        hash32(seed, input)
+    }
+
+    #[inline(always)]
+    fn accumulate64(mut acc: [u64; 4], stripes: &[[impl Byte; 32]]) -> [u64; 4] {
+        for stripe in stripes {
+            for (i, acc) in acc.iter_mut().enumerate() {
+                *acc = round64(*acc, u64_at(stripe, 8 * i));
+            }
+        }
+        acc
+    }
+
+    /// `rest` follows the last whole stripe.
+    #[inline(always)]
+    fn finish64(mut hash: u64, rest: &[impl Byte]) -> u64 {
+        let (words, mut bytes) = rest.as_chunks::<8>();
+        #[rustc_unroll(never)]
+        for word in words {
+            hash = (hash ^ round64(0, u64_at(word, 0))).rotate_left(27);
+            hash = hash.wrapping_mul(PRIME64_1).wrapping_add(PRIME64_4);
+        }
+        if let Some((word, after)) = bytes.split_first_chunk::<4>() {
+            hash ^= u64::from(u32_at(word, 0)).wrapping_mul(PRIME64_1);
+            hash = hash
+                .rotate_left(23)
+                .wrapping_mul(PRIME64_2)
+                .wrapping_add(PRIME64_3);
+            bytes = after;
+        }
+        #[rustc_unroll(never)]
+        for byte in bytes {
+            hash ^= u64::from(byte.get()).wrapping_mul(PRIME64_5);
+            hash = hash.rotate_left(11).wrapping_mul(PRIME64_1);
+        }
+        avalanche64(hash)
+    }
+
+    #[inline(always)]
+    fn hash64(seed: u64, input: &[impl Byte]) -> u64 {
+        let (stripes, rest) = input.as_chunks();
+        let hash = match stripes {
+            [] => seed.wrapping_add(PRIME64_5),
+            _ => merge64(accumulate64(XxHash64State::new(seed).acc, stripes)),
+        };
+        finish64(hash.wrapping_add(input.len() as u64), rest)
+    }
+
+    #[export(baseline)]
+    pub fn xxhash64(seed: u64, input: &[u8]) -> u64 {
+        hash64(seed, input)
+    }
+
+    #[export(baseline)]
+    pub fn xxhash64_shared(seed: u64, input: &[SharedU8]) -> u64 {
+        hash64(seed, input)
+    }
+
+    #[export(baseline)]
+    pub fn update(state: &mut XxHash64State, input: &[u8]) {
+        let room = &mut state.pending[state.len as usize % 32..];
+        state.len += input.len() as u64;
+        let Some((first, input)) = input.split_at_checked(room.len()) else {
+            return room[..input.len()].copy_from_slice(input);
+        };
+        room.copy_from_slice(first);
+        let (stripes, rest) = input.as_chunks();
+        state.acc = accumulate64(accumulate64(state.acc, &[state.pending]), stripes);
+        state.pending[..rest.len()].copy_from_slice(rest);
+    }
+
+    #[export(baseline)]
+    pub fn digest(state: &XxHash64State) -> u64 {
+        let hash = match state.len {
+            ..32 => state.acc[2].wrapping_add(PRIME64_5),
+            _ => merge64(state.acc),
+        };
+        finish64(
+            hash.wrapping_add(state.len),
+            &state.pending[..state.len as usize % 32],
+        )
+    }
 }
 
 #[inline(always)]
@@ -141,29 +342,8 @@ fn avalanche64(mut hash: u64) -> u64 {
     hash ^ hash >> 32
 }
 
-#[inline(always)]
-fn mix(data: &[u8; 16], key_at: usize, seed: u64) -> u64 {
-    let low = u64_at(data, 0) ^ u64_at(&SECRET, key_at).wrapping_add(seed);
-    let high = u64_at(data, 8) ^ u64_at(&SECRET, key_at + 8).wrapping_sub(seed);
-    folded_mul(low, high)
-}
-
 #[inline(never)]
-fn hash_129_to_240(seed: u64, input: &[u8]) -> u64 {
-    let (first, others) = input.as_chunks().0.split_first_chunk::<8>().unwrap();
-    let mut hash = (input.len() as u64).wrapping_mul(PRIME64_1);
-    for (i, data) in first.iter().enumerate() {
-        hash = hash.wrapping_add(mix(data, 16 * i, seed));
-    }
-    hash = avalanche3(hash).wrapping_add(mix(input.last_chunk().unwrap(), 136 - 17, seed));
-    for (data, i) in others.iter().zip(0..7) {
-        hash = hash.wrapping_add(mix(data, 16 * i + 3, seed));
-    }
-    avalanche3(hash)
-}
-
-#[inline(never)]
-fn hash_long_with_seed(seed: u64, input: &[u8]) -> u64 {
+fn hash_long_with_seed(seed: u64, input: &[SharedU8]) -> u64 {
     let mut secret = SECRET;
     for (i, word) in secret.as_chunks_mut().0.iter_mut().enumerate() {
         let seed = if i % 2 == 0 {
@@ -176,105 +356,10 @@ fn hash_long_with_seed(seed: u64, input: &[u8]) -> u64 {
     simd::hash_long(input, &secret)
 }
 
-pub fn xxhash3_64(seed: u64, input: &[u8]) -> u64 {
-    let len = input.len();
-    let key = |at: usize| u64_at(&SECRET, at) ^ u64_at(&SECRET, at + 8);
-    let mut hash = (len as u64).wrapping_mul(PRIME64_1);
-    match len {
-        0 => avalanche64(seed ^ key(56)),
-        1..=3 => {
-            let all = u32::from_le_bytes([input[len - 1], len as u8, input[0], input[len / 2]]);
-            let key = u32_at(&SECRET, 0) ^ u32_at(&SECRET, 4);
-            avalanche64(u64::from(all) ^ u64::from(key).wrapping_add(seed))
-        }
-        4..=8 => {
-            let seed = seed ^ u64::from((seed as u32).swap_bytes()) << 32;
-            let ends = u64::from(u32_at(input, 0)) << 32 | u64::from(u32_at(input, len - 4));
-            hash = ends ^ key(8).wrapping_sub(seed);
-            hash = (hash ^ hash.rotate_left(49) ^ hash.rotate_left(24)).wrapping_mul(PRIME_MX2);
-            hash = (hash ^ ((hash >> 35) + len as u64)).wrapping_mul(PRIME_MX2);
-            hash ^ hash >> 28
-        }
-        9..=16 => {
-            let low = u64_at(input, 0) ^ key(24).wrapping_add(seed);
-            let high = u64_at(input, len - 8) ^ key(40).wrapping_sub(seed);
-            hash = (len as u64)
-                .wrapping_add(low.swap_bytes())
-                .wrapping_add(high);
-            avalanche3(hash.wrapping_add(folded_mul(low, high)))
-        }
-        17..=128 => {
-            for i in 0..4 {
-                if len > 32 * i {
-                    let (front, back) = (&input[16 * i..], &input[..len - 16 * i]);
-                    let front = mix(front.first_chunk().unwrap(), 32 * i, seed);
-                    let back = mix(back.split_last_chunk().unwrap().1, 32 * i + 16, seed);
-                    hash = hash.wrapping_add(front).wrapping_add(back);
-                }
-            }
-            avalanche3(hash)
-        }
-        129..=240 => hash_129_to_240(seed, input),
-        _ if seed == 0 => simd::hash_long(input, &SECRET),
-        _ => hash_long_with_seed(seed, input),
-    }
-}
-
-pub fn xxhash32(seed: u32, input: &[u8]) -> u32 {
-    let (stripes, rest) = input.as_chunks::<16>();
-    let mut hash = seed.wrapping_add(PRIME32_5);
-    if !stripes.is_empty() {
-        let from_seed = [
-            PRIME32_1.wrapping_add(PRIME32_2),
-            PRIME32_2,
-            0,
-            PRIME32_1.wrapping_neg(),
-        ];
-        let mut acc = from_seed.map(|it| it.wrapping_add(seed));
-        for stripe in stripes {
-            for (i, acc) in acc.iter_mut().enumerate() {
-                let sum = acc.wrapping_add(u32_at(stripe, 4 * i).wrapping_mul(PRIME32_2));
-                // In a vector, each step takes longer.
-                *acc = opaque(sum.rotate_left(13).wrapping_mul(PRIME32_1).into()) as u32;
-            }
-        }
-        let rotated = acc
-            .iter()
-            .zip([1, 7, 12, 18])
-            .map(|(acc, by)| acc.rotate_left(by));
-        hash = rotated.fold(0, u32::wrapping_add);
-    }
-    hash = hash.wrapping_add(input.len() as u32);
-    let (words, bytes) = rest.as_chunks();
-    #[rustc_unroll(never)]
-    for &word in words {
-        hash = hash.wrapping_add(u32::from_le_bytes(word).wrapping_mul(PRIME32_3));
-        hash = hash.rotate_left(17).wrapping_mul(PRIME32_4);
-    }
-    #[rustc_unroll(never)]
-    for &byte in bytes {
-        hash = hash.wrapping_add(u32::from(byte).wrapping_mul(PRIME32_5));
-        hash = hash.rotate_left(11).wrapping_mul(PRIME32_1);
-    }
-    hash = (hash ^ hash >> 15).wrapping_mul(PRIME32_2);
-    hash = (hash ^ hash >> 13).wrapping_mul(PRIME32_3);
-    hash ^ hash >> 16
-}
-
 #[inline(always)]
 fn round64(acc: u64, input: u64) -> u64 {
     let sum = acc.wrapping_add(input.wrapping_mul(PRIME64_2));
     sum.rotate_left(31).wrapping_mul(PRIME64_1)
-}
-
-#[inline(always)]
-fn accumulate64(mut acc: [u64; 4], stripes: &[[u8; 32]]) -> [u64; 4] {
-    for stripe in stripes {
-        for (i, acc) in acc.iter_mut().enumerate() {
-            *acc = round64(*acc, u64_at(stripe, 8 * i));
-        }
-    }
-    acc
 }
 
 #[inline(always)]
@@ -284,46 +369,12 @@ fn merge64(acc: [u64; 4]) -> u64 {
         .zip([1, 7, 12, 18])
         .map(|(acc, by)| acc.rotate_left(by));
     let mut hash = rotated.fold(0, u64::wrapping_add);
-    for acc in acc {
-        hash = (hash ^ round64(0, acc))
+    for lane in acc {
+        hash = (hash ^ round64(0, lane))
             .wrapping_mul(PRIME64_1)
             .wrapping_add(PRIME64_4);
     }
     hash
-}
-
-/// `rest` follows the last whole stripe.
-#[inline(always)]
-fn finish64(mut hash: u64, rest: &[u8]) -> u64 {
-    let (words, mut bytes) = rest.as_chunks();
-    #[rustc_unroll(never)]
-    for &word in words {
-        hash = (hash ^ round64(0, u64::from_le_bytes(word))).rotate_left(27);
-        hash = hash.wrapping_mul(PRIME64_1).wrapping_add(PRIME64_4);
-    }
-    if let Some((&word, after)) = bytes.split_first_chunk() {
-        hash ^= u64::from(u32::from_le_bytes(word)).wrapping_mul(PRIME64_1);
-        hash = hash
-            .rotate_left(23)
-            .wrapping_mul(PRIME64_2)
-            .wrapping_add(PRIME64_3);
-        bytes = after;
-    }
-    #[rustc_unroll(never)]
-    for &byte in bytes {
-        hash ^= u64::from(byte).wrapping_mul(PRIME64_5);
-        hash = hash.rotate_left(11).wrapping_mul(PRIME64_1);
-    }
-    avalanche64(hash)
-}
-
-pub fn xxhash64(seed: u64, input: &[u8]) -> u64 {
-    let (stripes, rest) = input.as_chunks();
-    let hash = match stripes {
-        [] => seed.wrapping_add(PRIME64_5),
-        _ => merge64(accumulate64(XxHash64State::new(seed).acc, stripes)),
-    };
-    finish64(hash.wrapping_add(input.len() as u64), rest)
 }
 
 /// `xxhash64` of an input that comes in parts.
@@ -350,26 +401,13 @@ impl XxHash64State {
         }
     }
 
+    #[inline]
     pub fn update(&mut self, input: &[u8]) {
-        let room = &mut self.pending[self.len as usize % 32..];
-        self.len += input.len() as u64;
-        let Some((first, input)) = input.split_at_checked(room.len()) else {
-            return room[..input.len()].copy_from_slice(input);
-        };
-        room.copy_from_slice(first);
-        let (stripes, rest) = input.as_chunks();
-        self.acc = accumulate64(accumulate64(self.acc, &[self.pending]), stripes);
-        self.pending[..rest.len()].copy_from_slice(rest);
+        simd::update(self, input);
     }
 
+    #[inline]
     pub fn digest(&self) -> u64 {
-        let hash = match self.len {
-            ..32 => self.acc[2].wrapping_add(PRIME64_5),
-            _ => merge64(self.acc),
-        };
-        finish64(
-            hash.wrapping_add(self.len),
-            &self.pending[..self.len as usize % 32],
-        )
+        simd::digest(self)
     }
 }

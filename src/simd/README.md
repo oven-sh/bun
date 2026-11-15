@@ -46,6 +46,7 @@ In a module with `#[foreach_target]`:
 - `this_target` is the name of the copy: `use other::simd::this_target::helper;`
 - Trait methods, `const fn` and functions from a macro outside the module do not get the features of the target. They can use only the ops that need no intrinsic, and run baseline code unless they are inlined.
 - `#[inline(always)]` becomes `#[rustc_force_inline]`. Use it only on functions that no other crate calls. If rustc reports a recursion limit, raise `#![recursion_limit]`.
+- These do not compile: `async`, `unsafe` and `extern` functions, `#[inline(always)]` in a macro inside the module, and a fragment of several tokens from a macro around it.
 - Name the module `simd`. The allowlists in `scripts/verify-baseline-static` match that name.
 
 An op has the name that `core::simd` gives it, where there is one.
@@ -60,6 +61,7 @@ An op has the name that `core::simd` gives it, where there is one.
 | `trusted/output.rs`    | `Out` and `Writer`, for output to memory that may be uninitialized                     |
 | `partial.rs`           | Loads and stores for a slice that is shorter than a vector                             |
 | `source.rs`            | `load`, from plain or from shared memory                                               |
+| `sink.rs`              | Output of bytes, to plain or to shared memory                                          |
 
 `load` and `store` take an array of the size of the vector, so they need no bounds check. Cut a slice with `as_chunks`, `first_chunk` and `split_last_chunk`.
 
@@ -85,6 +87,8 @@ fn main() {
     assert_eq!(all, [248, 255, 0]);
 }
 ```
+
+`extend_vec` reserves the room. `spare_capacity` does not allocate, and can fill several vectors at once.
 
 Call ops in `for` loops and in the closures that you pass to `algo.rs`. LLVM may not inline a closure that goes through an adapter of `core`, such as `array::map`.
 
@@ -123,8 +127,8 @@ What you have to trust:
 - **Detection.** A feature counts only if the CPU reports it and the system saves its registers. The same has to hold for every feature that it implies. `trusted/os.rs` makes the queries. The decoders are pure functions of the answers.
 - **`if_supported!` and `AtomicFn`**, which stores the chosen pointer.
 - **`opaque`**, which is `asm!` without an instruction.
-- **`Out` and `Writer`.** They write only initialized values, and count them. Miri runs their tests.
-- **Access to shared memory.** A `SharedArrayBuffer` can change while a kernel reads it, so it is a `&[AtomicU8]` and never a `&[u8]`. Rust has no vector access that may race. `trusted/shared.rs` has one `asm!` instruction for each width, which stands for a relaxed access to each byte. This relies on the CPU not to tear a byte. The loops do not depend on two reads giving the same value.
+- **`Out`, `Writer` and `spare_capacity`.** They write only initialized values, and count them. Miri runs their tests.
+- **Access to shared memory.** A `SharedArrayBuffer` can change while a kernel reads it, so it is never a `&[u8]`. It is a `&[SharedU8]` for input and a `&[AtomicU8]` for output. Rust has no vector access that may race. `trusted/shared.rs` has one `asm!` instruction for each width, which stands for a relaxed access to each byte. This relies on the CPU not to tear a byte. The loops do not depend on two reads giving the same value.
 
 ## What the ops avoid
 

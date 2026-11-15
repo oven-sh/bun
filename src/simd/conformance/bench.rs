@@ -2,7 +2,7 @@
 #![allow(clippy::useless_conversion)] // to `Out` for Rust, and to the same type for Highway
 use crate::pairs::{self, Pairs};
 use crate::room::Room;
-use crate::{Random, columns, highway, write_line};
+use crate::{Random, columns, highway, shared, write_line};
 use bun_simd_kernels::{self as rust, Filter::Lanczos3};
 use core::fmt::Arguments;
 use core::hint::black_box as opaque;
@@ -108,10 +108,14 @@ fn searches(plain: &[u8]) {
             opaque(t),
             opaque(b"xyz")
         ));
-        compare!("memmem16 miss {n}", |k| k::memmem16(
+        compare!("index_of_char16 miss {n}", |k| k::index_of_char16(
             opaque(wide),
-            opaque(&[1, 2, 3])
+            1
         ));
+        compare!(
+            "last_index_of_char16 miss {n}",
+            |k| k::last_index_of_char16(opaque(wide), 1)
+        );
         compare!("memrmem16 miss {n}", |k| k::memrmem16(
             opaque(wide),
             opaque(&[1, 2, 3])
@@ -233,7 +237,7 @@ fn pieces(js: &[u8]) {
 }
 
 #[inline(always)]
-fn hop(text: &[u8], find: impl Fn(&[u8]) -> Option<usize>) -> &[u8] {
+fn hop<T>(text: &[T], find: impl Fn(&[T]) -> Option<usize>) -> &[T] {
     let mut rest = opaque(text);
     while let Some(at) = find(rest) {
         rest = &rest[at + 1..];
@@ -291,11 +295,6 @@ fn whole_files(js: &[u8], json: &[u8], map: &[u8]) {
     )));
     for n in [3, 7, 12, 30, 100, 200, 300, 65536] {
         let text = &js[..n];
-        compare!("xxhash3 {n}", |k| k::xxhash3_64(opaque(0), opaque(text)));
-        compare!("xxhash3 with a seed {n}", |k| k::xxhash3_64(
-            opaque(1),
-            opaque(text)
-        ));
         compare!("xxhash32 {n}", |k| k::xxhash32(opaque(0), opaque(text)));
         compare!("xxhash64 {n}", |k| k::xxhash64(opaque(0), opaque(text)));
         compare!("xxhash64 of 100 parts of {n}", |k| {
@@ -396,14 +395,8 @@ fn conversions(js: &[u8]) {
         compare!("copy_ascii_prefix {n}", |k| {
             k::copy_ascii_prefix(opaque(t), opaque(&mut out[..]).into())
         });
-        compare!("bswap16 {n}", |k| {
-            k::bswap16(opaque(&mut out[..n]).as_chunks_mut().0)
-        });
-        compare!("bswap64 {n}", |k| {
-            k::bswap64(opaque(&mut out[..n]).as_chunks_mut().0)
-        });
-        compare!("bswap32 {n}", |k| {
-            k::bswap32(opaque(&mut out[..n]).as_chunks_mut().0)
+        compare!("mask_in_place {n}", |k| {
+            k::mask_in_place([1, 2, 3, 4], opaque(&mut out[..n]))
         });
     }
     let words = &Random(7).words_of_all_sizes(4096);
@@ -496,8 +489,7 @@ fn images() {
 }
 
 /// Highway has the same kernels for shared memory.
-fn shared() {
-    let shared = AtomicU8::from_mut_slice;
+fn from_shared(js: &[u8]) {
     for n in [12, 64, 100, 1000, 65536] {
         let (t, out) = (&mut vec![b'a'; n], &mut vec![0; 2 * n]);
         compare!(
@@ -510,10 +502,35 @@ fn shared() {
             highway::last_index_of_char(opaque(t), b'x'),
             rust::last_index_of_char_shared(shared(opaque(t)), b'x')
         );
+        for needle in [&b"xyz"[..], b"\r\n--boundary-of-24-bytes"] {
+            let (len, needle) = (needle.len(), &mut needle.to_vec());
+            compare!(
+                "shared: memmem of {len} miss {n}",
+                highway::memmem(opaque(t), opaque(needle)),
+                rust::memmem_shared(shared(opaque(t)), shared(opaque(needle)))
+            );
+            compare!(
+                "shared: memrmem of {len} miss {n}",
+                highway::memrmem(opaque(t), opaque(needle)),
+                rust::memrmem_shared(shared(opaque(t)), shared(opaque(needle)))
+            );
+        }
+        let (wide, needle) = (&vec![0x6161; n / 2], &mut [1, 0, 2, 0, 3, 0]);
         compare!(
-            "shared: count_char {n}",
-            highway::count_char(opaque(t), b'a'),
-            rust::count_char_shared(shared(opaque(t)), b'a')
+            "shared: memmem16 miss {n}",
+            highway::memmem16(opaque(wide), opaque(&[1, 2, 3])),
+            rust::memmem16_shared(
+                shared(opaque(t)).as_chunks().0,
+                shared(needle).as_chunks().0
+            )
+        );
+        compare!(
+            "shared: memrmem16 miss {n}",
+            highway::memrmem16(opaque(wide), opaque(&[1, 2, 3])),
+            rust::memrmem16_shared(
+                shared(opaque(t)).as_chunks().0,
+                shared(needle).as_chunks().0
+            )
         );
         compare!(
             "shared: encode_hex_lower {n}",
@@ -523,13 +540,71 @@ fn shared() {
         compare!(
             "shared: fill_with_mask {n}",
             highway::fill_with_mask([1; 4], out, opaque(t)),
-            rust::fill_shared_with_mask([1; 4], shared(out), opaque(t))
+            rust::fill_with_mask_from_shared([1; 4], out.as_mut_slice().into(), shared(opaque(t)))
+        );
+    }
+    let (t, needle) = (&mut js.to_vec(), &mut b"function".to_vec());
+    compare!(
+        "shared: memmem hops through 1 MB",
+        hop(t, |t| highway::memmem(t, needle)).len(),
+        {
+            let needle = shared(needle);
+            hop(shared(t), |t| rust::memmem_shared(t, needle)).len()
+        }
+    );
+    for n in [3, 7, 12, 30, 100, 200, 300, 65536] {
+        let t = &mut js[..n].to_vec();
+        for seed in [0, 1] {
+            compare!(
+                "shared: xxhash3 with seed {seed} {n}",
+                highway::xxhash3_64(opaque(seed), opaque(t)),
+                rust::xxhash3_64_shared(opaque(seed), shared(opaque(t)))
+            );
+        }
+        compare!(
+            "shared: xxhash32 {n}",
+            highway::xxhash32(opaque(0), opaque(t)),
+            rust::xxhash32_shared(opaque(0), shared(opaque(t)))
         );
         compare!(
-            "shared: bswap32 {n}",
-            highway::bswap32(opaque(&mut *t).as_chunks_mut().0),
-            rust::bswap32_shared(shared(opaque(t)))
+            "shared: xxhash64 {n}",
+            highway::xxhash64(opaque(0), opaque(t)),
+            rust::xxhash64_shared(opaque(0), shared(opaque(t)))
         );
+    }
+}
+
+fn to_shared() {
+    let shared = AtomicU8::from_mut_slice;
+    for n in [12, 32, 64, 100, 1000, 65536] {
+        let (t, wide, out) = (&vec![b'a'; 2 * n], &vec![0x61; 2 * n], &mut vec![0; n]);
+        compare!(
+            "to shared: decode_hex {n}",
+            highway::decode_hex(opaque(t).as_chunks().0, out).len(),
+            rust::decode_hex_to_shared(opaque(t).as_chunks().0, shared(out))
+        );
+        compare!(
+            "to shared: decode_hex16 {n}",
+            highway::decode_hex16(opaque(wide).as_chunks().0, out).len(),
+            rust::decode_hex16_to_shared(opaque(wide).as_chunks().0, shared(out))
+        );
+        compare!(
+            "to shared: copy_u16_to_u8 {n}",
+            highway::copy_u16_to_u8(opaque(&wide[..n]), out),
+            rust::copy_u16_to_shared(opaque(&wide[..n]), shared(out))
+        );
+        compare!(
+            "to shared: copy_ascii_prefix {n}",
+            highway::copy_ascii_prefix(opaque(&t[..n]), out).len(),
+            rust::copy_ascii_prefix_to_shared(opaque(&t[..n]), shared(out))
+        );
+        for (name, highway, rust) in pairs::SWAPS {
+            compare!(
+                "shared: {name} {n}",
+                highway(opaque(out)),
+                rust(shared(opaque(out)))
+            );
+        }
     }
 }
 
@@ -542,7 +617,8 @@ pub(crate) fn against_highway(js: &[u8], json: &[u8], map: &[u8]) {
     whole_files(js, json, map);
     conversions(js);
     images();
-    shared();
+    from_shared(js);
+    to_shared();
 }
 
 fn both<R>(name: &str, texts: &mut [&mut [u8]; 2], mut kernel: impl FnMut(&mut [u8]) -> R) {
@@ -568,7 +644,7 @@ pub(crate) fn at_the_end_of_a_page() {
         both("memmem", texts, |t| rust::memmem(t, b"xy"));
         both("line_starts", texts, |t| rust::line_starts(t));
         both("shared", texts, |t| {
-            rust::index_of_char_shared(AtomicU8::from_mut_slice(t), b'x')
+            rust::index_of_char_shared(shared(t), b'x')
         });
         both("fill_with_mask", texts, |t| {
             rust::fill_with_mask([0; 4], t.into(), text);

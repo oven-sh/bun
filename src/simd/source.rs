@@ -1,9 +1,10 @@
 //! What vectors are loaded from.
-use crate::Lane;
+use crate::{Isa, Lane, SharedU8};
 use core::array;
+use core::simd::{ToBytes, num::SimdUint, u8x64, u16x32};
 use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
-/// A lane in memory: a plain value, or a byte that other threads may write concurrently.
+/// A lane in memory: a plain value, or bytes that other threads may write concurrently.
 pub trait Source: Sized {
     type Lane: Lane;
     /// Two reads may return different values.
@@ -17,7 +18,7 @@ pub trait Source: Sized {
 
 pub enum Memory<'a, T> {
     Plain(&'a [T]),
-    Shared(&'a [AtomicU8]),
+    Shared(&'a [SharedU8]),
 }
 
 impl<T: Lane> Source for T {
@@ -35,6 +36,21 @@ impl<T: Lane> Source for T {
     }
 }
 
+impl Source for SharedU8 {
+    type Lane = u8;
+    const IS_SHARED: bool = true;
+
+    #[inline(always)]
+    fn get(&self) -> u8 {
+        self.get()
+    }
+
+    #[inline(always)]
+    fn memory(slice: &[Self]) -> Memory<'_, u8> {
+        Memory::Shared(slice)
+    }
+}
+
 impl Source for AtomicU8 {
     type Lane = u8;
     const IS_SHARED: bool = true;
@@ -46,7 +62,34 @@ impl Source for AtomicU8 {
 
     #[inline(always)]
     fn memory(slice: &[Self]) -> Memory<'_, u8> {
-        Memory::Shared(slice)
+        Memory::Shared(SharedU8::from_slice(slice))
+    }
+}
+
+/// Little-endian, at any address.
+impl Source for [SharedU8; 2] {
+    type Lane = u16;
+    const IS_SHARED: bool = true;
+
+    #[inline(always)]
+    fn get(&self) -> u16 {
+        u16::from_le_bytes([self[0].get(), self[1].get()])
+    }
+
+    #[inline(always)]
+    fn memory(slice: &[Self]) -> Memory<'_, u16> {
+        Memory::Shared(slice.as_flattened())
+    }
+}
+
+impl<T: Lane, const N: usize, I: Isa> crate::Vector<T, N, I> {
+    #[inline(always)]
+    pub(crate) fn from_shared(bytes: u8x64) -> Self {
+        match const { size_of::<T>() } {
+            1 => Self::new(bytes.resize(0).cast()),
+            2 => Self::new(u16x32::from_le_bytes(bytes).resize(0).cast()),
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -73,13 +116,29 @@ mod simd {
             ]
         }
 
-        fn load_nth<S: Source<Lane = T>, const K: usize, const AT: usize>(
+        pub(crate) fn load_nth<S: Source<Lane = T>, const K: usize, const AT: usize>(
             from: &[[S; N]; K],
         ) -> Self {
-            const { assert!(!S::IS_SHARED || N <= isa::U8::LEN, "wider than a register") };
+            const {
+                let fits = size_of::<[S; N]>() <= isa::U8::LEN;
+                assert!(!S::IS_SHARED || fits, "wider than a register")
+            };
+            Self::load_nth_of_any_width::<S, K, AT>(from)
+        }
+
+        /// For a branch that only the targets with such a width take.
+        pub(crate) fn load_nth_of_any_width<
+            S: Source<Lane = T>,
+            const K: usize,
+            const AT: usize,
+        >(
+            from: &[[S; N]; K],
+        ) -> Self {
             match S::memory(from.as_flattened()) {
                 Memory::Plain(lanes) => Self::from_array(lanes.as_chunks().0[AT]),
-                Memory::Shared(bytes) => Vector::new(shared::load_shared::<N, K, AT>(bytes)).cast(),
+                Memory::Shared(bytes) => {
+                    Self::from_shared(shared::load_shared::<[S; N], K, AT>(bytes))
+                }
             }
         }
     }

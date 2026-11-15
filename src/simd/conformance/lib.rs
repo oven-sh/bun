@@ -8,9 +8,10 @@ mod pairs;
 mod probe;
 mod room;
 
-use bun_simd::Target;
+use bun_simd::{SharedU8, Target};
 use bun_simd_kernels::Columns;
 use core::mem::MaybeUninit;
+use core::sync::atomic::AtomicU8;
 
 fn write_line(line: core::fmt::Arguments<'_>) {
     let stdout = bun_core::Fd::stdout();
@@ -68,6 +69,10 @@ impl Random {
             .map(|_| core::array::from_fn(&mut word))
             .collect()
     }
+}
+
+fn shared(bytes: &mut [u8]) -> &[SharedU8] {
+    SharedU8::from_slice(AtomicU8::from_mut_slice(bytes))
 }
 
 type Uninit<'a, T> = &'a mut [MaybeUninit<T>];

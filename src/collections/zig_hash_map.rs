@@ -440,12 +440,12 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         }
     }
 
-    /// The value stored under `key`, and `value` back if one was already there.
-    pub(crate) fn get_or_insert(&mut self, key: K, value: V) -> (&V, Option<V>) {
+    /// `Err` holds the stored value and the rejected one.
+    pub(crate) fn try_insert(&mut self, key: K, value: V) -> Result<&V, (&V, V)> {
         let (idx, _) = self.get_or_put_slot(&key);
         match &mut self.slots[idx] {
-            Some((_, existing)) => (existing, Some(value)),
-            vacant => (&vacant.insert((key, value)).1, None),
+            Some((_, existing)) => Err((existing, value)),
+            vacant => Ok(&vacant.insert((key, value)).1),
         }
     }
 

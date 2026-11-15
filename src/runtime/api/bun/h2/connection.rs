@@ -162,8 +162,8 @@ enum BlockDisposition {
 #[derive(Default)]
 pub(crate) struct HeaderFields {
     /// Name bytes then value bytes, in field order.
-    bytes: Vec<u8>,
-    /// Per field: [nameLen | (sensitive << 31), valueLen].
+    packed: Vec<u8>,
+    /// Per field: [nameLen | (never_index << 31), valueLen].
     meta: Vec<[u32; 2]>,
 }
 
@@ -171,20 +171,20 @@ impl HeaderFields {
     const NEVER_INDEX: u32 = 0x8000_0000;
 
     fn clear(&mut self) {
-        self.bytes.clear();
+        self.packed.clear();
         self.meta.clear();
     }
 
     fn push(&mut self, name: &[u8], value: &[u8], never_index: bool) {
-        self.bytes.extend_from_slice(name);
-        self.bytes.extend_from_slice(value);
+        self.packed.extend_from_slice(name);
+        self.packed.extend_from_slice(value);
         let flag = if never_index { Self::NEVER_INDEX } else { 0 };
         self.meta
             .push([name.len() as u32 | flag, value.len() as u32]);
     }
 
-    pub(crate) fn packed(&self) -> (&[u8], &[[u32; 2]]) {
-        (&self.bytes, &self.meta)
+    pub(crate) fn as_parts(&self) -> (&[u8], &[[u32; 2]]) {
+        (&self.packed, &self.meta)
     }
 }
 
@@ -2303,7 +2303,7 @@ mod tests {
             end_stream: bool,
             _flags: u8,
         ) {
-            let (mut bytes, meta) = fields.packed();
+            let (mut bytes, meta) = fields.as_parts();
             for &[name_len, value_len] in meta {
                 let (name, rest) = bytes.split_at((name_len & !HeaderFields::NEVER_INDEX) as usize);
                 let (value, rest) = rest.split_at(value_len as usize);

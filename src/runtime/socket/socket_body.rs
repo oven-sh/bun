@@ -839,7 +839,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.socket.get().is_detached() {
             return Ok(());
         }
-        if let Some(h2) = this.native_callback.get().h2() {
+        if let Some(h2) = this.native_callback.get().h2_ref() {
             h2.on_native_writable();
             return Ok(());
         }
@@ -2156,7 +2156,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.socket.get().is_detached() {
             return Ok(());
         }
-        if let Some(h2) = this.native_callback.get().h2() {
+        if let Some(h2) = this.native_callback.get().h2_ref() {
             return h2.on_native_read(data);
         }
         let handlers = this.get_handlers();
@@ -3636,8 +3636,8 @@ pub(crate) enum NativeCallbacks {
 }
 
 impl NativeCallbacks {
-    /// A ref of its own: the dispatch re-enters JS, which can `detach_native_callback`.
-    fn h2(&self) -> Option<RefPtr<H2FrameParser>> {
+    /// Returns a new ref: the dispatch re-enters JS, which can `detach_native_callback`.
+    fn h2_ref(&self) -> Option<RefPtr<H2FrameParser>> {
         match self {
             NativeCallbacks::H2(h2) => Some(h2.clone()),
             NativeCallbacks::None => None,

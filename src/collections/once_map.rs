@@ -4,13 +4,13 @@ use bun_ptr::AliasableBox;
 
 use crate::HashMap;
 
-/// Boxed values by id. Only `&mut self` removes one, so a `&V` stays valid while the map grows.
-pub struct AppendOnlyMap<V> {
-    /// A method's borrow of this ends before it returns or runs code it was given.
+/// Boxed values, inserted through `&self` and removed through `&mut self`.
+pub struct OnceMap<V> {
+    /// Never borrowed while `V::drop` or the caller's code runs.
     map: UnsafeCell<HashMap<u32, AliasableBox<V>>>,
 }
 
-impl<V> Default for AppendOnlyMap<V> {
+impl<V> Default for OnceMap<V> {
     fn default() -> Self {
         Self {
             map: UnsafeCell::default(),
@@ -18,32 +18,37 @@ impl<V> Default for AppendOnlyMap<V> {
     }
 }
 
-impl<V> AppendOnlyMap<V> {
+impl<V> OnceMap<V> {
     pub fn len(&self) -> usize {
         // SAFETY: no other borrow of `map` is live between method calls.
         unsafe { &*self.map.get() }.len()
     }
 
-    pub fn contains_key(&self, id: u32) -> bool {
+    pub fn contains_key(&self, key: u32) -> bool {
         // SAFETY: as in `len`. Hashing a `u32` runs no code that could reach `map`.
-        unsafe { &*self.map.get() }.contains_key(&id)
+        unsafe { &*self.map.get() }.contains_key(&key)
     }
 
-    pub fn get(&self, id: u32) -> Option<&V> {
+    pub fn get(&self, key: u32) -> Option<&V> {
         // SAFETY: as in `contains_key`. The value does not move with its slot, and only
         // `&mut self` drops it.
-        unsafe { (*self.map.get()).get(&id).map(|value| &*value.as_ptr()) }
+        unsafe { (*self.map.get()).get(&key).map(|value| &*value.as_ptr()) }
     }
 
-    /// Drops `value` if `id` is taken.
-    pub fn get_or_insert(&self, id: u32, value: V) -> &V {
-        // SAFETY: as in `get`. What was handed out points into the boxes, not into `map`.
-        let (stored, rejected) = unsafe {
-            let (stored, rejected) = (*self.map.get()).get_or_insert(id, AliasableBox::new(value));
-            (&*stored.as_ptr(), rejected)
+    /// Drops `value` if `key` is taken.
+    pub fn get_or_insert(&self, key: u32, value: V) -> &V {
+        // SAFETY: as in `contains_key`. What was handed out points into the boxes, not into `map`.
+        let stored = match unsafe { &mut *self.map.get() }.try_insert(key, AliasableBox::new(value))
+        {
+            Ok(stored) => stored.as_ptr(),
+            Err((stored, rejected)) => {
+                let stored = stored.as_ptr();
+                drop(rejected);
+                stored
+            }
         };
-        drop(rejected);
-        stored
+        // SAFETY: as in `get`.
+        unsafe { &*stored }
     }
 
     /// The values that are in the map now.
@@ -58,8 +63,8 @@ impl<V> AppendOnlyMap<V> {
     /// Does not allocate, but skips or repeats values if the map grows during the walk.
     pub fn values(&self) -> impl Iterator<Item = &V> {
         // SAFETY: as in `len`.
-        let slots = unsafe { &*self.map.get() }.capacity();
-        let values = (0..slots).filter_map(|slot| {
+        let capacity = unsafe { &*self.map.get() }.capacity();
+        let values = (0..capacity).filter_map(|slot| {
             // SAFETY: as in `get`. Each step borrows `map` anew.
             unsafe {
                 let value = (*self.map.get()).value_in_slot(slot)?;
@@ -69,24 +74,24 @@ impl<V> AppendOnlyMap<V> {
         values.take(self.len())
     }
 
-    pub fn remove(&mut self, id: u32) {
-        self.map.get_mut().remove(&id);
+    pub fn remove(&mut self, key: u32) {
+        self.map.get_mut().remove(&key);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::cell::{Cell, RefCell};
+    use core::cell::Cell;
     use std::rc::{Rc, Weak};
 
     #[test]
     fn values_stay_valid_while_the_map_grows() {
-        let map = AppendOnlyMap::default();
+        let map = OnceMap::default();
         let first = map.get_or_insert(1, Cell::new(1));
         let before = map.snapshot();
-        for id in 2..100 {
-            map.get_or_insert(id, Cell::new(id));
+        for key in 2..100 {
+            map.get_or_insert(key, Cell::new(key));
             first.set(first.get() + 1);
         }
         assert_eq!(before.len(), 1);
@@ -96,10 +101,10 @@ mod tests {
     }
 
     #[test]
-    fn a_walk_survives_growth() {
-        let map = AppendOnlyMap::default();
-        for id in 0..6 {
-            map.get_or_insert(id, id);
+    fn values_iterator_survives_inserts() {
+        let map = OnceMap::default();
+        for key in 0..6 {
+            map.get_or_insert(key, key);
         }
         let in_order: Vec<&u32> = map.values().collect();
         assert_eq!(in_order, map.snapshot());
@@ -113,20 +118,20 @@ mod tests {
         }
     }
 
-    struct InsertsOnDrop(Weak<AppendOnlyMap<InsertsOnDrop>>);
+    struct InsertsOnDrop(Weak<OnceMap<InsertsOnDrop>>);
 
     impl Drop for InsertsOnDrop {
         fn drop(&mut self) {
             let Some(map) = self.0.upgrade() else { return };
-            for id in 2..50 {
-                map.get_or_insert(id, InsertsOnDrop(Weak::new()));
+            for key in 2..50 {
+                map.get_or_insert(key, InsertsOnDrop(Weak::new()));
             }
         }
     }
 
     #[test]
-    fn a_taken_id_keeps_its_value() {
-        let map = Rc::new(AppendOnlyMap::default());
+    fn get_or_insert_keeps_the_existing_value() {
+        let map = Rc::new(OnceMap::default());
         let first = map.get_or_insert(1, InsertsOnDrop(Weak::new()));
         let second = map.get_or_insert(1, InsertsOnDrop(Rc::downgrade(&map)));
         assert!(core::ptr::eq(first, second));
@@ -135,16 +140,13 @@ mod tests {
     }
 
     #[test]
-    fn removal_waits_for_the_last_borrow() {
-        let alive = Rc::new(());
-        let map = RefCell::new(AppendOnlyMap::default());
-        let held = map.borrow();
-        let value = held.get_or_insert(1, Rc::clone(&alive));
-        assert!(map.try_borrow_mut().is_err());
-        assert_eq!(Rc::strong_count(value), 2);
-        drop(held);
-        map.borrow_mut().remove(1);
-        assert_eq!(Rc::strong_count(&alive), 1);
-        assert!(!map.borrow().contains_key(1));
+    fn remove_drops_the_value() {
+        let value = Rc::new(());
+        let mut map = OnceMap::default();
+        map.get_or_insert(1, Rc::clone(&value));
+        assert_eq!(Rc::strong_count(&value), 2);
+        map.remove(1);
+        assert_eq!(Rc::strong_count(&value), 1);
+        assert!(!map.contains_key(1));
     }
 }

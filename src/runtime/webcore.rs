@@ -61,8 +61,9 @@ pub(crate) struct AutoFlusher {
     pub(crate) registered: core::cell::Cell<bool>,
 }
 
-/// Implemented below for `FileSink` and `HTTPServerWritable<_, _>`.
-pub(crate) trait HasAutoFlusher: Sized {
+/// # Safety
+/// A value does not move while it is registered, and unregisters before it is freed.
+pub(crate) unsafe trait HasAutoFlusher: Sized {
     fn auto_flusher(&self) -> &AutoFlusher;
     /// `Type.onAutoFlush` — `DeferredRepeatingTask` ABI after `@ptrCast`
     /// erasure: `fn(*anyopaque) bool`.
@@ -144,17 +145,18 @@ impl AutoFlusher {
     ) {
         debug_assert!(!this.auto_flusher().registered.get());
         this.auto_flusher().registered.set(true);
-        let found_existing = vm
-            .event_loop()
-            .deferred_tasks
-            .post_task(Self::erased_ctx(this), Self::erased_cb::<T>());
+        let tasks = &vm.event_loop().deferred_tasks;
+        // SAFETY: the contract of `HasAutoFlusher`.
+        let found_existing =
+            unsafe { tasks.post_task(Self::erased_ctx(this), Self::erased_cb::<T>()) };
         debug_assert!(!found_existing);
     }
 }
 
 // ─── HasAutoFlusher impls ────────────────────────────────────────────────────
 
-impl HasAutoFlusher for file_sink::FileSink {
+// SAFETY: refcounted on the heap, and `drop` unregisters.
+unsafe impl HasAutoFlusher for file_sink::FileSink {
     #[inline]
     fn auto_flusher(&self) -> &AutoFlusher {
         &self.auto_flusher
@@ -167,7 +169,8 @@ impl HasAutoFlusher for file_sink::FileSink {
     }
 }
 
-impl<const SSL: bool> HasAutoFlusher for streams::HTTPServerWritable<SSL> {
+// SAFETY: written to only in its heap allocation, and `drop` unregisters.
+unsafe impl<const SSL: bool> HasAutoFlusher for streams::HTTPServerWritable<SSL> {
     #[inline]
     fn auto_flusher(&self) -> &AutoFlusher {
         &self.auto_flusher

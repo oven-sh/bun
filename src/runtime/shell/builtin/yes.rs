@@ -209,7 +209,8 @@ impl YesTask {
                     // SAFETY: the loop of the script calls this once.
                     unsafe { bun_core::heap::take(this).run_from_main_thread() }
                 });
-                mini.enqueue_task_concurrent(NonNull::new(at).expect("intrusive task"));
+                // SAFETY: a field of the leaked box, which the callback takes back on this thread.
+                unsafe { mini.enqueue_task_concurrent(NonNull::new(at).expect("intrusive task")) };
             }
         }
     }

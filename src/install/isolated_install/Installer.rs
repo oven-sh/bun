@@ -33,7 +33,7 @@ use crate::package_install::{
 };
 use crate::package_manager_real::directories;
 use crate::package_manager_real::package_manager_options::Do;
-use crate::package_manager_real::{INBOX, InstallFields, Options, THREAD_POOL};
+use crate::package_manager_real::{INBOX, InstallFields, Options, install_pool};
 use crate::postinstall_optimizer;
 use crate::postinstall_optimizer::PostinstallOptimizer;
 use crate::prune::LinkedNodeModules;
@@ -1337,7 +1337,7 @@ impl Task {
 
 impl TaskRunner<Task> for SharedInstaller<'_> {
     fn schedule(batch: thread_pool::Batch) {
-        THREAD_POOL.schedule(batch);
+        install_pool().schedule(batch);
     }
 
     fn run(&self, task: &mut Task) {

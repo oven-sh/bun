@@ -3625,7 +3625,7 @@ impl<'a> Resolver<'a> {
         // Hold `entries_mutex` across the in-place `DirEntry` rewrite below and
         // the `dir_info_uncached` call, mirroring `dir_info_cached_miss`: the
         // route loaders iterate the `DirEntry.data` map under this lock.
-        let _entries_unlock = rfs!().entries_mutex.lock_guard();
+        let _entries_unlock = rfs!().entries_mutex().lock_guard();
         let mut cached_dir_entry_result = rfs!().entries.get_or_put(dir_path)?;
 
         // NOTE: always assigned by either the cached-hit arm or the
@@ -3903,7 +3903,7 @@ impl<'a> Resolver<'a> {
                 // listing fd: a concurrent resolver at a newer generation
                 // rewrites the `DirEntry` in place under that lock.
                 let looked_up = {
-                    let _entries_lock = self.rfs_ref().entries_mutex.lock_guard();
+                    let _entries_lock = self.rfs_ref().entries_mutex().lock_guard();
                     resolved_dir_info
                         .get_entries_ref_locked(self.generation)
                         .map(|entries| (entries.get(base), entries.fd))
@@ -4496,7 +4496,7 @@ impl<'a> Resolver<'a> {
         }
 
         // SAFETY: `rfs` points at process-global storage; outlives this guard.
-        let _entries_unlock = rfs!().entries_mutex.lock_guard();
+        let _entries_unlock = rfs!().entries_mutex().lock_guard();
 
         while top.len() > root_path.len() {
             debug_assert!(top.as_ptr() == root_path.as_ptr());
@@ -5472,7 +5472,7 @@ impl<'a> Resolver<'a> {
         // for the rewrite this guards against); the fd gate matches
         // `DirInfo::get_file_descriptor`.
         let looked_up = {
-            let _entries_lock = self.rfs_ref().entries_mutex.lock_guard();
+            let _entries_lock = self.rfs_ref().entries_mutex().lock_guard();
             dir_info
                 .get_entries_ref_locked(self.generation)
                 .map(|entries| {

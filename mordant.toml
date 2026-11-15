@@ -16,7 +16,7 @@ freed-while-borrowed-releases = ["RefPtr::decrement_strong_count"]
 lock-guard-types = ["GuardedLock", "threading::MutexGuard", "RwLockReadGuard", "RwLockWriteGuard"]
 # The raw mutex locks and unlocks by hand, with no guard.
 lock-methods = ["threading::Mutex::lock"]
-unlock-methods = ["threading::Mutex::unlock"]
+unlock-methods = ["threading::Mutex::unlock_raw"]
 # Lints this repo has decided not to act on. Everything else in the pack is
 # on; add a lint here only with a reason.
 disabled = [

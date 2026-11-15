@@ -48,9 +48,8 @@ pub struct EventLoopTimer {
     /// A `setTimeout()` without a delay in `bun test`. Its deadline is 1 ms away, as in Node, so its place among the
     /// timers is Node's. An event loop that would sleep until then runs it at once.
     pub is_due_when_idle: Cell<bool>,
-    /// The latest drain generation when this timer was armed. A drain does not pop a timer armed while it runs,
-    /// in its own callbacks or in a nested event loop. Its deadline came from a later clock reading than the one
-    /// the drain cached, so it waits for the next turn of the event loop whatever the two readings say.
+    /// The drain generation when this timer was armed. A drain does not pop a timer armed while it runs: its
+    /// deadline came from a later clock reading than the one the drain cached.
     pub armed_in_drain: Cell<u32>,
 }
 

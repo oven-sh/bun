@@ -502,8 +502,7 @@ pub(crate) struct HotRun {
     pub(crate) only_intervals: bool,
 }
 
-/// One `drain_timers` call, once its heap is not empty: the clock reading it fires by, and once a timer is due,
-/// its generation (see [`All::open_drain`]).
+/// One `drain_timers` call: the clock reading it fires by and, once a timer is due, its generation.
 struct Drain {
     now: Timespec,
     seq: Option<u32>,
@@ -530,9 +529,8 @@ pub(crate) struct All {
     /// Incremented when timers are scheduled or rescheduled. See
     /// TimerObjectInternals.epoch. Masked to 24 bits on increment.
     pub(crate) epoch: Cell<u32>,
-    /// The last drain generation opened, see [`All::open_drain`]. A timer armed now gets it as its stamp
-    /// (`EventLoopTimer::armed_in_drain`). Atomic because `wtf_arm` runs on any thread. Written only on the JS
-    /// thread.
+    /// The latest generation [`All::open_drain`] gave out: the stamp of a timer armed now. `wtf_arm` reads it
+    /// on any thread.
     drain_seq: AtomicU32,
     pub(crate) immediate_ref_count: Cell<i32>,
     #[cfg(windows)]
@@ -812,17 +810,15 @@ impl All {
         }
     }
 
-    /// Opens a drain generation: the stamp of every timer armed from now until the next generation opens. The
-    /// generations are consecutive, so the timers armed while a drain runs are the ones stamped from its own
-    /// generation up to the latest one (a nested drain opens later generations). A drain leaves those timers in
-    /// the heap, see [`Self::armed_in_drain`].
+    /// Opens the next generation. The timers a drain must leave for the next turn are the ones stamped from its
+    /// generation on, see [`Self::armed_in_drain`].
     fn open_drain(&self) -> u32 {
         let seq = self.drain_seq.load(Ordering::Relaxed).wrapping_add(1);
         self.drain_seq.store(seq, Ordering::Relaxed);
         seq
     }
 
-    /// Whether a timer with `stamp` was armed since the drain with generation `seq` opened.
+    /// Whether a timer with `stamp` was armed since generation `seq` opened, in the drain or in a nested one.
     fn armed_in_drain(&self, stamp: u32, seq: u32) -> bool {
         stamp.wrapping_sub(seq) <= self.drain_seq.load(Ordering::Relaxed).wrapping_sub(seq)
     }
@@ -951,8 +947,7 @@ impl All {
         })
     }
 
-    /// Pop the next due timer. `drain` is filled lazily: an empty heap pays no `clock_gettime`, and a heap
-    /// with nothing due opens no generation.
+    /// Pop the next due timer. `drain` is filled lazily, so an empty heap pays no `clock_gettime`.
     fn next(&self, drain: &mut Option<Drain>) -> Option<(*mut EventLoopTimer, Timespec)> {
         // SAFETY: peek returns a live heap node
         let first = unsafe { &*self.timers.peek()? };

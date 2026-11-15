@@ -2952,14 +2952,41 @@ __attribute__((minsize)) static void wrapFunction(Zig::GlobalObject* globalObjec
     mock->setInitialImplementation(globalObject, function);
 }
 
-static String propertyKeyForMessage(const Identifier& key)
+// A message names the key as the caller wrote it. Behind a module mock, `key` is the name that the export has in the mocked module.
+static StringImpl* writtenName(JSValue written)
 {
+    return written.isString() ? asString(written)->tryGetValueImpl() : nullptr;
+}
+
+static String propertyKeyForMessage(JSValue written, const Identifier& key)
+{
+    if (StringImpl* name = writtenName(written))
+        return name;
     return key.isSymbol() ? makeString("Symbol("_s, key.string(), ')') : key.string();
 }
 
-static String propertyKeyForFunctionName(const Identifier& key)
+static String propertyKeyForFunctionName(JSValue written, const Identifier& key)
 {
+    if (StringImpl* name = writtenName(written))
+        return name;
     return key.isSymbol() ? makeString('[', key.string(), ']') : key.string();
+}
+
+static void throwNotExported(JSGlobalObject* globalObject, ThrowScope& scope, JSValue written, const Identifier& key)
+{
+    throwTypeError(globalObject, scope, makeString("spyOn(target, prop) expects the module namespace object to export `"_s, propertyKeyForMessage(written, key), '`'));
+}
+
+// As isModuleNamespace(). It asks about a compiled module only if the realm runs a compiled program.
+static ALWAYS_INLINE bool isNamespaceObjectOfModule(Zig::GlobalObject* globalObject, JSObject* object)
+{
+    bool isOfLoadedModule = object->inherits<JSModuleNamespaceObject>();
+#if ENABLE(AOT)
+    return isOfLoadedModule || (globalObject->aotInstance() && JSC::AOT::isModuleNamespace(object));
+#else
+    UNUSED_PARAM(globalObject);
+    return isOfLoadedModule;
+#endif
 }
 
 static JSObject* findPropertyDescriptor(JSGlobalObject* globalObject, JSObject* object, PropertyName key, PropertyDescriptor& descriptor)
@@ -3057,22 +3084,31 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    // A module mock's exports are read live from the object its factory returned, so spy on that object.
-#if ENABLE(AOT)
-    while (globalObject->aotInstance()) {
-        JSObject* exports = Bun::compiledMockExportHolder(globalObject, object, propertyKey);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!exports)
-            break;
-        object = exports;
-    }
-#endif
-    while (auto* moduleNamespaceObject = dynamicDowncast<JSModuleNamespaceObject>(object)) {
-        JSObject* exports = Bun::objectHoldingExportOfModuleMock(globalObject, moduleNamespaceObject, propertyKey);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!exports)
-            break;
-        object = exports;
+    // A module mock's exports are read live from the object its factory returned, so spy on that object, under the name the export has there.
+    JSObject* mockOfObject = nullptr;
+    if (isNamespaceObjectOfModule(globalObject, object)) {
+        // Module mocks can read each other's namespace objects in a circle. The remembered hop moves ahead at each power of two, so a circle of any length comes back to it.
+        JSObject* rememberedObject = nullptr;
+        Identifier rememberedKey;
+        for (unsigned hops = 0;; ++hops) {
+            Bun::ExportOfModuleMock held = Bun::exportOfModuleMock(globalObject, object, propertyKey);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!held.object)
+                break;
+            if (held.object == rememberedObject && held.name == rememberedKey) {
+                throwNotExported(globalObject, scope, propertyKeyValue, propertyKey);
+                return {};
+            }
+            if (hops && hasOneBitSet(hops)) {
+                rememberedObject = held.object;
+                rememberedKey = held.name;
+            }
+            object = held.object;
+            propertyKey = WTF::move(held.name);
+            mockOfObject = held.mock;
+            if (!isNamespaceObjectOfModule(globalObject, object))
+                break;
+        }
     }
 
     if (auto* target = dynamicDowncast<JSMockFunction>(object); target && propertyKey == vm.propertyNames->prototype) {
@@ -3163,20 +3199,36 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
 
         bool isNamespace = isModuleNamespace(object);
         if (isNamespace && !hasValue) {
-            throwTypeError(globalObject, scope, makeString("spyOn(target, prop) expects the module namespace object to export `"_s, propertyKeyForMessage(propertyKey), '`'));
+            throwNotExported(globalObject, scope, propertyKeyValue, propertyKey);
             return {};
+        }
+
+        // Importers can read a name that the object lacks: the default export of a Jest factory's object is the object itself. The spy starts from that.
+        bool isServedByMock = false;
+        if (!hasValue && mockOfObject) {
+            isServedByMock = mockOfObject->hasProperty(globalObject, propertyKey);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (isServedByMock) {
+                value = mockOfObject->get(globalObject, propertyKey);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (dynamicDowncast<JSMockFunction>(value))
+                    return JSValue::encode(value);
+            }
         }
 
         auto* mock = createMockFunction(vm, globalObject, isVitest);
         unsigned spyAttributes = slotAttributes;
         // A spy that shadows an inherited property is deleted on restore, so it has to be configurable.
         unsigned attributes = isOwn ? spyAttributes : spyAttributes & ~PropertyAttribute::DontDelete;
+        // The object does not list a name that only the mock serves, and the value of that name can be the object itself.
+        if (isServedByMock)
+            attributes |= PropertyAttribute::DontEnum;
         if (isNamespace)
             spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
         if (isOpaque)
             spyAttributes |= JSMockFunction::SpyAttributeOpaque;
 
-        if (hasValue && ((slotAttributes & PropertyAttribute::Function) != 0 || (value.isCell() && value.isCallable()))) {
+        if ((hasValue || isServedByMock) && ((slotAttributes & PropertyAttribute::Function) != 0 || (value.isCell() && value.isCallable()))) {
             wrapFunction(globalObject, mock, value);
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -3207,11 +3259,11 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
 
     // hardmode: a property's getter or setter, or the method a getter returns
     if (!hasValue) {
-        throwTypeError(globalObject, scope, makeString("spyOn(target, prop, accessType) expects target to have the property `"_s, propertyKeyForMessage(propertyKey), '`'));
+        throwTypeError(globalObject, scope, makeString("spyOn(target, prop, accessType) expects target to have the property `"_s, propertyKeyForMessage(propertyKeyValue, propertyKey), '`'));
         return {};
     }
     if (isModuleNamespace(object)) {
-        throwTypeError(globalObject, scope, makeString("Cannot spy on the "_s, access == SpyAccess::Get ? "getter"_s : "setter"_s, " of the `"_s, propertyKeyForMessage(propertyKey), "` export because the exports of a module namespace object are not accessors"_s));
+        throwTypeError(globalObject, scope, makeString("Cannot spy on the "_s, access == SpyAccess::Get ? "getter"_s : "setter"_s, " of the `"_s, propertyKeyForMessage(propertyKeyValue, propertyKey), "` export because the exports of a module namespace object are not accessors"_s));
         return {};
     }
     if (propertyKey == vm.propertyNames->prototype && isJSFunctionOrCompiledCallee(object)) {
@@ -3231,7 +3283,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             JSString* type = original.isNull() ? vm.smallStrings.nullString() : jsTypeStringForValue(globalObject, original);
             auto typeView = type->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            throwTypeError(globalObject, scope, makeString("Cannot spy on the `"_s, propertyKeyForMessage(propertyKey), "` property because it is not a function; "_s, typeView.data, " given instead"_s));
+            throwTypeError(globalObject, scope, makeString("Cannot spy on the `"_s, propertyKeyForMessage(propertyKeyValue, propertyKey), "` property because it is not a function; "_s, typeView.data, " given instead"_s));
             return {};
         }
     }
@@ -3249,7 +3301,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         answersForItsElements = false;
 #endif
     if (storage && !isOpaque && (parseIndex(propertyKey) ? answersForItsElements : !object->getDirect(vm, propertyKey))) {
-        throwTypeError(globalObject, scope, makeString("Cannot spy on the "_s, access == SpyAccess::Set ? "setter"_s : "getter"_s, " of the `"_s, propertyKeyForMessage(propertyKey), "` property because it cannot be redefined"_s));
+        throwTypeError(globalObject, scope, makeString("Cannot spy on the "_s, access == SpyAccess::Set ? "setter"_s : "getter"_s, " of the `"_s, propertyKeyForMessage(propertyKeyValue, propertyKey), "` property because it cannot be redefined"_s));
         return {};
     }
 
@@ -3269,11 +3321,11 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         break;
     }
     case SpyAccess::Get:
-        mock->setName(makeString("get "_s, propertyKeyForFunctionName(propertyKey)));
+        mock->setName(makeString("get "_s, propertyKeyForFunctionName(propertyKeyValue, propertyKey)));
         getter = mock;
         break;
     case SpyAccess::Set:
-        mock->setName(makeString("set "_s, propertyKeyForFunctionName(propertyKey)));
+        mock->setName(makeString("set "_s, propertyKeyForFunctionName(propertyKeyValue, propertyKey)));
         setter = mock;
         break;
     }

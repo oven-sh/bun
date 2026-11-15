@@ -49,6 +49,38 @@ for (const name of ["spy", "mock"])
   ]);
 }, 600000);
 
+test("through a re-export under another name, on the file that a factory returned", async () => {
+  // The build follows the name that the spy is made under to the file that the mock names. The factory returns another file, and no spy names `answer`.
+  using dir = tempDir("aot-refused-spies-and-mocks", {
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "dep.js": `export function answer() { return "real"; }`,
+    "fake.js": `export function answer() { return "fake"; }`,
+    "barrel.js": `export { answer as reply } from "./dep.js";`,
+    "a.test.js": `import { mock, spyOn, test } from "bun:test";
+mock.module("./dep.js", () => import("./fake.js"));
+const barrel = await import("./barrel.js");
+const name = "spy";
+test(name, () => {
+  try {
+    spyOn(barrel, "reply");
+    ${reports}
+});`,
+  });
+  const plain = await run([bunExe(), "test"], String(dir), bunEnv);
+  expect({ said: said(plain.stdout + "\n" + plain.stderr), exitCode: plain.exitCode }).toEqual({
+    said: ["SAID spy: no error"],
+    exitCode: 0,
+  });
+  const compiled = await run([bunExe(), "test", "--aot"], String(dir), bunEnv);
+  const fake = join(String(dir), "fake.js");
+  expect({ said: said(compiled.stdout + "\n" + compiled.stderr), exitCode: compiled.exitCode }).toEqual({
+    said: [
+      `SAID spy: TypeError: Cannot spy on 'answer' of "${fake}" because the build didn't see a test spy on it. Spell out the module and the name where the spy is made: import * as module from "<path>"; spyOn(module, "answer") ${page}`,
+    ],
+    exitCode: 0,
+  });
+}, 600000);
+
 test("in an executable", async () => {
   using dir = tempDir("aot-refused-spies-and-mocks", {
     "lib.js": `export function answer() { return "real"; }`,

@@ -448,6 +448,8 @@ const flags = await vi.importMock("./flags");
 flags.enabled = true;
 ```
 
+`spyOn()` on the mocked module replaces the export for every importer. Another module can re-export from the mocked module, with `export * from`, `export { name } from` or `export { name as other } from`. `spyOn()` on that module replaces `name` of the mocked module too, so the modules that import either one call the spy.
+
 A mock made by a `--preload` script is shared by every test file, so a write to it is still there in the next file. With `--isolate`, each file gets a fresh one.
 
 If a module imports a name the factory didn't return, the module still loads. With `vi.mock()` and `vi.doMock()`, using that name throws an error that says which export is missing from which mock, as in Vitest. With `mock.module()`, `jest.mock()` and `jest.doMock()`, the name is `undefined`. As in Jest, a default import of a `jest.mock()` or `jest.doMock()` factory's object is the object itself, unless it has `__esModule: true`. A name that reaches the module through another module's `export * from` or `export { name } from` is `undefined` instead, as in Vitest.
@@ -806,6 +808,7 @@ test("lazy import", async () => {
 - If two factories import each other's modules, the one that asks last gets the original. Vitest calls one of the two factories a second time instead.
 - A factory that uses `importOriginal` is called after the original module is evaluated, not before, so after the factories that don't use it. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.
+- `vi.spyOn()` on a module that re-exports from a mocked module replaces the export of the mocked module, so the modules that import the mocked module call the spy too. In Vitest, only the modules that import the re-exporting module call it.
 - If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.
 
 ## Implementation Details

@@ -3127,6 +3127,395 @@ describe.concurrent("a mocked module's exports are read from the object the fact
     );
   });
 
+  const aliases = {
+    "dep.ts": `
+      export function fn() { return "real-fn"; }
+      export const flag = "real-flag";
+      export const other = "real-other";
+      export default function () { return "real-default"; }
+    `,
+    "aliases.ts": `export { fn as again, default as def, flag as renamed, other as another } from "./dep";`,
+    "chain.ts": `export { again as third } from "./aliases";`,
+    "star-of-aliases.ts": `export * from "./aliases";`,
+    "local.ts": `
+      import def, { fn } from "./dep";
+      export { fn as viaImport, def as viaDefaultImport };
+    `,
+    "collides.ts": `export { fn as other } from "./dep";`,
+    "readers.ts": `
+      import { again, def, renamed } from "./aliases";
+      import { third } from "./chain";
+      import { again as viaStar } from "./star-of-aliases";
+      import { viaImport, viaDefaultImport } from "./local";
+      import direct, { fn, flag } from "./dep";
+      const call = value => (typeof value === "function" ? value() : value);
+      export const read = () => ({
+        fn: [again, third, viaStar, viaImport, fn].map(call),
+        default: [def, viaDefaultImport, direct].map(call),
+        flag: [renamed, flag].map(call),
+      });
+    `,
+  };
+
+  test("spyOn() through a re-export under another name spies on the name that importers read", async () => {
+    const everyForm = (mockIt: string) => `
+      import { expect, jest, mock, spyOn, test, vi } from "bun:test";
+
+      const made = { fn: () => "fn", default: () => "default", flag: "flag", other: () => "other" };
+      ${mockIt}("./dep", () => made);
+      const dep = await import("./dep");
+      const { read } = await import("./readers");
+      const original = { fn: Array(5).fill("fn"), default: Array(3).fill("default"), flag: ["flag", "flag"] };
+
+      test.each([
+        ["export { fn as again } from", "./aliases", "again", "fn"],
+        ["a chain of two of them", "./chain", "third", "fn"],
+        ["export * of one", "./star-of-aliases", "again", "fn"],
+        ["an import that is exported under another name", "./local", "viaImport", "fn"],
+        ["the name of another export of the mock", "./collides", "other", "fn"],
+        ["export { default as def } from", "./aliases", "def", "default"],
+        ["a default import that is exported under a name", "./local", "viaDefaultImport", "default"],
+        ["a value that is not a function", "./aliases", "renamed", "flag"],
+      ])("%s", async (_, specifier, alias, name) => {
+        const namespace = await import(specifier);
+        for (const spyOnIt of [spyOn, jest.spyOn, vi.spyOn]) {
+          const descriptors = Object.getOwnPropertyDescriptors(made);
+          const spy = spyOnIt(namespace, alias).mockReturnValue("spied");
+          const { value, get } = Object.getOwnPropertyDescriptor(made, name);
+          expect(value ?? get).toBe(spy);
+          expect(read()).toEqual({ ...original, [name]: original[name].map(() => "spied") });
+          expect(spy).toHaveBeenCalledTimes(original[name].length);
+          expect(spyOnIt(namespace, alias)).toBe(spy);
+          expect(spyOnIt(dep, name)).toBe(spy);
+          expect([Object.keys(made), made.other()]).toEqual([["fn", "default", "flag", "other"], "other"]);
+          spy.mockRestore();
+          expect(Object.getOwnPropertyDescriptors(made)).toEqual(descriptors);
+          expect(read()).toEqual(original);
+        }
+      });
+    `;
+    const leftOut = (mockIt: string) => `
+      import { expect, jest, mock, spyOn, test, vi } from "bun:test";
+
+      const made = { fn: () => "fn" };
+      ${mockIt}("./dep", () => made);
+      const [dep, aliases, local] = [await import("./dep"), await import("./aliases"), await import("./local")];
+
+      test("a name that the factory left out gets one spy, whichever namespace is spied on first", () => {
+        const spy = spyOn(aliases, "renamed").mockReturnValue("spied");
+        expect(spyOn(dep, "flag")).toBe(spy);
+        expect([aliases.renamed, dep.flag, Object.keys(made)]).toEqual(["spied", "spied", ["fn", "flag"]]);
+        spy.mockRestore();
+        expect([aliases.renamed, "flag" in dep, Object.keys(made)]).toEqual([undefined, false, ["fn"]]);
+
+        const direct = spyOn(dep, "flag");
+        expect(spyOn(aliases, "renamed")).toBe(direct);
+        direct.mockRestore();
+        expect(Object.keys(made)).toEqual(["fn"]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...aliases,
+        "mock-module.test.ts": everyForm("mock.module"),
+        "jest-mock.test.ts": everyForm("jest.mock"),
+        "jest-do-mock.test.ts": everyForm("jest.doMock"),
+        "vi-mock.test.ts": everyForm("vi.mock"),
+        "vi-do-mock.test.ts": everyForm("vi.doMock"),
+        "left-out-mock-module.test.ts": leftOut("mock.module"),
+        "left-out-vi-mock.test.ts": leftOut("vi.mock"),
+        "left-out-jest-mock.test.ts": `
+          ${leftOut("jest.mock")}
+          test("the default export of a jest.mock() factory that returned no \`default\` is the object itself, and the spy starts from it", () => {
+            const spy = spyOn(aliases, "def");
+            expect(spyOn(dep, "default")).toBe(spy);
+            // The object does not list the spy: its start value is the object.
+            expect([Object.keys(made), Object.keys(dep), JSON.stringify(made)]).toEqual([["fn"], ["fn"], "{}"]);
+            for (const read of [aliases.def, local.viaDefaultImport, dep.default]) expect(read).toBe(made);
+            expect(spy).toHaveBeenCalledTimes(3);
+            spy.mockReturnValue("spied");
+            expect([aliases.def, local.viaDefaultImport, dep.default]).toEqual(["spied", "spied", "spied"]);
+            spy.mockRestore();
+            expect(Object.getOwnPropertyNames(made)).toEqual(["fn"]);
+            for (const read of [aliases.def, local.viaDefaultImport, dep.default]) expect(read).toBe(made);
+          });
+        `,
+        "jest-mock-function.test.ts": `
+          import { expect, jest, spyOn, test } from "bun:test";
+
+          const made = Object.assign((...args) => ["called", ...args], { fn: () => "fn" });
+          jest.mock("./dep", () => made);
+          const [dep, aliases] = [await import("./dep"), await import("./aliases")];
+
+          test("the default export of a jest.mock() factory that returned a function is the function, and the spy wraps it", () => {
+            const spy = spyOn(aliases, "def");
+            expect(spyOn(dep, "default")).toBe(spy);
+            expect([aliases.def("one"), dep.default("two"), spy.mock.calls, Object.keys(made)]).toEqual([["called", "one"], ["called", "two"], [["one"], ["two"]], ["fn"]]);
+            spy.mockReturnValue("spied");
+            expect(aliases.def()).toBe("spied");
+            spy.mockRestore();
+            expect(Object.hasOwn(made, "default")).toBe(false);
+            for (const read of [aliases.def, dep.default]) expect(read).toBe(made);
+          });
+        `,
+        "jest-mock-jest-fn.test.ts": `
+          import { expect, jest, spyOn, test } from "bun:test";
+
+          const made = jest.fn((...args) => ["called", ...args]);
+          jest.mock("./dep", () => made);
+          const [dep, aliases] = [await import("./dep"), await import("./aliases")];
+
+          test("the default export of a jest.mock() factory that returned a jest.fn() already is the spy", () => {
+            expect(spyOn(aliases, "def")).toBe(made);
+            expect(spyOn(dep, "default")).toBe(made);
+            expect([aliases.def("one"), dep.default("two"), made.mock.calls, Object.keys(made)]).toEqual([["called", "one"], ["called", "two"], [["one"], ["two"]], []]);
+          });
+        `,
+        "accessors.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import * as aliases from "./aliases";
+          import { read } from "./readers";
+
+          const made = vi.hoisted(() => ({ fn: () => "fn", default: () => "default", get flag() { return "getter"; }, set flag(value) {} }));
+          vi.mock("./dep", () => made);
+
+          test("a getter and a setter", () => {
+            const descriptor = Object.getOwnPropertyDescriptor(made, "flag");
+            const getter = vi.spyOn(aliases, "renamed", "get").mockReturnValue("spied");
+            const setter = vi.spyOn(aliases, "renamed", "set");
+            made.flag = "written";
+            expect([read().flag, setter.mock.calls, getter.name, setter.name]).toEqual([["spied", "spied"], [["written"]], "get renamed", "set renamed"]);
+            vi.restoreAllMocks();
+            expect(Object.getOwnPropertyDescriptor(made, "flag")).toEqual(descriptor);
+          });
+
+          test("an error names the export as the test wrote it", () => {
+            expect(() => vi.spyOn(aliases, "renamed")).toThrow(
+              new TypeError("Cannot spy on the \`renamed\` property because it is not a function; string given instead"),
+            );
+            expect(() => vi.spyOn(aliases, "another", "get")).toThrow(
+              new TypeError("spyOn(target, prop, accessType) expects target to have the property \`another\`"),
+            );
+            expect(Object.keys(made)).toEqual(["fn", "default", "flag"]);
+          });
+
+          test("a key that is an object is converted to a name once", () => {
+            let conversions = 0;
+            const key = { toString: () => (conversions++, "renamed") };
+            expect(() => vi.spyOn(aliases, key)).toThrow(
+              new TypeError("Cannot spy on the \`flag\` property because it is not a function; string given instead"),
+            );
+            expect(conversions).toBe(1);
+          });
+        `,
+        "automock.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          vi.mock("./dep");
+
+          test("an automock already is the spy", async () => {
+            const [dep, aliases] = [await import("./dep"), await import("./aliases")];
+            const keys = Object.keys(dep);
+            expect(vi.isMockFunction(dep.fn)).toBe(true);
+            expect(vi.spyOn(aliases, "again")).toBe(dep.fn);
+            expect(Object.keys(dep)).toEqual(keys);
+          });
+        `,
+      },
+      50,
+    );
+  });
+
+  test("spyOn() through a re-export under another name, whatever an earlier test file of the run loaded", async () => {
+    const spies = (mockIt: string) => `
+      import { expect, mock, spyOn, test, vi } from "bun:test";
+
+      const made = { fn: () => "fn", default: () => "default", flag: "flag", other: () => "other" };
+      ${mockIt}("./dep", () => made);
+
+      test("importers read the spy", async () => {
+        const [aliases, { read }] = [await import("./aliases"), await import("./readers")];
+        const spy = spyOn(aliases, "again").mockReturnValue("spied");
+        expect([read().fn, spy.mock.calls.length]).toEqual([Array(5).fill("spied"), 5]);
+        spy.mockRestore();
+        expect([read().fn, Object.keys(made)]).toEqual([Array(5).fill("fn"), ["fn", "default", "flag", "other"]]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...aliases,
+        "1-mock-module.test.ts": spies("mock.module"),
+        "2-loads-the-module.test.ts": `
+          import { expect, test } from "bun:test";
+
+          test("an earlier file took its mock with it", async () => {
+            const { read } = await import("./readers");
+            expect(read().fn).toEqual(Array(5).fill("real-fn"));
+          });
+        `,
+        // The module is loaded now: this mock changes it in place.
+        "3-mock-module.test.ts": spies("mock.module"),
+        // This mock loads the module again.
+        "4-vi-do-mock.test.ts": spies("vi.doMock"),
+      },
+      4,
+    );
+  });
+
+  const fake = {
+    ...aliases,
+    "fake.ts": `
+      export function fn() { return "fake-fn"; }
+      export const flag = "fake-flag";
+      export default function () { return "fake-default"; }
+    `,
+  };
+
+  test("spyOn() through a re-export under another name, of a factory that returned a module namespace object", async () => {
+    await expectFixturesToPass(
+      {
+        ...fake,
+        "listed.ts": `export const length = 0;`,
+        "lengths.ts": `export { length as size } from "./listed";`,
+        "namespace.test.ts": `
+          import { expect, mock, spyOn, test } from "bun:test";
+          mock.module("./dep", () => import("./fake"));
+          const list = [1, 2];
+          mock.module("./listed", () => list);
+          const [fake, aliases, lengths, { read }] = [await import("./fake"), await import("./aliases"), await import("./lengths"), await import("./readers")];
+
+          test("the spy replaces the export of that module", () => {
+            const spy = spyOn(aliases, "again").mockReturnValue("spied");
+            // With --aot the build has to see a spy under the name \`fn\` as well.
+            expect(spyOn(fake, "fn")).toBe(spy);
+            expect(fake.fn).toBe(spy);
+            expect(read().fn).toEqual(Array(5).fill("spied"));
+            spy.mockRestore();
+            expect(read().fn).toEqual(Array(5).fill("fake-fn"));
+          });
+
+          test("an error names the export as the test wrote it", () => {
+            // fake.ts has no \`other\`, which is what \`another\` is there.
+            expect(() => spyOn(aliases, "another")).toThrow(
+              new TypeError("spyOn(target, prop) expects the module namespace object to export \`another\`"),
+            );
+            expect(() => spyOn(aliases, "renamed", "get")).toThrow(
+              new TypeError("Cannot spy on the getter of the \`renamed\` export because the exports of a module namespace object are not accessors"),
+            );
+            expect(() => spyOn(lengths, "size", "get")).toThrow(
+              new TypeError("Cannot spy on the getter of the \`size\` property because it cannot be redefined"),
+            );
+            expect([Object.keys(fake), Object.keys(list)]).toEqual([["default", "flag", "fn"], ["0", "1"]]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("spyOn() on a name that a factory's module namespace object re-exports under another name from a second mock", async () => {
+    await expectFixturesToPass(
+      {
+        ...fake,
+        "inner.ts": `export function held() { return "real-held"; }`,
+        "fake.ts": `
+          export { held as fn } from "./inner";
+          export const flag = "fake-flag";
+          export const other = "fake-other";
+          export default function () { return "fake-default"; }
+        `,
+        "behind.test.ts": `
+          import { expect, mock, spyOn, test } from "bun:test";
+          const made = { held: () => "held" };
+          mock.module("./inner", () => made);
+          mock.module("./dep", () => import("./fake"));
+          const [dep, { read }] = [await import("./dep"), await import("./readers")];
+
+          test.each([
+            ["the namespace object of the first mock", "./dep", "fn"],
+            ["a re-export under another name", "./aliases", "again"],
+            ["a re-export under the name of another export", "./collides", "other"],
+          ])("through %s, the spy is on the object that the second factory returned", async (_, specifier, name) => {
+            const namespace = await import(specifier);
+            const spy = spyOn(namespace, name).mockReturnValue("spied");
+            expect(made.held).toBe(spy);
+            expect([read().fn, Object.keys(made)]).toEqual([Array(5).fill("spied"), ["held"]]);
+            expect(spyOn(dep, "fn")).toBe(spy);
+            spy.mockRestore();
+            expect(read().fn).toEqual(Array(5).fill("held"));
+          });
+        `,
+        "steps/third.ts": `export function deep() { return "real-third"; }`,
+        "steps/inner.ts": `export function held() { return "real-inner"; }`,
+        "steps/fake-inner.ts": `export { deep as held } from "./third";`,
+        "steps/dep.ts": `export { held as fn } from "./inner";`,
+        "steps/barrel.ts": `export { fn as again } from "./dep";`,
+        "steps/reader.ts": `
+          import { again } from "./barrel";
+          import { fn } from "./dep";
+          import { held } from "./inner";
+          import { held as viaFake } from "./fake-inner";
+          import { deep } from "./third";
+          export const read = () => [again(), fn(), held(), viaFake(), deep()];
+        `,
+        "steps/steps.test.ts": `
+          import { expect, mock, spyOn, test, vi } from "bun:test";
+          const made = { deep: () => "made" };
+          mock.module("./third", () => made);
+          mock.module("./inner", () => import("./fake-inner"));
+          vi.mock("./dep", importOriginal => importOriginal());
+          const [barrel, dep, third, { read }] = [await import("./barrel"), await import("./dep"), await import("./third"), await import("./reader")];
+
+          test("another name on each step: the original of a mock, the module of a second factory, the object of a third", () => {
+            const descriptors = Object.getOwnPropertyDescriptors(made);
+            const spy = spyOn(barrel, "again").mockReturnValue("spied");
+            expect(made.deep).toBe(spy);
+            expect([read(), Object.keys(made)]).toEqual([Array(5).fill("spied"), ["deep"]]);
+            expect(spyOn(dep, "fn")).toBe(spy);
+            expect(spyOn(third, "deep")).toBe(spy);
+            spy.mockRestore();
+            expect(Object.getOwnPropertyDescriptors(made)).toEqual(descriptors);
+            expect(read()).toEqual(Array(5).fill("made"));
+          });
+        `,
+      },
+      4,
+    );
+  });
+
+  test("spyOn() on an export that module mocks read from each other in a circle throws", async () => {
+    await expectFixturesToPass(
+      {
+        "a.ts": `export default "real-a";`,
+        "b.ts": `export default "real-b";`,
+        "star-of-a.ts": `export * from "./a";`,
+        "y-of-b.ts": `export { y } from "./b";`,
+        "x-of-a.ts": `export { y as x } from "./a";`,
+        "circle.test.ts": `
+          import { expect, mock, spyOn, test } from "bun:test";
+          mock.module("./a", () => ({}));
+          mock.module("./b", () => ({}));
+          const [starOfA, yOfB, xOfA] = [await import("./star-of-a"), await import("./y-of-b"), await import("./x-of-a")];
+
+          test("under another name and under its own", () => {
+            // \`y\` of a is \`y\` of b now, and \`y\` of b is \`y\` of a.
+            mock.module("./a", () => yOfB);
+            mock.module("./b", () => starOfA);
+            expect(() => spyOn(xOfA, "x")).toThrow(
+              new TypeError("spyOn(target, prop) expects the module namespace object to export \`x\`"),
+            );
+            expect(() => spyOn(starOfA, "y")).toThrow(
+              new TypeError("spyOn(target, prop) expects the module namespace object to export \`y\`"),
+            );
+          });
+        `,
+      },
+      1,
+      [],
+      // A spyOn() that never returns must not outlive this test run.
+      { BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
+    );
+  });
+
   test("spyOn() on the namespace object spies on the object the factory returned", async () => {
     await expectFixturesToPass(
       {

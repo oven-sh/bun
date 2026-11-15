@@ -46,7 +46,7 @@ pub(crate) mod writable;
 pub(crate) use writable::Writable;
 
 pub(crate) use bun_spawn::static_pipe_writer;
-pub(crate) use static_pipe_writer::StaticPipeWriter as NewStaticPipeWriter;
+use static_pipe_writer::PipeState;
 
 pub(crate) use bun_io::MaxBuf;
 
@@ -63,16 +63,7 @@ type StdioPipeItem = StdioResult;
 #[cfg(not(windows))]
 type StdioPipeItem = ExtraPipe;
 
-pub(crate) type StaticPipeWriter<'a> = NewStaticPipeWriter<Subprocess<'a>>;
-
-impl<'a> static_pipe_writer::StaticPipeWriterProcess for Subprocess<'a> {
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::PollTag::StaticPipeWriter;
-    type Source = webcore::AnyBlob;
-    unsafe fn on_close_io(this: *mut Self, _: StdioKind) {
-        // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
-        unsafe { (*this).on_close_stdin() }
-    }
-}
+pub(crate) type StaticPipeWriter = static_pipe_writer::StaticPipeWriter<webcore::AnyBlob>;
 
 #[derive(EnumSetType, strum::IntoStaticStr)]
 pub enum ObservableGetter {
@@ -97,7 +88,7 @@ pub struct Subprocess<'a> {
     pub(crate) ref_count: RefCount<Subprocess<'a>>,
     /// The construction ref on the `Process` (detached in [`Subprocess::finalize`]).
     pub(crate) process: RefPtr<Process>,
-    pub(crate) stdin: JsCell<Writable<'a>>,
+    pub(crate) stdin: JsCell<Writable>,
     pub(crate) stdout: JsCell<Readable>,
     pub(crate) stderr: JsCell<Readable>,
     pub(crate) stdio_pipes: JsCell<Vec<StdioPipeItem>>,
@@ -144,13 +135,6 @@ bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_t
 // `*mut Process` has no sound placeholder anyway.
 
 impl<'a> Subprocess<'a> {
-    fn take_pending_start_writer(&self) -> Option<RefPtr<StaticPipeWriter<'a>>> {
-        match self.stdin.get() {
-            Writable::Buffer(buffer) => Writable::buffer_writer_mut(buffer).start_ref.take(),
-            _ => None,
-        }
-    }
-
     #[inline]
     pub(crate) fn process(&self) -> &Process {
         &self.process
@@ -352,6 +336,18 @@ impl Subprocess<'_> {
             _ => {}
         });
         self.update_has_pending_activity();
+    }
+
+    pub(crate) fn on_stdin_io(&self, event: bun_io::IoEvent) {
+        if let Writable::Buffer(buffer) = self.stdin.get() {
+            self.on_stdin_state(buffer.on_io(event));
+        }
+    }
+
+    pub(crate) fn on_stdin_state(&self, state: PipeState) {
+        if state == PipeState::Closed {
+            self.on_close_stdin();
+        }
     }
 
     fn on_output_read(&self, reader: &PipeReader, output: Readable) {
@@ -770,11 +766,9 @@ impl Subprocess<'_> {
         }
 
         // We won't be sending any more data.
-        let pending_start = self.take_pending_start_writer();
-        if let Writable::Buffer(buffer) = self.stdin.get() {
-            Writable::buffer_writer_mut(buffer).close();
+        if matches!(self.stdin.get(), Writable::Buffer(_)) {
+            self.on_close_stdin();
         }
-        drop(pending_start);
 
         if !existing_stdin_value.is_empty() {
             crate::webcore::file_sink::JSSink::forget_subprocess(existing_stdin_value);
@@ -932,10 +926,6 @@ impl Subprocess<'_> {
 
         match io {
             StdioKind::Stdin => {
-                let pending_start = self.take_pending_start_writer();
-                if let Some(writer) = &pending_start {
-                    Writable::buffer_writer_mut(writer).close();
-                }
                 if !called {
                     Writable::finalize(self);
                 } else {

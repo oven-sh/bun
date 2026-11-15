@@ -643,9 +643,7 @@ fn unclosed_bracket(tokens: &[Token], braces_nest: bool) -> u32 {
         match token.kind {
             TokenKind::Control(b'(') => open.push((b')', token)),
             TokenKind::Control(b'[') => open.push((b']', token)),
-            TokenKind::Control(b'{') if braces_nest && !open.is_empty() => {
-                open.push((b'}', token))
-            }
+            TokenKind::Control(b'{') if braces_nest && !open.is_empty() => open.push((b'}', token)),
             TokenKind::Control(control) if open.last().is_some_and(|it| it.0 == control) => {
                 open.pop();
             }
@@ -1440,7 +1438,9 @@ impl<'a> Parser<'a> {
         let last_paren = tokens
             .iter()
             .rposition(|token| token.is(b')'))
-            .ok_or_else(|| self.reject(Message::UnclosedBracket, unclosed_bracket(tokens, false)))?;
+            .ok_or_else(|| {
+                self.reject(Message::UnclosedBracket, unclosed_bracket(tokens, false))
+            })?;
         let params = self
             .texts
             .range_of(&tokens[first_paren..(first_paren + last_paren).min(tokens.len())]);
@@ -1477,7 +1477,9 @@ impl<'a> Parser<'a> {
             let last_paren = tokens
                 .iter()
                 .rposition(|token| token.is(b')'))
-                .ok_or_else(|| self.reject(Message::UnclosedBracket, unclosed_bracket(tokens, false)))?;
+                .ok_or_else(|| {
+                    self.reject(Message::UnclosedBracket, unclosed_bracket(tokens, false))
+                })?;
             // This is the end that `postcss-less` computes. It overshoots if more than the name comes before the
             // parenthesis.
             let contents = tokens

@@ -62,7 +62,7 @@ pub trait WriteHandler {
     fn set_has_inflight_write(&self, value: bool);
 }
 
-/// The handler of a `BufferedWriter`, which has the bytes.
+/// A handler that owns the bytes a `BufferedWriter` writes.
 pub trait BufferedWriteHandler: WriteHandler {
     /// Lends `f` what is to be written next.
     fn with_buffer<R>(&self, f: impl FnOnce(&[u8]) -> R) -> R;
@@ -76,6 +76,8 @@ pub trait BufferedWriteHandler: WriteHandler {
 #[cfg(unix)]
 struct PosixPipeWriter {
     handle: PipeHandle,
+    /// `false` for a file descriptor that is left open.
+    owns_fd: bool,
     /// Set once `pwritev2(RWF_NOWAIT)` said this fd's file type does not support it, so we stop asking.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     rwf_unsupported: Cell<bool>,
@@ -87,6 +89,7 @@ impl Default for PosixPipeWriter {
     fn default() -> Self {
         Self {
             handle: PipeHandle::closed(),
+            owns_fd: true,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             rwf_unsupported: Cell::new(false),
             closed_without_reporting: Cell::new(false),
@@ -227,19 +230,26 @@ impl PosixPipeWriter {
             .with_poll(|poll| poll.set_keeping_process_alive(value));
     }
 
-    fn close_without_reporting(&self, close_fd: bool) {
+    fn close_without_reporting(&self) {
         if !self.handle.is_closed() {
             debug_assert!(!self.closed_without_reporting.get());
             self.closed_without_reporting.set(true);
-            if close_fd {
+            if self.owns_fd {
                 self.handle.close();
             }
         }
     }
 
     /// `true` if there is a close to report.
-    fn close(&self, close_fd: bool) -> bool {
-        self.closed_without_reporting.take() || self.handle.close_impl(close_fd)
+    fn close(&self) -> bool {
+        self.closed_without_reporting.take() || self.handle.close_impl(self.owns_fd)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for PosixPipeWriter {
+    fn drop(&mut self) {
+        self.handle.close_impl(self.owns_fd);
     }
 }
 
@@ -277,17 +287,22 @@ fn write_to_socket(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
 #[cfg(unix)]
 pub struct PosixBufferedWriter {
     base: PosixPipeWriter,
-    owns_fd: bool,
 }
 
 #[cfg(unix)]
 impl PosixBufferedWriter {
-    /// Unless it `owns_fd`, closing it leaves the fd open.
-    pub fn new(owns_fd: bool) -> Self {
+    /// Closing it closes the fd.
+    pub fn owning_fd() -> Self {
         Self {
             base: PosixPipeWriter::default(),
-            owns_fd,
         }
+    }
+
+    /// Closing it leaves the fd open.
+    pub fn borrowing_fd() -> Self {
+        let mut this = Self::owning_fd();
+        this.base.owns_fd = false;
+        this
     }
 
     /// # Safety
@@ -329,7 +344,7 @@ impl PosixBufferedWriter {
             Some(WriteResult::Wrote(amt)) => handler.on_write(amt, WriteStatus::Drained),
             Some(WriteResult::Err(err)) => self.report_error_and_close(handler, err),
             Some(WriteResult::Done(amt)) => {
-                self.base.close_without_reporting(self.owns_fd);
+                self.base.close_without_reporting();
                 handler.on_write(amt, WriteStatus::EndOfFile);
                 self.close(handler);
             }
@@ -349,7 +364,7 @@ impl PosixBufferedWriter {
     }
 
     pub fn close(&self, handler: &impl WriteHandler) {
-        if self.base.close(self.owns_fd) {
+        if self.base.close() {
             handler.on_close();
         }
     }
@@ -358,7 +373,7 @@ impl PosixBufferedWriter {
         self.base.update_ref(value);
     }
 
-    /// On `Err` the writer holds nothing; `fd` is still the caller's to close. Only Windows reports from here.
+    /// On `Err` the writer holds nothing; `fd` is still the caller's to close. Takes the handler to match `WindowsBufferedWriter::start`.
     pub fn start(
         &self,
         _: &impl BufferedWriteHandler,
@@ -374,13 +389,6 @@ impl PosixBufferedWriter {
         self.base.start_polling(ev, fd)?;
         self.update_ref(true);
         sys::Result::Ok(())
-    }
-}
-
-#[cfg(unix)]
-impl Drop for PosixBufferedWriter {
-    fn drop(&mut self) {
-        self.base.handle.close_impl(self.owns_fd);
     }
 }
 
@@ -521,12 +529,12 @@ impl PosixStreamingWriter {
                 WriteResult::Done(amt) => {
                     outgoing.wrote(amt);
                     if !self.is_done.get() {
-                        self.base.close_without_reporting(true);
+                        self.base.close_without_reporting();
                     }
                 }
                 WriteResult::Err(ref err) => {
                     debug_assert!(!err.is_retry());
-                    self.base.close_without_reporting(true);
+                    self.base.close_without_reporting();
                     self.is_done.set(true);
                     outgoing.reset();
                 }
@@ -692,7 +700,7 @@ impl PosixStreamingWriter {
     }
 
     pub fn close(&self, handler: &impl WriteHandler) {
-        if self.base.close(true) {
+        if self.base.close() {
             handler.on_close();
         }
     }
@@ -714,13 +722,6 @@ impl PosixStreamingWriter {
     }
 }
 
-#[cfg(unix)]
-impl Drop for PosixStreamingWriter {
-    fn drop(&mut self) {
-        self.base.handle.close();
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // WindowsPipeWriter
 // ──────────────────────────────────────────────────────────────────────────
@@ -737,6 +738,18 @@ enum Completion {
     VmTeardown,
 }
 
+/// Also tells `handler` that the write has ended.
+#[cfg(windows)]
+fn completion_of(handler: &impl WriteHandler, event: IoEvent) -> Completion {
+    let IoEvent::Write(WriteEvent(completion)) = event else {
+        unreachable!("a read was passed to a writer");
+    };
+    if !matches!(completion, Completion::VmTeardown) {
+        handler.set_has_inflight_write(false);
+    }
+    completion
+}
+
 /// A source, and the one write that libuv may have on it. Shared borrows only: libuv holds its address.
 #[cfg(windows)]
 struct WindowsPipeWriter {
@@ -751,8 +764,15 @@ struct WindowsPipeWriter {
     write_req: UnsafeCell<uv::uv_write_t>,
     /// Bytes of the write in flight, or of one that failed.
     current_payload: Cell<StreamBuffer>,
-    /// See `WindowsBufferedWriter::orphan`.
-    orphan: Cell<Option<(*mut (), unsafe fn(*mut ()))>>,
+    detached: Cell<Option<Detached>>,
+}
+
+/// What the callback of the write in flight frees. See `WindowsBufferedWriter::close_and_detach`.
+#[cfg(windows)]
+#[derive(Copy, Clone)]
+struct Detached {
+    ptr: *mut (),
+    free: unsafe fn(*mut ()),
 }
 
 #[cfg(windows)]
@@ -767,7 +787,7 @@ impl Default for WindowsPipeWriter {
             has_inflight_write: Cell::new(false),
             write_req: UnsafeCell::new(bun_core::ffi::zeroed()),
             current_payload: Cell::default(),
-            orphan: Cell::new(None),
+            detached: Cell::new(None),
         }
     }
 }
@@ -828,11 +848,11 @@ impl WindowsPipeWriter {
             Some(err) => Completion::StreamFailed(err),
             None => Completion::Wrote,
         };
-        // SAFETY: set by `submit_buf`. `Drop` does not return while the write is in flight. `free` has `orphan`'s contract.
+        // SAFETY: set by `submit_buf`. `Drop` does not return while the write is in flight. `free` has `close_and_detach`'s contract.
         unsafe {
             (*this).has_inflight_write.set(false);
-            match (*this).orphan.get() {
-                Some((ptr, free)) => free(ptr),
+            match (*this).detached.get() {
+                Some(Detached { ptr, free }) => free(ptr),
                 None => Self::dispatch(this, completion),
             }
         }
@@ -879,7 +899,8 @@ impl WindowsPipeWriter {
         unsafe { self.submit_buf(buf) }
     }
 
-    /// SAFETY: on `Ok` the bytes of `buf` stay until libuv calls back.
+    /// # Safety
+    /// On `Ok` the bytes of `buf` stay until libuv calls back.
     unsafe fn submit_buf(&self, buf: impl FnOnce() -> uv::uv_buf_t) -> sys::Result<()> {
         assert!(!self.has_inflight_write.get());
         let submitted = self.with_source(|source| {
@@ -986,14 +1007,19 @@ pub struct WindowsBufferedWriter {
 
 #[cfg(windows)]
 impl WindowsBufferedWriter {
-    /// See `PosixBufferedWriter::new`. A pipe or a tty owns its fd either way.
-    pub fn new(owns_fd: bool) -> Self {
-        let pipe = WindowsPipeWriter::default();
-        pipe.owns_fd.set(owns_fd);
+    /// See `PosixBufferedWriter::owning_fd`.
+    pub fn owning_fd() -> Self {
         Self {
-            pipe,
+            base: WindowsPipeWriter::default(),
             pending_payload_size: Cell::new(0),
         }
+    }
+
+    /// See `PosixBufferedWriter::borrowing_fd`. A pipe or a tty owns its fd either way.
+    pub fn borrowing_fd() -> Self {
+        let this = Self::owning_fd();
+        this.base.owns_fd.set(false);
+        this
     }
 
     /// # Safety
@@ -1059,13 +1085,7 @@ impl WindowsBufferedWriter {
     }
 
     pub fn on_io(&self, handler: &impl BufferedWriteHandler, event: IoEvent) {
-        let IoEvent::Write(WriteEvent(completion)) = event else {
-            unreachable!("a read was passed to a writer");
-        };
-        if !matches!(completion, Completion::VmTeardown) {
-            handler.set_has_inflight_write(false);
-        }
-        match completion {
+        match completion_of(handler, event) {
             Completion::Wrote => {
                 let written = self.pending_payload_size.get();
                 // After a `close()` the handler may have less than what was written.
@@ -1078,24 +1098,24 @@ impl WindowsBufferedWriter {
                 handler.on_write(written, status);
             }
             Completion::StreamFailed(err) | Completion::FileFailed(err) => {
-                self.report_error_and_close(handler, err);
+                self.close_and_report_error(handler, err);
             }
             Completion::VmTeardown => self.close(handler),
         }
     }
 
-    fn report_error_and_close(&self, handler: &impl WriteHandler, err: sys::Error) {
+    fn close_and_report_error(&self, handler: &impl WriteHandler, err: sys::Error) {
         self.close(handler);
         handler.on_error(err);
     }
 
     /// `false` if there is nothing to write, or not now.
     fn begin_write(&self, buffer: &[u8]) -> bool {
-        let pipe = &self.base;
-        if pipe.is_done.get()
-            || pipe.has_inflight_write.get()
+        let base = &self.base;
+        if base.is_done.get()
+            || base.has_inflight_write.get()
             || buffer.is_empty()
-            || !pipe.has_source()
+            || !base.has_source()
         {
             return false;
         }
@@ -1112,8 +1132,9 @@ impl WindowsBufferedWriter {
         })
     }
 
-    /// SAFETY: see `write_lent`.
-    unsafe fn submit_lent(&self, buffer: &[u8]) -> Option<sys::Result<()>> {
+    /// # Safety
+    /// See `write_no_copy`.
+    unsafe fn submit_no_copy(&self, buffer: &[u8]) -> Option<sys::Result<()>> {
         self.begin_write(buffer).then(|| {
             assert!(self.is_stream());
             // SAFETY: fn contract. A write to a stream is in flight until its callback.
@@ -1125,7 +1146,7 @@ impl WindowsBufferedWriter {
         match submitted {
             None => {}
             Some(sys::Result::Ok(())) => handler.set_has_inflight_write(true),
-            Some(sys::Result::Err(err)) => self.report_error_and_close(handler, err),
+            Some(sys::Result::Err(err)) => self.close_and_report_error(handler, err),
         }
     }
 
@@ -1135,10 +1156,12 @@ impl WindowsBufferedWriter {
     }
 
     /// `write` to a stream, without a copy.
-    /// SAFETY: the bytes that `handler` lends stay as they are while the write is in flight.
-    pub unsafe fn write_lent(&self, handler: &impl BufferedWriteHandler) {
+    ///
+    /// # Safety
+    /// The bytes that `handler` lends stay as they are while the write is in flight.
+    pub unsafe fn write_no_copy(&self, handler: &impl BufferedWriteHandler) {
         // SAFETY: fn contract.
-        let submitted = handler.with_buffer(|buffer| unsafe { self.submit_lent(buffer) });
+        let submitted = handler.with_buffer(|buffer| unsafe { self.submit_no_copy(buffer) });
         self.report_submitted(handler, submitted);
     }
 
@@ -1147,13 +1170,15 @@ impl WindowsBufferedWriter {
     }
 
     /// Closes without reporting. `true` if a write is still in flight, whose callback calls `free(ptr)`.
-    /// SAFETY: after `true`, `self` stays until `free(ptr)`, which may be called then.
-    pub unsafe fn orphan(&self, ptr: *mut (), free: unsafe fn(*mut ())) -> bool {
+    ///
+    /// # Safety
+    /// After `true`, `self` stays until `free(ptr)`, which may be called then.
+    pub unsafe fn close_and_detach(&self, ptr: *mut (), free: unsafe fn(*mut ())) -> bool {
         self.base.close_source(true);
         let has_inflight_write = self.base.has_inflight_write.get();
         self.base
-            .orphan
-            .set(has_inflight_write.then_some((ptr, free)));
+            .detached
+            .set(has_inflight_write.then_some(Detached { ptr, free }));
         has_inflight_write
     }
 }
@@ -1428,13 +1453,7 @@ impl WindowsStreamingWriter {
     }
 
     pub fn on_io(&self, handler: &impl WriteHandler, event: IoEvent) {
-        let IoEvent::Write(WriteEvent(completion)) = event else {
-            unreachable!("a read was passed to a writer");
-        };
-        if !matches!(completion, Completion::VmTeardown) {
-            handler.set_has_inflight_write(false);
-        }
-        match completion {
+        match completion_of(handler, event) {
             Completion::Wrote => self.on_write_complete(handler, self.base.reset_payload()),
             Completion::StreamFailed(err) => self.report_error_and_close(handler, err),
             Completion::FileFailed(err) => {

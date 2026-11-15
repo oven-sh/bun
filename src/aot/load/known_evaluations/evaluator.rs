@@ -1,8 +1,10 @@
+use std::cell::Cell;
 use std::rc::Rc;
 
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::atom::{Atom, Interner, known};
+use bun_sema::fold::Constant;
 use bun_sema::hir::{
     BinOp, Call, CallId, Chain, ClassId, ExprId, ExprKind, File, Flags, FnBody, FnId, FnKind,
     IdList, MemberKind, PatId, PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind,
@@ -75,6 +77,8 @@ pub(super) struct Evaluator<'a, 's> {
     ends: FxHashMap<FnId, u32>,
     prototypes: FxHashMap<FnId, FxHashMap<Rc<[u8]>, Value>>,
     properties_of_globals: FxHashMap<(Global, Rc<[u8]>), Value>,
+    unknown_imports: FxHashSet<Atom>,
+    has_read_unknown_import: Cell<bool>,
     evaluating: FxHashSet<FnId>,
     evaluating_methods: Vec<(FnId, FnId)>,
     receiver: Value,
@@ -131,6 +135,8 @@ impl<'a, 's> Evaluator<'a, 's> {
             ends: FxHashMap::default(),
             prototypes: FxHashMap::default(),
             properties_of_globals: FxHashMap::default(),
+            unknown_imports: FxHashSet::default(),
+            has_read_unknown_import: Cell::new(false),
             evaluating: calls
                 .iter()
                 .flat_map(|it| it.functions.iter().copied())
@@ -174,6 +180,13 @@ impl<'a, 's> Evaluator<'a, 's> {
         let hir = self.hir;
         for import in hir.imports.iter().filter(|it| !it.type_only) {
             let Some(module) = Global::of_module(self.atoms.bytes(import.spec)) else {
+                let named = import.named.iter().map(|spec| hir[spec].local);
+                for name in [import.default].into_iter().chain(named) {
+                    if name.is_some() {
+                        self.declare(EnvironmentId(0), name, Value::Unknown);
+                        self.unknown_imports.insert(name);
+                    }
+                }
                 continue;
             };
             for whole in [import.default, import.namespace] {
@@ -190,11 +203,44 @@ impl<'a, 's> Evaluator<'a, 's> {
         }
     }
 
+    fn declare_imported_constants(&mut self) {
+        let hir = self.hir;
+        for constant in hir.imported_constants.iter() {
+            let name = constant.name;
+            if name.member.is_some() || name.export.is_none() {
+                continue;
+            }
+            let import = &hir[name.import];
+            let mut named = import.named.iter().map(|spec| hir[spec]);
+            let local = match named.find(|spec| !spec.type_only && spec.imported == name.export) {
+                Some(spec) => spec.local,
+                None if name.export == known::default => import.default,
+                None => continue,
+            };
+            let value = match constant.value {
+                Constant::String(text) => self.string(self.atoms.bytes(text).to_vec()),
+                Constant::Number(number) => Value::Number(number),
+                Constant::Boolean(value) => Value::Boolean(value),
+                Constant::Null => Value::Null,
+                Constant::Undefined => Value::Undefined,
+                Constant::BigInt(_) => Value::Unknown,
+            };
+            if local.is_some() && self.unknown_imports.remove(&local) {
+                self.declare(EnvironmentId(0), local, value);
+            }
+        }
+    }
+
+    pub(super) fn has_read_unknown_import(&self) -> bool {
+        self.has_read_unknown_import.get()
+    }
+
     pub(super) fn find_texts(
-        mut self,
+        &mut self,
         calls: &[EvaluatingCall],
     ) -> (Vec<(CallId, Vec<Rc<[u8]>>)>, usize) {
         self.declare_module_names();
+        self.declare_imported_constants();
         self.hoist(self.hir.body);
         self.statements(self.hir.body);
         self.call_methods_of_globals();
@@ -210,7 +256,7 @@ impl<'a, 's> Evaluator<'a, 's> {
             }
         }
         self.construct_with_constants();
-        (self.texts, self.text_allowance)
+        (std::mem::take(&mut self.texts), self.text_allowance)
     }
 
     fn call_methods_of_globals(&mut self) {
@@ -513,6 +559,9 @@ impl<'a, 's> Evaluator<'a, 's> {
 
     fn read(&self, name: Atom) -> Value {
         if let Some(environment) = self.environment_of(name) {
+            if environment == EnvironmentId(0) && self.unknown_imports.contains(&name) {
+                self.has_read_unknown_import.set(true);
+            }
             let value = self.environments[environment.0].variables.get(&name);
             return value.cloned().unwrap_or(Value::Unknown);
         }

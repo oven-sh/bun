@@ -3017,6 +3017,7 @@ pub struct FileIn<S: Storage> {
     /// `is_script_for_project`, and what `bun run` drops of it stays global. Set by the loader.
     pub is_script_with_code: bool,
     pub runs_beside_loader: bool,
+    pub evaluates_imports: bool,
     /// The imports that bind the `require` of another file. Set by the loader.
     pub imported_requires: S::Few<ImportedRequire>,
     pub places_of_imported_requires: S::Few<u32>,
@@ -3889,6 +3890,7 @@ macro_rules! file_in_storage {
             is_script_for_project: $this.is_script_for_project,
             is_script_with_code: $this.is_script_with_code,
             runs_beside_loader: $this.runs_beside_loader,
+            evaluates_imports: $this.evaluates_imports,
             imported_requires: $few!($this.imported_requires),
             places_of_imported_requires: $few!($this.places_of_imported_requires),
             imported_constants: $few!($this.imported_constants),
@@ -4046,6 +4048,7 @@ impl FileBuilder {
             is_script_for_project,
             is_script_with_code,
             runs_beside_loader,
+            evaluates_imports,
             imported_requires,
             places_of_imported_requires,
             imported_constants,
@@ -4159,6 +4162,7 @@ impl FileBuilder {
         *is_script_for_project = Default::default();
         *is_script_with_code = Default::default();
         *runs_beside_loader = Default::default();
+        *evaluates_imports = Default::default();
         imported_requires.clear();
         places_of_imported_requires.clear();
         imported_constants.clear();

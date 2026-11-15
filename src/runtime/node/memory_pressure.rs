@@ -103,14 +103,10 @@ mod posix {
         poll: Option<OwnedFilePoll>,
         /// After `poll`, which watches it.
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        psi: Option<Psi>,
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    struct Psi {
-        file: bun_sys::CloseOnDrop,
-        /// `some total=` at arm time, then at the last emitted event.
-        some_total: u64,
+        psi: Option<bun_sys::CloseOnDrop>,
+        /// PSI `some total=` at arm time, then at the last emitted event.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        psi_some_total: u64,
     }
 
     /// Build `/sys/fs/cgroup/<current>/memory.pressure` from the cgroup v2
@@ -187,8 +183,9 @@ mod posix {
 
     /// Open a PSI memory file and write a trigger. Tries the system-wide
     /// `/proc/pressure/memory` first, then the current cgroup's file.
+    /// Returns `some total=` as read before the write.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn open_psi_file() -> Option<Psi> {
+    fn open_psi_file() -> Option<(bun_sys::CloseOnDrop, u64)> {
         use bun_sys::O;
 
         let mut cgroup_buf = [0u8; 320];
@@ -206,7 +203,7 @@ mod posix {
                 .and_then(parse_psi_some_total)
                 .unwrap_or(0);
             if bun_sys::write(file.fd(), PSI_TRIGGER).is_ok() {
-                return Some(Psi { file, some_total });
+                return Some((file, some_total));
             }
         }
         None
@@ -214,9 +211,9 @@ mod posix {
 
     fn register_os_watch(global: &JSGlobalObject) -> Option<MemoryPressureWatcher> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        let psi = open_psi_file()?;
+        let (psi, psi_some_total) = open_psi_file()?;
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        let fd = psi.file.fd();
+        let fd = psi.fd();
         #[cfg(target_os = "macos")]
         let fd = bun_sys::Fd::from_native(0);
         #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
@@ -238,6 +235,8 @@ mod posix {
                 poll: Some(poll),
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 psi: Some(psi),
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                psi_some_total,
             })
         }
     }
@@ -278,12 +277,17 @@ mod posix {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if !slot(vm).with_mut(|watcher| {
-            let Some(psi) = watcher.as_mut().and_then(|watcher| watcher.psi.as_mut()) else {
+            let Some(MemoryPressureWatcher {
+                psi: Some(psi),
+                psi_some_total,
+                ..
+            }) = watcher
+            else {
                 return false;
             };
             let mut buf = [0u8; 256];
-            read_psi_file(&psi.file, &mut buf)
-                .is_none_or(|contents| psi_growth_reached_threshold(&mut psi.some_total, contents))
+            read_psi_file(psi, &mut buf)
+                .is_none_or(|contents| psi_growth_reached_threshold(psi_some_total, contents))
         }) {
             return;
         }

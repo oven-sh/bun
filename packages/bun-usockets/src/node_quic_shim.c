@@ -33,7 +33,7 @@ extern SSL_CTX *Bun__nodeQuic__getSslCtx(void *ctx, const struct sockaddr *local
 extern SSL_CTX *Bun__nodeQuic__lookupCert(void *ctx, const struct sockaddr *local, const char *sni);
 extern int Bun__nodeQuic__packetsOut(void *ctx, const struct lsquic_out_spec *specs, unsigned n);
 
-/* engine.rs asserts the same numbers. */
+/* engine.rs and lsquic_sys assert the same numbers. */
 _Static_assert(sizeof(struct lsquic_out_spec) == 56
     && offsetof(struct lsquic_out_spec, iov) == 0
     && offsetof(struct lsquic_out_spec, iovlen) == 8
@@ -351,8 +351,7 @@ NQ_GET(max_datagram_frame_size, unsigned short)
 /* `ctx` must outlive the engine; `settings` is copied by lsquic. */
 lsquic_engine_t *us_nq_engine_new(int is_server, int is_http,
                                   void *ctx,
-                                  const struct lsquic_engine_settings *settings,
-                                  const char *alpn) {
+                                  const struct lsquic_engine_settings *settings) {
     struct lsquic_engine_api api;
     memset(&api, 0, sizeof(api));
     api.ea_settings = settings;
@@ -365,7 +364,6 @@ lsquic_engine_t *us_nq_engine_new(int is_server, int is_http,
         api.ea_lookup_cert = Bun__nodeQuic__lookupCert;
         api.ea_cert_lu_ctx = ctx;
     }
-    api.ea_alpn = alpn;
     unsigned flags = is_server ? LSENG_SERVER : 0;
     if (is_http) {
         flags |= LSENG_HTTP;

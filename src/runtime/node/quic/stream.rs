@@ -198,7 +198,7 @@ impl QuicStream {
     }
 
     /// Call after `raw` is bound.
-    pub(super) fn on_open(&self, is_server: bool) {
+    pub(super) fn on_opened(&self, is_server: bool) {
         let s = &self.raw;
         let Some(id) = s.id() else { return };
         let id = id as i64;
@@ -229,7 +229,7 @@ impl QuicStream {
         let mut want_write = false;
         for (bytes, count, eos) in self.pending_headers.take() {
             self.wrote_to_lsquic.set(true);
-            if s.send_headers(&bytes, count, eos) == 0 {
+            if s.send_headers(&bytes, count, eos) {
                 if eos {
                     self.state().fin_sent.store(1, Relaxed);
                     self.state().write_ended.store(1, Relaxed);
@@ -414,13 +414,12 @@ impl QuicStream {
                 let (slice, _) = data.as_slices();
                 let contig = slice.len();
                 let n = s.write(slice);
-                if n <= 0 {
+                if n == 0 {
                     self.note_write_blocked();
                     break;
                 }
                 self.blocked_reported.set(false);
                 self.wrote_to_lsquic.set(true);
-                let n = n as usize;
                 data.drain(..n.min(contig));
                 self.add_stat(IDX_STATS_BYTES_SENT, n as u64);
                 if n < contig {
@@ -661,6 +660,7 @@ impl QuicStream {
         } else {
             error_code_arg(arg)
         };
+        // A getter on `code` can destroy this stream.
         if !cascading && !self.raw.is_null() && !self.destroyed.get() {
             let deferred = self
                 .session
@@ -815,8 +815,7 @@ impl QuicStream {
             self.state().has_outbound.store(1, Relaxed);
             return Ok(JSValue::js_boolean(true));
         }
-        let rv = s.send_headers(&bytes, header_count, eos);
-        if rv == 0 {
+        if s.send_headers(&bytes, header_count, eos) {
             self.wrote_to_lsquic.set(true);
             self.state().has_outbound.store(1, Relaxed);
             if eos {

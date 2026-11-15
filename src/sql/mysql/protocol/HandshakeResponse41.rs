@@ -24,11 +24,11 @@ pub struct HandshakeResponse41<'a> {
 }
 
 impl HandshakeResponse41<'_> {
-    pub(crate) fn write_internal<Context: super::new_writer::WriterContext>(
+    pub(crate) fn write_internal(
         &mut self,
-        writer: NewWriter<Context>,
+        writer: &mut NewWriter<'_>,
     ) -> Result<(), AnyMySQLError> {
-        let mut packet = writer.start(self.sequence_id)?;
+        let packet = writer.start(self.sequence_id)?;
 
         self.capability_flags.CLIENT_CONNECT_ATTRS = self.connect_attrs.len() > 0;
 
@@ -104,14 +104,11 @@ impl HandshakeResponse41<'_> {
             debug_assert!(false, "zstd compression algorithm is not supported");
         }
 
-        packet.end()?;
+        packet.end(writer)?;
         Ok(())
     }
 
-    pub fn write<Context: super::new_writer::WriterContext>(
-        &mut self,
-        writer: NewWriter<Context>,
-    ) -> Result<(), AnyMySQLError> {
+    pub fn write(&mut self, writer: &mut NewWriter<'_>) -> Result<(), AnyMySQLError> {
         self.write_internal(writer)
     }
 }

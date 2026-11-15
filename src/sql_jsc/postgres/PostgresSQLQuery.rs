@@ -1,12 +1,13 @@
 use core::cell::Cell;
+use std::rc::Rc;
 
 use crate::jsc::{JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachineSqlExt as _};
 use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args;
 use bun_core::String as BunString;
+use bun_jsc::JSArray;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSArray, JsCell};
-use bun_ptr::{AsCtxPtr, RefPtr};
+use bun_ptr::{AsCtxPtr, CellExt as _, RefPtr, VecDequeCellExt as _};
 
 use super::PostgresSQLConnection;
 use super::PostgresSQLStatement;
@@ -29,11 +30,11 @@ pub(crate) use crate::generated_bindgen::postgres_sql_query::js_PostgresSQLQuery
 #[derive(bun_ptr::RefCounted)]
 pub struct PostgresSQLQuery {
     /// Shared with the connection's named-statement map (each holder owns one ref).
-    pub(crate) statement: JsCell<Option<RefPtr<PostgresSQLStatement>>>,
+    pub(crate) statement: Cell<Option<Rc<PostgresSQLStatement>>>,
     /// The connection whose queue it is in.
-    connection: JsCell<Option<RefPtr<PostgresSQLConnection>>>,
+    connection: Cell<Option<RefPtr<PostgresSQLConnection>>>,
     pub(crate) query: BunString,
-    undescribed: JsCell<Undescribed<ResultDescription>>,
+    undescribed: Undescribed<ResultDescription>,
 
     pub(crate) this_value: JsRef,
 
@@ -47,10 +48,10 @@ pub struct PostgresSQLQuery {
 impl Default for PostgresSQLQuery {
     fn default() -> Self {
         Self {
-            statement: JsCell::new(None),
-            connection: JsCell::new(None),
+            statement: Cell::new(None),
+            connection: Cell::new(None),
             query: BunString::EMPTY,
-            undescribed: JsCell::new(Undescribed::default()),
+            undescribed: Undescribed::default(),
             this_value: JsRef::empty(),
             status: Cell::new(Status::Pending),
             ref_count: bun_ptr::RefCount::init(),
@@ -147,23 +148,27 @@ impl PostgresSQLQuery {
         unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
-    /// Kept alive by the ref this query holds. All mutation is
-    /// single-JS-thread so the `&mut` is exclusive for the borrow's lifetime;
-    /// callers must not hold two results live simultaneously (the request
-    /// FIFO never does).
-    #[inline]
-    #[allow(clippy::mut_from_ref)] // intrusive pointer; see doc comment
-    pub(crate) fn statement_mut(&self) -> Option<&mut PostgresSQLStatement> {
-        // SAFETY: see doc comment.
-        self.statement
-            .get()
-            .as_ref()
-            .map(|p| unsafe { &mut *p.as_ptr() })
+    pub(crate) fn statement(&self) -> Option<Rc<PostgresSQLStatement>> {
+        let statement = self.statement.take();
+        let clone = statement.clone();
+        self.statement.put_back(statement);
+        clone
+    }
+
+    /// Takes no ref: the query has no statement while `f` runs.
+    pub(crate) fn with_statement<R>(
+        &self,
+        f: impl FnOnce(&mut Rc<PostgresSQLStatement>) -> R,
+    ) -> Option<R> {
+        let mut statement = self.statement.take();
+        let result = statement.as_mut().map(f);
+        self.statement.put_back(statement);
+        result
     }
 
     #[inline]
     pub(crate) fn connection(&self) -> Option<RefPtr<PostgresSQLConnection>> {
-        self.connection.get().clone()
+        self.connection.with_taken(|connection| connection.clone())
     }
 
     #[inline]
@@ -279,7 +284,6 @@ impl PostgresSQLQuery {
         global_object: &JSGlobalObject,
         is_last: bool,
     ) {
-        let _guard = self.ref_guard();
         self.status.set(if is_last {
             Status::Success
         } else {
@@ -300,20 +304,16 @@ impl PostgresSQLQuery {
         js_tag.ensure_still_alive();
 
         // The last call ends the query and brings no result.
-        let statement = match self.statement_mut().filter(|_| !is_last) {
-            Some(statement) if statement.is_named() => {
-                match statement.description(global_object, &self.query) {
-                    Ok(description) => description,
-                    Err(e) => {
-                        let err = global_object.take_exception(e);
-                        return self.reject_in_flight(err, global_object);
-                    }
+        let statement = if is_last {
+            JSValue::NULL
+        } else {
+            match self.description(global_object) {
+                Ok(description) => description,
+                Err(e) => {
+                    let err = global_object.take_exception(e);
+                    return self.reject_in_flight(err, global_object);
                 }
             }
-            Some(statement) => self
-                .undescribed
-                .with_mut(|results| results.push(statement.take_result())),
-            None => JSValue::NULL,
         };
 
         let Some(this_value) = self.this_value.try_get() else {
@@ -352,12 +352,23 @@ impl PostgresSQLQuery {
         );
     }
 
+    /// `result.statement`, or the number that `describe_result` makes it for.
+    fn description(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        self.with_statement(|statement| {
+            if statement.is_named() {
+                return statement.description(global_object, &self.query);
+            }
+            let result = Rc::get_mut(statement)
+                .map(PostgresSQLStatement::take_result)
+                .unwrap_or_default();
+            Ok(self.undescribed.push(result))
+        })
+        .unwrap_or(Ok(JSValue::NULL))
+    }
+
     /// `result.statement` of the result for which `on_result` gave this number instead.
     pub fn describe_result(&self, cx: &mut JsScope<'_>, number: JsLocal<'_>) -> JsResult<JSValue> {
-        match self
-            .undescribed
-            .with_mut(|results| results.take(number.to_js()))
-        {
+        match self.undescribed.take(number.to_js()) {
             Some((parameters, fields)) => describe(cx.global(), &self.query, &parameters, &fields),
             None => Ok(JSValue::NULL),
         }
@@ -493,26 +504,23 @@ impl PostgresSQLQuery {
         let new_statement =
             |id: Option<u64>| PostgresSQLStatement::new(Signature::new(&declared, id));
         self.statement.set(Some(if self.flags.get().simple {
-            let mut s = PostgresSQLStatement::default();
+            let s = PostgresSQLStatement::default();
             // It has no Parse of its own: the Query message is the whole request.
-            s.status = StatementStatus::Parsing;
-            RefPtr::new(s)
+            s.status.set(StatementStatus::Parsing);
+            Rc::new(s)
         } else if unnamed {
             new_statement(None)
         } else {
             let query_str = self.query.to_utf8();
-            connection.statements.with_mut(|cache| {
-                cache.get(query_str.slice(), &declared).unwrap_or_else(|| {
-                    let statement = new_statement(Some(connection.take_prepared_statement_id()));
-                    cache.insert(query_str.slice(), statement.clone());
-                    statement
-                })
+            let cache = &connection.statements;
+            cache.get(query_str.slice(), &declared).unwrap_or_else(|| {
+                let statement = new_statement(Some(connection.take_prepared_statement_id()));
+                cache.insert(query_str.slice(), Rc::clone(&statement));
+                statement
             })
         }));
 
-        connection
-            .requests
-            .with_mut(|q| q.push_back(self.ref_guard()));
+        connection.requests.push_back(self.ref_guard());
         connection.count(self, RequestCounter::Pending);
         self.connection.set(Some(connection.ref_guard()));
         // Request is enqueued: keep the event loop alive until the server responds.

@@ -1,0 +1,270 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`Bun.Archive writes archives the way it was recorded to nothing 1`] = `
+"10240 bytes
+crc=271dde9a
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to one file 1`] = `
+"10240 bytes
+type=0 name=612e747874 prefix= mode=000644  size=1 checksum=ok mtime=now
+crc=b662bc81
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to empty file 1`] = `
+"10240 bytes
+type=0 name=61 prefix= mode=000644  size=0 checksum=ok mtime=now
+crc=94772c35
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to block sizes 1`] = `
+"30720 bytes
+type=0 name=353131 prefix= mode=000644  size=511 checksum=ok mtime=now
+type=0 name=353132 prefix= mode=000644  size=512 checksum=ok mtime=now
+type=0 name=353133 prefix= mode=000644  size=513 checksum=ok mtime=now
+type=0 name=39393939 prefix= mode=000644  size=9999 checksum=ok mtime=now
+type=0 name=3130323430 prefix= mode=000644  size=10240 checksum=ok mtime=now
+crc=cf34ffcf
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to directories in names 1`] = `
+"10240 bytes
+type=0 name=612f622f632e747874 prefix= mode=000644  size=1 checksum=ok mtime=now
+type=0 name=612f prefix= mode=000644  size=0 checksum=ok mtime=now
+type=0 name=2e2f64 prefix= mode=000644  size=1 checksum=ok mtime=now
+type=0 name=2f616273 prefix= mode=000644  size=1 checksum=ok mtime=now
+type=0 name=2e2e2f7570 prefix= mode=000644  size=1 checksum=ok mtime=now
+type=0 name=612f2f62 prefix= mode=000644  size=1 checksum=ok mtime=now
+crc=a73012f2
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to name of 99 1`] = `
+"10240 bytes
+type=0 name=6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e prefix= mode=000644  size=1 checksum=ok mtime=now
+crc=5d60b2af
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to name of 100 1`] = `
+"10240 bytes
+type=0 name=6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e prefix= mode=000644  size=1 checksum=ok mtime=now
+crc=d3ddafe6
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to name of 101 1`] = `
+"10240 bytes
+type=x name=5061784865616465722f6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e prefix= mode=000644  size=111 checksum=ok mtime=now
+  pax=31313120706174683d6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e0a
+type=0 name=6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e prefix= mode=000644  size=1 checksum=ok mtime=now
+crc=d0141907
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to name of 300 1`] = `
+"10240 bytes
+type=x name=5061784865616465722f6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e prefix= mode=000644  size=310 checksum=ok mtime=now
+  pax=33313020706174683d6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e0a
+type=0 name=6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e prefix= mode=000644  size=1 checksum=ok mtime=now
+crc=46e84fe4
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to prefix of 1 1`] = `
+"10240 bytes
+type=0 name=6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e prefix=64 mode=000644  size=1 checksum=ok mtime=now
+crc=414067fc
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to prefix of 154 1`] = `
+"10240 bytes
+type=0 name=6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e prefix=6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e mode=000644  size=1 checksum=ok mtime=now
+crc=7fd5468b
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to prefix of 155 1`] = `
+"10240 bytes
+type=0 name=6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e prefix=6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e mode=000644  size=1 checksum=ok mtime=now
+crc=b2ef0992
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to prefix of 156 1`] = `
+"10240 bytes
+type=x name=5061784865616465722f6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e prefix= mode=000644  size=267 checksum=ok mtime=now
+  pax=32363720706174683d6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e2f6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e0a
+type=0 name=6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e prefix= mode=000644  size=1 checksum=ok mtime=now
+crc=9d8e1670
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to prefix then name of 101 1`] = `
+"10240 bytes
+type=x name=642f5061784865616465722f6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e prefix= mode=000644  size=113 checksum=ok mtime=now
+  pax=31313320706174683d642f6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e0a
+type=0 name=642f6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e prefix= mode=000644  size=1 checksum=ok mtime=now
+crc=f142a1f9
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to many parts 1`] = `
+"10240 bytes
+type=0 name=6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f66 prefix=6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f6469722f646972 mode=000644  size=1 checksum=ok mtime=now
+crc=c9c98458
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to many long parts 1`] = `
+"10240 bytes
+type=x name=5061784865616465722f6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e prefix=6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e mode=000644  size=737 checksum=ok mtime=now
+  pax=37333720706174683d6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e2f6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e2f6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e2f6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e2f6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e2f6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e2f6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e2f6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e0a
+type=0 name=6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e prefix=6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e mode=000644  size=1 checksum=ok mtime=now
+crc=e4ae53b1
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to long with a trailing slash 1`] = `
+"10240 bytes
+type=x name=5061784865616465722f6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e prefix= mode=000644  size=131 checksum=ok mtime=now
+  pax=31333120706174683d6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e2f0a
+type=0 name=6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e2f prefix= mode=000644  size=0 checksum=ok mtime=now
+crc=da38570e
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to long name ending in a dot 1`] = `
+"10240 bytes
+type=0 name=2e prefix=642f6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e mode=000644  size=1 checksum=ok mtime=now
+crc=db6cf95c
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to control characters 1`] = `
+"10240 bytes
+type=0 name=610a62 prefix= mode=000644  size=1 checksum=ok mtime=now
+type=0 name=610962 prefix= mode=000644  size=1 checksum=ok mtime=now
+type=0 name=613d62 prefix= mode=000644  size=1 checksum=ok mtime=now
+type=0 name=20 prefix= mode=000644  size=1 checksum=ok mtime=now
+crc=e24de551
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to binary data 1`] = `
+"10240 bytes
+type=0 name=62696e prefix= mode=000644  size=1000 checksum=ok mtime=now
+crc=98aa872e
+"
+`;
+
+exports[`Bun.Archive writes archives the way it was recorded to a hundred files 1`] = `
+"153600 bytes
+type=0 name=646972302f66696c6530 prefix= mode=000644  size=0 checksum=ok mtime=now
+type=0 name=646972312f66696c6531 prefix= mode=000644  size=13 checksum=ok mtime=now
+type=0 name=646972322f66696c6532 prefix= mode=000644  size=26 checksum=ok mtime=now
+type=0 name=646972332f66696c6533 prefix= mode=000644  size=39 checksum=ok mtime=now
+type=0 name=646972342f66696c6534 prefix= mode=000644  size=52 checksum=ok mtime=now
+type=0 name=646972352f66696c6535 prefix= mode=000644  size=65 checksum=ok mtime=now
+type=0 name=646972362f66696c6536 prefix= mode=000644  size=78 checksum=ok mtime=now
+type=0 name=646972302f66696c6537 prefix= mode=000644  size=91 checksum=ok mtime=now
+type=0 name=646972312f66696c6538 prefix= mode=000644  size=104 checksum=ok mtime=now
+type=0 name=646972322f66696c6539 prefix= mode=000644  size=117 checksum=ok mtime=now
+type=0 name=646972332f66696c653130 prefix= mode=000644  size=130 checksum=ok mtime=now
+type=0 name=646972342f66696c653131 prefix= mode=000644  size=143 checksum=ok mtime=now
+type=0 name=646972352f66696c653132 prefix= mode=000644  size=156 checksum=ok mtime=now
+type=0 name=646972362f66696c653133 prefix= mode=000644  size=169 checksum=ok mtime=now
+type=0 name=646972302f66696c653134 prefix= mode=000644  size=182 checksum=ok mtime=now
+type=0 name=646972312f66696c653135 prefix= mode=000644  size=195 checksum=ok mtime=now
+type=0 name=646972322f66696c653136 prefix= mode=000644  size=208 checksum=ok mtime=now
+type=0 name=646972332f66696c653137 prefix= mode=000644  size=221 checksum=ok mtime=now
+type=0 name=646972342f66696c653138 prefix= mode=000644  size=234 checksum=ok mtime=now
+type=0 name=646972352f66696c653139 prefix= mode=000644  size=247 checksum=ok mtime=now
+type=0 name=646972362f66696c653230 prefix= mode=000644  size=260 checksum=ok mtime=now
+type=0 name=646972302f66696c653231 prefix= mode=000644  size=273 checksum=ok mtime=now
+type=0 name=646972312f66696c653232 prefix= mode=000644  size=286 checksum=ok mtime=now
+type=0 name=646972322f66696c653233 prefix= mode=000644  size=299 checksum=ok mtime=now
+type=0 name=646972332f66696c653234 prefix= mode=000644  size=312 checksum=ok mtime=now
+type=0 name=646972342f66696c653235 prefix= mode=000644  size=325 checksum=ok mtime=now
+type=0 name=646972352f66696c653236 prefix= mode=000644  size=338 checksum=ok mtime=now
+type=0 name=646972362f66696c653237 prefix= mode=000644  size=351 checksum=ok mtime=now
+type=0 name=646972302f66696c653238 prefix= mode=000644  size=364 checksum=ok mtime=now
+type=0 name=646972312f66696c653239 prefix= mode=000644  size=377 checksum=ok mtime=now
+type=0 name=646972322f66696c653330 prefix= mode=000644  size=390 checksum=ok mtime=now
+type=0 name=646972332f66696c653331 prefix= mode=000644  size=403 checksum=ok mtime=now
+type=0 name=646972342f66696c653332 prefix= mode=000644  size=416 checksum=ok mtime=now
+type=0 name=646972352f66696c653333 prefix= mode=000644  size=429 checksum=ok mtime=now
+type=0 name=646972362f66696c653334 prefix= mode=000644  size=442 checksum=ok mtime=now
+type=0 name=646972302f66696c653335 prefix= mode=000644  size=455 checksum=ok mtime=now
+type=0 name=646972312f66696c653336 prefix= mode=000644  size=468 checksum=ok mtime=now
+type=0 name=646972322f66696c653337 prefix= mode=000644  size=481 checksum=ok mtime=now
+type=0 name=646972332f66696c653338 prefix= mode=000644  size=494 checksum=ok mtime=now
+type=0 name=646972342f66696c653339 prefix= mode=000644  size=507 checksum=ok mtime=now
+type=0 name=646972352f66696c653430 prefix= mode=000644  size=520 checksum=ok mtime=now
+type=0 name=646972362f66696c653431 prefix= mode=000644  size=533 checksum=ok mtime=now
+type=0 name=646972302f66696c653432 prefix= mode=000644  size=546 checksum=ok mtime=now
+type=0 name=646972312f66696c653433 prefix= mode=000644  size=559 checksum=ok mtime=now
+type=0 name=646972322f66696c653434 prefix= mode=000644  size=572 checksum=ok mtime=now
+type=0 name=646972332f66696c653435 prefix= mode=000644  size=585 checksum=ok mtime=now
+type=0 name=646972342f66696c653436 prefix= mode=000644  size=598 checksum=ok mtime=now
+type=0 name=646972352f66696c653437 prefix= mode=000644  size=611 checksum=ok mtime=now
+type=0 name=646972362f66696c653438 prefix= mode=000644  size=624 checksum=ok mtime=now
+type=0 name=646972302f66696c653439 prefix= mode=000644  size=637 checksum=ok mtime=now
+type=0 name=646972312f66696c653530 prefix= mode=000644  size=650 checksum=ok mtime=now
+type=0 name=646972322f66696c653531 prefix= mode=000644  size=663 checksum=ok mtime=now
+type=0 name=646972332f66696c653532 prefix= mode=000644  size=676 checksum=ok mtime=now
+type=0 name=646972342f66696c653533 prefix= mode=000644  size=689 checksum=ok mtime=now
+type=0 name=646972352f66696c653534 prefix= mode=000644  size=702 checksum=ok mtime=now
+type=0 name=646972362f66696c653535 prefix= mode=000644  size=715 checksum=ok mtime=now
+type=0 name=646972302f66696c653536 prefix= mode=000644  size=728 checksum=ok mtime=now
+type=0 name=646972312f66696c653537 prefix= mode=000644  size=741 checksum=ok mtime=now
+type=0 name=646972322f66696c653538 prefix= mode=000644  size=754 checksum=ok mtime=now
+type=0 name=646972332f66696c653539 prefix= mode=000644  size=767 checksum=ok mtime=now
+type=0 name=646972342f66696c653630 prefix= mode=000644  size=780 checksum=ok mtime=now
+type=0 name=646972352f66696c653631 prefix= mode=000644  size=793 checksum=ok mtime=now
+type=0 name=646972362f66696c653632 prefix= mode=000644  size=806 checksum=ok mtime=now
+type=0 name=646972302f66696c653633 prefix= mode=000644  size=819 checksum=ok mtime=now
+type=0 name=646972312f66696c653634 prefix= mode=000644  size=832 checksum=ok mtime=now
+type=0 name=646972322f66696c653635 prefix= mode=000644  size=845 checksum=ok mtime=now
+type=0 name=646972332f66696c653636 prefix= mode=000644  size=858 checksum=ok mtime=now
+type=0 name=646972342f66696c653637 prefix= mode=000644  size=871 checksum=ok mtime=now
+type=0 name=646972352f66696c653638 prefix= mode=000644  size=884 checksum=ok mtime=now
+type=0 name=646972362f66696c653639 prefix= mode=000644  size=897 checksum=ok mtime=now
+type=0 name=646972302f66696c653730 prefix= mode=000644  size=910 checksum=ok mtime=now
+type=0 name=646972312f66696c653731 prefix= mode=000644  size=923 checksum=ok mtime=now
+type=0 name=646972322f66696c653732 prefix= mode=000644  size=936 checksum=ok mtime=now
+type=0 name=646972332f66696c653733 prefix= mode=000644  size=949 checksum=ok mtime=now
+type=0 name=646972342f66696c653734 prefix= mode=000644  size=962 checksum=ok mtime=now
+type=0 name=646972352f66696c653735 prefix= mode=000644  size=975 checksum=ok mtime=now
+type=0 name=646972362f66696c653736 prefix= mode=000644  size=988 checksum=ok mtime=now
+type=0 name=646972302f66696c653737 prefix= mode=000644  size=1001 checksum=ok mtime=now
+type=0 name=646972312f66696c653738 prefix= mode=000644  size=1014 checksum=ok mtime=now
+type=0 name=646972322f66696c653739 prefix= mode=000644  size=1027 checksum=ok mtime=now
+type=0 name=646972332f66696c653830 prefix= mode=000644  size=1040 checksum=ok mtime=now
+type=0 name=646972342f66696c653831 prefix= mode=000644  size=1053 checksum=ok mtime=now
+type=0 name=646972352f66696c653832 prefix= mode=000644  size=1066 checksum=ok mtime=now
+type=0 name=646972362f66696c653833 prefix= mode=000644  size=1079 checksum=ok mtime=now
+type=0 name=646972302f66696c653834 prefix= mode=000644  size=1092 checksum=ok mtime=now
+type=0 name=646972312f66696c653835 prefix= mode=000644  size=1105 checksum=ok mtime=now
+type=0 name=646972322f66696c653836 prefix= mode=000644  size=1118 checksum=ok mtime=now
+type=0 name=646972332f66696c653837 prefix= mode=000644  size=1131 checksum=ok mtime=now
+type=0 name=646972342f66696c653838 prefix= mode=000644  size=1144 checksum=ok mtime=now
+type=0 name=646972352f66696c653839 prefix= mode=000644  size=1157 checksum=ok mtime=now
+type=0 name=646972362f66696c653930 prefix= mode=000644  size=1170 checksum=ok mtime=now
+type=0 name=646972302f66696c653931 prefix= mode=000644  size=1183 checksum=ok mtime=now
+type=0 name=646972312f66696c653932 prefix= mode=000644  size=1196 checksum=ok mtime=now
+type=0 name=646972322f66696c653933 prefix= mode=000644  size=1209 checksum=ok mtime=now
+type=0 name=646972332f66696c653934 prefix= mode=000644  size=1222 checksum=ok mtime=now
+type=0 name=646972342f66696c653935 prefix= mode=000644  size=1235 checksum=ok mtime=now
+type=0 name=646972352f66696c653936 prefix= mode=000644  size=1248 checksum=ok mtime=now
+type=0 name=646972362f66696c653937 prefix= mode=000644  size=1261 checksum=ok mtime=now
+type=0 name=646972302f66696c653938 prefix= mode=000644  size=1274 checksum=ok mtime=now
+type=0 name=646972312f66696c653939 prefix= mode=000644  size=1287 checksum=ok mtime=now
+crc=fac35742
+"
+`;

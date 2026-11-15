@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Disallow negating the left operand in `in` expressions.
 pub struct NoNegatedInLhs;
 
-const NEGATED_LHS: Message =
-    Message::new("negatedLHS", "The 'in' expression's left operand is negated.");
+const NEGATED_LHS: &Message =
+    &Message::new("negatedLHS", "The 'in' expression's left operand is negated.");
 
 impl Rule for NoNegatedInLhs {
     const META: Meta = Meta::eslint("no-negated-in-lhs", Kind::Problem).deprecated();

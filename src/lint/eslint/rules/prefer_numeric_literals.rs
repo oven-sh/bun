@@ -5,7 +5,7 @@ use bun_lint::utils::ast_utils::{TokenOrText, can_tokens_be_adjacent};
 /// Disallow `parseInt()` and `Number.parseInt()` in favor of binary, octal, and hexadecimal literals.
 pub struct PreferNumericLiterals;
 
-const USE_LITERAL: Message = Message::new(
+const USE_LITERAL: &Message = &Message::new(
     "useLiteral",
     "Use {{system}} literals instead of {{functionName}}().",
 );

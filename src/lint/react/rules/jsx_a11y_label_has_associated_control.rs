@@ -29,8 +29,8 @@ enum Assert {
     Either,
 }
 
-const LABEL_HAS_ASSOCIATED_CONTROL: Message = Message::new("", "A form label must be associated with a control.");
-const LABEL_HAS_ASSOCIATED_CONTROL_NO_LABEL: Message = Message::new("", "A form label must have accessible text.");
+const LABEL_HAS_ASSOCIATED_CONTROL: &Message = &Message::new("", "A form label must be associated with a control.");
+const LABEL_HAS_ASSOCIATED_CONTROL_NO_LABEL: &Message = &Message::new("", "A form label must have accessible text.");
 
 impl Rule for LabelHasAssociatedControl {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "label-has-associated-control", Kind::Problem);

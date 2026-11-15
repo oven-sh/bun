@@ -19,8 +19,5 @@
   },
   "src/runtime/webcore/Request.rs": {
     "JsResult collapsed on the spot": 1
-  },
-  "src/runtime/webcore/Sink.rs": {
-    "discarded result of a call that enters script": 2
   }
 }

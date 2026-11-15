@@ -1,0 +1,33 @@
+# f7 = apply
+# -- source: call-a-function-value-with-many-seen-callees.ts
+# function double(value: number): number {
+#   return value * 2;
+# }
+# function negate(value: number): number {
+#   return -value;
+# }
+# function square(value: number): number {
+#   return value * value;
+# }
+# function half(value: number): number {
+#   return value / 2;
+# }
+# function next(value: number): number {
+#   return value + 1;
+# }
+# function previous(value: number): number {
+#   return value - 1;
+# }
+# const operations = [double, negate, square, half, next, previous];
+# function apply(operation: (value: number) => number, value: number): number {
+#   return operation(value) + 1;
+# }
+# declare const input: any;
+# (globalThis as any).answer = apply(operations[input | 0], +input);
+# -- end of source
+# The compiler before this one: 17 instructions, 6 of them patches.
+# When the bound was taken: steps: operations 24, patches 3, moves 4, unlikely or rare 1.
+# RUN(X64): steps most:28 f7 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f7:Body
+# X64-NEXT: steps: at most 28

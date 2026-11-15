@@ -1,0 +1,21 @@
+# what Bun.plugin() runs is taken for code of the program, which may replace what a program may replace: beside a call of it the program lays no lock of its own, and Link takes nothing for a constant
+# WebKit's aot/tests/link/locks/the-flow-brings-options-written-with-the-option-that-runs-code.ir: the same where an object written with `app` arrives at Bun.serve()
+# WebKit's aot/tests/link/locks/locks-beside-a-build-whose-macros-have-a-realm-of-their-own.ir: Bun.build() is no such call
+# f0: Bun.plugin(options); Date.now();
+# RUN: locks
+# CHECK-NOT: locked
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Bun" [isFreeName]
+    v2 = PropGet v1 key="plugin"
+    v3 = PropGet v0 key="options" [isFreeName]
+    v4 = Call v2, v1, v3 calleeKey="plugin"
+    v5 = PropGet v0 key="Date" [isFreeName]
+    v6 = PropGet v5 key="now"
+    v7 = Call v6, v5 calleeKey="now"
+    Return v7
+}

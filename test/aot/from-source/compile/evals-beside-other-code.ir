@@ -1,0 +1,19 @@
+# Each function evaluates another string than its constants say, where other code runs.
+# -- source: main.cjs
+# function stored(run) {
+#   var text = "(function f() { return 1; })";
+#   run(function () { text = "(function f() { return 2; })"; });
+#   return eval(text)();
+# }
+# function reached(run) {
+#   var rows = [["1"]];
+#   run(rows);
+#   return eval("(function f() { return " + rows[0][0] + "; })")();
+# }
+# console.log(stored(f => f()), reached(rows => { rows[0][0] = "3"; }));
+# -- end of source
+# RUN: print
+# CHECK-LABEL: function f{{*}} name="stored"
+# CHECK: = DirectEval v
+# CHECK-LABEL: function f{{*}} name="reached"
+# CHECK: = DirectEval v

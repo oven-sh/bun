@@ -1,0 +1,10 @@
+A hoisted vi.mock() without a factory of a CommonJS file: its body runs once.
+#### hoisted-cjs.test.mjs
+import { test, vi } from "bun:test";
+import * as lib from "./lib.cjs";
+vi.mock("./lib.cjs");
+test("its body runs once", () => console.log("| CASE", lib.value, lib.f(), vi.isMockFunction(lib.f)));
+#### lib.cjs
+console.log("| CASE lib.cjs runs");
+exports.value = "real value";
+exports.f = function () { return "real f"; };

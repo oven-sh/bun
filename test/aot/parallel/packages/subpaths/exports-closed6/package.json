@@ -1,0 +1,10 @@
+{
+  "name": "program",
+  "version": "1.0.0",
+  "imports": {
+    "#app/*": "./app/*.mjs",
+    "#cfg": "./app/cfg.json",
+    "#one": "./app/one.mjs",
+    "#pk": "hash_dep"
+  }
+}

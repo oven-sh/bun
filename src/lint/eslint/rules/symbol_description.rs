@@ -4,7 +4,7 @@ use bun_lint::utils::ast_utils;
 /// Require symbol descriptions.
 pub struct SymbolDescription;
 
-const EXPECTED: Message = Message::new("expected", "Expected Symbol to have a description.");
+const EXPECTED: &Message = &Message::new("expected", "Expected Symbol to have a description.");
 
 impl Rule for SymbolDescription {
     const META: Meta = Meta::eslint("symbol-description", Kind::Suggestion).reports_at_the_end();

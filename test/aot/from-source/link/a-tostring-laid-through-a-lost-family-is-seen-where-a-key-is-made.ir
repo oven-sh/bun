@@ -1,0 +1,21 @@
+# -- source: a-tostring-laid-through-a-lost-family-is-seen-where-a-key-is-made.js
+# class Mark { constructor(start) { this.start = start; } }
+# function m0(mark) { return { kind: "K0", k0: 1, value: "v0", mark }; }
+# function m1(mark) { return { kind: "K1", k1: 1, value: "v1", mark }; }
+# function m2(mark) { return { kind: "K2", k2: 1, value: "v2", mark }; }
+# function m3(mark) { return { kind: "K3", k3: 1, value: "v3", mark }; }
+# function m4(mark) { return { kind: "K4", k4: 1, value: "v4", mark }; }
+# function m5(mark) { return { kind: "K5", value: pick(mark.start % 5, mark), mark }; }
+# function pick(i, mark) { return i === 0 ? m0(mark) : i === 1 ? m1(mark) : i === 2 ? m2(mark) : i === 3 ? m3(mark) : i === 4 ? m4(mark) : m5(mark); }
+# const table = { v1: 1, v2: 2 };
+# function lay(made) { made.toString = function () { this.mark.start = "text"; return "v2"; }; return made; }
+# function known(made) { return Object.hasOwn(table, made.kind === "K5" ? lay(made.value) : made.value); }
+# let sum = "";
+# for (let i = 0; i < 6; i++) { const made = pick(i, new Mark(i)); sum += known(made) + "," + typeof made.mark.start + ";"; }
+# print(sum);
+# -- end of source
+# L0 = Mark. The name is laid beside the fields, through the lost family itself.
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS-NOT: "start" proven=number writers-known written-at-construction-alone
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: false,number;true,number;true,number;false,number;false,number;true,string;

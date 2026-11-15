@@ -1,0 +1,16 @@
+A test ends the mock of a built-in module itself: whoever was linked against the mock goes on reading it until the test file ends.
+#### a.test.js
+import { test, vi } from "bun:test";
+import { seen } from "./src/uses.js";
+vi.mock("node:fs", () => ({ default: { existsSync: () => "mocked" }, existsSync: () => "mocked" }));
+test("a", () => { console.log("| CASE a " + seen()); vi.doUnmock("node:fs"); console.log("| CASE a " + seen()); });
+test("a2", () => console.log("| CASE a2 " + seen()));
+#### b.test.js
+import { test } from "bun:test";
+import { seen } from "./src/uses.js";
+test("b", () => console.log("| CASE b " + seen()));
+#### src/uses.js
+import it from "node:fs";
+import * as all from "node:fs";
+import { existsSync } from "node:fs";
+export const seen = () => [it.existsSync("/nowhere"), all.existsSync("/nowhere"), existsSync("/nowhere")].join();

@@ -1,4 +1,3 @@
-use core::mem::MaybeUninit;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
 
@@ -10,7 +9,6 @@ use bun_http::{
     self as http, AsyncHTTP, HTTPClientResult, HTTPClientResultCallback, HTTPVerboseLevel,
     HeaderBuilder, async_http::Options as AsyncHTTPOptions,
 };
-use bun_threading::thread_pool::Batch;
 use bun_url::{PercentEncoding, URL};
 use std::io::Write as _;
 
@@ -18,13 +16,9 @@ use crate::extract_tarball;
 use crate::npm::{self as npm, PackageManifest};
 use crate::{ExtractTarball, PackageManager, TarballStream, Task};
 
-// Adapter so `StringOrTinyString::init_append_if_needed` can intern overflow
-// names into the resolver's filename arena. The bun_sys-level `FilenameStore` exposes `append` /
-// `append_lower_case` but doesn't itself implement `strings::Appender` (that
-// impl lives in `bun_resolver`, which this crate can't reach without a cycle).
-pub struct FilenameStoreAppender<'a>(pub(crate) &'a FilenameStore);
+struct FilenameStoreAppender<'a>(&'a FilenameStore);
 impl strings::Appender for FilenameStoreAppender<'_> {
-    fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
+    fn append(&mut self, s: &[u8]) -> Result<&'static [u8], bun_alloc::AllocError> {
         self.0.append(s)
     }
 }
@@ -33,7 +27,7 @@ impl strings::Appender for FilenameStoreAppender<'_> {
 pub(crate) fn stored_string(bytes: &[u8]) -> strings::StringOrTinyString {
     strings::StringOrTinyString::init_append_if_needed(
         bytes,
-        &mut FilenameStoreAppender(FileSystem::instance().filename_store()),
+        &mut FilenameStoreAppender(FileSystem::get().filename_store()),
     )
     .expect("unreachable")
 }
@@ -41,20 +35,8 @@ pub(crate) fn stored_string(bytes: &[u8]) -> strings::StringOrTinyString {
 pub struct NetworkTask {
     // Self-referential: borrows `url_buf` / `header_buf` owned by
     // sibling fields, so the lifetime is erased to `'static`.
-    // `MaybeUninit` because the slot comes from `HiveArrayFallback`
-    // as *uninitialized* memory (often zero-page on first mmap, but not
-    // guaranteed — `claim()`'s heap fallback is `Box::new_uninit()`) and is
-    // overwritten by plain `=` in `for_manifest`/`for_tarball`.
-    // `MaybeUninit<T>` is the spec-correct mapping for that semantic — unlike
-    // `ManuallyDrop<T>`, it suppresses `T`'s validity invariant, so
-    // materializing `&mut NetworkTask` after `write_init` (which leaves this
-    // field bitwise-untouched) is sound even though `AsyncHTTP` contains
-    // niche-bearing fields (`Decompressor` enum, `Option<NonNull>`). The
-    // HTTP-thread bitwise copy in `notify`
-    // (`ptr::write(real, ptr::read(async_http))`) targets the inner `AsyncHTTP`
-    // directly via `*mut AsyncHTTP`, which is sound because `MaybeUninit<T>`
-    // is `#[repr(transparent)]`.
-    pub(crate) unsafe_http_client: MaybeUninit<AsyncHTTP<'static>>,
+    /// `None` while the HTTP thread has it.
+    pub(crate) http: Option<Box<AsyncHTTP<'static>>>,
     pub(crate) response: HTTPClientResult<'static>,
     pub(crate) task_id: crate::package_manager_task::Id,
     // Owned in both `for_manifest` (toOwnedSlice) and `for_tarball`. Aliasing
@@ -65,22 +47,21 @@ pub struct NetworkTask {
     pub(crate) retried: u16,
     pub(crate) response_buffer: MutableString,
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
-    // ParentRef constructed via `from_raw_mut` so `assume_mut` retains write
-    // provenance for `for_manifest`/`for_tarball` (which call `pm.log_mut()`).
+    // ParentRef constructed via `from_raw_mut` so `as_mut_ptr` retains write
+    // provenance for `notify` (`wake_raw`) and `reset_streaming_for_retry`
+    // (`TarballStream::init`).
     pub(crate) package_manager: bun_ptr::ParentRef<PackageManager, bun_ptr::Mut>,
     pub(crate) callback: Callback,
     pub(crate) next: bun_threading::Link<NetworkTask>,
 
     /// Producer/consumer buffer that feeds tarball bytes from the HTTP thread
-    /// to a worker running libarchive. `None` when streaming extraction is
+    /// to a worker that extracts them. `None` when streaming extraction is
     /// disabled or this task is not a tarball download.
     pub(crate) tarball_stream: Option<Box<TarballStream>>,
     /// Extract `Task` pre-created on the main thread so the HTTP thread can
     /// schedule it on the worker pool as soon as the first body chunk arrives.
-    // `'static` matches `PreallocatedTaskStore =
-    // HiveArrayFallback<Task<'static>, 64>` which this slot is borrowed from
-    // and returned to (`discard_unused_streaming_state`).
-    pub(crate) streaming_extract_task: *mut Task<'static>,
+    /// A slot of `PreallocatedTaskStore`, which `discard_unused_streaming_state` returns.
+    pub(crate) streaming_extract_task: *mut Task,
     /// Set by the HTTP thread the first time it commits this request to
     /// the streaming path. Once true, `notify` never pushes this task to
     /// `async_network_task_queue` — the extract Task published by
@@ -103,8 +84,7 @@ unsafe impl bun_threading::Linked for NetworkTask {
     }
 }
 
-/// The network-backed subset of `crate::package_manager_task::Tag` (git
-/// clone/checkout run as thread-pool tasks, never as network tasks).
+/// What the response is for. A git clone or checkout is never a network task.
 pub enum Callback {
     PackageManifest {
         loaded_manifest: Option<PackageManifest>,
@@ -159,51 +139,17 @@ pub(crate) type DedupeMap = HashMap<
 >;
 
 impl NetworkTask {
-    /// Access the HTTP client after `for_manifest`/`for_tarball` (or `notify`'s
-    /// bitwise copy) has initialized it. The field is `MaybeUninit` only to keep
-    /// `&mut NetworkTask` sound between `write_init` and the `for_*` overwrite.
-    #[inline]
-    pub(crate) fn http_mut(&mut self) -> &mut AsyncHTTP<'static> {
-        // SAFETY: every caller is reached only after `unsafe_http_client` was
-        // populated via `MaybeUninit::new(AsyncHTTP::init(..))` (or the
-        // `ptr::write(real, ..)` in `notify`).
-        unsafe { self.unsafe_http_client.assume_init_mut() }
-    }
-
-    /// BACKREF accessor — single `unsafe` deref for the set-once
-    /// `package_manager` `ParentRef` so `for_manifest`/`for_tarball` call
-    /// sites are safe. Lifetime is decoupled from `&self` (the manager is the
-    /// process singleton that owns this task and outlives it).
-    ///
-    /// # Safety (encapsulated)
-    /// `package_manager` is constructed via `ParentRef::from_raw_mut` (write
-    /// provenance) in `write_init`; the `for_*` builders run on the
-    /// single-threaded main setup path, so no overlapping `&mut
-    /// PackageManager` exists for the returned borrow.
-    #[inline]
-    fn pm_mut<'a>(&self) -> &'a mut PackageManager {
-        // SAFETY: see fn doc — BACKREF, write provenance, single-threaded.
-        unsafe { self.package_manager.assume_mut() }
-    }
-
-    // Signature matches `HTTPClientResultCallback::new::<NetworkTask>`'s
-    // `fn(*mut T, *mut AsyncHTTP, HTTPClientResult<'_>)` shape so it can be
-    // installed directly without a separate trampoline.
-    fn notify(
-        this: *mut NetworkTask,
-        async_http: *mut AsyncHTTP<'static>,
-        mut result: HTTPClientResult<'_>,
-    ) {
+    fn notify(this: *mut NetworkTask, finished: http::Finished, mut result: HTTPClientResult<'_>) {
         // `this` is the NetworkTask erased into the callback ctx in
         // `get_completion_callback`; the HTTP thread is the sole writer for
         // this call. It stays a raw receiver: both exits below (`on_chunk(..,
         // true, ..)` and the queue push) hand `this` to another thread, so no
         // `&mut NetworkTask` may outlive them and every pointer handed off is
         // derived from the raw `this`.
-        //
-        // SAFETY: `async_http` is the threadlocal AsyncHTTP the HTTP client
-        // passes to every completion callback; live for this call.
-        let async_http = unsafe { &mut *async_http };
+        if finished.is_some() {
+            // SAFETY: `this` is live; the HTTP thread is its sole writer here.
+            unsafe { (*this).http = finished };
+        }
         // SAFETY: `this` is live (see above). `on_chunk` takes `*mut Self`
         // (freely-aliasing) because a worker may be inside `drain()`
         // concurrently, so `stream` is a raw pointer, never `&mut TarballStream`.
@@ -261,7 +207,7 @@ impl NetworkTask {
                 if result.has_more {
                     if !chunk.is_empty() {
                         // The drain task is scheduled by `on_chunk`
-                        // (guarded by its own `draining` atomic) so it
+                        // (guarded by its own `draining` flag) so it
                         // runs at most once at a time, releases the
                         // worker on ARCHIVE_RETRY, and is re-enqueued by
                         // the next chunk. Pending-task accounting stays
@@ -325,7 +271,7 @@ impl NetworkTask {
         }
 
         // Stash this callback's body bytes into our own accumulation buffer
-        // before `detach_lifetime` clears `result.body` to `&[]`. Covers the
+        // before `without_borrowed_body` drops `result.body`. Covers the
         // non-streaming manifest path and the tarball fall-through above.
         if result.metadata.is_some() {
             // First callback of a fresh attempt on the non-streaming path —
@@ -353,22 +299,14 @@ impl NetworkTask {
         // The wake happens at the end of the fn (no
         // early returns past this point).
 
-        // SAFETY: `real` is set by the HTTP thread before invoking the
-        // completion callback.
-        unsafe {
-            let real = async_http.real.expect("unreachable").as_ptr();
-            ptr::write(real, ptr::read(async_http));
-        }
         // SAFETY: the HTTP thread is the sole writer for this call; nothing
         // exclusive to `*this` outlives this block, which ends before the
-        // cross-thread push below. `detach_lifetime` erases the callback-scoped
-        // `'_` to `'static` and clears `body` to `&[]`; the body bytes were
-        // stashed into `(*this).response_buffer` above.
+        // cross-thread push below.
         unsafe {
             // Preserve metadata captured on an earlier streaming callback; the
             // final `result` won't have it.
             let saved_metadata = (*this).response.metadata.take();
-            (*this).response = result.detach_lifetime();
+            (*this).response = result.without_borrowed_body();
             if (*this).response.metadata.is_none() {
                 (*this).response.metadata = saved_metadata;
             }
@@ -509,9 +447,7 @@ impl NetworkTask {
             is_optional,
             needs_extended || npm::name_suggests_libc(name),
         )?;
-        // The old value isn't dropped, because it's either uninitialized or a stale bitwise copy
-        // from `notify`.
-        self.unsafe_http_client = MaybeUninit::new(request);
+        self.http = Some(request);
         Ok(())
     }
 
@@ -541,7 +477,7 @@ impl NetworkTask {
             is_optional,
             false,
         )?;
-        *self.http_mut() = request;
+        self.http = Some(request);
         Ok(())
     }
 
@@ -552,8 +488,8 @@ impl NetworkTask {
         loaded_manifest: Option<&PackageManifest>,
         is_optional: bool,
         needs_extended: bool,
-    ) -> Result<AsyncHTTP<'static>, ForManifestError> {
-        let pm = self.pm_mut();
+    ) -> Result<Box<AsyncHTTP<'static>>, ForManifestError> {
+        let pm = self.package_manager;
         // SAFETY: `pm.log` is the long-lived `*mut Log` the package manager
         // was constructed with.
         let log = pm.log_mut();
@@ -590,8 +526,8 @@ impl NetworkTask {
             // The join would read bytes that are not UTF-8 as U+FFFD, which is another name.
             let tmp = if strings::is_valid_utf8(encoded_name) {
                 bun_url::join(
-                    &bun_core::String::borrow_utf8(base),
-                    &bun_core::String::borrow_utf8(encoded_name),
+                    &bun_core::StringView::borrow_utf8(base),
+                    &bun_core::StringView::borrow_utf8(encoded_name),
                 )
             } else {
                 bun_core::String::DEAD
@@ -657,7 +593,7 @@ impl NetworkTask {
         let mut last_modified: &[u8] = b"";
         let mut etag: &[u8] = b"";
         if let Some(manifest) = loaded_manifest {
-            if (needs_extended && manifest.pkg.has_extended_manifest) || !needs_extended {
+            if (needs_extended && manifest.pkg.has_extended_manifest()) || !needs_extended {
                 last_modified = manifest.pkg.last_modified.slice(&manifest.string_buf);
                 etag = manifest.pkg.etag.slice(&manifest.string_buf);
             }
@@ -781,13 +717,11 @@ impl NetworkTask {
     }
 
     pub(crate) fn get_completion_callback(&mut self) -> HTTPClientResultCallback {
-        // `HTTPClientResultCallback::new`
-        // performs type erasure over a `fn(*mut T, *mut AsyncHTTP, _)`.
         HTTPClientResultCallback::new::<NetworkTask>(self, Self::notify)
     }
 
-    pub(crate) fn schedule(&mut self, batch: &mut Batch) {
-        self.http_mut().schedule(batch);
+    pub(crate) fn take_request(&mut self) -> Box<AsyncHTTP<'static>> {
+        self.http.take().expect("not in flight")
     }
 }
 
@@ -837,7 +771,7 @@ impl NetworkTask {
         scope: &npm::registry::Scope,
         authorization: Authorization,
     ) -> Result<(), ForTarballError> {
-        let pm = self.pm_mut();
+        let pm = self.package_manager;
 
         let tarball_url = tarball_.url.slice();
         let built_from_registry_url = tarball_url.is_empty();
@@ -848,7 +782,7 @@ impl NetworkTask {
             let version = tarball_.resolution.npm().version;
             Box::from(extract_tarball::build_url(
                 scope.url.href(),
-                &tarball_.name,
+                tarball_.name.slice(),
                 version,
                 pm.lockfile.buffers.string_bytes.as_slice(),
             )?)
@@ -949,10 +883,10 @@ impl NetworkTask {
             // Tell the HTTP client to invoke `notify` for every body chunk
             // instead of buffering the whole response. `notify` pushes each
             // chunk into `tarball_stream`, which schedules a drain task on
-            // `thread_pool`; the drain task calls into libarchive until it
-            // reports ARCHIVE_RETRY (out of input), then returns so the
+            // `thread_pool`; the drain task runs the decoder until it is
+            // out of input, then returns so the
             // worker can be reused for other install work. The next chunk
-            // reschedules it and libarchive — whose state lives on the heap
+            // reschedules it and the decoder — whose state lives on the heap
             // — resumes exactly where it stopped.
             //
             // The stream itself is created by the caller (see
@@ -976,10 +910,7 @@ impl NetworkTask {
         }
 
         let completion_callback = self.get_completion_callback();
-        // MaybeUninit overwrite — see field doc; old slot value is
-        // either uninitialized (fresh hive slot) or a stale bitwise copy from
-        // `notify`, neither of which is safe/meaningful to drop.
-        self.unsafe_http_client = MaybeUninit::new(AsyncHTTP::init(
+        let request = self.http.insert(AsyncHTTP::init(
             http::Method::GET,
             url,
             header_builder.entries,
@@ -989,13 +920,12 @@ impl NetworkTask {
             http::FetchRedirect::Follow,
             http_options,
         ));
-        self.http_mut().client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
-        self.http_mut().client.flags.redirect_credentials =
-            http::RedirectCredentialsPolicy::HttpsUpgrade;
+        request.client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
+        request.client.flags.redirect_credentials = http::RedirectCredentialsPolicy::HttpsUpgrade;
         // A manifest says what else has to be fetched, so a burst of tarballs must not hold it up.
-        self.http_mut().client.flags.yields_to_other_requests = true;
+        request.client.flags.yields_to_other_requests = true;
         if PackageManager::verbose_install() {
-            self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
+            request.client.verbose = HTTPVerboseLevel::Headers;
         }
 
         Ok(())
@@ -1035,14 +965,11 @@ impl NetworkTask {
         } else if !self.streaming_extract_task.is_null() {
             let manager = self.package_manager.as_mut_ptr();
             let this: *mut NetworkTask = self;
-            // SAFETY: `init` returns a fresh heap allocation owned here.
-            self.tarball_stream = Some(unsafe {
-                bun_core::heap::take(TarballStream::init(
-                    self.streaming_extract_task,
-                    this,
-                    manager,
-                ))
-            });
+            self.tarball_stream = Some(TarballStream::init(
+                self.streaming_extract_task,
+                this,
+                manager,
+            ));
         }
         self.response = HTTPClientResult::default();
     }
@@ -1055,13 +982,7 @@ impl NetworkTask {
     /// written via `addr_of_mut!().write()` without dropping the previous
     /// value — the slot is freshly poisoned/uninit from `claim()`.
     ///
-    /// Caller-initialized fields (`unsafe_http_client`, `callback`,
-    /// `response_buffer`) are written here with drop-safe
-    /// placeholders so subsequent `=` assignments in `for_manifest`/
-    /// `for_tarball` do not drop uninitialized memory. `unsafe_http_client`
-    /// stays bitwise-untouched (it is `MaybeUninit`, so leaving it uninit is
-    /// sound under the `&mut NetworkTask` the caller forms next; it is
-    /// overwritten without drop by `for_manifest`/`for_tarball`).
+    /// `callback` and `response_buffer` get placeholders that `for_manifest`/`for_tarball` replace.
     ///
     /// # Safety
     /// `slot` must be the unique handle to a `HiveArrayFallback<NetworkTask>`
@@ -1079,11 +1000,12 @@ impl NetworkTask {
         unsafe {
             addr_of_mut!((*slot).task_id).write(task_id);
             // SAFETY: `package_manager` is the live owner of this task; write
-            // provenance is required for `for_manifest`/`for_tarball`'s
-            // `assume_mut`, so callers pass `*mut` (not `*const`).
+            // provenance is required for the `as_mut_ptr()` in `notify` and
+            // `reset_streaming_for_retry`, so callers pass `*mut` (not `*const`).
             addr_of_mut!((*slot).package_manager)
                 .write(bun_ptr::ParentRef::from_raw_mut(package_manager));
             // Struct-default fields.
+            addr_of_mut!((*slot).http).write(None);
             addr_of_mut!((*slot).response).write(HTTPClientResult::default());
             addr_of_mut!((*slot).url_buf).write(Box::default());
             addr_of_mut!((*slot).header_buf).write(Box::default());
@@ -1095,7 +1017,6 @@ impl NetworkTask {
             addr_of_mut!((*slot).signal_store).write(http::signals::Store::default());
             // Caller-initialized fields: write drop-safe placeholders so the
             // plain `=` in `for_manifest`/`for_tarball` drops a valid value.
-            // (`unsafe_http_client` is `MaybeUninit` — left uninitialized.)
             addr_of_mut!((*slot).response_buffer).write(MutableString::init_empty());
             addr_of_mut!((*slot).callback).write(Callback::LocalTarball);
         }

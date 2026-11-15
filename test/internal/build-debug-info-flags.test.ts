@@ -16,7 +16,7 @@ import { describe, expect, test } from "bun:test";
 import { isMacOS, tempDir } from "harness";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
-import { computeDepFlags, computeFlags } from "../../scripts/build/flags.ts";
+import { computeDepFlags, computeFlags, linkerMapOutputs } from "../../scripts/build/flags.ts";
 
 /** A fully-populated fake toolchain; resolveConfig never spawns any of these. */
 function mockToolchain(): Toolchain {
@@ -28,7 +28,6 @@ function mockToolchain(): Toolchain {
     clangVersion: "23.1.1",
     clangResourceDir: "/fake/llvm/lib/clang/23",
     ar: "/fake/llvm/bin/llvm-ar",
-    ranlib: "/fake/llvm/bin/llvm-ranlib",
     ld: "/fake/llvm/bin/ld.lld",
     ld64Lld: "/fake/llvm/bin/ld64.lld",
     rustLlvmVersion: "23.1.1",
@@ -51,7 +50,6 @@ function mockToolchain(): Toolchain {
     rustupHome: undefined,
     msvcLinker: undefined,
     rc: undefined,
-    mt: undefined,
     nasm: undefined,
   };
 }
@@ -118,6 +116,48 @@ describe("debug-info flag order", () => {
       expect(flags.indexOf("-gz=zstd")).toBe(flags.indexOf("-g3") + 1);
       expect(flags).toContain("-fno-standalone-debug");
     }
+  });
+
+  test("--debug-info=lines: a release build without LTO gets the line tables of an LTO build", () => {
+    using dir = tempDir("build-debug-info", {});
+    const cfg = linuxConfig({ buildType: "Release", lto: false, debugInfo: "lines" }, String(dir));
+    for (const flags of allCompileFlagLists(cfg)) {
+      expect(levelFlags(flags)).toEqual(["-glldb", "-g1"]);
+      expect(flags).not.toContain("-fno-standalone-debug");
+    }
+    expect(computeFlags(cfg).ldflags).toContain("-Wl,--gdb-index");
+  });
+
+  test("--debug-info=none: -g0 ends the list and the link drops every debug section", () => {
+    using dir = tempDir("build-debug-info", {});
+    const cfg = linuxConfig({ buildType: "Release", lto: false, debugInfo: "none" }, String(dir));
+    for (const flags of allCompileFlagLists(cfg)) {
+      expect(levelFlags(flags)).toEqual(["-glldb", "-g0"]);
+      expect(flags).not.toContain("-gz=zstd");
+    }
+    const { ldflags } = computeFlags(cfg);
+    expect(ldflags).toContain("-Wl,--strip-debug");
+    expect(ldflags).not.toContain("-Wl,--gdb-index");
+    expect(ldflags).not.toContain("-Wl,--compress-debug-sections=zlib");
+  });
+
+  test("without --debug-info the link keeps, indexes and compresses the debug sections", () => {
+    using dir = tempDir("build-debug-info", {});
+    for (const lto of [false, true]) {
+      const { ldflags } = computeFlags(linuxConfig({ buildType: "Release", lto }, String(dir)));
+      expect(ldflags).toContain("-Wl,--gdb-index");
+      expect(ldflags).toContain("-Wl,--compress-debug-sections=zlib");
+      expect(ldflags).not.toContain("-Wl,--strip-debug");
+    }
+  });
+
+  test("--linker-map=off: the link writes no map", () => {
+    using dir = tempDir("build-debug-info", {});
+    const isMap = (flag: string) => flag.startsWith("-Wl,-Map=");
+    expect(computeFlags(linuxConfig({ buildType: "Release" }, String(dir))).ldflags.some(isMap)).toBe(true);
+    const cfg = linuxConfig({ buildType: "Release", linkerMap: false }, String(dir));
+    expect(computeFlags(cfg).ldflags.some(isMap)).toBe(false);
+    expect(linkerMapOutputs(cfg)).toEqual([]);
   });
 
   // Cross-config path only: on macOS, resolveConfig({ os: "darwin" }) probes

@@ -1,0 +1,34 @@
+A test file's vi.mock() of a file that a preload's helper has loaded: the preload keeps the file.
+preload: preload.js
+#### a.test.js
+import { test, vi } from "bun:test";
+const say = (...all) => console.log("| CASE", ...all);
+import { who } from "./m.js";
+import { read } from "./user.js";
+vi.mock("./m.js", () => { console.log("| CASE factory runs"); return { who: "mock", count: () => "mock" }; });
+test("t", () => {
+  say("the test file", who, read());
+  say("the preload", globalThis.readOfPreload());
+});
+#### helper.js
+console.log("| CASE helper runs");
+import { who, count } from "./m.js";
+export const read = () => who + " " + count();
+#### m.js
+console.log("| CASE m runs");
+let n = 0;
+export const who = "real";
+export function count() { return ++n; }
+#### package.json
+{ "type": "module" }
+#### preload.js
+import { read } from "./helper.js";
+globalThis.readOfPreload = read;
+#### user.js
+console.log("| CASE user runs");
+import { who, count } from "./m.js";
+export const read = () => who + " " + count();
+#### z.test.js
+import { test } from "bun:test";
+import "./m.js";
+test("other file", () => {});

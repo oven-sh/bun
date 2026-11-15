@@ -1,5 +1,4 @@
 use core::ffi::c_uint;
-use core::mem::ManuallyDrop;
 
 use crate::{JSCell, JSGlobalObject, JSValue, JsResult};
 use bun_core::String as BunString;
@@ -111,14 +110,6 @@ impl JSObject {
         Ok(obj)
     }
 
-    pub fn get(
-        &self,
-        global: &JSGlobalObject,
-        prop: impl AsRef<[u8]>,
-    ) -> JsResult<Option<JSValue>> {
-        self.to_js().get(global, prop.as_ref())
-    }
-
     /// # Safety
     /// `owner` must be a cell-tagged `JSValue` (its payload is a live
     /// `JSCell*`) that remains valid for the duration of the call.
@@ -169,35 +160,13 @@ impl JSObject {
     }
 }
 
-#[repr(C)]
-pub struct ExternColumnIdentifier {
-    pub tag: u8,
-    pub value: ExternColumnIdentifierValue,
+/// `ExternColumnIdentifier` in SQLClient.cpp.
+#[repr(C, u8)]
+pub enum ExternColumnIdentifier {
+    Index(u32) = 1,
+    Name(BunString) = 2,
 }
-
-#[repr(C)]
-pub union ExternColumnIdentifierValue {
-    pub index: u32,
-    pub name: ManuallyDrop<BunString>,
-}
-
-impl Default for ExternColumnIdentifier {
-    fn default() -> Self {
-        Self {
-            tag: 0,
-            value: ExternColumnIdentifierValue { index: 0 },
-        }
-    }
-}
-
-impl Drop for ExternColumnIdentifier {
-    fn drop(&mut self) {
-        if self.tag == 2 {
-            // SAFETY: tag == 2 means `value.name` is the active union field.
-            unsafe { core::mem::ManuallyDrop::drop(&mut self.value.name) };
-        }
-    }
-}
+bun_opaque::assert_ffi_layout!(ExternColumnIdentifier, 32, 8);
 
 /// Compile-time field enumeration for POJO marshalling.
 ///

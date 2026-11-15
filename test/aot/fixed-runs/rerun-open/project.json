@@ -1,0 +1,8 @@
+{
+  "flags": [
+    "--rerun-each=3"
+  ],
+  "ways": {
+    "one program": "TestRunLayers:0"
+  }
+}

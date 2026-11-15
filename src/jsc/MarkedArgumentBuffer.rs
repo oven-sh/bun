@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use crate::JSValue;
+use crate::{JSGlobalObject, JSValue, JsResult};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for JSC's `MarkedArgumentBuffer` (a GC-rooted argument list).
@@ -10,6 +10,11 @@ bun_opaque::opaque_ffi! {
 
 unsafe extern "C" {
     safe fn MarkedArgumentBuffer__append(args: &MarkedArgumentBuffer, value: JSValue);
+    safe fn MarkedArgumentBuffer__size(args: &MarkedArgumentBuffer) -> usize;
+    safe fn MarkedArgumentBuffer__constructArray(
+        args: &MarkedArgumentBuffer,
+        global: &JSGlobalObject,
+    ) -> JSValue;
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `f`
     // (never dereferenced as Rust data) — same contract as
     // `JSC__VM__holdAPILock` / `JSC__JSGlobalObject__queueMicrotaskCallback`.
@@ -28,18 +33,13 @@ impl MarkedArgumentBuffer {
             f: Option<F>,
             r: Option<R>,
         }
-        extern "C" fn run<F, R>(ctx: *mut Ctx<F, R>, args: *mut MarkedArgumentBuffer)
+        extern "C" fn run<F, R>(ctx: &mut Ctx<F, R>, args: &mut MarkedArgumentBuffer)
         where
             F: FnOnce(&mut MarkedArgumentBuffer) -> R,
         {
-            // SAFETY: `ctx` is the `&mut ctx` passed to `run` below; nothing
-            // `f` runs can reach it.
-            let f = unsafe { (*ctx).f.take() }.unwrap();
-            // SAFETY: `args` is the live stack-allocated `MarkedArgumentBuffer` C++
-            // hands us for the duration of this callback.
-            let r = f(unsafe { &mut *args });
-            // SAFETY: as above.
-            unsafe { (*ctx).r = Some(r) };
+            // `ctx` is the local below; nothing `f` runs can reach it.
+            let f = ctx.f.take().unwrap();
+            ctx.r = Some(f(args));
         }
         let mut ctx = Ctx {
             f: Some(f),
@@ -53,63 +53,32 @@ impl MarkedArgumentBuffer {
         MarkedArgumentBuffer__append(self, value)
     }
 
-    pub fn run<T>(ctx: &mut T, func: extern "C" fn(ctx: *mut T, args: *mut MarkedArgumentBuffer)) {
+    pub fn size(&self) -> usize {
+        MarkedArgumentBuffer__size(self)
+    }
+
+    /// A `JSArray` of the values.
+    #[track_caller]
+    pub fn construct_array(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(global, || {
+            MarkedArgumentBuffer__constructArray(self, global)
+        })
+    }
+
+    fn run<T>(ctx: &mut T, func: extern "C" fn(ctx: &mut T, args: &mut MarkedArgumentBuffer)) {
         // `MarkedArgumentBuffer__run` round-trips `ctx` opaquely back to `func`,
         // and `func`'s ABI is identical modulo the
         // pointee types (both params are thin pointers).
         MarkedArgumentBuffer__run(
             std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
             // SAFETY: both fn-pointer signatures are `extern "C"` with two
-            // thin-pointer params; ABI-identical modulo pointee type.
+            // thin-pointer params; C++ only hands `ctx` back to `func`, with the address of its live local.
             unsafe {
                 bun_ptr::cast_fn_ptr::<
-                    extern "C" fn(*mut T, *mut MarkedArgumentBuffer),
+                    extern "C" fn(&mut T, &mut MarkedArgumentBuffer),
                     extern "C" fn(*mut c_void, *mut c_void),
                 >(func)
             },
         )
     }
-}
-
-/// Rust cannot parameterize a `fn` item by a const
-/// fn-pointer, so this is a macro that expands to a `#[bun_jsc::host_fn]` wrapper.
-#[macro_export]
-macro_rules! marked_argument_buffer_wrap {
-    ($function:path) => {{
-        #[$crate::host_fn]
-        pub(crate) fn wrapper(
-            global_this: &$crate::JSGlobalObject,
-            callframe: &$crate::CallFrame,
-        ) -> $crate::JsResult<$crate::JSValue> {
-            struct Context<'a> {
-                result: $crate::JsResult<$crate::JSValue>,
-                global_this: &'a $crate::JSGlobalObject,
-                callframe: &'a $crate::CallFrame,
-            }
-            extern "C" fn run(
-                this: *mut Context<'_>,
-                marked_argument_buffer: *mut $crate::MarkedArgumentBuffer,
-            ) {
-                // SAFETY: `this` is the `&mut ctx` passed to `MarkedArgumentBuffer::run` below;
-                // `marked_argument_buffer` is the live stack-allocated buffer C++ hands us.
-                let result = $function(
-                    unsafe { (*this).global_this },
-                    unsafe { (*this).callframe },
-                    unsafe { &mut *marked_argument_buffer },
-                );
-                unsafe { (*this).result = result };
-            }
-
-            let mut ctx = Context {
-                global_this,
-                callframe,
-                // Placeholder; `run`
-                // unconditionally overwrites it before we read.
-                result: ::core::result::Result::Ok($crate::JSValue::ZERO),
-            };
-            $crate::MarkedArgumentBuffer::run(&mut ctx, run);
-            ctx.result
-        }
-        wrapper
-    }};
 }

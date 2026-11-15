@@ -1,0 +1,15 @@
+# -- source: main.js
+# class Meter { k = 2; read(x) { return x + this.k; } }
+# function patch(type) { type.prototype.read = function (x) { return x * 2 + this.k; }; }
+# patch(Meter);
+# function run(n) { const meter = new Meter(); let s = 0; for (let i = 0; i < n; i++) s = (s + meter.read(i & 3)) | 0; return s; }
+# print(run(100));
+# -- end of source
+# LIBRARY: own
+# The module always calls the helper, so the function that the helper puts there is asked for first: the guard of the declared method is asked behind it.
+# RUN: walk f2 mechanisms=all
+# CHECK-NOT: AreMembersUnchanged conditions=[{layout=L0 key="read"}]
+# CHECK: AreMembersUnchanged conditions=[{kind=MemberAssigned layout=L0 key="read"}]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 500
+# ANSWERS-NEXT: exited with 0

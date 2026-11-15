@@ -1,0 +1,12 @@
+# Lists and views answer `fill` alike, so the name says of neither that it comes: the loops are told apart as where length alone is named. `push` is the lists' own.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetTypedArrayElement
+# RUN(PUSHED): walk f2:Body mechanisms=all
+# PUSHED-LABEL: code f2:Body
+# PUSHED-NOT: = GetTypedArrayElement
+# -- source: main.js
+# function marks(s) { s.fill(1); let n = 0; for (let i = 2; i * i < s.length; i++) if (s[i]) for (let j = i * i; j < s.length; j += i) s[j] = 0; for (let i = 2; i < s.length; i++) n += s[i] * 1; return n; }
+# function pushed(s) { if (s.push) s.push(1); let n = 0; for (let i = 0; i < s.length; i++) { s[i] = i * 2; n += s[i] * 1; } return n; }
+# globalThis.kept = [marks, pushed];
+# -- end of source

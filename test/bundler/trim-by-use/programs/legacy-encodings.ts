@@ -1,0 +1,20 @@
+// TextDecoder for encodings that encoding_rs decodes
+const show = (label: string, bytes: number[]) =>
+  console.log(
+    label,
+    new TextDecoder(label).encoding,
+    JSON.stringify(new TextDecoder(label).decode(new Uint8Array(bytes))),
+  );
+show("shift_jis", [0x82, 0xb1, 0x82, 0xf1, 0x82, 0xc9, 0x82, 0xbf, 0x82, 0xcd]);
+show("euc-kr", [0xbe, 0xc8, 0xb3, 0xe7]);
+show("gbk", [0xc4, 0xe3, 0xba, 0xc3]);
+show("big5", [0xa7, 0x41, 0xa6, 0x6e]);
+show("windows-1251", [0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2]);
+show("iso-8859-2", [0xb1, 0xe6, 0xea]);
+show("utf-16be", [0x00, 0x68, 0x00, 0x69]);
+try {
+  new TextDecoder("euc-jp", { fatal: true }).decode(new Uint8Array([0xff, 0xff]));
+} catch (error) {
+  console.log((error as Error).name);
+}
+show("utf-8", [0xe2, 0x82, 0xac]);

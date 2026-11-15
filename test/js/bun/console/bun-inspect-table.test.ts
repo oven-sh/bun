@@ -47,6 +47,15 @@ describe("inspect.table", () => {
     expect(inspect.table(function () {})).not.toBeEmpty();
   });
 
+  it("takes a subclass of Array, and Array.prototype, as the list of properties", () => {
+    const rows = [{ a: 1, b: 2 }];
+    class Properties extends Array<string> {}
+    expect(inspect.table(rows, Properties.from(["a"]), { colors: false })).toBe(
+      inspect.table(rows, ["a"], { colors: false }),
+    );
+    expect(inspect.table(rows, Array.prototype, { colors: false })).toBe(inspect.table(rows, [], { colors: false }));
+  });
+
   it("a depth option above the cell depth cap prints cells like the default", () => {
     const rows = [{ a: [1, 2], m: new Map([[1, 2]]), s: new Set([1]), o: { x: 1 } }];
     const byDefault = inspect.table(rows);

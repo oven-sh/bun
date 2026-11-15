@@ -1,0 +1,23 @@
+# -- source: an-argument-that-reads-a-variable-keeps-the-call-off-the-method-table-where-the-lookup-may-run-code.ts
+# declare function print(...values: unknown[]): void;
+# interface Figure { area(n: number): number }
+# class Plate implements Figure { side: number; constructor(side: number) { this.side = side; } area(n: number) { return this.side * 1000 + n; } }
+# class Board implements Figure { wide: number; constructor(wide: number) { this.wide = wide; } area(n: number) { return this.wide * 1000 + n; } }
+# const figures: Figure[] = [new Plate(2), new Board(3)];
+# var tally = 0;
+# function reads() { let sum = 0; for (let i = 0; i < 2; i++) sum += figures[i].area(tally); return sum; }
+# function holds() { let sum = 0; for (let i = 0; i < 2; i++) sum += figures[i].area(7); return sum; }
+# print(reads(), holds(), tally);
+# Board.prototype.area = function (this: Board, n: number) { tally += 5; return this.wide * 2000 + n; };
+# print(reads(), holds(), tally);
+# -- end of source
+# f1 = reads
+# A call through the method table looks the method up where the call stands: behind the arguments. As written the method is read first. The program stores to Board.prototype.area, so what is found
+# there may change while it runs, to an accessor too, and then the lookup runs code that may write what an argument reads. The argument of `reads` reads a variable: the read of the method may not
+# move behind it, and the call does not go through the table. With an accessor that wrote the variable it gave 3001 for 3006.
+# RUN(READS): walk f1 mechanisms=all-Inlining
+# READS-LABEL: code f1:Body
+# READS-NOT: = CallTable
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 5000 5014 0
+# ANSWERS-NEXT: 8000 8014 10

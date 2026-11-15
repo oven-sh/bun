@@ -9,8 +9,24 @@ bun_opaque::opaque_ffi! {
     pub struct ListenSocket;
 }
 
+/// Closed on drop.
+#[repr(transparent)]
+pub struct OwnedListenSocket(pub(crate) core::ptr::NonNull<ListenSocket>);
+
+impl OwnedListenSocket {
+    pub fn as_ptr(&self) -> *mut ListenSocket {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for OwnedListenSocket {
+    fn drop(&mut self) {
+        ListenSocket::opaque_mut(self.as_ptr()).close()
+    }
+}
+
 impl ListenSocket {
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         us_listen_socket_close(self)
     }
 
@@ -59,7 +75,12 @@ impl ListenSocket {
     /// `cb` receives a null `ListenSocket` once this listen socket closed.
     pub fn on_server_name(
         &mut self,
-        cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,
+        cb: extern "C" fn(
+            *mut ListenSocket,
+            *const c_char,
+            Option<&mut c_int>,
+            *mut c_void,
+        ) -> *mut c_void,
     ) {
         us_listen_socket_on_server_name(self, cb)
     }
@@ -79,6 +100,11 @@ unsafe extern "C" {
     fn us_listen_socket_set_default_ssl_ctx(ls: *mut ListenSocket, ctx: *mut SslCtx);
     safe fn us_listen_socket_on_server_name(
         ls: &mut ListenSocket,
-        cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,
+        cb: extern "C" fn(
+            *mut ListenSocket,
+            *const c_char,
+            Option<&mut c_int>,
+            *mut c_void,
+        ) -> *mut c_void,
     );
 }

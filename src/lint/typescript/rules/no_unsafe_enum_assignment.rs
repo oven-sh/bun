@@ -12,27 +12,27 @@ use smallvec::SmallVec;
 /// Disallow assigning non-enum values to enum typed locations.
 pub struct NoUnsafeEnumAssignment;
 
-const UNSAFE_ENUM_ACCESS: Message = Message::new(
+const UNSAFE_ENUM_ACCESS: &Message = &Message::new(
     "unsafeEnumAccess",
     "The computed key used here does not have a shared enum type with the expected enum {{enumNames}}.",
 );
-const UNSAFE_ENUM_ARGUMENT: Message = Message::new(
+const UNSAFE_ENUM_ARGUMENT: &Message = &Message::new(
     "unsafeEnumArgument",
     "The argument passed here does not have a shared enum type with the expected enum {{enumNames}}.",
 );
-const UNSAFE_ENUM_ASSERTION: Message = Message::new(
+const UNSAFE_ENUM_ASSERTION: &Message = &Message::new(
     "unsafeEnumAssertion",
     "The value asserted here does not have a shared enum type with the expected enum {{enumNames}}.",
 );
-const UNSAFE_ENUM_ASSIGNMENT: Message = Message::new(
+const UNSAFE_ENUM_ASSIGNMENT: &Message = &Message::new(
     "unsafeEnumAssignment",
     "The value assigned here does not have a shared enum type with the expected enum {{enumNames}}.",
 );
-const UNSAFE_ENUM_MUTATION: Message = Message::new(
+const UNSAFE_ENUM_MUTATION: &Message = &Message::new(
     "unsafeEnumMutation",
     "This mutation can produce a value outside of the expected enum {{enumNames}}.",
 );
-const UNSAFE_ENUM_RETURN: Message = Message::new(
+const UNSAFE_ENUM_RETURN: &Message = &Message::new(
     "unsafeEnumReturn",
     "The value returned here does not have a shared enum type with the expected enum {{enumNames}}.",
 );
@@ -52,7 +52,7 @@ pub struct State<'a> {
     /// Deferred reports about those nodes, with the enum names. Such a node can also be reported at the same location
     /// as part of an enclosing node. ESLint puts that report first, and for a part of a literal it's only known at the
     /// end.
-    deferred_reports: Vec<(Span, Message, Vec<u8>)>,
+    deferred_reports: Vec<(Span, &'static Message, Vec<u8>)>,
     types: TypeCache<'a>,
     /// Caches [`describe_enum_types`] of a single type.
     descriptions: IdMap<Type<'a>, Vec<u8>>,
@@ -301,7 +301,7 @@ fn describe_enum_types(types: &[Type]) -> Vec<u8> {
     description
 }
 
-fn report<'a>(cx: &mut Context<'a>, node: Span, message: Message, receiver_types: &[Type<'a>]) {
+fn report<'a>(cx: &mut Context<'a>, node: Span, message: &'static Message, receiver_types: &[Type<'a>]) {
     let enum_names = match receiver_types {
         &[only] => cx
             .state
@@ -412,7 +412,7 @@ fn check_assignment_of_type<'a>(
     sender_node: Expr<'a>,
     sender_type: Type<'a>,
     reporting_node: Span,
-    message: Message,
+    message: &'static Message,
 ) {
     if is_unsafe_assignment(cx, sender_node, receiver_type, sender_type) {
         report(cx, reporting_node, message, &[receiver_type]);
@@ -426,7 +426,7 @@ fn check_assignment<'a>(
     receiver_type: impl FnOnce() -> Option<Type<'a>>,
     sender_node: Expr<'a>,
     reporting_node: Span,
-    message: Message,
+    message: &'static Message,
 ) {
     if is_array_or_object_literal(sender_node) {
         return;

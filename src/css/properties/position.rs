@@ -48,9 +48,9 @@ fn lookup_keyword(ident: &[u8]) -> Option<PositionKeyword> {
 }
 
 impl Position {
-    pub(crate) fn parse(input: &mut Parser) -> css::Result<Position> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Position> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
 
         let Some(keyword) = lookup_keyword(ident) else {
             return Err(location.new_unexpected_token_error(Token::Ident(ident)));

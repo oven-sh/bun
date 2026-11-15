@@ -10,14 +10,14 @@ use std::hash::Hasher;
 /// Disallow JSX prop spreading the same identifier multiple times
 pub struct JsxPropsNoSpreadMulti;
 
-const NO_MULTI_SPREADING: Message = Message::new(
+const NO_MULTI_SPREADING: &Message = &Message::new(
     "noMultiSpreading",
     "Spreading the same expression multiple times is forbidden",
 );
-const MULTIPLE_IDENTIFIERS: Message =
-    Message::new("", "Prop '{{prop_name}}' is spread multiple times.");
-const MULTIPLE_MEMBER_EXPRESSIONS: Message =
-    Message::new("", "'{{member_name}}' is spread multiple times.");
+const MULTIPLE_IDENTIFIERS: &Message =
+    &Message::new("", "Prop '{{prop_name}}' is spread multiple times.");
+const MULTIPLE_MEMBER_EXPRESSIONS: &Message =
+    &Message::new("", "'{{member_name}}' is spread multiple times.");
 
 impl Rule for JsxPropsNoSpreadMulti {
     const META: Meta =

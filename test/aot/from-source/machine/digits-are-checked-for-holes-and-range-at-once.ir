@@ -1,0 +1,9 @@
+# A digit of an array of int32s is checked for a hole and for its range by one comparison: without its tag a hole is larger than every digit. A failing check restarts the iteration.
+# RUN(EVENT): compile PresenceChecksFusedIntoRangeChecks mechanisms=all
+# EVENT: statistic PresenceChecksFusedIntoRangeChecks 10
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# function multiplyAdd(a: any, i: any, x: any, b: any, j: any, c: any, n: any) { const xl = x & 0x3fff, xh = x >> 14; while (--n >= 0) { let l = a[i] & 0x3fff; const h = a[i++] >> 14; const m = xh * l + h * xl; l = xl * l + ((m & 0x3fff) << 14) + b[j] + c; c = (l >> 28) + (m >> 14) + xh * h; b[j++] = l & 0xfffffff; } return c; }
+# sink(multiplyAdd(input.a, input.i, input.x, input.b, input.j, input.c, input.n));
+# -- end of source

@@ -47,7 +47,7 @@ class DuplexSide extends Duplex {
     this.#otherSide!.push(null);
   }
 
-  _destroy(err, callback) {
+  _destroy(err: Error | null, callback: $Node.ErrorCallback) {
     const otherSide = this.#otherSide;
 
     if (otherSide !== null && !otherSide.destroyed) {

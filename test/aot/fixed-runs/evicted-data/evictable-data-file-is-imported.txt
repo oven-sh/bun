@@ -1,0 +1,36 @@
+A test file imports a data file and then a CommonJS file that requires it. Another test file deletes the data file's key from require.cache. require() returns the namespace object, as it does where nothing is deleted.
+#### asks-json.cjs
+exports.required = require("./held.json");
+#### asks-toml.cjs
+exports.required = require("./held.toml");
+#### asks-alone.cjs
+exports.required = require("./alone.json");
+#### alone.json
+{ "name": "alone" }
+#### held.json
+{ "name": "json" }
+#### held.toml
+name = "toml"
+#### json.test.js
+import { test } from "bun:test";
+import held from "./held.json";
+import cjs from "./asks-json.cjs";
+test("a default import first", () => {
+  console.log("| CASE", "json", held.name, JSON.stringify(cjs.required), Object.prototype.toString.call(cjs.required));
+  console.log("| CASE", "in the test", Object.prototype.toString.call(require("./held.json")));
+});
+#### toml.test.js
+import { test } from "bun:test";
+import * as held from "./held.toml";
+import cjs from "./asks-toml.cjs";
+import alone from "./asks-alone.cjs";
+test("a namespace import first, and a file that nothing imports", () => {
+  console.log("| CASE", "toml", held.name, JSON.stringify(cjs.required), Object.prototype.toString.call(cjs.required));
+  console.log("| CASE", "alone", JSON.stringify(alone.required), Object.prototype.toString.call(alone.required));
+});
+#### z.test.js
+import { test } from "bun:test";
+test("deletes the keys", () => {
+  for (const path of [require.resolve("./held.json"), require.resolve("./held.toml"), require.resolve("./alone.json")]) delete require.cache[path];
+  console.log("| CASE", "after that", Object.prototype.toString.call(require("./held.json")));
+});

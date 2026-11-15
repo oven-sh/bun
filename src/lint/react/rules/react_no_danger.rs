@@ -13,8 +13,8 @@ pub struct NoDanger {
     custom_component_names: Vec<Minimatch>,
 }
 
-const DANGEROUS_PROP: Message = Message::new("dangerousProp", "Dangerous property '{{name}}' found");
-const NO_DANGER: Message = Message::new("", "Do not use `dangerouslySetInnerHTML` prop");
+const DANGEROUS_PROP: &Message = &Message::new("dangerousProp", "Dangerous property '{{name}}' found");
+const NO_DANGER: &Message = &Message::new("", "Do not use `dangerouslySetInnerHTML` prop");
 
 impl Rule for NoDanger {
     const META: Meta = Meta::plugin(Plugin::React, "no-danger", Kind::None);

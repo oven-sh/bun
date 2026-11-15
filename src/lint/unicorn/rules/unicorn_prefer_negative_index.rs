@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 /// Prefer using a negative index over `.length - index` when possible.
 pub struct PreferNegativeIndex;
 
-const PREFER_NEGATIVE_INDEX: Message = Message::new("", "Prefer negative index over `.length - index` when possible.");
+const PREFER_NEGATIVE_INDEX: &Message = &Message::new("", "Prefer negative index over `.length - index` when possible.");
 
 enum TypeOptions {
     String,

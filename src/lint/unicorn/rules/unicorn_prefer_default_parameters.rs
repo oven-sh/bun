@@ -7,8 +7,8 @@ use smallvec::{SmallVec, smallvec};
 /// Prefer default parameters over reassignment.
 pub struct PreferDefaultParameters;
 
-const PREFER_DEFAULT_PARAMETERS: Message = Message::new("", "Prefer default parameters over reassignment for '{{name}}'.");
-const USE_DEFAULT_PARAMETER: Message = Message::new("", "Prefer default parameters over reassignment.");
+const PREFER_DEFAULT_PARAMETERS: &Message = &Message::new("", "Prefer default parameters over reassignment for '{{name}}'.");
+const USE_DEFAULT_PARAMETER: &Message = &Message::new("", "Prefer default parameters over reassignment.");
 
 impl Rule for PreferDefaultParameters {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-default-parameters", Kind::Suggestion).has_suggestions();

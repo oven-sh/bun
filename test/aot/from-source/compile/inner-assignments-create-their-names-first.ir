@@ -1,0 +1,14 @@
+# -- source: main.cjs
+# "use strict";
+# function Both(v) { this.a = this.b = v; this.c = v; }
+# globalThis.held = new Map([["literal", v => { var c = {}; c.x = c.y = v; c.z = v; return c; }], ["constructed", v => new Both(v)]]);
+# print(Object.keys(globalThis.held.get("literal")(1)).join(), Object.keys(globalThis.held.get("constructed")(1)).join());
+# -- end of source
+# The assignment in the value of another one is evaluated first: its name goes first in the layout, so that no store misses the expected order.
+# RUN(LITERAL): print
+# LITERAL: fields=[{key="x"{{*}}{key="y"{{*}}{key="z"{{*}}declaredOrder=[1, 0, 2]
+# RUN(CONSTRUCTED): print
+# CONSTRUCTED: name="Both"{{*}}fields=[{key="b"{{*}}{key="a"{{*}}{key="c"
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: y,x,z b,a,c
+# ANSWERS-NEXT: exited with 0

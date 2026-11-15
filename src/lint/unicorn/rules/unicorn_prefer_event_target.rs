@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Prefer `EventTarget` over `EventEmitter`.
 pub struct PreferEventTarget;
 
-const PREFER_EVENT_TARGET: Message = Message::new("", "Prefer `EventTarget` over `EventEmitter`.");
+const PREFER_EVENT_TARGET: &Message = &Message::new("", "Prefer `EventTarget` over `EventEmitter`.");
 
 const IGNORED_PACKAGES: [&str; 2] = ["@angular/core", "eventemitter3"];
 

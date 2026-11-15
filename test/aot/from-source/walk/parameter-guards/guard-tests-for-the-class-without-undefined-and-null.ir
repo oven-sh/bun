@@ -1,0 +1,21 @@
+# the type of a position that holds a reference lists undefined and null whatever the program wrote. The program wrote `Point`, and nobody in sight passes anything else,
+# so the guard tests for the class alone: undefined and null go on in the slow version, where the read throws as it is written, and the fast version asks nothing in front of its first read
+# f1 = area
+# -- source: guard-tests-for-the-class-without-undefined-and-null.ts
+# declare function sink(...values: unknown[]): void;
+# class Point { x = 1; y = 2; }
+# function area(point: Point, scale: number): number { const across = point.x * scale; const down = point.y * scale; return across * down + point.x; }
+# sink(area, new Point());
+# -- end of source
+# RUN: walk f1:ParameterGuard mechanisms=all
+# CHECK-LABEL: code f1:ParameterGuard
+# CHECK: = TypeTest {{*}}testedType=L
+# RUN(NULLISH): walk f1:ParameterGuard mechanisms=all
+# NULLISH-NOT: testedType=undefined|null
+# RUN(FAST): walk f1 mechanisms=all
+# FAST-LABEL: code f1:Body
+# FAST: = GetSlot {{*}}key="x"
+# RUN(UNASKED): walk f1 mechanisms=all
+# UNASKED-NOT: RequireObjectCoercible
+# RUN(FEWEST): walk f1:ParameterGuard mechanisms=none+TypedOperations+ParameterGuards
+# FEWEST-NOT: testedType=undefined|null

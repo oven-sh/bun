@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Warns when a single-character string access is compared with a string of length greater than 1.
 pub struct BadCharAtComparison;
 
-const BAD_CHAR_AT_COMPARISON: Message = Message::new("", "Invalid character comparison");
+const BAD_CHAR_AT_COMPARISON: &Message = &Message::new("", "Invalid character comparison");
 
 impl Rule for BadCharAtComparison {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "bad-char-at-comparison", Kind::Problem);

@@ -143,7 +143,7 @@ impl PerMessageDeflate {
     /// is the thread's shared libdeflate handle (`None` when it could not be allocated).
     pub(crate) fn decompress(
         &mut self,
-        decompressor: Option<&mut libdeflate_sys::Decompressor>,
+        decompressor: Option<&libdeflate_sys::Decompressor>,
         in_buf: &[u8],
         out: &mut Vec<u8>,
         max_len: usize,

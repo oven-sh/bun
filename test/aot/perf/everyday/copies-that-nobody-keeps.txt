@@ -1,0 +1,109 @@
+//// two-members-replaced
+interface O { a: number; b: number; c: number }
+const o: O = { a: 1, b: 2, c: 3 };
+function turn(i: number): number {
+  const c = { ...o, b: i & 7, c: i & 3 };
+  return c.a + c.b + c.c;
+}
+//// nothing-replaced
+interface O { a: number; b: number; c: number }
+const o: O = { a: 1, b: 2, c: 3 };
+function turn(i: number): number {
+  const c = { ...o };
+  return c.a + c.b + c.c + (i & 7);
+}
+//// two-sources-of-one-type
+interface O { a: number; b: number; c: number }
+const o: O = { a: 1, b: 2, c: 3 };
+const p: O = { a: 4, b: 5, c: 6 };
+function turn(i: number): number {
+  const c = { ...o, ...p, b: i & 7 };
+  return c.a + c.b + c.c;
+}
+//// one-of-a-list
+interface O { a: number; b: number; c: number }
+const os: O[] = [{ a: 1, b: 2, c: 3 }, { a: 4, b: 5, c: 6 }];
+function turn(i: number): number {
+  const c = { ...os[i & 1], b: i & 7 };
+  return c.a + c.b + c.c;
+}
+//// a-parameter
+interface O { a: number; b: number; c: number }
+const os: O[] = [{ a: 1, b: 2, c: 3 }, { a: 4, b: 5, c: 6 }];
+function replaced(o: O, b: number): number {
+  const c = { ...o, b };
+  return c.a + c.b + c.c;
+}
+function turn(i: number): number {
+  return replaced(os[i & 1], i & 7);
+}
+//// texts-and-numbers
+interface Options { host: string; port: number; secure: boolean }
+const defaults: Options = { host: "localhost", port: 80, secure: false };
+function turn(i: number): number {
+  const options = { ...defaults, port: i & 1023 };
+  return options.host.length + options.port + (options.secure ? 1 : 0);
+}
+//// one-inside-another
+interface Inner { x: number; y: number }
+interface Outer { inner: Inner; n: number }
+const outer: Outer = { inner: { x: 1, y: 2 }, n: 3 };
+function turn(i: number): number {
+  const c = { ...outer, inner: { ...outer.inner, y: i & 7 } };
+  return c.inner.x + c.inner.y + c.n;
+}
+//// a-member-in-front
+interface O { a?: number; b: number; c: number }
+const o: O = { a: 1, b: 2, c: 3 };
+function turn(i: number): number {
+  const c = { a: i & 7, ...o };
+  return c.a + c.b + c.c + (i & 7);
+}
+//// a-new-member-in-front
+interface O { a: number; b: number; c: number }
+const o: O = { a: 1, b: 2, c: 3 };
+function turn(i: number): number {
+  const c = { d: i & 7, ...o };
+  return c.a + c.b + c.c + c.d;
+}
+//// a-source-that-may-be-missing
+interface O { a: number; b: number; c: number }
+const os: (O | undefined)[] = [{ a: 1, b: 2, c: 3 }, undefined];
+function turn(i: number): number {
+  const c = { a: 0, c: 0, ...os[i & 1], b: i & 7 };
+  return c.a + c.b + c.c;
+}
+//// the-rest-of-a-pattern
+interface O { a: number; b: number; c: number }
+const o: O = { a: 1, b: 2, c: 3 };
+function turn(i: number): number {
+  const { a, ...rest } = o;
+  return a + rest.b + rest.c + (i & 7);
+}
+//// the-rest-of-a-pattern-over-one-of-a-list
+interface O { a: number; b: number; c: number }
+const os: O[] = [{ a: 1, b: 2, c: 3 }, { a: 4, b: 5, c: 6 }];
+function turn(i: number): number {
+  const { a, ...rest } = os[i & 1];
+  return a + rest.b + rest.c + (i & 7);
+}
+//// a-list-with-one-more
+const list: number[] = [1, 2, 3];
+function turn(i: number): number {
+  const c = [...list, i & 7];
+  return c[0] + c[3] + c.length;
+}
+//// kept.one-member-replaced
+interface O { a: number; b: number; c: number }
+let kept: O = { a: 1, b: 2, c: 3 };
+function turn(i: number): number {
+  kept = { ...kept, b: i & 7 };
+  return kept.a + kept.b + kept.c;
+}
+//// kept.nothing-replaced
+interface O { a: number; b: number; c: number }
+let kept: O = { a: 1, b: 2, c: 3 };
+function turn(i: number): number {
+  kept = { ...kept };
+  return kept.a + (i & 7);
+}

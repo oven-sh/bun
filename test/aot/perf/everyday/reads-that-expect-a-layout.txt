@@ -1,0 +1,87 @@
+//// four-fields-of-any-type-of-a-local-with-a-declared-object-type
+type Entry = { kind: unknown; value: unknown; owner: unknown; note: unknown };
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "entries"] = [{ kind: 1, value: 2, owner: 3, note: 4 }, { kind: 5, value: 6, owner: 7, note: 8 }] as Entry[];
+function turn(i: number): number {
+  const entry: Entry = (globalThis as any).entries[i & 1];
+  return ((entry.kind as number) + (entry.value as number) + (entry.owner as number) + (entry.note as number)) | 0;
+}
+//// four-number-fields-of-a-local-with-a-declared-object-type
+type Entry = { kind: number; value: number; owner: number; note: number };
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "entries"] = [{ kind: 1, value: 2, owner: 3, note: 4 }, { kind: 5, value: 6, owner: 7, note: 8 }] as Entry[];
+function turn(i: number): number {
+  const entry: Entry = (globalThis as any).entries[i & 1];
+  return (entry.kind + entry.value + entry.owner + entry.note) | 0;
+}
+//// four-fields-of-this-in-a-long-method-found-by-name
+class Box { a: unknown = 1; b: unknown = 2; c: unknown = 3; d: unknown = 4;
+  sum(i: number): number {
+    if (i < 0) { let t = i | 0; t = ((t ^ 5) * 3) | 0; t = ((t ^ 6) * 3) | 0; t = ((t ^ 7) * 3) | 0; t = ((t ^ 8) * 3) | 0; t = ((t ^ 9) * 3) | 0; t = ((t ^ 10) * 3) | 0; t = ((t ^ 11) * 3) | 0; t = ((t ^ 12) * 3) | 0; t = ((t ^ 13) * 3) | 0; t = ((t ^ 14) * 3) | 0; t = ((t ^ 15) * 3) | 0; t = ((t ^ 16) * 3) | 0; (globalThis as any).neverStoredEither = t; }
+    return ((this.a as number) + (this.b as number) + (this.c as number) + (this.d as number) + i) | 0;
+  }
+}
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "box"] = new Box();
+function turn(i: number): number {
+  return (globalThis as any).box.sum(i & 7);
+}
+//// fields-of-a-parameter-of-a-long-function-anybody-may-call
+type Item = { id: unknown; price: unknown; label: unknown };
+function priceOf(item: Item, i: number): number {
+  if (i < 0) { let t = i | 0; t = ((t ^ 5) * 3) | 0; t = ((t ^ 6) * 3) | 0; t = ((t ^ 7) * 3) | 0; t = ((t ^ 8) * 3) | 0; t = ((t ^ 9) * 3) | 0; t = ((t ^ 10) * 3) | 0; t = ((t ^ 11) * 3) | 0; t = ((t ^ 12) * 3) | 0; t = ((t ^ 13) * 3) | 0; t = ((t ^ 14) * 3) | 0; t = ((t ^ 15) * 3) | 0; t = ((t ^ 16) * 3) | 0; (globalThis as any).neverStoredEither = t; }
+  return ((item.price as number) + (item.id as number)) | 0;
+}
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "priceOf"] = priceOf;
+const items: Item[] = [{ id: 1, price: 2, label: "a" }, { id: 2, price: 3, label: "b" }];
+function turn(i: number): number {
+  return (globalThis as any).priceOf(items[i & 1], i & 3);
+}
+//// a-chain-of-object-fields-of-a-local-with-a-declared-object-type
+type Leaf = { size: unknown };
+type Branch = { leaf: Leaf; other: unknown };
+type Tree = { branch: Branch; name: unknown };
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "tree"] = { branch: { leaf: { size: 3 }, other: 1 }, name: "t" } as Tree;
+function turn(i: number): number {
+  const tree: Tree = (globalThis as any).tree;
+  return ((tree.branch.leaf.size as number) + i) | 0;
+}
+//// rules-whose-one-property-is-defined-after-birth-beside-a-payload-with-a-layout
+type Payload = { value: number; issues: number[]; failed: boolean };
+function Rule(this: any, limit: number) {
+  Object.defineProperty(this, "inner", { value: { limit, check(payload: Payload) { if (payload.value > limit) payload.issues.push(limit); } }, enumerable: false });
+}
+(globalThis as any).placeholderRule = { inner: { limit: 0, check(payload: Payload) {} } };
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "rules"] = [new (Rule as any)(5), new (Rule as any)(6), new (Rule as any)(7), new (Rule as any)(8)];
+function runRules(payload: any, rules: any) {
+  for (const rule of rules) {
+    const before = payload.issues.length;
+    rule.inner.check(payload);
+    if (payload.issues.length !== before) payload.failed = true;
+  }
+  return payload;
+}
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "runRules"] = runRules;
+function turn(i: number): number {
+  return (globalThis as any).runRules({ value: i & 7, issues: [], failed: false }, (globalThis as any).rules).issues.length;
+}
+//// a-method-of-a-field-of-a-declared-class-beside-two-literals-with-a-member-of-its-name-stored-under-a-key-nobody-knows
+class Shelf { texts: string[] = [" ", "a", "b"]; get(i: number): string { return this.texts[i] ?? " "; } }
+type Ledger = { codes: Int32Array; shelf: Shelf };
+type Entry = { label: string; weight: number };
+const first = { get(path: string) { return path.length; }, port: 80 };
+const second = { get(path: string) { return path.length + 1; }, port: 443, secure: true };
+const pass = new Function("value", process.argv.length > 99 ? "" : "return value") as <T>(value: T) => T;
+function put(target: any, key: string, value: unknown) { target[key] = value; }
+const clients: Record<string, unknown> = {};
+put(clients, pass("http"), first);
+put(clients, pass("https"), second);
+function entryAt(ledger: Ledger, i: number, out: Entry): void {
+  const word = ledger.codes[i | 1]!;
+  out.label = ledger.shelf.get(ledger.codes[i]!);
+  out.weight = word & 3;
+}
+const ledger: Ledger = { codes: new Int32Array(32).fill(1), shelf: new Shelf() };
+put(ledger, pass("shelf"), pass(new Shelf()));
+const out: Entry = { label: "", weight: 0 };
+function turn(i: number): number {
+  entryAt(ledger, i & 15, out);
+  return out.label.length + out.weight;
+}

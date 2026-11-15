@@ -11,10 +11,10 @@ pub struct RequireUnicodeRegexp {
     require_flag: Option<UnicodeFlag>,
 }
 
-const ADD_U_FLAG: Message = Message::new("addUFlag", "Add the 'u' flag.");
-const ADD_V_FLAG: Message = Message::new("addVFlag", "Add the 'v' flag.");
-const REQUIRE_U_FLAG: Message = Message::new("requireUFlag", "Use the 'u' flag.");
-const REQUIRE_V_FLAG: Message = Message::new("requireVFlag", "Use the 'v' flag.");
+const ADD_U_FLAG: &Message = &Message::new("addUFlag", "Add the 'u' flag.");
+const ADD_V_FLAG: &Message = &Message::new("addVFlag", "Add the 'v' flag.");
+const REQUIRE_U_FLAG: &Message = &Message::new("requireUFlag", "Use the 'u' flag.");
+const REQUIRE_V_FLAG: &Message = &Message::new("requireVFlag", "Use the 'v' flag.");
 
 const TRACE_MAP: TraceMap<'static, ()> =
     TraceMap::new(&[("RegExp", TraceMap::EMPTY.call(()).construct(()))]);
@@ -97,11 +97,11 @@ impl RequireUnicodeRegexp {
         self.require_flag == Some(UnicodeFlag::V)
     }
 
-    fn require_message(&self) -> Message {
+    fn require_message(&self) -> &'static Message {
         if self.requires_v() { REQUIRE_V_FLAG } else { REQUIRE_U_FLAG }
     }
 
-    fn add_message(&self) -> Message {
+    fn add_message(&self) -> &'static Message {
         if self.requires_v() { ADD_V_FLAG } else { ADD_U_FLAG }
     }
 

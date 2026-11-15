@@ -10,7 +10,6 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-bytemuck = "1"
 thiserror.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
@@ -19,7 +18,6 @@ enum-map.workspace = true
 enumset.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
-bun_ptr.workspace = true
 bun_collections.workspace = true
 bun_wyhash.workspace = true
 bun_crash_handler.workspace = true

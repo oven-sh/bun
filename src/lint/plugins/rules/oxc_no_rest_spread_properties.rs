@@ -7,7 +7,7 @@ pub struct NoRestSpreadProperties {
     object_rest_message: String,
 }
 
-const NO_REST_SPREAD_PROPERTIES: Message = Message::new("", "{{kind}} are not allowed. {{message_suffix}}");
+const NO_REST_SPREAD_PROPERTIES: &Message = &Message::new("", "{{kind}} are not allowed. {{message_suffix}}");
 
 impl Rule for NoRestSpreadProperties {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "no-rest-spread-properties", Kind::Suggestion);

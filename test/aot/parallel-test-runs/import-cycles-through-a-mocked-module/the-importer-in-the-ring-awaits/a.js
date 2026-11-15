@@ -1,0 +1,1 @@
+import { order } from "./log.js"; import { readA } from "./b.js"; import { part } from "./part.js"; order.push("a begins"); await 0; order.push("a ends"); export const name = "a"; export const a = () => part; export const viaB = () => readA();

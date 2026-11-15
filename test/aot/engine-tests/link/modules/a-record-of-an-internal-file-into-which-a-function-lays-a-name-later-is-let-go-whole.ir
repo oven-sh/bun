@@ -1,0 +1,36 @@
+# internal/net/isIP: export default { grow(by) { return by }, size: 3 };      node:net: const all = require("internal/net/isIP"); function later() { all.cache = 1; } export default later;      main.js: require("node:net")();
+# The build admits code from outside the image. A compiled file of the library lays a name into the record that its layout does not list, in a function that runs behind the evaluation.
+# Were the record handed out frozen, that store would throw as soon as an uncompiled file has asked the registry for it. So such a record is not as born: it is let go whole.
+# RUN: link modules functions calls fields mechanisms=all
+# CHECK-NOT: module m1 record-is-handed-out-frozen
+layout L0 module=m1 fields=[{key="grow" declared={type=anything} flags=[IsRequired]}, {key="size" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m2 kind=Require completes=true}]
+module m1 path="internal:net/isIP" displayPath="internal:net/isIP" kind=RuntimeSource flags=[IsLoadedByImportOnly, RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalNetIsIP body=f1
+module m2 path="node:net" displayPath="node:net" kind=RuntimeSource flags=[RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeNet body=f3
+entry module=m0
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = RequireModule module=m2 referrer=m0 specifier="node:net"
+    Return
+}
+function f1 module=m1 kind=Module role=Library results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = Integer integer=3
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    Return v3
+}
+function f2 name="grow" module=m1 role=Library length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 module=m2 kind=Module role=Library results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    Return v0
+}
+function f4 name="later" module=m2 role=Library results=[{type=anything}] {
+    v0 = RequireModule module=m1 referrer=m2 specifier="internal/net/isIP"
+    v1 = Integer integer=1
+    PropSet v0, v1 key="cache"
+    Return v1
+}

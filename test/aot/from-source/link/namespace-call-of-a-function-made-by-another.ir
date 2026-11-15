@@ -1,0 +1,56 @@
+# -- source: main.mjs
+# import * as lib from "./lib.mjs";
+# print(lib.load("text"));
+# -- source: lib.mjs
+# function makeLoad(prefix) { return function load(text) { return prefix + text; }; }
+# export const load = makeLoad("loaded ");
+# export function unused(text) { return load(text) + " twice"; }
+# -- end of source
+# load() is what makeLoad() returns and reads no `this`, so the call through the namespace keeps no other export.
+# RUN: print f2
+# CHECK: function f2 name="unused"
+# CHECK: runtimeError=OmittedFromExecutable name="unused"
+
+module m0 path="lib.mjs" displayPath="lib.mjs" flags=[CachesEvaluationError, IsImportedAsNamespace] body=f0 exports=[{name="load" variable=g0}] namespaceLayout=L(m0)
+module m1 path="main.mjs" displayPath="main.mjs" body=f5 requests=[{target=m0 completes=true}] namespaceLayout=L(m1)
+entry module=m1
+variable g0 name="load" module=m0 declared={type=undefined|null|function|absent|f3 flags=[IsExpected]} flags=[IsImmutable] place=5
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = String string="loaded " @113
+    v3 = Call v1, -, v2 calleeName="makeLoad" @104
+    PutModuleVariable v3 variable=g0 @97
+    v5 = Undefined @125
+    Return v5 @125
+}
+function f1 name="makeLoad" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = NewClosure v0 function=f3 @35
+    Return v1 @35
+}
+function f2 name="unused" module=m0 position=125 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = NewRuntimeError runtimeError=OmittedFromExecutable name="unused" @125
+    Throw v1 @125
+}
+function f3 name="load" module=m0 position=35 flags=[HasExplicitName] length=1 captures=[{type=undefined|null|string flags=[IsExpected] variableName="prefix"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: anything):
+    v2 = Add v0, v1 @64
+    Return v2 @64
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f5 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis @34
+    v1 = PropGet v0 key="print" [isFreeName] @34
+    v2 = GetModuleVariable variable=g0 @40
+    v3 = CheckInitialized v2 name="load" @40
+    v4 = ModuleNamespace module=m0 @40
+    v5 = String string="text" @49
+    v6 = Call v3, v4, v5 calleeName="lib.load" @44
+    v7 = Call v1, -, v6 calleeName="print" @34
+    v8 = Undefined @34
+    Return v8 @34
+}

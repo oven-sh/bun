@@ -62,7 +62,7 @@ impl DevServer {
     /// that has no parameter.
     pub(super) fn report_pages_hidden_by_server_routes(&self) {
         let Some(server) = self.server else { return };
-        let keys = self.server_graph.bundled_files.keys();
+        let keys = self.graphs.server.bundled_files.keys();
         for (route_path, route_index) in self.router.static_routes.iter() {
             if !server.has_route(route_path) {
                 continue;
@@ -84,7 +84,7 @@ impl DevServer {
         if !self.router.type_ptr_const(route.r#type).client_pages {
             return ClientPageFiles::default();
         }
-        let keys = self.server_graph.bundled_files.keys();
+        let keys = self.graphs.server.bundled_files.keys();
         let path = |id: OpaqueFileId| -> Box<[u8]> {
             Box::from(&*keys[from_opaque_file_id::<{ bake::Side::Server }>(id).get() as usize])
         };
@@ -101,22 +101,20 @@ impl DevServer {
         }
         files
     }
+}
 
-    /// Interface function for FrameworkRouter
-    pub(crate) fn get_file_id_for_router(
+impl router::InsertionHandler for Graphs {
+    fn get_file_id_for_router(
         &mut self,
         abs_path: &[u8],
         associated_route: router::RouteIndex,
         file_kind: router::FileKind,
-    ) -> crate::Result<OpaqueFileId> {
-        let index = self
-            .server_graph
-            .insert_stale_extra(
-                abs_path,
-                bake::Graph::Server,
-                incremental_graph::RouteKind::Route,
-            )
-            .map_err(crate::Error::from)?;
+    ) -> Result<OpaqueFileId, AllocError> {
+        let index = self.insert_stale_extra::<{ Side::Server }>(
+            abs_path,
+            bake::Graph::Server,
+            incremental_graph::RouteKind::Route,
+        )?;
         self.route_lookup.put(
             index,
             RouteIndexAndRecurseFlag::new(associated_route, file_kind == router::FileKind::Layout),
@@ -124,18 +122,18 @@ impl DevServer {
         Ok(to_opaque_file_id::<{ bake::Side::Server }>(index))
     }
 
-    pub(crate) fn on_router_syntax_error(
-        &self,
+    fn on_router_syntax_error(
+        &mut self,
         rel_path: &[u8],
-        log: &router::TinyLog,
+        log: router::TinyLog,
     ) -> Result<(), AllocError> {
         // TODO: maybe this should track the error, send over HmrSocket?
         log.print(rel_path);
         Ok(())
     }
 
-    pub(crate) fn on_router_collision_error(
-        &self,
+    fn on_router_collision_error(
+        &mut self,
         rel_path: &[u8],
         other_id: OpaqueFileId,
         ty: router::FileKind,
@@ -149,41 +147,15 @@ impl DevServer {
         let mut buf = paths::path_buffer_pool::get();
         bun_core::pretty_errorln!(
             "  - <blue>{}<r>",
-            bstr::BStr::new(self.relative_path(
+            bstr::BStr::new(relative_path(
+                &self.root,
                 &mut *buf,
-                &self.server_graph.bundled_files.keys()
+                &self.server.bundled_files.keys()
                     [from_opaque_file_id::<{ bake::Side::Server }>(other_id).get() as usize]
             ))
         );
         Output::flush();
         Ok(())
-    }
-}
-
-impl router::InsertionHandler for DevServer {
-    fn get_file_id_for_router(
-        &mut self,
-        abs_path: &[u8],
-        associated_route: router::RouteIndex,
-        kind: router::FileKind,
-    ) -> Result<OpaqueFileId, AllocError> {
-        DevServer::get_file_id_for_router(self, abs_path, associated_route, kind)
-            .map_err(|_| AllocError)
-    }
-    fn on_router_syntax_error(
-        &mut self,
-        rel_path: &[u8],
-        fail: router::TinyLog,
-    ) -> Result<(), AllocError> {
-        DevServer::on_router_syntax_error(self, rel_path, &fail)
-    }
-    fn on_router_collision_error(
-        &mut self,
-        rel_path: &[u8],
-        other_id: OpaqueFileId,
-        file_kind: router::FileKind,
-    ) -> Result<(), AllocError> {
-        DevServer::on_router_collision_error(self, rel_path, other_id, file_kind)
     }
 }
 
@@ -215,33 +187,37 @@ impl DevServer {
         relative_path_buf: &'a mut PathBuffer,
         path: &'a [u8],
     ) -> &'a [u8] {
-        if !paths::is_absolute(path) {
-            return path;
-        }
-
-        if path.len() > self.root.len()
-            && path[self.root.len()] == b'/'
-            && path.starts_with(&self.root)
-        {
-            return &path[self.root.len() + 1..];
-        }
-
-        if path.len() + self.root.len() * 2 >= paths::MAX_PATH_BYTES {
-            return path;
-        }
-
-        // `relative_platform_buf` with ALWAYS_COPY=true writes into
-        // `relative_path_buf[..len]` (same invariant `relative_buf_z` relies
-        // on); capture the length, drop the shared borrow, then re-slice
-        // mutably to convert separators in place.
-        let rel_len = bun_paths::resolve_path::relative_platform_buf::<
-            bun_paths::resolve_path::platform::Auto,
-            true,
-        >(&mut relative_path_buf[..], &self.root, path)
-        .len();
-        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
-            &mut relative_path_buf[..rel_len],
-        );
-        &relative_path_buf[..rel_len]
+        relative_path(&self.graphs.root, relative_path_buf, path)
     }
+}
+
+/// `DevServer::relative_path`, given `Graphs::root`.
+pub(super) fn relative_path<'a>(
+    root: &[u8],
+    relative_path_buf: &'a mut PathBuffer,
+    path: &'a [u8],
+) -> &'a [u8] {
+    if !paths::is_absolute(path) {
+        return path;
+    }
+
+    if path.len() > root.len() && path[root.len()] == b'/' && path.starts_with(root) {
+        return &path[root.len() + 1..];
+    }
+
+    if path.len() + root.len() * 2 >= paths::MAX_PATH_BYTES {
+        return path;
+    }
+
+    // `relative_platform_buf` with ALWAYS_COPY=true writes into
+    // `relative_path_buf[..len]` (same invariant `relative_buf_z` relies
+    // on); capture the length, drop the shared borrow, then re-slice
+    // mutably to convert separators in place.
+    let rel_len = bun_paths::resolve_path::relative_platform_buf::<
+        bun_paths::resolve_path::platform::Auto,
+        true,
+    >(&mut relative_path_buf[..], root, path)
+    .len();
+    bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut relative_path_buf[..rel_len]);
+    &relative_path_buf[..rel_len]
 }

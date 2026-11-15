@@ -1,0 +1,32 @@
+# round a ring of calls in tail position all members return in one form, or no call of the ring can be a jump. `odd` is also handed to `map`: a call of it is not listed, so it returns boxed values: then `even` does too.
+# with a raw Int32 out of `even` alone each turn of the ring left two frames: even(4000000) threw a RangeError, where plain Bun answers 1.
+# `up` and `down`, of which neither is used by value, return boxed values too: their calls are calls of values: ring-of-tail-calls-returns-raw-values-only-where-each-call-is-written-direct.ir
+# f1 = even, f2 = odd, f3 = up, f4 = down
+# -- source: ring-of-tail-calls-with-a-member-that-is-also-used-by-value.ts
+# declare function sink(...values: unknown[]): void;
+# let work = 0;
+# function even(n: number): number { for (let i = 0; i < 2; i++) work = (work + i) | 0; if (n === 0) return 1; return odd(n - 1); }
+# function odd(n: number): number { for (let i = 0; i < 2; i++) work = (work ^ i) | 0; if (n === 0) return 0; return even(n - 1); }
+# function up(n: number): number { for (let i = 0; i < 2; i++) work = (work + i) | 0; if (n === 0) return 1; return down(n - 1); }
+# function down(n: number): number { for (let i = 0; i < 2; i++) work = (work ^ i) | 0; if (n === 0) return 0; return up(n - 1); }
+# sink([3].map(odd).length, even(4), up(4));
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}ring-by-value
+# CHECK: function f2 {{*}}ring-by-value
+# CHECK: function f3 {{*}}ring-by-value
+# CHECK: function f4 {{*}}ring-by-value
+# RUN(PLAN): plan units mechanisms=all
+# PLAN: unit f1:Body ({{*}}) -> (JSValue)
+# PLAN: unit f2:Body ({{*}}) -> (JSValue)
+# PLAN: unit f3:Body ({{*}}) -> (JSValue)
+# PLAN: unit f4:Body ({{*}}) -> (JSValue)
+# RUN(WALK): walk f1 f2 f3 f4 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: ReturnCall
+# WALK-LABEL: code f2:Body
+# WALK: ReturnCall
+# WALK-LABEL: code f3:Body
+# WALK: ReturnCall
+# WALK-LABEL: code f4:Body
+# WALK: ReturnCall

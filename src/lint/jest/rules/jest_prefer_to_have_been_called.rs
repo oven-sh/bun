@@ -5,7 +5,7 @@ use bun_lint::prelude::*;
 /// Suggests using `toHaveBeenCalled()` or `not.toHaveBeenCalled()` over `toHaveBeenCalledTimes(0)` or `toBeCalledTimes(0)`.
 pub struct PreferToHaveBeenCalled<const RUNNER: u8 = { jest::JEST }>;
 
-const PREFER_TO_HAVE_BEEN_CALLED: Message = Message::new("", "Prefer `toHaveBeenCalled()` over `toHaveBeenCalledTimes(0)`");
+const PREFER_TO_HAVE_BEEN_CALLED: &Message = &Message::new("", "Prefer `toHaveBeenCalled()` over `toHaveBeenCalledTimes(0)`");
 
 impl<const RUNNER: u8> Rule for PreferToHaveBeenCalled<RUNNER> {
     const META: Meta = jest::meta(RUNNER, "prefer-to-have-been-called", Kind::Suggestion).fixable(Fixable::Code);

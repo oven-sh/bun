@@ -1,0 +1,27 @@
+# -- source: main.cjs
+# "use strict";
+# const nothing = { weight: 0 };
+# function size(holder) { const n = holder.count; if (holder.rest) return n + holder.more - 1; return n; }
+# function pick(holder, at) { if (holder.hook) holder.hook(at); const n = holder.items.length - (holder.rest ? 1 : 0); if (at < n) return holder.items[at]; if (holder.rest) { const last = holder.items[n]; const behind = at - n; if (last.many) { if (behind < last.many.length) return last.many[behind]; return last.many.length ? last.many[last.many.length - 1] : undefined; } return last; } return undefined; }
+# function each(first, second, visit, bad) { const a = size(first), b = size(second); const least = second.rest ? b - 1 : b; const n = first.rest ? least : Math.min(a, least); for (let i = 0; i < n; i++) { const x = pick(first, i) || nothing; if (x.weight === 2) continue; const y = pick(second, i) || nothing; visit(x, y); if (x.weight === 5) break; if (y.weight === bad + 1) return 1000 + i; } return 3000; }
+# let sum = 0; function add(x, y) { sum = (sum * 31 + x.weight * 3 + y.weight) % 1000003; }
+# function f(first, second, bad) { return each(first, second, add, bad) + ":" + sum; }
+# const entry = [f], data = JSON.parse('[{"rest":true,"more":1,"count":5,"hook":null,"items":[{"weight":1},{"weight":2},{"weight":3}]},{"rest":false,"more":1,"count":3,"hook":null,"items":[{"weight":4},{"weight":5},{"weight":6}]}]');
+# console.log(entry[0](data[0], data[1], 99));
+# -- end of source
+# The bound is a local that no turn stores: the least of two results of calls, a number as far as anybody knows. The turns call a function that is not copied, so a copy that counts on quiet turns is left in every turn. The loop is built twice all the same, with the calls staying in the typed copy.
+# RUN: walk f3 mechanisms=all
+# The bound is asked once, in front of the loop.
+# CHECK: TypeTest {{*}} testedType=i32
+# The loop as written: the bound is asked for its kind in every turn and the counter is an integer up to 2 ** 53.
+# CHECK: isLoopHead=true
+# CHECK: Less {{*}} form=NumberAndValue
+# CHECK: Increment {{*}} form=CheckedIntegers
+# What is no int32 is rounded up once; what is no number goes to the loop as written.
+# CHECK: IntegerBound {{*}} comparison=Less
+# The typed copy: two integers are compared, both calls stand in it, and the counter is stepped as an int32.
+# CHECK: isLoopHead=true
+# CHECK: Less {{*}} form=Integers
+# CHECK: CallDirect {{*}} function=f2
+# CHECK: CallDirect {{*}} function=f2
+# CHECK: Increment {{*}} form=Integers

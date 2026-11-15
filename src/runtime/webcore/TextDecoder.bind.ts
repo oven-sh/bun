@@ -12,7 +12,6 @@ export const TextDecodeOptions = b.dictionary({ stream: b.bool.loose.default(fal
 
 export const TextDecoder = b.class({
   rustPath: "crate::webcore::TextDecoder",
-  configurable: false,
   construct: {
     args: { label: b.string.loose.utf8.optional, options: TextDecoderOptions.nullable.default({}) },
     expected: { options: ["object"] },
@@ -33,7 +32,7 @@ export const TextDecoder = b.class({
       mutates: true,
     },
     encoding: { getter: b.string.local, cache: true, capability: "heap" },
-    fatal: { getter: b.bool },
-    ignoreBOM: { getter: b.bool },
+    fatal: { getter: b.bool, pure: true },
+    ignoreBOM: { getter: b.bool, pure: true },
   },
 });

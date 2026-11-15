@@ -7,7 +7,7 @@ use bun_lint::rule::Plugin;
 /// See `windowsHide` and `stdio` in the documentation of Node.js's `child_process.spawn()` and of `Bun.spawn()`.
 pub struct NoConsoleWindowFlash;
 
-const CONSOLE_WINDOW: Message = Message::new(
+const CONSOLE_WINDOW: &Message = &Message::new(
     "consoleWindow",
     "On Windows, this process briefly opens a console window. Set `windowsHide: true`.",
 );

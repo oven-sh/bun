@@ -1,0 +1,10 @@
+# codePointAt inside the text gives no undefined
+# f1 = last
+# -- source: code-point-read-inside-a-text-comes-round-as-an-integer.ts
+# function last(text: string): number { let point = 0; for (let pos = 0; pos < text.length; pos++) point = text.codePointAt(pos)!; return point; }
+# console.log(last("abc"), last(""));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: : int[0, 1114111] @Int32{{*}}isLoopHead=true
+# CHECK: = GetStringCodeUnit

@@ -1,0 +1,8 @@
+# the control: a read under such a name may hand out eval
+# -- source: a-read-under-a-computed-name-hands-out-any-member.ts
+# declare const input: string;
+# console.log((globalThis as any)[input]);
+# -- end of source
+# RUN: causes
+# CHECK: cause EvaluatesText Eval at f0
+# CHECK: unseen-code can-run

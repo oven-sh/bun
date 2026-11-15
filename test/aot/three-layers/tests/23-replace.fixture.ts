@@ -1,0 +1,14 @@
+import { spyOn, mock, jest, expect } from "bun:test";
+import { check } from "../src/show";
+import * as shapes from "fake-shapes";
+import { Circle, accessors, callArea } from "fake-shapes";
+import { Vec2, total } from "fake-typed";
+import * as models from "../src/models";
+import { Square } from "../src/models";
+const F = "23";
+check(F, "spies on prototypes of other layers", () => { const a = spyOn(Circle.prototype, "area").mockReturnValue(42); const b = spyOn(Vec2.prototype, "add"); const c = spyOn(Square.prototype, "area").mockImplementation(function (this: Square) { return -this.side; }); const out = [callArea(new Circle("c", 1)), new Circle("c", 1).describe(), total([new Vec2(1, 1), new Vec2(2, 2)]).parts(), b.mock.calls.length, new Square("s", 3).describe(), callArea(new Square("s", 4))]; a.mockRestore(); b.mockRestore(); c.mockRestore(); return [out, callArea(new Circle("c", 1)), new Square("s", 3).area()]; });
+check(F, "spies on objects and instances", () => { const s = new Square("s", 2); const spy = spyOn(s, "area"); const out = [s.describe(), spy.mock.calls.length, spy.mock.results, accessors.v]; spy.mockRestore(); return [out, accessors.v > 0]; });
+check(F, "mock functions as callbacks", () => { const f = mock((a: number) => a * 2); const r = shapes.callTwice(f, 4); const j = jest.fn().mockReturnValueOnce("once").mockReturnValue("then"); return [r, f.mock.calls, f.mock.contexts.map(c => (c as any)?.who), shapes.callTwice(j as any), shapes.mapValues({ a: 1, b: 2 }, f)]; });
+check(F, "spies on exports", () => { const spy = spyOn(models, "makeUser").mockReturnValue({ id: 0, name: "mocked", size: 0, roles: [] }); const viaNs = models.makeUser(5).name; spy.mockRestore(); return [viaNs, models.makeUser(5).name]; });
+check(F, "matchers over foreign objects", () => { expect(new Vec2(1, 2)).toEqual(new Vec2(1, 2)); expect(new Square("s", 1)).toBeInstanceOf(shapes.Shape); expect(models.makeUser(3)).toMatchObject({ address: { city: "c3" } }); expect(() => shapes.thrower("pkg")).toThrow(shapes.PkgError); expect(new Vec2(1, 2)).not.toStrictEqual({ x: 1, y: 2 }); expect({ ...new Vec2(1, 2) }).toStrictEqual({ x: 1, y: 2 }); expect([...shapes.range(0, 3)]).toEqual([0, 1, 2]); expect(new Set([1])).toContain(1); return "all matched"; });
+check(F, "fake timers", () => { jest.useFakeTimers(); const log: string[] = []; setTimeout(() => log.push("a"), 100); const d = require("fake-cjs").debounce((x: string) => log.push(x), 50); d("1"); d("2"); jest.advanceTimersByTime(60); log.push("|"); jest.advanceTimersByTime(60); jest.useRealTimers(); return log; });

@@ -1,0 +1,24 @@
+# a read of the slot as a value makes the closure and lays it in the slot. Where such a read stands in a loop the look counts that store, and what the state holds of the slot ends at the head, as with any store in a loop: the call in the loop goes by the read beside it. The twin with the call alone in the loop is call-off-the-literal-that-the-unit-made-reads-neither-slot-nor-capture.ir.
+# f1 = make, f2 = run, f3 = next
+# -- source: read-as-a-value-in-a-loop-ends-what-is-known-of-the-slot-at-the-head.js
+# var kept;
+# function make() { var state = 0; return { next: function () { for (var k = 0; k < 3; k++) state += k; return state; } }; }
+# function run(count) { var total = 0; for (var n = 0; n < count; n++) { var it = make(); for (var j = 0; j < 3; j++) { kept = it.next; total += it.next(); } } return total; }
+# print(run(10), kept());
+# -- end of source
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: "next" DeferredClosure
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: [[scope]]: env {{*}} = NewObject
+# CHECK: [[unmade]]: {{*}} = NewClosure [[scope]] {{*}}closureForm=Deferred
+# CHECK: [[literal]]: {{*}} = NewObject -, [[unmade]], [[scope]]
+# CHECK: [[closure]]: {{*}} = GetDeferredClosureSlot {{*}}key="next"
+# CHECK: [[read]]: {{*}} = GetCapture [[closure]]
+# CHECK: = CallDirect [[read]]{{*}}function=f3
+# RUN(NEVER): walk f2 mechanisms=all
+# NEVER-LABEL: code f2:Body
+# NEVER: [[scope]]: env {{*}} = NewObject
+# NEVER-NOT: = CallDirect [[scope]]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

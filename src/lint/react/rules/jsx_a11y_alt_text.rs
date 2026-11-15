@@ -15,13 +15,13 @@ pub struct AltText {
     input_type_image: Option<Vec<String>>,
 }
 
-const MISSING_ALT_PROP: Message = Message::new("", "Missing `alt` attribute.");
-const MISSING_ALT_VALUE: Message = Message::new("", "Invalid `alt` value.");
-const ARIA_LABEL_VALUE: Message = Message::new("", "Missing value for `aria-label` attribute.");
-const ARIA_LABELLED_BY_VALUE: Message = Message::new("", "Missing value for `aria-labelledby` attribute.");
-const PREFER_ALT: Message = Message::new("", "ARIA used where native HTML could suffice.");
+const MISSING_ALT_PROP: &Message = &Message::new("", "Missing `alt` attribute.");
+const MISSING_ALT_VALUE: &Message = &Message::new("", "Invalid `alt` value.");
+const ARIA_LABEL_VALUE: &Message = &Message::new("", "Missing value for `aria-label` attribute.");
+const ARIA_LABELLED_BY_VALUE: &Message = &Message::new("", "Missing value for `aria-labelledby` attribute.");
+const PREFER_ALT: &Message = &Message::new("", "ARIA used where native HTML could suffice.");
 /// For `object`, `area` and `input[type="image"]`.
-const MISSING_ALTERNATIVE_TEXT: Message = Message::new("", "Missing alternative text.");
+const MISSING_ALTERNATIVE_TEXT: &Message = &Message::new("", "Missing alternative text.");
 const OBJECT_HELP: &str =
     "Embedded <object> elements must have a text alternative through the `alt`, `aria-label`, or `aria-labelledby` prop.";
 const AREA_HELP: &str =
@@ -113,7 +113,7 @@ fn has_label(node: Jsx) -> bool {
         || has_jsx_prop_ignore_case(node, "aria-labelledby").is_some_and(aria_label_has_value)
 }
 
-fn img_rule(node: Jsx) -> Option<Message> {
+fn img_rule(node: Jsx) -> Option<&'static Message> {
     if let Some(alt_prop) = has_jsx_prop_ignore_case(node, "alt") {
         return (!is_valid_alt_prop(alt_prop)).then_some(MISSING_ALT_VALUE);
     }
@@ -129,14 +129,14 @@ fn img_rule(node: Jsx) -> Option<Message> {
     Some(MISSING_ALT_PROP)
 }
 
-fn object_rule<'a>(file: &'a File<'a>, node: Jsx<'a>) -> Option<Message> {
+fn object_rule<'a>(file: &'a File<'a>, node: Jsx<'a>) -> Option<&'static Message> {
     let title = has_jsx_prop_ignore_case(node, "title").and_then(get_string_literal_prop_value);
     let has_text_alternative = has_label(node) || title.is_some_and(|it| !it.is_empty()) || object_has_accessible_child(file, node);
     (!has_text_alternative).then_some(MISSING_ALTERNATIVE_TEXT)
 }
 
 /// Also for `input[type="image"]`.
-fn area_rule(node: Jsx) -> Option<Message> {
+fn area_rule(node: Jsx) -> Option<&'static Message> {
     let has_text_alternative = has_label(node) || has_jsx_prop_ignore_case(node, "alt").is_some_and(is_valid_alt_prop);
     (!has_text_alternative).then_some(MISSING_ALTERNATIVE_TEXT)
 }

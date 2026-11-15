@@ -1,5 +1,5 @@
 # h3blast — links against Bun's already-built vendored deps so we don't
-# rebuild lsquic/BoringSSL/HdrHistogram. Run `bun run build:release` once
+# rebuild lsquic/BoringSSL. Run `bun run build:release` once
 # in the repo root first so the .o files exist.
 
 ROOT      := ../..
@@ -8,13 +8,14 @@ OBJ       := $(ROOT)/build/$(PROFILE)/obj/vendor
 VENDOR    := $(ROOT)/vendor
 
 CC        ?= clang
+# LSXPACK_MAX_STRLEN: as in scripts/build/deps/lshpack.ts, which built the objects.
 CFLAGS    := -std=c11 -O3 -g -Wall -Wextra -Wno-unused-parameter \
+             -DLSXPACK_MAX_STRLEN=UINT32_MAX \
              -I$(VENDOR)/lsquic/include \
-             -I$(VENDOR)/hdrhistogram/include \
              -I$(VENDOR)/boringssl/include
 LDFLAGS   := -lstdc++ -lm -lpthread
 
-DEPS      := lsquic lsqpack lshpack boringssl hdrhistogram zlib
+DEPS      := lsquic lsqpack lshpack boringssl zlib
 DEP_DIRS  := $(addprefix $(OBJ)/,$(DEPS))
 LIBDEPS   := build/libdeps.a
 

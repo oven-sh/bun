@@ -1,0 +1,20 @@
+# -- source: parsed.ts
+# interface Node1 { kind: number; pos: number; parent?: Node1; getText(): string }
+# interface Options { target: number; configFile?: Node1 }
+# interface Request1 { seq: number; command: string; arguments?: { file: string; options: Options } }
+# class NodeObject implements Node1 {
+#   kind: number; pos: number; parent?: Node1;
+#   constructor(kind: number, pos: number) { this.kind = kind; this.pos = pos; this.parent = undefined; }
+#   getText(): string { return "text" + this.kind; }
+# }
+# class IdentifierObject extends NodeObject { escaped: string; constructor(pos: number) { super(80, pos); this.escaped = "_" + pos; } }
+# function parseMessage(text: string): Request1 { return JSON.parse(text) as Request1; }
+# function widthOf(node: Node1): number { return node.kind + node.pos; }
+# (globalThis as any).parseMessage = parseMessage; (globalThis as any).widthOf = widthOf; (globalThis as any).made = [NodeObject, IdentifierObject];
+# const nodes: Node1[] = []; for (let i = 0; i < 20; i++) nodes.push(i % 2 ? new NodeObject(i, i) : new IdentifierObject(i));
+# let sum = parseMessage('{"seq":1,"command":"c"}').seq; for (const n of nodes) sum += widthOf(n);
+# console.log(sum);
+# -- end of source
+# The parser makes no Node1, which requires a method, so the two classes are its members alone.
+# RUN: members
+# CHECK: L4: members [L0, L1]

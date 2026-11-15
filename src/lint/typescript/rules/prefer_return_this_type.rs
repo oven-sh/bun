@@ -4,7 +4,7 @@ use bun_lint::types::tsutils::is_union_type;
 /// Enforce that `this` is used when only `this` type is returned.
 pub struct PreferReturnThisType;
 
-const USE_THIS_TYPE: Message = Message::new("useThisType", "Use `this` type instead.");
+const USE_THIS_TYPE: &Message = &Message::new("useThisType", "Use `this` type instead.");
 
 fn try_get_name_in_type<'a>(name: Name<'a>, type_node: TypeNode<'a>, is_oxlint: bool) -> Option<TypeNode<'a>> {
     // tsgolint doesn't look into a ParenthesizedType.

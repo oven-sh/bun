@@ -7,7 +7,7 @@ use bun_lint::rule::Plugin;
 /// Enforces that `aria-hidden="true"` is not set on focusable elements.
 pub struct NoAriaHiddenOnFocusable;
 
-const NO_ARIA_HIDDEN_ON_FOCUSABLE: Message = Message::new("", "`aria-hidden` must not be true on focusable elements.");
+const NO_ARIA_HIDDEN_ON_FOCUSABLE: &Message = &Message::new("", "`aria-hidden` must not be true on focusable elements.");
 
 impl Rule for NoAriaHiddenOnFocusable {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "no-aria-hidden-on-focusable", Kind::Problem).fixable(Fixable::Code);

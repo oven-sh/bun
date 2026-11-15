@@ -5,8 +5,8 @@ use bun_lint::utils::char_source;
 /// Disallow `javascript:` URLs.
 pub struct NoScriptUrl;
 
-const UNEXPECTED_SCRIPT_URL: Message =
-    Message::new("unexpectedScriptURL", "Script URL is a form of eval.");
+const UNEXPECTED_SCRIPT_URL: &Message =
+    &Message::new("unexpectedScriptURL", "Script URL is a form of eval.");
 
 const SCHEME: &[u8] = b"javascript:";
 

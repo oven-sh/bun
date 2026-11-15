@@ -1,0 +1,18 @@
+# `{ [Symbol.iterator]() { .. } }`: the member under the well-known symbol is a field of the literal's layout, so the open reads it out of its slot, knows the one function that it holds,
+# and walks that function and `next` in place: no helper of the library is called, and no record `{ value, done }` is born in a step.
+# f1 = make, f2 = total, f3 = the method under the symbol, f4 = next
+# -- source: the-loop-over-an-object-literal-with-its-own-iterator-goes-by-the-methods-in-sight.ts
+# declare function sink(...values: unknown[]): number;
+# function make(most: number) { return { [Symbol.iterator]() { let i = 0; return { next(): IteratorResult<number> { return i < most ? { value: ++i, done: false } : { value: undefined, done: true }; } }; } }; }
+# function total(walk: Iterable<number>): number { let sum = 0; for (const x of walk) sum += x; return sum; }
+# sink(total(make(3)), total(make(4)));
+# -- end of source
+# RUN: walk f2:Body mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: frame 1 callee=f3
+# CHECK: frame 2 callee=f4
+# CHECK: = GetSlot {{*}}key=@@iterator
+# CHECK-NOT: isNeverInlined
+# CHECK: isLoopHead=true
+# CHECK-NOT: = NewObject
+# CHECK: Return

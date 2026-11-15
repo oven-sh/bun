@@ -1,0 +1,24 @@
+# beside what is expected, these are never held, whatever is written of them: a type without a required member (a bag of options: every object is of it) . an accessor, whose slot holds its functions.
+# `strict` beside them is the control: it is written, and held. So is `total`, though Link sees a store under a computed key come to its layout: that mark takes back what rests on what was SEEN stored, never what is written:
+# the same store comes to the same objects through a receiver that Link has lost, and the run time's own store holds the slot. Else the more Link saw, the fewer slots were held.
+# f1 = fill
+# -- source: each-kind-of-field-that-is-never-held.ts
+# declare function sink(...values: unknown[]): void;
+# interface Bag { depth?: number; name?: string; strict?: boolean }
+# class Holder { bag: Bag; strict: boolean; constructor(bag: Bag, strict: boolean) { this.bag = bag; this.strict = strict; } }
+# class Counts { total: string; constructor(total: string) { this.total = total; } }
+# function fill(counts: Counts, word: string, value: string) { (counts as any)[word] = value; }
+# function literal(seed: string) { return { get size(): string { return seed; }, plain: seed }; }
+# fill(new Counts("1"), "total", "2");
+# fill(new Counts("2"), "other", "3");
+# sink(Holder, Counts, fill, literal);
+# -- end of source
+# RUN: facts enforced mechanisms=all
+# CHECK: field {{*}} "strict" source=written type=boolean markers spares-test
+# CHECK: field {{*}} "total" source=written type=undefined|null|string
+# RUN(NEVER): facts enforced mechanisms=all
+# NEVER-NOT: "bag"
+# NEVER-NOT: "size"
+# NEVER-NOT: differs-from-table
+# RUN(LINK): link held layouts mechanisms=all
+# LINK: filled-under-computed-keys

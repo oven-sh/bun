@@ -34,7 +34,7 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU16, AtomicU32, AtomicU64, O
 /// handles, and `Option<NonNull<_>>` that more than one thread touches.
 ///
 /// `T` must implement [`Atom`] (no padding, `size_of::<T>() ∈ {1,2,4,8}`).
-/// Larger or padded `T` is a compile error — use `bun_threading::RwLock<T>` or
+/// Larger or padded `T` is a compile error — use `bun_threading::Guarded<T>` or
 /// restructure. There is **no** seqlock fallback (unlike crossbeam's
 /// `AtomicCell`): if it doesn't fit in a native atomic word, it doesn't
 /// compile.
@@ -159,7 +159,7 @@ impl<T: Atom + core::fmt::Debug> core::fmt::Debug for AtomicCell<T> {
 ///   reinterpreting as `uN` reads only initialized bits).
 /// - Round-tripping `Self → uN → Self` (where every `uN` value observed was
 ///   produced from a valid `Self`) yields the original value. This is weaker
-///   than `bytemuck::AnyBitPattern` — `#[repr(u8)]` enums qualify because the
+///   than [`AnyBitPattern`](crate::AnyBitPattern) — `#[repr(u8)]` enums qualify because the
 ///   cell only ever stores valid discriminants.
 /// - `Self` is safe to transport across threads when stored in an
 ///   `AtomicCell` — i.e. it has no thread affinity beyond what the atomic op
@@ -293,9 +293,8 @@ macro_rules! size_dispatch {
                 let $a = unsafe { &*($p as *const $A) };
                 $body
             }
-            // SAFETY: `unsafe_impl_atom!`'s `const _` assert rejected every
-            // other width at compile time.
-            _ => unsafe { ::core::hint::unreachable_unchecked() },
+            // `unsafe_impl_atom!`'s `const _` assert rejects every other width.
+            _ => unreachable!(),
         }
     };
 }
@@ -461,9 +460,6 @@ pub struct ThreadCell<T: ?Sized> {
 // SAFETY: same lie as `RacyCell` (caller promises thread-affinity), now
 // *checked* in debug via `owner`.
 unsafe impl<T: ?Sized> Sync for ThreadCell<T> {}
-// SAFETY: `UnsafeCell<T>: Send` when `T: Send`, and `owner: AtomicU64` is
-// `Send`; sending the cell just moves the (still thread-affine) `T`.
-unsafe impl<T: ?Sized + Send> Send for ThreadCell<T> {}
 
 #[cfg(debug_assertions)]
 const UNCLAIMED: u64 = 0;
@@ -482,8 +478,7 @@ impl<T> ThreadCell<T> {
 impl<T: ?Sized> ThreadCell<T> {
     /// Bind this cell to the calling thread. Idempotent on the owner; panics
     /// if a *different* thread has already claimed it. Call once from the
-    /// owning thread's entry point (e.g. `HTTPThread::on_start`,
-    /// `IoRequestLoop::on_spawn_io_thread`).
+    /// owning thread's entry point (e.g. `HTTPThread::on_start`).
     #[inline]
     pub fn claim(&self) {
         #[cfg(debug_assertions)]
@@ -524,16 +519,6 @@ impl<T: ?Sized> ThreadCell<T> {
     #[inline]
     pub fn get(&self) -> *mut T {
         self.assert_owner();
-        self.inner.get()
-    }
-
-    /// Raw pointer **without** the owner assertion. Use only on paths that
-    /// touch fields which are *themselves* cross-thread-safe (lock-free
-    /// queue + waker), pending a refactor that moves those fields out of the
-    /// thread-confined struct. Every call site must say which fields it
-    /// touches and why that's sound.
-    #[inline]
-    pub fn get_unchecked(&self) -> *mut T {
         self.inner.get()
     }
 }

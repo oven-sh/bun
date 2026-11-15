@@ -6,9 +6,9 @@ use bun_lint::rule::Plugin;
 /// Enforces providing a `message` when creating built-in `Error` objects to improve readability and debugging.
 pub struct ErrorMessage;
 
-const MISSING_MESSAGE: Message = Message::new("", "Pass a message to the {{ctor_name}} constructor.");
-const EMPTY_MESSAGE: Message = Message::new("", "Error message should not be an empty string.");
-const NOT_STRING: Message = Message::new("", "Error message should be a string.");
+const MISSING_MESSAGE: &Message = &Message::new("", "Pass a message to the {{ctor_name}} constructor.");
+const EMPTY_MESSAGE: &Message = &Message::new("", "Error message should not be an empty string.");
+const NOT_STRING: &Message = &Message::new("", "Error message should be a string.");
 
 impl Rule for ErrorMessage {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "error-message", Kind::Suggestion);

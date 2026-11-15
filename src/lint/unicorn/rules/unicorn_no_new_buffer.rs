@@ -5,12 +5,12 @@ use bun_lint::rule::Plugin;
 /// Disallows the deprecated `new Buffer()` constructor.
 pub struct NoNewBuffer;
 
-const NO_NEW_BUFFER: Message = Message::new(
+const NO_NEW_BUFFER: &Message = &Message::new(
     "",
     "Use `Buffer.alloc()` or `Buffer.from()` instead of the deprecated `new Buffer()` constructor.",
 );
-const USE_ALLOC_OR_FROM: Message =
-    Message::new("", "`new Buffer()` is deprecated, use `Buffer.alloc()` or `Buffer.from()` instead.");
+const USE_ALLOC_OR_FROM: &Message =
+    &Message::new("", "`new Buffer()` is deprecated, use `Buffer.alloc()` or `Buffer.from()` instead.");
 
 /// `alloc` for a number, `from` for an array or a string. `None` if the argument's type can't be
 /// determined.

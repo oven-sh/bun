@@ -1,0 +1,11 @@
+# `total = total + rows[place] * more[place]`, both constants of the file: the front of the loop tells one holder apart; in the copy where that one is a list of numbers the other is asked for one too, but only a holder that stands in front of the loop was looked at, and a variable of the file is read in the turn.
+# The name under which the variable's value enters the loop is the holder; in the copy the variable is noted to hold the proof.
+# -- source: the-second-list-that-a-variable-of-the-file-names-is-asked-for-beside-the-first-in-front-of-the-loop.cjs
+# const rows = JSON.parse("[1, 2, 3, 4.5]"), more = JSON.parse("[2, 3, 4, 5]");
+# function sum(start) { let total = start; for (let place = 0; place < rows.length; place++) total = total + rows[place] * more[place]; return total; }
+# print(sum([].length + 1));
+# -- end of source
+# RUN(COUNT): compile ArraysGuardedBesideArrays mechanisms=all
+# COUNT: statistic ArraysGuardedBesideArrays 2
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 43.5

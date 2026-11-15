@@ -1,0 +1,20 @@
+[package]
+name = "bun_aot_absent"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+test = false
+bench = false
+doctest = false
+
+[dependencies]
+bun_aot_interface = { workspace = true, features = ["absent"] }
+bun_ast.workspace = true
+bun_options_types.workspace = true
+bun_sema.workspace = true
+bun_trim.workspace = true
+
+[lints]
+workspace = true

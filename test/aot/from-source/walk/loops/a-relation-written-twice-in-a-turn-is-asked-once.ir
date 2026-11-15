@@ -1,0 +1,23 @@
+# -- source: a-relation-written-twice-in-a-turn-is-asked-once.ts
+# declare function sink(value: unknown): void;
+# function climb(turns: number, low: number, high: number) {
+#   let a = low, b = high, hits = 0, odd = 0;
+#   for (let k = 0; k < turns; k++) {
+#     if (a < b) { hits++; if (a < b) a += k * 0.75 + 0.5; else odd++; }
+#     else { odd += 10; b += 1.5; }
+#   }
+#   return hits + " " + odd + " " + a + " " + b;
+# }
+# sink(climb(6, 0.5, 3));
+# sink(climb(6, 0.5, NaN));
+# -- end of source
+# `a < b` stands twice in a turn with nothing between that writes either. The outcome of the second is known on the way on which the first was taken, so no second branch is built.
+# In a loop it used to be built all the same: the edge behind a relation narrows its operands, and what was typed ahead of the walk followed both edges.
+# f1 = climb
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isLoopHead=true
+# CHECK: [[asked]]: boolean @Boolean = Less {{*}}form=Numbers
+# CHECK-NEXT: Branch [[asked]]
+# CHECK-NOT: Branch [[asked]]

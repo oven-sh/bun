@@ -1,4 +1,5 @@
 #![warn(unused_must_use)]
+#![forbid(unsafe_code)]
 use bstr::BStr;
 #[cfg(windows)]
 use bun_core::{WStr, w};
@@ -49,7 +50,6 @@ fn is_valid(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Opt
     }
     buf[prefix_len..prefix_len + bin.len()].copy_from_slice(bin);
     buf[len] = 0;
-    // SAFETY: buf[len] == 0 written above
     let filepath = ZStr::from_buf(&buf[..], len);
     if !bun_sys::is_executable_file_path(filepath) {
         return None;
@@ -130,7 +130,6 @@ fn utf16_result_into<'a>(buf: &'a mut PathBuffer, result: &[u16]) -> &'a ZStr {
     let result_converted_ptr = result_converted.as_ptr();
     buf[result_converted_len] = 0;
     debug_assert!(result_converted_ptr == buf.as_ptr());
-    // SAFETY: buf[result_converted_len] == 0 written above
     ZStr::from_buf(&buf[..], result_converted_len)
 }
 
@@ -165,10 +164,9 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         if is_absolute(bin) {
             buf[..bin.len()].copy_from_slice(bin);
             buf[bin.len()] = 0;
-            // SAFETY: buf[bin.len()] == 0 written above
-            let bin_z = unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), bin.len()) };
-            if bun_sys::is_executable_file_path(&*bin_z) {
-                return Some(&*bin_z);
+            let bin_z = ZStr::from_buf(&buf[..], bin.len());
+            if bun_sys::is_executable_file_path(bin_z) {
+                return Some(bin_z);
             }
             // Do not look absolute paths in $PATH
             return None;
@@ -188,7 +186,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
                     cwd_trimmed,
                     strings::without_prefix_comptime(bin, b"./"),
                 ) {
-                    // SAFETY: is_valid wrote NUL at buf[len]
+                    // `is_valid` wrote NUL at buf[len]
                     return Some(ZStr::from_buf(&buf[..], len as usize));
                 }
             }
@@ -205,7 +203,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
                 cwd_for_relative_segment
             };
             if let Some(len) = is_valid(buf, cwd_prefix, segment, bin) {
-                // SAFETY: is_valid wrote NUL at buf[len]
+                // `is_valid` wrote NUL at buf[len]
                 return Some(ZStr::from_buf(&buf[..], len as usize));
             }
         }
@@ -298,7 +296,7 @@ fn search_bin<'a>(
 ) -> Option<&'a mut [u16]> {
     {
         if try_as_spelled {
-            // SAFETY: caller wrote NUL at buf[path_size]
+            // The caller wrote NUL at buf[path_size]
             if bun_sys::exists_os_path(WStr::from_buf(&buf[..], path_size), true) {
                 return Some(&mut buf[..path_size]);
             }
@@ -310,7 +308,6 @@ fn search_bin<'a>(
                 let end = path_size + 1 + ext.len();
                 buf[path_size + 1..end].copy_from_slice(ext);
                 buf[end] = 0;
-                // SAFETY: buf[end] == 0 written above
                 if bun_sys::exists_os_path(WStr::from_buf(&buf[..], end), true) {
                     return Some(&mut buf[..end]);
                 }
@@ -410,13 +407,8 @@ pub(crate) fn which_win<'a>(
 
     // check if bin is in cwd
     if has_dir {
-        // NLL/Polonius limitation — raw-ptr reborrow so the None branch can
-        // fall through without `buf` appearing borrowed.
-        // SAFETY: bin_path borrow does not escape this block on the None path.
-        let buf_reborrow: &'a mut WPathBuffer =
-            unsafe { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
         if let Some(bin_path) = search_bin_in_path(
-            buf_reborrow,
+            buf,
             &mut *path_buf,
             cwd,
             strings::without_prefix_comptime(bin, b"./"),
@@ -434,18 +426,9 @@ pub(crate) fn which_win<'a>(
     if spells_executable_extension {
         return search_bin_in_path_list(buf, &mut *path_buf, path, bin, true, &[]).map(|w| &*w);
     }
-    // NLL/Polonius limitation — raw-ptr reborrow so the None branch can fall
-    // through without `buf` appearing borrowed.
-    // SAFETY: bin_path borrow does not escape this block on the None path.
-    let buf_reborrow: &'a mut WPathBuffer = unsafe { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
-    if let Some(bin_path) = search_bin_in_path_list(
-        buf_reborrow,
-        &mut *path_buf,
-        path,
-        bin,
-        false,
-        &WIN_EXTENSIONS_W,
-    ) {
+    if let Some(bin_path) =
+        search_bin_in_path_list(buf, &mut *path_buf, path, bin, false, &WIN_EXTENSIONS_W)
+    {
         return Some(&*bin_path);
     }
     search_bin_in_path_list(buf, &mut *path_buf, path, bin, false, &WIN_COM_EXTENSION_W)
@@ -463,19 +446,9 @@ fn search_bin_in_path_list<'a>(
     extensions: &[&[u16]],
 ) -> Option<&'a mut [u16]> {
     for segment_part in strings::tokenize(path, b";") {
-        // NLL/Polonius limitation — re-borrowing `buf` across loop iterations
-        // when returning a reference tied to its lifetime.
-        // SAFETY: on None the borrow ends; on Some we return immediately.
-        let buf_reborrow: &'a mut WPathBuffer =
-            unsafe { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
-        if let Some(bin_path) = search_bin_in_path(
-            buf_reborrow,
-            path_buf,
-            segment_part,
-            bin,
-            try_as_spelled,
-            extensions,
-        ) {
+        if let Some(bin_path) =
+            search_bin_in_path(buf, path_buf, segment_part, bin, try_as_spelled, extensions)
+        {
             return Some(bin_path);
         }
     }

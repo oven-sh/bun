@@ -1,0 +1,25 @@
+# An Extension has 64 granules. Of the 68 fields of Wide that no maker gives, the first 64 find one, in front `x`, which Narrow shares: how often the program mentions a name decides nothing. What finds none and is stored nowhere is no field: it has no slot and no place in the record of the layout,
+# and whoever comes with the name, compiled code or the run time, finds what it finds under a name that the layout does not declare. A cell with a slot for each would be as wide as the type is long.
+# Narrow is made by a function, like Wide: how often that is called decides nothing. What the two records of the union share and no maker gives, `x`, lies in one granule of both.
+# -- source: wide.ts
+# interface Wide { kind: "wide"; a00?: number; a01?: number; a02?: number; a03?: number; a04?: number; a05?: number; a06?: number; a07?: number; a08?: number; a09?: number; a10?: number; a11?: number; a12?: number; a13?: number; a14?: number; a15?: number; a16?: number; a17?: number; a18?: number; a19?: number; a20?: number; a21?: number; a22?: number; a23?: number; a24?: number; a25?: number; a26?: number; a27?: number; a28?: number; a29?: number; a30?: number; a31?: number; a32?: number; a33?: number; a34?: number; a35?: number; a36?: number; a37?: number; a38?: number; a39?: number; a40?: number; a41?: number; a42?: number; a43?: number; a44?: number; a45?: number; a46?: number; a47?: number; a48?: number; a49?: number; a50?: number; a51?: number; a52?: number; a53?: number; a54?: number; a55?: number; a56?: number; a57?: number; a58?: number; a59?: number; a60?: number; a61?: number; a62?: number; a63?: number; a64?: number; a65?: number; x?: number; y?: number }
+# interface Narrow { kind: "narrow"; x?: number; z: number }
+# function wide(): Wide { return { kind: "wide" }; }
+# function narrow(z: number): Narrow { return { kind: "narrow", z }; }
+# function fill(made: Wide) { made.a00 = 1; made.a65 = 2; made.x = 3; made.y = 4; (made as any).later = 5; }
+# function read(one: Wide | Narrow) { return one.kind === "wide" ? (one.x ?? 0) + (one.a65 ?? 0) + (one.y ?? 0) : one.z + (one.x ?? 0); }
+# const left = wide(), filled = wide(); fill(filled);
+# console.log(String(read(left)) + " " + String(read(filled)) + " " + String(read(narrow(7))) + " " + Object.keys(filled).join());
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L0 CompiledObject size=64 extension=520
+# CHECK-NEXT: slot 0 "a00" JSValue OutOfLine {{*}}record=0
+# CHECK: slot 62 "a62" JSValue OutOfLine offset=512
+# CHECK-NEXT: slot 63 "a63" JSValue None
+# CHECK-NEXT: slot 64 "a64" JSValue None
+# CHECK-NEXT: slot 65 "a65" {{*}}Inline {{*}}record=1
+# CHECK-NEXT: slot 66 "kind" {{*}}Inline offset=24
+# CHECK-NEXT: slot 67 "x" JSValue OutOfLine offset=8
+# CHECK-NEXT: slot 68 "y" {{*}}Inline
+# CHECK: layout L1 CompiledObject size=32
+# CHECK: slot 1 "x" JSValue OutOfLine offset=8

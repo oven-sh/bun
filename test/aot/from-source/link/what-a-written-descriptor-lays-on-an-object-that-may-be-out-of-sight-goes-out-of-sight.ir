@@ -1,0 +1,16 @@
+# The object of the definition is a parameter of a function that code nobody sees may call: the object may be its own, so what a written descriptor lays on it goes out of sight, though every object that the program itself hands in is of a layout in sight. L0 = what is laid.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# -- source: what-a-written-descriptor-lays-on-an-object-that-may-be-out-of-sight-goes-out-of-sight.js
+# let last;
+# function lay(object) {
+#   const made = { kind: "made", seen: 0 };
+#   Object.defineProperty(object, "inner", { value: made, enumerable: false });
+#   last = made;
+# }
+# globalThis.layFromOutside = lay;
+# const mine = { id: 1 };
+# lay(mine);
+# last.seen += 2;
+# console.log(last.seen, mine.inner.kind);
+# -- end of source

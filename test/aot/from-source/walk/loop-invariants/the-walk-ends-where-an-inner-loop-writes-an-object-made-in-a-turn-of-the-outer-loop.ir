@@ -1,0 +1,19 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const row: number[] = [];
+# for (let i = 0; i < 16; i++) row.push(i + 0.5);
+# function sumOfThrees(height: number): number {
+#   let total = 0;
+#   for (let y = 0; y < height; y++) {
+#     const box = { sum: 0 };
+#     for (let k = 0; k < 3; k++) box.sum += row[(y + k) % height];
+#     total += box.sum;
+#   }
+#   return total;
+# }
+# let all = 0;
+# for (let turn = 0; turn < 50; turn++) all += sumOfThrees(16);
+# print(all);
+# -- end of source
+# RUN(RIGHT): run-in-shell
+# RIGHT: 19200

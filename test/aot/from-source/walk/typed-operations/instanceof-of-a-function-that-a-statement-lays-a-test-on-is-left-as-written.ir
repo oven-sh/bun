@@ -1,0 +1,15 @@
+# -- source: instanceof-of-a-function-that-a-statement-lays-a-test-on-is-left-as-written.js
+# function Mid(m) { this.m = m; }
+# function isMid(r) { return r instanceof Mid; }
+# function always() { return true; }
+# Object.defineProperties(Mid, { [Symbol.hasInstance]: { value: always, writable: true } });
+# sink(isMid(new Mid(1)), isMid(sink()));
+# -- end of source
+# The value is in sight and it is one function, so Mid's record expects `always` under Symbol.hasInstance. The guard of the name holds as long as `always` lies there, and says nothing of Function.prototype's test: the operation stays as written.
+# f1 = Mid, f2 = isMid
+# RUN: walk f2 mechanisms=all
+# CHECK-NOT: ShapeTest
+# CHECK: = InstanceOf
+# CHECK-NOT: ShapeTest
+# RUN(LINK): link members mechanisms=all
+# LINK: on-function f1 @@hasInstance

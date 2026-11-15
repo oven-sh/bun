@@ -146,6 +146,6 @@ private:
     size_t m_externalBefore { 0 };
 };
 
-JSC::JSObject* createNodeV8Binding(JSC::JSGlobalObject* globalObject);
+JSC::JSValue createNodeV8Binding(JSC::JSGlobalObject* globalObject);
 
 } // namespace Bun

@@ -10,7 +10,7 @@ pub struct JsxNoForbiddenNesting {
     pairs: Box<[(Box<[u8]>, Box<[u8]>)]>,
 }
 
-const FORBIDDEN_NESTING: Message = Message::new("forbiddenNesting", "`<{{inner}}>` cannot be inside `<{{outer}}>`.");
+const FORBIDDEN_NESTING: &Message = &Message::new("forbiddenNesting", "`<{{inner}}>` cannot be inside `<{{outer}}>`.");
 
 const HTML: [(&str, &str); 6] =
     [("a", "a"), ("a", "button"), ("button", "a"), ("button", "button"), ("form", "form"), ("label", "label")];

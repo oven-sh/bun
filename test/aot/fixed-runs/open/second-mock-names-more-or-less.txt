@@ -1,0 +1,29 @@
+A second mock of a CommonJS file names more members than the first, or fewer: whoever required the file keeps the first mock's object as it was.
+#### again.test.js
+import { test, mock } from "bun:test";
+test("the second mock names more", () => {
+  mock.module("./target-c.cjs", () => ({ v: "first" }));
+  const user = require("./user-c.cjs");
+  mock.module("./target-c.cjs", () => ({ v: "second", w: "second w" }));
+  console.log("| CASE more", user.read(), user.keys(), user.held().w, require("./target-c.cjs") === user.held(), Object.keys(require("./target-c.cjs")).join());
+});
+test("the second mock names less", () => {
+  mock.module("./target-d.cjs", () => ({ v: "first", w: "first w" }));
+  const user = require("./user-d.cjs");
+  mock.module("./target-d.cjs", () => ({ v: "second" }));
+  console.log("| CASE less", user.read(), user.keys(), user.held().w, require("./target-d.cjs") === user.held(), Object.keys(require("./target-d.cjs")).join());
+});
+#### target-c.cjs
+exports.v = "real"; exports.w = "real w";
+#### target-d.cjs
+exports.v = "real"; exports.w = "real w";
+#### user-c.cjs
+const T = require("./target-c.cjs");
+exports.read = () => T.v;
+exports.held = () => T;
+exports.keys = () => Object.keys(T).join();
+#### user-d.cjs
+const T = require("./target-d.cjs");
+exports.read = () => T.v;
+exports.held = () => T;
+exports.keys = () => Object.keys(T).join();

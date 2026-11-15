@@ -4,8 +4,8 @@ use bun_lint_oxlint::no_negated_condition::{fix_conditional_expression, fix_if_s
 /// Disallow negated conditions.
 pub struct NoNegatedCondition;
 
-const UNEXPECTED_NEGATED: Message =
-    Message::new("unexpectedNegated", "Unexpected negated condition.");
+const UNEXPECTED_NEGATED: &Message =
+    &Message::new("unexpectedNegated", "Unexpected negated condition.");
 
 /// ESLint's `isNegatedIf`
 #[inline]

@@ -31,21 +31,21 @@ struct Found<'a> {
     /// The element or call whose listener reports it.
     node: Span,
     at: Span,
-    message: Message,
+    message: &'static Message,
     value: Option<Cow<'a, [u8]>>,
 }
 
-const MISSING_TYPE: Message = Message::new("missingType", "Missing an explicit type attribute for button");
-const COMPLEX_TYPE: Message = Message::new(
+const MISSING_TYPE: &Message = &Message::new("missingType", "Missing an explicit type attribute for button");
+const COMPLEX_TYPE: &Message = &Message::new(
     "complexType",
     "The button type attribute must be specified by a static string or a trivial ternary expression",
 );
-const INVALID_VALUE: Message =
-    Message::new("invalidValue", "\"{{value}}\" is an invalid value for button type attribute");
-const FORBIDDEN_VALUE: Message =
-    Message::new("forbiddenValue", "\"{{value}}\" is an invalid value for button type attribute");
-const MISSING_TYPE_PROP: Message = Message::new("", "`button` elements must have an explicit `type` attribute.");
-const INVALID_TYPE_PROP: Message = Message::new("", "`button` elements must have a valid `type` attribute.");
+const INVALID_VALUE: &Message =
+    &Message::new("invalidValue", "\"{{value}}\" is an invalid value for button type attribute");
+const FORBIDDEN_VALUE: &Message =
+    &Message::new("forbiddenValue", "\"{{value}}\" is an invalid value for button type attribute");
+const MISSING_TYPE_PROP: &Message = &Message::new("", "`button` elements must have an explicit `type` attribute.");
+const INVALID_TYPE_PROP: &Message = &Message::new("", "`button` elements must have a valid `type` attribute.");
 
 impl Rule for ButtonHasType {
     const META: Meta = Meta::plugin(Plugin::React, "button-has-type", Kind::None);

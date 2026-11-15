@@ -1,0 +1,17 @@
+# -- source: the-arms-of-a-key-told-apart-by-names-run-up-to-the-last-access-under-that-key.ts
+# declare function sink(...values: unknown[]): void;
+# type Row = { id: number; price: number; stock: number };
+# const rows: Row[] = []; for (let i = 0; i < 64; i++) rows.push({ id: i, price: i * 2, stock: i + 1 });
+# const keys: ("price" | "stock")[] = JSON.parse('["price","stock"]');
+# function raise(rows: Row[], key: "price" | "stock", by: number): number { for (let i = 0; i < rows.length; i++) rows[i]![key] = (rows[i]![key] + by) & 1023; return rows[3]![key]; }
+# (globalThis as any).kept = raise;
+# sink(raise(rows, keys[0]!, 1), raise(rows, keys[1]!, 2));
+# -- end of source
+# The arms of a key that is told apart by its written names covered the one read: they met right behind it as any value, the sum was a generic operation outside arms, the try of the loop heard other code and no second build
+# was bought; the store under the same key stayed as written. Now the arms run up to the last access under that key in the block: the read, the sum and the store are walked in each arm with the key known.
+# RUN(HEADS): walk f1 mechanisms=all
+# HEADS-COUNT-2: isLoopHead=true
+# HEADS-NOT: isLoopHead=true
+# RUN(STORES): walk f1 mechanisms=all
+# STORES: PutSlot {{*}} key="price"
+# STORES: PutSlot {{*}} key="stock"

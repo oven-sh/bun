@@ -1,0 +1,9 @@
+# Kin of a-list-is-asked-for-the-place-of-its-own-element-in-a-loop.ir: `first.concat(..first[i]..)`: the method is read off the very place whose element is handed to it.
+# LIBRARY: own
+# -- source: main.js
+# const first = JSON.parse("[1.5,2.5,3.5,2.5]"), mixed = JSON.parse("[0,0,0,0]");
+# function run() { for (let i = 0; i < first.length; i++) mixed[i] = first.concat(first[i]).length; return mixed.join(); }
+# publish(run);
+# -- end of source
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run()); };
+# SHELL: 5,5,5,5

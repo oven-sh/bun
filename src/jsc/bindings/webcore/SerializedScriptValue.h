@@ -81,7 +81,6 @@ enum class FastPath : uint8_t {
 };
 
 class MessagePort;
-class CloneSerializer;
 enum class SerializationReturnCode;
 
 enum class SerializationErrorMode { NonThrowing,
@@ -109,9 +108,6 @@ class SerializedScriptValue : public ThreadSafeRefCounted<SerializedScriptValue>
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(SerializedScriptValue, SerializedScriptValue);
 
 public:
-    static SYSV_ABI void writeBytesForBun(CloneSerializer*, const uint8_t*, uint32_t);
-    static SYSV_ABI bool isTransferable(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
-
     WEBCORE_EXPORT static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, Vector<RefPtr<MessagePort>>&, SerializationForStorage = SerializationForStorage::No, SerializationContext = SerializationContext::Default, SerializationForCrossProcessTransfer = SerializationForCrossProcessTransfer::No);
 
     WEBCORE_EXPORT static RefPtr<SerializedScriptValue> create(JSC::JSGlobalObject&, JSC::JSValue, SerializationForStorage = SerializationForStorage::No, SerializationErrorMode = SerializationErrorMode::Throwing, SerializationContext = SerializationContext::Default, SerializationForCrossProcessTransfer = SerializationForCrossProcessTransfer::No);
@@ -180,6 +176,8 @@ private:
     // Raw `*mut BlockList` pointers whose refcount was bumped at serialize
     // time so they outlive the wire buffer; released in the destructor.
     Vector<void*> m_serializedBlockListRefs;
+    // What `Histogram__retainForStructuredClone` returned at serialize time; released in the destructor.
+    Vector<uint64_t> m_serializedHistogramIds;
 #if ENABLE(WEBASSEMBLY)
     std::unique_ptr<WasmModuleArray> m_wasmModulesArray;
     std::unique_ptr<WasmMemoryHandleArray> m_wasmMemoryHandlesArray;

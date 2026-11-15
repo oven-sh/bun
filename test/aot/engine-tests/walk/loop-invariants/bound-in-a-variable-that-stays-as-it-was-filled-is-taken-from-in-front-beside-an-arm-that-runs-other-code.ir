@@ -1,0 +1,164 @@
+# The bound of the counter is a `const` of the module. An arm in the turn may run other code (a getter), and behind `seen++` that arm stands in the typed build and comes round. Whatever it runs, it cannot write a variable that
+# stays as it was filled: the note that the variable is as it was in front of the loop rests on nothing, so the head goes by the word from in front and the counter is an int32. A `let` in its place is read again in every turn.
+# class Box { constructor(public v: number) {} }
+# const N = Number(process.argv[2] ?? "12"); let seen = 0; const trap: any = {};
+# Object.defineProperty(trap, "v", { get() { seen += 100; return 1; } });
+# function run(boxes: Box[]) { const k = boxes[0]; let hits = 0; for (let i = 0; i < N; i++) { seen++; if (boxes[i & 3].v === k.v) hits++; } return hits; }
+# console.log(run([new Box(1), new Box(2), process.argv[3] ? new Box(1) : trap, new Box(3)]), seen);
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: @Int32) isInLoop=true isLoopHead=true:
+# CHECK-NEXT: = LoopHint
+# CHECK-NEXT: = Less {{*}} form=Integers
+# CHECK: = PropGet {{*}} key="v"
+
+module m0 path="bound-in-a-variable-that-stays-as-it-was-filled-is-taken-from-in-front-beside-an-arm-that-runs-other-code.ts" displayPath="bound-in-a-variable-that-stays-as-it-was-filled-is-taken-from-in-front-beside-an-arm-that-runs-other-code.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Box" module=m0 constructor=f2 fields=[{key="v" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0
+layout L2 fields=[{key="configurable" declared={type=undefined|boolean} flags=[IsNeverWritten]}, {key="enumerable" declared={type=undefined|boolean} flags=[IsNeverWritten]}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean} flags=[IsNeverWritten]}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+variable g0 name="N" module=m0 declared={type=number|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g1 name="seen" module=m0 declared={type=number|absent}
+variable g2 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = NewClass v2 layout=L0 @0
+    PutModuleVariable v3 variable=g2 @0
+    v5 = FinishClass v3 layout=L0 @0
+    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @0
+    v7 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @0
+    v8 = Builtin builtin=Number @57
+    v9 = Builtin builtin=Process @64
+    v10 = PropGet v9 key="argv" @64
+    v11 = Convert v10 declared={type=builtin(ProcessArgv) flags=[IsExpected]} @64
+    v12 = Integer integer=2 @64
+    v13 = ElemGet v11, v12 @72
+    v14 = TypeTest v13 testedType=undefined|null @64
+    Branch v14 -> taken b1(| 0), notTaken b2(| 0) @64
+  b1(v15):
+    v16 = String string="12" @83
+    Jump -> next b3(v16) @83
+  b2(v17):
+    Jump -> next b3(v17) @64
+  b3(v18):
+    v19 = Call v8, -, v18 calleeName="Number" @57
+    v20 = Convert v19 declared={type=number} illTypedCause=DeclarationWithoutBody @57
+    PutModuleVariable v20 variable=g0 @53
+    v22 = Integer @101
+    v23 = Convert v22 declared={type=number} @101
+    PutModuleVariable v23 variable=g1 @94
+    v25 = Data data=d0 @122
+    v26 = Builtin builtin=Object @126
+    v27 = Builtin builtin=ObjectDefineProperty @126
+    v28 = String string="v" @154
+    v29 = NewClosure function=f3 @161
+    v30 = Convert v29 declared={type=undefined|null|function flags=[IsExpected]} @164
+    v31 = NewObject layout=L2 @161
+    PropDefine v31, v30 key="get" @161
+    v33 = FinishObject v31 @159
+    v34 = Call v27, v26, v25, v28, v33 calleeName="Object.defineProperty" @133
+    v35 = Builtin builtin=GlobalThis @352
+    v36 = PropGet v35 key="console" [isFreeName] @352
+    v37 = Convert v36 declared={type=builtin(Console) flags=[IsExpected]} @352
+    v38 = PropGet v37 key="log" @352
+    v39 = Convert v38 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @352
+    v40 = Integer integer=1 @377
+    v41 = Construct v7, -, v40 calleeName="Box" @373
+    v42 = Integer integer=2 @389
+    v43 = Construct v7, -, v42 calleeName="Box" @385
+    v44 = Builtin builtin=Process @393
+    v45 = PropGet v44 key="argv" @393
+    v46 = Convert v45 declared={type=builtin(ProcessArgv) flags=[IsExpected]} @393
+    v47 = Integer integer=3 @393
+    v48 = ElemGet v46, v47 @401
+    v49 = ToBoolean v48 @393
+    Branch v49 -> taken b4(| 0), notTaken b5(v25) @393
+  b4(v50):
+    v51 = Integer integer=1 @419
+    v52 = Construct v7, -, v51 calleeName="Box" @415
+    Jump -> next b5(v52) @411
+  b5(v53):
+    v54 = Integer integer=3 @438
+    v55 = Construct v7, -, v54 calleeName="Box" @434
+    v56 = NewArray v41, v43, v53, v55 contents=undefined|null|L0 @368
+    v57 = Call v1, -, v56 calleeName="run" @364
+    v58 = GetModuleVariable variable=g1 @444
+    v59 = CheckInitialized v58 name="seen" @444
+    v60 = Call v39, v37, v57, v59 calleeKey="log" calleeName="console.log" @360
+    v61 = Undefined @352
+    Return v61 @352
+}
+function f1 name="run" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|L0>):
+    v1 = Integer @237
+    v2 = ElemGet v0, v1 @237
+    v3 = Integer @258
+    v4 = Convert v3 declared={type=number} @258
+    v5 = Integer @274
+    v6 = Convert v5 declared={type=number} @274
+    Jump -> next b1(v4, v6) @270
+  b1(v7: number, v8: number):
+    LoopHint @270
+    v10 = GetModuleVariable variable=g0 @281
+    v11 = CheckInitialized v10 name="N" @281
+    v12 = Less v8, v11 @281
+    Branch v12 -> taken b2(), notTaken b5() @281
+  b2():
+    v13 = GetModuleVariable variable=g1 @291
+    v14 = CheckInitialized v13 name="seen" @291
+    v15 = Increment v14 @291
+    v16 = Convert v15 declared={type=number} @291
+    v17 = GetModuleVariable variable=g1 @291
+    v18 = CheckInitialized v17 name="seen" @291
+    PutModuleVariable v16 variable=g1 @291
+    v20 = Integer integer=3 @313
+    v21 = BitAnd v8, v20 @313
+    v22 = ElemGet v0, v21 @303
+    v23 = PropGet v22 key="v" @313
+    v24 = PropGet v2 key="v" @322
+    v25 = StrictEq v23, v24 @322
+    Branch v25 -> taken b3(), notTaken b4(v7) @322
+  b3():
+    v26 = Increment v7 @327
+    v27 = Convert v26 declared={type=number} @327
+    Jump -> next b4(v27) @327
+  b4(v28: number):
+    v29 = Increment v8 @284
+    v30 = Convert v29 declared={type=number} @284
+    Jump -> next b1(v28, v30) @284
+  b5():
+    Return v7 @344
+}
+function f2 name="Box" module=m0 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0 @23
+    v3 = NewObject v2 layout=L0 @23
+    v4 = Convert v3 declared={type=L0} @23
+    PropDefine v4, v1 key="v" @24
+    v6 = Undefined @24
+    v7 = TypeTest v6 testedType=object @24
+    Branch v7 -> taken b1(| 0), notTaken b2(v4) @24
+  b1(v8):
+    Jump -> next b2(v8) @24
+  b2(v9):
+    Return v9 @24
+}
+function f3 name="get" module=m0 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g1 @169
+    v1 = CheckInitialized v0 name="seen" @169
+    v2 = Integer integer=100 @177
+    v3 = Add v1, v2 @177
+    v4 = Convert v3 declared={type=number} @169
+    v5 = GetModuleVariable variable=g1 @169
+    v6 = CheckInitialized v5 name="seen" @169
+    PutModuleVariable v4 variable=g1 @169
+    v8 = Integer integer=1 @189
+    Return v8 @189
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+data d0 root=Object{layout=L1} module=m0

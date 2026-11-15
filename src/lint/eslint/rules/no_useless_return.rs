@@ -7,8 +7,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 /// Disallow redundant return statements.
 pub struct NoUselessReturn;
 
-const UNNECESSARY_RETURN: Message =
-    Message::new("unnecessaryReturn", "Unnecessary return statement.");
+const UNNECESSARY_RETURN: &Message =
+    &Message::new("unnecessaryReturn", "Unnecessary return statement.");
 
 /// Keyed by `Segment::id`. Only reachable segments have an entry.
 type SegmentInfoMap = FxHashMap<u32, SegmentInfo>;

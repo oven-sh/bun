@@ -1,0 +1,11 @@
+# A constant of the file is read in a loop of a function of the file. All in the loop is proven, so nothing is guessed and no typed copy is open in front of which the constant could be asked. Link finds it filled
+# wherever `tally` can run, so in front of a loop of tally's own frame the read's type is true: it stands there, unasked, and with it what hangs on it. f1 = tally.
+# RUN: walk f1 mechanisms=all
+# CHECK: = GetModuleVariable
+# CHECK: isLoopHead=true
+# CHECK-NOT: = GetModuleVariable
+# -- source: a-constant-of-the-readers-own-file-is-read-in-front-of-a-loop-in-which-nothing-is-guessed.cjs
+# const flags = new Set(JSON.parse('["fast","beta"]'));
+# function tally(seed) { let sum = seed & 1; for (let i = 0; i < 128; i++) sum += flags.has("fast") ? 2 : 1; return sum; }
+# console.log([tally][JSON.parse("0")](3));
+# -- end of source

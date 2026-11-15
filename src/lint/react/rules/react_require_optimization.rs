@@ -14,7 +14,7 @@ pub struct RequireOptimization {
     allow_decorators: Vec<Box<[u8]>>,
 }
 
-const NO_SHOULD_COMPONENT_UPDATE: Message = Message::new(
+const NO_SHOULD_COMPONENT_UPDATE: &Message = &Message::new(
     "noShouldComponentUpdate",
     "Component is not optimized. Please add a shouldComponentUpdate method.",
 );

@@ -17,21 +17,21 @@ pub struct NoRestrictedExports {
     namespace_from: bool,
 }
 
-const RESTRICTED_NAMED: Message = Message::new(
+const RESTRICTED_NAMED: &Message = &Message::new(
     "restrictedNamed",
     "'{{name}}' is restricted from being used as an exported name.",
 );
-const RESTRICTED_DEFAULT: Message =
-    Message::new("restrictedDefault", "Exporting 'default' is restricted.");
+const RESTRICTED_DEFAULT: &Message =
+    &Message::new("restrictedDefault", "Exporting 'default' is restricted.");
 /// oxlint's messages for the forms other than `export default`.
-const RESTRICTED_NAMED_AS_DEFAULT: Message =
-    Message::new("restrictedDefault", "Exporting named value as default is restricted.");
-const RESTRICTED_DEFAULT_FROM: Message =
-    Message::new("restrictedDefault", "Reexporting 'default' export is restricted.");
-const RESTRICTED_NAMED_FROM: Message =
-    Message::new("restrictedDefault", "Reexporting named export as default is restricted.");
-const RESTRICTED_NAMESPACE_FROM: Message =
-    Message::new("restrictedDefault", "Reexporting namespace as default is restricted.");
+const RESTRICTED_NAMED_AS_DEFAULT: &Message =
+    &Message::new("restrictedDefault", "Exporting named value as default is restricted.");
+const RESTRICTED_DEFAULT_FROM: &Message =
+    &Message::new("restrictedDefault", "Reexporting 'default' export is restricted.");
+const RESTRICTED_NAMED_FROM: &Message =
+    &Message::new("restrictedDefault", "Reexporting named export as default is restricted.");
+const RESTRICTED_NAMESPACE_FROM: &Message =
+    &Message::new("restrictedDefault", "Reexporting namespace as default is restricted.");
 
 impl NoRestrictedExports {
     fn is_restricted_name(&self, name: Name) -> bool {
@@ -54,7 +54,7 @@ impl NoRestrictedExports {
     fn check_exported_name<'a>(
         &self,
         exported: Ident<'a>,
-        (restricts_default, oxlint_message): (bool, Message),
+        (restricts_default, oxlint_message): (bool, &'static Message),
         statement: Stmt<'a>,
         cx: &Cx<'a, Self>,
     ) {

@@ -1,0 +1,7 @@
+# a Constructor by its kind, and no class: its read is its loading
+# -- source: the-object-of-a-module-that-is-a-function-is-loaded-where-it-is-read.ts
+# const events = require("node:events");
+# console.log(typeof events);
+# -- end of source
+# RUN: features
+# CHECK: by NodeEvents

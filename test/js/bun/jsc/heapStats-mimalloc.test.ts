@@ -8,7 +8,7 @@ describe("heapStats() mimalloc integration", () => {
     expect(s.mimalloc).toBeDefined();
     expect(s.mimalloc.mimalloc_version).toBeGreaterThan(3000);
     expect(s.mimalloc.pages.current).toBeGreaterThan(0);
-    expect(s.mimalloc.committed.current).toBeGreaterThan(0);
+    expect(s.mimalloc.committed.total).toBeGreaterThan(0);
     expect(Array.isArray(s.mimalloc.malloc_bins)).toBe(true);
   });
 

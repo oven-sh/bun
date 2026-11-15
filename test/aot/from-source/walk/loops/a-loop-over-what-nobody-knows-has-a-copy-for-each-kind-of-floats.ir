@@ -1,0 +1,25 @@
+# -- source: main.js
+# var key = JSON.parse('"go"');
+# var T = { go(d) { var s = 0; for (var i = 0; i < d.length; i++) s += d[i] * 0.5; return s; } };
+# print(T[key](new Float32Array(4).fill(0.5)), T[key](new Float64Array(4).fill(0.25)), T[key](new Int16Array(4).fill(3)), T[key](new Uint32Array(2).fill(4294967295)), T[key]([1, 2, 3]), T[key](new Uint8Array(3).fill(2)), T[key]("12"));
+# -- end of source
+# Nobody has typed `d`, and its callers are out of sight: the function's own text says "something with a length that is read by a number". The front of the loop tells a list, bytes and the other views of numbers apart.
+# In the one copy for all eight other kinds each access goes through a jump table on the cell's type: 11 instructions a read of a Float32Array, 6 of a Float64Array, where a copy for one kind takes 1 or 2:
+# a sum of squares over 1,000 floats: 26,508 | 16,507 instructions, plain Bun some 6,900 | 6,500. The two kinds of floats have a copy each: 3,627 | 3,625. The six kinds of integers share theirs as before.
+# The members are the same for every function: nothing is asked of the callers.
+# f1 = go
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=Float64Array
+# CHECK: = TypeTest {{*}} testedType=Float32Array
+# CHECK: = TypeTest {{*}} testedType=Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8ClampedArray
+# CHECK: = IsPristine {{*}} builtinClass=Float64Array aspects=[Storage, Names]
+# CHECK: number @Double = GetTypedArrayElement {{*}} typedArrayType=10 level=Proven [keyIsIntegral, isInsideView]
+# CHECK: = IsPristine {{*}} builtinClass=Float32Array aspects=[Storage, Names]
+# CHECK: number @Double = GetTypedArrayElement {{*}} typedArrayType=9 level=Proven [keyIsIntegral, isInsideView]
+# CHECK: = IsPristine {{*}} builtinClass=TypedArray aspects=[Storage, Names]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 1 0.5 6 4294967295 3 3 1.5
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 1 0.5 6 4294967295 3 3 1.5
+# NONE-NEXT: exited with 0

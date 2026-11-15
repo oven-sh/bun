@@ -1,6 +1,6 @@
-// Fixture for compile-rss.test.ts. Compiles a generated wasm module 6 times, discards each result,
+// Fixture for compile-rss.test.ts. Compiles a generated wasm module 12 times, discards each result,
 // then polls RSS until it falls below the target (argv[2], MiB) or the deadline passes. The idle
-// compiler threads exit after 10 s and release everything then, so the deadline stays well below
+// compiler thread exits after 10 s and releases everything then, so the deadline stays well below
 // that. Prints one JSON line with the lowest RSS growth seen, relative to the RSS before the first
 // compile.
 
@@ -100,38 +100,41 @@ const rss = () =>
   (process.platform === "darwin" ? Bun.unsafe.memoryFootprint?.() : undefined) ?? process.memoryUsage.rss();
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const bytes = makeModule();
+const trivial = makeModule({ functionCount: 1, opsPerFunction: 1, giantOps: 1 });
+
+// What the first compile of a process brings in and keeps, whatever it compiles: the code of the
+// compiler, its thread and its tables.
+await WebAssembly.compile(trivial);
 
 // Building the module leaves garbage behind. Wait until RSS stops falling before taking the
 // baseline: mimalloc hands freed memory back on its own schedule, and there is no signal for it.
 let base = Infinity;
 const baseDeadline = performance.now() + 2000;
-do {
+for (let turnsAtBase = 0; turnsAtBase < 4 && performance.now() < baseDeadline; turnsAtBase++) {
   Bun.gc(true);
   await sleep(50);
   const now = rss();
-  if (now >= base - 1048576) break;
-  base = now;
-} while (performance.now() < baseDeadline);
-// Each compile adds to what the unfixed threads keep (8 threads: 18 to 27 MiB after 3 compiles,
-// 35 to 39 MiB after 6) and costs about 20 ms. The fixed build returns to the baseline either way.
-for (let i = 0; i < 6; i++) {
+  if (now < base - 262144) turnsAtBase = 0;
+  base = Math.min(base, now);
+}
+// Each compile can add to what the unfixed thread keeps. The fixed build returns to the baseline either way.
+for (let i = 0; i < 12; i++) {
   let mod = await WebAssembly.compile(bytes);
   mod = null;
 }
 // Read before anything is freed: the test checks that the compiles grew RSS at all.
 const peak = rss() - base;
-// Free the modules. The main thread frees their metadata into the compiler threads' pages, and only
-// those threads can hand that memory back. They do so once they have worked and gone idle again, so
-// give each of them one trivial function to compile after the modules are gone.
-Bun.gc(true);
-await WebAssembly.compile(makeModule({ functionCount: 16, opsPerFunction: 1, giantOps: 1 }));
+// Free the modules. The main thread frees their metadata into the compiler thread's pages, and only
+// that thread can hand that memory back. It does so each time it has worked and gone idle again, so
+// give it a trivial function to compile after the modules are gone.
 Bun.gc(true);
 const afterCompiles = rss() - base;
 
 const deadline = performance.now() + 3000;
 let min = Infinity;
 do {
-  await sleep(100);
+  await WebAssembly.compile(trivial);
+  await sleep(200);
   Bun.gc(true);
   min = Math.min(min, rss() - base);
 } while (performance.now() < deadline && min / 1048576 >= targetMiB);

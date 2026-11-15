@@ -1,0 +1,14 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function meet(x: number): number { let n = 0; for (let i = 0, j = 7; i < j; i++, j--) n += i * j * x; return n; }
+# function long(x: number): number { let n = 0; for (let i = 0, j = 100; i < j; i++, j--) n += (i ^ j) & x; return n; }
+# print(meet(0.5), meet(3), long(7));
+# -- end of source
+# Both counters begin and step with constants: the four iterations of the first loop are written out, the fifty of the second are not.
+# f1 = meet, f2 = long
+# RUN(MEET): walk f1 mechanisms=all
+# MEET-LABEL: code f1:Body
+# MEET-NOT: isLoopHead
+# RUN(LONG): walk f2 mechanisms=all
+# LONG-LABEL: code f2:Body
+# LONG: isLoopHead=true

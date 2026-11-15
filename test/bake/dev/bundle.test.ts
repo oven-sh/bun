@@ -455,7 +455,7 @@ devTest("repairing a missing import in a framework without server components", {
 // Regression test: DirectoryWatchStore.Dep.source_file_path borrows the key
 // string from IncrementalGraph.bundled_files. When a client-component boundary
 // is demoted (its "use client" directive is removed) the server graph calls
-// client_graph.disconnectAndDeleteFile which frees that key. Previously the
+// disconnect_and_delete_client_file which frees that key. Previously the
 // Dep was left pointing at freed memory, and the next directory-watch event
 // that re-resolved that Dep read it (use-after-free, caught by ASAN).
 devTest("removing 'use client' from a component with a pending resolution failure", {
@@ -513,8 +513,8 @@ devTest("removing 'use client' from a component with a pending resolution failur
     );
 
     // Drop the directive and the failing import so the server parse
-    // succeeds. server_graph.receiveChunk now sees scb=false with
-    // was_ccb=true and calls client_graph.disconnectAndDeleteFile, which
+    // succeeds. The server graph now sees scb=false with
+    // was_ccb=true and calls disconnect_and_delete_client_file, which
     // frees the key string that the Comp.ts Dep still references.
     await dev.write(
       "components/Comp.ts",
@@ -1406,6 +1406,58 @@ devTest("barrel optimization: two import statements from the same barrel (#28886
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("got: ALPHA BETA");
+  },
+});
+
+// HMR lowering merges the statements of one import path into the first one. The
+// import record of each later statement is never resolved.
+const abBarrel = `export { a } from './a.js'; export { b } from './b.js';`;
+const abPackage = (name: string, index: string) => ({
+  [`node_modules/${name}/package.json`]: JSON.stringify({
+    name,
+    version: "1.0.0",
+    main: "./index.js",
+    sideEffects: false,
+  }),
+  [`node_modules/${name}/index.js`]: index,
+  [`node_modules/${name}/inner.js`]: abBarrel,
+  [`node_modules/${name}/a.js`]: `export const a = "A";`,
+  [`node_modules/${name}/b.js`]: `export function b() {}`,
+});
+
+devTest("barrel optimization: export star after another statement of the same path", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { b as b1 } from 'named-first';
+      import { b as b2 } from 'star-first';
+      import { b as b3 } from 'star-twice';
+      import { b as b4 } from './import-first';
+      import { a as importLate } from 'parsed-first';
+      const { b: b5 } = await importLate();
+      console.log('got: ' + [b1, b2, b3, b4, b5].map(b => typeof b).join(' '));
+    `,
+    ...abPackage("named-first", `export { a } from './inner.js'; export * from './inner.js';`),
+    ...abPackage("star-first", `export * from './inner.js'; export { a } from './inner.js';`),
+    ...abPackage("star-twice", `import './inner.js'; export * from './inner.js'; export * from './inner.js';`),
+    "import-first.ts": `
+      import { a } from 'leaf';
+      export * from 'leaf';
+      export const own = a;
+    `,
+    ...abPackage("leaf", abBarrel),
+    // parsed-first has deferred b.js by the time its a.js leads to late.ts.
+    ...abPackage("parsed-first", abBarrel),
+    "node_modules/parsed-first/a.js": `export const a = () => import('../../late');`,
+    "late.ts": `
+      import { a } from 'parsed-first';
+      export * from 'parsed-first';
+      export const own = a;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("got: function function function function function");
   },
 });
 

@@ -1,0 +1,11 @@
+// Under: --aot-harden=proof-checks: what the linker says of the index of callbacks holds at run time
+const lists = [[3, 4, 5, 6], [1.5, -0, 2], [], [, 1, , 2], Array.from({ length: 300 }, (_, i) => i % 7), Array.from({ length: 50 }, (_, i) => (i * 37) % 101), new Array(50).fill(0).map((_, i) => i % 5), Array.from("text", (c, i) => i * 2), Array.from(new Set([7, 8]), (x, i) => x % 5 - i), Object.assign([], { length: 3, 4294967294: 1 }).slice(0, 5), [...Array(20).keys()].map(i => (i * 3) % 4)];
+const show = x => Object.is(x, -0) ? "-0" : String(x);
+function uses(l) { return [l.map((x, i) => i % 7), l.map((x, i) => (i * 37) % 101), l.map((x, i) => i * 4294967296 % 10), l.map((x, i) => -i % 3), l.map((x, i) => (i - 2) % 3), l.map((x, i) => i + 1), l.map((x, i) => i * i), l.map((x, i) => i * 1e300 * 1e300), l.map((x, i) => i * 0.5 % 2), l.map((x, i) => x * i), l.filter((x, i) => i % 2 === 0), l.reduce((a, x, i) => a + i % 3, 0), l.flatMap((x, i) => [i % 2, i * 2 % 3]), Array.from(l, (x, i) => i % 4), Array.from({ length: l.length }, (_, i) => i * 5 % 6)]; }
+function consume(l) { let s = 0, t = 0, u = ""; for (const x of l) { s += x % 5; t = t * 31 + (x | 0) | 0; u = show(x % 3) + show(x / 2); } return [show(s), t, u].join(); }
+for (const l of lists) for (const made of uses(l)) console.log(Array.isArray(made) ? made.slice(0, 8).map(show).join() + " " + consume(made) : made);
+const big = { length: 3, 0: "a", get 1() { return "b"; } }; console.log(Array.from(big, (x, i) => x + i % 2).join(), Array.prototype.map.call({ length: 2 ** 53 - 1 > 5 ? 4 : 0, 2: 1 }, (x, i) => i % 3).length);
+const sparse = []; sparse[4294967294] = 1; const seen = []; sparse.slice(-1); Object.keys(sparse).forEach(k => seen.push(+k % 1000)); console.log(seen.join());
+function* counted(n) { for (let i = 0; i < n; i++) yield -i; } console.log(Array.from(counted(5), (x, i) => show(x % 2) + i % 2).join(), [...counted(4)].map((x, i) => show(x * i % 2)).join());
+class Own extends Array { map(f) { return super.map((x, i) => f(x, -i)); } } console.log(Own.from([1, 2, 3]).map((x, i) => show(i % 2)).join());
+for (const call of [f => f(0, -3), f => f(0, 0.5), f => f(0, "7"), f => f(0)]) { const f = (x, i) => show(i % 2); console.log([1, 2, 3].map(f).join(), call(f)); }

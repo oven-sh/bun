@@ -7,9 +7,9 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// Disallow confusing usages of `jest.setTimeout`.
 pub struct NoConfusingSetTimeout;
 
-const NON_GLOBAL_SET_TIMEOUT: Message = Message::new("", "`jest.setTimeout` should only be called in a global scope");
-const NO_MULTIPLE_SET_TIMEOUTS: Message = Message::new("", "Do not call `jest.setTimeout` multiple times");
-const NO_UNORDER_SET_TIMEOUT: Message = Message::new("", "`jest.setTimeout` should be placed before any other jest methods.");
+const NON_GLOBAL_SET_TIMEOUT: &Message = &Message::new("", "`jest.setTimeout` should only be called in a global scope");
+const NO_MULTIPLE_SET_TIMEOUTS: &Message = &Message::new("", "Do not call `jest.setTimeout` multiple times");
+const NO_UNORDER_SET_TIMEOUT: &Message = &Message::new("", "`jest.setTimeout` should be placed before any other jest methods.");
 
 impl Rule for NoConfusingSetTimeout {
     const META: Meta = Meta::oxlint(Plugin::Jest, "no-confusing-set-timeout", Kind::Suggestion);

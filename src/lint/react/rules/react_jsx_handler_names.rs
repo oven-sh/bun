@@ -49,15 +49,15 @@ pub struct TextSearchCache {
     is_handler_name: OnceCell<bool>,
 }
 
-const BAD_HANDLER_NAME: Message = Message::new(
+const BAD_HANDLER_NAME: &Message = &Message::new(
     "badHandlerName",
     "Handler function for {{propKey}} prop key must be a camelCase name beginning with '{{handlerPrefix}}' only",
 );
-const BAD_PROP_KEY: Message =
-    Message::new("badPropKey", "Prop key for {{propValue}} must begin with '{{handlerPropPrefix}}'");
-const OXLINT_BAD_HANDLER_NAME: Message = Message::new("", "Bad handler name");
-const OXLINT_INVALID_HANDLER_NAME: Message = Message::new("", "Invalid handler name: {{handler_name}}");
-const OXLINT_INVALID_HANDLER_PROP_NAME: Message = Message::new("", "Invalid handler prop name: {{prop_key}}");
+const BAD_PROP_KEY: &Message =
+    &Message::new("badPropKey", "Prop key for {{propValue}} must begin with '{{handlerPropPrefix}}'");
+const OXLINT_BAD_HANDLER_NAME: &Message = &Message::new("", "Bad handler name");
+const OXLINT_INVALID_HANDLER_NAME: &Message = &Message::new("", "Invalid handler name: {{handler_name}}");
+const OXLINT_INVALID_HANDLER_PROP_NAME: &Message = &Message::new("", "Invalid handler prop name: {{prop_key}}");
 
 #[derive(Copy, Clone)]
 enum HandlerName<'a> {

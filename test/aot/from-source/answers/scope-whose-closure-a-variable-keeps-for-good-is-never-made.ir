@@ -1,0 +1,45 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function keptForGood(seed: number) { let text = "k" + seed; const box = { n: seed }; return () => { text += "!"; return text + ++box.n; }; }
+# function storedAgain(seed: number) { let text = "s" + seed; return () => (text += "?"); }
+# function droppedAtOnce(seed: number) { let text = "d" + seed; return () => (text += "."); }
+# function oneOfTwo(seed: number) { let text = "t" + seed; const first = () => (text += "1"); const second = () => (text += "2"); return seed & 1 ? first : second; }
+# function handedToACall(seed: number) { let text = "h" + seed; return () => (text += "+"); }
+# function underTry(seed: number) { let text = "u" + seed; if (seed < 0) throw new Error("below"); return () => (text += "~"); }
+# function same<T>(value: T): T { return value; }
+# const kept = keptForGood(1);
+# let again = storedAgain(2);
+# const two = oneOfTwo(3);
+# const handed = same(handedToACall(4));
+# let caught: undefined | (() => string);
+# try { caught = underTry(5); } catch { caught = undefined; }
+# function all() { return [kept(), again(), two(), handed(), caught && caught()].join(" "); }
+# print(all(), droppedAtOnce(6)());
+# again = () => "other";
+# print(all());
+# -- end of source
+# Each maker runs once and its scope holds a text, which the collector could let go with the scope. The closure that keptForGood returns on every way goes, by the one call, into a variable of the module that
+# never holds anything else: closure and scope live as long as the program, so the scope is never made and its names are words of the instance. The others keep their scopes: the variable is stored again;
+# the closure is dropped at once; one of two closures comes back; the answer goes to a call first; the call stands under a handler. f1 = keptForGood .. f6 = underTry
+# RUN(COUNT): compile EnvironmentsPromotedToVariables mechanisms=all
+# COUNT: statistic EnvironmentsPromotedToVariables 1
+# RUN(KEPT): walk f1 mechanisms=all
+# KEPT: Unspecified valueType=env L1
+# KEPT: EnterBodyThatRunsOnce
+# KEPT-NOT: layout=L1 fields=
+# RUN(AGAIN): walk f2 mechanisms=all
+# AGAIN-NOT: EnterBodyThatRunsOnce
+# RUN(DROPPED): walk f3 mechanisms=all
+# DROPPED-NOT: EnterBodyThatRunsOnce
+# RUN(TWO): walk f4 mechanisms=all
+# TWO-NOT: EnterBodyThatRunsOnce
+# RUN(HANDED): walk f5 mechanisms=all
+# HANDED-NOT: EnterBodyThatRunsOnce
+# RUN(TRY): walk f6 mechanisms=all
+# TRY-NOT: EnterBodyThatRunsOnce
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: k1!2 s2? t31 h4+ u5~ d6.
+# ANSWERS-NEXT: k1!!3 other t311 h4++ u5~~
+# RUN(HELD): run-in-shell mechanisms=all-PromotedEnvironments
+# HELD: k1!2 s2? t31 h4+ u5~ d6.
+# HELD-NEXT: k1!!3 other t311 h4++ u5~~

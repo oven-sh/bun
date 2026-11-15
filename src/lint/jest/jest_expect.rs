@@ -38,22 +38,22 @@ fn is_method_of_promise(call_expr: Call) -> bool {
 pub(crate) mod valid_expect {
     use super::*;
 
-    const MATCHER_NOT_FOUND: Message =
-        Message::new("", "Expect must have a corresponding matcher call.");
-    const MATCHER_NOT_CALLED: Message = Message::new("", "Matchers must be called to assert.");
-    const MODIFIER_UNKNOWN: Message = Message::new("", "Expect has an unknown modifier.");
-    const ASYNC_MUST_BE_AWAITED: Message = Message::new("", "Async assertions must be awaited.");
-    const PROMISES_WITH_ASYNC_ASSERTIONS_MUST_BE_AWAITED: Message = Message::new(
+    const MATCHER_NOT_FOUND: &Message =
+        &Message::new("", "Expect must have a corresponding matcher call.");
+    const MATCHER_NOT_CALLED: &Message = &Message::new("", "Matchers must be called to assert.");
+    const MODIFIER_UNKNOWN: &Message = &Message::new("", "Expect has an unknown modifier.");
+    const ASYNC_MUST_BE_AWAITED: &Message = &Message::new("", "Async assertions must be awaited.");
+    const PROMISES_WITH_ASYNC_ASSERTIONS_MUST_BE_AWAITED: &Message = &Message::new(
         "",
         "Promises which return async assertions must be awaited.",
     );
-    const TOO_MANY_ARGUMENTS: Message =
-        Message::new("", "Expect takes at most {{count}} argument{{s}} ");
-    const NOT_ENOUGH_ARGUMENTS: Message =
-        Message::new("", "Expect requires at least {{count}} argument{{s}} ");
-    const ADD_AWAIT: Message = Message::new("", "Add `await`.");
-    const ADD_AWAIT_AND_ASYNC: Message =
-        Message::new("", "Add `await` and make the enclosing function `async`.");
+    const TOO_MANY_ARGUMENTS: &Message =
+        &Message::new("", "Expect takes at most {{count}} argument{{s}} ");
+    const NOT_ENOUGH_ARGUMENTS: &Message =
+        &Message::new("", "Expect requires at least {{count}} argument{{s}} ");
+    const ADD_AWAIT: &Message = &Message::new("", "Add `await`.");
+    const ADD_AWAIT_AND_ASYNC: &Message =
+        &Message::new("", "Add `await` and make the enclosing function `async`.");
 
     pub(crate) struct ValidExpectConfig {
         async_matchers: Vec<String>,
@@ -375,9 +375,9 @@ pub(crate) mod valid_expect {
 pub(crate) mod valid_expect_in_promise {
     use super::*;
 
-    const EXPECT_IN_UNHANDLED_PROMISE: Message =
-        Message::new("", "Expect in a promise chain must be awaited or returned");
-    const EXPECT_IN_PROMISE_AFTER_RETURN: Message = Message::new(
+    const EXPECT_IN_UNHANDLED_PROMISE: &Message =
+        &Message::new("", "Expect in a promise chain must be awaited or returned");
+    const EXPECT_IN_PROMISE_AFTER_RETURN: &Message = &Message::new(
         "",
         "Expect in a promise chain is unreachable after a `return` statement",
     );
@@ -668,7 +668,7 @@ pub(crate) mod valid_expect_in_promise {
 pub(crate) mod expect_expect {
     use super::*;
 
-    const EXPECT_EXPECT: Message = Message::new("", "Test has no assertions");
+    const EXPECT_EXPECT: &Message = &Message::new("", "Test has no assertions");
 
     enum AssertFunctionMatcher {
         Exact(String),
@@ -1118,8 +1118,8 @@ pub(crate) mod expect_expect {
 pub(crate) mod no_standalone_expect {
     use super::*;
 
-    const NO_STANDALONE_EXPECT: Message =
-        Message::new("", "`expect` must be inside of a test block.");
+    const NO_STANDALONE_EXPECT: &Message =
+        &Message::new("", "`expect` must be inside of a test block.");
 
     pub(crate) struct NoStandaloneExpectConfig {
         additional_test_block_functions: Vec<String>,
@@ -1288,7 +1288,7 @@ pub(crate) mod no_standalone_expect {
 pub(crate) mod no_conditional_expect {
     use super::*;
 
-    const NO_CONDITIONAL_EXPECT: Message = Message::new("", "Unexpected conditional expect");
+    const NO_CONDITIONAL_EXPECT: &Message = &Message::new("", "Unexpected conditional expect");
 
     /// The node that stops the walk up from an `expect`.
     #[derive(Copy, Clone)]
@@ -1405,7 +1405,7 @@ pub(crate) mod no_conditional_expect {
 pub(crate) mod max_expects {
     use super::*;
 
-    const EXCEEDED_MAX_ASSERTION: Message = Message::new(
+    const EXCEEDED_MAX_ASSERTION: &Message = &Message::new(
         "",
         "Enforces a maximum number assertion calls in a test body.",
     );
@@ -1461,30 +1461,30 @@ pub(crate) mod prefer_expect_assertions {
     use super::*;
     use std::borrow::Cow;
 
-    const HAVE_EXPECT_ASSERTIONS_JEST: Message = Message::new(
+    const HAVE_EXPECT_ASSERTIONS_JEST: &Message = &Message::new(
         "",
         "Every test should have either `{{prefix}}.assertions(<number of assertions>)` or `{{prefix}}.hasAssertions()` as its first expression.",
     );
-    const HAVE_EXPECT_ASSERTIONS_VITEST: Message = Message::new(
+    const HAVE_EXPECT_ASSERTIONS_VITEST: &Message = &Message::new(
         "",
         "This test should have either `{{prefix}}.assertions(<number of assertions>)` or `{{prefix}}.hasAssertions()` as its first expression.",
     );
-    const EXPECT_SHADOWED_BY_PARAMETER: Message = Message::new(
+    const EXPECT_SHADOWED_BY_PARAMETER: &Message = &Message::new(
         "",
         "`expect` is shadowed by a callback parameter and cannot be used for assertions.",
     );
-    const HAS_ASSERTIONS_TAKES_NO_ARGUMENTS: Message =
-        Message::new("", "`{{prefix}}.hasAssertions` expects no arguments.");
-    const ASSERTIONS_REQUIRES_ONE_ARGUMENT: Message = Message::new(
+    const HAS_ASSERTIONS_TAKES_NO_ARGUMENTS: &Message =
+        &Message::new("", "`{{prefix}}.hasAssertions` expects no arguments.");
+    const ASSERTIONS_REQUIRES_ONE_ARGUMENT: &Message = &Message::new(
         "",
         "`{{prefix}}.assertions` expects a single argument of type number.",
     );
-    const ASSERTIONS_REQUIRES_NUMBER_ARGUMENT: Message =
-        Message::new("", "This argument should be a number.");
-    const REMOVE_EXTRA_ARGUMENTS: Message = Message::new("", "Remove extra arguments");
-    const ADD_HAS_ASSERTIONS: Message = Message::new("", "Add `{{prefix}}.hasAssertions()`");
-    const ADD_ASSERTIONS: Message =
-        Message::new("", "Add `{{prefix}}.assertions(<number of assertions>)");
+    const ASSERTIONS_REQUIRES_NUMBER_ARGUMENT: &Message =
+        &Message::new("", "This argument should be a number.");
+    const REMOVE_EXTRA_ARGUMENTS: &Message = &Message::new("", "Remove extra arguments");
+    const ADD_HAS_ASSERTIONS: &Message = &Message::new("", "Add `{{prefix}}.hasAssertions()`");
+    const ADD_ASSERTIONS: &Message =
+        &Message::new("", "Add `{{prefix}}.assertions(<number of assertions>)");
 
     pub(crate) struct PreferExpectAssertionsConfig {
         only_functions_with_async_keyword: bool,

@@ -16,14 +16,6 @@ use super::protocol_jsc::{resp_value_to_js, valkey_error_to_js};
 use super::valkey_command_body as command;
 use super::valkey_command_body::{Args, Command};
 
-/// Codegen target name. `valkey.classes.ts` declares `name: "RedisClient"`, so
-/// `generate-classes.ts` resolves the native backing struct to
-/// `crate::valkey_jsc::valkey::RedisClient` and emits ~200
-/// `RedisClient::method(…)` thunks against it. The actual host type is
-/// `JSValkeyClient` (sibling `js_valkey.rs`); re-export it under the codegen
-/// spelling here so the generated `pub use` and prototype thunks resolve.
-pub(crate) use super::js_valkey_body::JSValkeyClient as RedisClient;
-
 bun_output::define_scoped_log!(debug, Redis, visible);
 
 /// Connection flags to track Valkey client state
@@ -203,7 +195,7 @@ impl Address {
     pub(crate) fn connect<Owner>(
         &self,
         owner: *mut Owner,
-        group: &mut SocketGroup,
+        group: &SocketGroup,
         ssl_ctx: Option<*mut SslCtx>,
         is_tls: bool,
     ) -> Result<AnySocket, crate::Error> {
@@ -320,7 +312,7 @@ impl DeferredFailure {
     fn enqueue(self: Box<Self>) {
         debug!("enqueueing deferred failure");
         VirtualMachine::get()
-            .event_loop_mut()
+            .event_loop()
             .enqueue_task(bun_event_loop::Task::from_boxed(self));
     }
 }
@@ -538,6 +530,22 @@ impl ValkeyClient {
 
         let global_this = self.global_object();
         let jsvalue = valkey_error_to_js(&global_this, message, err);
+        let mut entries = command::entry::Queue::new();
+        Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
+    }
+
+    /// The open socket's TLS session broke, and uSockets closes it next: what was sent over it
+    /// hears why, and the rest is `on_close`'s, like any lost connection. The caller enters no
+    /// event loop scope, so the rejections are only observed once `on_close` has run.
+    pub(crate) fn on_tls_session_error(
+        &mut self,
+        ssl_error: &uws::us_bun_verify_error_t,
+    ) -> JsResult<()> {
+        if self.in_flight.is_empty() {
+            return Ok(());
+        }
+        let global_this = self.global_object();
+        let jsvalue = crate::socket::uws_jsc::verify_error_to_js(ssl_error, &global_this);
         let mut entries = command::entry::Queue::new();
         Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
     }
@@ -900,8 +908,6 @@ impl ValkeyClient {
         let global_this = self.global_object();
 
         debug!("Handling a subscribe response: {}", value);
-        // SAFETY: `event_loop()` returns the live VM-owned `*mut EventLoop`; the guard holds the
-        // raw pointer (no long-lived `&mut`) and calls `exit()` on drop.
         let _exit = self.vm.enter_event_loop_scope();
 
         match value {

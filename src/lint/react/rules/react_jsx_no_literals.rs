@@ -36,47 +36,47 @@ pub struct JsxNoLiterals {
 }
 
 // Each pair is [the plain message, the message when an `elementOverrides` entry applies].
-const INVALID_PROP_VALUE: [Message; 2] = [
-    Message::new("invalidPropValue", "Invalid prop value: \"{{text}}\""),
-    Message::new(
+const INVALID_PROP_VALUE: [&Message; 2] = [
+    &Message::new("invalidPropValue", "Invalid prop value: \"{{text}}\""),
+    &Message::new(
         "invalidPropValueInElement",
         "Invalid prop value: \"{{text}}\" in {{element}}",
     ),
 ];
-const NO_STRINGS_IN_ATTRIBUTES: [Message; 2] = [
-    Message::new(
+const NO_STRINGS_IN_ATTRIBUTES: [&Message; 2] = [
+    &Message::new(
         "noStringsInAttributes",
         "Strings not allowed in attributes: \"{{text}}\"",
     ),
-    Message::new(
+    &Message::new(
         "noStringsInAttributesInElement",
         "Strings not allowed in attributes: \"{{text}}\" in {{element}}",
     ),
 ];
-const NO_STRINGS_IN_JSX: [Message; 2] = [
-    Message::new(
+const NO_STRINGS_IN_JSX: [&Message; 2] = [
+    &Message::new(
         "noStringsInJSX",
         "Strings not allowed in JSX files: \"{{text}}\"",
     ),
-    Message::new(
+    &Message::new(
         "noStringsInJSXInElement",
         "Strings not allowed in JSX files: \"{{text}}\" in {{element}}",
     ),
 ];
-const LITERAL_NOT_IN_JSX_EXPRESSION: [Message; 2] = [
-    Message::new(
+const LITERAL_NOT_IN_JSX_EXPRESSION: [&Message; 2] = [
+    &Message::new(
         "literalNotInJSXExpression",
         "Missing JSX expression container around literal string: \"{{text}}\"",
     ),
-    Message::new(
+    &Message::new(
         "literalNotInJSXExpressionInElement",
         "Missing JSX expression container around literal string: \"{{text}}\" in {{element}}",
     ),
 ];
-const LITERAL_TEXT: Message = Message::new("", "Disallow literal text as JSX children");
-const LITERAL_ATTRIBUTE: Message = Message::new("", "Disallow string literals in JSX attributes");
-const RESTRICTED_ATTRIBUTE: Message =
-    Message::new("", "Disallow string literals on restricted JSX attributes");
+const LITERAL_TEXT: &Message = &Message::new("", "Disallow literal text as JSX children");
+const LITERAL_ATTRIBUTE: &Message = &Message::new("", "Disallow string literals in JSX attributes");
+const RESTRICTED_ATTRIBUTE: &Message =
+    &Message::new("", "Disallow string literals on restricted JSX attributes");
 
 impl JsxNoLiteralsOptions {
     fn new(options: Object) -> Self {
@@ -116,7 +116,7 @@ const JSX_AND_DECLARATIONS: NodeTags =
     JSX.union(NodeTags::new().stmts(&[StmtTag::Import, StmtTag::Var]));
 
 /// oxlint runs its rule on the outermost element.
-fn report_as_oxlint<'a>(at: impl Spanned, message: Message, cx: &Cx<'a, JsxNoLiterals>) {
+fn report_as_oxlint<'a>(at: impl Spanned, message: &'static Message, cx: &Cx<'a, JsxNoLiterals>) {
     match cx.state.outermost {
         Some(outermost) => drop(cx.report(at, message).called_with(outermost)),
         None => drop(cx.report(at, message)),
@@ -426,7 +426,7 @@ impl ResolvedConfig<'_> {
     }
 
     /// Upstream's `defaultMessageId`
-    fn default_message_id(&self, ancestor_is_jsx_element: bool) -> &'static [Message; 2] {
+    fn default_message_id(&self, ancestor_is_jsx_element: bool) -> &'static [&'static Message; 2] {
         if self.options.no_attribute_strings && !ancestor_is_jsx_element {
             &NO_STRINGS_IN_ATTRIBUTES
         } else if self.options.no_strings {
@@ -437,7 +437,12 @@ impl ResolvedConfig<'_> {
     }
 
     /// Upstream's `reportLiteralNode`
-    fn report_literal_node(&self, at: Span, messages: &[Message; 2], cx: &Cx<'_, JsxNoLiterals>) {
+    fn report_literal_node(
+        &self,
+        at: Span,
+        messages: &[&'static Message; 2],
+        cx: &Cx<'_, JsxNoLiterals>,
+    ) {
         let [message, message_in_element] = *messages;
         let trimmed = strings::trim_js_whitespace(cx.file().slice(at));
         match self.element_override {

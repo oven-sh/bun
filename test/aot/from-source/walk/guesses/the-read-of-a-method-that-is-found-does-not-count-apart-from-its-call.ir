@@ -1,0 +1,22 @@
+# -- source: main.cjs
+# "use strict";
+# const zero = JSON.parse("0"), view = new DataView(new ArrayBuffer(256)), src = new DataView(new ArrayBuffer(256)), at = [x => x & 127][zero];
+# function f(t) { for (let i = 0; i < 64; i++) view.setUint8(i, src.getUint8(at(i))); return t + view.getUint8(3); }
+# print(f(1), f(2));
+# -- end of source
+# f1 = f
+# `src` is proven, and `at(i)` stands between the read of `src.getUint8` and its call: the stretch of a guess at the read ends in front of other code. In a loop the read of a method for its call counts by
+# itself only behind a look at the cell of a record or of an instance of a class of the program. A view is asked whether it is as made: that read counts with its call or not at all. Where it counted alone, every turn asked whether
+# `src` is as made and laid the built-in down, and the call went by value all the same: 9 instructions a turn more on seven everyday lines, 7,817 B more in TypeScript 6.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isInLoop=true isLoopHead=true:
+# Here it counts with its call: the call enters the built-in with whatever `at(i)` answered, and none goes by value.
+# CHECK-NOT: key="getUint8"
+# CHECK: InitializeBuiltin builtin=DataViewPrototypeGetUint8
+# CHECK-NOT: calleeKey="getUint8"
+# CHECK: CallBuiltin {{*}}overload=DataViewPrototypeGetUint8/0 builtinCallForm=AnyReceiver
+# CHECK-NOT: calleeKey="getUint8"
+# RUN(ANSWER): run-in-shell
+# ANSWER: 1 2
+# ANSWER-NEXT: exited with 0

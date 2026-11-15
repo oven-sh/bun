@@ -1,140 +1,137 @@
 //! take Collection phase output and convert to Execution phase input
 
-use core::ptr::NonNull;
-
-use bun_jsc::JsResult;
-
-use super::bun_test::{AddedInPhase, DescribeScope, ExecutionEntry, Only, TestScheduleEntry};
+use super::bun_test::{BunTest, DescribeScope, EntryId, Hooks, Only, ScopeId, StepId, TestScheduleEntry};
 use super::execution::{ConcurrentGroup, ExecutionSequence};
 
-pub(crate) struct Order {
+pub(crate) struct Order<'a> {
+    buntest: &'a BunTest,
     pub(crate) groups: Vec<ConcurrentGroup>,
     pub(crate) sequences: Vec<ExecutionSequence>,
-    // The ExecutionEntry clones below are allocated via `heap::into_raw(Box::new(...))`;
-    // `BunTest` collects them into
-    // `cloned_hook_entries` after `generate_order_describe` and reclaims the Box
-    // headers (without running `Drop`) in `Drop for BunTest`.
     pub(crate) previous_group_was_concurrent: bool,
+    /// Set by `describe.shuffle` only, not by `--randomize`.
+    pub(crate) shuffled: bool,
     pub(crate) cfg: Config,
 }
 
-impl Order {
-    pub(crate) fn init(cfg: Config) -> Order {
+impl<'a> Order<'a> {
+    pub(crate) fn init(buntest: &'a BunTest, cfg: Config) -> Order<'a> {
         Order {
+            buntest,
             groups: Vec::new(),
             sequences: Vec::new(),
             cfg,
             previous_group_was_concurrent: false,
+            shuffled: false,
         }
     }
-    // `deinit` only freed `groups` / `sequences` — handled by Drop on Vec; no impl Drop needed.
 
-    pub(crate) fn generate_all_order(&mut self, entries: &[Box<ExecutionEntry>]) -> JsResult<AllOrderResult> {
+    /// Vitest doesn't run the hooks of a scope where every test is skipped, so `!runs_a_test` drops Vitest hooks.
+    pub(crate) fn generate_all_order(&mut self, entries: &[EntryId], runs_a_test: bool) -> AllOrderResult {
         let start = self.groups.len();
-        for entry_box in entries.iter() {
-            // Callers (e.g. BunTestRoot.hook_scope) only hold `&` access to the Vec, so we accept
-            // `&[Box<_>]` and recover each Box's heap pointer as *mut to mutate through the
-            // pointer, not the slice. SAFETY: each Box<ExecutionEntry> is live and
-            // uniquely owned by the DescribeScope tree, and no other reference into it is live
-            // while we write, so the raw-pointer writes are sound. The pointer is obtained via `box_inner_mut`
-            // (see below) so rustc's `invalid_reference_casting` lint does not see a local
-            // `&T as *const T as *mut T` chain; field writes use raw deref to avoid materializing
-            // a long-lived `&mut`.
-            let entry: *mut ExecutionEntry = box_inner_mut(&**entry_box);
-            // SAFETY: `entry` is the heap address of a live `Box<ExecutionEntry>` uniquely owned by
-            // the DescribeScope tree (see paragraph above); raw-ptr field writes avoid
-            // materializing a long-lived `&mut`.
-            unsafe {
-                if bun_core::Environment::CI_ASSERT && (*entry).added_in_phase != AddedInPhase::Preload {
-                    debug_assert!((*entry).next.is_none());
-                }
-                (*entry).next = None;
-                (*entry).failure_skip_past = None;
+        for &entry in entries {
+            if !runs_a_test && self.buntest.entry(entry).calling.is_vitest() {
+                continue;
             }
-            let sequences_start = self.sequences.len();
-            self.sequences.push(ExecutionSequence::init(
-                NonNull::new(entry),
-                None,
-                0,
-                0,
-            )); // add sequence to concurrentgroup
-            let sequences_end = self.sequences.len();
-            let failure_skip_to = self.groups.len() + 1;
-            self.groups
-                .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to)); // add a new concurrentgroup to order
-            self.previous_group_was_concurrent = false;
+            self.append_group_of(self.buntest.push_step(entry));
         }
         let end = self.groups.len();
-        Ok(AllOrderResult { start, end })
+        AllOrderResult { start, end }
+    }
+
+    pub(crate) fn append_group_of(&mut self, step: StepId) {
+        let sequences_start = self.sequences.len();
+        self.sequences.push(ExecutionSequence::init(Some(step), None, 0, 0)); // add sequence to concurrentgroup
+        let sequences_end = self.sequences.len();
+        let failure_skip_to = self.groups.len() + 1;
+        self.groups
+            .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to)); // add a new concurrentgroup to order
+        self.previous_group_was_concurrent = false;
     }
 
     /// Uses an explicit stack instead of recursion, because `describe()` can nest arbitrarily deep.
-    pub(crate) fn generate_order_describe(&mut self, root: &mut DescribeScope) -> JsResult<()> {
-        let mut open: Vec<OpenDescribe<'_>> = Vec::new();
-        if let Some(frame) = self.enter_describe(root)? {
-            open.push(frame);
-        }
+    pub(crate) fn generate_order_describe(&mut self, root: ScopeId, preload: &Hooks) {
+        let mut open: Vec<OpenDescribe<'a>> = Vec::new();
+        open.extend(self.enter_describe(root));
         while let Some(frame) = open.last_mut() {
-            let scope_only = frame.only;
-            let Some(entry) = frame.children.next() else {
+            let Some(&entry) = frame.children.get(frame.next_child) else {
                 let frame = open.pop().expect("non-empty");
-                self.exit_describe(&frame)?;
+                self.exit_describe(frame);
                 continue;
             };
-            if scope_only == Only::Contains && entry.base().only == Only::No {
+            frame.next_child += 1;
+            let base = match entry {
+                TestScheduleEntry::Describe(describe) => &self.buntest.scope(describe).base,
+                TestScheduleEntry::TestCallback(test_callback) => &self.buntest.entry(test_callback).base,
+            };
+            if frame.scope.base.only.get() == Only::Contains && base.only.get() == Only::No {
                 continue;
             }
             match entry {
-                TestScheduleEntry::Describe(describe) => {
-                    if let Some(child) = self.enter_describe(describe)? {
-                        open.push(child);
-                    }
-                }
+                TestScheduleEntry::Describe(describe) => open.extend(self.enter_describe(describe)),
                 TestScheduleEntry::TestCallback(test_callback) => {
-                    self.generate_order_test(NonNull::from(&mut **test_callback))?
+                    self.generate_order_test(test_callback, &open, preload)
                 }
             }
         }
-        Ok(())
     }
 
-    fn enter_describe<'a>(
-        &mut self,
-        current: &'a mut DescribeScope,
-    ) -> JsResult<Option<OpenDescribe<'a>>> {
-        if current.failed {
-            return Ok(None); // do not schedule any tests in a failed describe scope
+    fn enter_describe(&mut self, current: ScopeId) -> Option<OpenDescribe<'a>> {
+        let current = self.buntest.scope(current);
+        if current.failed.get() {
+            return None; // do not schedule any tests in a failed describe scope
         }
-        let use_hooks = self.cfg.always_use_hooks || current.base.has_callback;
+        let has_callback = current.base.has_callback.get();
+        let use_hooks = self.cfg.always_use_hooks || has_callback;
+        let hooks = current.hooks.take();
+
+        // gather aroundAll
+        let aroundall_order: AllOrderResult = if use_hooks {
+            self.generate_all_order(&hooks.around_all, has_callback)
+        } else {
+            AllOrderResult::EMPTY
+        };
 
         // gather beforeAll
         let beforeall_order: AllOrderResult = if use_hooks {
-            self.generate_all_order(&current.before_all)?
+            self.generate_all_order(&hooks.before_all, has_callback)
         } else {
             AllOrderResult::EMPTY
         };
 
         // shuffle entries if randomize flag is set
-        if let Some(random) = self.cfg.randomize.as_mut() {
-            shuffle_with_index(random, &mut current.entries);
+        let mut children = current.entries.take();
+        match (current.inherited.shuffle, self.cfg.randomize.as_mut()) {
+            (Some(false), _) | (None, None) => {}
+            (None, Some(random)) => shuffle_with_index(random, &mut children),
+            // Uses its own PRNG, so `--seed` reproduces this order even though it also shuffles everything else.
+            (Some(true), _) => {
+                let name = bun_wyhash::hash(current.base.name.as_deref().unwrap_or_default());
+                let mut random = bun_core::rand::DefaultPrng::init(self.cfg.seed.wrapping_add(name));
+                shuffle_with_index(&mut random, &mut children);
+                self.shuffled = true;
+            }
         }
 
-        Ok(Some(OpenDescribe {
-            children: current.entries.iter_mut(),
-            only: current.base.only,
+        Some(OpenDescribe {
+            scope: current,
+            children,
+            next_child: 0,
+            hooks,
             use_hooks,
+            aroundall_order,
             beforeall_order,
-            after_all: &current.after_all,
-        }))
+        })
     }
 
-    fn exit_describe(&mut self, frame: &OpenDescribe<'_>) -> JsResult<()> {
+    fn exit_describe(&mut self, frame: OpenDescribe<'a>) {
+        let has_callback = frame.scope.base.has_callback.get();
+
         // update skip_to values for beforeAll to skip to the first afterAll
         frame.beforeall_order.set_failure_skip_to(self);
 
         // gather afterAll
         let afterall_order: AllOrderResult = if frame.use_hooks {
-            self.generate_all_order(frame.after_all)?
+            self.generate_all_order(&frame.hooks.after_all, has_callback)
         } else {
             AllOrderResult::EMPTY
         };
@@ -142,109 +139,88 @@ impl Order {
         // update skip_to values for afterAll to skip the remaining afterAll items
         afterall_order.set_failure_skip_to(self);
 
-        Ok(())
+        // An aroundAll that fails before `runSuite()` skips to the teardown of the ones around it. Its own slot has no callback.
+        frame.aroundall_order.set_failure_skip_to(self);
+        if frame.use_hooks {
+            self.generate_all_order(&frame.hooks.around_all_teardown, has_callback);
+        }
+
+        frame.scope.entries.set(frame.children);
     }
 
-    /// # Safety
-    /// `current` must point to a live, uniquely-owned `ExecutionEntry` (Box-owned in
-    /// `DescribeScope.entries`) with mutable provenance for the duration of this call. The
-    /// `base.parent` chain reachable from `*current` must consist of live `DescribeScope` nodes.
-    pub(crate) fn generate_order_test(&mut self, current: NonNull<ExecutionEntry>) -> JsResult<()> {
-        // Stacked Borrows: `current` is reborrowed as `&mut` inside `list.append` and the skip-past
-        // loop below, so we never hold a long-lived `&mut` to it across those calls — each access
-        // dereferences the pointer locally.
-        // SAFETY: caller-guaranteed live `ExecutionEntry` (see safety doc above); read-only field access.
-        debug_assert!(unsafe { current.as_ref().base.has_callback == current.as_ref().callback.is_some() });
-        // SAFETY: caller-guaranteed live `ExecutionEntry` (see above); read-only field access.
-        let use_each_hooks = unsafe { current.as_ref().base.has_callback };
-        // SAFETY: caller-guaranteed live `ExecutionEntry` (see above); read-only field access.
-        let first_parent: Option<*mut DescribeScope> = unsafe { current.as_ref().base.parent };
+    /// `open` is the scopes around the test, outermost first.
+    fn generate_order_test(&mut self, test: EntryId, open: &[OpenDescribe<'a>], preload: &Hooks) {
+        let buntest = self.buntest;
+        let entry = buntest.entry(test);
+        debug_assert!(entry.base.has_callback.get() == entry.callback.is_some());
+        let use_each_hooks = entry.base.has_callback.get();
+        let parents = open.iter().rev().map(|frame| &frame.hooks).chain([preload]);
 
-        let mut list = EntryList::default();
+        let mut list = EntryList { buntest, first: None, last: None };
 
         // gather beforeEach (alternatively, this could be implemented recursively to make it less complicated)
         if use_each_hooks {
-            let mut parent: Option<*mut DescribeScope> = first_parent;
-            while let Some(p_ptr) = parent {
-                // SAFETY: parent chain consists of live DescribeScope nodes.
-                let p = unsafe { &*p_ptr };
+            for p in parents.clone() {
                 // prepend in reverse so they end up in forwards order
-                let mut i: usize = p.before_each.len();
-                while i > 0 {
-                    let src: *const ExecutionEntry = &raw const *p.before_each[i - 1];
-                    // Ownership: `BunTest` collects these clones into `cloned_hook_entries`
-                    // (the post-`generate_order_describe` walk) and frees only the Box
-                    // headers in `Drop for BunTest` — `Drop` must not run on the bitwise
-                    // copy or the originals' Strong/Box fields would be freed twice.
-                    // SAFETY: `src` is valid for reads; `Drop` never runs on the bitwise copy
-                    // (see ownership note above), so duplicated owning fields are not double-freed.
-                    let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
-                    list.prepend(cloned);
-                    i -= 1;
+                for &hook in p.before_each.iter().rev() {
+                    list.prepend(hook);
                 }
-                parent = p.base.parent;
+            }
+        }
+
+        // gather aroundEach, which goes around every beforeEach
+        if use_each_hooks {
+            for p in parents.clone() {
+                for &hook in p.around_each.iter().rev() {
+                    list.prepend(hook);
+                }
             }
         }
 
         // append test
-        list.append(current.as_ptr()); // add entry to sequence
+        let current = list.append(test); // add entry to sequence
 
         // gather afterEach
         if use_each_hooks {
-            let mut parent: Option<*mut DescribeScope> = first_parent;
-            while let Some(p_ptr) = parent {
-                // SAFETY: parent chain consists of live DescribeScope nodes.
-                let p = unsafe { &*p_ptr };
-                for entry in p.after_each.iter() {
-                    let src: *const ExecutionEntry = &raw const **entry;
-                    // SAFETY: `src` is valid for reads; `Drop` never runs on the bitwise copy
-                    // (see ownership note above), so duplicated owning fields are not double-freed.
-                    let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
-                    list.append(cloned);
+            for p in parents {
+                for &hook in &p.after_each {
+                    list.append(hook);
                 }
-                parent = p.base.parent;
             }
         }
 
         // set skip_to values
-        let mut index = list.first;
-        let mut failure_skip_past: Option<*mut ExecutionEntry> = Some(current.as_ptr());
-        while let Some(entry_ptr) = index {
-            // SAFETY: list contains valid ExecutionEntry nodes linked via `next`.
-            unsafe {
-                (*entry_ptr).failure_skip_past = failure_skip_past; // we could consider matching skip_to in beforeAll to skip directly to the first afterAll from its own scope rather than skipping to the first afterAll from any scope
-                if Some(entry_ptr) == failure_skip_past {
-                    failure_skip_past = None;
-                }
-                index = (*entry_ptr).next;
+        let mut failure_skip_past = Some(current);
+        for (id, step) in buntest.steps_from(list.first) {
+            step.failure_skip_past.set(if buntest.entry(step.entry).around.is_some() {
+                // Nothing inside an aroundEach that fails before `runTest()` runs, afterEach included.
+                list.last
+            } else {
+                failure_skip_past // we could consider matching skip_to in beforeAll to skip directly to the first afterAll from its own scope rather than skipping to the first afterAll from any scope
+            });
+            if Some(id) == failure_skip_past {
+                failure_skip_past = None;
             }
         }
 
         // add these as a single sequence
-        // SAFETY: `current` still valid; re-derive fields locally so no `&mut` outlives the
-        // competing reborrows performed by `list.append` / the skip-past loop above.
-        let (retry_count, repeat_count, concurrent) = unsafe {
-            let cur = current.as_ref();
-            (cur.retry_count, cur.repeat_count, cur.base.concurrent)
-        };
         let sequences_start = self.sequences.len();
         self.sequences.push(ExecutionSequence::init(
-            list.first.and_then(NonNull::new),
+            list.first,
             Some(current),
-            retry_count,
-            repeat_count,
+            entry.retry_count,
+            entry.repeat_count,
         )); // add sequence to concurrentgroup
         let sequences_end = self.sequences.len();
-        self.append_or_extend_concurrent_group(concurrent, sequences_start, sequences_end)?; // add or extend the concurrent group
-        Ok(())
+        self.append_or_extend_concurrent_group(entry.base.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
     }
 
-    pub(crate) fn append_or_extend_concurrent_group(
+    fn append_or_extend_concurrent_group(
         &mut self,
         concurrent: bool,
         sequences_start: usize,
         sequences_end: usize,
-    ) -> JsResult<()> {
+    ) {
         // We capture the old value first, then assign immediately so it applies on every exit path.
         let prev_was_concurrent = self.previous_group_was_concurrent;
         self.previous_group_was_concurrent = concurrent;
@@ -254,24 +230,26 @@ impl Order {
             if prev_was_concurrent {
                 // extend the previous group to include this sequence
                 if previous_group.try_extend(sequences_start, sequences_end) {
-                    return Ok(());
+                    return;
                 }
             }
         }
         let failure_skip_to = self.groups.len() + 1;
         self.groups
             .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to)); // otherwise, add a new concurrentgroup to order
-        Ok(())
     }
 }
 
 /// Tracks a describe scope whose children `generate_order_describe` is still scheduling.
 struct OpenDescribe<'a> {
-    children: core::slice::IterMut<'a, TestScheduleEntry>,
-    only: Only,
+    scope: &'a DescribeScope,
+    /// `scope.entries`, until `exit_describe` puts them back.
+    children: Vec<TestScheduleEntry>,
+    next_child: usize,
+    hooks: Hooks,
     use_hooks: bool,
+    aroundall_order: AllOrderResult,
     beforeall_order: AllOrderResult,
-    after_all: &'a [Box<ExecutionEntry>],
 }
 
 pub(crate) struct AllOrderResult {
@@ -282,7 +260,7 @@ pub(crate) struct AllOrderResult {
 impl AllOrderResult {
     pub(crate) const EMPTY: AllOrderResult = AllOrderResult { start: 0, end: 0 };
 
-    pub(crate) fn set_failure_skip_to(&self, this: &mut Order) {
+    pub(crate) fn set_failure_skip_to(&self, this: &mut Order<'_>) {
         if self.start == 0 && self.end == 0 {
             return;
         }
@@ -298,11 +276,13 @@ pub(crate) struct Config {
     // The only call site seeds a concrete `DefaultPrng` (xoshiro256++), so
     // no type-erased Random vtable is needed.
     pub(crate) randomize: Option<bun_core::rand::DefaultPrng>,
+    pub(crate) seed: u64,
 }
 
 /// Forward Fisher-Yates: `i` from 0 to len-2, `j = intRangeLessThan(usize, i, len)`.
 /// Must produce the identical permutation for the same xoshiro256++ state across Bun
 /// versions so that `bun test --randomize --seed=N` stays reproducible.
+#[optimize(size)]
 fn shuffle_with_index<T>(r: &mut bun_core::rand::DefaultPrng, buf: &mut [T]) {
     if buf.len() < 2 {
         return;
@@ -343,52 +323,29 @@ fn uint_less_than(r: &mut bun_core::rand::DefaultPrng, less_than: u64) -> u64 {
     (m >> 64) as u64
 }
 
-/// Recover the heap pointer behind a `Box<T>` as `*mut T` given the inner `&T`.
-///
-/// Callers hand us `&[Box<T>]`, but we still need to mutate through each element.
-/// Going through this helper breaks the intraprocedural dataflow that the
-/// `invalid_reference_casting` deny-by-default lint tracks (it would otherwise flag the
-/// `&T -> *const T -> *mut T -> &mut T` chain at the call site). The provenance caveat is
-/// real — see the SAFETY note at the call site in `generate_all_order`.
-#[inline(always)]
-fn box_inner_mut<T>(b: &T) -> *mut T {
-    core::ptr::from_ref(b).cast_mut()
+struct EntryList<'a> {
+    buntest: &'a BunTest,
+    first: Option<StepId>,
+    last: Option<StepId>,
 }
 
-#[derive(Default)]
-struct EntryList {
-    first: Option<*mut ExecutionEntry>,
-    last: Option<*mut ExecutionEntry>,
-}
-
-impl EntryList {
-    fn prepend(&mut self, current: *mut ExecutionEntry) {
-        // SAFETY: `current` points to a live ExecutionEntry owned by the test scheduler.
-        unsafe { (*current).next = self.first };
+impl EntryList<'_> {
+    fn prepend(&mut self, entry: EntryId) {
+        let current = self.buntest.push_step(entry);
+        self.buntest.step(current).next.set(self.first);
         self.first = Some(current);
         if self.last.is_none() {
             self.last = Some(current);
         }
     }
 
-    fn append(&mut self, current: *mut ExecutionEntry) {
-        // SAFETY: `current` points to a live ExecutionEntry owned by the test scheduler.
-        let cur = unsafe { &mut *current };
-        if bun_core::Environment::CI_ASSERT && cur.added_in_phase != AddedInPhase::Preload {
-            debug_assert!(cur.next.is_none());
+    fn append(&mut self, entry: EntryId) -> StepId {
+        let current = self.buntest.push_step(entry);
+        match self.last {
+            Some(last) => self.buntest.step(last).next.set(Some(current)),
+            None => self.first = Some(current),
         }
-        cur.next = None;
-        if let Some(last) = self.last {
-            // SAFETY: `last` was stored by a prior prepend/append and is still live.
-            let last_ref = unsafe { &mut *last };
-            if bun_core::Environment::CI_ASSERT && last_ref.added_in_phase != AddedInPhase::Preload {
-                debug_assert!(last_ref.next.is_none());
-            }
-            last_ref.next = Some(current);
-            self.last = Some(current);
-        } else {
-            self.first = Some(current);
-            self.last = Some(current);
-        }
+        self.last = Some(current);
+        current
     }
 }

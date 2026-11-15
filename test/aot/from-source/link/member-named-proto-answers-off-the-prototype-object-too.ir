@@ -1,0 +1,17 @@
+# The prototype object of a class has the member named `__proto__` as its own, and that of the class below finds it one step up: a read of the name off either is not answered with the link, and a getter of the name is reached.
+# f1 = told, f2 = aboveOf
+# -- source: member-named-proto-answers-off-the-prototype-object-too.js
+# class Low { hello() { return 2; } }
+# class Tagged extends Low { __proto__() { return 1; } }
+# class Below extends Tagged {}
+# class WithGetter extends Low { get __proto__() { return told(); } }
+# function told() { return 7; }
+# function aboveOf(c) { return c.prototype.__proto__.hello; }
+# aboveOf(Tagged); aboveOf(Below); aboveOf(WithGetter);
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1
+# LINK-NOT: unreached
+# LINK: function f2
+# LINK-NOT: result=
+# LINK: function f3

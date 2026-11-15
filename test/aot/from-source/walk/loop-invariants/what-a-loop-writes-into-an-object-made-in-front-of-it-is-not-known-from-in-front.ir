@@ -1,0 +1,27 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const list: number[] = [];
+# for (let i = 0; i < 12; i++) list.push(i + 0.5);
+# function countAndKeepLast(): string {
+#   const seen = { count: 0, last: 0 };
+#   for (let i = 0; i < list.length; i++) {
+#     seen.count++;
+#     seen.last = list[i];
+#   }
+#   return seen.count + "|" + seen.last;
+# }
+# function fillAndReadBack(): string {
+#   const made = { list: list.slice() };
+#   const out: number[] = [];
+#   for (let i = 0; i < made.list.length && i < 30; i++) {
+#     out.push(made.list[i]);
+#     if (i === 5) made.list = out;
+#   }
+#   return out.length + "|" + out[29];
+# }
+# let said = "";
+# for (let turn = 0; turn < 30; turn++) said = countAndKeepLast() + " " + fillAndReadBack();
+# print(said);
+# -- end of source
+# RUN(RIGHT): run-in-shell
+# RIGHT: 12|11.5 6|undefined

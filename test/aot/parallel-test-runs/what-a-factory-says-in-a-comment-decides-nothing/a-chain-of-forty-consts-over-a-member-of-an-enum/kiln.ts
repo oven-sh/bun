@@ -1,0 +1,44 @@
+enum Glaze { Matte = 1 }
+export function fired() {
+  const k0 = Glaze.Matte;
+  const k1 = k0 ? k0 : 0;
+  const k2 = k1 ? k1 : 0;
+  const k3 = k2 ? k2 : 0;
+  const k4 = k3 ? k3 : 0;
+  const k5 = k4 ? k4 : 0;
+  const k6 = k5 ? k5 : 0;
+  const k7 = k6 ? k6 : 0;
+  const k8 = k7 ? k7 : 0;
+  const k9 = k8 ? k8 : 0;
+  const k10 = k9 ? k9 : 0;
+  const k11 = k10 ? k10 : 0;
+  const k12 = k11 ? k11 : 0;
+  const k13 = k12 ? k12 : 0;
+  const k14 = k13 ? k13 : 0;
+  const k15 = k14 ? k14 : 0;
+  const k16 = k15 ? k15 : 0;
+  const k17 = k16 ? k16 : 0;
+  const k18 = k17 ? k17 : 0;
+  const k19 = k18 ? k18 : 0;
+  const k20 = k19 ? k19 : 0;
+  const k21 = k20 ? k20 : 0;
+  const k22 = k21 ? k21 : 0;
+  const k23 = k22 ? k22 : 0;
+  const k24 = k23 ? k23 : 0;
+  const k25 = k24 ? k24 : 0;
+  const k26 = k25 ? k25 : 0;
+  const k27 = k26 ? k26 : 0;
+  const k28 = k27 ? k27 : 0;
+  const k29 = k28 ? k28 : 0;
+  const k30 = k29 ? k29 : 0;
+  const k31 = k30 ? k30 : 0;
+  const k32 = k31 ? k31 : 0;
+  const k33 = k32 ? k32 : 0;
+  const k34 = k33 ? k33 : 0;
+  const k35 = k34 ? k34 : 0;
+  const k36 = k35 ? k35 : 0;
+  const k37 = k36 ? k36 : 0;
+  const k38 = k37 ? k37 : 0;
+  const k39 = k38 ? k38 : 0;
+  return "\n".length + k39;
+}

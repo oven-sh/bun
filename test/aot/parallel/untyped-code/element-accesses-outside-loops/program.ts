@@ -1,0 +1,2 @@
+import "./impl.js";
+export {};

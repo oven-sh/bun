@@ -4,8 +4,8 @@ use bun_lint::prelude::*;
 /// Disallow `// tslint:<rule-flag>` comments.
 pub struct BanTslintComment;
 
-const COMMENT_DETECTED: Message =
-    Message::new("commentDetected", "tslint comment detected: \"{{ text }}\"");
+const COMMENT_DETECTED: &Message =
+    &Message::new("commentDetected", "tslint comment detected: \"{{ text }}\"");
 
 /// `/^\s*tslint:(enable|disable)(?:-(line|next-line))?(:|\s|$)/`
 fn is_enable_disable(value: &[u8]) -> bool {

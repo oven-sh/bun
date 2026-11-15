@@ -1,0 +1,13 @@
+import { check } from "../src/show";
+import { makeWide, Circle, PkgError, Bytes, Stack } from "fake-shapes";
+import { Vec2, config } from "fake-typed";
+import { Square, makeUser, AppError, Packet, Pile } from "../src/models";
+import { _ } from "../src/store";
+const F = "07";
+check(F, "structuredClone of records", () => [structuredClone(makeWide(1)), structuredClone(makeUser(3)), structuredClone(config), structuredClone(new Vec2(1, 2)), structuredClone(new Square("s", 2)), structuredClone(new Circle("c", 2))]);
+check(F, "structuredClone of collections", () => { const u = makeUser(1); const m = new Map<unknown, unknown>([[u, new Set([u, 1])], ["k", new Date(0)]]); const c = structuredClone(m); const [first] = c.keys(); return [c, (c.get(first) as Set<unknown>).has(first), first === u]; });
+check(F, "structuredClone of errors and bytes", () => [structuredClone(new PkgError("p", 1)), structuredClone(new AppError("a", { at: "x" })), structuredClone(new Bytes([1, 2])), structuredClone(new Packet([3, 4])), structuredClone(Pile.from([1, 2])), structuredClone(new Stack(3))]);
+check(F, "structuredClone refuses functions", () => structuredClone({ f: Square }));
+check(F, "cloneDeep keeps classes", () => { const s = new Square("s", 2).withTag("t"); const c = _.cloneDeep({ s, v: new Vec2(1, 2), u: makeUser(3), m: new Map([[1, { a: 1 }]]) }); return [c.s instanceof Square, c.s.side, c.s.tags, c.s.tags === s.tags, c.v.parts(), c.u, c.m, (() => { try { return c.s.id; } catch (e) { return (e as Error).name; } })()]; });
+check(F, "merge, get, set, isEqual, pick, groupBy", () => [_.merge({}, config, { nested: { flag: false, more: 1 } }), _.get(makeUser(3), "address.city"), _.get(makeUser(1), "roles[1]"), _.get(makeUser(1), "address.city", "nowhere"), _.set(makeUser(2), "address.zip", "z"), _.isEqual(makeUser(3), makeUser(3)), _.isEqual(new Vec2(1, 2), { x: 1, y: 2 }), _.isEqual(new Vec2(1, 2), new Vec2(1, 2)), _.pick(new Square("s", 1), "side", "area", "nope"), _.groupBy([1, 2, 3, 4].map(makeUser), u => u.roles.length), _.groupBy([makeUser(1), makeUser(2)], "size")]);
+check(F, "chains and memoize", () => { const m = _.memoize((n: number) => makeUser(n)); return [_([1, 2, 3, 4]).map(n => makeUser(n)).filter(u => u.roles.length > 1).map(u => u.name).value(), m(1) === m(1), m.cache.size, _.VERSION, _.loads, _.isPlain(makeUser(1)), _.isPlain(new Vec2(0, 0)), typeof _.Wrapper]; });

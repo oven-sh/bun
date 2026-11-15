@@ -24,27 +24,27 @@ impl Style {
     }
 }
 
-const ERROR_STRING_ARRAY: Message = Message::new(
+const ERROR_STRING_ARRAY: &Message = &Message::new(
     "errorStringArray",
     "Array type using '{{className}}<{{type}}>' is forbidden. Use '{{readonlyPrefix}}{{type}}[]' instead.",
 );
-const ERROR_STRING_ARRAY_READONLY: Message = Message::new(
+const ERROR_STRING_ARRAY_READONLY: &Message = &Message::new(
     "errorStringArrayReadonly",
     "Array type using '{{className}}<{{type}}>' is forbidden. Use '{{readonlyPrefix}}{{type}}' instead.",
 );
-const ERROR_STRING_ARRAY_SIMPLE: Message = Message::new(
+const ERROR_STRING_ARRAY_SIMPLE: &Message = &Message::new(
     "errorStringArraySimple",
     "Array type using '{{className}}<{{type}}>' is forbidden for simple types. Use '{{readonlyPrefix}}{{type}}[]' instead.",
 );
-const ERROR_STRING_ARRAY_SIMPLE_READONLY: Message = Message::new(
+const ERROR_STRING_ARRAY_SIMPLE_READONLY: &Message = &Message::new(
     "errorStringArraySimpleReadonly",
     "Array type using '{{className}}<{{type}}>' is forbidden for simple types. Use '{{readonlyPrefix}}{{type}}' instead.",
 );
-const ERROR_STRING_GENERIC: Message = Message::new(
+const ERROR_STRING_GENERIC: &Message = &Message::new(
     "errorStringGeneric",
     "Array type using '{{readonlyPrefix}}{{type}}[]' is forbidden. Use '{{className}}<{{type}}>' instead.",
 );
-const ERROR_STRING_GENERIC_SIMPLE: Message = Message::new(
+const ERROR_STRING_GENERIC_SIMPLE: &Message = &Message::new(
     "errorStringGenericSimple",
     "Array type using '{{readonlyPrefix}}{{type}}[]' is forbidden for non-simple types. Use '{{className}}<{{type}}>' instead.",
 );

@@ -1,0 +1,10 @@
+# -- source: main.cjs
+# "use strict";
+# const held = JSON.parse('{"0":0.5,"1":1.5,"2":2.5,"length":3}');
+# function sum(turn) { let all = turn & 1; for (let i = 0; i < held.length; i++) all = all + held[i] * 2; return all; }
+# console.log(sum(0), sum(1));
+# -- end of source
+# Nothing is expected of `held`, so what is neither a list nor bytes nor a view runs in the copy for the rest, which is walked as without a guess. Every test for a built-in has failed in front of that copy too:
+# the length, which no built-in answers there, is read at its site.
+# RUN: walk f1 mechanisms=all
+# CHECK: PropGet {{*}} key="length" [receiverIsAskedForNameOfNoBuiltin]

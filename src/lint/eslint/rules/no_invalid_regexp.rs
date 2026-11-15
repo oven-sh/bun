@@ -11,9 +11,9 @@ pub struct NoInvalidRegexp {
     allowed_flags: Vec<u8>,
 }
 
-const REGEX_MESSAGE: Message = Message::new("regexMessage", "{{message}}.");
+const REGEX_MESSAGE: &Message = &Message::new("regexMessage", "{{message}}.");
 /// oxlint's message.
-const INVALID: Message = Message::new("regexMessage", "Invalid regular expression: {{message}}");
+const INVALID: &Message = &Message::new("regexMessage", "Invalid regular expression: {{message}}");
 const VALID_FLAGS_NOTE: &str = "Valid flags are: d (indices), g (global), i (ignore case), m (multiline),\n             s (dot all), u (unicode), v (unicode sets), y (sticky)";
 
 const VALID_FLAGS: &[u8] = b"dgimsuvy";

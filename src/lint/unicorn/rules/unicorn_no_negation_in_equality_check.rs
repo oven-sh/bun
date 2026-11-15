@@ -5,9 +5,9 @@ use bun_lint::rule::Plugin;
 /// Disallow negated expressions on the left of (in)equality checks.
 pub struct NoNegationInEqualityCheck;
 
-const NO_NEGATION_IN_EQUALITY_CHECK: Message = Message::new("", "Negated expression is not allowed in equality check.");
-const REMOVE_NEGATION: Message =
-    Message::new("", "Remove the negation operator and use '{{suggested_operator}}' instead of '{{current_operator}}'.");
+const NO_NEGATION_IN_EQUALITY_CHECK: &Message = &Message::new("", "Negated expression is not allowed in equality check.");
+const REMOVE_NEGATION: &Message =
+    &Message::new("", "Remove the negation operator and use '{{suggested_operator}}' instead of '{{current_operator}}'.");
 
 impl Rule for NoNegationInEqualityCheck {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-negation-in-equality-check", Kind::Suggestion).has_suggestions();

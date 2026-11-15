@@ -1,0 +1,18 @@
+As ./failing-factory-gets-the-module-itself.txt, but the factory awaits first: the import() calls that it makes of the module that it mocks come behind an await, and it fails late. They are for the module itself, and the factory is called once. A compiled run counted as the factory's own only what it imported in its first stretch: the first of these imports took the error that was kept for the load that had waited, and that load called the factory anew: three calls.
+#### late.test.js
+import { mock, test } from "bun:test";
+test("t", async () => {
+  let calls = 0;
+  const imports = [];
+  const own = n => imports.push(import("./m.js").then(ns => n + " got " + Object.keys(ns), e => n + " caught " + e.message));
+  mock.module("./m.js", async () => { calls++; await 0; own(1); await 0; own(2); throw new Error("the factory failed " + calls); });
+  try { const user = await import("./user.js"); console.log("| CASE loaded", Object.keys(user).join()); } catch (e) { console.log("| CASE threw", e.message); }
+  console.log("| CASE", JSON.stringify(await Promise.all(imports)), "calls", calls);
+  try { await import("./m.js"); console.log("| CASE loaded again"); } catch (e) { console.log("| CASE again threw", e.message, "calls", calls); }
+});
+#### m.js
+import "./x.js"; console.log("| CASE m runs"); export const b = 1;
+#### user.js
+import "./m.js"; export const a = 1;
+#### x.js
+console.log("| CASE x runs");

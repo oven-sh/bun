@@ -8,8 +8,8 @@ pub struct NoUselessRename {
     ignore_export: bool,
 }
 
-const UNNECESSARILY_RENAMED: Message =
-    Message::new("unnecessarilyRenamed", "{{type}} {{name}} unnecessarily renamed.");
+const UNNECESSARILY_RENAMED: &Message =
+    &Message::new("unnecessarilyRenamed", "{{type}} {{name}} unnecessarily renamed.");
 
 /// A problem to report: the node, and the part of it that the fix keeps.
 #[derive(Copy, Clone)]

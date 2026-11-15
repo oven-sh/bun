@@ -1,0 +1,18 @@
+{
+  "name": "servers",
+  "private": true,
+  "dependencies": {
+    "@apollo/server": "5.5.1",
+    "@nestjs/common": "12.3.2",
+    "@nestjs/core": "12.3.2",
+    "@nestjs/platform-express": "12.3.2",
+    "@trpc/client": "11.22.1",
+    "@trpc/server": "11.22.1",
+    "graphql-yoga": "6.0.1",
+    "inversify": "8.2.3",
+    "reflect-metadata": "0.2.2",
+    "socket.io": "4.8.4",
+    "socket.io-client": "4.8.4",
+    "zod": "4.6.7"
+  }
+}

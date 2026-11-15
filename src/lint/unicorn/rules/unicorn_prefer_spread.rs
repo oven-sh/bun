@@ -9,7 +9,7 @@ use bun_lint::utils::visible::{is_global, is_visibly_iterable};
 /// Enforces the use of the spread operator (`...`) over outdated patterns.
 pub struct PreferSpread;
 
-const PREFER_SPREAD: Message = Message::new("", "Prefer the spread operator (`...`) over {{bad_method}}");
+const PREFER_SPREAD: &Message = &Message::new("", "Prefer the spread operator (`...`) over {{bad_method}}");
 
 impl Rule for PreferSpread {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-spread", Kind::Suggestion).fixable(Fixable::Code);

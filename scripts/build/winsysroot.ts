@@ -10,7 +10,8 @@
  * time — the build never depends on what the agent image happens to carry.
  *
  * The fetch is two steps, both pinned:
- *   1. Download the xwin release binary for the build host (GitHub).
+ *   1. Download the xwin release binary for the build host (GitHub) and
+ *      compare its sha256 with the pinned one.
  *   2. Run `xwin splat` — xwin downloads the CRT/SDK/ATL packages from
  *      Microsoft's CDN and lays them out like a Visual Studio install so a
  *      single `/winsysroot` flag works for clang-cl and lld-link.
@@ -25,11 +26,11 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, symlinkSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { pins } from "./ci-images/spec.ts";
 import type { Arch, Config } from "./config.ts";
-import { downloadWithRetry, extractTarGz, extractZip } from "./download.ts";
+import { checkSha256, downloadWithRetry, extractTarGz, extractZip } from "./download.ts";
 import { BuildError } from "./error.ts";
 
 /** Pinned xwin release — https://github.com/Jake-Shadle/xwin/releases. The CI build image's sysroot is made with the same one. */
@@ -149,19 +150,17 @@ function ensureSdkCaseAliases(dir: string): void {
   }
 }
 
-/** xwin release triple for the machine running the build. */
-function xwinHostTriple(cfg: Config): string {
-  const arch = cfg.host.arch === "aarch64" ? "aarch64" : "x86_64";
-  switch (cfg.host.os) {
-    case "linux":
-      return `${arch}-unknown-linux-musl`;
-    case "darwin":
-      return `${arch}-apple-darwin`;
-    default:
-      throw new BuildError(`No xwin release for host ${cfg.host.os}-${cfg.host.arch}`, {
-        hint: "Provide a Windows sysroot via WINDOWS_SYSROOT / --winsysroot instead.",
-      });
+/** The pinned xwin release's archive for the machine running the build: its target triple and its sha256. */
+function xwinRelease(host: Config["host"]): { triple: string; sha256: string } {
+  if (host.os !== "linux") {
+    throw new BuildError(`No xwin release for host ${host.os}-${host.arch}`, {
+      hint: "Provide a Windows sysroot via WINDOWS_SYSROOT / --winsysroot instead.",
+    });
   }
+  return {
+    triple: `${host.arch === "aarch64" ? "aarch64" : "x86_64"}-unknown-linux-musl`,
+    sha256: pins.windowsSysroot.xwinSha256[host.arch],
+  };
 }
 
 /**
@@ -243,17 +242,31 @@ async function ensureUcrtServicingOverlay(cfg: Config): Promise<void> {
 /** Download xwin and splat the MSVC CRT + Windows SDK into `dest`. */
 async function fetchWindowsSysroot(cfg: Config, dest: string): Promise<void> {
   // ─── 1. xwin binary ───
-  const triple = xwinHostTriple(cfg);
-  const xwinDir = resolve(cfg.cacheDir, `xwin-${XWIN_VERSION}`);
+  const { triple, sha256 } = xwinRelease(cfg.host);
+  const xwinDir = resolve(cfg.cacheDir, `xwin-${XWIN_VERSION}-${sha256.slice(0, 16)}`);
   const xwinExe = join(xwinDir, `xwin-${XWIN_VERSION}-${triple}`, "xwin");
   if (!existsSync(xwinExe)) {
     const url = `https://github.com/Jake-Shadle/xwin/releases/download/${XWIN_VERSION}/xwin-${XWIN_VERSION}-${triple}.tar.gz`;
-    const tarball = join(xwinDir, `xwin-${triple}.tar.gz`);
-    mkdirSync(xwinDir, { recursive: true });
-    console.log(`downloading ${url}`);
-    await downloadWithRetry(url, tarball, "xwin");
-    // Keep the release's top-level dir (strip=0) so the exe path is stable.
-    await extractTarGz(tarball, xwinDir, 0);
+    // Process-unique scratch next to the destination: concurrent builds can share the cache directory.
+    const scratch = `${xwinDir}.${process.pid}.tmp`;
+    const tarball = join(scratch, `xwin-${triple}.tar.gz`);
+    try {
+      mkdirSync(scratch, { recursive: true });
+      console.log(`downloading ${url}`);
+      await downloadWithRetry(url, tarball, "xwin");
+      checkSha256(tarball, sha256);
+      // Keep the release's top-level dir (strip=0) so the exe path is stable.
+      await extractTarGz(tarball, scratch, 0);
+      rmSync(tarball);
+      try {
+        renameSync(scratch, xwinDir);
+      } catch (e) {
+        // another build published the same release first
+        if (!existsSync(xwinExe)) throw e;
+      }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
     if (!existsSync(xwinExe)) {
       throw new BuildError(`xwin binary not found after extraction: ${xwinExe}`);
     }

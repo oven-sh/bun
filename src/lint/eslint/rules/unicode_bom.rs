@@ -5,8 +5,9 @@ pub struct UnicodeBom {
     is_required: bool,
 }
 
-const EXPECTED: Message = Message::new("expected", "Expected Unicode BOM (Byte Order Mark).");
-const UNEXPECTED: Message = Message::new("unexpected", "Unexpected Unicode BOM (Byte Order Mark).");
+const EXPECTED: &Message = &Message::new("expected", "Expected Unicode BOM (Byte Order Mark).");
+const UNEXPECTED: &Message =
+    &Message::new("unexpected", "Unexpected Unicode BOM (Byte Order Mark).");
 
 const BOM: &str = "\u{FEFF}";
 

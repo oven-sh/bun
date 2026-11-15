@@ -124,7 +124,9 @@ pub(crate) struct ErrorBody {
     pub message: Option<Box<[u8]>>,
 }
 
+#[inline(never)]
 pub(crate) fn parse_error(body: &[u8]) -> Option<ErrorBody> {
+    bun_removable_features::removable_definition!(S3Responses, parse_error);
     parse(body, |root| {
         (root.name == b"Error").then(|| ErrorBody {
             code: root.child_nonempty_text(b"Code"),

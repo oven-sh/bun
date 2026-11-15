@@ -192,7 +192,7 @@ impl<'a> Program<'a> {
     /// True if the statement is a string literal without parentheses.
     #[optimize(size)]
     fn is_directive(&self, id: u32) -> bool {
-        matches!(self.stmts.get(id as usize), Some(Stmt { kind: StmtKind::Expr(e), .. })
+        matches!(self.stmts.get(id as usize), Some(Stmt { kind: StmtKind::Expr(e) | StmtKind::Directive { expr: e, .. }, .. })
             if matches!(self.exprs.get(e.idx()), Some(Expr { kind: ExprKind::String(_), pos, .. })
                 if self.text.get(*pos as usize) != Some(&b'`') && !self.is_parenthesized(*e)))
     }
@@ -918,6 +918,7 @@ impl Walk<'_, '_> {
         match (x, y) {
             (Empty, Empty) | (Debugger, Debugger) => Ok(()),
             (Expr(x), Expr(y))
+            | (Directive { expr: x, .. }, Directive { expr: y, .. })
             | (Return(x), Return(y))
             | (Throw(x), Throw(y))
             | (ExportDefault(x), ExportDefault(y))
@@ -1076,6 +1077,16 @@ impl Walk<'_, '_> {
                 self.stmt(body, body2)
             }
             (Block(x), Block(y)) => self.stmt_list(x, y),
+            (
+                With { object, body },
+                With {
+                    object: object2,
+                    body: body2,
+                },
+            ) => {
+                self.expr(object, object2)?;
+                self.stmt(body, body2)
+            }
             (
                 Switch { expr, cases },
                 Switch {
@@ -1568,7 +1579,7 @@ impl Walk<'_, '_> {
             | (False, False)
             | (ImportMeta, ImportMeta) => Ok(()),
             // Allowed: see `is_same_string`.
-            (String(p), String(q)) => {
+            (String(p), String(q)) | (JsxText(p), JsxText(q)) => {
                 let is_template =
                     |program: &Program<'_>, at: u32| program.text.get(at as usize) == Some(&b'`');
                 let is_a_template = is_template(self.a, x.pos);
@@ -1602,7 +1613,9 @@ impl Walk<'_, '_> {
             }
             // Allowed: it's lowercased.
             (BigInt(x), BigInt(y)) => self.bigint(x, y),
-            (Regex, Regex) => self.regex(self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end)),
+            (Regex { .. }, Regex { .. }) => {
+                self.regex(self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end))
+            }
             (Template { exprs: p }, Template { exprs: q }) => self.template((a, x, p), (y, q)),
             (TaggedTemplate(a), TaggedTemplate(b)) => {
                 let (x, y) = both!(self, calls, a, b, "a call is missing");
@@ -2624,6 +2637,11 @@ impl<'p> Iterator for JsxChildren<'p> {
                 continue;
             };
             match self.program.exprs.get(child.idx()) {
+                Some(Expr {
+                    kind: ExprKind::JsxText(_),
+                    pos,
+                    end,
+                }) => self.text = self.program.slice(*pos, *end),
                 Some(Expr {
                     kind: ExprKind::String(value),
                     pos,

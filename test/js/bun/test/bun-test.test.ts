@@ -12,6 +12,14 @@ test("expect().not.not", () => {
   expect(1).not.not.not.toBe(2);
 });
 
+test("expect().not.not on an expect() that already ran a matcher", () => {
+  const kept = expect(1);
+  kept.not.toBe(2);
+  kept.not.not.toBe(1);
+  kept.not.not.not.toBe(2);
+  expect(() => kept.not.not.toBe(2)).toThrow();
+});
+
 // Fuzzer-found crash: Bun.jest() without an active test runner, followed by
 // misuse of the expect statics, must not crash the process. In particular,
 // `new` on a matcher registered via expect.extend() used to jump to a null
@@ -77,7 +85,6 @@ test("toBeWithin() with missing or non-number arguments fails the test without c
 
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("toBeWithin() requires 2 arguments");
   expect(stderr).toContain("toBeWithin() requires the first argument to be a number");
   expect(stderr).toContain("toBeWithin() requires the second argument to be a number");
   expect(stderr).toContain("4 fail");

@@ -37,12 +37,6 @@ pub(crate) mod object_url_registry;
 pub(crate) use object_url_registry::ObjectURLRegistry;
 
 // ─── webcore-local jsc re-export ─────────────────────────────────────────────
-// `bun_jsc` is now a dep of `bun_runtime`; forward to it. The per-class
-// submodules (`JSBlob`, `JSResponse`, …) live in `bun_jsc::generated`
-// (`js_class_module!`); the previous local stub macro (`js_class_mod`) that
-// returned `JSValue::default()` from `to_js_unchecked` has been removed —
-// every webcore caller now imports the real bindings directly
-// (`bun_jsc::generated::JS{Blob,Request,Response,…}`).
 pub(crate) mod jsc {
     pub(crate) use crate::jsc::*;
     pub(crate) use bun_jsc::virtual_machine::VirtualMachine;
@@ -137,7 +131,7 @@ impl AutoFlusher {
         // Do not wrap the side-effecting call in `debug_assert!`;
         // only the *check* is debug-gated.
         let removed = vm
-            .event_loop_ref()
+            .event_loop()
             .deferred_tasks
             .unregister_task(Self::erased_ctx(this));
         debug_assert!(removed);
@@ -152,7 +146,7 @@ impl AutoFlusher {
         debug_assert!(!this.auto_flusher().registered.get());
         this.auto_flusher().registered.set(true);
         let found_existing = vm
-            .event_loop_ref()
+            .event_loop()
             .deferred_tasks
             .post_task(Self::erased_ctx(this), Self::erased_cb::<T>());
         debug_assert!(!found_existing);
@@ -344,8 +338,9 @@ pub enum SinkHandle {
     HTMLRewriter(bun_ptr::BackRef<crate::api::html_rewriter::RewriterPipe>),
     HttpResponse(bun_ptr::BackRef<streams::HTTPResponseSink, bun_ptr::Mut>),
     HttpsResponse(bun_ptr::BackRef<streams::HTTPSResponseSink, bun_ptr::Mut>),
-    ArrayBuffer(bun_ptr::BackRef<sink::ArrayBufferSink, bun_ptr::Mut>),
 }
+
+use bun_removable_features::{removable_body, removable_body_of_either};
 
 impl SinkHandle {
     #[inline]
@@ -358,24 +353,31 @@ impl SinkHandle {
         !self.is_none()
     }
 
-    /// SAFETY: every non-None variant's pointee is kept alive by the hook-in site for as long
-    /// as this handle is installed.
+    /// SAFETY: every non-None variant's pointee is alive for as long as this handle is installed.
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
         match *self {
             SinkHandle::None => streams::Writable::Done,
-            SinkHandle::ServerResponse(any) => any.write_chunk(data),
-            // SAFETY: live backref; ByteStream clears sink before free.
-            SinkHandle::FetchRequestBody(mut p) => unsafe { p.get_mut() }.write(data),
-            // SAFETY: live backref; ByteStream clears sink before free.
-            SinkHandle::S3Upload(mut p) => unsafe { p.get_mut() }.write(data),
+            SinkHandle::ServerResponse(any) => {
+                removable_body!(Serve, Abort, { any.write_chunk(data) })
+            }
+            SinkHandle::FetchRequestBody(mut p) => removable_body!(Fetch, Abort, {
+                // SAFETY: live backref; ByteStream clears sink before free.
+                unsafe { p.get_mut() }.write(data)
+            }),
+            SinkHandle::S3Upload(mut p) => removable_body!(S3Client, Abort, {
+                // SAFETY: live backref; ByteStream clears sink before free.
+                unsafe { p.get_mut() }.write(data)
+            }),
             SinkHandle::FileSink(p) => p.write(data),
-            SinkHandle::HTMLRewriter(p) => p.write(data),
-            // SAFETY: live backref; transform detaches before the JSSink is finalized.
-            SinkHandle::HttpResponse(mut p) => unsafe { p.get_mut() }.write(data),
-            // SAFETY: live backref; transform detaches before the JSSink is finalized.
-            SinkHandle::HttpsResponse(mut p) => unsafe { p.get_mut() }.write(data),
-            // SAFETY: live backref; transform detaches before the JSSink is finalized.
-            SinkHandle::ArrayBuffer(mut p) => unsafe { p.get_mut() }.write(data),
+            SinkHandle::HTMLRewriter(p) => removable_body!(HtmlRewriter, Abort, { p.write(data) }),
+            SinkHandle::HttpResponse(mut p) => removable_body_of_either!(Serve, WebStreams, {
+                // SAFETY: live backref; transform detaches before the JSSink is finalized.
+                unsafe { p.get_mut() }.write(data)
+            }),
+            SinkHandle::HttpsResponse(mut p) => removable_body_of_either!(Serve, WebStreams, {
+                // SAFETY: live backref; transform detaches before the JSSink is finalized.
+                unsafe { p.get_mut() }.write(data)
+            }),
         }
     }
 
@@ -385,16 +387,23 @@ impl SinkHandle {
     pub fn end(&self, err: Option<streams::StreamError>) {
         match *self {
             SinkHandle::None => {}
-            SinkHandle::ServerResponse(any) => any.end_chunk(err.as_ref()),
-            // SAFETY: live backref; ByteStream clears sink before free.
-            SinkHandle::FetchRequestBody(mut p) => unsafe { p.get_mut() }.end_from_stream(err),
+            SinkHandle::ServerResponse(any) => {
+                removable_body!(Serve, Abort, { any.end_chunk(err.as_ref()) })
+            }
+            SinkHandle::FetchRequestBody(mut p) => removable_body!(Fetch, Abort, {
+                // SAFETY: live backref; ByteStream clears sink before free.
+                unsafe { p.get_mut() }.end_from_stream(err)
+            }),
             // Raw-ptr dispatch: may re-borrow and free the sink (see its doc).
-            SinkHandle::S3Upload(p) => streams::NetworkSink::end_from_stream(p.as_ptr(), err),
+            SinkHandle::S3Upload(p) => removable_body!(S3Client, Abort, {
+                streams::NetworkSink::end_from_stream(p.as_ptr(), err)
+            }),
             SinkHandle::FileSink(p) => p.end_from_stream(err),
-            SinkHandle::HTMLRewriter(p) => p.end_from_stream(err),
+            SinkHandle::HTMLRewriter(p) => {
+                removable_body!(HtmlRewriter, Abort, { p.end_from_stream(err) })
+            }
             SinkHandle::HttpResponse(_) => {}
             SinkHandle::HttpsResponse(_) => {}
-            SinkHandle::ArrayBuffer(_) => {}
         }
     }
 }
@@ -409,7 +418,4 @@ pub(crate) enum DrainResult {
 pub(crate) enum Lifetime {
     Clone,
     Transfer,
-    Share,
-    /// When reading from a fifo like STDIN/STDERR
-    Temporary,
 }

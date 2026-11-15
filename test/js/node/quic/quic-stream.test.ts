@@ -6,7 +6,7 @@ import { bunEnv, bunExe, tempDir, withoutAsanQuarantine } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { connect, listen, type QuicEndpoint, type SessionOptions } from "node:quic";
+import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
@@ -178,6 +178,126 @@ describe("HTTP/3 header encoding", () => {
 
     expect(seen.length).toBe(1);
     expect(Object.keys(seen[0])).not.toContain("authorization");
+  });
+
+  test("a value of more than 64 KB arrives intact in both directions, up to a raised maxHeaderLength", async () => {
+    const application = { maxHeaderLength: 100_000 };
+    const valueOf = (length: number) => Buffer.alloc(length, "v").toString();
+    let requested = Promise.withResolvers<string | undefined>();
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        application,
+        onheaders(this: any, headers: Record<string, any>) {
+          requested.resolve(headers["x-value"]);
+          this.sendHeaders(
+            { ":status": "200", "x-value": valueOf(Number(headers[":path"].slice(1))) },
+            { terminal: true },
+          );
+        },
+      },
+    );
+
+    // An endpoint keeps the limits it was created with, so not the shared one.
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(server.address!, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+      application,
+    } as SessionOptions);
+    await client.opened;
+    const exchange = async (length: number) => {
+      requested = Promise.withResolvers();
+      const answered = Promise.withResolvers<Record<string, any>>();
+      await client.createBidirectionalStream({
+        headers: {
+          ":method": "GET",
+          ":path": `/${length}`,
+          ":scheme": "https",
+          ":authority": "localhost",
+          "x-value": valueOf(length),
+        },
+        onheaders: answered.resolve,
+      });
+      // Lengths and not the values: a mismatch would print them.
+      const describe = (value: string | undefined) => (value === valueOf(length) ? "intact" : value?.length);
+      const response = await answered.promise;
+      return {
+        request: describe(await requested.promise),
+        status: response[":status"],
+        response: describe(response["x-value"]),
+      };
+    };
+
+    expect({ under: await exchange(70_000), over: await exchange(application.maxHeaderLength) }).toEqual({
+      under: { request: "intact", status: "200", response: "intact" },
+      // As in Node, the receiver drops the field that goes over the limit.
+      over: { request: undefined, status: "200", response: undefined },
+    });
+    client.close();
+  });
+
+  test("reports request headers that can't be sent", async () => {
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any) {
+          this.sendHeaders({ ":status": "200" }, { terminal: true });
+        },
+      },
+    );
+    const request = { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+    // One call sends 128 fields at most.
+    const headers: Record<string, string> = { ...request };
+    for (let i = 0; i < 128; i++) headers[`x-field-${i}`] = "v";
+
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+    } as SessionOptions);
+    // These wait for the handshake, so only `closed` can report them.
+    const queued = await client.createBidirectionalStream({ headers });
+    expect(
+      await queued.closed.then(
+        () => "closed",
+        err => `${err.code} ${err.errorCode}`,
+      ),
+    ).toBe("ERR_QUIC_APPLICATION_ERROR 258");
+
+    await client.opened;
+    expect(
+      await client.createBidirectionalStream({ headers }).then(
+        () => "opened",
+        err => err.code,
+      ),
+    ).toBe("ERR_QUIC_OPEN_STREAM_FAILED");
+
+    const answered = Promise.withResolvers<string>();
+    await client.createBidirectionalStream({
+      headers: request,
+      onheaders(received: Record<string, any>) {
+        answered.resolve(received[":status"]);
+      },
+    });
+    expect(await answered.promise).toBe("200");
+    client.close();
   });
 });
 

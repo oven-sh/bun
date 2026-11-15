@@ -6,7 +6,7 @@ use smallvec::SmallVec;
 /// The rule disallows importing any Vitest global functions.
 pub struct NoImportingVitestGlobals;
 
-const NO_IMPORTING_VITEST_GLOBALS: Message = Message::new("", "Do not `import`/`require` global functions from 'vitest'.");
+const NO_IMPORTING_VITEST_GLOBALS: &Message = &Message::new("", "Do not `import`/`require` global functions from 'vitest'.");
 
 const VITEST_GLOBALS: [&str; 17] = [
     "suite",

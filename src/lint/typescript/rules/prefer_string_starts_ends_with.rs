@@ -15,10 +15,10 @@ pub struct PreferStringStartsEndsWith {
     allow_single_element_equality: bool,
 }
 
-const PREFER_ENDS_WITH: Message =
-    Message::new("preferEndsWith", "Use the 'String#endsWith' method instead.");
-const PREFER_STARTS_WITH: Message =
-    Message::new("preferStartsWith", "Use 'String#startsWith' method instead.");
+const PREFER_ENDS_WITH: &Message =
+    &Message::new("preferEndsWith", "Use the 'String#endsWith' method instead.");
+const PREFER_STARTS_WITH: &Message =
+    &Message::new("preferStartsWith", "Use 'String#startsWith' method instead.");
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Side {
@@ -27,7 +27,7 @@ enum Side {
 }
 
 impl Side {
-    fn message(self) -> Message {
+    fn message(self) -> &'static Message {
         match self {
             Side::Start => PREFER_STARTS_WITH,
             Side::End => PREFER_ENDS_WITH,

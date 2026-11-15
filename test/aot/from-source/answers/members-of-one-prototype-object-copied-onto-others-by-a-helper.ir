@@ -1,0 +1,22 @@
+# -- source: main.js
+# function Emitter(object) { if (object) return mix(object); this.count = 0; }
+# function mix(object) { for (var key in Emitter.prototype) object[key] = Emitter.prototype[key]; return object; }
+# Emitter.prototype.on = function () { this.count = (this.count || 0) + 1; return this; };
+# Emitter.prototype.total = function () { return this.count || 0; };
+# function Door(n) { this.n = n; }
+# function Gate(n) { this.n = n; }
+# Emitter(Door.prototype);
+# Emitter(Gate.prototype);
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) { var door = new Door(i), gate = new Gate(i), plain = new Emitter(); total += door.on().on().total() + gate.on().total() + plain.on().on().on().total(); } return total; }
+# print(run(10));
+# -- end of source
+# The source of the copy is the prototype object of another constructor function, and the target comes through two calls. What statements lay on the one prototype object by name is expected under the same names on each of the others.
+# RUN: run-in-shell
+# CHECK: 60
+# CHECK-NEXT: exited with 0
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: 60
+# CALLED-NEXT: exited with 0
+# RUN(CLOSED): run-in-shell mechanisms=all-Guesses
+# CLOSED: 60
+# CLOSED-NEXT: exited with 0

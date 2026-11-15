@@ -58,16 +58,24 @@ void CommonStrings::initialize(JSString*& slot, Index index)
     slot = jsString(m_vm, AtomString(literal));
 }
 
+#define BUN_COMMON_STRINGS_SLOT_ENTRY(name, ...) &CommonStrings::m_##name,
+// clang-format off
+static constexpr JSString* CommonStrings::* commonStringSlots[] = {
+    BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_SLOT_ENTRY)
+    BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(BUN_COMMON_STRINGS_SLOT_ENTRY)
+    BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_SLOT_ENTRY)
+};
+// clang-format on
+#undef BUN_COMMON_STRINGS_SLOT_ENTRY
+static_assert(std::size(commonStringSlots) == static_cast<size_t>(CommonStrings::Index::Count));
+
 template<typename Visitor>
 void CommonStrings::visit(Visitor& visitor)
 {
-#define BUN_COMMON_STRINGS_VISIT(name, ...) \
-    if (m_##name)                           \
-        visitor.appendUnbarriered(m_##name);
-    BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_VISIT)
-    BUN_COMMON_STRINGS_EACH_VM_PROPERTY_NAME(BUN_COMMON_STRINGS_VISIT)
-    BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_VISIT)
-#undef BUN_COMMON_STRINGS_VISIT
+    for (auto slot : commonStringSlots) {
+        if (JSString* string = this->*slot)
+            visitor.appendUnbarriered(string);
+    }
 }
 
 template void CommonStrings::visit(JSC::AbstractSlotVisitor&);
@@ -196,32 +204,28 @@ enum class CommonStringsForRust : uint8_t {
     fetchInclude = 8,
     buffer = 9,
     binaryTypeArrayBuffer = 10,
-    binaryTypeNodeBuffer = 11,
-    binaryTypeUint8Array = 12,
-    binaryTypeBlob = 13,
-    unknown = 14,
-    protocolHttp = 15,
-    protocolHttps = 16,
-    alpnH2 = 17,
-    alpnHttp11 = 18,
-    utf8WithDash = 19,
-    quicDatagramAbandoned = 20,
-    quicDatagramAcknowledged = 21,
-    quicDatagramLost = 22,
-    base64 = 23,
-    write = 24,
-    fetchOptionCompress = 25,
-    fetchOptionDecompress = 26,
-    fetchOptionKeepalive = 27,
-    fetchOptionMaxRedirects = 28,
-    fetchOptionProtocol = 29,
-    fetchOptionProxy = 30,
-    fetchOptionS3 = 31,
-    fetchOptionSession = 32,
-    fetchOptionTimeout = 33,
-    fetchOptionTls = 34,
-    fetchOptionUnix = 35,
-    fetchOptionVerbose = 36,
+    binaryTypeUint8Array = 11,
+    unknown = 12,
+    alpnH2 = 13,
+    alpnHttp11 = 14,
+    utf8WithDash = 15,
+    quicDatagramAbandoned = 16,
+    quicDatagramAcknowledged = 17,
+    quicDatagramLost = 18,
+    base64 = 19,
+    write = 20,
+    fetchOptionCompress = 21,
+    fetchOptionDecompress = 22,
+    fetchOptionKeepalive = 23,
+    fetchOptionMaxRedirects = 24,
+    fetchOptionProtocol = 25,
+    fetchOptionProxy = 26,
+    fetchOptionS3 = 27,
+    fetchOptionSession = 28,
+    fetchOptionTimeout = 29,
+    fetchOptionTls = 30,
+    fetchOptionUnix = 31,
+    fetchOptionVerbose = 32,
 };
 
 static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForRust commonString)
@@ -250,18 +254,10 @@ static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForRust c
         return commonStrings.bufferString();
     case CommonStringsForRust::binaryTypeArrayBuffer:
         return commonStrings.binaryTypeArrayBufferString();
-    case CommonStringsForRust::binaryTypeNodeBuffer:
-        return commonStrings.binaryTypeNodeBufferString();
     case CommonStringsForRust::binaryTypeUint8Array:
         return commonStrings.binaryTypeUint8ArrayString();
-    case CommonStringsForRust::binaryTypeBlob:
-        return commonStrings.binaryTypeBlobString();
     case CommonStringsForRust::unknown:
         return commonStrings.unknownString();
-    case CommonStringsForRust::protocolHttp:
-        return commonStrings.protocolHttpString();
-    case CommonStringsForRust::protocolHttps:
-        return commonStrings.protocolHttpsString();
     case CommonStringsForRust::alpnH2:
         return commonStrings.alpnH2String();
     case CommonStringsForRust::alpnHttp11:

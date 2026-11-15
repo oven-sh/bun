@@ -6,7 +6,7 @@ use smallvec::SmallVec;
 /// Disallow type arguments that are equal to the default.
 pub struct NoUnnecessaryTypeArguments;
 
-const UNNECESSARY_TYPE_PARAMETER: Message = Message::new(
+const UNNECESSARY_TYPE_PARAMETER: &Message = &Message::new(
     "unnecessaryTypeParameter",
     "This is the default value for this type parameter, so it can be omitted.",
 );

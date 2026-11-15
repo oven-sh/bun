@@ -2,7 +2,7 @@
 //! no effect on the environment of the shell, so we can skip them.
 
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv};
 use crate::shell::states::base::Base;
 use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
@@ -71,7 +71,7 @@ impl Assigns {
                         interp.as_assigns_mut(this).state = AssignsState::Done;
                         continue;
                     }
-                    let atom: *const ast::Atom = &raw const assigns[idx as usize].value;
+                    let atom = &assigns[idx as usize].value;
                     let child = Expansion::init(interp, shell, atom, this, true);
                     return Expansion::start(interp, child);
                 }
@@ -128,18 +128,12 @@ impl Assigns {
             merged
         };
 
-        let value_ref = EnvStr::init_ref_counted(value.into_boxed_slice());
         interp.as_assigns_mut(this).base.shell_mut().assign_var(
             EnvStr::init_slice(label),
-            value_ref,
+            EnvStr::init_ref_counted(value.into_boxed_slice()),
             ctx,
         );
-        value_ref.deref();
 
         Yield::Next(this)
-    }
-
-    pub(crate) fn deinit(_interp: &Interpreter, this: NodeId) {
-        log!("Assigns {} deinit", this);
     }
 }

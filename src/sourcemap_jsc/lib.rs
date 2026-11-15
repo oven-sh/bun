@@ -2,10 +2,5 @@
 
 #[path = "CodeCoverage.rs"]
 pub mod code_coverage;
-pub mod internal_jsc;
-#[path = "JSSourceMap.rs"]
-pub mod js_source_map;
-
-// ---- public surface ---------------------------------------------------------
-
-pub use js_source_map::JSSourceMap;
+pub(crate) mod generated_bindgen;
+pub(crate) mod internal_jsc;

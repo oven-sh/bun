@@ -1,0 +1,25 @@
+# -- source: main.cjs
+# function Owner() { this.current = null; this.list = null; this.held = 0; }
+# Owner.prototype.run = function () { this.current = this.list; while (this.current != null) { if (this.current.held) this.current = this.current.link; else this.current = this.current.run(); } };
+# Owner.prototype.hold = function () { this.held++; this.current.held = true; return this.current.link; };
+# function Block(link, task) { this.link = link; this.task = task; this.held = false; }
+# Block.prototype.run = function () { return this.task.step(); };
+# function First(owner) { this.owner = owner; this.steps = 0; }
+# First.prototype.step = function () { this.steps++; return this.owner.hold(); };
+# function Second(owner) { this.owner = owner; this.steps = 0; }
+# Second.prototype.step = function () { this.steps += 2; return this.owner.hold(); };
+# const owner = new Owner();
+# owner.list = new Block(new Block(null, new First(owner)), new Second(owner));
+# owner.run();
+# sink(owner.held);
+# -- end of source
+# The steps of the tasks call back the owner whose loop runs them: the copies go on with that owner behind one compare, and call the method where it is another.
+# f5 = Owner.prototype.run, f6 = Owner.prototype.hold
+# RUN: walk f5 mechanisms=all
+# CHECK: isLoopHead=true
+# CHECK: [[first]]: {{*}} key="owner"
+# CHECK-NEXT: = StrictEq [[first]], v0
+# CHECK: CallDirect [[first]] function=f6
+# CHECK: [[second]]: {{*}} key="owner"
+# CHECK-NEXT: = StrictEq [[second]], v0
+# CHECK: CallDirect [[second]] function=f6

@@ -5,7 +5,7 @@ use bun_lint::types::{ObjectFlags, Type};
 /// Disallow type operations that resolve to the "empty object" type.
 pub struct NoGeneratedEmptyObjectType;
 
-const NO_GENERATED_EMPTY_OBJECT_TYPE: Message = Message::new(
+const NO_GENERATED_EMPTY_OBJECT_TYPE: &Message = &Message::new(
     "noGeneratedEmptyObjectType",
     "This type resolves to `{}`, the empty object type. This was likely not intentional.",
 );

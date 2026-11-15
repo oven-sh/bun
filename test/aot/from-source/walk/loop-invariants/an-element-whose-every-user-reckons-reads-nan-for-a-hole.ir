@@ -1,0 +1,22 @@
+# LIBRARY: own
+# -- source: an-element-whose-every-user-reckons-reads-nan-for-a-hole.ts
+# declare function sink(value: unknown): void;
+# function moments(d: number[]): number { let s = 0, q = 0; for (let i = 0; i < d.length; i++) { const v = d[i]; s += v; q += v * v; } return s + q * 3; }
+# sink(moments);
+# -- end of source
+# One read under a name, and three mentions of the name: each adds or multiplies, so undefined and NaN give the same. The question was asked of a read's ONLY user, so a read with two was a number or
+# undefined, and each of the three asked anew which: a third of what a correlation over rows of fractions executed.
+# f1 = moments
+# RUN: walk f1 mechanisms=all
+# REQUIRES: as-written
+# CHECK-LABEL: code f1:Body
+# CHECK: @Double = GetArrayElement {{*}}level=Proven {{*}}readsHoleAsNaN
+# CHECK-NOT: @OptionalDouble = GetArrayElement {{*}}level=Proven
+# RUN(SHELL): run-in-shell globalThis.sink = moments => { const halves = Array.from({ length: 40 }, (_, i) => i + 0.5), wholes = Array.from({ length: 40 }, (_, i) => i), holed = halves.slice(), holedWholes = wholes.slice(); delete holed[21]; delete holedWholes[3]; for (const d of [halves, wholes, holed, holedWholes, [], [1.5, NaN], [2]]) print(moments(d)); };
+# SHELL: 64790
+# SHELL: 62400
+# SHELL: NaN
+# SHELL: NaN
+# SHELL: 0
+# SHELL: NaN
+# SHELL: 14

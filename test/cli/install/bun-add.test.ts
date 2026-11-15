@@ -372,6 +372,17 @@ it("bun add --analyze leaves out builtins, paths and aliases, with or without a 
   ).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
 });
 
+it("bun add --analyze does not add the package that the rest of a bun: specifier names", async () => {
+  const urls: string[] = [];
+  // "#!/usr/bin/env bun" makes this a file for bun.
+  expect(await analyze("add", `#!/usr/bin/env bun\nimport "bun:boba"; import "bar/sub";`, { urls })).toEqual({
+    added: ["bar"],
+    errors: [],
+    exitCode: 0,
+  });
+  expect(urls).toEqual([`${root_url}/bar`]);
+});
+
 it.each([
   ["billing", "billing"],
   ["billing", "billing/sub"],

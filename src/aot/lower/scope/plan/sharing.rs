@@ -1,0 +1,535 @@
+use bun_sema::bind::{CodeUnit, InitialState, ScopeId, ScopeKind, SymbolId};
+use bun_sema::check::aot::ClassRef;
+use bun_sema::hir::{ExprId, FnKind};
+use bun_sema::program::Sym;
+use bun_sema::util::SharedSort;
+use smallvec::SmallVec;
+
+use super::loop_updates::is_stored_only_by_own_loop_update;
+use super::tables::ScopeTree;
+use super::{BindingSharing, Context, NormalizedUses};
+use crate::ir::{ClassSlot, VariableKey};
+use crate::lower::captures::{CapturedBinding, is_initialized_before};
+use crate::lower::class;
+use crate::lower::scope::analysis::{find_by_key, sort_unique};
+use crate::lower::scope::dead_zone::find_constant_initializer;
+use crate::lower::scope::{
+    BindingForm, BindingRef, Initialization, ScopeSlot, WalkedFunctionId, order_by_number,
+};
+use crate::modules::{ExportBinding, ModuleKind};
+
+type Users = SmallVec<[(BindingRef, WalkedFunctionId); 8]>;
+
+fn find_registries(
+    context: &Context<'_, '_>,
+    variables: &[(ScopeId, SymbolId)],
+) -> Vec<(ScopeId, BindingRef)> {
+    let Some(find) = context.input.find_registries else {
+        return Vec::new();
+    };
+    let symbols: Vec<SymbolId> = variables.iter().map(|it| it.1).collect();
+    let answers = find(&symbols);
+    let held = variables.iter().zip(answers).filter(|it| it.1);
+    let held = held.map(|(&(scope, symbol), _)| (scope, BindingRef::Symbol(symbol)));
+    let mut registries: Vec<(ScopeId, BindingRef)> = held.collect();
+    registries.sort_unstable();
+    registries
+}
+
+pub(super) fn compute_sharing(
+    context: &Context<'_, '_>,
+    forms: &[BindingForm],
+    uses: &NormalizedUses,
+) -> BindingSharing {
+    let exported = collect_exported_symbols(context, forms);
+    let eval_bindings = uses.eval_uses.iter().map(|eval_use| eval_use.binding);
+    let mut seen_by_eval: Vec<BindingRef> = eval_bindings.collect();
+    sort_unique(&mut seen_by_eval);
+    let input = context.input;
+    let read_as_members = input.modules.bindings_read_as_members(input.file);
+    let mut read_as_members: Vec<SymbolId> = read_as_members.collect();
+    sort_unique(&mut read_as_members);
+    debug_assert!(
+        uses.uses.is_sorted(),
+        "the users of a binding stand in order"
+    );
+    let users = uses.uses.iter().map(|&(user, binding)| (binding, user));
+    let mut by_binding = order_by_number(users, forms.len() + 1, |(binding, _)| match binding {
+        BindingRef::Symbol(symbol) => symbol.idx(),
+        BindingRef::Slot(..) => forms.len(),
+    });
+    let first_slot = by_binding.partition_point(|entry| matches!(entry.0, BindingRef::Symbol(_)));
+    by_binding[first_slot..].sort_unstable();
+    let mut sharing = BindingSharing::default();
+    let mut may_hold_registries: Vec<(ScopeId, SymbolId)> = Vec::new();
+    for mut run in by_binding.chunk_by(|first, second| first.0 == second.0) {
+        let binding = run[0].0;
+        let Some(owner) = context.owner_of(binding) else {
+            continue;
+        };
+        let is_exported = binding.is_listed_in(&exported);
+        let is_seen_by_eval =
+            !seen_by_eval.is_empty() && seen_by_eval.binary_search(&binding).is_ok();
+        let mut readers = Users::new();
+        if !is_exported
+            && !is_seen_by_eval
+            && (context.is_holder_without_value(binding)
+                || is_captured_constant(context, owner, run, &read_as_members))
+        {
+            readers.extend_from_slice(run);
+            drop_users_behind_initialization(context, owner, &mut readers, &mut sharing);
+            run = readers.as_slice();
+        }
+        if run.is_empty() {
+            continue;
+        }
+        let is_shared =
+            is_exported || is_seen_by_eval || run.iter().any(|&(_, user)| user != owner);
+        if is_shared {
+            sharing.shared.push(binding);
+        }
+        let body_of = |function: WalkedFunctionId| context.module_bodies[function.index()];
+        let body_of_owner = body_of(owner);
+        let is_used_by_other_body = run.iter().any(|&(_, user)| body_of(user) != body_of_owner);
+        let key = match binding {
+            BindingRef::Symbol(symbol) if is_exported => Some(symbol_key(context, symbol)),
+            BindingRef::Symbol(_) | BindingRef::Slot(..) if is_used_by_other_body => {
+                find_variable_key_between_bodies(context, binding)
+            }
+            BindingRef::Symbol(_) | BindingRef::Slot(..) => {
+                find_variable_key(context, binding, is_seen_by_eval).filter(|_| is_shared)
+            }
+        };
+        if let Some(key) = key {
+            sharing.variables.push((binding, key));
+            continue;
+        }
+        let captured = describe_captured_binding(context, binding, owner);
+        if let BindingRef::Symbol(symbol) = binding
+            && is_shared
+            && context.input.find_registries.is_some()
+        {
+            may_hold_registries.push((captured.scope, symbol));
+        }
+        sharing.captured.push(captured);
+        for &(binding, user) in run {
+            sharing.captured_uses.push((user, binding));
+        }
+    }
+    let used_count = sharing.variables.len();
+    for &symbol in &exported {
+        let binding = BindingRef::Symbol(symbol);
+        let is_used = find_by_key(&sharing.variables[..used_count], binding).is_some();
+        if forms[symbol.idx()] == BindingForm::Stored && !is_used {
+            sharing.shared.push(binding);
+            match context.find_instance_field(symbol) {
+                Some(field) => sharing.instance_fields.push((binding, field)),
+                None => {
+                    let key = symbol_key(context, symbol);
+                    sharing.variables.push((binding, key));
+                }
+            }
+        }
+    }
+    sharing
+        .captured
+        .sort_unstable_by_key(|captured| captured.binding);
+    let registries = find_registries(context, &may_hold_registries);
+    hold_in_every_closure(context, &registries, &mut sharing.captured_uses);
+    sharing.registries = registries;
+    sharing.fields_for_eval = collect_fields_for_eval(context, uses, &sharing.captured);
+    collect_what_is_stored_under_handlers(context, forms, &mut sharing);
+    if sharing.registries.is_empty() {
+        let captured_uses = sharing.captured_uses.iter().copied();
+        let function_count = context.walk.functions.len();
+        sharing.captured_uses =
+            order_by_number(captured_uses, function_count, |(user, _)| user.index());
+    } else {
+        sharing.captured_uses.sort_unstable();
+    }
+    sharing.variables.shared_sort_unstable();
+    sharing.shared.sort_unstable();
+    sharing
+}
+
+fn hold_in_every_closure(
+    context: &Context<'_, '_>,
+    held: &[(ScopeId, BindingRef)],
+    uses: &mut Vec<(WalkedFunctionId, BindingRef)>,
+) {
+    if held.is_empty() {
+        return;
+    }
+    let scopes = &context.input.bound.scopes;
+    let mut is_met = vec![false; context.walk.functions.len()];
+    for (scope, &function) in scopes.iter().zip(&context.scope_functions) {
+        let Some(function) = function else {
+            continue;
+        };
+        if std::mem::replace(&mut is_met[function.index()], true) {
+            continue;
+        }
+        let mut around = scope.parent.some();
+        while let Some(outer) = around {
+            let owner = context.scope_functions[outer.idx()];
+            let body_of = |function: WalkedFunctionId| context.module_bodies[function.index()];
+            if owner.is_some_and(|owner| body_of(owner) == body_of(function)) {
+                let first = held.partition_point(|entry| entry.0 < outer);
+                let in_scope = held[first..].iter().take_while(|entry| entry.0 == outer);
+                uses.extend(in_scope.map(|entry| (function, entry.1)));
+            }
+            around = scopes[outer.idx()].parent.some();
+        }
+    }
+}
+
+fn describe_captured_binding(
+    context: &Context<'_, '_>,
+    binding: BindingRef,
+    owner: WalkedFunctionId,
+) -> CapturedBinding {
+    let mut is_immutable =
+        is_immutable(context, binding) || is_stored_only_by_own_loop_update(context, binding);
+    let mut initialization = find_initialization(context, binding);
+    if !is_immutable && let Some(time) = find_time_of_last_store(context, binding, owner) {
+        is_immutable = true;
+        initialization = Some(Initialization {
+            time: initialization.map_or(time, |initialization| initialization.time.max(time)),
+            precedes_hoisted_functions: false,
+        });
+    }
+    let is_entered_once_per_instance = context.has_instances
+        && context.is_entered_once_per_instance(context.scope_of(binding))
+        && !matches!(binding, BindingRef::Slot(_, ScopeSlot::ModuleInstance));
+    CapturedBinding {
+        binding,
+        scope: context.storage_scope(binding),
+        owner,
+        is_immutable: is_immutable && !is_entered_once_per_instance,
+        initialization,
+    }
+}
+
+fn find_time_of_last_store(
+    context: &Context<'_, '_>,
+    binding: BindingRef,
+    owner: WalkedFunctionId,
+) -> Option<u32> {
+    let symbol = match binding {
+        BindingRef::Symbol(symbol) => symbol,
+        BindingRef::Slot(scope, ScopeSlot::This) => {
+            return find_time_of_only_super_call(context, scope);
+        }
+        BindingRef::Slot(..) => return None,
+    };
+    if find_by_key(&context.walk.made_at_first_read, symbol).is_some() {
+        return None;
+    }
+    let bound = context.input.bound;
+    if bound.is_visible_to_eval(symbol) {
+        return None;
+    }
+    let time = context.walk.last_store_times[symbol.idx()];
+    if time == 0 || time == u32::MAX {
+        return None;
+    }
+    let is_initialized = context.walk.symbol_initializations[symbol.idx()].is_some()
+        || bound.initial_state(symbol) == InitialState::Undefined;
+    if !is_initialized {
+        return None;
+    }
+    let all_stores = &context.walk.symbol_stores;
+    let first = all_stores.partition_point(|store| store.0 < symbol);
+    let end = all_stores.partition_point(|store| store.0 <= symbol);
+    let stores = &all_stores[first..end];
+    if stores.iter().any(|store| store.2 != owner) {
+        return None;
+    }
+    let is_own_store = |target: ExprId| {
+        stores
+            .binary_search_by_key(&target, |store| store.1)
+            .is_ok()
+    };
+    let is_stable = context.is_stable_ignoring(symbol, is_own_store);
+    is_stable.then_some(time)
+}
+
+fn find_time_of_only_super_call(context: &Context<'_, '_>, scope: ScopeId) -> Option<u32> {
+    let bindings = &context.walk.this_bindings;
+    let times = &context.walk.slot_initializations;
+    let first = bindings.partition_point(|binding| binding.0 < scope);
+    let end = bindings.partition_point(|binding| binding.0 <= scope);
+    match bindings[first..end] {
+        [(_, true)] => find_by_key(times, (scope, ScopeSlot::This)),
+        _ => None,
+    }
+}
+
+/// `var unit = "day"; C.prototype.get = function () { return this[unit]; };`: a closure made behind the declaration
+/// has the constant itself. A member read names the variable.
+fn is_captured_constant(
+    context: &Context<'_, '_>,
+    owner: WalkedFunctionId,
+    uses: &[(BindingRef, WalkedFunctionId)],
+    read_as_members: &[SymbolId],
+) -> bool {
+    let Some(&(BindingRef::Symbol(symbol), _)) = uses.first() else {
+        return false;
+    };
+    let input = context.input;
+    let decisions = &input.compiled.analysis.decisions;
+    uses.iter().any(|&(_, user)| user != owner)
+        && read_as_members.binary_search(&symbol).is_err()
+        && find_constant_initializer(input.hir, input.bound, decisions, symbol).is_some()
+}
+
+fn drop_users_behind_initialization(
+    context: &Context<'_, '_>,
+    owner: WalkedFunctionId,
+    users: &mut Users,
+    sharing: &mut BindingSharing,
+) {
+    let Some(&(binding @ BindingRef::Symbol(symbol), _)) = users.first() else {
+        return;
+    };
+    let walk = context.walk;
+    let is_reached_through_initialization = match context.input.bound.initial_state(symbol) {
+        InitialState::Uninitialized => true,
+        InitialState::Undefined | InitialState::Initialized => {
+            !walk.is_initialized_conditionally[symbol.idx()]
+        }
+    };
+    let holder = describe_captured_binding(context, binding, owner);
+    if !holder.is_immutable || !is_reached_through_initialization {
+        return;
+    }
+    users.retain(|&mut (_, user)| {
+        let is_behind =
+            user != owner && is_initialized_before(&walk.functions, &holder, user, u32::MAX);
+        if is_behind {
+            sharing.initialized_holders.push((user, symbol));
+        }
+        !is_behind
+    });
+}
+
+pub(super) fn is_immutable(context: &Context<'_, '_>, binding: BindingRef) -> bool {
+    let (scope, slot) = match binding {
+        BindingRef::Symbol(id) => {
+            let file = context.input.file;
+            return find_by_key(&context.walk.made_at_first_read, id).is_none()
+                && context.is_stable_ignoring(id, |_| false)
+                && !context.input.modules.is_replaceable(Sym { file, id });
+        }
+        BindingRef::Slot(scope, slot) => (scope, slot),
+    };
+    match slot {
+        ScopeSlot::This | ScopeSlot::ArgumentsBinding | ScopeSlot::CommonJs(_) => {
+            let stored_slots = &context.walk.stored_slots;
+            stored_slots.binary_search(&(scope, slot)).is_err()
+        }
+        ScopeSlot::Class(
+            ClassSlot::ClassObject
+            | ClassSlot::ClassToken
+            | ClassSlot::ComputedKey(_)
+            | ClassSlot::PrivateMethod(_),
+        ) => true,
+        ScopeSlot::Class(ClassSlot::StaticField(_) | ClassSlot::DecoratorState) => false,
+        _ => true,
+    }
+}
+
+fn symbol_key(context: &Context<'_, '_>, id: SymbolId) -> VariableKey {
+    let file = context.input.file;
+    VariableKey::Symbol(Sym { file, id })
+}
+
+fn find_variable_key(
+    context: &Context<'_, '_>,
+    binding: BindingRef,
+    is_seen_by_eval: bool,
+) -> Option<VariableKey> {
+    let scope = context.scope_of(binding);
+    if !context.is_module_level_scope[scope.idx()] {
+        return None;
+    }
+    // What a direct eval of an inner module names stands in an environment.
+    if is_seen_by_eval && context.input.bound.code_unit(scope) != CodeUnit::File {
+        return None;
+    }
+    create_variable_key(context, binding)
+}
+
+fn find_variable_key_between_bodies(
+    context: &Context<'_, '_>,
+    binding: BindingRef,
+) -> Option<VariableKey> {
+    let scope = context.scope_of(binding);
+    let is_entered_once = context.input.bound.code_unit(scope) == CodeUnit::File
+        && !context.walk.is_repeated_scope[scope.idx()];
+    let key = create_variable_key(context, binding).filter(|_| is_entered_once);
+    debug_assert!(
+        key.is_some(),
+        "an inner module names only what the top of its file declares"
+    );
+    key
+}
+
+fn create_variable_key(context: &Context<'_, '_>, binding: BindingRef) -> Option<VariableKey> {
+    match binding {
+        BindingRef::Symbol(symbol) => Some(symbol_key(context, symbol)),
+        BindingRef::Slot(scope, ScopeSlot::Class(slot)) => {
+            let ScopeKind::Class(class) = context.input.bound.scopes[scope.idx()].kind else {
+                return None;
+            };
+            let file = context.input.file;
+            let class = ClassRef { file, class };
+            Some(VariableKey::ClassSlot { class, slot })
+        }
+        BindingRef::Slot(_, ScopeSlot::CommonJs(variable)) => {
+            let file = context.input.file;
+            Some(VariableKey::ModulePath { file, variable })
+        }
+        BindingRef::Slot(
+            _,
+            ScopeSlot::This
+            | ScopeSlot::NewTarget
+            | ScopeSlot::Callee
+            | ScopeSlot::HomeObject
+            | ScopeSlot::Arguments
+            | ScopeSlot::ArgumentsBinding
+            | ScopeSlot::WithObject
+            | ScopeSlot::EvalVariables
+            | ScopeSlot::ParameterEvalVariables
+            | ScopeSlot::ModuleInstance,
+        ) => None,
+    }
+}
+
+fn is_derived_constructor_scope(context: &Context<'_, '_>, scope: ScopeId) -> bool {
+    let (hir, bound) = (context.input.hir, context.input.bound);
+    let ScopeKind::Fn(function) = bound.scopes[scope.idx()].kind else {
+        return false;
+    };
+    let class = bound.function_class(function);
+    hir.runtime_function_kind(function) == FnKind::Constructor
+        && class.is_some_and(|class| class::is_derived_class(hir, class))
+}
+
+fn find_initialization(context: &Context<'_, '_>, binding: BindingRef) -> Option<Initialization> {
+    let walk = context.walk;
+    let (scope, slot) = match binding {
+        BindingRef::Symbol(symbol) => return walk.symbol_initializations[symbol.idx()],
+        BindingRef::Slot(scope, slot) => (scope, slot),
+    };
+    match slot {
+        ScopeSlot::Class(
+            ClassSlot::ClassObject
+            | ClassSlot::ClassToken
+            | ClassSlot::ComputedKey(_)
+            | ClassSlot::PrivateMethod(_),
+        ) => {
+            let time = find_by_key(&walk.slot_initializations, (scope, slot))?;
+            Some(Initialization {
+                time,
+                precedes_hoisted_functions: false,
+            })
+        }
+        ScopeSlot::Class(ClassSlot::StaticField(_) | ClassSlot::DecoratorState) => None,
+        ScopeSlot::This if is_derived_constructor_scope(context, scope) => None,
+        _ => Some(Initialization::AT_SCOPE_ENTRY),
+    }
+}
+
+fn collect_exported_symbols(context: &Context<'_, '_>, forms: &[BindingForm]) -> Vec<SymbolId> {
+    let input = context.input;
+    let exports = input.modules.exports(input.file).iter();
+    let own_variables = exports.filter_map(|export| match export.binding {
+        ExportBinding::Variable(variable) if variable.file == input.file => Some(variable.id),
+        _ => None,
+    });
+    let mut symbols: Vec<SymbolId> = own_variables.collect();
+    let callbacks = input.modules.inner_modules(input.file).iter();
+    let mut body_scopes: SmallVec<[ScopeId; 4]> = callbacks
+        .map(|callback| input.bound.fns[callback.idx()].scope)
+        .collect();
+    if input.modules.kind(input.file) == ModuleKind::CommonJs {
+        body_scopes.push(context.file_scope);
+    }
+    if !body_scopes.is_empty() {
+        body_scopes.sort_unstable();
+        let commonjs = input.modules.commonjs();
+        for (symbol, &form) in (0..).map(SymbolId).zip(forms) {
+            if form == BindingForm::Stored
+                && body_scopes
+                    .binary_search(&context.declaring_scope(symbol))
+                    .is_ok()
+                && commonjs.is_exported_binding(input.file, symbol)
+            {
+                symbols.push(symbol);
+            }
+        }
+    }
+    symbols.extend(input.modules.wrapped().require_function(input.file));
+    sort_unique(&mut symbols);
+    symbols
+}
+
+fn collect_what_is_stored_under_handlers(
+    context: &Context<'_, '_>,
+    forms: &[BindingForm],
+    sharing: &mut BindingSharing,
+) {
+    let tries = &context.walk.tries;
+    let mut scopes = None;
+    let mut stored: Vec<Vec<BindingRef>> = vec![Vec::new(); tries.len()];
+    let mut fields = Vec::new();
+    for (index, walked) in tries.iter().enumerate().rev() {
+        let mut bindings = std::mem::take(&mut stored[index]);
+        bindings.extend_from_slice(&walked.stored);
+        bindings.retain(|&binding| {
+            matches!(binding, BindingRef::Symbol(symbol) if forms[symbol.idx()] == BindingForm::Stored)
+                && context.owner_of(binding) == Some(walked.function)
+                && scopes
+                    .get_or_insert_with(|| ScopeTree::new(context))
+                    .encloses(context.scope_of(binding), walked.boundary)
+        });
+        if let Some(around) = walked.parent {
+            debug_assert!((around as usize) < index);
+            debug_assert!(tries[around as usize].function == walked.function);
+            stored[around as usize].extend_from_slice(&bindings);
+        }
+        let number_of_stores = bindings.len() as u64;
+        sort_unique(&mut bindings);
+        if bindings.len() as u64 * number_of_stores > u64::from(walked.size) {
+            fields.extend_from_slice(&bindings);
+        }
+        stored[index] = bindings;
+    }
+    sort_unique(&mut fields);
+    sharing.stored_under_handlers = stored;
+    sharing.fields_for_handlers = fields;
+}
+
+fn collect_fields_for_eval(
+    context: &Context<'_, '_>,
+    uses: &NormalizedUses,
+    captured: &[CapturedBinding],
+) -> Vec<BindingRef> {
+    let functions = &context.walk.functions;
+    let mut fields = Vec::new();
+    for eval_use in &uses.eval_uses {
+        let index = captured.binary_search_by_key(&eval_use.binding, |entry| entry.binding);
+        let Ok(index) = index else {
+            continue;
+        };
+        let binding = &captured[index];
+        let is_passed_by_value = binding.is_immutable
+            && is_initialized_before(functions, binding, eval_use.function, eval_use.time);
+        if !is_passed_by_value {
+            fields.push(binding.binding);
+        }
+    }
+    sort_unique(&mut fields);
+    fields
+}

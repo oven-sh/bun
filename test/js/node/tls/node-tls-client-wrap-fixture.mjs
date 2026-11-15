@@ -303,7 +303,9 @@ async function serverWithSession() {
 export async function session() {
   const { server, port, session, connected } = await serverWithSession();
   const host = "127.0.0.1";
-  const options = { session, rejectUnauthorized: false };
+  // Since Node.js 26.3.1 a session is only offered to the host it came from. A socket that is already connected
+  // does not say which that is, so every path names it.
+  const options = { session, host, rejectUnauthorized: false };
   // The listener is attached in the turn that makes the socket: a wrap starts its handshake at once.
   async function reused(socket, event, prepare) {
     try {
@@ -317,7 +319,7 @@ export async function session() {
   }
   try {
     return {
-      "tls.connect({ port, session })": await reused(tls.connect({ port, host, ...options }), "secureConnect"),
+      "tls.connect({ port, session })": await reused(tls.connect({ port, ...options }), "secureConnect"),
       "tls.connect({ socket, session })": await reused(
         tls.connect({ socket: await connected(), ...options }),
         "secureConnect",

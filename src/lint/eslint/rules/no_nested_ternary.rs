@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Disallow nested ternary expressions.
 pub struct NoNestedTernary;
 
-const NO_NESTED_TERNARY: Message =
-    Message::new("noNestedTernary", "Do not nest ternary expressions.");
+const NO_NESTED_TERNARY: &Message =
+    &Message::new("noNestedTernary", "Do not nest ternary expressions.");
 
 impl Rule for NoNestedTernary {
     const META: Meta = Meta::eslint("no-nested-ternary", Kind::Suggestion);

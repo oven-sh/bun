@@ -1,8 +1,38 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { checkPrime, checkPrimeSync, randomBytes, randomFill, randomFillSync, randomInt } from "crypto";
+import { checkPrime, checkPrimeSync, randomBytes, randomFill, randomFillSync, randomInt, randomUUID } from "crypto";
 import { statSync } from "fs";
 import { bunEnv, bunExe, isLinux, isMacOS, isMusl, tempDir } from "harness";
 import { join } from "path";
+
+describe("arguments are validated as in Node", () => {
+  it("a proxy of a function is a callback", async () => {
+    const called = (call: (callback: (err: Error | null) => void) => void) =>
+      new Promise<void>((resolve, reject) => call(new Proxy(err => (err ? reject(err) : resolve()), {})));
+    await called(callback => randomBytes(4, callback));
+    await called(callback => randomInt(5, callback));
+    await called(callback => randomInt(1, 5, callback));
+    await called(callback => randomFill(new Uint8Array(4), callback));
+    await called(callback => randomFill(new Uint8Array(4), 0, callback));
+    await called(callback => randomFill(new Uint8Array(4), 0, 1, callback));
+  });
+
+  it("randomUUID refuses a proxy of an array", () => {
+    expect(() => randomUUID(new Proxy([], {}))).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  });
+
+  it("randomUUID and randomFill report their arguments", () => {
+    // @ts-expect-error
+    expect(() => randomUUID(5)).toThrow('The "options" argument must be of type object. Received type number (5)');
+    // @ts-expect-error
+    expect(() => randomUUID({ disableEntropyCache: 1 })).toThrow(
+      'The "options.disableEntropyCache" property must be of type boolean. Received type number (1)',
+    );
+    // @ts-expect-error
+    expect(() => randomFillSync(5)).toThrow(
+      'The "buf" argument must be an instance of ArrayBuffer or ArrayBufferView. Received type number (5)',
+    );
+  });
+});
 
 describe("randomInt args validation", () => {
   it("default min is 0 so max should be greater than 0", () => {

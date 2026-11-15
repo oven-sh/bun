@@ -1,0 +1,29 @@
+# A turn may write the list, so nothing of it is asked in front of the loop. The read asked for itself, and its miss called the read of any object under any key: so the operation counted as one that may run other code, on the usual way, and every test behind it in the turn kept a closed side that rejoins.
+# In the typed copy the two questions stand in front of the read as tests of their own: the kind of the storage, and whether the element is there. Where one fails the turn begins again in the other copy. Behind them the read runs no code.
+# Only where numbers come out of the list: a list of numbers, or a list of lists of numbers. What comes out of a list of texts or objects is asked again whatever the read is, and the tests would be built for nothing: counts() reads as before.
+# f1 = grows, f2 = counts
+# -- source: an-element-of-a-list-that-the-turns-may-write-is-asked-in-the-turn-and-the-miss-leaves.ts
+# declare function sink(...values: unknown[]): void;
+# function grows(list: number[]) { let s = 0; for (let i = 0; i < list.length; i++) { s += list[i]; if (s === 3) list.push(7); } return s; }
+# function counts(list: string[], turns: number) { let n = 0; for (let i = 0; i < turns; i++) { if (list[i & 7] === "x") n++; if (n === 3) list.push("y"); } return n; }
+# sink(grows, counts);
+# -- end of source
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
+# CHECK: = IsElementPresent
+# CHECK: = GetArrayElement {{*}}arrayStorage=Double level=Proven [keyIsIntegral, isPresent
+# RUN(TEXTS): walk f2 mechanisms=all
+# TEXTS-LABEL: code f2:Body
+# TEXTS-NOT: = IsElementPresent
+# TEXTS: = GetArrayElement {{*}}level=Expected
+# RUN(FRONT): walk f1 f2 mechanisms=all
+# FRONT-NOT: = GetArrayStorage
+# RUN(COUNT): compile ElementsGuardedInIterations mechanisms=all
+# COUNT: statistic ElementsGuardedInIterations 1
+# RUN(SHELL): run-in-shell globalThis.sink = (grows, counts) => { print(grows([1, 2, 4]), grows([1.5, 1.5, 4]), grows([1, , 2, 5]), grows([1, "2", 3]), grows([])); const seen = []; const odd = [1, 2, 4]; Object.defineProperty(odd, 1, { get() { seen.push("read"); return 2; } }); print(grows(odd), seen.join()); print(counts(["x", "x", "x"], 12), counts(["x", , "x", 5, "x", "x"], 9), counts([1, 2, 3], 4)); };
+# SHELL: 14 14 NaN 123 0
+# SHELL-NEXT: 14 read
+# SHELL-NEXT: 6 5 0
+# SHELL-NEXT: exited with 0

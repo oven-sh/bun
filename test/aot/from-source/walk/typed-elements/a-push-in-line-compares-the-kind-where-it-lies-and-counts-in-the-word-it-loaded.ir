@@ -1,0 +1,14 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function fill(list: string[], texts: string[]): number { for (let i = 0; i < texts.length; i++) list.push(texts[i]!); return list.length; }
+# const made: string[] = [];
+# print(fill(made, JSON.parse('["a", "b", "c"]')), made.join());
+# -- end of source
+# The room is asked of the two words as they were loaded, the sum is made in the word, and the word is stored: no widened copy of the length lives beside it.
+# RUN(EMIT): emit f1 mechanisms=all
+# EMIT: Int32 {{*}} = Below({{*}}
+# EMIT: Int32 {{*}} = Add({{*}}
+# EMIT-NEXT: Void {{*}} = Store({{*}}, offset = -8, Butterfly_publicLength)
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 3 a,b,c
+# RIGHT-NEXT: exited with 0

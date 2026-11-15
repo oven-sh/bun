@@ -102,11 +102,7 @@ impl HotReloadEvent {
 
                 // Bust resolution cache, but since Bun does not watch all
                 // directories in a codebase, this only targets the following resolutions
-                // SAFETY: server_transpiler is initialized in DevServer::init before any
-                // HotReloadEvent can fire.
-                let _ = unsafe { dev.server_transpiler.assume_init_mut() }
-                    .resolver
-                    .bust_dir_cache(changed_dir);
+                let _ = dev.server_transpiler.resolver.bust_dir_cache(changed_dir);
 
                 // if a directory watch exists for resolution failures, check those now.
                 if let Some(watcher_index) = dev.directory_watchers.watches.get_index(changed_dir) {
@@ -115,24 +111,18 @@ impl HotReloadEvent {
                         Some(dev.directory_watchers.watches.values()[watcher_index].first_dep);
 
                     while let Some(index) = it {
-                        // Note: reshaped for borrowck — re-index per iteration instead of
-                        // holding `dep` ref across resolver call + appendFile + freeDependencyIndex.
-                        let (source_file_path, specifier, next) = {
-                            let dep = &dev.directory_watchers.dependencies[index as usize];
-                            (dep.source_file_path, &raw const *dep.specifier, dep.next)
-                        };
-                        it = next;
+                        let dep = &dev.directory_watchers.dependencies[index as usize];
+                        let source_file_path = dep.source_file_path;
+                        it = dep.next;
 
-                        // `specifier` points into the dep's owned `Box<[u8]>`, which is
-                        // not mutated until after `resolve` returns.
-                        // SAFETY: see `Dep` doc — neither slice is mutated mid-resolve.
-                        let resolved = unsafe { dev.server_transpiler.assume_init_mut() }
+                        let resolved = dev
+                            .server_transpiler
                             .resolver
                             .resolve(
                                 bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                                     source_file_path.slice(),
                                 ),
-                                unsafe { &*specifier },
+                                &dep.specifier,
                                 bun_ast::ImportKind::Stmt,
                             )
                             .is_ok();
@@ -157,7 +147,7 @@ impl HotReloadEvent {
                             new_first_dep;
                     } else {
                         // without any files to depend on this watcher is freed
-                        dev.directory_watchers.free_entry(watcher_index);
+                        dev.free_directory_watch(watcher_index);
                     }
                 }
             }
@@ -174,11 +164,13 @@ impl HotReloadEvent {
 
         let changed_file_paths = self.files.keys();
         bun_core::handle_oom(
-            dev.server_graph
+            dev.graphs
+                .server
                 .invalidate(changed_file_paths, entry_points),
         );
         bun_core::handle_oom(
-            dev.client_graph
+            dev.graphs
+                .client
                 .invalidate(changed_file_paths, entry_points),
         );
 
@@ -207,7 +199,7 @@ impl HotReloadEvent {
 
         if let Some(map) = &dev.has_tailwind_plugin_hack {
             for abs_path in map.keys() {
-                let Some(file) = dev.client_graph.bundled_files.get(abs_path) else {
+                let Some(file) = dev.graphs.client.bundled_files.get(abs_path) else {
                     continue;
                 };
                 if file.file_kind() == FileKind::Css {
@@ -258,31 +250,24 @@ impl HotReloadEvent {
 
     /// Main-thread side of the watcher → DevServer hand-off.
     ///
-    /// Takes a raw `*mut` because `first` lives in the heap
-    /// `(*(*first).atomics).events[_]`; holding a `&mut HotReloadEvent`
-    /// parameter while also materialising `&mut DevServer` would create two
-    /// aliasing unique borrows. All event accesses go through the raw pointer
-    /// and `&mut DevServer` is re-borrowed per use, scoped to not overlap any
-    /// live `&mut *current`.
-    ///
     /// # Safety
     /// `first` points into `(*(*first).atomics).events` of a live heap
     /// `WatcherAtomics`. `(*first).owner` is either the live owning
     /// `DevServer` or null (set by `Drop for DevServer` while this event was
     /// still queued). Must run on the DevServer thread.
+    #[inline(never)]
     pub(crate) unsafe fn run(first: *mut HotReloadEvent) {
-        // SAFETY: caller contract — `first` is a live slot in a heap
-        // `WatcherAtomics`; `owner` is either the live DevServer or null.
-        let dev: *mut DevServer = unsafe { (*first).owner };
-        if dev.is_null() {
-            // SAFETY: `atomics` was set in `WatcherAtomics::init` to the
-            // `heap::into_raw` pointer; DevServer released its reference so
-            // this is the unique owner.
-            unsafe { bun_core::heap::destroy((*first).atomics) };
-            return;
-        }
-        // SAFETY: see above; `magic` read is non-aliasing.
-        debug_assert!(unsafe { (*dev).magic } == Magic::Valid);
+        bun_removable_features::removable_definition!(Bundler, Self::run);
+        // SAFETY: caller contract. With a null `owner`, `atomics` (the `heap::alloc_nn` pointer) has
+        // no other owner. Otherwise the slot is this thread's until it is recycled.
+        let (event, dev) = unsafe {
+            let Some(dev) = (*first).owner.as_mut() else {
+                bun_core::heap::destroy((*first).atomics);
+                return;
+            };
+            (&mut *first, dev)
+        };
+        debug_assert!(dev.magic == Magic::Valid);
         bun_core::scoped_log!(DevServer, "HMR Task start");
         scopeguard::defer! {
             bun_core::scoped_log!(DevServer, "HMR Task end");
@@ -290,72 +275,30 @@ impl HotReloadEvent {
 
         #[cfg(debug_assertions)]
         {
-            // SAFETY: `first` is live and exclusively owned by this thread.
-            debug_assert!(unsafe { (*first).debug_mutex.try_lock() });
-            // SAFETY: `first` is live (caller contract); atomic load needs no
-            // exclusivity and does not alias any `&mut` borrow.
-            debug_assert!(unsafe { (*first).contention_indicator.load(Ordering::SeqCst) } == 0);
+            debug_assert!(event.debug_mutex.try_lock());
+            debug_assert!(event.contention_indicator.load(Ordering::SeqCst) == 0);
         }
 
-        // SAFETY: `dev` is the unique BACKREF; this fn runs on the DevServer
-        // thread. No `&mut *first` is live across this borrow.
-        if unsafe { (*dev).current_bundle.is_some() } {
-            // SAFETY: as above; `next_bundle` is disjoint from `watcher_atomics`.
-            unsafe { (*dev).next_bundle.reload_event = Some(first) };
+        if dev.current_bundle.is_some() {
+            dev.next_bundle.reload_event = Some(first);
             return;
         }
 
         let mut entry_points = EntryPointList::default();
-
-        // SAFETY: `first` is live; `&mut *dev` re-borrowed for the call only.
-        // `process_file_list` mutates graph/watcher/transpiler fields of `dev`,
-        // all disjoint from `dev.watcher_atomics.events[_]` (where `first` lives).
-        unsafe { (*first).process_file_list(&mut *dev, &mut entry_points) };
-
-        // SAFETY: `first` is live; `timer` was set by
-        // `WatcherAtomics::watcher_acquire_event` before submission.
-        let timer = unsafe { (*first).timer };
-
-        // Note: raw-ptr loop because `recycle_event_from_dev_server` returns
-        // a pointer into `dev.watcher_atomics.events`; re-borrow each iteration
-        // to avoid aliasing UB.
-        let mut current: *mut HotReloadEvent = first;
-        loop {
-            // SAFETY: `current` always points at a live event owned by
-            // `dev.watcher_atomics`; `&mut *dev` re-borrowed for the call only,
-            // disjoint per the note above.
-            unsafe { (*current).process_file_list(&mut *dev, &mut entry_points) };
-            // SAFETY: `dev` is valid; recycle traffics in raw `*mut HotReloadEvent`.
-            match unsafe {
-                WatcherAtomics::recycle_event_from_dev_server(
-                    (*dev).watcher_atomics.as_ptr(),
-                    current,
-                )
-            } {
-                Some(next) => {
-                    current = next;
-                    #[cfg(debug_assertions)]
-                    {
-                        // SAFETY: `current` is a live event we now exclusively own.
-                        debug_assert!(unsafe { (*current).debug_mutex.try_lock() });
-                    }
-                }
-                None => break,
-            }
-        }
-
-        // SAFETY: `dev` is valid; no `&mut *current` is live past this point.
-        let dev_ref = unsafe { &mut *dev };
+        event.process_file_list(dev, &mut entry_points);
+        let timer = event.timer;
+        // SAFETY: as above.
+        unsafe { dev.process_reload_events(first, &mut entry_points) };
 
         if entry_points.set.count() == 0 {
             return;
         }
 
-        match &mut dev_ref.testing_batch_events {
+        match &mut dev.testing_batch_events {
             TestingBatchEvents::Disabled => {}
             TestingBatchEvents::Enabled(ev) | TestingBatchEvents::ReleaseAfterBundle(ev) => {
                 bun_core::handle_oom(ev.append(&entry_points));
-                dev_ref.publish(
+                dev.publish(
                     HmrTopic::TestingWatchSynchronization,
                     &[MessageId::TestingWatchSynchronization.char(), 1],
                     bun_uws::Opcode::BINARY,
@@ -365,8 +308,33 @@ impl HotReloadEvent {
             TestingBatchEvents::EnableAfterBundle => debug_assert!(false),
         }
 
-        if let Err(_err) = dev_ref.start_async_bundle(entry_points, true, timer) {
+        if let Err(_err) = dev.start_async_bundle(entry_points, true, timer) {
             return;
+        }
+    }
+}
+
+impl DevServer {
+    /// SAFETY: `first` is a slot of `self.watcher_atomics` that was submitted and not yet recycled.
+    pub(super) unsafe fn process_reload_events(
+        &mut self,
+        first: *mut HotReloadEvent,
+        entry_points: &mut EntryPointList,
+    ) {
+        let mut current = first;
+        // SAFETY: caller contract, which also holds for the slot that recycling returns.
+        unsafe {
+            loop {
+                (*current).process_file_list(self, entry_points);
+                let atomics = self.watcher_atomics.as_ptr();
+                let Some(next) = WatcherAtomics::recycle_event_from_dev_server(atomics, current)
+                else {
+                    break;
+                };
+                current = next;
+                #[cfg(debug_assertions)]
+                debug_assert!((*current).debug_mutex.try_lock());
+            }
         }
     }
 }

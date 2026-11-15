@@ -9,34 +9,34 @@ pub struct ArrayCallbackReturn {
 }
 
 /// oxlint's messages for a last statement that's a `switch` without `default`, or an `if` without `else`.
-const MAY_FALL_THROUGH_SWITCH: Message = Message::new(
+const MAY_FALL_THROUGH_SWITCH: &Message = &Message::new(
     "mayFallThroughSwitch",
     "Callback for array method \"{{arrayMethodName}}\" may fall through a `switch` without returning",
 );
-const MAY_REACH_END_OF_IF: Message = Message::new(
+const MAY_REACH_END_OF_IF: &Message = &Message::new(
     "mayReachEndOfIf",
     "Callback for array method \"{{arrayMethodName}}\" may reach the end of an `if` without returning",
 );
-const EXPECTED_AT_END: Message = Message::new(
+const EXPECTED_AT_END: &Message = &Message::new(
     "expectedAtEnd",
     "{{arrayMethodName}}() expects a value to be returned at the end of {{name}}.",
 );
-const EXPECTED_INSIDE: Message = Message::new(
+const EXPECTED_INSIDE: &Message = &Message::new(
     "expectedInside",
     "{{arrayMethodName}}() expects a return value from {{name}}.",
 );
-const EXPECTED_RETURN_VALUE: Message = Message::new(
+const EXPECTED_RETURN_VALUE: &Message = &Message::new(
     "expectedReturnValue",
     "{{arrayMethodName}}() expects a return value from {{name}}.",
 );
-const EXPECTED_NO_RETURN_VALUE: Message = Message::new(
+const EXPECTED_NO_RETURN_VALUE: &Message = &Message::new(
     "expectedNoReturnValue",
     "{{arrayMethodName}}() expects no useless return value from {{name}}.",
 );
 /// oxlint's `help` with `allowVoid`.
 const EXPECTED_VOID: &str = "Expected the return expression to be started with `void`";
-const WRAP_BRACES: Message = Message::new("wrapBraces", "Wrap the expression in `{}`.");
-const PREPEND_VOID: Message = Message::new("prependVoid", "Prepend `void` to the expression.");
+const WRAP_BRACES: &Message = &Message::new("wrapBraces", "Wrap the expression in `{}`.");
+const PREPEND_VOID: &Message = &Message::new("prependVoid", "Prepend `void` to the expression.");
 
 const TARGET_METHODS: [&str; 14] = [
     "every",
@@ -190,7 +190,7 @@ impl ArrayCallbackReturn {
     fn report<'a>(
         cx: &Cx<'a, Self>,
         at: impl Spanned,
-        message: Message,
+        message: &'static Message,
         func: Func<'a>,
         array_method_name: &str,
     ) -> Report<'a> {

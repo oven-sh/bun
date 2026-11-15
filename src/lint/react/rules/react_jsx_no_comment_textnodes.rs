@@ -6,10 +6,10 @@ use bun_lint::rule::Plugin;
 /// Disallow comments from being inserted as text nodes.
 pub struct JsxNoCommentTextnodes;
 
-const PUT_COMMENT_IN_BRACES: Message =
-    Message::new("putCommentInBraces", "Comments inside children section of tag should be placed inside braces");
-const JSX_NO_COMMENT_TEXTNODES: Message =
-    Message::new("", "Comments inside children section of tag should be placed inside braces");
+const PUT_COMMENT_IN_BRACES: &Message =
+    &Message::new("putCommentInBraces", "Comments inside children section of tag should be placed inside braces");
+const JSX_NO_COMMENT_TEXTNODES: &Message =
+    &Message::new("", "Comments inside children section of tag should be placed inside braces");
 
 impl Rule for JsxNoCommentTextnodes {
     const META: Meta = Meta::plugin(Plugin::React, "jsx-no-comment-textnodes", Kind::None).recommended();

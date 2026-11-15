@@ -1,0 +1,3 @@
+// getter getter, nothing
+const show = (label, f) => { let r; try { r = f(); } catch (e) { r = `${e?.name}: ${e?.message}`.slice(0, 90); } console.log(label, typeof r === "object" ? Object.prototype.toString.call(r) : String(r).slice(0, 60)); };
+class A { k = 4; get m() { return this.k + 5; } } Object.defineProperty(A.prototype, "m", { get() { return this.k * 2; }, configurable: true }); let a = new A(); function r() { let s = 0; for (let j = 0; j < 150; j++) { s += +a.m; } return s; } show("after", r); try {  } catch (e) { console.log("threw", e.name); } show("then", r); show("again", r); a = new A(); show("new", r);

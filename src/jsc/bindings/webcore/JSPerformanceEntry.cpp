@@ -315,7 +315,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformanceEntryPrototypeFunction_inspectCustom, (JSG
             innerDepth = jsNumber(d - 1);
         }
     }
-    innerOptions->putDirect(vm, Identifier::fromString(vm, "depth"_s), innerDepth);
+    Bun::putDirectNamed(vm, innerOptions, "depth"_s, innerDepth);
 
     JSValue toJSON = entry->get(lexicalGlobalObject, vm.propertyNames->toJSON);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -359,11 +359,12 @@ bool JSPerformanceEntryOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknow
     return false;
 }
 
-void JSPerformanceEntryOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSPerformanceEntryOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsPerformanceEntry = static_cast<JSPerformanceEntry*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, &jsPerformanceEntry->wrapped(), jsPerformanceEntry);
+    return FinalizeResult::KeepImpl;
 }
 
 PerformanceEntry* JSPerformanceEntry::toWrapped(JSC::VM&, JSC::JSValue value)

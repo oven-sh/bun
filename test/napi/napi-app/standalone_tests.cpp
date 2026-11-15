@@ -3968,9 +3968,6 @@ test_napi_adjust_external_memory(const Napi::CallbackInfo &info) {
 extern "C" {
 napi_status node_api_set_prototype(napi_env env, napi_value object,
                                    napi_value value);
-napi_status node_api_create_object_with_properties(
-    napi_env env, napi_value prototype_or_null, napi_value *property_names,
-    napi_value *property_values, size_t property_count, napi_value *result);
 napi_status node_api_is_sharedarraybuffer(napi_env env, napi_value value,
                                           bool *result);
 napi_status node_api_create_sharedarraybuffer(napi_env env, size_t byte_length,

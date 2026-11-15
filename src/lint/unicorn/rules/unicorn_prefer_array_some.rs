@@ -7,11 +7,11 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// Prefer using `Array#some()` over various alternatives.
 pub struct PreferArraySome;
 
-const OVER_METHOD: Message = Message::new("", "Prefer `.some(…)` over `.find(…)` or `.findLast(…)`.");
-const NON_ZERO_FILTER: Message = Message::new("", "Prefer `.some(…)` over non-zero length check from `.filter(…)`.");
-const NEGATIVE_ONE_OR_ZERO_FILTER: Message =
-    Message::new("", "Prefer `.some(…)` over `.findIndex(…)` or `.findLastIndex(…)`.");
-const REPLACE_FILTER_LENGTH: Message = Message::new("", "Replace `.filter(…).length` with `.some(…)`");
+const OVER_METHOD: &Message = &Message::new("", "Prefer `.some(…)` over `.find(…)` or `.findLast(…)`.");
+const NON_ZERO_FILTER: &Message = &Message::new("", "Prefer `.some(…)` over non-zero length check from `.filter(…)`.");
+const NEGATIVE_ONE_OR_ZERO_FILTER: &Message =
+    &Message::new("", "Prefer `.some(…)` over `.findIndex(…)` or `.findLastIndex(…)`.");
+const REPLACE_FILTER_LENGTH: &Message = &Message::new("", "Replace `.filter(…).length` with `.some(…)`");
 
 impl Rule for PreferArraySome {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-array-some", Kind::Suggestion).has_suggestions();

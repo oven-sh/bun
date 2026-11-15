@@ -5,7 +5,7 @@ pub struct NoMissingLabelRefs {
     allow_labels: FxHashSet<Vec<u8>>,
 }
 
-const NOT_FOUND: Message = Message::new("notFound", "Label reference '{{label}}' not found.");
+const NOT_FOUND: &Message = &Message::new("notFound", "Label reference '{{label}}' not found.");
 
 static LABEL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::literal(

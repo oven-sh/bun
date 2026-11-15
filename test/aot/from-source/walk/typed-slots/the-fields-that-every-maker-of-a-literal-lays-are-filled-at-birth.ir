@@ -1,0 +1,52 @@
+# a literal's layout has births as a class's has: the fields that every maker lays at the allocation are filled at birth, the mark in the word of the shape answers for them, and behind one test of the shape that refuses
+# marked objects each read of such a field is a load: no look at the slot. Every road by which a field leaves its slot sets the mark: the reader then goes by its closed arm. Here those deeds are out of sight (built-ins read by a key).
+# NOT SO a literal of which code IN SIGHT takes a property away or lays an accessor over one (`Loose`): its objects would be marked in the ordinary course, and a marked object goes closed at every read: it has no births, its slots are looked at.
+# f1 = make, f2 = sum, f3 = lone: a lone read is one operation, which takes the word of the shape as it lies and looks at no slot . f4 = makeLoose, f5 = sumLoose
+# -- source: the-fields-that-every-maker-of-a-literal-lays-are-filled-at-birth.ts
+# declare function print(...values: unknown[]): void;
+# interface Row { first: number; second: number; third: string }
+# function make(seed: number): Row { return { first: seed, second: seed + 1, third: "t" + seed }; }
+# function sum(row: Row): string { const first = row.first, second = row.second, third = row.third; return String(first) + "," + String(second) + "," + String(third); }
+# function lone(row: Row): string { return String(row.second); }
+# interface Loose { left: number; right: number; name: string }
+# function makeLoose(seed: number): Loose { return { left: seed, right: seed + 1, name: "l" + seed }; }
+# function sumLoose(row: Loose): string { const left = row.left, right = row.right, name = row.name; return String(left) + "," + String(right) + "," + String(name); }
+# const shelf: any[] = [make, sum, lone, makeLoose, sumLoose];
+# const at: number[] = JSON.parse("[0, 1, 2, 3, 4]");
+# const strip: (o: object, k: string) => boolean = (Reflect as any)[JSON.parse('"deleteProperty"')];
+# const define: typeof Object.defineProperty = (Object as any)[JSON.parse('"defineProperty"')];
+# let text = "";
+# for (let turn = 0; turn < 40; turn++) text = shelf[at[1]](shelf[at[0]](turn)) + " " + shelf[at[4]](shelf[at[3]](turn));
+# print(text);
+# const hurt: any = make(7); strip(hurt, "second"); print(shelf[at[1]](hurt));
+# const hidden = make(8); define(hidden, "first", { get() { return "by a getter"; } }); print(shelf[at[1]](hidden));
+# const again: any = make(9); strip(again, "third"); again.third = "laid again"; print(shelf[at[1]](again), Object.keys(again).join());
+# print(shelf[at[1]](make(10)), shelf[at[2]](make(11)), shelf[at[2]](hurt));
+# const loose: any = makeLoose(12); delete loose.right; print(shelf[at[4]](loose), shelf[at[4]](makeLoose(13)));
+# -- end of source
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: "first" {{*}}filled-at-birth
+# PLAN: "second" {{*}}filled-at-birth
+# PLAN: "third" {{*}}filled-at-birth
+# RUN(LOOSE): plan layouts mechanisms=all
+# LOOSE-NOT: "left" {{*}}filled-at-birth
+# LOOSE-NOT: "right" {{*}}filled-at-birth
+# RUN: walk f2 mechanisms=all-Inlining-ParameterGuards
+# CHECK-LABEL: code f2:Body
+# CHECK: ShapeTest {{*}}[rejectsMarkedObjects]
+# CHECK: GetSlot {{*}}key="first"
+# CHECK: GetSlot {{*}}key="second"
+# CHECK: GetSlot {{*}}key="third"
+# RUN(LOOKS): walk f2 mechanisms=all-Inlining-ParameterGuards
+# LOOKS-NOT: IsSlotFilled
+# RUN(LONE): walk f3 mechanisms=all-Inlining-ParameterGuards
+# LONE: GetSlot {{*}}key="second" {{*}}level=Expected [isFilledWhereShapeFits]
+# RUN(LOOKED): walk f5 mechanisms=all-Inlining-ParameterGuards
+# LOOKED: IsSlotFilled {{*}}key="right"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 39,40,t39 39,40,l39
+# ANSWERS: 7,undefined,t7
+# ANSWERS: by a getter,9,t8
+# ANSWERS: 9,10,laid again first,second,third
+# ANSWERS: 10,11,t10 12 undefined
+# ANSWERS: 12,undefined,l12 13,14,l13

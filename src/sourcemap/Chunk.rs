@@ -38,15 +38,6 @@ impl Chunk {
     // `pub fn deinit` dropped — body only freed `self.buffer`, which `Drop` on
     // `MutableString` handles automatically.
 
-    /// # Safety
-    /// The returned `Chunk` aliases `self.buffer`'s allocation; at most one may be dropped.
-    #[inline]
-    pub unsafe fn alias(&self) -> Chunk {
-        // SAFETY: `self` is a valid aligned reference; caller upholds the at-most-one-drop
-        // contract above so the bitwise copy never causes a double free of `buffer`.
-        unsafe { core::ptr::read(self) }
-    }
-
     /// `chunk.buffer` holds an InternalSourceMap blob (the runtime path). Re-encode
     /// to a standard VLQ "mappings" string before emitting JSON.
     pub fn print_source_map_contents_from_internal<const ASCII_ONLY: bool>(
@@ -55,11 +46,10 @@ impl Chunk {
         mutable: &mut MutableString,
         include_sources_contents: bool,
     ) -> Result<(), crate::Error> {
-        let ism = InternalSourceMap {
-            data: self.buffer.list.as_ptr(),
-        };
         let mut vlq = MutableString::init_empty();
-        ism.append_vlq_to(&mut vlq);
+        if let Some(ism) = InternalSourceMap::new(&self.buffer.list) {
+            ism.append_vlq_to(&mut vlq);
+        }
         print_source_map_contents_json::<ASCII_ONLY>(
             source,
             mutable,
@@ -682,8 +672,7 @@ impl NewBuilder<'_, VLQSourceMap> {
         let idx = original_line.max(0) as usize;
 
         // PERF: read the three columns directly instead of `list.get(idx)`.
-        // `MultiArrayList::get` builds a 272-byte `Slice` (`[*mut u8; 32]` +
-        // len/cap) and then gathers *every* field via `ptr::read`; for the
+        // `MultiArrayList::get` gathers *every* field via `ptr::read`; for the
         // hot per-token path that dominated `add_source_mapping`. Each
         // `items::<>` is a single `base + CONST*cap` pointer add.
         let mut original_column = loc.start - byte_offsets[idx] as i32;

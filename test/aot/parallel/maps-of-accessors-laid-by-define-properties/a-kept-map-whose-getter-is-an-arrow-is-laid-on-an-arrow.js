@@ -1,0 +1,11 @@
+const seed = Number(process.argv[2] ?? 3);
+let hits = 0;
+const state = { kind: seed };
+const internals = { kept: undefined };
+const tool = () => 1;
+const map = { size: { get: () => { hits++; state.kind = "text"; return 7; } } };
+Object.defineProperties(tool, map);
+internals.kept = map;
+const before = hits + ":" + typeof state.kind;
+const read = (tool).size;
+console.log(before, read, hits, typeof state.kind, state.kind + 1);

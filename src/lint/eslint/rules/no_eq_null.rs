@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow `null` comparisons without type-checking operators.
 pub struct NoEqNull;
 
-const UNEXPECTED: Message = Message::new("unexpected", "Use '===' to compare with null.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Use '===' to compare with null.");
 
 impl Rule for NoEqNull {
     const META: Meta = Meta::eslint("no-eq-null", Kind::Suggestion);

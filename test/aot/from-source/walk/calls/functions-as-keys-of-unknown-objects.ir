@@ -1,0 +1,19 @@
+# -- source: main.cjs
+# function Point(x) { this.x = x; }
+# function Circle(x) { this.x = x; }
+# function implemented(value, type) { return !!JSON.parse(value)[type]; }
+# function run(count) {
+#   var list = new Array(1, true), sum = 0;
+#   list[0] = new Point(0.5);
+#   list[1] = new Point(2);
+#   for (var i = 0; i < count; i++) sum += list[i & 1].x;
+#   return sum;
+# }
+# console.log(implemented("{}", Circle), run(10), run(1000));
+# -- end of source
+# The text of a function names no built-in, so Number.prototype stays in sight.
+# RUN: link functions
+# CHECK: function f1 callers-known
+# CHECK: function f2 unreached
+# CHECK: function f3 callers-known
+# CHECK: function f4 callers-known

@@ -6,6 +6,7 @@ export const unsafe = b.namespace({
   gcAggressionLevel: {
     args: { level: b.f64.loose.nullable },
     returns: b.i32,
+    readsStateBeforeConversions: true,
   },
   arrayBufferToString: {
     args: { buffer: b.any },

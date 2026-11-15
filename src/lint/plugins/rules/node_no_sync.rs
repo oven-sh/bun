@@ -10,7 +10,7 @@ pub struct NoSync {
     ignores: FxHashSet<Box<[u8]>>,
 }
 
-const NO_SYNC: Message = Message::new("", "Unexpected sync method: '{{property_name}}'.");
+const NO_SYNC: &Message = &Message::new("", "Unexpected sync method: '{{property_name}}'.");
 
 impl Rule for NoSync {
     const META: Meta = Meta::oxlint(Plugin::Node, "no-sync", Kind::Suggestion);

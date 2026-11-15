@@ -1,0 +1,13 @@
+# -- source: in-an-untyped-file-what-is-seen-leaves-a-list-of-no-contents-where-the-loops-tell-it-from-bytes.js
+# const table = { sum(a, b) { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] + b[i]; return s; } }, name = JSON.parse('"sum"');
+# const first = new Uint8Array([1, 2, 3, 4]), second = new Uint8Array([7, 7, 7, 7]);
+# print(table[name](first, second), table[name](second, first));
+# -- end of source
+# `a[i] + b[i]` may join texts, so use writes a text or a list of no contents of `a` and `b`; the one call that may reach the function, through the table, is seen to hand over bytes. The loop's own front tells a list from bytes for such
+# a word too, and in the copy for bytes both holders run under one bound. With the bytes in the word's place the entry's guard typed `a` alone, and the turn asked the bound of each holder.
+# f1 = sum
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=Buffer|Uint8Array
+# CHECK-NOT: testedType=Uint8Array
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 38 38

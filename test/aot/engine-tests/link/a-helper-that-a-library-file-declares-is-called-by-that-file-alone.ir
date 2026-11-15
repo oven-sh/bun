@@ -1,0 +1,45 @@
+# /$bun/js/prelude/array-sort.ts:  function place(from: unknown[], at: number) { return at + 1; }  let kept;  export function sort(this: unknown[], comparator) { return place(this, 2); }
+# main.js:  [3, 1].sort(sink)
+# A library file of functions has no body of its own, so nobody is seen to fill its variables: once its code is reached they are let go. A function declaration is filled from the start, nobody writes it,
+# and no code outside the file names it: let go with the others, its closure went to unseen code, every private helper of the library counted as escaped, and nothing was known of what it is handed.
+# It stays: f2 = place has its one caller, and what that caller hands it is proven. A variable that is no function declaration is let go as before: g1.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f2 callers-known
+# CHECK: parameter 1 {{*}}proven=int[0, 2147483647]
+# RUN(VARIABLES): link variables mechanisms=all
+# VARIABLES: variable g0 proven=f2
+# VARIABLES-NOT: variable g1 proven=
+
+variable g0 name="place" module=m1 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g1 name="kept" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/prelude/array-sort.ts" displayPath="/$bun/js/prelude/array-sort.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ArraySortSort function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=3
+    v1 = Integer integer=1
+    v2 = NewArray v0, v1
+    v3 = PropGet v2 key="sort"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = Call v3, v2, v5 calleeKey="sort"
+    Return v6
+}
+function f1 name="sort" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArraySortSort thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    v3 = Integer integer=2
+    v4 = Call v2, -, v0, v3 calleeName="place"
+    v5 = GetModuleVariable variable=g1
+    v6 = NewArray v4, v5
+    Return v6
+}
+function f2 name="place" module=m1 role=Library flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    Return v3
+}

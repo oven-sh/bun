@@ -1,0 +1,1 @@
+import { test, vi } from "bun:test"; vi.mock("./dep.mjs", async () => ({ ...(await import("./dep.mjs")), extra: 1 })); test("t", async () => { console.log("| " + await import("./dep.mjs").then(d => d.get() + " " + d.extra, e => e.name + " " + e.message.slice(0, 60))); });

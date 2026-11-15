@@ -1,0 +1,30 @@
+// a tree of elements rendered to text, differences as patches, keyed children, components with state and hooks
+'use strict';
+var TEXT = '#text', current = null, index = 0;
+function h(type, props) { var children = []; for (var i = 2; i < arguments.length; i++) add(arguments[i]); function add(c) { if (Array.isArray(c)) c.forEach(add); else if (c !== null && c !== undefined && c !== false && c !== true) children.push(typeof c === 'object' ? c : { type: TEXT, text: String(c), props: {}, children: [] }); } props = props || {}; var key = props.key; return { type: type, props: props, children: children, key: key === undefined ? null : key }; }
+function Host(root) { this.root = root; this.log = []; this.ids = 0; this.dirty = []; this.effects = []; }
+Host.prototype.create = function (v) { var n = { id: ++this.ids, v: v, kids: [] }; if (typeof v.type === 'function') { n.hooks = []; n.kids = [this.create(this.call(n, v))]; } else { n.name = v.type; n.text = v.text; n.attrs = {}; for (var k in v.props) if (k !== 'key') n.attrs[k] = v.props[k]; var self = this; n.kids = v.children.map(function (c) { return self.create(c); }); } this.log.push('+' + (n.name || v.type.name) + n.id); return n; };
+Host.prototype.call = function (n, v) { var was = current, at = index; current = { node: n, host: this }; index = 0; try { var out = v.type.prototype && v.type.prototype.render ? (n.instance = n.instance || new v.type(v.props), n.instance.props = v.props, n.instance.update = n.instance.update || (function (host) { return function () { if (host.dirty.indexOf(n) < 0) host.dirty.push(n); }; }(this)), n.instance.render()) : v.type(Object.assign({ children: v.children }, v.props)); if (out === null || typeof out !== 'object') out = { type: TEXT, text: out === null ? '' : String(out), props: {}, children: [] }; return out; } finally { current = was; index = at; } };
+Host.prototype.remove = function (n) { var self = this; n.kids.forEach(function (k) { self.remove(k); }); if (n.hooks) n.hooks.forEach(function (hk) { if (hk && hk.cleanup) hk.cleanup(); }); if (n.instance && n.instance.gone) n.instance.gone(); this.log.push('-' + n.id); };
+Host.prototype.patch = function (n, v) {
+  if (n.v.type !== v.type || n.v.key !== v.key) { this.remove(n); return this.create(v); }
+  if (typeof v.type === 'function') { n.v = v; n.kids[0] = this.patch(n.kids[0], this.call(n, v)); return n; }
+  if (v.type === TEXT) { if (n.text !== v.text) { this.log.push('t' + n.id + '=' + v.text); n.text = v.text; } n.v = v; return n; }
+  for (var k in v.props) if (k !== 'key' && n.attrs[k] !== v.props[k] && typeof v.props[k] !== 'function') this.log.push('a' + n.id + '.' + k + '=' + v.props[k]);
+  for (k in n.attrs) if (!(k in v.props)) { this.log.push('a' + n.id + '.' + k + ' gone'); }
+  n.attrs = {}; for (k in v.props) if (k !== 'key') n.attrs[k] = v.props[k];
+  var old = n.kids, keyed = new Map(), out = [], self = this, used = new Set(), last = -1;
+  old.forEach(function (o, i) { if (o.v.key !== null) keyed.set(o.v.key, i); });
+  v.children.forEach(function (c, i) { var at = c.key !== null ? keyed.get(c.key) : i < old.length && old[i].v.key === null ? i : undefined; if (at === undefined || used.has(at)) { out.push(self.create(c)); return; } used.add(at); if (at < last) self.log.push('move' + old[at].id); else last = at; out.push(self.patch(old[at], c)); });
+  old.forEach(function (o, i) { if (!used.has(i)) self.remove(o); });
+  n.kids = out; n.v = v; return n;
+};
+Host.prototype.render = function (v) { this.tree = this.tree ? this.patch(this.tree, v) : this.create(v); this.flush(); return this; };
+Host.prototype.flush = function () { var n = 0; do { while (this.dirty.length && n++ < 50) { var d = this.dirty.shift(); d.kids[0] = this.patch(d.kids[0], this.call(d, d.v)); } var e = this.effects; this.effects = []; e.forEach(function (f) { f(); }); } while (this.dirty.length && n < 50); };
+Host.prototype.html = function (n) { n = n || this.tree; var self = this; if (!n.name) return n.kids.map(function (k) { return self.html(k); }).join(''); if (n.name === TEXT) return n.text.replace(/[<&]/g, function (c) { return c === '<' ? '&lt;' : '&amp;'; }); var a = ''; for (var k in n.attrs) if (typeof n.attrs[k] !== 'function' && n.attrs[k] !== false && n.attrs[k] != null) a += ' ' + k + (n.attrs[k] === true ? '' : '="' + (k === 'style' && typeof n.attrs[k] === 'object' ? Object.entries(n.attrs[k]).map(function (e) { return e[0].replace(/[A-Z]/g, function (c) { return '-' + c.toLowerCase(); }) + ':' + e[1]; }).join(';') : n.attrs[k]) + '"'); return '<' + n.name + a + '>' + n.kids.map(function (k) { return self.html(k); }).join('') + '</' + n.name + '>'; };
+Host.prototype.fire = function (test, event, arg) { var hit = 0; (function go(n) { if (n.attrs && typeof n.attrs[event] === 'function' && test(n)) { hit++; n.attrs[event](arg); } n.kids.slice().forEach(go); }(this.tree)); this.flush(); return hit; };
+function slot(make) { var c = current, i = index++; if (!c) throw new Error('hooks only inside a component'); var list = c.node.hooks; if (i >= list.length) list.push(make()); return [list[i], c]; }
+function useState(initial) { var s = slot(function () { return { value: typeof initial === 'function' ? initial() : initial }; }), st = s[0], c = s[1]; if (!st.set) st.set = function (v) { var n = typeof v === 'function' ? v(st.value) : v; if (Object.is(n, st.value)) return; st.value = n; if (c.host.dirty.indexOf(c.node) < 0) c.host.dirty.push(c.node); }; return [st.value, st.set]; }
+function useMemo(f, deps) { var m = slot(function () { return {}; })[0]; if (!m.deps || deps.some(function (d, i) { return !Object.is(d, m.deps[i]); })) { m.value = f(); m.deps = deps; } return m.value; }
+function useEffect(f, deps) { var s = slot(function () { return {}; }), e = s[0]; if (!e.deps || !deps || deps.some(function (d, i) { return !Object.is(d, e.deps[i]); })) { e.deps = deps || []; s[1].host.effects.push(function () { if (e.cleanup) e.cleanup(); e.cleanup = f(); }); } }
+module.exports = { h: h, Host: Host, useState: useState, useMemo: useMemo, useEffect: useEffect };

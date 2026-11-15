@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Enforce consistent style for escaping `${` in template literals.
 pub struct ConsistentTemplateLiteralEscape;
 
-const CONSISTENT_TEMPLATE_LITERAL_ESCAPE: Message = Message::new("", "Invalid escape sequence in template literal.");
+const CONSISTENT_TEMPLATE_LITERAL_ESCAPE: &Message = &Message::new("", "Invalid escape sequence in template literal.");
 
 impl Rule for ConsistentTemplateLiteralEscape {
     const META: Meta =

@@ -1,0 +1,28 @@
+# -- source: main.js
+# function Inner(n) { this.n = n; }
+# function Other(n) { this.n = n; this.late = 0; this.behind = 0; }
+# function Holder(n) { this.inner = new Inner(n); }
+# function fill(holder, i) { holder.inner.late = i; }
+# function fillBehind(holder, i) { holder ?? (holder = null); return () => { holder.inner.behind = i; }; }
+# function read(holder) { return holder.inner.late + holder.inner.behind + holder.inner.n; }
+# register(fill, fillBehind);
+# var total = 0;
+# for (var i = 0; i < 10; i++) { var made = new Holder(i); filler(made, i); total += read(made) + new Other(i).n; }
+# print(total);
+# -- end of source
+# Only code that nobody sees calls fill() and fillBehind(), so the flow knows nothing of `holder`, and `late` and `behind` were no fields of an Inner: the reads of them were closed. A Holder's constructor lays an Inner in `inner`:
+# the names stored through what a read under `inner` gave are appended to Inner where the tables say what is expected, and the reads go to their slots. In fill() the parameter says that it is a Holder; in fillBehind() the holder is a
+# variable of a closure that is assigned again, and the name `inner` speaks alone. The reading that proves does not ask. f6 = read
+# RUN: link fields mechanisms=all
+# CHECK-NOT: "late" appended
+# CHECK-NOT: "behind" appended
+# RUN(HELD): link held fields mechanisms=all
+# HELD: field L0.1 "late" appended
+# HELD: field L0.2 "behind" appended
+# RUN(WALK): walk f6 mechanisms=all
+# WALK-LABEL: code f6:Body
+# WALK: GetSlot {{*}}key="late"
+# WALK: GetSlot {{*}}key="behind"
+# RUN(ANSWERS): run-in-shell globalThis.register = (f, g) => { globalThis.filler = (h, i) => { f(h, i); g(h, i)(); }; };
+# ANSWERS: 180
+# ANSWERS-NEXT: exited with 0

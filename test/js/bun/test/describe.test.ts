@@ -1,5 +1,5 @@
 import { spawnSync } from "bun";
-import { describe, expect, jest, test } from "bun:test";
+import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 
 describe("blocks should handle a number, string, anonymous class, named class, or function for the first arg", () => {
@@ -221,6 +221,31 @@ describe("passing arrow function as args", () => {
     );
     expect(fullOutput).toInclude("0 pass");
     expect(fullOutput).toInclude("1 fail");
+  });
+});
+
+describe("a proxy of a function is a callback", () => {
+  const ran: string[] = [];
+  const proxy = (name: string) => new Proxy(() => void ran.push(name), {});
+  describe("describe", new Proxy(() => test("test", proxy("test")), {}));
+  describe("hooks", () => {
+    beforeAll(proxy("beforeAll"));
+    beforeEach(proxy("beforeEach"));
+    afterEach(proxy("afterEach"));
+    test("test with a timeout", proxy("test with a timeout"), 5000);
+  });
+  test("each ran", () => {
+    expect(ran).toEqual(["test", "beforeAll", "beforeEach", "test with a timeout", "afterEach"]);
+  });
+  let error: Error | undefined;
+  try {
+    // @ts-expect-error
+    test("a proxy where the options go", proxy("options"), () => {});
+  } catch (thrown) {
+    error = thrown as Error;
+  }
+  test("and not options", () => {
+    expect(error?.message).toBe("test() expects options to be a number or object, not a function");
   });
 });
 

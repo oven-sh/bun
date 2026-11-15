@@ -3,7 +3,7 @@ use crate::prelude::*;
 /// Disallow reversed link and image syntax
 pub struct NoReversedMediaSyntax;
 
-const REVERSED_SYNTAX: Message = Message::new(
+const REVERSED_SYNTAX: &Message = &Message::new(
     "reversedSyntax",
     "Unexpected reversed syntax found. Use [label](URL) syntax instead.",
 );

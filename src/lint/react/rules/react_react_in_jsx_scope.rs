@@ -7,8 +7,8 @@ use bun_lint::rule::Plugin;
 /// Disallow missing React when using JSX.
 pub struct ReactInJsxScope;
 
-const NOT_IN_SCOPE: Message = Message::new("notInScope", "'{{name}}' must be in scope when using JSX");
-const REACT_IN_JSX_SCOPE: Message = Message::new("", "`React` must be in scope when using JSX.");
+const NOT_IN_SCOPE: &Message = &Message::new("notInScope", "'{{name}}' must be in scope when using JSX");
+const REACT_IN_JSX_SCOPE: &Message = &Message::new("", "`React` must be in scope when using JSX.");
 
 /// The name that has to be in scope.
 pub struct Pragma<'a> {

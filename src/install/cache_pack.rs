@@ -498,7 +498,7 @@ fn pack_entry(
                     let len = sys::readlinkat(entry.dir, entry.basename, &mut target_buf[..])?;
                     let target = ZStr::from_buf(&target_buf[..], len);
                     if len > MAX_PACK_PATH_LEN
-                        || !bun_libarchive::is_symlink_target_safe(rel, target, &mut join_buf)
+                        || !bun_archive::is_symlink_target_safe(rel, target, &mut join_buf)
                     {
                         return Err(refuse(
                             "cache entry has symlink that may point outside it",
@@ -749,7 +749,7 @@ fn unpack_package(
     let mut target: Vec<u8> = Vec::new();
     // Symlinks are created last, so that no path can go through one while files are being written.
     #[cfg(unix)]
-    let mut links: Vec<bun_libarchive::DeferredSymlink> = Vec::new();
+    let mut links: Vec<bun_archive::DeferredSymlink> = Vec::new();
     #[cfg(unix)]
     let mut join_buf = None;
 
@@ -804,7 +804,7 @@ fn unpack_package(
                 {
                     let target = ZStr::from_slice_with_nul(&target);
                     if strings::contains_char(target.as_bytes(), 0)
-                        || !bun_libarchive::is_symlink_target_safe(
+                        || !bun_archive::is_symlink_target_safe(
                             rel.as_bytes(),
                             target,
                             &mut join_buf,
@@ -812,7 +812,7 @@ fn unpack_package(
                     {
                         return Err(r.refuse("unsafe symlink target", rel.as_bytes()));
                     }
-                    links.push(bun_libarchive::DeferredSymlink::new(
+                    links.push(bun_archive::DeferredSymlink::new(
                         rel.as_bytes(),
                         target.as_bytes(),
                     ));
@@ -829,7 +829,7 @@ fn unpack_package(
     }
 
     #[cfg(unix)]
-    if bun_libarchive::create_deferred_symlinks(dir.fd(), &links, false) as usize != links.len() {
+    if bun_archive::create_deferred_symlinks(dir.fd(), &links, false) as usize != links.len() {
         return Err(r.refuse("symlink collides with another entry", name.as_bytes()));
     }
     // Windows requires the directory to be closed before it's renamed.
@@ -871,7 +871,7 @@ fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::M
     // A virus scanner or indexer may have the new files open. See `cache_publish::RenameRetry`.
     let mut retries: u32 = 0;
     loop {
-        let dir = sys::open_dir_at_windows_a(
+        let dir = sys::Dir::from_fd(sys::open_dir_at_windows_a(
             from_dir,
             from.as_bytes(),
             sys::WindowsOpenDirOptions {
@@ -879,9 +879,9 @@ fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::M
                 iterable: false,
                 ..Default::default()
             },
-        )?;
-        let result = sys::windows::move_opened_file_at(dir, to_dir, to_w, false);
-        let _ = sys::close(dir);
+        )?);
+        let result = sys::windows::move_opened_file_at(dir.fd(), to_dir, to_w, false);
+        drop(dir);
         let Err(err) = result else {
             return Ok(true);
         };

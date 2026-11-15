@@ -1,0 +1,3 @@
+{
+  "features": ["Inspector", "StructuredClone", "HttpClient", "S3Client", "Tls", "Serve", "RuntimeTranspiler"]
+}

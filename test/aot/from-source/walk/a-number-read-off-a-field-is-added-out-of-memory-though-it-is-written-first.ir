@@ -1,0 +1,17 @@
+# `point.x += step * point.speed`: the sum's first operand is the read of the field, made before the product. The operands of a commutative operation stood by age, the elder first, and x86-64 reads only its
+# second operand out of memory: so the read took an instruction of its own. Among the operands of a commutative operation on numbers a load stands last.
+# LIBRARY: own
+# -- source: main.ts
+# class Point { x: number; speed: number; constructor(x: number, speed: number) { this.x = x; this.speed = speed; } }
+# function move(point: Point, step: number): void { point.x += step * point.speed; }
+# const one = new Point(1.5, 0.25);
+# publish(() => { move(one, 2.5); return one.x; });
+# declare function publish(run: () => number): void;
+# -- end of source
+# RUN: emit f1:Body mechanisms=all
+# CHECK: Double @[[field]] = Load(@[[point]], offset = 16,
+# CHECK: Double @[[product]] = Mul(
+# CHECK-NEXT: Double @[[sum]] = Add(@[[product]], @[[field]],
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run()); print(run()); };
+# SHELL: 2.125
+# SHELL-NEXT: 2.75

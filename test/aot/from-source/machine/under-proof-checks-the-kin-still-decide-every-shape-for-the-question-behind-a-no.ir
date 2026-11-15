@@ -1,0 +1,31 @@
+# Behind a no to Dog the object is known as one of the kin that stands where it was made: the kin decide every shape for the next question, which asks the shape alone.
+# Where proofs are asked again each answer taken from shapes is held to a walk of the chain. A walk that is heard as code that may run ended what the arm had just noted and kept the loop
+# from its copies: the checks never saw this form. The hold walks by the operation that gives way at a trap and leaves the walk's state as it was: what is built under the checks is what ships.
+# RUN(BUILT): compile InstanceOfTestsDecidedByHierarchy mechanisms=all
+# Three copies of the loop.
+# BUILT: statistic InstanceOfTestsDecidedByHierarchy 3
+# RUN(CHECKED): compile InstanceOfTestsDecidedByHierarchy mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: statistic InstanceOfTestsDecidedByHierarchy 3
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 22 22
+# RIGHT-NEXT: exited with 0
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# class Animal { n: number; constructor(n: number) { this.n = n; } }
+# class Dog extends Animal { bark(): number { return 1; } }
+# class Cat extends Animal { purr(): number { return 2; } }
+# class Bird extends Animal { sing(): number { return 3; } }
+# const things: unknown[] = id([new Dog(1), new Cat(2), new Bird(3), new Dog(4), new Cat(5)]);
+# function cats(): number {
+#   let sum = 0;
+#   for (let i = 0; i < things.length; i++) {
+#     const thing = things[i];
+#     if (thing instanceof Dog) sum += 10;
+#     else if (thing instanceof Cat) sum++;
+#   }
+#   return sum;
+# }
+# const first = cats();
+# print(first, cats());
+# -- end of source

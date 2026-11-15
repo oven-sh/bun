@@ -8,9 +8,9 @@ pub struct PreferModule;
 
 const COMMON_JS_GLOBALS: [&str; 5] = ["exports", "require", "module", "__filename", "__dirname"];
 
-const USE_STRICT_DIRECTIVE: Message = Message::new("", "Do not use \"use strict\" directive.");
-const GLOBAL_RETURN: Message = Message::new("", "\"return\" should be used inside a function.");
-const COMMON_JS_GLOBAL: Message = Message::new("", "Do not use \"{{name}}\".");
+const USE_STRICT_DIRECTIVE: &Message = &Message::new("", "Do not use \"use strict\" directive.");
+const GLOBAL_RETURN: &Message = &Message::new("", "\"return\" should be used inside a function.");
+const COMMON_JS_GLOBAL: &Message = &Message::new("", "Do not use \"{{name}}\".");
 
 #[derive(Default)]
 pub struct State<'a> {

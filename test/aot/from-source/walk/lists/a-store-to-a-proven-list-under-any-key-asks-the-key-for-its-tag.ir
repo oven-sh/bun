@@ -1,0 +1,23 @@
+# -- source: a-store-to-a-proven-list-under-any-key-asks-the-key-for-its-tag.ts
+# let cells: string[] = ["a", "b", "c"];
+# let position: any = 0;
+# let count: number = 0;
+# function put(value: string) { cells[position] = value; }
+# function append(value: string) { cells[count / 2] = value; }
+# function move(to: any) { position = to; count = to; }
+# declare function sink(...all: unknown[]): void;
+# move(sink()); put("d"); append("e");
+# -- end of source
+# f1 = put, f2 = append
+# The list is proven one. Of the key nothing is proven, or only that it is a number. As the read does, the store asks the key for its int32 tag, replaces an element inside the length by itself,
+# and does the closed store, whole and once, for whatever else it meets.
+# RUN(ANY): walk f1 mechanisms=all
+# ANY-LABEL: code f1:Body
+# ANY: = PutArrayElement {{*}}level=Expected
+# ANY-NOT: = ElemSet
+# RUN(NUMBER): walk f2 mechanisms=all
+# NUMBER-LABEL: code f2:Body
+# NUMBER: = PutArrayElement {{*}}level=Expected
+# NUMBER-NOT: = ElemSet
+# RUN(WITHHELD): walk f1 mechanisms=none
+# WITHHELD: = ElemSet

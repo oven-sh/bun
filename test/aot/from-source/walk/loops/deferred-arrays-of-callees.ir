@@ -1,0 +1,25 @@
+# f1 = daysIn, f2 = next, f3 = run, f4 = draw
+# -- source: main.js
+# const days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+# const state = [12345];
+# function daysIn(month) { return days[month]; }
+# function next() { state[0] = (state[0] * 5 + 1) & 1023; return state[0]; }
+# function run(k) { let s = 0; for (let i = 0; i < k; i++) s = (s + daysIn(i % 12)) | 0; return s; }
+# function draw(k) { let s = 0; for (let i = 0; i < k; i++) s = (s + next()) | 0; return s; }
+# print(run(0), run(24), run(5), draw(0), draw(3), draw(1000));
+# -- end of source
+# The first read of days or state makes the array. The preheader of a loop that copies a function reads it there, so no iteration asks whether the array was made.
+# RUN: walk f3:Body mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: = LoopHint
+# CHECK: = LoopHint
+# CHECK-NOT: = GetModuleVariable
+# CHECK: Return
+# RUN(DRAW): walk f4:Body mechanisms=all
+# DRAW-LABEL: code f4:Body
+# DRAW: = LoopHint
+# DRAW: = LoopHint
+# DRAW-NOT: = GetModuleVariable
+# DRAW: Return
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 0 730 151 0 1705 512868

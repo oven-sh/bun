@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Disallow `with` statements.
 pub struct NoWith;
 
-const UNEXPECTED_WITH: Message =
-    Message::new("unexpectedWith", "Unexpected use of 'with' statement.");
+const UNEXPECTED_WITH: &Message =
+    &Message::new("unexpectedWith", "Unexpected use of 'with' statement.");
 
 impl Rule for NoWith {
     const META: Meta = Meta::eslint("no-with", Kind::Suggestion).recommended();

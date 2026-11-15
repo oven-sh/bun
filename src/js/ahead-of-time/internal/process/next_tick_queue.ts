@@ -1,0 +1,205 @@
+// What the compiler reads in place of src/js/internal/process/next_tick_queue.ts, which `bun run` evaluates. The two do the same.
+// Written against that file with the SHA-256 6bfa15a49147ccbe51dbb47cec2c272d31f177c679c57e8c929c49ab78d6b56b.
+// When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
+
+// process.nextTick, and what a built-in module calls in its place.
+type TickRing = $BunModules["internal/process/tick_ring"];
+type Tick = import("./tick_ring").Tick;
+type TickCallback = import("./tick_ring").TickCallback;
+type Frame = import("./tick_ring").Frame;
+
+function listOf(...list: unknown[]): unknown[] {
+  return list;
+}
+
+const ring: import("./tick_ring").Ring = {
+  read: undefined,
+  write: undefined,
+  spare: 0,
+  willDropFreeTicks: false,
+  beforeRead: undefined,
+  pushWithInitHooks: undefined,
+};
+let growRing!: TickRing["growRing"];
+let pushWithList!: TickRing["pushWithList"];
+let tickInitHooks!: TickRing["tickInitHooks"];
+let installedNextTick: unknown = {};
+let tickingProcess!: NodeJS.Process;
+let nextTickQueue: any;
+let startRing!: () => void;
+let isSetUp = false;
+// The realm has one for good. A constant of the module is read without a look at the global object.
+const asyncContext = $asyncContext;
+
+function setUp(): void {
+  const tickRing = require("internal/process/tick_ring");
+  growRing = tickRing.growRing;
+  pushWithList = tickRing.pushWithList;
+  tickInitHooks = tickRing.tickInitHooks;
+  startRing();
+  isSetUp = true;
+}
+
+function takeTick(callback: TickCallback | undefined, frame: Frame): Tick {
+  const tick = ring.write!;
+  let next = tick.next;
+  if (next === ring.read) {
+    ("unlikely");
+    next = growRing(tick);
+  }
+  tick.callback = callback;
+  tick.frame = frame;
+  ring.write = next;
+  return tick;
+}
+
+// process.nextTick of a program that is compiled ahead of time.
+function nextTick(cb: TickCallback, ...args: unknown[]) {
+  ("frames are native code");
+  if (typeof cb !== "function") throw require("internal/validate_function")["::bunternal::"](cb, "callback");
+  if (!isSetUp) setUp();
+  if (tickingProcess._exiting) return;
+
+  const count = args.length | 0;
+  const frame: Frame = $getInternalField(asyncContext, 0);
+  if (tickInitHooks.length !== 0) {
+    ("unlikely");
+    (whileHooked.push ?? ring.pushWithInitHooks)!(cb, count !== 0 ? listOf(...args) : undefined, frame);
+  } else if (count > 3) {
+    ("unlikely");
+    pushWithList(cb, listOf(...args), frame);
+  } else {
+    const tick = takeTick(cb, frame);
+    tick.count = count;
+    if (count !== 0) {
+      tick.first = args[0];
+      if (count !== 1) {
+        tick.second = args[1];
+        if (count !== 2) tick.third = args[2];
+      }
+    }
+  }
+  $putInternalField(nextTickQueue, 0, 1);
+}
+
+// What nextTick does with `count` arguments, one to three, for a caller that holds nextTick itself and a callback that is a function.
+function enqueueTick(callback: TickCallback, count: number, first: unknown, second: unknown, third: unknown): void {
+  if (!isSetUp) setUp();
+  if (tickingProcess._exiting) return;
+  const frame: Frame = $getInternalField(asyncContext, 0);
+  if (tickInitHooks.length !== 0) {
+    ("unlikely");
+    ring.pushWithInitHooks!(
+      callback,
+      count === 1 ? [first] : count === 2 ? [first, second] : [first, second, third],
+      frame,
+    );
+  } else {
+    // takeTick(), written out: this is what the built-in modules queue every tick of a request with.
+    const tick = ring.write!;
+    let next = tick.next;
+    if (next === ring.read) {
+      ("unlikely");
+      next = growRing(tick);
+    }
+    tick.callback = callback;
+    tick.frame = frame;
+    ring.write = next;
+    tick.count = count | 0;
+    tick.first = first;
+    tick.second = second;
+    tick.third = third;
+  }
+  $putInternalField(nextTickQueue, 0, 1);
+}
+
+function ticksAreUnseen(): boolean {
+  return (
+    isSetUp &&
+    ((IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(process, "nextTick")) ||
+      process.nextTick === installedNextTick) &&
+    tickInitHooks.length === 0
+  );
+}
+
+function ticksAreUnhooked(): boolean {
+  return isSetUp && tickInitHooks.length === 0;
+}
+
+function enqueueTick1(callback: TickCallback, first: unknown): void {
+  enqueueTick(callback, 1, first, undefined, undefined);
+}
+
+function queueTick1(callback: TickCallback, first: unknown): void {
+  if (IS_COMPILED_AHEAD_OF_TIME && isSetUp && $findsDeclaredMember(process, "nextTick"))
+    return enqueueTick(callback, 1, first, undefined, undefined);
+  const target = process;
+  const current = target.nextTick;
+  if (current === installedNextTick) enqueueTick(callback, 1, first, undefined, undefined);
+  else {
+    ("unlikely");
+    current.$call(target, callback, first);
+  }
+}
+
+function queueTick2(callback: TickCallback, first: unknown, second: unknown): void {
+  if (IS_COMPILED_AHEAD_OF_TIME && isSetUp && $findsDeclaredMember(process, "nextTick"))
+    return enqueueTick(callback, 2, first, second, undefined);
+  const target = process;
+  const current = target.nextTick;
+  if (current === installedNextTick) enqueueTick(callback, 2, first, second, undefined);
+  else {
+    ("unlikely");
+    current.$call(target, callback, first, second);
+  }
+}
+
+function queueTick3(callback: TickCallback, first: unknown, second: unknown, third: unknown): void {
+  if (IS_COMPILED_AHEAD_OF_TIME && isSetUp && $findsDeclaredMember(process, "nextTick"))
+    return enqueueTick(callback, 3, first, second, third);
+  const target = process;
+  const current = target.nextTick;
+  if (current === installedNextTick) enqueueTick(callback, 3, first, second, third);
+  else {
+    ("unlikely");
+    current.$call(target, callback, first, second, third);
+  }
+}
+
+// `start` makes the ring and hands native code the function that runs the ticks.
+function install(process: NodeJS.Process, marker: unknown, start: () => void, processNextTick: typeof nextTick) {
+  tickingProcess = process;
+  nextTickQueue = marker;
+  startRing = start;
+  installedNextTick = processNextTick;
+  return processNextTick;
+}
+
+// What follows is for nextTick alone. It stands behind the functions that run without ahead-of-time compilation too, whose lines a stack names.
+
+// What nextTick queues a tick with while an `init` hook is enabled. node:async_hooks puts it here with the first hook, where it is compiled with the program.
+// An executable that runs code from outside makes the modules that it does not hold out of the library's text. That text fills `ring.pushWithInitHooks` alone.
+const whileHooked: { push: TickRing["pushInsideNextTick"] | undefined } = { push: undefined };
+
+// Code that is loaded at run time may ask for node:async_hooks. Where such code can come, it is compiled with this module: the text
+// that `bun run` evaluates for it knows nothing of the ring.
+function loadWhatHooksTicks() {
+  if (CAN_LOAD_CODE_AT_RUN_TIME) require("node:async_hooks");
+}
+
+export default {
+  install,
+  setUp,
+  asyncContext,
+  nextTick,
+  ticksAreUnseen,
+  ticksAreUnhooked,
+  enqueueTick1,
+  queueTick1,
+  queueTick2,
+  queueTick3,
+  ring,
+  takeTick,
+  whileHooked,
+  loadWhatHooksTicks,
+};

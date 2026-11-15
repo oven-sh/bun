@@ -1,0 +1,10 @@
+# -- source: main.cjs
+# const rows = JSON.parse('[{"id":0,"active":true},{"id":1,"active":false}]');
+# function run(turns) { let s = 0; for (let i = 0; i < turns; i++) { const m = rows[i & 1]; s += m.id + (m.active ? 1 : 0); } return s; }
+# console.log(run(9), run(0));
+# -- end of source
+# `m.id + (m.active ? 1 : 0)`: where the read of `id` is walked the other operand is a join that is not built yet, so nothing was said of it, the read did not count as reckoned with as a number, and each `+`
+# of the turn went to the operator's stub. Every way into that join writes a number: the read asks its site and is asked for a number, as it is where a number stands beside it.
+# RUN: walk f1 mechanisms=all
+# CHECK: GetValueAtSiteOrAbsent {{*}} key="id"
+# CHECK: TypeTest {{*}} testedType=number

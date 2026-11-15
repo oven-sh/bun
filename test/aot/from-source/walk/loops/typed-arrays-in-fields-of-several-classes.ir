@@ -1,0 +1,22 @@
+# -- source: main.cjs
+# "use strict";
+# const utils = require("./utils.cjs");
+# function zero(buf) { var len = buf.length; while (--len >= 0) { buf[len] = 0; } }
+# function First(n) { this.heap = new utils.Buf16(n); zero(this.heap); this.length = n; }
+# function Second(n) { this.heap = new utils.Buf16(n); zero(this.heap); this.length = n; }
+# function sum(state) { let s = 0; for (let i = 0; i < state.length; i++) s += state.heap[i] * 2; return s; }
+# const first = new First(4), second = new Second(6); first.heap[0] = 5; second.heap[1] = 7; globalThis.held = new Map([["first", first], ["second", second], ["run", which => sum(which ? first : second)]]);
+# print(globalThis.held.get("run")(1), globalThis.held.get("run")(0));
+# globalThis.held.get("first").heap = [1, 2, 3, 4.5]; print(globalThis.held.get("run")(1));
+# -- source: utils.cjs
+# "use strict";
+# exports.setTyped = function (on) { if (on) { exports.Buf16 = Uint16Array; } else { exports.Buf16 = Array; } };
+# exports.setTyped(typeof Uint16Array !== "undefined");
+# -- end of source
+# Two copies of one library: the field is told by its uses to be a list in both classes, and by what the makers lay to be a Uint16Array.
+# RUN(LOOP): walk f4:Body mechanisms=all
+# LOOP: testedType=Uint16Array
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 10 14
+# ANSWERS-NEXT: 21
+# ANSWERS-NEXT: exited with 0

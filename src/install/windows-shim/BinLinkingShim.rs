@@ -379,21 +379,14 @@ mod host {
             l
         }
 
-        /// The buffer must be exactly the correct length given by encoded_length.
+        /// The buffer must be exactly `encoded_length()` bytes.
         ///
         /// Returns `Err` when the shebang launcher does not encode to exactly
         /// `utf16_len` UTF-16 units (invalid UTF-8); the caller (`bin.rs`) reports
         /// that as an invalid bin.
-        pub(crate) fn encode_into(&self, buf: &mut [u8]) -> Result<(), bun_core::Error> {
-            debug_assert!(buf.len() == self.encoded_length());
+        pub(crate) fn encode_into(&self, mut wbuf: &mut [u16]) -> Result<(), bun_core::Error> {
+            debug_assert!(size_of_val(wbuf) == self.encoded_length());
             debug_assert!(self.bin_path[0] != b'/' as u16);
-
-            // `bytemuck::cast_slice_mut` performs a runtime alignment +
-            // size-multiple check and panics on mismatch — no
-            // `unsafe` needed. (The sole caller, `bin.rs`, passes a stack `[u8; 65536]`
-            // whose Rust-guaranteed alignment is 1; it should be changed to a `[u16; N]`
-            // buffer to make alignment a compile-time guarantee — tracked separately.)
-            let mut wbuf: &mut [u16] = bytemuck::cast_slice_mut(buf);
 
             wbuf[0..self.bin_path.len()].copy_from_slice(self.bin_path);
             wbuf = &mut wbuf[self.bin_path.len()..];
@@ -437,21 +430,17 @@ mod host {
                 wbuf[0] = b' ' as u16;
                 wbuf = &mut wbuf[1..];
 
-                // SAFETY: wbuf has at least 4 u16s (= 2 u32s) remaining per encoded_length();
-                // the buffer is only 2-byte aligned, so use unaligned writes.
-                unsafe {
-                    (wbuf.as_mut_ptr().cast::<u32>())
-                        .write_unaligned(u32::try_from(self.bin_path.len() * 2).expect("int cast"));
-                    (wbuf.as_mut_ptr().add(2).cast::<u32>()).write_unaligned((s.utf16_len) * 2 + 2); // include the spaces!
-                }
-                wbuf = &mut wbuf[(size_of::<u32>() * 2) / size_of::<u16>()..];
+                let lengths: [u32; 2] = [
+                    u32::try_from(self.bin_path.len() * 2).expect("int cast"),
+                    s.utf16_len * 2 + 2, // include the spaces!
+                ];
+                bun_core::slice_as_bytes_mut(&mut wbuf[..4])
+                    .copy_from_slice(bun_core::bytes_of(&lengths));
+                wbuf = &mut wbuf[4..];
             }
 
-            // SAFETY: Flags is #[repr(transparent)] over u16; one u16 slot remains.
-            unsafe {
-                (wbuf.as_mut_ptr().cast::<u16>()).write_unaligned(flags.bits());
-            }
-            wbuf = &mut wbuf[size_of::<u16>() / size_of::<u16>()..];
+            wbuf[0] = flags.bits();
+            wbuf = &mut wbuf[1..];
 
             if cfg!(debug_assertions) {
                 if wbuf.len() != 0 {

@@ -1,0 +1,93 @@
+`bun:fs` means `fs` to the transpiler, wherever it reads the name; every other call hands the name to the loader, which does not know it. Where nothing is found the error names what the program asked for.
+#### a.test.js
+import { test } from "bun:test";
+import { createRequire } from "node:module";
+const tag = "a";
+const here = import.meta.dirname;
+const clean = value => String(value).replaceAll(here, "<here>");
+
+const ask = async (label, load) => {
+  try { console.log("| CASE", tag, label, clean(await load())); }
+  catch (error) { console.log("| CASE", tag, label, "THROWS", error?.constructor?.name, error?.code, clean(error?.message).split("\n")[0]); }
+};
+
+const made = createRequire(import.meta.url);
+const quiet = process.argv.length > 90;
+test(tag, async () => {
+  await ask("require", () => typeof require("bun:fs").readFileSync);
+  await ask("(0, require)", () => typeof (0, require)("bun:fs").readFileSync);
+  await ask("import()", async () => typeof (await import("bun:fs")).readFileSync);
+  await ask("require.resolve", () => require.resolve("bun:fs"));
+  await ask("a choice, require", () => require(quiet ? "bun:os" : "bun:fs") === require("node:fs"));
+  await ask("a choice of three, require", () => require(quiet ? "bun:os" : !quiet ? "bun:path" : "./a-none.cjs") === require("node:path"));
+  await ask("a choice, import()", async () => (await import(quiet ? "bun:os" : "bun:fs")).default === require("node:fs"));
+  await ask("a choice, require.resolve", () => require.resolve(quiet ? "bun:os" : "bun:fs"));
+  await ask("import.meta.require", () => typeof import.meta.require("bun:fs"));
+  await ask("a choice, import.meta.require", () => typeof import.meta.require(quiet ? "bun:os" : "bun:fs"));
+  await ask("import.meta.require under another name", () => { const load = import.meta.require; return typeof load("bun:fs"); });
+  await ask("what createRequire made", () => typeof made("bun:fs"));
+  await ask("what createRequire made, called at once", () => typeof createRequire(import.meta.url)("bun:fs"));
+  await ask("what createRequire made for another file", () => typeof createRequire("/")("bun:fs"));
+  await ask("its resolve", () => made.resolve("bun:fs"));
+  await ask("require.call", () => typeof require.call(null, "bun:fs"));
+  await ask("require.apply", () => typeof require.apply(null, ["bun:fs"]));
+  await ask("require under another name", () => { const load = require; return typeof load("bun:fs"); });
+  await ask("require with a second argument", () => typeof require("bun:fs", 1));
+  await ask("process.getBuiltinModule", () => typeof process.getBuiltinModule("bun:fs"));
+  await ask("the names that the loader knows", () => [import.meta.require("node:fs"), made("fs"), require.call(null, "fs"), process.getBuiltinModule("fs")].every(it => it === require("bun:fs")));
+  await ask("require.resolve of a whole path that is missing", () => require.resolve(here + "/a-none.cjs"));
+  await ask("require.resolve of a whole path above that is missing", () => require.resolve(here + "/../a-none.cjs"));
+  await ask("require of a whole path that is missing", () => require(here + "/a-none.cjs"));
+  await ask("import() of a whole path that is missing", () => import(here + "/a-none.mjs"));
+  await ask("import.meta.require of a whole path that is missing", () => import.meta.require(here + "/a-none.cjs"));
+  await ask("require.resolve of a relative path that is missing", () => require.resolve("./a-none.cjs"));
+  await ask("require.resolve of a package that is missing", () => require.resolve("a-none"));
+  await ask("import.meta.resolve of a package that is missing", () => import.meta.resolve("a-none"));
+  await ask("import.meta.resolve of a relative path that is missing", () => import.meta.resolve("./a-none.mjs"));
+});
+#### c.test.cjs
+const { test } = require("bun:test");
+const { createRequire } = require("node:module");
+const tag = "c";
+const clean = value => String(value).replaceAll(__dirname, "<here>");
+
+const ask = async (label, load) => {
+  try { console.log("| CASE", tag, label, clean(await load())); }
+  catch (error) { console.log("| CASE", tag, label, "THROWS", error?.constructor?.name, error?.code, clean(error?.message).split("\n")[0]); }
+};
+
+const made = createRequire(__filename);
+const quiet = process.argv.length > 90;
+test(tag, async () => {
+  await ask("require", () => typeof require("bun:fs").readFileSync);
+  await ask("module.require", () => typeof module.require("bun:fs").readFileSync);
+  await ask("a choice, require", () => require(quiet ? "bun:os" : "bun:fs") === require("node:fs"));
+  await ask("what createRequire made", () => typeof made("bun:fs"));
+  await ask("require.call", () => typeof require.call(null, "bun:fs"));
+  await ask("require.apply", () => typeof require.apply(null, ["bun:fs"]));
+  await ask("require under another name", () => { const load = require; return typeof load("bun:fs"); });
+  await ask("module.require.call", () => typeof module.require.call(module, "bun:fs"));
+  await ask("require.resolve of a whole path that is missing", () => require.resolve(__dirname + "/c-none.cjs"));
+  await ask("require of a whole path that is missing", () => require(__dirname + "/c-none.cjs"));
+});
+#### d.test.js
+import { test } from "bun:test";
+const tag = "d";
+const clean = String;
+
+const ask = async (label, load) => {
+  try { console.log("| CASE", tag, label, clean(await load())); }
+  catch (error) { console.log("| CASE", tag, label, "THROWS", error?.constructor?.name, error?.code, clean(error?.message).split("\n")[0]); }
+};
+
+const quiet = process.argv.length > 90;
+test(tag, async () => {
+  await ask("a choice, process.getBuiltinModule", () => typeof process.getBuiltinModule(quiet ? "bun:os" : "bun:fs"));
+  await ask("a choice of names that the loader knows", () => process.getBuiltinModule(quiet ? "os" : "fs") === require("bun:fs"));
+  // The program of a test file holds no copy of `fs`, whatever names it computes: the program below has the one that runs.
+  const later = name => name + (quiet ? "x" : "");
+  await ask("process.getBuiltinModule of a computed name", () => typeof process.getBuiltinModule(later("nothing")));
+  await ask("import() of a computed name beside it", async () => (await import(later("fs"))).default === require("node:fs"));
+});
+#### tsconfig.json
+{}

@@ -1,26 +1,3 @@
-use crate::jsc::{JSGlobalObject, JSValue};
-
-pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
-    let binding = JSValue::create_empty_object_with_null_prototype(global_object);
-    crate::put_host_functions!(
-        binding,
-        global_object,
-        [
-            ("init", my_sql_context::init, 0),
-            (
-                "createQuery",
-                js_my_sql_query::JSMySQLQuery::create_instance,
-                5
-            ),
-            (
-                "createConnection",
-                js_my_sql_connection::JSMySQLConnection::create_instance,
-                2
-            ),
-        ]
-    )
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Submodule tree (files use PascalCase basenames; wired via `#[path]`).
 // ──────────────────────────────────────────────────────────────────────────

@@ -1409,7 +1409,9 @@ nativeTests.test_napi_get_prototype_proxy = () => {
   dump("plain object again", {});
 };
 
-nativeTests.test_get_value_string = () => {
+nativeTests.test_get_value_string = async () => {
+  // The addon writes to stdout itself, and Node queues what a full pipe doesn't take.
+  const print = line => new Promise(resolve => process.stdout.write(line + "\n", resolve));
   function to16Bit(string) {
     if (typeof Bun != "object") return string;
     const jsc = require("bun:jsc");
@@ -1442,9 +1444,9 @@ nativeTests.test_get_value_string = () => {
     // ["\ud801", "unpaired high surrogate"],
     // ["\udc02", "unpaired low surrogate"],
   ]) {
-    console.log(`test napi_get_value_string on ${string} (${description})`);
+    await print(`test napi_get_value_string on ${string} (${description})`);
     for (const encoding of ["latin1", "utf8", "utf16"]) {
-      console.log(encoding);
+      await print(encoding);
       const fn = nativeTests[`test_get_value_string_${encoding}`];
       fn(string);
     }

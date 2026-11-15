@@ -1,0 +1,17 @@
+# -- source: object-in-a-variable-that-stays-as-made-goes-by-the-row-for-such.js
+# const marks = /\[[0-9;]*m/g;
+# const named = /\[[0-9;]*m/g;
+# named.note = 1;
+# function strip(text) { return String(text).replace(marks, ""); }
+# function stripByNamed(text) { return String(text).replace(named, ""); }
+# sink(strip("a[1mb"), stripByNamed("a[1mb"));
+# -- end of source
+# Nothing ever lays a name on the RegExp in `marks`, puts another object above it or lets it go: Link says so of the variable, and the call goes by the row that takes a RegExp as its class makes it. What it gives is a text.
+# f1 = strip, f2 = stripByNamed
+# RUN: link variables mechanisms=all
+# CHECK: variable g0 {{*}}RegExp {{*}}stays-as-made
+# CHECK-NOT: variable g1 {{*}}stays-as-made
+# RUN(ROW): walk f1 mechanisms=all
+# ROW: string @Cell = CallInline {{*}}inlineBuiltin=StringReplace
+# RUN(NAMED): walk f2 mechanisms=all
+# NAMED-NOT: = CallInline {{*}}inlineBuiltin=StringReplace

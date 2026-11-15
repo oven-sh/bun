@@ -1,0 +1,19 @@
+# f1 = Meter
+# f2 = load
+# f3 = run
+# -- source: main.mjs
+# function Meter() { this.kept = 0; this.scaled = 0; this.moved = 0; this.masked = 0; this.summed = 0; }
+# Meter.prototype.load = function (values) { this.kept = values[0]; this.scaled = values[1]; this.moved = values[2]; this.masked = values[3]; this.summed = values[4]; };
+# Meter.prototype.run = function (turns, by) {
+#   for (let turn = 0; turn < turns; turn++) { this.kept += 0.25; this.kept++; this.scaled *= by; this.scaled++; this.moved -= by; this.moved++; this.masked = this.masked - (turn >> 1); this.masked++; this.summed += by; this.summed++; }
+# };
+# const meter = new Meter(); globalThis.unseen = meter; meter.load((0, eval)(String(Math.random()))); meter.run(3, meter.load.length);
+# print(meter.kept, meter.scaled, meter.moved, meter.masked, meter.summed);
+# -- end of source
+# A step alone makes no integer of a field: a fraction that is added, a product and what nobody knows may each be a fraction.
+# RUN: link held fields
+# CHECK: "kept" proven=number
+# CHECK: "scaled" proven=number
+# CHECK: "moved" proven=number
+# CHECK: "masked" proven=i32
+# CHECK: "summed" proven=number

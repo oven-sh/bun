@@ -2,6 +2,7 @@
 // `createConnection`. The other end of the stream is either a raw peer or a second `ws` socket. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { openAsBlob } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
@@ -896,6 +897,54 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
           "text !fin",
           "continuation",
         ]);
+      });
+
+      // The stream is written to in the store that the socket was created in, so the stream's own write callbacks run
+      // there. npm ws, on Node too, runs the callback of a queued write in the store of the write in front of it, and
+      // the callback of a compressed send in the store of the first compressed send.
+      test.skipIf(!builtin).each([
+        { extension: "without permessage-deflate", options: {}, setup: {} },
+        {
+          extension: "with permessage-deflate",
+          options: { perMessageDeflate: { threshold: 0 } },
+          setup: { extensions: "permessage-deflate" },
+        },
+      ])("run in the AsyncLocalStorage store of their own call, $extension", async ({ options, setup }) => {
+        const storage = new AsyncLocalStorage<string>();
+        await using connection = await storage.run("the socket's", () => open(implementation, role, options, setup));
+        const { ws } = connection;
+        const calls: string[][] = [];
+        const { promise: done, resolve } = Promise.withResolvers<void>();
+        const callback =
+          (call: string) =>
+          (...args: unknown[]) => {
+            if (calls.push([call, args.map(show).join(", "), storage.getStore() ?? "no store"]) === 5) resolve();
+          };
+        ws.send("a", callback("send"));
+        ws.ping("b", undefined, callback("ping"));
+        ws.pong("c", undefined, callback("pong"));
+        storage.run("the sender's", () => ws.send("d", callback("send")));
+        storage.run("the pinger's", () => ws.ping("e", undefined, callback("ping")));
+        await done;
+        expect(calls).toEqual([
+          ["send", "null", "no store"],
+          ["ping", "null", "no store"],
+          ["pong", "null", "no store"],
+          ["send", "null", "the sender's"],
+          ["ping", "null", "the pinger's"],
+        ]);
+      });
+
+      test.each([null, false, 0, ""])("a callback that is %p is ignored", async ignored => {
+        await using connection = await open(implementation, role);
+        const { ws, peer } = connection;
+        const { callback, resultsAfter } = callbackRecorder();
+        ws.send("a", {}, ignored as any);
+        ws.ping("b", undefined, ignored as any);
+        ws.pong("c", undefined, ignored as any);
+        ws.send("d", callback("send"));
+        expect(await resultsAfter(1)).toEqual(["send null"]);
+        expect(await peer.nextFrames(4)).toEqual(['text "a"', 'ping "b"', 'pong "c"', 'text "d"']);
       });
 
       // npm ws reads every Blob asynchronously. The built-in can't read a file-backed Blob synchronously in send(), so

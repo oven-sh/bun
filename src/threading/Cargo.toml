@@ -6,6 +6,10 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
+[features]
+# What only tests use, those of other crates too.
+test_support = []
+
 [lints]
 workspace = true
 
@@ -16,7 +20,6 @@ scopeguard.workspace = true
 libc.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
-bun_collections.workspace = true
 bun_ptr.workspace = true
 bun_safety.workspace = true
 bun_sys.workspace = true

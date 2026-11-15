@@ -51,6 +51,13 @@ impl Socket {
         }
     }
 
+    /// The handshake is done, and neither side is closing or going away.
+    #[inline]
+    pub fn is_connected(&mut self) -> bool {
+        const LSCONN_ST_CONNECTED: c_int = 1;
+        self.status(&mut []) == LSCONN_ST_CONNECTED
+    }
+
     /// `conn_ext_size` bytes of caller storage co-allocated with the socket.
     /// Unset until the caller writes to it after `connect`/`on_open`; the
     /// `Option<NonNull<T>>` slot pattern lets callbacks early-return on a null ext.

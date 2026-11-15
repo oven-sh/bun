@@ -7,7 +7,7 @@ use bun_lint::utils::eslint_utils::{ReferenceTracker, TraceMap};
 /// Disallow the use of `Math.pow` in favor of the `**` operator.
 pub struct PreferExponentiationOperator;
 
-const USE_EXPONENTIATION: Message = Message::new(
+const USE_EXPONENTIATION: &Message = &Message::new(
     "useExponentiation",
     "Use the '**' operator instead of 'Math.pow'.",
 );

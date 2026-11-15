@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Enforce default parameters to be last.
 pub struct DefaultParamLast;
 
-const SHOULD_BE_LAST: Message = Message::new("shouldBeLast", "Default parameters should be last.");
+const SHOULD_BE_LAST: &Message = &Message::new("shouldBeLast", "Default parameters should be last.");
 
 /// The range of ESLint's `params` element. A `TSParameterProperty` includes the keywords before the parameter and the
 /// decorators before those.

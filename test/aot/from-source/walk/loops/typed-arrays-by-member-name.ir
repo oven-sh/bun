@@ -1,0 +1,29 @@
+# -- source: typed-arrays-by-member-name.js
+# function checksum(d, part) { let c = -1; for (let i = 0; i < d.length; ++i) c = ((c << 1) ^ d[i]) | 0; return part ? c + d.subarray(1, 3).length : c; }
+# function sum(d) { let a = 1; for (let i = 0; i < d.length; i++) a = (a + d[i]) % 65521; return a + d.byteLength; }
+# const table = { checksum, sum }, names = JSON.parse('["checksum", "sum"]');
+# for (const held of JSON.parse('[[1, 2, 3, 250], [1, 2.5, 3], [-7, 2147483648]]')) {
+#   for (const kind of [Uint8Array, Float64Array, Int32Array]) print(table[names[0]](new kind(held), true), table[names[1]](new kind(held)));
+#   print(table[names[0]](held, false), table[names[1]](held));
+# }
+# -- end of source
+# Nothing says what the parameters are, but arrays and strings have no `subarray` and no `byteLength`: a value that code indexes with numbers and asks for one of them is a typed array. The loops are versioned for bytes and for the other typed arrays.
+# f1 = checksum, f2 = sum
+# RUN(CHECKSUM): walk f1:Body mechanisms=all
+# CHECKSUM: = GetTypedArrayElement
+# RUN(SUM): walk f2:Body mechanisms=all
+# SUM: = GetTypedArrayElement
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: -242 261
+# ANSWERS-NEXT: -242 289
+# ANSWERS-NEXT: -242 273
+# ANSWERS-NEXT: -244 NaN
+# ANSWERS-NEXT: -3 10
+# ANSWERS-NEXT: -3 31.5
+# ANSWERS-NEXT: -3 19
+# ANSWERS-NEXT: -5 NaN
+# ANSWERS-NEXT: -497 252
+# ANSWERS-NEXT: -2147483633 32883
+# ANSWERS-NEXT: -2147483633 -32871
+# ANSWERS-NEXT: -2147483634 NaN
+# ANSWERS-NEXT: exited with 0

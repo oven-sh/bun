@@ -1,0 +1,24 @@
+#### require-of-a-static-field/main.js
+let loaded; try { loaded = require((class { static file = "./parts/two.js"; }).file); console.log(loaded.name); } catch (error) { console.log(error.code ?? error.name); }
+#### require-of-a-static-field/parts/one.js
+exports.name = "one";
+#### require-of-a-static-field/parts/two.js
+exports.name = "two";
+#### require-of-a-static-field prints
+two
+#### require-of-a-field/main.js
+let loaded; try { loaded = require(new (class { name = "./parts/two.js"; })().name); console.log(loaded.name); } catch (error) { console.log(error.code ?? error.name); }
+#### require-of-a-field/parts/one.js
+exports.name = "one";
+#### require-of-a-field/parts/two.js
+exports.name = "two";
+#### require-of-a-field prints
+two
+#### require-of-a-map-entry/main.js
+let loaded; try { loaded = require(new Map([["one", "./parts/one.js"], ["two", "./parts/two.js"]]).get("two")); console.log(loaded.name); } catch (error) { console.log(error.code ?? error.name); }
+#### require-of-a-map-entry/parts/one.js
+exports.name = "one";
+#### require-of-a-map-entry/parts/two.js
+exports.name = "two";
+#### require-of-a-map-entry prints
+two

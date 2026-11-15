@@ -1,0 +1,28 @@
+# -- source: main.cjs
+# "use strict";
+# const names = {};
+# Object.defineProperty(names, "size", { enumerable: true, get() { return 3; } });
+# function attempt(act) { try { return String(act()); } catch (error) { return error.constructor.name; } }
+# print(JSON.stringify(Object.getOwnPropertyDescriptor(names, "size")), Object.keys(names).join(), JSON.stringify(names));
+# print(attempt(() => delete names.size), attempt(() => Reflect.deleteProperty(names, "size")), attempt(() => { names.size = 1; }));
+# change(names);
+# print(names.size, JSON.stringify(Object.getOwnPropertyDescriptor(names, "size")));
+# -- end of source
+# The slot's form is what the language shows of the property: it cannot be deleted, stored over or defined anew, by the program or by the shell.
+# RUN(NOTHING): run-in-shell change = function () { };
+# NOTHING: {"enumerable":true,"configurable":false} size {"size":3}
+# NOTHING-NEXT: TypeError false TypeError
+# NOTHING-NEXT: 3 {"enumerable":true,"configurable":false}
+# NOTHING-NEXT: exited with 0
+# RUN(AGAIN): run-in-shell change = function (names) { try { Object.defineProperty(names, "size", { get() { return 9; } }); } catch (error) { print(error.constructor.name); } };
+# AGAIN: {"enumerable":true,"configurable":false} size {"size":3}
+# AGAIN-NEXT: TypeError false TypeError
+# AGAIN-NEXT: TypeError
+# AGAIN-NEXT: 3 {"enumerable":true,"configurable":false}
+# AGAIN-NEXT: exited with 0
+# RUN(FROZEN): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime change = function (names) { Object.freeze(names); print(Object.isFrozen(names)); };
+# FROZEN: {"enumerable":true,"configurable":false} size {"size":3}
+# FROZEN-NEXT: TypeError false TypeError
+# FROZEN-NEXT: true
+# FROZEN-NEXT: 3 {"enumerable":true,"configurable":false}
+# FROZEN-NEXT: exited with 0

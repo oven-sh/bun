@@ -460,6 +460,23 @@ describe("DatabaseSync", () => {
     db.close();
   });
 
+  test.each([
+    ["a Proxy", () => new Proxy({ first: "one", second: "two" }, {})],
+    ["import.meta.env", () => import.meta.env as Record<string, string>],
+  ])("binds the named parameters of an object that lists its properties itself: %s", (_, object) => {
+    const env = process.env;
+    process.env = { first: "one", second: "two" };
+    const db = new DatabaseSync(":memory:");
+    try {
+      const statement = db.prepare("SELECT $first AS first, $second AS second");
+      statement.setAllowUnknownNamedParameters(true);
+      expect({ ...statement.get(object()) }).toEqual({ first: "one", second: "two" });
+    } finally {
+      db.close();
+      process.env = env;
+    }
+  });
+
   test("named parameters come from the object's own [[OwnPropertyKeys]] (Proxy, String object)", () => {
     const db = new DatabaseSync(":memory:");
     const stmt = db.prepare("SELECT $a AS a, $b AS b");

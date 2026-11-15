@@ -6,6 +6,7 @@
 
 #include "BunClientData.h"
 #include "BunStreamSource.h"
+#include "GeneratedSink.h"
 #include "JSBuffer.h"
 #include "JSDOMWrapperCache.h"
 #include "JSDirectStreamController.h"
@@ -458,20 +459,9 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
         sourceCancelPromise = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get())->cancelSteps(globalObject, reason);
         break;
     case ControllerKind::NativeSink: {
-        auto* sinkController = stream->m_controller.get();
-        JSValue closeFunction = sinkController->getIfPropertyExists(globalObject, builtinNames(vm).closePublicName());
+        uncheckedDowncast<JSReadableSinkController>(stream->m_controller.get())->close(globalObject, reason);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        if (!closeFunction || !closeFunction.isCallable()) {
-            throwTypeError(globalObject, scope, "The stream's native sink controller has no close method"_s);
-            return nullptr;
-        }
-        auto callData = JSC::getCallData(closeFunction);
-        MarkedArgumentBuffer args;
-        args.append(reason);
-        ASSERT(!args.hasOverflowed());
-        JSValue closeResult = JSC::call(globalObject, closeFunction, callData, sinkController, args);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        sourceCancelPromise = promiseResolvedWith(globalObject, closeResult);
+        sourceCancelPromise = promiseResolvedWith(globalObject, jsUndefined());
         break;
     }
     }

@@ -1,0 +1,11 @@
+import { check } from "../src/show";
+import { remember, recall, registry, weak, seen, makePoint, secret, shared, Shape, compare } from "fake-shapes";
+import { Vec2 } from "fake-typed";
+import { makeUser, Square } from "../src/models";
+const F = "13";
+check(F, "keys from every layer", () => { const keys: unknown[] = [makePoint(1, 2), new Vec2(1, 2), makeUser(1), new Square("s", 1), { local: true }, "text", "te" + "xt", 1, 1.0, -0, NaN, secret, shared, Symbol.for("border.shared"), Square, makePoint, null, undefined]; const before = registry.size; keys.forEach((k, i) => remember(k, i)); return [registry.size - before, keys.map(k => recall(k))]; });
+check(F, "weak collections", () => { const u = makeUser(2); remember(u, "u"); return [weak.has(u), weak.get(u), seen.has(u), weak.has(makeUser(2)), weak.delete(u), weak.has(u), seen.has(u)]; });
+check(F, "the class registry", () => { const s = new Square("reg", 1); return [Shape.registry.get(s.id) === s, Shape.registry.size === Shape.count, [...Shape.registry.values()].at(-1) === s]; });
+check(F, "symbols", () => { const o: any = { [secret]: 1, [shared]: 2, [Symbol.for("border.shared")]: 3, plain: 4 }; return [o[secret], o[shared], Object.getOwnPropertySymbols(o).length, shared === Symbol.for("border.shared"), Symbol.keyFor(shared), Symbol.keyFor(secret), secret.description, String(secret), Object.keys(o)]; });
+check(F, "equality of values from two layers", () => [compare("alpha", "al" + "pha"), compare(1, 1.0), compare(0, -0), compare(NaN, NaN), compare(makePoint(1, 1), makePoint(1, 1)), compare(null, undefined), compare("1", 1), compare(10n, 10), compare(Square, Square), compare(secret, secret)]);
+check(F, "Map and Set algebra", () => { const a = new Set([1, 2, 3].map(n => "k" + n)), b = new Set(["k2", "k" + 3, "k4"]); const m = Map.groupBy([1, 2, 3, 4].map(makeUser), u => u.roles.length); return [a.union(b), a.intersection(b), a.difference(b), a.isSubsetOf(b), [...m.keys()], m.get(2)!.map(u => u.id), Object.groupBy([makePoint(1, 1), makePoint(2, 1)], p => "y" + p.y)]; });

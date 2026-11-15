@@ -119,9 +119,22 @@ impl Checker<'_, '_> {
             Some(_) => is_checked_by_function,
             None => !is_checked_by_function && is_checked_by_class,
         };
-        if is_checked {
-            self.check_function_or_constructor_symbol(sym);
+        if !is_checked {
+            return;
         }
+        if let Some(function) = at
+            && symbol.name == known::computed
+        {
+            let first = self.first_late_bound_declaration_that(file, function, |checker, it| {
+                it.0 == file
+                    && bound.symbol(bound.symbol_of_declaration(it.1)).name == known::computed
+                    && checker.function_of_declaration(it).is_some()
+            });
+            if first.is_some_and(|first| first.1 != function) {
+                return;
+            }
+        }
+        self.check_function_or_constructor_symbol(sym);
     }
 
     /// `checkFunctionOrConstructorSymbolWorker`
@@ -198,7 +211,11 @@ impl Checker<'_, '_> {
             (duplicate_function_declaration, 2393),
         ] {
             for &declaration in function_declarations.iter().filter(|_| is_reported) {
-                self.error_at_declaration(declaration, code, &[]);
+                let class =
+                    self.duplicate_implementation_class(&function_declarations, declaration, code);
+                if let Some(reported) = self.error_at_declaration(declaration, code, &[]) {
+                    reported.class = class;
+                }
             }
         }
         if has_non_ambient_class && !is_constructor && flags.contains(SymFlags::FUNCTION) {
@@ -366,7 +383,7 @@ impl Checker<'_, '_> {
     }
 
     /// `node.Flags&ast.NodeFlagsAmbient != 0`
-    fn is_in_ambient_context(&self, (file, decl): Declaration) -> bool {
+    pub(super) fn is_in_ambient_context(&self, (file, decl): Declaration) -> bool {
         let hir = self.hir(file);
         // FOR SPEED: avoids looking up parents in a declaration file.
         hir.kind == FileKind::Declaration || hir.is_ambient(hir.node(decl))

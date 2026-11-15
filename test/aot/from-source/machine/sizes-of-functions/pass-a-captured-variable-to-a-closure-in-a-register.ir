@@ -1,0 +1,15 @@
+# f2 = scale
+# -- source: pass-a-captured-variable-to-a-closure-in-a-register.ts
+# function scaleBoth(first: number, second: number, factor: number): number {
+#   const scale = (value: number) => value * factor;
+#   return scale(first) + scale(second);
+# }
+# declare const input: any;
+# (globalThis as any).answer = scaleBoth(+input, +input, +input) + scaleBoth(1, 2, +input);
+# -- end of source
+# The compiler before this one: 2 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 10, patches 0, moves 0, unlikely or rare 0.
+# RUN(X64): steps most:10 f2 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f2:Body
+# X64-NEXT: steps: at most 10

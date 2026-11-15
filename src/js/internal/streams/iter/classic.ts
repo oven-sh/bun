@@ -24,21 +24,24 @@ const {
   kSyncWriteAccepted,
   drainableProtocol,
 } = require("internal/streams/iter/types");
+// A symbol that a pattern takes out of `require(..)` is a plain `symbol` for the type checker: `x[key as Keys["key"]]` says which.
+type Keys = typeof import("internal/streams/iter/types").default;
+type Writer = import("internal/streams/iter/types").Writer;
 
 const { validateBackpressure, toUint8Array } = require("internal/streams/iter/utils");
 
 const destroyImpl = require("internal/streams/destroy");
 
-const SymbolAsyncIterator = Symbol.asyncIterator;
-const SymbolIterator = Symbol.iterator;
+const SymbolAsyncIterator: typeof Symbol.asyncIterator = Symbol.asyncIterator;
+const SymbolIterator: typeof Symbol.iterator = Symbol.iterator;
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const SymbolDispose = Symbol.dispose;
 const PromiseWithResolvers = Promise.withResolvers.bind(Promise);
 
 // Lazy-loaded to avoid circular dependencies. Readable and Writable
 // both require this module's parent, so we defer the require.
-let Readable;
-let Writable;
+let Readable: $BunModules["internal/streams/readable"] | undefined;
+let Writable: $BunModules["internal/streams/writable"] | undefined;
 
 function lazyReadable() {
   if (Readable === undefined) {
@@ -59,7 +62,7 @@ function lazyWritable() {
 // ============================================================================
 
 // Cache: one stream/iter source per Readable instance.
-const fromReadableCache = new WeakMap();
+const fromReadableCache = new WeakMap<object, AsyncIterable<unknown>>();
 
 // Maximum chunks to drain into a single batch. Bounds peak memory when
 // _read() synchronously pushes many chunks into the buffer.
@@ -71,7 +74,7 @@ const { isUint8Array } = require("node:util/types");
 // Normalize a batch of raw chunks from an object-mode or encoded
 // Readable into Uint8Array values. Returns the normalized batch,
 // or null if normalization produced no output.
-async function normalizeBatch(raw) {
+async function normalizeBatch(raw: unknown[]) {
   const batch: Uint8Array[] = [];
   for (let i = 0; i < raw.length; i++) {
     const value = raw[i];
@@ -106,10 +109,10 @@ interface BatchedAsyncIterator extends ReturnType<typeof createBatchedAsyncItera
   stream?: unknown;
 }
 
-async function* createBatchedAsyncIterator(stream, normalize) {
+async function* createBatchedAsyncIterator(stream: $Node.Readable, normalize: typeof normalizeBatch | null) {
   let callback = nop;
 
-  function next(resolve) {
+  function next(this: unknown, resolve: (value?: unknown) => void) {
     if (this === stream) {
       callback();
       callback = nop;
@@ -176,7 +179,7 @@ async function* createBatchedAsyncIterator(stream, normalize) {
  *   read() and on()/off() methods.
  * @returns {AsyncIterable<Uint8Array[]>} A stream/iter async iterable source.
  */
-function fromReadable(readable) {
+function fromReadable(readable: $Node.Readable & import("internal/streams/iter/types").Streamable) {
   if (readable == null || typeof readable !== "object") {
     throw $ERR_INVALID_ARG_TYPE("readable", "Readable", readable);
   }
@@ -187,7 +190,7 @@ function fromReadable(readable) {
 
   // Protocol path: object implements toAsyncStreamable.
   if (typeof readable[kToAsyncStreamable] === "function") {
-    const result = readable[kToAsyncStreamable]();
+    const result = readable[kToAsyncStreamable as Keys["toAsyncStreamable"]]!() as AsyncIterable<unknown>;
     fromReadableCache.set(readable, result);
     return result;
   }
@@ -233,7 +236,7 @@ const kNullPrototype: ClassicAdapterOptions = { __proto__: null };
  * @param {AbortSignal} [options.signal]
  * @returns {stream.Readable}
  */
-function toReadable(source, options = kNullPrototype) {
+function toReadable(source: AsyncIterable<Uint8Array[]>, options = kNullPrototype) {
   if (typeof source?.[SymbolAsyncIterator] !== "function") {
     throw $ERR_INVALID_ARG_TYPE("source", "AsyncIterable", source);
   }
@@ -244,7 +247,7 @@ function toReadable(source, options = kNullPrototype) {
 
   const ReadableCtor = lazyReadable();
   const iterator = source[SymbolAsyncIterator]();
-  let backpressure;
+  let backpressure: PromiseWithResolvers<void> | null | undefined;
   let pumping = false;
   let done = false;
 
@@ -270,7 +273,7 @@ function toReadable(source, options = kNullPrototype) {
         backpressure = null;
       }
       if (typeof iterator.return === "function") {
-        iterator.return().then(
+        iterator.return!().then(
           () => cb(err),
           e => cb(e || err),
         );
@@ -303,7 +306,7 @@ function toReadable(source, options = kNullPrototype) {
       }
     } catch (err) {
       done = true;
-      readable.destroy(err);
+      readable.destroy(err as Error);
     }
   }
 
@@ -322,7 +325,7 @@ function toReadable(source, options = kNullPrototype) {
  * @param {number} [options.highWaterMark]
  * @returns {stream.Readable}
  */
-function toReadableSync(source, options = kNullPrototype) {
+function toReadableSync(source: Iterable<Uint8Array[]>, options = kNullPrototype) {
   if (typeof source?.[SymbolIterator] !== "function") {
     throw $ERR_INVALID_ARG_TYPE("source", "Iterable", source);
   }
@@ -334,7 +337,7 @@ function toReadableSync(source, options = kNullPrototype) {
   const ReadableCtor = lazyReadable();
   const iterator = source[SymbolIterator]();
   let hasBatch = false;
-  let batch;
+  let batch: Uint8Array[] | undefined;
   let batchIndex = 0;
 
   return new ReadableCtor({
@@ -343,8 +346,8 @@ function toReadableSync(source, options = kNullPrototype) {
     read() {
       for (;;) {
         if (hasBatch) {
-          while (batchIndex < batch.length) {
-            if (!this.push(batch[batchIndex++])) return;
+          while (batchIndex < batch!.length) {
+            if (!this.push(batch![batchIndex++])) return;
           }
           batch = undefined;
           hasBatch = false;
@@ -375,7 +378,7 @@ function toReadableSync(source, options = kNullPrototype) {
 // ============================================================================
 
 // Cache: one Writer adapter per Writable instance.
-const fromWritableCache = new WeakMap();
+const fromWritableCache = new WeakMap<object, Map<string, object>>();
 
 /**
  * Create a stream/iter Writer adapter from a classic Writable (or duck-type).
@@ -395,7 +398,7 @@ interface DrainWaiter {
   reject: (err?: unknown) => void;
 }
 
-function fromWritable(writable, options = kNullPrototype) {
+function fromWritable(writable: $Node.Writable, options = kNullPrototype) {
   if (writable == null || typeof writable.write !== "function" || typeof writable.on !== "function") {
     throw $ERR_INVALID_ARG_TYPE("writable", "Writable", writable);
   }
@@ -451,8 +454,8 @@ function fromWritable(writable, options = kNullPrototype) {
   // accumulating per-write listeners on the stream.
   let waiters: DrainWaiter[] = [];
   let listenersInstalled = false;
-  let onDrain;
-  let onError;
+  let onDrain: (() => void) | undefined;
+  let onError: ((err: unknown) => void) | undefined;
 
   function installListeners() {
     if (listenersInstalled) return;
@@ -484,8 +487,8 @@ function fromWritable(writable, options = kNullPrototype) {
     }
     if (!listenersInstalled) return;
     listenersInstalled = false;
-    writable.removeListener("drain", onDrain);
-    writable.removeListener("error", onError);
+    writable.removeListener("drain", onDrain!);
+    writable.removeListener("error", onError!);
   }
 
   function waitForDrain() {
@@ -725,7 +728,7 @@ function fromWritable(writable, options = kNullPrototype) {
  * @param {object} writer - A stream/iter Writer (only write() is required).
  * @returns {stream.Writable}
  */
-function toWritable(writer) {
+function toWritable(writer: Writer) {
   if (typeof writer?.write !== "function") {
     throw $ERR_INVALID_ARG_TYPE("writer", "Writer", writer);
   }
@@ -741,17 +744,17 @@ function toWritable(writer) {
   const hasSyncWriteAccepted = typeof writer[kSyncWriteAccepted] === "function";
 
   function syncWriteAccepted() {
-    return hasSyncWriteAccepted && writer[kSyncWriteAccepted]();
+    return hasSyncWriteAccepted && writer[kSyncWriteAccepted as Keys["kSyncWriteAccepted"]]!();
   }
 
-  function finishAfterSyncBackpressure(cb) {
-    let ondrain;
+  function finishAfterSyncBackpressure(cb: $Node.ErrorCallback) {
+    let ondrain: Promise<boolean> | null | undefined;
     try {
       if (typeof writer[drainableProtocol] === "function") {
-        ondrain = writer[drainableProtocol]();
+        ondrain = writer[drainableProtocol as Keys["drainableProtocol"]]!();
       }
     } catch (err) {
-      cb(err);
+      cb(err as Error);
       return;
     }
     if (ondrain !== null && ondrain !== undefined) {
@@ -773,11 +776,11 @@ function toWritable(writer) {
   // queueMicrotask to preserve the async resolution contract that Writable
   // internals expect from _write/_writev/_final callbacks.
 
-  function _write(chunk, encoding, cb) {
+  function _write(chunk, encoding: string, cb: $Node.ErrorCallback) {
     const bytes = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
     if (hasWriteSync) {
       try {
-        if (writer.writeSync(bytes)) {
+        if (writer.writeSync!(bytes)) {
           queueMicrotask(cb);
           return;
         }
@@ -793,11 +796,11 @@ function toWritable(writer) {
     try {
       writer.write(bytes).then(() => cb(), cb);
     } catch (err) {
-      cb(err);
+      cb(err as Error);
     }
   }
 
-  function _writev(entries, cb) {
+  function _writev(entries, cb: $Node.ErrorCallback) {
     const chunks: Uint8Array[] = [];
     for (let i = 0; i < entries.length; i++) {
       const { chunk, encoding } = entries[i];
@@ -805,7 +808,7 @@ function toWritable(writer) {
     }
     if (hasWritevSync) {
       try {
-        if (writer.writevSync(chunks)) {
+        if (writer.writevSync!(chunks)) {
           queueMicrotask(cb);
           return;
         }
@@ -819,20 +822,20 @@ function toWritable(writer) {
       }
     }
     try {
-      writer.writev(chunks).then(() => cb(), cb);
+      writer.writev!(chunks).then(() => cb(), cb);
     } catch (err) {
-      cb(err);
+      cb(err as Error);
     }
   }
 
-  function _final(cb) {
+  function _final(cb: $Node.ErrorCallback) {
     if (!hasEnd) {
       queueMicrotask(cb);
       return;
     }
     if (hasEndSync) {
       try {
-        const result = writer.endSync();
+        const result = writer.endSync!();
         if (result >= 0) {
           queueMicrotask(cb);
           return;
@@ -842,9 +845,9 @@ function toWritable(writer) {
       }
     }
     try {
-      writer.end().then(() => cb(), cb);
+      writer.end!().then(() => cb(), cb);
     } catch (err) {
-      cb(err);
+      cb(err as Error);
     }
   }
 
@@ -857,9 +860,9 @@ function toWritable(writer) {
     destroy: typeof _destroy;
   }
 
-  function _destroy(err, cb) {
+  function _destroy(err: Error | null, cb: $Node.ErrorCallback) {
     if (err && hasFail) {
-      writer.fail(err);
+      writer.fail!(err);
     }
     cb();
   }

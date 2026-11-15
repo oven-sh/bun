@@ -1,0 +1,17 @@
+import { check } from "../src/show";
+import { keyOf, builtKey, readKey, writeKey, hasKey, deleteKey, switchOn, makePoint, kinds, tag, sameTemplate, keysOf, Circle } from "fake-shapes";
+import { Vec2, table, weigh, makeItem, colorName, Color, Word } from "fake-typed";
+import { makeUser, Square, Stage, stages } from "../src/models";
+const F = "14";
+const local = (text: string) => { switch (text) { case "alpha": return 1; case "beta": return 2; case "circle": return 3; case "side": return 4; case "": return 5; default: return -1; } };
+check(F, "names made there, read here", () => { const s: any = new Square("sq", 2), v: any = new Vec2(7, 8), u: any = makeUser(3), out: unknown[] = []; for (let i = 0; i < 16; i++) { const k = keyOf(i); out.push([k, typeof s[k], typeof v[k], typeof u[k], k in s, Object.hasOwn(v, k)]); } return out; });
+check(F, "names made here, read there", () => { const s = new Square("sq", 2), v = new Vec2(7, 8), c = new Circle("c", 3); return ["si" + "de", "name", "x", "y", "r", "ta" + "gs", "area", "leng" + "th", "kind", "nope"].map(k => [k, typeof readKey(s, k), readKey(v, k), typeof readKey(c, k), hasKey(s, k)]); });
+check(F, "built names", () => [readKey(makePoint(1, 2), builtKey("", "x")), readKey({ alphabeta: 1 }, builtKey("alpha", "beta")), readKey({ [builtKey("a", "b")]: 2 }, "ab"), ({ ab: 3 } as any)[builtKey("a", "b")], readKey(table, builtKey("o", "ne")), table[builtKey("t", "wo")]]);
+check(F, "switches on text from the other side", () => ["alpha", "be" + "ta", kinds.circle, keyOf(14), "", keyOf(0) + "", keyOf(15), String(keyOf(1))].map(t => [switchOn(t), local(t)]));
+check(F, "writes and deletes by name", () => { const p: any = makePoint(1, 2); writeKey(p, "z", 3); writeKey(p, keyOf(0), 4); p[keyOf(1)] = 5; const keys = keysOf(p); return [keys, deleteKey(p, "x"), delete p[keyOf(0)], keysOf(p), p]; });
+check(F, "index-like and odd names", () => { const o: any = {}; for (const k of ["1", "0", "b", "-1", "01", "1.5", "4294967295", "a", "__proto__x", ""]) writeKey(o, k, k.length); return [Object.keys(o), keysOf(o), readKey(o, 1), readKey(o, 0), readKey([9, 8], "1"), readKey("str", "1"), readKey("str", "length")]; });
+check(F, "__proto__ and constructor", () => { const p = makePoint(1, 2); return [readKey(p, "__proto__") === Object.prototype, readKey(p, keyOf(8)) === Object.prototype, readKey(new Square("s", 1), keyOf(7)) === Square, readKey(new Vec2(0, 0), "constructor") === Vec2, hasKey(p, "__proto__"), Object.hasOwn(JSON.parse('{"__proto__": 1}'), keyOf(8))]; });
+check(F, "unions by tag", () => [[0, 1, 2, 4, 5].map(i => weigh(makeItem(i))), weigh({ kind: "b", b: "local" }), weigh({ kind: ("a" + "") as "a", a: 2 }), weigh(JSON.parse('{"kind":"c","c":[true]}'))]);
+check(F, "enums", () => [colorName(Color.Green), colorName(6), colorName(1 as Color), Color.Blue, Color[5], Word.Yes, Object.keys(Color), Object.values(Word), Stage.Live, stages[Stage.Live], stages["draft" as Stage]]);
+check(F, "templates", () => { const t = () => tag`x${1}\n${"two"}y`; const a = t(), b = t(); return [a.strings, a.raw, a.values, a.strings === b.strings, Object.isFrozen(a.strings), sameTemplate(), tag`x${1}\n${"two"}y`.strings === a.strings]; });
+check(F, "long and joined text", () => { const long = "x".repeat(300) + keyOf(0); const o: any = { [long]: 1 }; return [readKey(o, "x".repeat(300) + "alpha"), hasKey(o, long), keysOf(o)[0]!.length, switchOn(long.slice(300)), long.slice(300) === keyOf(0), [..."añ😀"].map(c => c.length), readKey({ "añ😀": 1 }, "a" + "ñ" + "😀")]; });

@@ -5,8 +5,8 @@ use bun_lint::rule::Plugin;
 /// Enforces that positive values for the `tabIndex` attribute are not used in JSX.
 pub struct TabindexNoPositive;
 
-const TABINDEX_NO_POSITIVE: Message = Message::new("", "Avoid positive integer values for `tabIndex`.");
-const CHANGE: Message = Message::new("", "Change the `tabIndex` prop to a non-positive value.");
+const TABINDEX_NO_POSITIVE: &Message = &Message::new("", "Avoid positive integer values for `tabIndex`.");
+const CHANGE: &Message = &Message::new("", "Change the `tabIndex` prop to a non-positive value.");
 
 impl Rule for TabindexNoPositive {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "tabindex-no-positive", Kind::Problem).has_suggestions();

@@ -5,7 +5,7 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// This rule applies when the comparison operator is applied two or more times in a row.
 pub struct BadComparisonSequence;
 
-const BAD_COMPARISON_SEQUENCE: Message = Message::new("", "Bad comparison sequence");
+const BAD_COMPARISON_SEQUENCE: &Message = &Message::new("", "Bad comparison sequence");
 
 impl Rule for BadComparisonSequence {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "bad-comparison-sequence", Kind::Problem);

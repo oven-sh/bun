@@ -13,43 +13,43 @@ use std::collections::BinaryHeap;
 /// Enforces the Rules of Hooks.
 pub struct RulesOfHooks;
 
-pub(crate) const TRY_CATCH: Message = Message::new(
+pub(crate) const TRY_CATCH: &Message = &Message::new(
     "",
     "React Hook \"{{hook}}\" cannot be called in a try/catch block.",
 );
-pub(crate) const LOOP: Message = Message::new(
+pub(crate) const LOOP: &Message = &Message::new(
     "",
     "React Hook \"{{hook}}\" may be executed more than once. Possibly because it is called in a loop. React Hooks must be called in the exact same order in every component render.",
 );
-const ASYNC: Message = Message::new(
+const ASYNC: &Message = &Message::new(
     "",
     "React Hook \"{{hook}}\" cannot be called in an async function.",
 );
-const CONDITIONAL: Message = Message::new(
+const CONDITIONAL: &Message = &Message::new(
     "",
     "React Hook \"{{hook}}\" is called conditionally. React Hooks must be called in the exact same order in every component render.{{hint}}",
 );
-pub(crate) const CLASS: Message = Message::new(
+pub(crate) const CLASS: &Message = &Message::new(
     "",
     "React Hook \"{{hook}}\" cannot be called in a class component. React Hooks must be called in a React function component or a custom React Hook function.",
 );
-pub(crate) const FUNCTION: Message = Message::new(
+pub(crate) const FUNCTION: &Message = &Message::new(
     "",
     "React Hook \"{{hook}}\" is called in function \"{{function}}\" that is neither a React function component nor a custom React Hook function. React component names must start with an uppercase letter. React Hook names must start with the word \"use\".",
 );
-pub(crate) const TOP_LEVEL: Message = Message::new(
+pub(crate) const TOP_LEVEL: &Message = &Message::new(
     "",
     "React Hook \"{{hook}}\" cannot be called at the top level. React Hooks must be called in a React function component or a custom React Hook function.",
 );
-pub(crate) const CALLBACK: Message = Message::new(
+pub(crate) const CALLBACK: &Message = &Message::new(
     "",
     "React Hook \"{{hook}}\" cannot be called inside a callback. React Hooks must be called in a React function component or a custom React Hook function.",
 );
-pub(crate) const EFFECT_EVENT_PASSED_DOWN: Message = Message::new(
+pub(crate) const EFFECT_EVENT_PASSED_DOWN: &Message = &Message::new(
     "",
     "React Hook \"useEffectEvent\" can only be called at the top level of your component. It cannot be passed down.",
 );
-pub(crate) const EFFECT_EVENT_FUNCTION: Message = Message::new(
+pub(crate) const EFFECT_EVENT_FUNCTION: &Message = &Message::new(
     "",
     "`{{function}}` is a function created with React Hook \"useEffectEvent\", and can only be called from Effects and Effect Events in the same component.{{hint}}",
 );
@@ -702,7 +702,7 @@ fn why_conditional<'a>(hook: Expr<'a>, func: Func<'a>) -> Option<String> {
         if decides {
             let line = file.line_of(outer.span().start);
             return Some(format!(
-                "Whether it is called depends on the condition on line {line}."
+                "Depends on the condition on line {line}."
             ));
         }
         inner = outer;
@@ -713,7 +713,7 @@ fn why_conditional<'a>(hook: Expr<'a>, func: Func<'a>) -> Option<String> {
         .min_by_key(|it| it.span().start)?;
     let line = file.line_of(early.span().start);
     Some(format!(
-        "The return on line {line} can end the render before it is called."
+        "The return on line {line} can skip this hook."
     ))
 }
 
@@ -1053,8 +1053,8 @@ impl RulesOfHooks {
             }
             let is_cycled = flow.is_cyclic;
             let is_use = is_react_function(hook, "use");
-            let report = |message: Message| cx.report(hook, message).data("hook", hook.text());
-            let mut reports: smallvec::SmallVec<[Message; 2]> = smallvec::SmallVec::new();
+            let report = |message: &'static Message| cx.report(hook, message).data("hook", hook.text());
+            let mut reports: smallvec::SmallVec<[&'static Message; 2]> = smallvec::SmallVec::new();
 
             if is_use && memo.is_inside_try_catch(hook) {
                 reports.push(TRY_CATCH);

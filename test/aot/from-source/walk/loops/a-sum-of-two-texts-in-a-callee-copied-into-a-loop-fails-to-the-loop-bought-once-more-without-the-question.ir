@@ -1,0 +1,116 @@
+# The arrow is copied into the loop; its sum asks both operands for numbers where the turn may begin again. Both are texts: the first turn fails. The failing way leads to the loop bought once more, which asks no more and is no rare code, in the place of the closed copy.
+# -- source: a-sum-of-two-texts-in-a-callee-copied-into-a-loop-fails-to-the-loop-bought-once-more-without-the-question.js
+# const table = { go: (a, b) => a + b }, names = JSON.parse('["go"]'), values = JSON.parse('["ab","cd",3]');
+# const picked = table[names[0]], x = values[0], y = values[1];
+# function run() { let c = 0; for (let i = 0; i < 100; i++) c += picked(x, y) === x ? 1 : 2; return c; }
+# print(run(), picked(x, y));
+# -- end of source
+# RUN(COUNT): compile LoopsReversionedWithoutHoistedGuards mechanisms=all
+# COUNT: statistic LoopsReversionedWithoutHoistedGuards 1
+# RUN(ANSWERS): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# ANSWERS: 200 abcd
+
+module m0 path="a-sum-of-two-texts-in-a-callee-copied-into-a-loop-fails-to-the-loop-bought-once-more-without-the-question.js" displayPath="a-sum-of-two-texts-in-a-callee-copied-into-a-loop-fails-to-the-loop-bought-once-more-without-the-question.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 module=m0 position=14 fields=[{key="go" declared={type=anything} flags=[IsRequired]}] place=14 ownFieldCount=1
+variable g0 name="picked" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=5
+variable g1 name="x" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=6
+variable g2 name="y" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=7
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @20
+    v3 = NewObject -, v2 layout=L0 fields=[0] @14
+    v4 = FinishObject v3 @14
+    v5 = Builtin builtin=JSON @47
+    v6 = PropGet v5 key="parse" @47
+    v7 = Convert v6 declared={type=builtin(JSONParse) flags=[IsExpected]} @47
+    v8 = String string="[\"go\"]" @58
+    v9 = Call v7, v5, v8 calleeKey="parse" calleeName="JSON.parse" @52
+    v10 = Builtin builtin=JSON @78
+    v11 = PropGet v10 key="parse" @78
+    v12 = Convert v11 declared={type=builtin(JSONParse) flags=[IsExpected]} @78
+    v13 = String string="[\"ab\",\"cd\",3]" @89
+    v14 = Call v12, v10, v13 calleeKey="parse" calleeName="JSON.parse" @83
+    v15 = Integer @128
+    v16 = ElemGet v9, v15 @128
+    v17 = ElemGet v4, v16 @122
+    PutModuleVariable v17 variable=g0 @113
+    v19 = Integer @143
+    v20 = ElemGet v14, v19 @143
+    PutModuleVariable v20 variable=g1 @139
+    v22 = Integer integer=1 @158
+    v23 = ElemGet v14, v22 @158
+    PutModuleVariable v23 variable=g2 @154
+    v25 = Builtin builtin=GlobalThis @272
+    v26 = PropGet v25 key="print" [isFreeName] @272
+    v27 = Call v1 calleeName="run" @278
+    v28 = Call v17, -, v20, v23 calleeName="picked" @285
+    v29 = Call v26, -, v27, v28 calleeName="print" @272
+    v30 = Undefined @272
+    Return v30 @272
+}
+function f1 name="run" module=m0 position=169 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer @194
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @194
+    v2 = Integer @210
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @210
+    Jump -> next b1(v1, v3) @206
+  b1(v4, v5):
+    LoopHint @206
+    v7 = Integer integer=100 @217
+    v8 = Less v5, v7 @217
+    Branch v8 -> taken b2(), notTaken b6() @217
+  b2():
+    v9 = GetModuleVariable variable=g0 @232
+    v10 = CheckInitialized v9 name="picked" @232
+    v11 = GetModuleVariable variable=g1 @239
+    v12 = CheckInitialized v11 name="x" @239
+    v13 = GetModuleVariable variable=g2 @242
+    v14 = CheckInitialized v13 name="y" @242
+    v15 = Call v10, -, v12, v14 calleeName="picked" @232
+    v16 = GetModuleVariable variable=g1 @249
+    v17 = CheckInitialized v16 name="x" @249
+    v18 = StrictEq v15, v17 @249
+    Branch v18 -> taken b3(), notTaken b4() @249
+  b3():
+    v19 = Integer integer=1 @253
+    Jump -> next b5(v19) @253
+  b4():
+    v20 = Integer integer=2 @257
+    Jump -> next b5(v20) @257
+  b5(v21):
+    v22 = Add v4, v21 @257
+    v23 = Convert v22 declared={type=number flags=[IsExpected]} @227
+    v24 = Increment v5 @222
+    v25 = Convert v24 declared={type=number flags=[IsExpected]} @222
+    Jump -> next b1(v23, v25) @222
+  b6():
+    Return v4 @267
+}
+function f2 name="go" module=m0 position=20 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1 @34
+    Return v2 @34
+}
+function f3 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private

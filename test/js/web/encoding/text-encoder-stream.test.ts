@@ -165,9 +165,9 @@ test("cancelling the readable inside the chunk's toString() rejects the write in
   await writer.abort("bye"); // must settle
 });
 
-// Native-sink output path: when the readable is consumed by a native JSSink
+// Native-sink output path: when the readable is consumed by a native sink
 // (here HTTPResponseSink via Bun.serve), the encoder writes into a reusable
-// scratch buffer and straight to the sink's m_sinkPtr instead of wrapping each
+// scratch buffer and straight to the sink instead of wrapping each
 // chunk in a JSUint8Array.
 test("TextEncoderStream -> native HTTP response sink round-trips (incl. split surrogate)", async () => {
   await using server = Bun.serve({
@@ -284,6 +284,7 @@ describe.skipIf(!isASAN)("a failed output buffer allocation errors the stream in
   const CAP_MB = 4;
   const env = {
     ...bunEnv,
+    WebKitMallocForceEnabled: "1",
     // detect_leaks=0: natives owned only by a JSC cell are invisible to
     // LeakSanitizer's reachability scan and would be reported at exit.
     ASAN_OPTIONS: [

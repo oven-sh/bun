@@ -1,0 +1,26 @@
+# -- source: main.js
+# function V() { this.fill.apply(this, arguments); }
+# V.prototype.fill = function (k) {
+#   this.first = 0;
+#   if (k & 1) this.both = 1.5; else this.both = 2.5;
+#   if (k & 2) this.alone = 1.5;
+#   switch (k & 3) { case 0: this.every = 0.5; break; case 1: this.every = 1.5; break; default: this.every = 2.5; }
+#   if (k & 4) { this.outer = 0.5; if (k & 8) this.inner = 0.5; else this.inner = 1.5; } else { this.outer = 1.5; this.inner = 2.5; }
+#   for (let i = 0; i < (k & 1); i++) this.looped = 0.5;
+#   this.last = 1;
+# };
+# let total = 0;
+# for (let i = 0; i < 100; i++) { const a = new V(i); total += a.first + a.both + (a.alone ?? 0) + a.every + a.outer + a.inner + (a.looped ?? 0) + a.last; }
+# console.log(total);
+# -- end of source
+# A body that the constructor applies fills a field in every arm: it is filled behind the arms. What one arm or a loop alone fills may be empty.
+# RUN: link fields mechanisms=all
+# CHECK: "both" proven=number writers-known filled
+# CHECK: "alone" proven=number writers-known
+# CHECK: "every" proven=number writers-known filled
+# CHECK: "outer" proven=number writers-known filled
+# CHECK: "inner" proven=number writers-known filled
+# CHECK: "looped" proven=number writers-known
+# RUN(EMPTY): link fields mechanisms=all
+# EMPTY-NOT: "alone" proven=number writers-known filled
+# EMPTY-NOT: "looped" proven=number writers-known filled

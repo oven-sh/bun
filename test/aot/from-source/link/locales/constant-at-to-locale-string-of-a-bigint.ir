@@ -1,0 +1,10 @@
+# a written tag at the method that Link finds on a BigInt
+# -- source: constant-at-to-locale-string-of-a-bigint.ts
+# declare function sink(...values: unknown[]): void;
+# sink(10n.toLocaleString("de-AT"));
+# -- end of source
+# RUN: locales
+# CHECK: locale constant "de-AT" BigIntPrototypeToLocaleString
+# RUN(NEVER): locales
+# NEVER-NOT: locale unknown
+# NEVER-NOT: efault

@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow equal signs explicitly at the beginning of regular expressions.
 pub struct NoDivRegex;
 
-const UNEXPECTED: Message = Message::new(
+const UNEXPECTED: &Message = &Message::new(
     "unexpected",
     "A regular expression literal can be confused with '/='.",
 );

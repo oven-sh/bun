@@ -100,8 +100,9 @@ pub struct Ast<'a> {
     /// This is a list of named exports that may exist in a CommonJS module
     /// We use this with `commonjs_at_runtime` to re-export CommonJS
     pub has_commonjs_export_names: bool,
-    pub has_import_meta: bool,
     pub import_meta_ref: Ref,
+    /// Output depends on more than the source text (macros, `import.meta.glob`), so don't cache it.
+    pub depends_on_more_than_source: bool,
 }
 
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
@@ -145,8 +146,8 @@ impl<'a> Ast<'a> {
             target: Target::Browser,
             ts_enums: Default::default(),
             has_commonjs_export_names: false,
-            has_import_meta: false,
             import_meta_ref: Ref::NONE,
+            depends_on_more_than_source: false,
         }
     }
 }

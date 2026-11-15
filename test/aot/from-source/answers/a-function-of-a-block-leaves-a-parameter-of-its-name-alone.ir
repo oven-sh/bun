@@ -1,0 +1,11 @@
+# -- source: main.cjs
+# function visit(size) {
+#   { function size() { return "inner"; } }
+#   return typeof size === "function" ? size() : size;
+# }
+# print(visit("argument"));
+# -- end of source
+# In sloppy code a function of a block is not stored outside the block where the function around it has a parameter of that name: the parameter keeps its argument.
+# RUN: run-in-shell
+# CHECK: argument
+# CHECK-NEXT: exited with 0

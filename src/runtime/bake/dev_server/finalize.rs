@@ -4,7 +4,7 @@ use super::*;
 
 pub(crate) struct HotUpdateContext<'a> {
     /// bundle_v2.Graph.input_files.items(.source)
-    pub sources: &'a [bun_ast::Source],
+    pub sources: &'a [bun_ast::Source<'a>],
     /// bundle_v2.Graph.ast.items(.import_records)
     pub import_records: &'a [bun_ast::import_record::List<'a>],
     /// bundle_v2.Graph.input_files.items(.loader)
@@ -66,17 +66,23 @@ impl<'a> HotUpdateContext<'a> {
     }
 }
 
-fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr_event: bool) {
-    bv2.deinit_without_freeing_arena();
-    let script_requests = match &mut dev.current_bundle {
-        Some(current_bundle) => ::core::mem::take(&mut current_bundle.script_requests),
-        None => Vec::new(),
+fn finalize_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool) {
+    // Held to the end: a stopped server frees `dev` with its last request.
+    let (script_requests, _pending_request) = match &mut dev.current_bundle {
+        Some(current_bundle) => {
+            drain_current_bundle_requests(current_bundle);
+            (
+                ::core::mem::take(&mut current_bundle.script_requests),
+                current_bundle.pending_request.take(),
+            )
+        }
+        None => (Vec::new(), None),
     };
-    // Drops `CurrentBundle.heap` (the arena `bv2.graph.heap` borrows).
+    // Drops the bundle, then the arena it borrows.
     dev.current_bundle = None;
     dev.log.clear_and_free();
 
-    let _ = dev.assets.reindex_if_needed(); // not fatal
+    let _ = dev.graphs.assets.reindex_if_needed(); // not fatal
 
     // Answer these before `start_next_bundle_if_present` below, or they'd wait for that bundle too.
     for deferred in script_requests {
@@ -127,25 +133,17 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr
         };
         dev.release_testing_batch(batch);
     }
-
-    // Unref the ref added in `start_async_bundle`
-    if let Some(server) = dev.server.as_mut() {
-        server.on_static_request_complete();
-    }
 }
 
 pub(super) fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
-    if !current_bundle.requests.first.is_null() {
+    if current_bundle.requests.first().is_some() {
         // cannot be an assertion because in the case of OOM, the request list was not drained.
         bun_core::debug!(
             "current_bundle.requests.first != null. this leaves pending requests without an error page!",
         );
     }
-    while let Some(node) = current_bundle.requests.pop_first() {
-        // SAFETY: pop_first returns a live `*mut Node<T>`; `data` was
-        // initialized by `defer_request`.
-        let req = unsafe { (*node).data.assume_init_mut() };
-        req.abort_and_deref();
+    while let Some(req) = current_bundle.requests.pop_first() {
+        req.take_handler().fail();
     }
 }
 
@@ -154,39 +152,22 @@ pub(super) fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) 
 pub(super) fn finalize_bundle(
     dev: &mut DevServer,
     bv2: &mut BundleV2,
-    result: &mut bundler::bundle_v2::DevServerOutput,
+    result: bundler::bundle_v2::DevServerOutput,
 ) -> JsResult<()> {
     debug_assert!(dev.magic == Magic::Valid);
-    // Note: `had_sent_hmr_event` is read inside the outer-defer scopeguard
-    // and mutated later in the body. Use a `Cell` so the closure capture is `&Cell`
-    // (shared), letting the body keep writing through `.set()`.
-    let had_sent_hmr_event = ::core::cell::Cell::new(false);
+    let mut had_sent_hmr_event = false;
+    let finalized = finalize_bundle_inner(dev, bv2, result, &mut had_sent_hmr_event);
+    finalize_bundle_cleanup(dev, had_sent_hmr_event);
+    finalized
+}
 
-    // Both `defer!`s below (outer cleanup, then current_bundle request
-    // drain) are registered before the first fallible operation — the only
-    // statements in between are infallible (raw-pointer copies and the
-    // `expect` on an invariant). Guards run LIFO (drain → outer), and the
-    // `graph_safety_lock` guard declared after them drops first.
-    // Note: erase `dev`/`bv2` to raw pointers inside the guard so the
-    // long-lived closure capture doesn't lock borrowck for the entire fn body.
-    let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
-    let bv2_ptr = std::ptr::from_mut::<BundleV2>(bv2);
-    // Note: copy the raw ptrs into closure-only locals so `defer!`'s by-ref
-    // capture does not hold `*dev_ptr`/`*bv2_ptr` borrowed for the entire fn body.
-    let dev_ptr_outer: *mut DevServer = dev_ptr;
-    let bv2_ptr_outer: *mut BundleV2 = bv2_ptr;
-    scopeguard::defer! {
-        // SAFETY: `dev`/`bv2` are `&mut` params erased above; both outlive
-        // this fn-scoped guard, and no borrow of either is live when it runs.
-        unsafe {
-            finalize_bundle_cleanup(
-                &mut *dev_ptr_outer,
-                &mut *bv2_ptr_outer,
-                had_sent_hmr_event.get(),
-            )
-        };
-    };
-
+/// Drops `result` before `finalize_bundle_cleanup` frees what it borrows.
+fn finalize_bundle_inner(
+    dev: &mut DevServer,
+    bv2: &mut BundleV2,
+    result: bundler::bundle_v2::DevServerOutput,
+    had_sent_hmr_event: &mut bool,
+) -> JsResult<()> {
     // Note: holding `&mut CurrentBundle` for the rest of the fn locks `*dev`
     // mutably. Erase to a raw pointer and reborrow at each use site via the
     // `current_bundle!()` macro.
@@ -197,53 +178,23 @@ pub(super) fn finalize_bundle(
     macro_rules! current_bundle {
         () => {
             // SAFETY: `dev.current_bundle` is `Some` for the entire fn body —
-            // it is only set to `None` inside the outer `finalize_bundle_cleanup` defer, which runs after
-            // every use of this macro. `dev.current_bundle` is never reassigned
-            // (so the inner `CurrentBundle` is not moved) between here and the
-            // outer-defer.
+            // it is only set to `None` by `finalize_bundle_cleanup`, which the
+            // caller runs after this fn returns. `dev.current_bundle` is never
+            // reassigned (so the inner `CurrentBundle` is not moved) before then.
             unsafe { &mut *current_bundle_ptr }
         };
     }
-    // Note: see `dev_ptr_outer` rationale above — separate copy for the
-    // `defer!` capture so `current_bundle!()` keeps reborrowing freely.
-    let current_bundle_ptr_defer: *mut CurrentBundle = current_bundle_ptr;
-    scopeguard::defer! {
-        // SAFETY: see `current_bundle!` SAFETY above; this `defer!` runs
-        // before the outer cleanup guard (LIFO), so `current_bundle_ptr` is
-        // still live and no borrow of `*current_bundle_ptr` remains.
-        unsafe { drain_current_bundle_requests(&mut *current_bundle_ptr_defer) };
-    };
 
-    let _lock = dev.graph_safety_lock.guard();
+    let lock = dev.graph_safety_lock.guard();
 
-    // Note: `js_pseudo_chunk()`/`css_chunks()`/`html_chunks()` each take
-    // `&mut DevServerOutput`, so calling more than one wedges borrowck. Split
-    // `result.chunks` once up front (the three regions are disjoint:
-    // `[0] | [1..1+n_css] | [1+n_css..1+n_css+n_html]`).
+    // `[js] | [css; n_css] | [html; ..]`
+    let mut chunks = result.chunks;
     let n_css = result.css_file_list.count();
-    let n_html = result.html_files.count();
-    // Note: snapshot `result.chunks` ptr/len before `split_at_mut` so the
-    // CSS-chunk loop can re-form the full slice for `intermediate_output.code()`
-    // without re-borrowing `result.chunks` (already split).
-    let chunks_ptr: *mut bundler::chunk::Chunk = result.chunks.as_mut_ptr();
-    let chunks_len = result.chunks.len();
-    scopeguard::defer! {
-        // SAFETY: `chunks_ptr/len` snapshot the arena slice before any `split_at_mut`.
-        unsafe {
-            ::core::ptr::drop_in_place(::core::ptr::slice_from_raw_parts_mut(
-                chunks_ptr, chunks_len,
-            ));
-        }
-    };
-    let (js_chunk_slice, rest_chunks) = result.chunks.split_at_mut(1);
-    let js_chunk = &mut js_chunk_slice[0];
-    let (css_chunks_mut, html_rest) = rest_chunks.split_at_mut(n_css);
-    let html_chunks_mut = &mut html_rest[..n_html];
     let input_file_sources = bv2.graph.input_files.items_source();
     let input_file_loaders = bv2.graph.input_files.items_loader();
     let import_records = bv2.graph.ast.items_import_records();
     let targets = bv2.graph.ast.items_target();
-    let scbs = bv2.graph.server_component_boundaries.slice();
+    let scbs = &bv2.graph.server_component_boundaries;
 
     let mut scb_bitset = DynamicBitSet::init_empty(input_file_sources.len())?;
     for ((source_index, ssr_index), ref_index) in scbs
@@ -263,7 +214,7 @@ pub(super) fn finalize_bundle(
     let mut resolved_index_cache = vec![CachedFileIndex::NONE; input_file_sources.len() * 2];
 
     // Note: ctx fields `server_seen_bit_set`/`gts` are seeded with
-    // placeholders and assigned AFTER Pass 1 (receive_chunk grows `bundled_files`, so the trace bitsets
+    // placeholders and assigned AFTER Pass 1 (receiving a chunk grows `bundled_files`, so the trace bitsets
     // must be sized post-Pass-1). Seed with empty placeholders; real init below.
     let mut gts_storage = GraphTraceState {
         server_bits: DynamicBitSet::default(),
@@ -280,9 +231,10 @@ pub(super) fn finalize_bundle(
         gts: &mut gts_storage,
     };
 
-    let quoted_source_contents = bv2.linker.graph.files.items_quoted_source_contents();
+    let quoted_source_contents = result.linker_graph.files.items_quoted_source_contents();
     // Pass 1, update the graph's nodes, resolving every bundler source
     // index into its `IncrementalGraph(...).FileIndex`
+    let js_chunk = &chunks[0];
     debug_assert_eq!(
         js_chunk.content.javascript().parts_in_chunk_in_order.len(),
         js_chunk.compile_results_for_chunk.len()
@@ -321,9 +273,9 @@ pub(super) fn finalize_bundle(
                 graph,
             );
             match graph {
-                bake::Graph::Client => dev.client_graph.insert_failure(key, &log)?,
+                bake::Graph::Client => dev.graphs.insert_failure::<{ Side::Client }>(key, &log)?,
                 bake::Graph::Server | bake::Graph::Ssr => {
-                    dev.server_graph.insert_failure(key, &log)?
+                    dev.graphs.insert_failure::<{ Side::Server }>(key, &log)?
                 }
             }
             continue;
@@ -340,7 +292,7 @@ pub(super) fn finalize_bundle(
                     }
                 ));
                 debug_assert!(
-                    dev.server_transpiler().options.source_map
+                    dev.server_transpiler.options.source_map
                         != bundler::options::SourceMapOption::None
                 );
                 debug_assert!(!part_range.source_index.is_runtime());
@@ -348,53 +300,33 @@ pub(super) fn finalize_bundle(
             }
         };
         let quoted_contents = &quoted_source_contents[part_range.source_index.get() as usize];
+        let content = incremental_graph::ReceiveChunkContent::Js {
+            code: compile_result.code().to_vec().into_boxed_slice(),
+            source_map: Some(incremental_graph::ReceiveChunkSourceMap {
+                chunk: source_map,
+                // Copied out of the per-bundle AST heap: stack traces are remapped after the bundle ends.
+                escaped_source: quoted_contents
+                    .as_ref()
+                    .map(|v| v.as_slice().to_vec().into_boxed_slice()),
+            }),
+        };
         match targets[part_range.source_index.get() as usize].bake_graph() {
-            bake::Graph::Client => dev.client_graph.receive_chunk(
-                &mut ctx,
-                index,
-                incremental_graph::ReceiveChunkContent::Js {
-                    code: compile_result.code().to_vec().into_boxed_slice(),
-                    source_map: Some(incremental_graph::ReceiveChunkSourceMap {
-                        chunk: source_map,
-                        // `quoted_contents` lives in the per-bundle AST heap,
-                        // which is destroyed at bundle end; copy onto the
-                        // global heap so the dev-server can hold it across
-                        // rebuilds for stack-trace remapping.
-                        escaped_source: quoted_contents
-                            .as_ref()
-                            .map(|v| v.as_slice().to_vec().into_boxed_slice()),
-                    }),
-                },
-                false,
-            )?,
-            graph @ (bake::Graph::Server | bake::Graph::Ssr) => dev.server_graph.receive_chunk(
-                &mut ctx,
-                index,
-                incremental_graph::ReceiveChunkContent::Js {
-                    code: compile_result.code().to_vec().into_boxed_slice(),
-                    source_map: Some(incremental_graph::ReceiveChunkSourceMap {
-                        chunk: source_map,
-                        // `quoted_contents` lives in the per-bundle AST heap,
-                        // which is destroyed at bundle end; copy onto the
-                        // global heap so the dev-server can hold it across
-                        // rebuilds for stack-trace remapping.
-                        escaped_source: quoted_contents
-                            .as_ref()
-                            .map(|v| v.as_slice().to_vec().into_boxed_slice()),
-                    }),
-                },
-                graph == bake::Graph::Ssr,
-            )?,
+            bake::Graph::Client => dev.receive_client_chunk(&mut ctx, index, content)?,
+            graph @ (bake::Graph::Server | bake::Graph::Ssr) => {
+                dev.receive_server_chunk(&mut ctx, index, content, graph == bake::Graph::Ssr)?
+            }
         }
     }
 
-    for (chunk, metadata) in css_chunks_mut.iter_mut().zip(result.css_file_list.values()) {
+    for (chunk_index, metadata) in (1..).zip(result.css_file_list.values()) {
+        let mut output = ::core::mem::take(&mut chunks[chunk_index].intermediate_output);
+        let chunk = &chunks[chunk_index];
         debug_assert!(matches!(chunk.content, bundler::chunk::Content::Css(_)));
 
         let index = bun_ast::Index::init(chunk.entry_point.source_index());
 
         // Report a chunk that failed to print as its entry point's failure. The next
-        // good build's `receive_chunk` clears it.
+        // good build's `receive_client_chunk` clears it.
         let entry_source = &ctx.sources[index.get() as usize];
         let mut log = Log::init();
         for compile_result in chunk.compile_results_for_chunk.iter() {
@@ -419,56 +351,42 @@ pub(super) fn finalize_bundle(
         }
         if log.errors > 0 {
             let entry_key = entry_source.path.key_for_incremental_graph();
-            dev.client_graph.insert_failure(
+            dev.graphs.insert_failure::<{ Side::Client }>(
                 incremental_graph::InsertFailureKey::AbsPath(entry_key, bake::Graph::Client),
                 &log,
             )?;
             let file_index = dev
-                .client_graph
+                .graphs
+                .client
                 .get_file_index(entry_key)
                 .expect("insert_failure registered the entry");
             // Pass 2 needs the index to diff the `@import` edges. Editing an imported
             // file follows those edges to rebundle this chunk.
             *ctx.get_cached_index(bake::Side::Client, index) =
                 CachedFileIndex::from(Some(file_index));
-            dev.client_graph
+            dev.graphs
+                .client
                 .restore_failed_css_root(file_index, hash(entry_key));
             // This lets a server route's trace reach the failed client file.
             if metadata.imported_on_server {
-                dev.server_graph
+                dev.graphs
+                    .server
                     .insert_css_file_on_server(&mut ctx, index, entry_key)?;
             }
             continue;
         }
 
-        // Note: `IntermediateOutput::code` takes `&mut self` (a field of
-        // `*chunk`) plus `chunk: &Chunk` and `chunks: &[Chunk]`; borrowck still
-        // rejects the overlap (`&mut chunk.intermediate_output` aliases the
-        // shared `&chunk` / `&chunks[..]`). Split via raw
-        // pointers — the callee never reborrows `chunk.intermediate_output`
-        // through the `chunk`/`chunks` params (it reads metadata only).
-        let code = {
-            let chunk_ptr: *mut bundler::chunk::Chunk = chunk;
-            // SAFETY: `intermediate_output` is a disjoint field of `*chunk`;
-            // `code()` does not access it via the `chunk`/`chunks` arguments.
-            let io = unsafe { &mut (*chunk_ptr).intermediate_output };
-            io.code(
-                None,
-                &bv2.graph,
-                &bv2.linker.graph,
-                b"THIS_SHOULD_NEVER_BE_EMITTED_IN_DEV_MODE",
-                // SAFETY: see above; shared reborrow of the same allocation,
-                // disjoint from the `&mut intermediate_output` receiver.
-                unsafe { &*chunk_ptr },
-                // SAFETY: `result.chunks` outlives this loop body;
-                // `chunks_ptr/len` were snapshotted before `split_at_mut`,
-                // and `code()` only reads.
-                unsafe { ::core::slice::from_raw_parts(chunks_ptr, chunks_len) },
-                None,
-                bundler::chunk::ReferencePathStyle::ImporterRelative,
-                bundler::chunk::SourceMapShiftTracking::Disabled,
-            )?
-        };
+        let code = output.code(
+            None,
+            bv2,
+            &result.linker_graph,
+            b"THIS_SHOULD_NEVER_BE_EMITTED_IN_DEV_MODE",
+            chunk,
+            &chunks,
+            None,
+            bundler::chunk::ReferencePathStyle::ImporterRelative,
+            bundler::chunk::SourceMapShiftTracking::Disabled,
+        )?;
 
         // Create an entry for this file.
         let key = ctx.sources[index.get() as usize]
@@ -477,13 +395,13 @@ pub(super) fn finalize_bundle(
         // TODO: use a hash mix with the first half being a path hash and the second half content hash
         let h = hash(key);
         // Track css files that look like tailwind files.
-        // Note: hoisted before `replace_path` because that consumes
+        // Note: hoisted before `replace_asset_path` because that consumes
         // `code.buffer`.
         let looks_like_tailwind = dev.has_tailwind_plugin_hack.is_some() && {
             let first_1024 = &code.buffer[..code.buffer.len().min(1024)];
             strings::index_of(first_1024, b"tailwind").is_some()
         };
-        dev.assets.replace_path(
+        dev.replace_asset_path(
             key,
             crate::webcore::blob::Any::from_owned_slice(code.buffer.into()),
             &MimeType::CSS,
@@ -500,28 +418,30 @@ pub(super) fn finalize_bundle(
             }
         }
 
-        dev.client_graph.receive_chunk(
+        dev.receive_client_chunk(
             &mut ctx,
             index,
             incremental_graph::ReceiveChunkContent::Css(h),
-            false,
         )?;
 
         // If imported on server, there needs to be a server-side file entry
         // so that edges can be attached.
         if metadata.imported_on_server {
-            dev.server_graph
+            dev.graphs
+                .server
                 .insert_css_file_on_server(&mut ctx, index, key)?;
         }
     }
 
-    for chunk in html_chunks_mut.iter_mut() {
+    let (js_and_css_chunks, html_chunks) = chunks.split_at_mut(1 + n_css);
+    let (js_chunk, css_chunks) = (&js_and_css_chunks[0], &js_and_css_chunks[1..]);
+    for chunk in html_chunks.iter_mut() {
         let index = bun_ast::Index::init(chunk.entry_point.source_index());
         let bundler::CompileResult::Html {
             code: compile_result_code,
             script_injection_offset: compile_result_offset,
             ..
-        } = chunk.compile_results_for_chunk.get_mut(0)
+        } = &mut chunk.compile_results_for_chunk[0]
         else {
             unreachable!()
         };
@@ -532,25 +452,24 @@ pub(super) fn finalize_bundle(
             input_file_sources,
             bv2.graph.input_files.items_loader(),
         )?;
-        dev.client_graph.receive_chunk(
+        dev.receive_client_chunk(
             &mut ctx,
             index,
             incremental_graph::ReceiveChunkContent::Js {
                 code: generated_js,
                 source_map: None,
             },
-            false,
         )?;
         let client_index = ctx
             .get_cached_index(bake::Side::Client, index)
             .unwrap::<{ bake::Side::Client }>()
             .expect("unresolved index");
         // Not the file of a route: a plugin resolved a route's file to it, or loaded it as html.
-        let Some(route_bundle_index) = dev.client_graph.html_route_bundle_index(client_index)
+        let Some(route_bundle_index) = dev.graphs.client.html_route_bundle_index(client_index)
         else {
             continue;
         };
-        let route_bundle = dev.route_bundle_ptr(route_bundle_index);
+        let route_bundle = &mut dev.route_bundles[route_bundle_index.get() as usize];
         debug_assert!(route_bundle.data.html().bundled_file == client_index);
         // Note: split borrow — `invalidate_client_bundle` needs `&mut RouteBundle`
         // so the `cached_response` take is done before the long-lived `html` borrow.
@@ -561,9 +480,7 @@ pub(super) fn finalize_bundle(
             .take()
             .is_some()
         {
-            // SAFETY: `route_bundle` borrows `dev.route_bundles[_]`; `source_maps`
-            // is a disjoint field reborrowed through the raw `dev_ptr`.
-            route_bundle.invalidate_client_bundle(unsafe { &mut (*dev_ptr).source_maps });
+            route_bundle.invalidate_client_bundle(&mut dev.source_maps);
         }
         let html = match &mut route_bundle.data {
             route_bundle::Data::Html(h) => h,
@@ -581,15 +498,15 @@ pub(super) fn finalize_bundle(
     }
 
     // Sized AFTER
-    // Pass 1 so server/client bitsets cover files just inserted by `receive_chunk`.
-    *ctx.gts = dev.init_graph_trace_state(if n_css > 0 {
+    // Pass 1 so server/client bitsets cover files just inserted.
+    *ctx.gts = dev.graphs.init_graph_trace_state(if n_css > 0 {
         input_file_sources.len()
     } else {
         0
     })?;
-    ctx.server_seen_bit_set = DynamicBitSet::init_empty(dev.server_graph.bundled_files.len())?;
+    ctx.server_seen_bit_set = DynamicBitSet::init_empty(dev.graphs.server.bundled_files.len())?;
 
-    dev.incremental_result.had_adjusted_edges = false;
+    dev.graphs.incremental_result.had_adjusted_edges = false;
 
     dev.prepare_and_log_resolution_failures()?;
     dev.report_html_routes_without_html()?;
@@ -615,29 +532,31 @@ pub(super) fn finalize_bundle(
             continue;
         }
         match targets[part_range.source_index.get() as usize].bake_graph() {
-            bake::Graph::Server | bake::Graph::Ssr => dev.server_graph.process_chunk_dependencies(
-                &mut ctx,
-                incremental_graph::ProcessMode::Normal,
-                part_range.source_index,
-            )?,
-            bake::Graph::Client => dev.client_graph.process_chunk_dependencies(
+            bake::Graph::Server | bake::Graph::Ssr => {
+                dev.graphs.process_chunk_dependencies::<{ Side::Server }>(
+                    &mut ctx,
+                    incremental_graph::ProcessMode::Normal,
+                    part_range.source_index,
+                )?
+            }
+            bake::Graph::Client => dev.graphs.process_chunk_dependencies::<{ Side::Client }>(
                 &mut ctx,
                 incremental_graph::ProcessMode::Normal,
                 part_range.source_index,
             )?,
         }
     }
-    for chunk in html_chunks_mut.iter() {
+    for chunk in html_chunks.iter() {
         let index = bun_ast::Index::init(chunk.entry_point.source_index());
-        dev.client_graph.process_chunk_dependencies(
+        dev.graphs.process_chunk_dependencies::<{ Side::Client }>(
             &mut ctx,
             incremental_graph::ProcessMode::Normal,
             index,
         )?;
     }
-    for chunk in css_chunks_mut.iter() {
+    for chunk in css_chunks {
         let entry_index = bun_ast::Index::init(chunk.entry_point.source_index());
-        dev.client_graph.process_chunk_dependencies(
+        dev.graphs.process_chunk_dependencies::<{ Side::Client }>(
             &mut ctx,
             incremental_graph::ProcessMode::Css,
             entry_index,
@@ -645,62 +564,45 @@ pub(super) fn finalize_bundle(
     }
 
     // Index all failed files now that the incremental graph has been updated.
-    if !dev.incremental_result.failures_removed.is_empty()
-        || !dev.incremental_result.failures_added.is_empty()
+    if !dev.graphs.incremental_result.failures_removed.is_empty()
+        || !dev.graphs.incremental_result.failures_added.is_empty()
     {
-        had_sent_hmr_event.set(true);
+        *had_sent_hmr_event = true;
     }
     dev.index_failures()?;
 
-    dev.client_graph.ensure_stale_bit_capacity(false)?;
-    dev.server_graph.ensure_stale_bit_capacity(false)?;
+    dev.graphs.client.ensure_stale_bit_capacity(false)?;
+    dev.graphs.server.ensure_stale_bit_capacity(false)?;
 
     dev.generation = dev.generation.wrapping_add(1);
     if Environment::ENABLE_LOGS {
         debug_log!(
             "Bundle Round {}: {} server, {} client, {} ms",
             dev.generation,
-            dev.server_graph.current_chunk_parts.len(),
-            dev.client_graph.current_chunk_parts.len(),
+            dev.graphs.server.current_chunk_parts.len(),
+            dev.graphs.client.current_chunk_parts.len(),
             current_bundle!().timer.elapsed().as_millis(),
         );
     }
 
     // Load all new chunks into the server runtime.
-    if !dev.frontend_only && dev.server_graph.current_chunk_len > 0 {
+    if !dev.frontend_only && dev.graphs.server.current_chunk_len > 0 {
         // Generate a script_id for server bundles
 
         // Get the source map if available and render to JSON
-        let source_map_json = if !dev.server_graph.current_chunk_source_maps.is_empty() {
-            'json: {
-                // Create a temporary source map entry to render
-                let mut source_map_entry = source_map_store::Entry {
-                    ref_count: 1,
-                    ..Default::default()
-                };
+        let source_map_json = if !dev.graphs.server.current_chunk_source_maps.is_empty() {
+            // Create a temporary source map entry to render
+            let mut source_map_entry = source_map_store::Entry::default();
 
-                // Fill the source map entry
-                dev.server_graph.take_source_map(&mut source_map_entry)?;
-                // Note: erase to raw ptr so `render_json` can borrow the entry
-                // while the cleanup guard is armed.
-                let entry_ptr: *mut source_map_store::Entry = &raw mut source_map_entry;
-                scopeguard::defer! {
-                    // SAFETY: `source_map_entry` is a stack local that outlives this guard.
-                    unsafe {
-                        (*entry_ptr).ref_count = 0;
-                        (*entry_ptr).deinit();
-                    }
-                };
+            // Fill the source map entry
+            dev.graphs.server.take_source_map(&mut source_map_entry)?;
 
-                let json_data =
-                    source_map_entry.render_json(dev, ChunkKind::HmrChunk, bake::Side::Server)?;
-                break 'json Some(json_data);
-            }
+            Some(source_map_entry.render_json(ChunkKind::HmrChunk, bake::Side::Server)?)
         } else {
             None
         };
 
-        let server_bundle = dev.server_graph.take_js_bundle_server(
+        let server_bundle = dev.graphs.server.take_js_bundle_server(
             &incremental_graph::TakeJSBundleOptionsServer {
                 kind: ChunkKind::HmrChunk,
             },
@@ -719,9 +621,7 @@ pub(super) fn finalize_bundle(
             ) {
                 Ok(v) => v,
                 Err(err) => {
-                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
-                    // `print_error_like_object_to_console` needs `&mut`.
-                    dev.vm_mut()
+                    dev.vm()
                         .print_error_like_object_to_console(global.take_exception(err));
                     // Note: `panic!()` would unwind through the
                     // `extern "C"` boundary above (`nounwind` UB), so abort.
@@ -737,9 +637,7 @@ pub(super) fn finalize_bundle(
             ) {
                 Ok(v) => v,
                 Err(err) => {
-                    // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
-                    // `print_error_like_object_to_console` needs `&mut`.
-                    dev.vm_mut()
+                    dev.vm()
                         .print_error_like_object_to_console(global.take_exception(err));
                     // Note: `panic!()` would unwind through the
                     // `extern "C"` boundary above (`nounwind` UB), so abort.
@@ -749,32 +647,24 @@ pub(super) fn finalize_bundle(
                 }
             }
         };
-        // Note: `make_array_for_server_components_patch` needs `&mut self`
-        // while reading `self.incremental_result.client_components_{added,removed}`.
-        // It only touches `server_graph.bundled_files.keys()`, so reborrow the
-        // index slices via `dev_ptr` (disjoint fields).
-        // SAFETY: `dev_ptr == dev`; `incremental_result` is not mutated by
-        // `make_array_for_server_components_patch`.
-        let (added, removed) = unsafe {
-            let ir = &(*dev_ptr).incremental_result;
-            (
-                ir.client_components_added.as_slice(),
-                ir.client_components_removed.as_slice(),
-            )
-        };
         let errors = match dev.server_register_update_callback.get().unwrap().call(
             global,
             global.to_js_value(),
             &[
                 server_modules,
-                dev.make_array_for_server_components_patch(global, added)?,
-                dev.make_array_for_server_components_patch(global, removed)?,
+                dev.make_array_for_server_components_patch(
+                    global,
+                    &dev.graphs.incremental_result.client_components_added,
+                )?,
+                dev.make_array_for_server_components_patch(
+                    global,
+                    &dev.graphs.incremental_result.client_components_removed,
+                )?,
             ],
         ) {
             Ok(v) => v,
             Err(err) => {
-                // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-                dev.vm_mut()
+                dev.vm()
                     .print_error_like_object_to_console(global.take_exception(err));
                 panic!(
                     "Error thrown in Hot-module-replacement code. This is always a bug in the HMR runtime."
@@ -812,14 +702,22 @@ pub(super) fn finalize_bundle(
     // This list of routes affected excludes client code.
     if will_hear_hot_update
         && current_bundle!().had_reload_event
-        && (dev.incremental_result.framework_routes_affected.len()
-            + dev.incremental_result.html_routes_hard_affected.len())
+        && (dev
+            .graphs
+            .incremental_result
+            .framework_routes_affected
+            .len()
+            + dev
+                .graphs
+                .incremental_result
+                .html_routes_hard_affected
+                .len())
             > 0
-        && dev.bundling_failures.is_empty()
+        && dev.graphs.bundling_failures.is_empty()
     {
         has_route_bits_set = true;
 
-        for request in &dev.incremental_result.framework_routes_affected {
+        for request in &dev.graphs.incremental_result.framework_routes_affected {
             let route = dev.router.route_ptr(request.route_index());
             if let Some(id) = route.bundle {
                 route_bits.set(id.get() as usize);
@@ -828,7 +726,7 @@ pub(super) fn finalize_bundle(
                 mark_all_route_children(&dev.router, &mut [&mut route_bits], request.route_index());
             }
         }
-        for route_bundle_index in &dev.incremental_result.html_routes_hard_affected {
+        for route_bundle_index in &dev.graphs.incremental_result.html_routes_hard_affected {
             route_bits.set(route_bundle_index.get() as usize);
             route_bits_client.set(route_bundle_index.get() as usize);
         }
@@ -847,17 +745,33 @@ pub(super) fn finalize_bundle(
 
     // When client component roots get updated, the `client_components_affected`
     // list contains the server side versions of these roots.
-    if !dev.incremental_result.client_components_affected.is_empty() {
+    if !dev
+        .graphs
+        .incremental_result
+        .client_components_affected
+        .is_empty()
+    {
         has_route_bits_set = true;
 
-        dev.incremental_result.framework_routes_affected.clear();
-        dev.incremental_result.html_routes_hard_affected.clear();
-        dev.incremental_result.html_routes_soft_affected.clear();
+        dev.graphs
+            .incremental_result
+            .framework_routes_affected
+            .clear();
+        dev.graphs
+            .incremental_result
+            .html_routes_hard_affected
+            .clear();
+        dev.graphs
+            .incremental_result
+            .html_routes_soft_affected
+            .clear();
         ctx.gts.clear();
 
         // `trace_dependencies` appends to this list.
-        for index in ::core::mem::take(&mut dev.incremental_result.client_components_affected) {
-            dev.server_graph.trace_dependencies(
+        for index in
+            ::core::mem::take(&mut dev.graphs.incremental_result.client_components_affected)
+        {
+            dev.graphs.trace_dependencies(
                 index,
                 ctx.gts,
                 incremental_graph::TraceDependencyGoal::NoStop,
@@ -865,7 +779,7 @@ pub(super) fn finalize_bundle(
             )?;
         }
 
-        for request in &dev.incremental_result.framework_routes_affected {
+        for request in &dev.graphs.incremental_result.framework_routes_affected {
             let route = dev.router.route_ptr(request.route_index());
             if let Some(id) = route.bundle {
                 route_bits.set(id.get() as usize);
@@ -885,7 +799,12 @@ pub(super) fn finalize_bundle(
         while let Some(bundled_route_index) = it.next() {
             dev.route_bundles[bundled_route_index].invalidate_client_bundle(&mut dev.source_maps);
         }
-    } else if !dev.incremental_result.html_routes_hard_affected.is_empty() {
+    } else if !dev
+        .graphs
+        .incremental_result
+        .html_routes_hard_affected
+        .is_empty()
+    {
         // Free old bundles
         let mut it = route_bits_client.iterator::<true, true>();
         while let Some(bundled_route_index) = it.next() {
@@ -897,7 +816,7 @@ pub(super) fn finalize_bundle(
     // edit to them makes the cached bundle stale: the next page load must not hydrate with it.
     {
         let mut stale = DynamicBitSet::init_empty(dev.route_bundles.len())?;
-        for request in &dev.incremental_result.framework_routes_affected {
+        for request in &dev.graphs.incremental_result.framework_routes_affected {
             let route = dev.router.route_ptr(request.route_index());
             if !dev.router.type_ptr_const(route.r#type).client_pages {
                 continue;
@@ -916,8 +835,13 @@ pub(super) fn finalize_bundle(
     }
 
     // Softly affected HTML routes only need the bundle invalidated.
-    if !dev.incremental_result.html_routes_soft_affected.is_empty() {
-        for index in &dev.incremental_result.html_routes_soft_affected {
+    if !dev
+        .graphs
+        .incremental_result
+        .html_routes_soft_affected
+        .is_empty()
+    {
+        for index in &dev.graphs.incremental_result.html_routes_soft_affected {
             dev.route_bundles[index.get() as usize].invalidate_client_bundle(&mut dev.source_maps);
             route_bits.set(index.get() as usize);
         }
@@ -925,31 +849,23 @@ pub(super) fn finalize_bundle(
     }
 
     // `route_bits` will have all of the routes that were modified.
-    if has_route_bits_set && (will_hear_hot_update || dev.incremental_result.had_adjusted_edges) {
-        // Note: copy out before the loop so the `&mut RouteBundle` borrow
-        // below doesn't overlap a `&dev.incremental_result` read.
-        let had_adjusted_edges = dev.incremental_result.had_adjusted_edges;
+    if has_route_bits_set
+        && (will_hear_hot_update || dev.graphs.incremental_result.had_adjusted_edges)
+    {
+        let had_adjusted_edges = dev.graphs.incremental_result.had_adjusted_edges;
         let mut it = route_bits.iterator::<true, true>();
         // List 2
         while let Some(i) = it.next() {
-            // Note: erase to raw ptr — `trace_all_route_imports` below needs
-            // `&mut *dev` while `route_bundle` (a sub-borrow of `dev.route_bundles`)
-            // is still live; the two do not actually alias.
-            let route_bundle: *mut RouteBundle = dev.route_bundle_ptr(route_bundle::Index::init(
-                u32::try_from(i).expect("int cast"),
-            ));
+            let route_bundle = &mut dev.route_bundles[i];
             if had_adjusted_edges {
-                // SAFETY: `route_bundle` points into `dev.route_bundles` (not
-                // resized in this loop); the exclusive borrow is scoped to this match.
-                match unsafe { &mut (*route_bundle).data } {
+                match &mut route_bundle.data {
                     route_bundle::Data::Framework(fw_bundle) => {
                         fw_bundle.cached_css_file_array.clear_without_deallocation()
                     }
                     route_bundle::Data::Html(html) => html.cached_response = None,
                 }
             }
-            // SAFETY: statement-scoped read; no `&mut` into `*route_bundle` is live.
-            if unsafe { (*route_bundle).active_viewers } == 0 || !will_hear_hot_update {
+            if route_bundle.active_viewers == 0 || !will_hear_hot_update {
                 continue;
             }
             w_int!(i32, i32::try_from(i).expect("int cast"));
@@ -958,12 +874,19 @@ pub(super) fn finalize_bundle(
             // change the list of CSS files.
             if had_adjusted_edges {
                 ctx.gts.clear();
-                dev.client_graph.current_css_files.clear();
-                // SAFETY: `trace_all_route_imports` does not mutate `route_bundles`;
-                // shared, call-scoped reborrow.
-                let route_bundle_ref = unsafe { &*route_bundle };
-                dev.trace_all_route_imports(route_bundle_ref, ctx.gts, TraceImportGoal::FindCss)?;
-                let css_ids = &dev.client_graph.current_css_files;
+                dev.graphs.client.current_css_files.clear();
+                match &route_bundle.data {
+                    route_bundle::Data::Framework(fw) => {
+                        let route_index = fw.route_index;
+                        dev.trace_all_route_imports(route_index, ctx.gts, TraceImportGoal::FindCss)?
+                    }
+                    route_bundle::Data::Html(html) => dev.graphs.trace_imports(
+                        html.bundled_file,
+                        ctx.gts,
+                        TraceImportGoal::FindCss,
+                    )?,
+                }
+                let css_ids = &dev.graphs.client.current_css_files;
 
                 w_int!(i32, i32::try_from(css_ids.len()).expect("int cast"));
                 for css_id in css_ids {
@@ -978,7 +901,6 @@ pub(super) fn finalize_bundle(
     }
     w_int!(i32, -1);
 
-    let css_chunks = &*css_chunks_mut;
     // If a chunk failed to print, the page keeps its last good stylesheet.
     let css_chunk_printed = |chunk: &bundler::chunk::Chunk| {
         !chunk
@@ -993,9 +915,9 @@ pub(super) fn finalize_bundle(
     };
     let printed_css_count = css_chunks.iter().filter(|c| css_chunk_printed(c)).count();
     if will_hear_hot_update {
-        if dev.client_graph.current_chunk_len > 0 || printed_css_count > 0 {
+        if dev.graphs.client.current_chunk_len > 0 || printed_css_count > 0 {
             // Send CSS mutations
-            dev.assets.reindex_if_needed()?;
+            dev.graphs.assets.reindex_if_needed()?;
             w_int!(u32, u32::try_from(printed_css_count).expect("int cast"));
             use bun_bundler::Graph::InputFileColumns as _;
             let sources = bv2.graph.input_files.items_source();
@@ -1007,7 +929,7 @@ pub(super) fn finalize_bundle(
                 let mut hex = [0u8; 16];
                 let n = bun_core::fmt::bytes_to_hex_lower(&content_hash.to_ne_bytes(), &mut hex);
                 w_all!(&hex[..n]);
-                let css_data: &[u8] = match dev.assets.get(content_hash) {
+                let css_data: &[u8] = match dev.graphs.assets.get(content_hash) {
                     Some(route) => &route.blob.internal_blob().bytes,
                     None => b"",
                 };
@@ -1016,13 +938,13 @@ pub(super) fn finalize_bundle(
             }
 
             // Send the JS chunk
-            if dev.client_graph.current_chunk_len > 0 {
+            if dev.graphs.client.current_chunk_len > 0 {
                 let script_id = 'h: {
                     // Matches the bundler's `ContentHasher` hash (XxHash64).
                     let mut source_map_hash = bun_hash::XxHash64Streaming::new(0x4b12);
-                    let keys = dev.client_graph.bundled_files.keys();
-                    let values = dev.client_graph.bundled_files.values();
-                    for part in &dev.client_graph.current_chunk_parts {
+                    let keys = dev.graphs.client.bundled_files.keys();
+                    let values = dev.graphs.client.bundled_files.values();
+                    for part in &dev.graphs.client.current_chunk_parts {
                         source_map_hash.update(&keys[part.get() as usize]);
                         if let Some(map) = values[part.get() as usize].source_map.get() {
                             source_map_hash.update(map.vlq());
@@ -1053,10 +975,7 @@ pub(super) fn finalize_bundle(
                     .put_or_increment_ref_count(script_id, sockets)?
                 {
                     source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => 'brk: {
-                        // Note: reborrow `client_graph` via `dev_ptr` so the
-                        // `&mut Entry` borrow inside `source_maps` does not alias.
-                        // SAFETY: `dev_ptr` is live for this fn; disjoint fields.
-                        unsafe { &mut (*dev_ptr).client_graph }.take_source_map(entry)?;
+                        dev.graphs.client.take_source_map(entry)?;
                         break 'brk entry;
                     }
                     source_map_store::PutOrIncrementRefCount::Shared(entry) => entry,
@@ -1064,7 +983,7 @@ pub(super) fn finalize_bundle(
                 w_int!(u32, entry.overlapping_memory_cost);
 
                 // Build and send the source chunk
-                dev.client_graph.take_js_bundle_to_list(
+                dev.graphs.client.take_js_bundle_to_list(
                     &mut hot_update_payload,
                     &incremental_graph::TakeJSBundleOptionsClient {
                         kind: crate::bake::dev_server::ChunkKind::HmrChunk,
@@ -1079,64 +998,44 @@ pub(super) fn finalize_bundle(
         }
 
         dev.publish(HmrTopic::HotUpdate, &hot_update_payload, Opcode::BINARY);
-        had_sent_hmr_event.set(true);
+        *had_sent_hmr_event = true;
     }
 
-    if !dev.incremental_result.failures_added.is_empty() {
+    if !dev.graphs.incremental_result.failures_added.is_empty() {
         dev.bundles_since_last_error = 0;
 
-        // Note: erase the agent borrow to a raw pointer so it can be passed
-        // through `send_serialized_failures` (which takes `&mut *dev` while
-        // the borrow derives from `&*dev`) and then re-used below. The agent
-        // lives in the VM's `Debugger`, which outlives this scope.
-        let mut inspector_agent_ptr: Option<*const BunFrontendDevServerAgent> =
-            dev.inspector().map(std::ptr::from_ref);
+        // Borrowed from the VM, where the agent lives, so that `dev` stays free below.
+        let vm = dev.vm;
+        let mut inspector_agent = BunFrontendDevServerAgent::of(&vm);
 
-        while let Some(node) = current_bundle!().requests.pop_first() {
-            // SAFETY: `pop_first` hands back ownership of the intrusive node;
-            // `data` was initialized by `defer_request`.
-            let req = unsafe { (*node).data.assume_init_mut() };
-            let req_ptr = std::ptr::from_mut::<DeferredRequest>(req);
-            // SAFETY: the node stays alive until `deref_()` releases it below.
-            scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
-
+        while let Some(req) = current_bundle!().requests.pop_first() {
             let rb = dev.route_bundle_ptr(req.route_bundle_index);
             rb.server_state = route_bundle::State::PossibleBundlingFailures;
 
-            let resp: AnyResponse = match &mut req.handler {
-                Handler::Aborted => continue,
-                Handler::ServerHandler(saved) => 'brk: {
-                    let resp = saved.response;
-                    saved.deinit();
-                    break 'brk resp;
-                }
-                Handler::BundledHtmlPage(ram) => ram.response,
+            let handler = req.take_handler();
+            let Some(resp) = handler.detach_response_for_error_page() else {
+                continue;
             };
 
-            // SAFETY: see Note on `failures` above; `dev_ptr` is live and
-            // `send_serialized_failures` does not mutate `bundling_failures`.
-            let failures = unsafe { (*dev_ptr).bundling_failures.values() };
             dev.send_serialized_failures(
                 resp,
-                failures,
-                // SAFETY: agent ptr is from `dev.inspector()` above; live for this scope.
-                inspector_agent_ptr.take().map(|p| unsafe { &*p }),
+                dev.graphs.bundling_failures.values(),
+                inspector_agent.take(),
             )?;
         }
-        if let Some(agent_ptr) = inspector_agent_ptr {
+        if let Some(agent) = inspector_agent {
             let mut buf: Vec<u8> = Vec::new();
             dev.encode_serialized_failures(
-                dev.bundling_failures.values(),
+                dev.graphs.bundling_failures.values(),
                 &mut buf,
-                // SAFETY: `agent_ptr` is from `dev.inspector()` above; live for this scope.
-                Some(unsafe { &*agent_ptr }),
+                Some(agent),
             )?;
         }
 
         return Ok(());
     }
 
-    if dev.bundling_failures.is_empty() {
+    if dev.graphs.bundling_failures.is_empty() {
         if current_bundle!().had_reload_event {
             let clear_terminal = !bun_output::scope_is_visible!(DevServer)
                 && !dev
@@ -1144,9 +1043,8 @@ pub(super) fn finalize_bundle(
                     .env_loader()
                     .has_set_no_clear_terminal_on_reload(false);
             if clear_terminal {
-                Output::disable_buffering();
+                let _unbuffered = Output::disable_buffering_scope();
                 Output::reset_terminal_all();
-                Output::enable_buffering();
             }
 
             dev.print_memory_line();
@@ -1192,18 +1090,13 @@ pub(super) fn finalize_bundle(
                 }
             } else {
                 'brk: {
-                    let route_bundle_index = 'rbi: {
-                        let first = current_bundle!().requests.first;
-                        if !first.is_null() {
-                            // SAFETY: `first` is a live intrusive node held by current_bundle.requests; `data` was initialized by `defer_request`.
-                            break 'rbi unsafe { (*first).data.assume_init_ref() }
-                                .route_bundle_index;
-                        }
+                    let Some(first) = current_bundle!().requests.first() else {
                         break 'brk None;
                     };
+                    let route_bundle_index = first.route_bundle_index;
 
                     // Note: index `route_bundles` immutably so `dev.relative_path`
-                    // / `dev.router` / `dev.server_graph` reads below stay disjoint.
+                    // / `dev.router` / `dev.graphs` reads below stay disjoint.
                     break 'brk match &dev.route_bundles[route_bundle_index.get() as usize].data {
                         route_bundle::Data::Html(html) => {
                             Some(dev.relative_path(&mut *buf, &html.html_bundle.bundle.path))
@@ -1216,8 +1109,8 @@ pub(super) fn finalize_bundle(
                             };
                             let server_index =
                                 from_opaque_file_id::<{ bake::Side::Server }>(opaque_id);
-                            let abs_path =
-                                &dev.server_graph.bundled_files.keys()[server_index.get() as usize];
+                            let abs_path = &dev.graphs.server.bundled_files.keys()
+                                [server_index.get() as usize];
                             break 'file_name Some(dev.relative_path(&mut *buf, abs_path));
                         }
                     };
@@ -1241,59 +1134,45 @@ pub(super) fn finalize_bundle(
     }
 
     // Release the lock because the underlying handler may acquire one.
-    dev.graph_safety_lock.unlock();
-    // SAFETY: `dev_ptr` is live for the entire fn body; runs before `_lock` (LIFO),
-    // so the outer unlock guard sees a locked state again.
-    scopeguard::defer! { unsafe { (*dev_ptr).graph_safety_lock.lock() } };
+    drop(lock);
 
-    // Set all the deferred routes to the .loaded state up front
-    {
-        let mut node = current_bundle!().requests.first;
-        while !node.is_null() {
-            // SAFETY: node is an intrusive list node valid while current_bundle.requests holds it;
-            // `data` was initialized by `defer_request`.
-            let n = unsafe { &*node };
-            // SAFETY: `data` was initialized by `defer_request` before being linked.
-            let rb = dev.route_bundle_ptr(unsafe { n.data.assume_init_ref() }.route_bundle_index);
-            rb.server_state = route_bundle::State::Loaded;
-            node = n.next;
-        }
+    // Set the state of all the deferred routes up front
+    for req in current_bundle!().requests.iter() {
+        let reaches_failure = !dev.graphs.bundling_failures.is_empty()
+            && !trace_route_failures(dev, req.route_bundle_index)?
+                .failures
+                .is_empty();
+        dev.route_bundle_ptr(req.route_bundle_index).server_state = if reaches_failure {
+            route_bundle::State::PossibleBundlingFailures
+        } else {
+            route_bundle::State::Loaded
+        };
     }
 
-    while let Some(node) = current_bundle!().requests.pop_first() {
-        // SAFETY: `pop_first` hands back ownership of the intrusive node;
-        // `data` was initialized by `defer_request`.
-        let req = unsafe { (*node).data.assume_init_mut() };
-        let req_ptr = std::ptr::from_mut::<DeferredRequest>(req);
-        // SAFETY: the node stays alive until `deref_()` releases it below.
-        scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
+    while let Some(req) = current_bundle!().requests.pop_first() {
+        if dev.route_bundle_ptr(req.route_bundle_index).server_state
+            == route_bundle::State::PossibleBundlingFailures
+        {
+            let failures = trace_route_failures(dev, req.route_bundle_index)?.failures;
+            if !failures.is_empty() {
+                let handler = req.take_handler();
+                if let Some(resp) = handler.detach_response_for_error_page() {
+                    dev.send_serialized_failures(resp, &failures, None)?;
+                }
+                continue;
+            }
+        }
 
         let rb = dev.route_bundle_ptr(req.route_bundle_index);
         rb.server_state = route_bundle::State::Loaded;
 
-        // Note: `SavedRequest` is move-only (`Strong` field). Take the
-        // handler by value so the `Saved` payload moves into the union; the
-        // node is being torn down via `_deref` regardless.
-        match ::core::mem::replace(&mut req.handler, Handler::Aborted) {
+        match req.take_handler() {
             Handler::Aborted => continue,
-            Handler::ServerHandler(saved) => {
-                let response = saved.response;
-                let ctx = saved.ctx;
-                // Note: `saved` is moved out (so `__deinit` sees `Aborted`);
-                // `js_request: StrongOptional` releases on Drop, but
-                // `ctx: AnyRequestContext` is `Copy` — explicitly balance the
-                // `ctx.ref_()` from `defer_request` here so the request
-                // context's `on_request_complete` (and thus the server's
-                // `pending_requests--`) eventually fires. Without this the
-                // bake-harness graceful-exit deinit check ("Failed to trigger
-                // deinit") never sees DevServer Drop.
-                scopeguard::defer! { ctx.deref() };
-                dev.on_framework_request_with_bundle(
-                    req.route_bundle_index,
-                    SavedRequestUnion::Saved(saved),
-                    response,
-                )?
-            }
+            Handler::ServerHandler(saved) => dev.on_framework_request_with_bundle(
+                req.route_bundle_index,
+                SavedRequestUnion::Saved(&saved),
+                saved.response,
+            )?,
             Handler::BundledHtmlPage(ram) => {
                 dev.on_html_request_with_bundle(req.route_bundle_index, ram.response, ram.method)
             }
@@ -1304,7 +1183,7 @@ pub(super) fn finalize_bundle(
 
 impl DevServer {
     fn make_array_for_server_components_patch(
-        &mut self,
+        &self,
         global: &JSGlobalObject,
         items: &[incremental_graph::ServerFileIndex],
     ) -> JsResult<JSValue> {
@@ -1312,7 +1191,7 @@ impl DevServer {
             return Ok(JSValue::NULL);
         }
         let arr = jsc::JSArray::create_empty(global, items.len())?;
-        let names = self.server_graph.bundled_files.keys();
+        let names = self.graphs.server.bundled_files.keys();
         for (i, item) in items.iter().enumerate() {
             let mut buf = paths::path_buffer_pool::get();
             let s = self.relative_path(&mut *buf, &names[item.get() as usize]);

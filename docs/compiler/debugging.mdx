@@ -1,0 +1,255 @@
+---
+title: "Test and debug a compiled program"
+sidebarTitle: "Testing and debugging"
+description: "Stack traces, source maps, crash reports and profiles of an executable, and how to run your tests compiled"
+---
+
+<Warning>Ahead-of-time compilation is experimental.</Warning>
+
+Stack traces, crash reports and profilers work on an executable built with [`bun compile`](/compiler/aot). Breakpoints don't. To use them, run your program from its source with `bun --inspect-brk ./app.ts`. If the problem only shows up in the executable, check [Compatibility](/compiler/compatibility).
+
+## Stack traces
+
+```ts repo.ts icon="/icons/typescript.svg"
+class Repo {
+  find(id: number): string {
+    if (id < 0) throw new RangeError("bad id " + id);
+    return "x";
+  }
+}
+new Repo().find(-1);
+```
+
+```bash terminal icon="terminal"
+bun compile ./repo.ts && ./repo
+```
+
+```txt
+RangeError: bad id -1
+      at find (./repo.ts:3:27)
+      at ./repo.ts:7:12
+```
+
+Stack traces have the file, line and column of your source code. You don't need a source map. A path in a stack trace is relative to the folder you ran the build in, as with [`--sourcemap`](/compiler/executables) without `--aot`. A package is at `./node_modules/pkg/index.js`, and a file above that folder at `../shared/log.ts`. An executable prints no source excerpt above the message.
+
+### Minified executables and external source maps
+
+```bash terminal icon="terminal"
+bun compile --minify --sourcemap=external ./repo.ts && ./repo
+```
+
+```txt
+RangeError: bad id -1
+      at <anonymous> (./compiled.js:4:2)
+      at ./compiled.js:1:4
+```
+
+`--sourcemap=external` moves function names, paths, lines and columns out of the executable and into `repo.map`, next to it. Every frame then points into `compiled.js`. That file doesn't exist. The line and column are a position in the map, and any source map library turns them back into your names, files and lines. Keep the map of every build you deploy, and don't ship it.
+
+The source text of functions moves out too, as with [`--no-compile-function-source`](/compiler/size). `handler.toString()` returns `function handler() { [native code] }`. `handler.name` stays. `--minify` shortens it, as in any minified build.
+
+### Keep every name out of the executable
+
+```bash terminal icon="terminal"
+bun compile --obfuscate ./repo.ts
+```
+
+`--obfuscate` does what `--sourcemap=external` does, and the `name` of every function and class in your program is `""`. Code that reads a name behaves differently. A table keyed by `constructor.name` puts every class under one key. Property names and strings stay in the executable, because your program uses them when it runs.
+
+### List the strings in the executable
+
+To check that a word isn't in your executable, search the list of its strings instead of its bytes. In the file, strings share characters, two strings that aren't related can be next to each other, and the names that a program only shows are compressed.
+
+```bash terminal icon="terminal"
+bun compile --metafile=meta.json ./repo.ts
+bun build --aot-stored-strings ./repo > strings.bin
+bun build --aot-stored-strings-json ./repo > strings.jsonl
+jq '.outputs[].inlinedStrings' meta.json
+```
+
+`--aot-stored-strings` prints each stored string as UTF-8, followed by a zero byte.
+
+`--aot-stored-strings-json` prints an object per line, and says where each string is in the file.
+
+```json
+{"type":"section","image":0,"section":"Text","offset":141190064,"length":88033}
+{"type":"string","image":0,"section":"Text","offset":141190065,"length":6,"encoding":"latin1","text":"bad id"}
+{"type":"uncovered","image":0,"section":"Text","offset":141190064,"length":1,"isZero":true}
+```
+
+| `type`      | What it is                                                                                                                                                                                                                                                                    |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `image`     | The compiled program in the file.                                                                                                                                                                                                                                             |
+| `section`   | A part of the image that has strings.                                                                                                                                                                                                                                         |
+| `string`    | A string. With the `encoding` `latin1`, `utf16le` or `utf8`, its characters are the `length` bytes at `offset`, and other strings can have some of the same bytes. With `coded` or `compressed`, those bytes are compressed, and hold up to eight strings or a block of text. |
+| `uncovered` | Bytes of the section that aren't in any string.                                                                                                                                                                                                                               |
+
+Both print a line per section to stderr. They exit with code `1` if a byte between the strings isn't zero, and `2` if they can't read the file.
+
+`inlinedStrings` in the metafile lists the strings whose characters are only in the machine code, up to eight at a time, like the label of a `case` or the other side of a `===`. The executable doesn't have them as a string, so the two commands can't print them.
+
+None of the lists has the strings of Bun itself, embedded files, or a single character that your program compares as a number.
+
+### Use with Sentry
+
+```bash terminal icon="terminal"
+bun compile --minify --sourcemap=external ./src/index.ts --outfile dist/app
+sentry-cli sourcemaps upload --org my-org --project my-project dist
+```
+
+`@sentry/bun` and `@sentry/node` work as they are. Sentry finds the map of an event by its debug ID, so you don't set a release or a URL prefix, and you don't run `sentry-cli sourcemaps inject`. Deploy `dist/app` without `app.map` and `app.map.js`.
+
+## Crash reports
+
+If the process crashes, Bun prints a report to stderr. It ends with the functions of your program that were running, innermost first, with file, line and column. The `Build ID:` line matches the `build id` that `bun compile` printed when you built it. Please [open an issue](https://github.com/oven-sh/bun/issues) with the report.
+
+## Run your tests compiled
+
+```ts math.test.ts icon="/icons/typescript.svg"
+import { expect, test } from "bun:test";
+
+test("add", () => {
+  expect(1 + 2).toBe(3);
+});
+```
+
+```bash terminal icon="terminal"
+bun test --aot
+```
+
+```txt
+math.test.ts:
+(pass) add
+```
+
+`bun test --aot` compiles your test files, your preloads and everything they import the way `bun compile` does, and runs the compiled code. Every [difference from `bun run`](/compiler/compatibility) shows up in your tests as it would in the executable.
+
+`--isolate`, `--parallel`, `--rerun-each`, `--coverage` and snapshots work as in `bun test`. `--isolate=modules` runs like `--isolate`. `--watch`, `--hot` and `--inspect` exit with an error.
+
+`--shard=i/n` can split the files differently from `bun test`. Test files that import the same code go into the same shard, so each part of your project is compiled on one machine. Every machine needs the same checkout, and the same `--timings` file if you pass one.
+
+### What differs from an executable
+
+A test run differs from `bun compile` only where tests couldn't work otherwise.
+
+| In a test run                                                                                                                                                                                                                            | In an executable                                                                                                |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Type errors are printed as warnings, and the tests run.                                                                                                                                                                                  | The build stops.                                                                                                |
+| A test file that can't be compiled fails. The other files run.                                                                                                                                                                           | The build stops.                                                                                                |
+| Tests can replace a module's exports with `spyOn()` and `mock.module()`, and [most built-in methods](#what-a-test-cant-replace).                                                                                                         | Calls are direct, and [built-in objects are read-only](/compiler/compatibility#built-in-objects-are-read-only). |
+| A test file, a preload or a helper that only your tests import can load a file that wasn't compiled, like a fixture or a module that a test writes. It runs from source. In a file of your program the `import()` or `require()` throws. | It throws, unless you build with `--aot-allow-code-from-disk`.                                                  |
+| `delete require.cache[path]` and `resetModules()` make the next `import()` or `require()` load the file again, from source.                                                                                                              | A module runs once.                                                                                             |
+| Files keep their paths on disk, so `import.meta.dir` is what it is in `bun test`. `Bun.embeddedFiles` is empty.                                                                                                                          | Files are embedded under `/$bunfs/root/`.                                                                       |
+| `process.platform`, `process.arch`, `process.isBun`, `process.versions`, `process.release` and `process.env.NODE_ENV` are read when the code runs, so a test can change them. `NODE_ENV` is `"test"` unless it's set.                    | They're constants, and the branch that isn't taken is removed.                                                  |
+| An error is printed with the source lines around it.                                                                                                                                                                                     | [No source excerpt.](#stack-traces)                                                                             |
+| With `--coverage`, code that nothing uses is compiled and counted.                                                                                                                                                                       | It's removed.                                                                                                   |
+
+If you build with `--aot-allow-code-from-disk`, pass it to `bun test --aot` too.
+
+A package may catch an error and carry on. So the run ends with a list of every write to a built-in that was refused, every load that was refused, and every compiled file that ran from source.
+
+### What a test can't replace
+
+The build reads your tests to find out which built-in methods and which exports they replace, and compiled code checks for a replacement of those. Your tests are the test files, the preloads and the files that only they import. A file that your program imports too can't replace a built-in. It throws the `TypeError` of the executable.
+
+A file is your program's if `package.json` names it as an entry point, if another file of your program in the run loads it, or if a file that the run doesn't load imports it by a relative path that's written as one string. A file that only re-exports it counts if something imports that file. Where the build can't tell, the file counts as your tests', and code in it runs as under `bun test`.
+
+If the build can't see what a test replaces, as in `Object.prototype[name] = 1` with a name that's put together while the test runs, the write, the spy or the mock throws a `TypeError` that shows what to write instead.
+
+What the language looks up by itself can't be replaced at all.
+
+```ts iterator.test.ts icon="/icons/typescript.svg"
+import { test } from "bun:test";
+
+test("patched iterator", () => {
+  Array.prototype[Symbol.iterator] = Array.prototype.keys;
+});
+```
+
+```bash terminal icon="terminal"
+bun test --aot ./iterator.test.ts
+```
+
+```txt
+(fail) patched iterator
+1 write to read-only built-ins failed during this run, caught or not. Code that continued after one may have left its work half done:
+  Cannot assign to Array.prototype[Symbol(Symbol.iterator)], at iterator.test.ts:4:9, while iterator.test.ts ran
+```
+
+| Throws a `TypeError`                                                                                           | Works, as in `bun test`                                                  |
+| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `Symbol.iterator` of arrays, strings and typed arrays. `next` of generators and of the iterators of built-ins. | `Symbol.iterator` of `Map` and `Set`. `values`, `keys` and `entries`.    |
+| `constructor` and `Symbol.species` of built-ins.                                                               | `map`, `slice`, `Array.from`, `then`.                                    |
+| `Symbol.match`, `Symbol.replace` and `Symbol.split` of `RegExp.prototype`.                                     | `exec` and `test`. `match`, `replace` and `split` of `String.prototype`. |
+| `Symbol.toPrimitive`, `Symbol.hasInstance` and an existing `Symbol.toStringTag`.                               | `toString`, `valueOf` and `toJSON`.                                      |
+| An index on a built-in prototype, like `Array.prototype[0]`. A symbol or a `then` on `Object.prototype`.       | A property with a name on `Object.prototype`.                            |
+| The prototype of a built-in, as in `Object.setPrototypeOf(Array.prototype, other)`.                            | A subclass, like `class List extends Array {}`.                          |
+
+A test of how your code copes with one of these has to run under `bun test`.
+
+### Module mocks
+
+`mock.module()`, `vi.mock()`, `jest.mock()` and `spyOn()` on a module's exports work as in [`bun test`](/test/mocks), with two differences.
+
+- A file's top-level code runs once. When a mock ends, `bun test` runs the files that imported the mocked module again at their next import. With `--aot` their imports follow the change, but `export const reading = "read " + level` keeps what it computed from the mock, in the next test file too. Read the import inside a function, or run with `--isolate`. The run ends with a list of these files.
+- The original of a mocked module runs from source, not compiled. That goes for `importOriginal()`, `vi.importActual()`, `jest.requireActual()` and a mock that has no factory. The tests still work, but that code isn't what your executable runs.
+
+## Run under the compiler's rules
+
+```ts patch.ts icon="/icons/typescript.svg"
+Array.prototype.push = () => 0;
+```
+
+```bash terminal icon="terminal"
+bun run --aot ./patch.ts
+```
+
+```txt
+error: TS100014: this assignment always throws: built-in objects are read-only in a compiled executable
+```
+
+`bun run --aot` checks your program the way `bun compile` does, and exits with code `1` on anything that would stop the build. Then it runs the program from its source files, with [built-in objects read-only](/compiler/compatibility#built-in-objects-are-read-only) as in an executable. `--watch` and `--inspect` work. The other [differences from `bun run`](/compiler/compatibility) don't show up, because the code that runs isn't compiled. To see those, use `bun test --aot` or build the executable.
+
+## Find the guards that fail
+
+```ts total.ts icon="/icons/typescript.svg"
+function total(rows: { id: number }[]): number {
+  let sum = 0;
+  for (const row of rows) sum += row.id;
+  return sum;
+}
+console.log(total(JSON.parse(process.argv[2] ?? "[]")));
+```
+
+```bash terminal icon="terminal"
+bun check --aot --explain=guards ./total.ts
+```
+
+```txt
+note: 3 type guards can fail at run time. When one fails, the result is the same and at most the rest of that call runs slower.
+note: 1. the type of this value isn't proven, so it is checked here
+   at total.ts:3:14
+note: fix: nothing to fix unless it fails in hot code. Then trace the value back from here to where its type is lost
+```
+
+A [guard](/compiler/types) that fails doesn't change what your program does. It slows down one operation, or sends the rest of the call to the function's slow version. Look here when a hot function is slower than you expected.
+
+## Profiles
+
+```bash terminal icon="terminal"
+BUN_OPTIONS="--cpu-prof" ./app    # a .cpuprofile for Chrome DevTools or VS Code
+BUN_OPTIONS="--heap-prof" ./app   # a heap profile
+```
+
+Both show your functions, classes and files by their names. `perf`, `gdb` and Instruments show addresses where your compiled code runs. On Linux, build with `--aot-symbols` to see function names there too.
+
+A heap snapshot shows the heap of the compiled program, which can hold less than under `bun run`. The compiler removes a variable that nothing in your program can read, along with an object that only that variable held.
+
+## The inspector
+
+```bash terminal icon="terminal"
+bun compile --compile-inspector ./app.ts
+BUN_INSPECT="ws://127.0.0.1:6499/app" ./app
+```
+
+The console, heap snapshots and CPU profiles work. Breakpoints, stepping and `debugger` statements don't. Code you run in the console can change anything it reaches from a global or from a module like `node:http`, and compiled code sees the change. The compiler can no longer assume that it has read every caller and every write, so the flag makes the executable larger and slower. Leave it out of production builds.

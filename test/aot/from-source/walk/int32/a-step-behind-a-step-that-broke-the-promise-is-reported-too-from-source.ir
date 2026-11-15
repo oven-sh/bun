@@ -1,0 +1,14 @@
+# `i++; i--;`: what broke the promise went on as it came, one past the range, and the step down brought it back: ONE OF THE TWO WAS REPORTED, and the other only by the build behind the mend of the first
+# f1 upAndDown is called once, with 1 . f2 upAndDownOpen: the same, and nobody knows who calls: there the walk's own type speaks, which has the same sum in it
+# f3 boundedInFront: THE CONTROL THAT OWES NOTHING: a step that keeps the promise leaves the variable as it came, 1 to 100, and the step down is proven
+# -- source: a-step-behind-a-step-that-broke-the-promise-is-reported-too-from-source.ts
+# declare function sink(...values: unknown[]): void;
+# function upAndDown(n: Bun.int32): Bun.int32 { let i: Bun.int32 = n; i++; i--; return i; }
+# function upAndDownOpen(n: Bun.int32): Bun.int32 { let i: Bun.int32 = n; i++; i--; return i; }
+# function boundedInFront(n: Bun.int32): Bun.int32 { let i: Bun.int32 = n; if (i < 0 || i > 99) return 0; i++; i--; return i; }
+# sink(upAndDown(1));
+# sink(upAndDownOpen, boundedInFront);
+# -- end of source
+# DIAGNOSTIC: UnprovenInt32 4
+# RUN: walk f1 f2 f3 mechanisms=all
+# CHECK: the walk of f1:Body failed

@@ -1,0 +1,26 @@
+;; Source of the .wasm file of the same name. Any assembler that supports the proposals below can rebuild it; the bytes may differ.
+;; Proposals: threads.
+(module
+  (import "env" "memory" (memory 1 1 shared))
+  (func (export "add32") (param i32 i32) (result i32) (i32.atomic.rmw.add (local.get 0) (local.get 1)))
+  (func (export "sub8") (param i32 i32) (result i32) (i32.atomic.rmw8.sub_u (local.get 0) (local.get 1)))
+  (func (export "and16") (param i32 i32) (result i32) (i32.atomic.rmw16.and_u (local.get 0) (local.get 1)))
+  (func (export "or64") (param i32 i64) (result i64) (i64.atomic.rmw.or (local.get 0) (local.get 1)))
+  (func (export "xor32in64") (param i32 i64) (result i64) (i64.atomic.rmw32.xor_u (local.get 0) (local.get 1)))
+  (func (export "exchange") (param i32 i32) (result i32) (i32.atomic.rmw.xchg (local.get 0) (local.get 1)))
+  (func (export "compareExchange") (param i32 i32 i32) (result i32) (i32.atomic.rmw.cmpxchg (local.get 0) (local.get 1) (local.get 2)))
+  (func (export "compareExchange8") (param i32 i32 i32) (result i32) (i32.atomic.rmw8.cmpxchg_u (local.get 0) (local.get 1) (local.get 2)))
+  (func (export "compareExchange64") (param i32 i64 i64) (result i64) (i64.atomic.rmw.cmpxchg (local.get 0) (local.get 1) (local.get 2)))
+  (func (export "load") (param i32) (result i32) (i32.atomic.load (local.get 0)))
+  (func (export "load64") (param i32) (result i64) (i64.atomic.load (local.get 0)))
+  (func (export "store") (param i32 i32) (i32.atomic.store (local.get 0) (local.get 1)))
+  (func (export "store16") (param i32 i32) (i32.atomic.store16 (local.get 0) (local.get 1)))
+  (func (export "notify") (param i32 i32) (result i32) (memory.atomic.notify (local.get 0) (local.get 1)))
+  (func (export "waitFor") (param i32 i32) (result i32) (memory.atomic.wait32 (local.get 0) (local.get 1) (i64.const 0)))
+  (func (export "fence") atomic.fence)
+  (func (export "count") (param $at i32) (param $n i32) (result i32)
+    (loop $l
+      (drop (i32.atomic.rmw.add (local.get $at) (i32.const 1)))
+      (br_if $l (local.tee $n (i32.sub (local.get $n) (i32.const 1)))))
+    (i32.atomic.load (local.get $at)))
+)

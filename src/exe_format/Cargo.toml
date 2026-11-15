@@ -10,10 +10,13 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-bytemuck = "1"
 thiserror.workspace = true
 strum.workspace = true
 bstr.workspace = true
+libc.workspace = true
 bun_core.workspace = true
 bun_sha_hmac.workspace = true
 bun_sys.workspace = true
+
+[dev-dependencies]
+bun_sema_standalone = { path = "../sema/standalone" }

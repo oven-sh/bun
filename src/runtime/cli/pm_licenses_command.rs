@@ -94,10 +94,10 @@ impl PmLicensesCommand {
             }
         }
 
-        let configured_linker = pm.options.node_linker;
         let load = pm.load_lockfile_from_cwd::<true>();
         PackageManagerCommand::handle_load_lockfile_errors_for(&load, log_level, "list");
-        let isolated = load.node_linker(configured_linker) == NodeLinker::Isolated;
+        let isolated =
+            load.node_linker(&pm.lockfile, pm.options.node_linker) == NodeLinker::Isolated;
 
         let json_output = pm.options.json_output;
         let features = pm.options.local_package_features;
@@ -199,7 +199,7 @@ impl PmLicensesCommand {
             });
         let locations = tree_locations(lockfile);
 
-        let packages = lockfile.packages.slice();
+        let packages = &lockfile.packages;
         let pkg_names = packages.items_name();
         let pkg_resolution = packages.items_resolution();
         let buf = lockfile.buffers.string_bytes.as_slice();

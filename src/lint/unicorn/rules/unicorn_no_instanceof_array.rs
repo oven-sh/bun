@@ -4,7 +4,7 @@ use bun_lint::rule::Plugin;
 /// Require `Array.isArray()` instead of `instanceof Array`.
 pub struct NoInstanceofArray;
 
-const NO_INSTANCEOF_ARRAY: Message = Message::new("", "Use `Array.isArray()` instead of `instanceof Array`.");
+const NO_INSTANCEOF_ARRAY: &Message = &Message::new("", "Use `Array.isArray()` instead of `instanceof Array`.");
 
 impl Rule for NoInstanceofArray {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-instanceof-array", Kind::Suggestion).fixable(Fixable::Code);

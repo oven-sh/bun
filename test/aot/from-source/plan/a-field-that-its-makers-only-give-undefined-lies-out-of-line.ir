@@ -1,0 +1,23 @@
+# `this.members = undefined` in the constructor gives every object the key, so that all have one shape, and fills nothing. Where the written type lets the field be left out and no maker goes on to fill it, the slot is a granule of the Extension
+# that an object gets where something is stored. The key stays in the order of the birth: one order. `declarations` and `parent` are filled by a second constructor, on which another maker builds: they lie in the cell. `kept` is born with a value.
+# `later` is stored on some of the objects: the layout has the word that names an Extension, whatever becomes of the others. A layout without it keeps its fields in the cell.
+# -- source: left-undefined.ts
+# interface Sym { flags: number; name: string; declarations?: string[]; parent?: Sym; members?: object; only: boolean | undefined; kept?: number }
+# function Sym(this: Sym, flags: number, name: string) { this.flags = flags; this.name = name; this.declarations = undefined; this.parent = undefined; this.members = undefined; this.only = undefined; this.kept = 0; }
+# function make(flags: number, name: string): Sym { return new (Sym as any)(flags, name); }
+# function below(flags: number, name: string, from: Sym) { const made = make(flags, name); made.declarations = from.declarations; made.parent = from; return made; }
+# function further(flags: number, name: string, from: Sym) { const made = below(flags, name, from); made.flags |= 64; return made; }
+# function fill(symbol: Sym) { symbol.members = {}; (symbol as any).later = 1; }
+# const root = make(1, "root"); const next = further(2, "next", root); fill(next);
+# console.log(Object.keys(next).join() + (root.members === undefined ? " left" : " filled") + (next.members === undefined ? " left" : " filled") + (next.only === undefined ? " left" : " filled"));
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L0 CompiledObject size=48 extension=
+# CHECK-NEXT: slot 0 "flags" {{*}}Inline offset=24
+# CHECK-NEXT: slot 1 "name" {{*}}Inline offset=28
+# CHECK-NEXT: slot 2 "declarations" {{*}}Inline offset=32
+# CHECK-NEXT: slot 3 "parent" {{*}}Inline offset=36
+# CHECK-NEXT: slot 4 "members" JSValue OutOfLine offset=8 {{*}}may-exist-without-storage
+# CHECK-NEXT: slot 5 "only" JSValue OutOfLine offset=16 {{*}}may-exist-without-storage
+# CHECK-NEXT: slot 6 "kept" {{*}}Inline offset=40
+# CHECK-NEXT: slot 7 "later" appended

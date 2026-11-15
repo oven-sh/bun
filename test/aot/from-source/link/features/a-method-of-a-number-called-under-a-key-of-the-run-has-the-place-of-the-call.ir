@@ -1,0 +1,6 @@
+# no code names toLocaleString, a name of the run may: the record has the place of the read that is called
+# -- source: a-method-of-a-number-called-under-a-key-of-the-run-has-the-place-of-the-call.ts
+# console.log((5 as any)[process.argv[2]!]());
+# -- end of source
+# RUN: features
+# CHECK: by NumberPrototypeToLocaleString unnamed at f0 v

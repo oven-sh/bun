@@ -9,7 +9,7 @@ pub struct MaxStatements {
     ignore_top_level_functions: bool,
 }
 
-const EXCEED: Message = Message::new(
+const EXCEED: &Message = &Message::new(
     "exceed",
     "{{name}} has too many statements ({{count}}). Maximum allowed is {{max}}.",
 );

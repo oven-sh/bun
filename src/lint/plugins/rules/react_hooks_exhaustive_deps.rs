@@ -16,7 +16,7 @@ pub struct ExhaustiveDeps {
 }
 
 /// Upstream has no message ids and builds its messages by concatenation.
-const TEXT: Message = Message::new("", "{{text}}");
+const TEXT: &Message = &Message::new("", "{{text}}");
 
 /// The first element of the pattern in `const [state, setState] = useState()`.
 #[derive(Copy, Clone)]

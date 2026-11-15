@@ -6,11 +6,11 @@ pub struct ValidTypeof {
     require_string_literals: bool,
 }
 
-const INVALID_VALUE: Message = Message::new("invalidValue", "Invalid typeof comparison value.");
-const NOT_STRING: Message =
-    Message::new("notString", "Typeof comparisons should be to string literals.");
-const SUGGEST_STRING: Message =
-    Message::new("suggestString", "Use `\"{{type}}\"` instead of `{{type}}`.");
+const INVALID_VALUE: &Message = &Message::new("invalidValue", "Invalid typeof comparison value.");
+const NOT_STRING: &Message =
+    &Message::new("notString", "Typeof comparisons should be to string literals.");
+const SUGGEST_STRING: &Message =
+    &Message::new("suggestString", "Use `\"{{type}}\"` instead of `{{type}}`.");
 
 const VALID_TYPES: [&str; 8] = [
     "symbol",

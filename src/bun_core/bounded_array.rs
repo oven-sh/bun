@@ -53,10 +53,7 @@ type Length = usize;
 
 impl<T, const BUFFER_CAPACITY: usize> Default for BoundedArrayAligned<T, BUFFER_CAPACITY> {
     fn default() -> Self {
-        Self {
-            buffer: [const { MaybeUninit::uninit() }; BUFFER_CAPACITY],
-            len: 0,
-        }
+        Self::new()
     }
 }
 
@@ -67,6 +64,13 @@ impl<T, const BUFFER_CAPACITY: usize> Drop for BoundedArrayAligned<T, BUFFER_CAP
 }
 
 impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
+    pub const fn new() -> Self {
+        Self {
+            buffer: [const { MaybeUninit::uninit() }; BUFFER_CAPACITY],
+            len: 0,
+        }
+    }
+
     /// Set the actual length of the slice.
     /// Returns error.Overflow if it exceeds the length of the backing array.
     pub(crate) fn init(len: usize) -> Result<Self, OverflowError> {

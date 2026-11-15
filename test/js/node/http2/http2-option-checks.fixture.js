@@ -101,6 +101,10 @@ sink.listen(0, "127.0.0.1", async () => {
       { remoteCustomSettings: "x", strictSingleValueFields: "yes" },
     ],
     [
+      '{ strictSingleValueFields: "yes", maxSessionInvalidFrames: -1 }',
+      { strictSingleValueFields: "yes", maxSessionInvalidFrames: -1 },
+    ],
+    [
       "{ remoteCustomSettings: [11 ids], maxSessionInvalidFrames: -1 }",
       { remoteCustomSettings: Array.from({ length: 11 }, (_, i) => 0x100 + i), maxSessionInvalidFrames: -1 },
     ],

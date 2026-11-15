@@ -17,8 +17,8 @@ pub struct PreferStatelessFunction {
     ignore_pure_components: bool,
 }
 
-const COMPONENT_SHOULD_BE_PURE: Message =
-    Message::new("componentShouldBePure", "Component should be written as a pure function");
+const COMPONENT_SHOULD_BE_PURE: &Message =
+    &Message::new("componentShouldBePure", "Component should be written as a pure function");
 
 fn is_valid_pair<'a>(ctor_param: Param<'a>, super_arg: Expr<'a>) -> bool {
     let super_arg = match super_arg.kind() {

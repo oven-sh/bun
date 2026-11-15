@@ -123,6 +123,7 @@ impl Checker<'_, '_> {
             ) || matches!(bound.member_owner[i], MemberOwner::None)
                 || unchecked.contain(hir[member].start)
                 || self.is_never_checked(hir[member].start)
+                || self.is_left_out(file, hir[member].func)
             {
                 continue;
             }
@@ -141,6 +142,7 @@ impl Checker<'_, '_> {
             if matches!(bound.fns[i].owner, FnOwner::None)
                 || unchecked.contain(hir[func].start)
                 || self.is_never_checked(hir[func].start)
+                || self.is_left_out(file, func)
             {
                 continue;
             }
@@ -213,8 +215,8 @@ impl Checker<'_, '_> {
             (None, Some(setter)) => (setter, 2502),
             // tsgo reports it on the set accessor, which may be nil.
             _ if auto_accessor.is_some_and(|(file, m)| self.hir(file)[m].ty.is_some()) => {
-                match setter {
-                    Some(setter) => (setter, 2502),
+                match setter.or_else(|| auto_accessor.filter(|_| self.files.is_compile_build())) {
+                    Some(accessor) => (accessor, 2502),
                     None => {
                         let err = Reported::new(NOWHERE, 2502, held(vec![name]));
                         return self.add_diagnostic_of(Some(Query::Symbol(sym)), err);
@@ -222,7 +224,7 @@ impl Checker<'_, '_> {
                 }
             }
             _ => match getter {
-                Some(getter) if self.p.files.options.no_implicit_any => (getter, 7023),
+                Some(getter) if self.module_options(getter.0).no_implicit_any => (getter, 7023),
                 _ => return,
             },
         };
@@ -319,7 +321,7 @@ impl Checker<'_, '_> {
         func: FnId,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let no_implicit_any = self.p.files.options.no_implicit_any;
+        let no_implicit_any = self.module_options(file).no_implicit_any;
         let fn_owner = bound.fns[func.idx()].owner;
         // `printed` is the position of the name shown in the message, if it isn't `of`'s name.
         let report_at_name = |c: &mut Self, of: FnId, code: u32, printed: Option<u32>| {

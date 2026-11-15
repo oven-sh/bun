@@ -1,0 +1,91 @@
+--- a/lsqpack.c
++++ b/lsqpack.c
+@@ -3383,10 +3383,10 @@ guarantee_out_bytes (struct lsqpack_dec
+     unsigned off;
+ 
+     assert(read_ctx->hbrc_out.xhdr);
+-    assert(read_ctx->hbrc_out.state == XOUT_VALUE);
+-    assert(read_ctx->hbrc_out.xhdr->val_offset
+-                                    >= read_ctx->hbrc_out.xhdr->name_offset);
+-    off = read_ctx->hbrc_out.xhdr->val_offset
++    if (read_ctx->hbrc_out.state == XOUT_NAME)
++        off = read_ctx->hbrc_out.off;
++    else
++        off = read_ctx->hbrc_out.xhdr->val_offset
+             - read_ctx->hbrc_out.xhdr->name_offset + read_ctx->hbrc_out.off;
+ 
+     assert(read_ctx->hbrc_out.xhdr->val_len >= off);
+@@ -3693,22 +3693,18 @@ parse_header_data (struct lsqpack_dec *d
+                 if (DATA.left > LSXPACK_MAX_STRLEN)
+                     RETURN_ERROR();
+ #endif
++                /* bun: the states that read the string ask for room, each time
++                 * for the bytes they have in hand.
++                 */
+                 if (DATA.left)
+                 {
+                     if (DATA.is_huffman)
+                     {
+-                        if (0 != guarantee_out_bytes(dec, read_ctx,
+-                                                    DATA.left + DATA.left / 2))
+-                            RETURN_ERROR();
+                         DATA.dec_huff_state.resume = 0;
+                         DATA.state = DATA_STATE_READ_VAL_HUFFMAN;
+                     }
+                     else
+-                    {
+-                        if (0 != guarantee_out_bytes(dec, read_ctx, DATA.left))
+-                            RETURN_ERROR();
+                         DATA.state = DATA_STATE_READ_VAL_PLAIN;
+-                    }
+                 }
+                 else if (0 == header_out_write_value(dec, read_ctx, 0, 1))
+                     DATA.state = DATA_STATE_NEXT_INSTRUCTION;
+@@ -3724,6 +3720,8 @@ parse_header_data (struct lsqpack_dec *d
+             size = MIN((unsigned) (end - buf), DATA.left);
+             if (size == 0)
+                 RETURN_ERROR();
++            if (0 != guarantee_out_bytes(dec, read_ctx, size + size / 2))
++                RETURN_ERROR();
+             dst = get_dst(dec, read_ctx, &dst_size);
+             hdr = lsqpack_huff_decode(buf, (int)size, dst, (int)dst_size,
+                     &DATA.dec_huff_state, DATA.left == size);
+@@ -3758,6 +3756,8 @@ parse_header_data (struct lsqpack_dec *d
+             size = MIN((unsigned) (end - buf), DATA.left);
+             if (size == 0)
+                 RETURN_ERROR();
++            if (0 != guarantee_out_bytes(dec, read_ctx, size))
++                RETURN_ERROR();
+             dst = get_dst(dec, read_ctx, &dst_size);
+             if (size > dst_size)
+                 RETURN_ERROR();
+@@ -3780,7 +3780,10 @@ parse_header_data (struct lsqpack_dec *d
+                 if (DATA.left > LSXPACK_MAX_STRLEN)
+                     RETURN_ERROR();
+ #endif
+-                size = DATA.is_huffman ? DATA.left + DATA.left / 2 : DATA.left;
++                /* bun: room for the bytes at hand, see READ_VAL_LEN */
++                size = MIN((unsigned) (end - buf), DATA.left);
++                if (DATA.is_huffman)
++                    size += size / 2;
+                 if (0 != header_out_begin_literal(dec, read_ctx, size,
+                                                             DATA.is_never))
+                     RETURN_ERROR();
+@@ -3801,6 +3804,8 @@ parse_header_data (struct lsqpack_dec *d
+             size = MIN((unsigned) (end - buf), DATA.left);
+             if (size == 0)
+                 RETURN_ERROR();
++            if (0 != guarantee_out_bytes(dec, read_ctx, size + size / 2))
++                RETURN_ERROR();
+             dst = get_dst(dec, read_ctx, &dst_size);
+             hdr = lsqpack_huff_decode(buf, (int)size, dst, (int)dst_size,
+                     &DATA.dec_huff_state, DATA.left == size);
+@@ -3835,6 +3840,8 @@ parse_header_data (struct lsqpack_dec *d
+             size = MIN((unsigned) (end - buf), DATA.left);
+             if (size == 0)
+                 RETURN_ERROR();
++            if (0 != guarantee_out_bytes(dec, read_ctx, size))
++                RETURN_ERROR();
+             dst = get_dst(dec, read_ctx, &dst_size);
+             if (size > dst_size)
+                 RETURN_ERROR();

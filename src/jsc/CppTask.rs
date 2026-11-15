@@ -88,7 +88,7 @@ extern "C" fn ConcurrentCppTask__createAndRun(
 ) {
     crate::mark_binding!();
     let vm = global.bun_vm();
-    vm.event_loop_shared().ref_keep_alive();
+    vm.event_loop().ref_keep_alive();
     let ticket = vm.ticket();
     WorkPool::schedule_new(ConcurrentCppTask {
         cpp_task,

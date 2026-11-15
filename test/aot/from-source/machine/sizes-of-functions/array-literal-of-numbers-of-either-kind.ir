@@ -1,0 +1,14 @@
+# f1 = pair
+# -- source: array-literal-of-numbers-of-either-kind.ts
+# function pair(a: number, b: number): number[] {
+#   return [a, b];
+# }
+# declare const input: any;
+# (globalThis as any).answer = pair(input.a, input.b);
+# -- end of source
+# The compiler before this one: 15 instructions, 2 of them patches ; 7 instructions, 3 of them patches ; 5 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 4, patches 1, moves 2, unlikely or rare 0.
+# RUN(X64): steps most:6 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 6

@@ -10,7 +10,7 @@ pub struct CallbackReturn {
     on: On,
 }
 
-const CALLBACK_RETURN: Message = Message::new("", "Expected return with your callback function.");
+const CALLBACK_RETURN: &Message = &Message::new("", "Expected return with your callback function.");
 
 /// The result of `find_closest_block_parent`.
 #[derive(Copy, Clone)]

@@ -1,0 +1,30 @@
+# -- source: calls-laid-in-two-families-each-asked-by-name-and-united-later-are-seen-from-both.js
+# class First { constructor(n) { this.count = n; } }
+# class Second { constructor(n) { this.note = n; } }
+# function a1() { return 1; }
+# function a2() { return 2; }
+# function a3() { return 3; }
+# function a4() { return 4; }
+# function a5() { return ofFirst(pickOther(hidden()), new First(30)) + ofSecond(pick(hidden()), new Second(40)); }
+# function b1() { return 10; }
+# function b2() { return 20; }
+# function b3() { return 30; }
+# function b4() { return 40; }
+# function b5() { return 50; }
+# a3.call = function (box) { box.note = "text"; return "first"; };
+# b3.call = function (box) { box.count = "text"; return "second"; };
+# function ofFirst(handed, box) { const answer = handed.call(box); return answer + "," + typeof box.count + ";"; }
+# function ofSecond(handed, box) { const answer = handed.call(box); return answer + "," + typeof box.note + ";"; }
+# function pick(i) { return i === 0 ? a1 : i === 1 ? a2 : i === 2 ? a3 : i === 3 ? a4 : a5; }
+# function pickOther(i) { return i === 0 ? b1 : i === 1 ? b2 : i === 2 ? b3 : i === 3 ? b4 : b5; }
+# let sum = "";
+# for (let i = 0; i < 2; i++) sum += ofSecond(pickOther(i), new Second(i));
+# for (let i = 0; i < 5; i++) if (i !== 2) sum += ofFirst(pick(i), new First(i));
+# print(sum);
+# -- end of source
+# L0 = First, L1 = Second. Each family is asked by name at a place of its own, each with an object of its own class; one of the first five then hands each family to the other place. The families are united behind both calls: each place must find what is laid on the closures of the other family.
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS: "count" proven=int[0, {{*}}]|string
+# FIELDS: L1.0 "note" proven=int[0, {{*}}]|string
+# RUN(ANSWERS): run-in-shell globalThis.hidden = () => 2;
+# ANSWERS: 10,number;20,number;1,number;2,number;4,number;second,string;first,string;,number;

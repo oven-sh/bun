@@ -19,7 +19,11 @@
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include "ZigGlobalObject.h"
+#include "ObjectBindings.h"
 #include "JavaScriptCore/DateInstance.h"
+#if ENABLE(AOT)
+#include <JavaScriptCore/AOTPropertyWalk.h>
+#endif
 #include <wtf/Int128.h>
 #if !OS(WINDOWS)
 #include <sys/stat.h>
@@ -235,7 +239,8 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
 
     JSValue result = JSC::DateInstance::create(vm, globalObject->dateStructure(), internalNumber);
     if (!thisObject->structure()->mayBePrototype()) {
-        thisObject->putDirect(vm, propertyName, result, 0);
+        putDirectOrThrow(globalObject, thisObject, propertyName, result, 0);
+        RETURN_IF_EXCEPTION(scope, {});
     }
     return result;
 }
@@ -284,10 +289,8 @@ JSC_DEFINE_CUSTOM_SETTER(jsStatsPrototypeFunction_DatePutter, (JSGlobalObject * 
     if (!thisObject)
         return false;
 
-    if (thisObject->type() == JSC::FinalObjectType) [[likely]] {
-        thisObject->putDirect(vm, propertyName, JSValue::decode(encodedValue), 0);
-        return true;
-    }
+    if (thisObject->type() == JSC::FinalObjectType || JSC::AOT::PropertyWalk::isCompiledObject(thisObject)) [[likely]]
+        RELEASE_AND_RETURN(scope, putDirectOrThrow(globalObject, thisObject, propertyName, JSValue::decode(encodedValue), 0));
     // putDirect needs a structure transition, which a WebAssembly GC object doesn't support.
     RELEASE_AND_RETURN(scope, thisObject->createDataProperty(globalObject, propertyName, JSValue::decode(encodedValue), true));
 }
@@ -889,26 +892,26 @@ inline JSValue constructJSStatsObject(JSC::JSGlobalObject* lexicalGlobalObject, 
     }
 
     JSFinalObject* object = JSC::JSFinalObject::create(vm, structure);
-    object->putDirect(vm, Identifier::fromString(vm, "dev"_s), dev, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "mode"_s), mode, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "nlink"_s), nlink, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "uid"_s), uid, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "gid"_s), gid, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "rdev"_s), rdev, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "blksize"_s), blksize, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "ino"_s), ino, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "size"_s), size, 0);
-    object->putDirect(vm, Identifier::fromString(vm, "blocks"_s), blocks, 0);
+    Bun::putDirectNamed(vm, object, "dev"_s, dev);
+    Bun::putDirectNamed(vm, object, "mode"_s, mode);
+    Bun::putDirectNamed(vm, object, "nlink"_s, nlink);
+    Bun::putDirectNamed(vm, object, "uid"_s, uid);
+    Bun::putDirectNamed(vm, object, "gid"_s, gid);
+    Bun::putDirectNamed(vm, object, "rdev"_s, rdev);
+    Bun::putDirectNamed(vm, object, "blksize"_s, blksize);
+    Bun::putDirectNamed(vm, object, "ino"_s, ino);
+    Bun::putDirectNamed(vm, object, "size"_s, size);
+    Bun::putDirectNamed(vm, object, "blocks"_s, blocks);
     object->putDirect(vm, identifier(vm, DateFieldType::atime), atimeMs, 0);
     object->putDirect(vm, identifier(vm, DateFieldType::mtime), mtimeMs, 0);
     object->putDirect(vm, identifier(vm, DateFieldType::ctime), ctimeMs, 0);
     object->putDirect(vm, identifier(vm, DateFieldType::birthtime), birthtimeMs, 0);
 
     if constexpr (isBigInt) {
-        object->putDirect(vm, Identifier::fromString(vm, "atimeNs"_s), atimeNs, 0);
-        object->putDirect(vm, Identifier::fromString(vm, "mtimeNs"_s), mtimeNs, 0);
-        object->putDirect(vm, Identifier::fromString(vm, "ctimeNs"_s), ctimeNs, 0);
-        object->putDirect(vm, Identifier::fromString(vm, "birthtimeNs"_s), birthtimeNs, 0);
+        Bun::putDirectNamed(vm, object, "atimeNs"_s, atimeNs);
+        Bun::putDirectNamed(vm, object, "mtimeNs"_s, mtimeNs);
+        Bun::putDirectNamed(vm, object, "ctimeNs"_s, ctimeNs);
+        Bun::putDirectNamed(vm, object, "birthtimeNs"_s, birthtimeNs);
     }
 
     return object;

@@ -12,6 +12,7 @@
 #include "ipc_protocol.h"
 #include "ZigGlobalObject.h"
 #include "BunClientData.h"
+#include "GeneratedBlob.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -44,7 +45,6 @@ extern "C" int32_t Bun__WebViewHost__ensure(Zig::GlobalObject*, bool stdoutInher
 // Unpublishes and kills the host without reporting its exit back here.
 extern "C" void Bun__WebViewHost__retire();
 extern "C" void* Blob__fromMmapWithType(JSC::JSGlobalObject*, uint8_t* ptr, size_t len, const char* mime);
-extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
 extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject*, void* ptr, size_t length);
 // Bracket the whole onData batch. exit() drains microtasks when outermost,
 // so all the promise reactions from this batch run before we return to usockets.
@@ -213,9 +213,7 @@ void HostClient::onWritable()
 
 // Open + mmap the child-written shm segment. The child already munmapped
 // its side before sendReply, so we're the sole mapper. O_RDWR + PROT_WRITE
-// because the child's allocator poisons the buffer in
-// safe builds BEFORE the vtable free (which munmap's) — a PROT_READ
-// mapping SIGBUS'd on that poison. MAP_SHARED is required for POSIX shm
+// because JS can be given the pages to write to. MAP_SHARED is required for POSIX shm
 // objects on macOS — MAP_PRIVATE returns EINVAL (the kernel's posix_shm
 // vfs doesn't implement VM_BEHAVIOR_COPY). Returns nullptr on failure
 // with errno set; caller reports it.
@@ -260,7 +258,7 @@ static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t n
         auto* obj = JSC::constructEmptyObject(g);
         obj->putDirect(vm, Identifier::fromString(vm, "name"_s),
             jsString(vm, WTF::String::fromUTF8(std::span<const char>(name, nameLen))));
-        obj->putDirect(vm, Identifier::fromString(vm, "size"_s), jsNumber(byteLen));
+        Bun::putDirectNamed(vm, obj, "size"_s, jsNumber(byteLen));
         ok = true;
         return obj;
     }
@@ -277,12 +275,11 @@ static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t n
 
     switch (enc) {
     case ScreenshotEncoding::Blob: {
-        // Blob adopts the mapping — no copy. Store's allocator.free
-        // munmap's when the Blob's refcount drops to zero.
+        // Blob adopts the mapping — no copy. Its store munmap's when dropped.
         // `await blob.bytes()` reads directly from these pages.
         void* impl = Blob__fromMmapWithType(g, static_cast<uint8_t*>(map), byteLen, mime);
         ok = true;
-        return JSValue::decode(Blob__create(defaultGlobalObject(g), impl));
+        return Bun::Bindgen::createWrapper<Bun::Bindgen::Generated::JSBlob>(g, impl);
     }
     case ScreenshotEncoding::Buffer: {
         // ArrayBuffer adopts the mapping — createFromBytes + a
@@ -526,7 +523,7 @@ void HostClient::onData(const char* data, int length)
         off += sizeof(Frame) + h.len;
 
         handleReply(h, r);
-        // createError/jsString/Blob__create can throw (OOM). Report +
+        // createError/jsString can throw (OOM). Report +
         // clear so one bad frame doesn't poison the rest of the batch.
         if (auto* exception = catchScope.exception()) [[unlikely]] {
             if (!catchScope.clearExceptionExceptTermination()) break;

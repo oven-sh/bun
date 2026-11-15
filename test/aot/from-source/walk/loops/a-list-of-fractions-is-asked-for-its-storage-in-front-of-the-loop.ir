@@ -1,0 +1,25 @@
+# f1 = byForOf, f2 = byIndex
+# -- source: a-list-of-fractions-is-asked-for-its-storage-in-front-of-the-loop.ts
+# declare function print(...values: unknown[]): void;
+# const halves = [1.5, 2.5, 3.5, 4.5];
+# function byForOf(rounds: number) { let total = 0; for (let r = 0; r < rounds; r++) for (const each of halves) total += each; return total; }
+# function byIndex(rounds: number) { let total = 0; for (let r = 0; r < rounds; r++) for (let at = 0; at < halves.length; at++) total += halves[at]!; return total; }
+# let out = 0;
+# for (let k = 0; k < 3; k++) out += byForOf(2) + byIndex(2);
+# halves[1] = 7;
+# halves.length = 3;
+# print(out + byForOf(1) + byIndex(1));
+# -- end of source
+# The list is a variable of the module: its type in the function says no more than Array, and nothing is expected of it. Link has seen what a read of it gives: fractions. The row in front of the loop asked
+# for no storage, and every turn read its element through the stub that looks at the kind and boxes what it finds. What Link has seen says which storage to ask for; where the answer is no, the closed copy runs.
+# RUN: walk f1 mechanisms=all
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
+# CHECK: isLoopHead=true
+# CHECK: = GetArrayElement {{*}}arrayStorage=Double
+# What plain Bun prints.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 168
+# ANSWERS-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell testing=CheckProofsAtRunTime,CheckBoundsAtRunTime
+# HARDENED: 168
+# HARDENED-NEXT: exited with 0

@@ -1,0 +1,48 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`promises rejects 1`] = `[Error: as a value]`;
+
+exports[`promises resolves 1`] = `
+{
+  "r": 1,
+}
+`;
+
+exports[`toThrowErrorMatchingSnapshot Error 1`] = `"plain message"`;
+
+exports[`toThrowErrorMatchingSnapshot TypeError 1`] = `"type message"`;
+
+exports[`toThrowErrorMatchingSnapshot a thrown object 1`] = `"object message"`;
+
+exports[`toThrowErrorMatchingSnapshot async function rejects 1`] = `"async message"`;
+
+exports[`toThrowErrorMatchingSnapshot custom error 1`] = `"custom message"`;
+
+exports[`toThrowErrorMatchingSnapshot empty message 1`] = `""`;
+
+exports[`toThrowErrorMatchingSnapshot mixed with toMatchSnapshot 1`] = `1`;
+
+exports[`toThrowErrorMatchingSnapshot mixed with toMatchSnapshot 2`] = `"in between"`;
+
+exports[`toThrowErrorMatchingSnapshot mixed with toMatchSnapshot 3`] = `3`;
+
+exports[`toThrowErrorMatchingSnapshot multi-line message 1`] = `
+"first
+second
+  third"
+`;
+
+exports[`toThrowErrorMatchingSnapshot odd characters 1`] = `"a \`b\` \${c} \\d "e" 'f'"`;
+
+exports[`toThrowErrorMatchingSnapshot rejects 1`] = `"rejected message"`;
+
+exports[`toThrowErrorMatchingSnapshot twice 1`] = `"one"`;
+
+exports[`toThrowErrorMatchingSnapshot twice 2`] = `"two"`;
+
+exports[`toThrowErrorMatchingSnapshot with a cause 1`] = `
+"outer
+Cause: inner"
+`;
+
+exports[`toThrowErrorMatchingSnapshot with a hint: the hint 1`] = `"hinted"`;

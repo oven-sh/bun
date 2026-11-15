@@ -22,7 +22,7 @@ pub struct ControlHasAssociatedLabel {
     ignore_roles: Vec<String>,
 }
 
-const CONTROL_HAS_ASSOCIATED_LABEL: Message = Message::new("", "A control must be associated with a text label.");
+const CONTROL_HAS_ASSOCIATED_LABEL: &Message = &Message::new("", "A control must be associated with a text label.");
 
 impl Rule for ControlHasAssociatedLabel {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "control-has-associated-label", Kind::Problem);

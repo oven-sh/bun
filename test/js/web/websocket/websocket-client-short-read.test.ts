@@ -456,10 +456,10 @@ describe("aborting while CONNECTING", () => {
 
 describe("data received while a handshake listener spins the event loop", () => {
   // Call from a listener. Sends `bytes` from the peer, then blocks until `until` settles.
-  // `expect().resolves` is deliberately not awaited. It ticks the event loop until the promise settles.
+  // `Bun.build()` ticks the event loop until a plugin's `setup()` settles.
   function sendAndWaitSynchronously(peer: RawSocket, bytes: string, until: Promise<void>) {
     write(peer, bytes);
-    expect(until).resolves.toBeUndefined();
+    Bun.build({ entrypoints: ["./none.js"], plugins: [{ name: "spin", setup: () => until }] }).catch(() => {});
   }
 
   test("a frame received during a 101's handshake listener is delivered after 'open'", async () => {

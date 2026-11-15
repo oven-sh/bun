@@ -197,20 +197,14 @@ fn compress_brotli(
     let mode = c::BrotliEncoderMode::generic;
 
     let bound = bun_brotli::encode_bound(input.len());
-    // BrotliEncoderMaxCompressedSize returns 0 when the bound would overflow
-    // size_t — fall back to a heap buffer in that case.
-    if bound != 0 && bound <= state.shared_buffer.len() {
+    if bound.is_some_and(|bound| bound <= state.shared_buffer.len()) {
         if let Some(n) = bun_brotli::encode(quality, window, mode, input, &mut state.shared_buffer)
         {
             return Ok(CompressOutput::Shared(n));
         }
     }
 
-    let cap = if bound != 0 {
-        bound
-    } else {
-        input.len() + 1024
-    };
+    let cap = bound.unwrap_or(input.len() + 1024);
     spill
         .try_reserve_exact(cap)
         .map_err(|_| bun_alloc::AllocError)?;

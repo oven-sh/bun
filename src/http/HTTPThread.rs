@@ -1093,12 +1093,7 @@ mod _event_loop_draft {
 
         #[cfg(windows)]
         {
-            // `getenv_w` forwards `name.as_ptr()` directly to Win32
-            // `GetEnvironmentVariableW`, which expects a NUL-terminated LPCWSTR.
-            // `bun_core::w!` does NOT append a sentinel on its own (see
-            // src/sys/windows/mod.rs WATCHER_CHILD_ENV_Z note), so embed `\0`
-            // in the literal.
-            if bun_sys::windows::getenv_w(bun_core::w!("SystemRoot\0")).is_none() {
+            if bun_sys::windows::getenv_w(bun_core::wstr!("SystemRoot")).is_none() {
                 Output::err_generic(
                     "The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.",
                     (),

@@ -2209,12 +2209,12 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                     b'=' as u16,
                     u16::try_from(drive.as_u32()).expect("int cast"),
                     CHAR_COLON as u16,
-                    // `getenv_w` hands the pointer to `GetEnvironmentVariableW`.
                     0,
                 ];
+                let key_w = bun_core::WStr::from_slice_with_nul(&key_w);
                 // TODO: Enable test once spawnResult.stdout works on Windows.
                 // test/js/node/path/resolve.test.js
-                bun_sys::windows::getenv_w(&key_w).map(|r| match T::units_mut(cwd_buf) {
+                bun_sys::windows::getenv_w(key_w).map(|r| match T::units_mut(cwd_buf) {
                     CodeUnitsMut::U16(dst) => {
                         let n = r.len().min(dst.len());
                         memmove(&mut dst[..n], &r[..n]);

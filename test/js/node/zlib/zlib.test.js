@@ -4,6 +4,7 @@ import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
+import { totalmem } from "node:os";
 import { resolve } from "node:path";
 import * as stream from "node:stream";
 import * as util from "node:util";
@@ -107,8 +108,8 @@ describe("zlib", () => {
     expect(() => gunzipSync(data, { library: "zlib" })).toThrow(new Error("incorrect header check"));
   });
 
-  // zlib takes a 32-bit length. The pages that are never written stay virtual.
-  describe("an input of 2**32 bytes", () => {
+  // zlib takes a 32-bit length.
+  describe.skipIf(totalmem() < 10 * 1024 ** 3)("an input of 2**32 bytes", () => {
     it("gunzipSync reads it", () => {
       const input = new Uint8Array(2 ** 32);
       input.set(gzipSync("hello"));

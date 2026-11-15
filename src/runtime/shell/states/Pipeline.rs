@@ -1,4 +1,3 @@
-use bun_ptr::AliasableBox;
 use bun_sys::File;
 
 use crate::shell::ExitCode;
@@ -7,7 +6,7 @@ use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, ShellEx
 use crate::shell::io::{IO, InKind, OutKind};
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::{self, IOWriter};
-use crate::shell::states::base::Base;
+use crate::shell::states::base::{Base, Env, InheritedEnv};
 use crate::shell::states::cmd::Cmd;
 use crate::shell::states::cond_expr::CondExpr;
 use crate::shell::states::r#if::If;
@@ -16,6 +15,7 @@ use crate::shell::yield_::Yield;
 
 pub(crate) struct Pipeline {
     pub(crate) base: Base,
+    shell: InheritedEnv,
     pub node: bun_ptr::BackRef<ast::Pipeline>,
     pub(crate) io: IO,
     pub(crate) exited_count: u32,
@@ -25,11 +25,7 @@ pub(crate) struct Pipeline {
 }
 
 pub(crate) enum CmdOrResult {
-    Cmd {
-        id: NodeId,
-        /// What the member's `base.shell` points to.
-        _env: AliasableBox<ShellExecEnv>,
-    },
+    Cmd(NodeId),
     Result(ExitCode),
 }
 
@@ -60,7 +56,8 @@ impl Pipeline {
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Pipeline(Pipeline {
-            base: Base::new(parent, shell),
+            base: Base::new(parent),
+            shell: InheritedEnv(shell),
             node: bun_ptr::BackRef::new(node),
             io,
             exited_count: 0,
@@ -120,7 +117,7 @@ impl Pipeline {
             let me = interp.as_pipeline(this);
             let cmds = me.cmds.as_deref().expect("set by setup_commands");
             cmds.get(idx as usize).map(|slot| match slot {
-                CmdOrResult::Cmd { id, .. } => *id,
+                CmdOrResult::Cmd(id) => *id,
                 CmdOrResult::Result(_) => {
                     unreachable!("pipeline child {} finished before it was started", idx)
                 }
@@ -139,10 +136,7 @@ impl Pipeline {
     /// failed pipe or dup finishes the pipeline (`Some(yield)`) while no child
     /// runs a subtree that `deinit` cannot reach.
     fn setup_commands(interp: &Interpreter, this: NodeId) -> Option<Yield> {
-        let (node, parent_shell, evtloop) = {
-            let me = interp.as_pipeline(this);
-            (me.node, me.base.shell, interp.event_loop)
-        };
+        let (node, evtloop) = (interp.as_pipeline(this).node, interp.event_loop);
         let items: &[ast::PipelineItem] = node.items;
         let cmd_count = items
             .iter()
@@ -226,11 +220,9 @@ impl Pipeline {
 
             // Each pipeline child gets its own duped env (var assignments
             // inside a pipeline must not leak to siblings or the parent).
-            // SAFETY: `parent_shell` is a live env owned by this pipeline's
-            // parent state.
-            let env = match unsafe {
-                (*parent_shell).dupe_for_subshell(&child_io, ShellExecEnvKind::Pipeline)
-            } {
+            let env = match (interp.as_pipeline_mut(this).shell)
+                .dupe_for_subshell(&child_io, ShellExecEnvKind::Pipeline)
+            {
                 Ok(d) => d,
                 Err(e) => {
                     drop((child_io, read_end, pipes));
@@ -244,15 +236,16 @@ impl Pipeline {
                 }
             };
 
-            let shell = env.as_ptr();
             let id = match *item {
-                ast::PipelineItem::Cmd(c) => Cmd::init(interp, shell, c, this, child_io),
-                ast::PipelineItem::Subshell(s) => Subshell::init(interp, shell, s, this, child_io),
-                ast::PipelineItem::If(f) => If::init(interp, shell, f, this, child_io),
-                ast::PipelineItem::CondExpr(c) => CondExpr::init(interp, shell, c, this, child_io),
+                ast::PipelineItem::Cmd(c) => Cmd::init(interp, Env::Owned(env), c, this, child_io),
+                ast::PipelineItem::Subshell(s) => Subshell::init(interp, env, s, this, child_io),
+                ast::PipelineItem::If(f) => If::init(interp, Env::Owned(env), f, this, child_io),
+                ast::PipelineItem::CondExpr(c) => {
+                    CondExpr::init(interp, Env::Owned(env), c, this, child_io)
+                }
                 ast::PipelineItem::Assigns(_) => unreachable!("skipped above"),
             };
-            cmds.push(CmdOrResult::Cmd { id, _env: env });
+            cmds.push(CmdOrResult::Cmd(id));
         }
         interp.as_pipeline_mut(this).cmds = Some(cmds.into_boxed_slice());
         None
@@ -292,13 +285,7 @@ impl Pipeline {
         if let OutKind::Pipe = &interp.as_pipeline(this).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's
             // (or its parent's) stderr buffer is live.
-            let stderr = unsafe {
-                interp
-                    .as_pipeline_mut(this)
-                    .base
-                    .shell_mut()
-                    .buffered_stderr_mut()
-            };
+            let stderr = unsafe { interp.as_pipeline_mut(this).shell.buffered_stderr_mut() };
             stderr.extend_from_slice(&buf);
         }
         Self::finish(interp, this, 1)
@@ -371,7 +358,7 @@ impl Pipeline {
         me.exited_count += 1;
         if let Some(cmds) = &mut me.cmds {
             for slot in cmds.iter_mut() {
-                if matches!(slot, CmdOrResult::Cmd { id, .. } if *id == child) {
+                if matches!(slot, CmdOrResult::Cmd(id) if *id == child) {
                     *slot = CmdOrResult::Result(exit_code);
                     break;
                 }
@@ -392,7 +379,7 @@ impl Pipeline {
                 cmds.iter()
                     .skip(idx as usize)
                     .filter_map(|slot| match slot {
-                        CmdOrResult::Cmd { id, .. } => Some(*id),
+                        CmdOrResult::Cmd(id) => Some(*id),
                         CmdOrResult::Result(_) => None,
                     })
                     .collect()
@@ -412,7 +399,7 @@ impl Pipeline {
         let cmds = interp.as_pipeline_mut(this).cmds.take();
         if let Some(cmds) = cmds {
             for c in cmds.into_vec() {
-                if let CmdOrResult::Cmd { id, .. } = c {
+                if let CmdOrResult::Cmd(id) = c {
                     interp.deinit_node(id);
                 }
             }

@@ -2,7 +2,7 @@ use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, log};
 use crate::shell::io::IO;
-use crate::shell::states::base::Base;
+use crate::shell::states::base::{Base, Env};
 use crate::shell::states::cmd::Cmd;
 use crate::shell::states::cond_expr::CondExpr;
 use crate::shell::states::r#if::If;
@@ -11,6 +11,7 @@ use crate::shell::yield_::Yield;
 
 pub(crate) struct Async {
     pub(crate) base: Base,
+    shell: *mut ShellExecEnv,
     pub node: bun_ptr::BackRef<ast::Expr>,
     pub(crate) io: IO,
     pub(crate) state: AsyncState,
@@ -44,7 +45,8 @@ impl Async {
             .set(interp.async_commands_executing.get() + 1);
         let evtloop = interp.event_loop;
         let id = interp.alloc_node(Node::Async(Async {
-            base: Base::new(parent, shell),
+            base: Base::new(parent),
+            shell,
             node: bun_ptr::BackRef::new(node),
             io,
             state: AsyncState::Idle,
@@ -99,7 +101,7 @@ impl Async {
             NextAction::SpawnChild => {
                 let (shell, io, node) = {
                     let me = interp.as_async(this);
-                    (me.base.shell, me.io.clone(), me.node)
+                    (me.shell, me.io.clone(), me.node)
                 };
                 // Init the child WITHOUT starting it, store it, enqueue self, return
                 // suspended. The child is started on the NEXT event-loop tick
@@ -107,9 +109,11 @@ impl Async {
                 // pipeline/cmd/if/condexpr — other Expr variants panic.
                 let child = match node.get() {
                     ast::Expr::Pipeline(p) => Pipeline::init(interp, shell, *p, this, io),
-                    ast::Expr::Cmd(c) => Cmd::init(interp, shell, *c, this, io),
-                    ast::Expr::If(i) => If::init(interp, shell, *i, this, io),
-                    ast::Expr::CondExpr(c) => CondExpr::init(interp, shell, *c, this, io),
+                    ast::Expr::Cmd(c) => Cmd::init(interp, Env::inherited(shell), *c, this, io),
+                    ast::Expr::If(i) => If::init(interp, Env::inherited(shell), *i, this, io),
+                    ast::Expr::CondExpr(c) => {
+                        CondExpr::init(interp, Env::inherited(shell), *c, this, io)
+                    }
                     ast::Expr::Assign(_)
                     | ast::Expr::Binary(_)
                     | ast::Expr::Subshell(_)

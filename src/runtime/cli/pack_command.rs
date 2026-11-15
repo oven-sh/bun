@@ -1940,7 +1940,7 @@ pub(crate) fn pack(
 
         while let Some(item) = pack_queue.remove_or_null() {
             let path = item.path.as_bytes();
-            let fd: Fd = bun_sys::openat(
+            let file = bun_sys::openat(
                 Fd::from_std_dir(&root_dir),
                 &item.path,
                 bun_sys::O::RDONLY,
@@ -1952,11 +1952,11 @@ pub(crate) fn pack(
                     bun_sys::ErrorCase::CloseOnFail,
                 )
             })
+            .map(CloseOnDrop::new)
             .unwrap_or_else(|err| fail_file(err, "open", path));
-            let _close_fd = CloseOnDrop::new(fd);
 
-            let stat =
-                bun_sys::sys_uv::fstat(fd).unwrap_or_else(|err| fail_file(err, "stat", path));
+            let stat = bun_sys::sys_uv::fstat(file.fd())
+                .unwrap_or_else(|err| fail_file(err, "stat", path));
 
             pack_list.push(PackListEntry {
                 subpath: ZBox::from_bytes(path),
@@ -1965,7 +1965,7 @@ pub(crate) fn pack(
 
             add_archive_entry(
                 &mut ctx,
-                fd,
+                file.fd(),
                 &stat,
                 &item.path,
                 &mut read_buf,

@@ -94,7 +94,6 @@ mod posix {
     use bun_io::posix_event_loop::{Flags, Owner, poll_tag};
     use bun_jsc::JSGlobalObject;
     use bun_jsc::virtual_machine::VirtualMachine;
-    use bun_sys::Fd;
 
     use super::slot;
 
@@ -104,7 +103,7 @@ mod posix {
         poll: Option<OwnedFilePoll>,
         /// After `poll`, which watches it.
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        _psi: Option<bun_sys::CloseOnDrop>,
+        psi: Option<bun_sys::CloseOnDrop>,
         /// PSI `some total=` at arm time, then at the last emitted event.
         #[cfg(any(target_os = "linux", target_os = "android"))]
         psi_some_total: u64,
@@ -115,10 +114,11 @@ mod posix {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn own_cgroup_pressure_path(buf: &mut [u8]) -> Option<&bun_core::ZStr> {
         use bun_sys::O;
-        let fd = bun_sys::open(bun_core::zstr!("/proc/self/cgroup"), O::RDONLY, 0).ok()?;
-        let _close = bun_sys::CloseOnDrop::new(fd);
+        let file = bun_sys::open(bun_core::zstr!("/proc/self/cgroup"), O::RDONLY, 0)
+            .map(bun_sys::CloseOnDrop::new)
+            .ok()?;
         let mut read = [0u8; 256];
-        let n = bun_sys::read(fd, &mut read).unwrap_or(0);
+        let n = file.read(&mut read).unwrap_or(0);
         for line in bun_core::strings::split(&read[..n], b"\n") {
             let Some(rest) = line.strip_prefix(b"0::") else {
                 continue;
@@ -163,8 +163,8 @@ mod posix {
 
     /// `pread` at offset 0 rewinds the seq_file, so the trigger fd is reusable.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn read_psi_file(fd: Fd, buf: &mut [u8; 256]) -> Option<&[u8]> {
-        let n = bun_sys::pread(fd, buf, 0).ok()?;
+    fn read_psi_file<'b>(file: &bun_sys::File, buf: &'b mut [u8; 256]) -> Option<&'b [u8]> {
+        let n = bun_sys::pread(file.fd(), buf, 0).ok()?;
         Some(&buf[..n])
     }
 
@@ -197,13 +197,13 @@ mod posix {
             let Ok(fd) = bun_sys::open(path, O::RDWR | O::NONBLOCK | O::CLOEXEC, 0) else {
                 continue;
             };
-            let psi = bun_sys::CloseOnDrop::new(fd);
+            let file = bun_sys::CloseOnDrop::new(fd);
             let mut buf = [0u8; 256];
-            let some_total = read_psi_file(fd, &mut buf)
+            let some_total = read_psi_file(&file, &mut buf)
                 .and_then(parse_psi_some_total)
                 .unwrap_or(0);
-            if bun_sys::write(fd, PSI_TRIGGER).is_ok() {
-                return Some((psi, some_total));
+            if bun_sys::write(file.fd(), PSI_TRIGGER).is_ok() {
+                return Some((file, some_total));
             }
         }
         None
@@ -215,7 +215,7 @@ mod posix {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let fd = psi.fd();
         #[cfg(target_os = "macos")]
-        let fd = Fd::from_native(0);
+        let fd = bun_sys::Fd::from_native(0);
         #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         {
             let _ = global;
@@ -234,7 +234,7 @@ mod posix {
             Some(MemoryPressureWatcher {
                 poll: Some(poll),
                 #[cfg(any(target_os = "linux", target_os = "android"))]
-                _psi: Some(psi),
+                psi: Some(psi),
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 psi_some_total,
             })
@@ -263,7 +263,7 @@ mod posix {
 
     /// `__bun_run_file_poll` dispatch target. `fflags` is the kqueue `fflags`
     /// on macOS (carrying the pressure level) and 0 on Linux.
-    pub(crate) fn on_poll(fd: Fd, flags: FlagsSet, fflags: i64) {
+    pub(crate) fn on_poll(flags: FlagsSet, fflags: i64) {
         let vm = VirtualMachine::get();
 
         // `EPOLLERR`/`EPOLLHUP` on a PSI fd means the trigger is dead (e.g.
@@ -277,19 +277,23 @@ mod posix {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if !slot(vm).with_mut(|watcher| {
-            let Some(watcher) = watcher else {
+            let Some(MemoryPressureWatcher {
+                psi: Some(psi),
+                psi_some_total,
+                ..
+            }) = watcher
+            else {
                 return false;
             };
             let mut buf = [0u8; 256];
-            read_psi_file(fd, &mut buf).is_none_or(|contents| {
-                psi_growth_reached_threshold(&mut watcher.psi_some_total, contents)
-            })
+            read_psi_file(psi, &mut buf)
+                .is_none_or(|contents| psi_growth_reached_threshold(psi_some_total, contents))
         }) {
             return;
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        let _ = (fd, flags);
+        let _ = flags;
         #[cfg(target_os = "macos")]
         let lvl = fflags as i32;
         #[cfg(not(target_os = "macos"))]
@@ -312,6 +316,7 @@ mod windows {
 
     use bun_event_loop::ConcurrentTask::ConcurrentTask;
     use bun_jsc::JSGlobalObject;
+    use std::os::windows::io::{AsRawHandle as _, HandleOrNull, OwnedHandle};
 
     use super::slot;
 
@@ -338,39 +343,27 @@ mod windows {
         /// A bad handle yields `WAIT_FAILED`.
         safe fn WaitForSingleObject(h: HANDLE, ms: DWORD) -> DWORD;
         fn WaitForMultipleObjects(n: DWORD, h: *const HANDLE, wait_all: BOOL, ms: DWORD) -> DWORD;
-        fn CloseHandle(h: HANDLE) -> BOOL;
-    }
-
-    /// Owns a kernel HANDLE; closes on drop.
-    struct OwnedHandle(HANDLE);
-    impl Drop for OwnedHandle {
-        fn drop(&mut self) {
-            // SAFETY: constructed only from a handle returned by the kernel.
-            unsafe { CloseHandle(self.0) };
-        }
     }
 
     pub(crate) struct MemoryPressureWatcher {
-        /// Held only so it is closed on drop after the thread joins.
-        _notify: OwnedHandle,
         shutdown: OwnedHandle,
         thread: Option<std::thread::JoinHandle<()>>,
     }
 
     impl Drop for MemoryPressureWatcher {
         fn drop(&mut self) {
-            SetEvent(self.shutdown.0);
+            SetEvent(self.shutdown.as_raw_handle());
             if let Some(thread) = self.thread.take() {
                 let _ = thread.join();
             }
         }
     }
 
-    fn thread_main(vm: bun_jsc::VmHandle, notify: usize, shutdown: usize) {
+    fn thread_main(vm: bun_jsc::VmHandle, notify: &OwnedHandle, shutdown: usize) {
         bun_core::output::Source::configure_named_thread(bun_core::zstr!("MemoryPressure"));
-        let handles: [HANDLE; 2] = [shutdown as HANDLE, notify as HANDLE];
+        let handles: [HANDLE; 2] = [shutdown as HANDLE, notify.as_raw_handle()];
         loop {
-            // SAFETY: the watcher joins before it closes the handles.
+            // SAFETY: the watcher joins before it closes `shutdown`.
             let rc = unsafe { WaitForMultipleObjects(2, handles.as_ptr(), 0, u32::MAX) };
             if rc != WAIT_OBJECT_0 + 1 {
                 break;
@@ -397,32 +390,28 @@ mod windows {
         }
 
         let notify = CreateMemoryResourceNotification(LOW_MEMORY_RESOURCE_NOTIFICATION);
-        if notify.is_null() {
+        // SAFETY: a new handle, or null.
+        let Ok(notify) = OwnedHandle::try_from(unsafe { HandleOrNull::from_raw_handle(notify) })
+        else {
             return;
-        }
-        let notify = OwnedHandle(notify);
-        // SAFETY: FFI; manual-reset, initially non-signalled, unnamed.
-        let shutdown = unsafe { CreateEventW(ptr::null_mut(), 1, 0, ptr::null()) };
-        if shutdown.is_null() {
+        };
+        // SAFETY: FFI; manual-reset, initially non-signalled, unnamed. A new handle, or null.
+        let Ok(shutdown) = OwnedHandle::try_from(unsafe {
+            HandleOrNull::from_raw_handle(CreateEventW(ptr::null_mut(), 1, 0, ptr::null()))
+        }) else {
             return;
-        }
-        let shutdown = OwnedHandle(shutdown);
+        };
 
-        let (vm, n, s) = (
-            global.bun_vm().handle(),
-            notify.0 as usize,
-            shutdown.0 as usize,
-        );
+        let (vm, s) = (global.bun_vm().handle(), shutdown.as_raw_handle() as usize);
         let Ok(thread) = std::thread::Builder::new()
             .name("MemoryPressure".into())
             .stack_size(64 * 1024)
-            .spawn(move || thread_main(vm, n, s))
+            .spawn(move || thread_main(vm, &notify, s))
         else {
             return;
         };
 
         slot(global.bun_vm()).set(Some(MemoryPressureWatcher {
-            _notify: notify,
             shutdown,
             thread: Some(thread),
         }));

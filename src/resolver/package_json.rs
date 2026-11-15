@@ -430,39 +430,25 @@ impl PackageJSON {
         // So we cannot free these
         // (allocator dropped — global mimalloc)
 
-        let entry = match r.caches.fs.read_file_with_allocator(
-            package_json_path,
-            dirname_fd,
-            false,
-            None,
-            None,
-        ) {
-            Ok(e) => e,
-            Err(err) => {
-                if err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR) {
-                    r_log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Cannot read file \"{}\": {}",
-                            bstr::BStr::new(input_path),
-                            bstr::BStr::new(err.name())
-                        ),
-                    );
-                }
+        let entry_contents: Box<[u8]> =
+            match (r.caches.fs).read_file_and_close(package_json_path, dirname_fd) {
+                Ok(contents) => contents.into_boxed_slice(),
+                Err(err) => {
+                    if err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR) {
+                        r_log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Cannot read file \"{}\": {}",
+                                bstr::BStr::new(input_path),
+                                bstr::BStr::new(err.name())
+                            ),
+                        );
+                    }
 
-                return None;
-            }
-        };
-        let _file = entry.fd.unwrap_valid().map(bun_sys::File::from_fd);
-        // Immediately convert to owned `Box<[u8]>`: `use_shared_buffer = false`
-        // above guarantees `Contents::Owned`/`Empty`, so the match is exhaustive
-        // in practice (the catch-all copy is unreachable but defensive).
-        let entry_contents: Box<[u8]> = match entry.contents {
-            crate::cache::Contents::Owned(v) => v.into_boxed_slice(),
-            crate::cache::Contents::Empty => Box::default(),
-            other => Box::from(other.as_slice()),
-        };
+                    return None;
+                }
+            };
 
         if let Some(debug) = r.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(

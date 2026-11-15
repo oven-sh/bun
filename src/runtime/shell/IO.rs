@@ -70,7 +70,7 @@ impl OutFd {
     /// Mutably borrow the JS-side captured stdout/stderr buffer if configured.
     ///
     /// `captured` is a non-owning backref into `ShellExecEnv::_buffered_*`
-    /// (see field doc); the owning `ShellExecEnv` outlives every `Cmd`/builtin
+    /// (see field doc); the root `ShellExecEnv` outlives every `Cmd`/builtin
     /// that holds an `OutFd`. Localises the per-callsite raw deref so callers
     /// can `if let Some(buf) = fd.captured_mut() { buf.extend_from_slice(...) }`.
     ///

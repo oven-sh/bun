@@ -1680,10 +1680,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(val) = data.value.as_mut() {
             p.visit_expr(val);
 
-            // "return undefined;" can safely just always be "return;"
+            // In an async generator "return undefined;" awaits its operand and "return;" does not.
             if let Some(v) = data.value {
-                if matches!(v.data, js_ast::ExprData::EUndefined(_)) {
-                    // Returning undefined is implicit
+                if matches!(v.data, js_ast::ExprData::EUndefined(_))
+                    && !p.fn_or_arrow_data_visit.is_async_generator
+                {
                     data.value = None;
                 }
             }

@@ -157,7 +157,7 @@ pub(crate) fn compute_chunks<'a>(
         }
 
         if css_asts[source_index as usize].is_some() {
-            let order = find_imported_files_in_css_order(this, temp, &[Index::init(source_index)]);
+            let order = find_imported_files_in_css_order(this, &[Index::init(source_index)]);
             let order = css_order_or_log(log, sources, order);
             // Create a chunk for the entry point here to ensure that the chunk is
             // always generated even if the resulting file is empty
@@ -223,8 +223,7 @@ pub(crate) fn compute_chunks<'a>(
             let css_source_indices =
                 find_imported_css_files_in_js_order(this, temp, Index::init(source_index));
             if css_source_indices.len() > 0 {
-                let order =
-                    find_imported_files_in_css_order(this, temp, css_source_indices.slice());
+                let order = find_imported_files_in_css_order(this, css_source_indices.slice());
                 let order = css_order_or_log(log, sources, order);
 
                 // Always use content-based hashing for CSS chunk deduplication.

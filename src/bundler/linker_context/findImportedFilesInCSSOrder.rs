@@ -45,11 +45,8 @@ use bun_ast::Index as AstIndex;
 /// is too deep for the thread's stack, and the caller reports it.
 pub(crate) fn find_imported_files_in_css_order<'a>(
     this: &LinkerContext<'_, 'a>,
-    temp_arena: &Arena,
     entry_points: &[Index],
 ) -> Result<Vec<CssImportOrder<'a>>, CssImportChainTooDeep> {
-    let _ = temp_arena;
-
     struct Visitor<'v, 'a> {
         arena: &'a Arena,
         // `BundledAst.css` SoA column.
@@ -118,13 +115,14 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             conditions: &[ImportConditionsRef<'a>],
             sheet: CssAstRef<'a>,
             rule_index: usize,
+            has_anonymous_layer: bool,
         ) -> &'a [ImportConditionsRef<'a>] {
             let mut appended = ImportConditionsRef {
                 sheet,
                 rule_index: rule_index as u32,
                 anonymous_layer_id: None,
             };
-            if appended.has_anonymous_layer() {
+            if has_anonymous_layer {
                 self.anonymous_layers += 1;
                 appended.anonymous_layer_id = NonZeroU32::new(self.anonymous_layers);
             }
@@ -212,7 +210,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
 
                     // The conditions of this import add to those that wrap this file.
                     let conditions = if import_rule.has_conditions() {
-                        self.fork_conditions(wrapping_conditions, repr, rule_index)
+                        let is_anonymous = import_rule.conditions.has_anonymous_layer();
+                        self.fork_conditions(wrapping_conditions, repr, rule_index, is_anonymous)
                     } else {
                         wrapping_conditions
                     };

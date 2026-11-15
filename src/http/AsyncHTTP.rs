@@ -581,7 +581,7 @@ impl AsyncHTTP<'static> {
 
     pub(crate) fn release_at_shutdown(mut self: Box<Self>) {
         let callback = self.result_callback;
-        // `HTTPClient::drop` asserts that `h2` is `None`.
+        // Its session never runs again.
         self.client.h2 = None;
         drop(self);
         if let Some(release) = callback.release_at_shutdown {

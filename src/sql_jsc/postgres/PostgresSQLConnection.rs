@@ -86,7 +86,7 @@ pub struct PostgresSQLConnection {
 
     pub(crate) write_buffer: JsCell<OffsetByteList>,
     read_buffer: JsCell<OffsetByteList>,
-    /// While set, a re-entrant read only appends to `read_buffer`.
+    /// While set, a read from a nested event loop tick only appends to `read_buffer`.
     pub(crate) defer_reads: Cell<bool>,
     pub(crate) requests: JsCell<PostgresRequest::Queue>,
     /// number of requests in flight whose Bind and Execute are written

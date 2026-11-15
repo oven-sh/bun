@@ -54,7 +54,7 @@ pub struct MySQLConnection {
 
     write_buffer: OffsetByteList,
     read_buffer: OffsetByteList,
-    /// While set, a re-entrant read only appends to `read_buffer`.
+    /// While set, a read from a nested event loop tick only appends to `read_buffer`.
     defer_reads: bool,
     /// The one behind the last packet that was read.
     sequence_id: u8,

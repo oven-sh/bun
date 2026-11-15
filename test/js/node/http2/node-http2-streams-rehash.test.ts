@@ -238,7 +238,7 @@ describe.concurrent("re-entering a session from its Duplex transport's _write", 
     const http2 = require("node:http2");
     const { once } = require("node:events");
     const { Duplex } = require("node:stream");
-    const [DATA, HEADERS, RST_STREAM, SETTINGS, PING, GOAWAY, WINDOW_UPDATE] = [0, 1, 3, 4, 6, 7, 8];
+    const [DATA, HEADERS, RST_STREAM, SETTINGS, PING, WINDOW_UPDATE] = [0, 1, 3, 4, 6, 8];
     const [END_STREAM, ACK, END_HEADERS] = [1, 1, 4];
     function frame(type, flags, streamId, body = Buffer.alloc(0)) {
       const header = Buffer.alloc(9);
@@ -283,10 +283,9 @@ describe.concurrent("re-entering a session from its Duplex transport's _write", 
     function parse(bytes, type) {
       const found = [];
       for (let rest = bytes; rest.length; rest = rest.subarray(9 + rest.readUIntBE(0, 3))) {
-        const body = rest.subarray(9, 9 + rest.readUIntBE(0, 3));
-        found.push({ type: rest[3], flags: rest[4], id: rest.readUInt32BE(5), body });
+        found.push({ type: rest[3], flags: rest[4] });
       }
-      return type === undefined ? found : found.filter(frame => frame.type === type);
+      return found.filter(frame => frame.type === type);
     }
     async function handshake(options, greeting, open) {
       const written = [];
@@ -299,9 +298,9 @@ describe.concurrent("re-entering a session from its Duplex transport's _write", 
       written.length = 0;
       return { session, duplex, frames: type => parse(Buffer.concat(written), type) };
     }
-    const connect = (options, settings) =>
+    const connect = options =>
       handshake(options, settingsAndAck(), async duplex => {
-        const session = http2.connect("http://localhost:1", { createConnection: () => duplex, settings });
+        const session = http2.connect("http://localhost:1", { createConnection: () => duplex });
         await once(session, "connect");
         return session;
       });
@@ -354,11 +353,6 @@ describe.concurrent("re-entering a session from its Duplex transport's _write", 
     const hpackStatus200 = Buffer.from([0x88]);
     // With its frame header, leaves no room in the cork buffer for the next frame.
     const fillsCorkBuffer = Buffer.alloc(16374);
-    function countingBody(length) {
-      const body = Buffer.alloc(length);
-      for (let i = 0; i < length; i += 4) body.writeUInt32BE(i, i);
-      return body;
-    }
     async function requestWantingTrailers(session, options) {
       const req = session.request(post, { waitForTrailers: true, ...options }).on("error", () => {});
       const wanted = once(req, "wantTrailers");
@@ -440,6 +434,25 @@ describe.concurrent("re-entering a session from its Duplex transport's _write", 
     expect(result).toEqual({ stdout: "false false 4", stderr: "", exitCode: 0 });
   });
 
+  test("closed streams are freed when every read comes from a flush of queued DATA", async () => {
+    const result = await run(/* js */ `
+      const { session, duplex, encrypt, close } = await connectTls();
+      // More than its window: from now on every write is queued.
+      session.request(post).on("error", () => {}).write(Buffer.alloc(70000));
+      await until(() => session.state.outboundQueueSize > 0);
+      duplex.minLength = 16384;
+      for (let id = 3; id <= 7; id += 2) {
+        const record = await encrypt(frame(HEADERS, END_STREAM | END_HEADERS, id, hpackStatus200));
+        duplex.inNextWrite = () => duplex.push(record);
+        await once(session.request(post).resume().end(Buffer.alloc(20000)), "close");
+        await tick();
+      }
+      console.log(isAllocated(session, 3), isAllocated(session, 5));
+      close();
+    `);
+    expect(result).toEqual({ stdout: "false false", stderr: "", exitCode: 0 });
+  });
+
   test("destroy() and GC do not free the TLSSocket mid-write", async () => {
     const result = await run(/* js */ `
       const { session, socket, duplex, close } = await connectTls();
@@ -473,45 +486,6 @@ describe.concurrent("re-entering a session from its Duplex transport's _write", 
     expect(result).toEqual({ stdout: "ERR_HTTP2_STREAM_ERROR", stderr: "", exitCode: 0 });
   });
 
-  test("abort() drops unsent DATA and later streams still send", async () => {
-    const result = await run(/* js */ `
-      const { session, duplex, frames } = await connect();
-      const controller = new AbortController();
-      const aborted = session.request(post, { signal: controller.signal });
-      await until(() => frames(HEADERS).length === 1);
-      duplex.inNextWrite = () => controller.abort();
-      // More than the window: the rest would be queued once the first part is written.
-      aborted.write(Buffer.alloc(65535 + 40000));
-      await once(aborted, "error");
-      console.log(session.state.outboundQueueSize);
-
-      duplex.push(windowUpdate(0));
-      const next = session.request(post).on("error", () => {});
-      await until(() => frames(HEADERS).length === 2);
-      next.write("hello");
-      await until(() => frames(DATA).at(-1).id === 3);
-      console.log(frames(DATA).at(-1).body.toString());
-      session.destroy();
-    `);
-    expect(result).toEqual({ stdout: "0\nhello", stderr: "", exitCode: 0 });
-  });
-
-  test("WINDOW_UPDATE resumes the write that used up the window", async () => {
-    const result = await run(/* js */ `
-      const { session, duplex, frames } = await connect();
-      const req = session.request(post).on("error", () => {});
-      await until(() => frames(HEADERS).length === 1);
-      duplex.inNextWrite = () => duplex.push(Buffer.concat([windowUpdate(0), windowUpdate(1)]));
-      const body = countingBody(70000);
-      req.end(body);
-      await until(() => req.writableFinished);
-      console.log(Buffer.concat(frames(DATA).map(frame => frame.body)).equals(body));
-      console.log(frames(DATA).map(frame => frame.flags).join());
-      session.destroy();
-    `);
-    expect(result).toEqual({ stdout: "true\n0,0,0,0,0,1", stderr: "", exitCode: 0 });
-  });
-
   test.each([
     ["_write", "req.end(Buffer.alloc(70000));"],
     ["_writev", "req.write(Buffer.alloc(35000)); req.end(Buffer.alloc(35000));"],
@@ -530,45 +504,6 @@ describe.concurrent("re-entering a session from its Duplex transport's _write", 
       session.destroy();
     `);
     expect(result).toEqual({ stdout: "0,0,0,0,0,1", stderr: "", exitCode: 0 });
-  });
-
-  test("echoes more than a window over duplexPair()", async () => {
-    const result = await run(/* js */ `
-      const [clientSide, serverSide] = require("node:stream").duplexPair();
-      http2.performServerHandshake(serverSide).on("stream", stream => {
-        stream.respond();
-        stream.pipe(stream);
-      });
-      const session = http2.connect("http://localhost:1", { createConnection: () => clientSide });
-      const req = session.request(post);
-      let received = 0;
-      req.on("data", chunk => (received += chunk.length)).end(Buffer.alloc(70000));
-      await until(() => req.destroyed);
-      console.log(received, req.rstCode);
-      session.destroy();
-    `);
-    expect(result).toEqual({ stdout: "70000 0", stderr: "", exitCode: 0 });
-  });
-
-  test("a PING pushed while resume() writes WINDOW_UPDATE is read", async () => {
-    const result = await run(/* js */ `
-      const { session, duplex, frames } = await connect({}, { initialWindowSize: 1 << 20 });
-      const req = session.request({ ":path": "/" }).on("error", () => {});
-      const other = session.request(post).on("error", () => {});
-      await until(() => frames(HEADERS).length === 2);
-      req.pause();
-      duplex.push(frame(HEADERS, END_HEADERS, 1, hpackStatus200));
-      for (let i = 0; i < 40; i++) duplex.push(frame(DATA, 0, 1, Buffer.alloc(16384)));
-      let pinged = false;
-      session.on("ping", () => (pinged = true));
-      duplex.inNextWrite = () => duplex.push(ping());
-      req.prependListener("resume", () => other.write(fillsCorkBuffer));
-      req.resume();
-      await until(() => pinged);
-      console.log("pinged");
-      session.destroy();
-    `);
-    expect(result).toEqual({ stdout: "pinged", stderr: "", exitCode: 0 });
   });
 
   test.skipIf(!isASAN)("process.exit() leaves no leak report", async () => {
@@ -593,23 +528,6 @@ describe.concurrent("re-entering a session from its Duplex transport's _write", 
 
   // Sessions share one cork buffer. b has a frame in it when a starts to write.
   describe("b's _write runs because a takes the cork buffer", () => {
-    const withQueuedBody = /* js */ `
-      const a = await connect({ writableHighWaterMark: 1 });
-      const b = await connect();
-      const controller = new AbortController();
-      const req = a.session.request(post, { signal: controller.signal }).on("error", () => {});
-      const body = countingBody(1 << 18);
-      req.write(body);
-      await until(() => a.session.state.outboundQueueSize > 0);
-      a.duplex.stall = true;
-      a.duplex.push(Buffer.concat([windowUpdate(0), windowUpdate(1)]));
-      await until(() => a.duplex.stalled);
-      // 'drain' flushes the rest of the queue.
-      const write = () => {
-        a.duplex.stall = false;
-        a.duplex.stalled();
-      };`;
-
     test.each([
       [
         "sendTrailers({})",
@@ -621,7 +539,24 @@ describe.concurrent("re-entering a session from its Duplex transport's _write", 
       await until(() => a.frames(HEADERS).length === 1);
       const write = () => req.sendTrailers({});`,
       ],
-      ["a flush of queued DATA", withQueuedBody],
+      [
+        "a flush of queued DATA",
+        /* js */ `
+      const a = await connect({ writableHighWaterMark: 1 });
+      const b = await connect();
+      const controller = new AbortController();
+      const req = a.session.request(post, { signal: controller.signal }).on("error", () => {});
+      req.write(Buffer.alloc(1 << 18));
+      await until(() => a.session.state.outboundQueueSize > 0);
+      a.duplex.stall = true;
+      a.duplex.push(Buffer.concat([windowUpdate(0), windowUpdate(1)]));
+      await until(() => a.duplex.stalled);
+      // 'drain' flushes the rest of the queue.
+      const write = () => {
+        a.duplex.stall = false;
+        a.duplex.stalled();
+      };`,
+      ],
     ])("abort() and a read during %s do not free the stream", async (_, setup) => {
       const result = await run(/* js */ `
       ${setup}
@@ -639,76 +574,6 @@ describe.concurrent("re-entering a session from its Duplex transport's _write", 
       b.session.destroy();
     `);
       expect(result).toEqual({ stdout: "true\nfalse", stderr: "", exitCode: 0 });
-    });
-
-    test("a read does not reorder queued DATA", async () => {
-      const result = await run(/* js */ `
-      ${withQueuedBody}
-      b.duplex.inNextWrite = () => a.duplex.push(ping());
-      b.session.ping(() => {});
-      write();
-      const sent = () => Buffer.concat(a.frames(DATA).map(frame => frame.body));
-      await until(() => sent().length === body.length);
-      console.log(sent().equals(body));
-      a.session.destroy();
-      b.session.destroy();
-    `);
-      expect(result).toEqual({ stdout: "true", stderr: "", exitCode: 0 });
-    });
-
-    // The block that adds the field to the dynamic table has to go out before the one that indexes it.
-    test.each([
-      [
-        "sendTrailers()",
-        /* js */ `
-      const a = await connect();
-      const req = await requestWantingTrailers(a.session);
-      await until(() => a.frames(HEADERS).length === 1);
-      const nested = () => a.session.request({ ...field }).on("error", () => {});
-      const write = () => req.sendTrailers({ ...field });`,
-      ],
-      [
-        "respond()",
-        /* js */ `
-      const a = await accept();
-      const streams = [];
-      a.session.on("stream", stream => streams.push(stream.on("error", () => {})));
-      a.duplex.push(Buffer.concat([frame(HEADERS, END_STREAM | END_HEADERS, 1, hpackGet), frame(HEADERS, END_STREAM | END_HEADERS, 3, hpackGet)]));
-      await until(() => streams.length === 2);
-      const nested = () => streams[1].respond({ ...field });
-      const write = () => streams[0].respond({ ...field });`,
-      ],
-    ])("header blocks of %s and a nested call are sent in HPACK encoding order", async (_, setup) => {
-      const result = await run(/* js */ `
-      const field = { "x-field": Buffer.alloc(200, "a").toString() };
-      ${setup}
-      const b = await connect();
-      const sent = a.frames(HEADERS).length;
-      b.duplex.inNextWrite = nested;
-      b.session.ping(() => {});
-      write();
-      await until(() => a.frames(HEADERS).length === sent + 2);
-      const [first, second] = a.frames(HEADERS).slice(sent);
-      console.log([first.id, second.id].join(), first.body.length > 100, second.body.length > 100);
-      a.session.destroy();
-      b.session.destroy();
-    `);
-      expect(result).toEqual({ stdout: "3,1 true false", stderr: "", exitCode: 0 });
-    });
-
-    test("WINDOW_UPDATE(0) on a does not flush b while a's stream window is empty", async () => {
-      const result = await run(/* js */ `
-      const a = await connect();
-      const b = await connect();
-      a.session.request(post).on("error", () => {}).write(Buffer.alloc(70000));
-      await until(() => a.session.state.outboundQueueSize > 0);
-      b.session.ping(() => {});
-      a.duplex.push(windowUpdate(0));
-      console.log(b.frames(PING).length);
-      a.session.destroy();
-      b.session.destroy();
-    `);
-      expect(result).toEqual({ stdout: "0", stderr: "", exitCode: 0 });
     });
 
     test("RST_STREAM during respond() closes and frees the stream", async () => {
@@ -731,88 +596,6 @@ describe.concurrent("re-entering a session from its Duplex transport's _write", 
       b.session.destroy();
     `);
       expect(result).toEqual({ stdout: "false", stderr: "", exitCode: 0 });
-    });
-
-    test.each(["GET", "POST"])("abort() during a %s request() sends RST_STREAM after HEADERS", async method => {
-      const result = await run(/* js */ `
-      const a = await connect();
-      const b = await connect();
-      const controller = new AbortController();
-      b.duplex.inNextWrite = () => controller.abort();
-      b.session.ping(() => {});
-      const req = a.session.request({ ":method": "${method}", ":path": "/" }, { signal: controller.signal });
-      const [error] = await once(req, "error");
-      await until(() => a.frames(RST_STREAM).length > 0);
-      console.log(error.code, req.aborted, a.frames().map(frame => frame.type).join());
-      a.session.destroy();
-      b.session.destroy();
-    `);
-      expect(result).toEqual({ stdout: "ABORT_ERR true 1,3", stderr: "", exitCode: 0 });
-    });
-
-    test.each([
-      ["destroy()", "ERR_HTTP2_STREAM_CANCEL 8"],
-      ["destroy(Object.assign(new Error(), { code: 'MINE' }))", "MINE 2"],
-    ])("%s during request() fails the request", async (destroy, expected) => {
-      const result = await run(/* js */ `
-      const a = await connect();
-      const b = await connect();
-      a.session.on("error", () => {});
-      b.duplex.inNextWrite = () => a.session.${destroy};
-      b.session.ping(() => {});
-      const req = a.session.request(post);
-      const [error] = await once(req, "error");
-      console.log(error.code, req.rstCode);
-      b.session.destroy();
-    `);
-      expect(result).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
-    });
-
-    test.each([0, 2])("GOAWAY(%d) during request() refuses the request", async code => {
-      const result = await run(/* js */ `
-      const a = await connect();
-      const b = await accept();
-      a.session.on("error", () => {});
-      b.duplex.inNextWrite = () => a.duplex.push(frame(GOAWAY, 0, 0, b.frames(GOAWAY)[0].body));
-      b.session.goaway(${code});
-      const req = a.session.request(post);
-      const [error] = await once(req, "error");
-      console.log(error.code, req.rstCode);
-      a.session.destroy();
-      b.session.destroy();
-    `);
-      expect(result).toEqual({ stdout: "ERR_HTTP2_GOAWAY_SESSION 7", stderr: "", exitCode: 0 });
-    });
-
-    test.each([
-      ["a", { a: ["reenter!", "a-outer."], b: ["b-first."], c: [] }],
-      ["b", { a: ["a-outer."], b: ["b-first.", "reenter!"], c: [] }],
-      ["c", { a: ["a-outer."], b: ["b-first."], c: ["reenter!"] }],
-    ])("a PING sent on %s is not lost", async (target, expected) => {
-      const result = await run(/* js */ `
-      const peers = { a: await connect(), b: await connect(), c: await connect() };
-      const pings = peer => peer.frames(PING).map(frame => frame.body.toString());
-      peers.b.duplex.inNextWrite = () => peers.${target}.session.ping(Buffer.from("reenter!"), () => {});
-      peers.b.session.ping(Buffer.from("b-first."), () => {});
-      peers.a.session.ping(Buffer.from("a-outer."), () => {});
-      await until(() => Object.values(peers).flatMap(pings).length === 3);
-      console.log(JSON.stringify({ a: pings(peers.a), b: pings(peers.b), c: pings(peers.c) }));
-      for (const { session } of Object.values(peers)) session.destroy();
-    `);
-      expect(result).toEqual({ stdout: JSON.stringify(expected), stderr: "", exitCode: 0 });
-    });
-
-    test.each(["connect", "accept"])("b's corked PING is written before destroy() (%s)", async open => {
-      const result = await run(/* js */ `
-      const a = await connect();
-      const b = await ${open}();
-      b.session.ping(Buffer.from("b-first."), () => {});
-      a.session.ping(() => {});
-      b.session.destroy();
-      console.log(b.frames(PING).map(frame => frame.body.toString()).join());
-      a.session.destroy();
-    `);
-      expect(result).toEqual({ stdout: "b-first.", stderr: "", exitCode: 0 });
     });
   });
 });

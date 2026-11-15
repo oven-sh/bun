@@ -2184,15 +2184,18 @@ impl Connection {
         self.streams.remove(&stream_id);
     }
 
-    /// The WINDOW_UPDATE increment to send now, or 0 (the embedder's reader resumed after a
+    /// Replenish a single stream's receive window now (the embedder's reader resumed after a
     /// pause). Without this, a peer stalled on a zero stream window would only be released by the
     /// next inbound batch — which may never come, since the peer is the one waiting.
-    pub(crate) fn take_stream_window_update(&mut self, stream_id: u32) -> u32 {
-        match self.streams.get_mut(&stream_id) {
+    pub(crate) fn replenish_stream(&mut self, sink: &impl Sink, stream_id: u32) {
+        let inc = match self.streams.get_mut(&stream_id) {
             Some(s) if s.state != State::Closed && s.recv_window.needs_update() => {
                 s.recv_window.take_update()
             }
-            _ => 0,
+            _ => return,
+        };
+        if inc > 0 {
+            self.send_window_update(sink, stream_id, inc);
         }
     }
 

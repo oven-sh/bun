@@ -28,7 +28,7 @@ use crate::api::bun_spawn::stdio::{self, Stdio};
 
 /// Local helper: `IoKind` → tag-name string for logs.
 #[inline]
-fn out_kind_str(k: IoKind) -> &'static str {
+fn io_kind_str(k: IoKind) -> &'static str {
     match k {
         IoKind::Stdout => "stdout",
         IoKind::Stderr => "stderr",
@@ -76,7 +76,7 @@ pub(crate) struct SubprocExec<'a> {
     ctrl_c_child: Option<bun_spawn::ctrl_c::Child>,
 
     /// `spawn_async` has not returned, so `finish_if_done` must not finish the `Cmd`.
-    pub(crate) spawning: bool,
+    pub(crate) is_spawning: bool,
 
     /// Keeps it inside its `Interpreter<'a>`.
     _interp: PhantomData<&'a ()>,
@@ -190,7 +190,7 @@ impl<'a> SubprocExec<'a> {
     ///
     /// VM-shutdown finalizer only (on a live heap this would leak the pin and
     /// GC root).
-    pub(crate) fn defuse_array_buffer_unpins(&mut self) {
+    pub(crate) fn defuse_array_buf_pins(&mut self) {
         for pipe in [&mut self.stdout, &mut self.stderr].into_iter().flatten() {
             if let BufferedOutput::ArrayBuffer { buf, .. } = &mut pipe.buffered_output {
                 buf.defuse();
@@ -332,7 +332,7 @@ impl<'a> SubprocExec<'a> {
             stdout,
             stderr,
             ctrl_c_child,
-            spawning: true,
+            is_spawning: true,
             _interp: PhantomData,
         });
 
@@ -396,7 +396,7 @@ impl ShellSubprocess {
             ControlFlow::Break(y) => return y,
         }
         let y = shell_interp.with_interp(|interp| {
-            SubprocExec::of_mut(interp, cmd).spawning = false;
+            SubprocExec::of_mut(interp, cmd).is_spawning = false;
             interp.as_cmd_mut(cmd).finish_if_done(cmd)
         });
         y.expect("the script waits for this Cmd")
@@ -481,7 +481,7 @@ impl ShellSubprocess {
             log!(
                 "PipeReader({}, {}) onReadChunk(chunk_len={}, has_more={})",
                 self.cmd,
-                out_kind_str(kind),
+                io_kind_str(kind),
                 chunk.len(),
                 read_state_str(has_more)
             );
@@ -782,7 +782,7 @@ impl PipeReader {
         Self::try_signal_done_to_cmd(interp, cmd, kind)
     }
 
-    pub(crate) fn on_iowriter_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &mut Interpreter<'_>,
         cmd: NodeId,
         kind: IoKind,
@@ -798,7 +798,7 @@ impl PipeReader {
         log!(
             "CapturedWriter({}, {}) onWrite({}, has_err={}) total_written={} total_to_write={}",
             cmd,
-            out_kind_str(kind),
+            io_kind_str(kind),
             amount,
             err.is_some(),
             cw.written,
@@ -823,7 +823,7 @@ impl PipeReader {
         log!(
             "signalDoneToCmd ({}: {}) state={}",
             cmd,
-            out_kind_str(kind),
+            io_kind_str(kind),
             <&'static str>::from(me.state)
         );
         exec.child.reader(kind).deinit();

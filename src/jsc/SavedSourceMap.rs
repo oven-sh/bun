@@ -76,6 +76,7 @@ impl bun_js_printer::OnSourceMapChunk for SavedSourceMap {
         &self,
         chunk: SourceMap::Chunk,
         source: &bun_ast::Source,
+        _: &mut MutableString,
     ) -> bun_js_printer::Result<()> {
         self.put_mappings(source, chunk.buffer)
     }

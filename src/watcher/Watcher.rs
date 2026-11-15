@@ -55,16 +55,6 @@ const NO_WATCH_ITEM: WatchItemIndex = WatchItemIndex::MAX;
 
 // ─── erased upward types (CYCLEBREAK) ─────────────────────────────────────
 
-/// Opaque forward-decl of `bun_resolver::package_json::PackageJSON` (T5).
-/// Watcher only stores `Option<&PackageJSON>` and passes it through; never
-/// dereferenced here. Real layout lives in `bun_resolver`.
-// SAFETY: erased PackageJSON — only ever held by reference / raw ptr.
-#[repr(C)]
-pub struct PackageJSON {
-    _opaque: [u8; 0],
-    _pinned: core::marker::PhantomPinned,
-}
-
 /// Manual vtable for resolver→watcher directory-watch callbacks.
 /// Was `bun_resolver::AnyResolveWatcher` (T5); defined here so the low-tier
 /// crate owns the shape and `bun_resolver` re-imports it (move-in pass).
@@ -107,8 +97,8 @@ pub struct Watcher {
     /// The platform-specific implementation of the watcher
     pub(crate) platform: Platform,
 
-    pub watchlist: WatchList,
-    pub mutex: Mutex,
+    pub(crate) watchlist: WatchList,
+    pub(crate) mutex: Mutex,
 
     // Storing the `top_level_dir` slice directly avoids a forward-decl
     // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
@@ -368,12 +358,10 @@ impl Watcher {
         if self.evict_list_i == 0 {
             return;
         }
-        // The swap_remove below must be serialized against the JS
-        // thread's watchlist lookups (`ImportWatcher::snapshot_package_json`)
-        // and `append_file_maybe_lock<true>` re-adds — both take `self.mutex`.
+        // The swap_remove below must be serialized against `append_file_maybe_lock<true>` re-adds, which take `self.mutex`.
         // The close it does is also why the watchlist's stored fd is never
         // handed out for reads: a reader that copied the number before this
-        // ran would hit `EBADF`/`EISDIR` after (see `snapshot_package_json`).
+        // ran would hit `EBADF`/`EISDIR` after.
         //
         // We do NOT lock here: the only callers run inside
         // `WatcherContext::on_file_update`, which is itself invoked from
@@ -467,7 +455,6 @@ impl Watcher {
         file_path: &[u8],
         hash: HashType,
         parent_hash: HashType,
-        package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<()> {
         #[cfg(windows)]
         {
@@ -526,7 +513,6 @@ impl Watcher {
             file,
             hash,
             parent_hash,
-            package_json,
             kind: WatchItemKind::File,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
@@ -609,7 +595,6 @@ impl Watcher {
             hash,
             parent_hash,
             kind: WatchItemKind::Directory,
-            package_json: None,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index,
         });
@@ -623,7 +608,6 @@ impl Watcher {
         file: Option<CloseOnDrop>,
         file_path: &[u8],
         hash: HashType,
-        package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<()> {
         // RAII guard: `lock_guard()` holds the
         // mutex by `BackRef`, not a borrow of `self`, so the `&mut self` calls
@@ -652,14 +636,8 @@ impl Watcher {
                 .map_err(|err| err.with_path(parent_dir))?;
         }
 
-        self.append_file_assume_capacity::<CLONE_FILE_PATH>(
-            file,
-            file_path,
-            hash,
-            parent_dir_hash,
-            package_json,
-        )
-        .map_err(|err| err.with_path(file_path))?;
+        self.append_file_assume_capacity::<CLONE_FILE_PATH>(file, file_path, hash, parent_dir_hash)
+            .map_err(|err| err.with_path(file_path))?;
 
         let cwd_len_with_slash = if self.cwd[self.cwd.len() - 1] == b'/' {
             self.cwd.len()
@@ -754,7 +732,7 @@ impl Watcher {
         #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
         let file = None;
 
-        self.add_file::<true>(file, file_path, hash, None).is_ok()
+        self.add_file::<true>(file, file_path, hash).is_ok()
     }
 
     /// Closes `file` unless the watchlist keeps it.
@@ -763,7 +741,6 @@ impl Watcher {
         file: Option<File>,
         file_path: &[u8],
         hash: HashType,
-        package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<()> {
         let file = file.map(CloseOnDrop::from);
         // This must lock due to concurrent transpiler
@@ -783,10 +760,10 @@ impl Watcher {
             return Ok(());
         }
 
-        self.append_file_maybe_lock::<CLONE_FILE_PATH, false>(file, file_path, hash, package_json)
+        self.append_file_maybe_lock::<CLONE_FILE_PATH, false>(file, file_path, hash)
     }
 
-    pub fn index_of(&self, hash: HashType) -> Option<u32> {
+    fn index_of(&self, hash: HashType) -> Option<u32> {
         for (i, other) in self.watchlist.items_hash().iter().enumerate() {
             if hash == *other {
                 return Some(i as u32);
@@ -934,7 +911,6 @@ pub struct WatchItem {
     pub file: Option<CloseOnDrop>,
     pub parent_hash: u32,
     pub kind: WatchItemKind,
-    pub package_json: Option<&'static PackageJSON>,
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub eventlist_index: platform::EventListIndex,
 }

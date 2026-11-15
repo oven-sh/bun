@@ -179,7 +179,7 @@ impl PnpmMatcher {
     // transient UTF-16→UTF-8 transcoding inside `slice`/`string_cloned`.
     pub fn from_expr(
         expr: &ast::Expr,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &bun_ast::Source,
     ) -> Result<PnpmMatcher, FromExprError> {
         // Scratch arena for `E::String::slice` / `as_string_cloned`.

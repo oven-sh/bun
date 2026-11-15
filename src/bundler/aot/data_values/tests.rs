@@ -16,13 +16,13 @@ fn with_scope(test: impl for<'s> FnOnce(&Interner<'s>, &'s Arena, &Arena)) {
 
 fn parse_tape(text: &'static [u8], scratch: &Arena) -> Expr {
     let source = Source::init_path_string(b"/value.json", text);
-    parse_json_into_arena(&source, &mut Log::default(), scratch)
+    parse_json_into_arena(&source, &Log::default(), scratch)
         .unwrap_or_else(|_| panic!("valid JSON"))
 }
 
 fn parse_tree(text: &'static [u8], scratch: &Arena) -> Expr {
     let source = Source::init_path_string(b"/value.json", text);
-    parse_utf8(&source, &mut Log::default(), scratch).unwrap_or_else(|_| panic!("valid JSON"))
+    parse_utf8(&source, &Log::default(), scratch).unwrap_or_else(|_| panic!("valid JSON"))
 }
 
 fn write_error(root: &Expr, scratch: &Arena) -> NotData {
@@ -164,11 +164,11 @@ fn big_int_expr(digits: &'static [u8]) -> Expr {
 }
 
 fn reported_text(error: NotData) -> Vec<u8> {
-    let mut log = Log::default();
-    report_not_data(&mut log, b"/project/value.toml", "the value", error);
-    assert_eq!(log.errors, 1);
-    assert_eq!(log.msgs.len(), 1);
-    log.msgs[0].data.text.to_vec()
+    let log = Log::default();
+    report_not_data(&log, b"/project/value.toml", "the value", error);
+    assert_eq!(log.errors.get(), 1);
+    assert_eq!(log.msgs_len(), 1);
+    log.msgs.take()[0].data.text.to_vec()
 }
 
 fn nesting_depth(mut value: &DataValue<'_>) -> usize {

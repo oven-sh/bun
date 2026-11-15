@@ -36,8 +36,8 @@ fn bind(files: &[(&str, &str)]) -> Log {
 
 fn written_for_failed_build(files: &[(&str, &str)]) -> Log {
     let project = TestProject::new(files, &default_settings());
-    let mut log = Log::init();
-    let result = link_program(&project.options(BUNDLED_LIBS), &WithoutServices, &mut log);
+    let log = Log::init();
+    let result = link_program(&project.options(BUNDLED_LIBS), &WithoutServices, &log);
     let Err(failed) = result else {
         panic!("the build went through");
     };
@@ -124,7 +124,7 @@ fn build_diagnostics_follow_effect() {
             "Err internal compiler error (Check): TS2322: internal at /project/a.ts:3:7",
         ]
     );
-    assert_eq!((log.errors, log.warnings), (2, 1));
+    assert_eq!((log.errors.get(), log.warnings.get()), (2, 1));
 }
 
 #[test]
@@ -198,7 +198,8 @@ fn import_statement_in_commonjs_lists_evidence_in_order() {
             ["/project/main.ts:1:1 Err TS100106: \
                  Cannot use import statement with CommonJS-only features"]
         );
-        let notes = log.msgs[0].notes.iter();
+        let msgs = log.msgs.take();
+        let notes = msgs[0].notes.iter();
         let notes: Vec<String> = notes.map(|note| text(&note.text)).collect();
         assert_eq!(
             notes,
@@ -232,8 +233,9 @@ fn failed_calls_warn_and_failed_statements_stop() {
 #[test]
 fn failed_import_is_located_at_import_site() {
     let log = bind(&[("main.ts", "export {};\nimport \"./missing\";\n")]);
-    let [message] = &log.msgs[..] else {
-        panic!("{:?}", describe(&log));
+    let described = describe(&log);
+    let [message] = &log.msgs.take()[..] else {
+        panic!("{described:?}");
     };
     let location = message.data.location.as_ref().expect("a location");
     assert_eq!(text(&location.file), "/project/main.ts");
@@ -266,7 +268,7 @@ fn resolved_imports_report_nothing() {
         ("main.ts", "import { b } from \"./b\";\nb;\n"),
         ("b.ts", "export const b = 1;\n"),
     ]);
-    assert!(log.msgs.is_empty(), "{:?}", describe(&log));
+    assert_eq!(log.msgs_len(), 0, "{:?}", describe(&log));
 }
 
 #[test]

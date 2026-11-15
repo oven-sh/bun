@@ -186,7 +186,7 @@ fn make_client<'a>(
 // load_env
 // ──────────────────────────────────────────────────────────────────────────
 
-pub fn load_env(logger: &mut Log, env: &DotEnvLoader) {
+pub fn load_env(logger: &Log, env: &DotEnvLoader) {
     if let Some(max_http_requests) = env.get(b"BUN_CONFIG_MAX_HTTP_REQUESTS") {
         // Note: env vars are bytes — never round-trip through &str.
         let max: u16 = match bun_core::parse_int::<u16>(max_http_requests, 10) {

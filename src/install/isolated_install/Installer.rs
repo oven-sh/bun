@@ -431,8 +431,8 @@ impl<'a> Installer<'a> {
 
         if let crate::patch_install::Callback::Apply(apply) = &mut patch_task.callback {
             if apply.logger.has_errors() {
-                let mut log = Log::init();
-                apply.logger.append_to(&mut log);
+                let log = Log::init();
+                apply.logger.append_to(&log);
                 return Err(TaskError::Patching(log));
             }
             let _ = apply.logger.print(Output::error_writer());
@@ -1318,9 +1318,9 @@ impl Task {
         installer
             .append_store_path(&mut cwd, self.entry_id)
             .map_err(|err| TaskError::RunScripts(err.into()))?;
-        let mut log = Log::init();
+        let log = Log::init();
         let Some(list) = pkg_scripts
-            .get_list(&mut log, &mut cwd, dep_name, pkg_res, is_trusted)
+            .get_list(&log, &mut cwd, dep_name, pkg_res, is_trusted)
             .map_err(TaskError::RunScripts)?
         else {
             return Ok(false);
@@ -1349,12 +1349,12 @@ impl Task {
         let pkg_res = installer.resolution(entry_id);
         let mut pkg_dir = AutoAbsPath::init_top_level_dir();
 
-        let mut log = Log::init();
+        let log = Log::init();
         let list = installer
             .append_real_store_path(&mut pkg_dir, entry_id, which)
             .map_err(crate::Error::from)
             // `true` counts the scripts that would run, like the hoisted installer does.
-            .and_then(|()| pkg_scripts.get_list(&mut log, &mut pkg_dir, dep_name, pkg_res, true));
+            .and_then(|()| pkg_scripts.get_list(&log, &mut pkg_dir, dep_name, pkg_res, true));
         match list {
             Ok(Some(list)) => {
                 if manager.options.log_level.is_verbose() {
@@ -1492,7 +1492,7 @@ impl<'a> Installer<'a> {
 
         if let Some(patch) = lockfile.patched_dependencies.get(&name_and_version_hash) {
             let Some(contents_hash) = patch.patchfile_hash() else {
-                let mut log = Log::init();
+                let log = Log::init();
                 log.add_error_fmt_opts(
                     format_args!(
                         "the hash of patch file {} was not calculated before install, this is a bug in Bun",
@@ -2257,7 +2257,7 @@ impl<'a> Installer<'a> {
     /// the output does not depend on which task finished first.
     pub(crate) fn warn_left_out_links(&self) {
         for text in self.tasks.iter().flat_map(|task| &task.left_out_links) {
-            self.manager().log_mut().add_warning_fmt(
+            self.manager().log().add_warning_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!("{}", bun_core::fmt::escape_control_chars(text)),

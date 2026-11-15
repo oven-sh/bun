@@ -7,7 +7,7 @@ use core::mem;
 use core::ptr::NonNull;
 
 use bun_ast::Loader;
-use bun_ast::Log;
+use bun_ast::{Log, Msg};
 use bun_bundler::bundle_v2::BuildResult;
 use bun_bundler::options::{self as bundler_options, LoaderExt as _};
 use bun_core::strings;
@@ -69,7 +69,7 @@ impl HTMLBundle {
 
     /// For `Route::on_complete` and the dev server's `finalize_bundle`, when a build has no page for the file.
     pub(crate) fn no_html_page_log(&self) -> Log {
-        let mut log = Log::init();
+        let log = Log::init();
         log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
@@ -125,7 +125,8 @@ pub(crate) enum State {
     Pending,
     /// The plugin load or the `JSBundleCompletionTask` holds a [`PendingBuild`].
     Building,
-    Err(Log),
+    /// Not a `Log`: a heap snapshot measures this on a marking thread.
+    Err(Vec<Msg>),
     Html(RefPtr<StaticRoute>),
 }
 
@@ -134,7 +135,7 @@ impl State {
         match self {
             State::Pending => 0,
             State::Building => 0,
-            State::Err(log) => log.memory_cost(),
+            State::Err(msgs) => msgs.iter().map(Msg::memory_cost).sum(),
             State::Html(html) => html.memory_cost(),
         }
     }
@@ -248,7 +249,7 @@ impl Route {
                     resp.on_aborted_this(Self::on_pending_response_aborted, this);
                     req.set_yield(false);
                 }
-                State::Err(_log) => {
+                State::Err(_msgs) => {
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_output::scoped_log!(
                             debug,
@@ -282,7 +283,7 @@ impl Route {
     fn schedule_bundle(this: ThisPtr<Self>, server: AnyServer) -> Result<(), crate::Error> {
         match server.get_or_load_plugins(ServePluginsCallback::HtmlBundleRoute(this)) {
             GetOrStartLoadResult::Err => {
-                this.state.set(State::Err(Log::init()));
+                this.state.set(State::Err(Vec::new()));
             }
             GetOrStartLoadResult::Ready(plugins) => {
                 let plugins = plugins.map(NonNull::from);
@@ -298,7 +299,7 @@ impl Route {
     /// The build task will not deliver (the context that started it stopped, or the VM is going):
     /// what waits for the page is answered as for a failed build.
     pub(crate) fn on_build_abandoned(&self) {
-        self.state.set(State::Err(Log::init()));
+        self.state.set(State::Err(Vec::new()));
         self.resume_pending_responses();
     }
 
@@ -308,7 +309,7 @@ impl Route {
             let _ = log.print(bun_output::error_writer_buffered());
             bun_output::flush();
         }
-        self.state.set(State::Err(log));
+        self.state.set(State::Err(log.msgs.into_inner()));
     }
 
     pub(crate) fn on_plugins_resolved(
@@ -435,7 +436,7 @@ impl Route {
             "HTMLBundleRoute(0x{:x}) plugins rejected",
             std::ptr::from_ref(self) as usize
         );
-        self.state.set(State::Err(Log::init()));
+        self.state.set(State::Err(Vec::new()));
         self.resume_pending_responses();
         Ok(())
     }
@@ -619,7 +620,7 @@ impl Route {
                         StaticRoute::on(html.this_ptr(), resp);
                     }
                 }
-                State::Err(_log) => {
+                State::Err(_msgs) => {
                     if self
                         .server
                         .get()

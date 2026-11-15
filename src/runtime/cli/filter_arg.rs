@@ -46,7 +46,7 @@ type GlobWalker = glob::GlobWalker<bun_resolver::DirEntryAccessor, false>;
 type GlobWalkerIterator = glob::walk::Iterator<'static, bun_resolver::DirEntryAccessor, false>;
 
 fn get_candidate_package_patterns<'a>(
-    log: &mut Log,
+    log: &Log,
     out_patterns: &mut Vec<Box<[u8]>>,
     negated: &mut NegatedWorkspaces,
     workdir_: &[u8],
@@ -72,9 +72,9 @@ fn get_candidate_package_patterns<'a>(
                 break 'body;
             };
 
-            log.msgs.clear();
-            log.errors = 0;
-            log.warnings = 0;
+            log.with_msgs(Vec::clear);
+            log.errors.set(0);
+            log.warnings.set(0);
 
             // Note: `bun.sys.File.toSource` was MOVE_DOWN'd to `bun_ast::to_source`
             // (T1 cannot name T2 — see src/sys/File.rs:446).
@@ -174,8 +174,7 @@ pub(crate) fn select_packages(
     let mut negated = NegatedWorkspaces::default();
     let mut root_buf = bun_paths::path_buffer_pool::get();
     let root_dir: Box<[u8]> = get_candidate_package_patterns(
-        // SAFETY: `ctx.log` is the process-static `Cli::LOG_`; CLI dispatch is single-threaded and no other `&mut Log` is live.
-        unsafe { ctx.log_mut() },
+        ctx.log(),
         &mut glob_patterns,
         &mut negated,
         cwd,

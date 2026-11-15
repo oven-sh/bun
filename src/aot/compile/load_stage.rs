@@ -769,8 +769,8 @@ impl<'a> Build<'a> {
                 };
                 let application = self.load_application(shared, project, &request_that_finds);
                 if application.is_err() {
-                    for (_, mut log) in host.take_failed_loads() {
-                        host.say(&mut log);
+                    for (_, log) in host.take_failed_loads() {
+                        host.say(&log);
                     }
                     self.diagnostics.add_load_messages(shared.messages);
                 }
@@ -807,7 +807,7 @@ impl<'a> Build<'a> {
                 refused.push((file, first_error_of(&log)));
                 warn_instead_of_errors(&mut log);
             }
-            host.say(&mut log);
+            host.say(&log);
         }
         for &file in guessed {
             let source = parsed_source(files, file);
@@ -1285,8 +1285,8 @@ mod tests {
                 other => panic!("{other:?}"),
             }
         });
-        let mut log = Log::init();
-        match build.finish(decided, &mut log) {
+        let log = Log::init();
+        match build.finish(decided, &log) {
             Ok((can_load_code, _)) => can_load_code,
             Err(failed) => panic!("{}: {}", failed.stage.name(), describe_messages(&log)),
         }
@@ -1653,9 +1653,9 @@ mod tests {
     fn only_an_executable_is_told_where_the_load_loses_sight_of_a_worker_of_node() {
         use crate::diagnostics::Diagnostics;
         fn describe(build: &mut Build<'_>, _: &LoadedBuild<'_, '_>) -> String {
-            let mut log = Log::init();
+            let log = Log::init();
             let said = std::mem::replace(&mut build.diagnostics, Diagnostics::new());
-            said.write_to(&mut log);
+            said.write_to(&log);
             describe_messages(&log)
         }
         let text = r#"import { Worker } from "node:worker_threads"; export const start = (path: string) => new Worker(path);"#;

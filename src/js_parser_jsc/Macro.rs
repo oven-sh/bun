@@ -103,7 +103,7 @@ impl MacroContext {
         &mut self,
         import_record_path: &[u8],
         source_dir: &[u8],
-        log: &mut Log,
+        log: &Log,
         source: &Source,
         import_range: Range,
         caller: Expr,
@@ -293,7 +293,7 @@ fn __bun_macro_context_call(
     ctx: &mut js_parser::Macro::MacroContext,
     import_record_path: &[u8],
     source_dir: &[u8],
-    log: &mut Log,
+    log: &Log,
     source: &Source,
     import_range: Range,
     caller: Expr,
@@ -383,7 +383,7 @@ impl Macro {
 
     pub(crate) fn init(
         input_specifier: &[u8],
-        log: &mut Log,
+        log: &Log,
         env: *mut DotEnvLoader,
         transform_options: &TransformOptions,
         function_name: &[u8],
@@ -413,7 +413,7 @@ impl Macro {
 
             let vm = VirtualMachine::init(VirtualMachineInitOptions {
                 transform_options,
-                log: Some(NonNull::from(&mut *log)),
+                log: Some(NonNull::from(log)),
                 owned_env_loader,
                 is_main_thread: false,
                 ..Default::default()
@@ -547,7 +547,7 @@ pub(crate) struct Run<'a> {
     // outlive `run_async` — the returned `Expr` is spliced into the AST and
     // printed long after this frame returns.
     pub(crate) bump: &'a bun_alloc::Arena,
-    pub(crate) log: &'a mut Log,
+    pub(crate) log: &'a Log,
     pub(crate) source: &'a Source<'a>,
     pub(crate) visited: VisitMap<'a>,
     pub(crate) is_top_level: bool,
@@ -557,7 +557,7 @@ pub(crate) struct Run<'a> {
 impl<'a> Run<'a> {
     pub(crate) fn run_async(
         macro_: &Macro,
-        log: &mut Log,
+        log: &Log,
         bump: &bun_alloc::Arena,
         caller: Expr,
         args: &[JSValue],
@@ -905,7 +905,7 @@ impl<'a> Run<'a> {
 impl Runner {
     fn run(
         macro_: &Macro,
-        log: &mut Log,
+        log: &Log,
         bump: &bun_alloc::Arena,
         function_name: &[u8],
         caller: Expr,
@@ -1009,7 +1009,7 @@ impl Runner {
 
         struct CallData<'c> {
             macro_: &'c Macro,
-            log: &'c mut Log,
+            log: &'c Log,
             bump: &'c bun_alloc::Arena,
             caller: Expr,
             js_args: &'c [JSValue],
@@ -1073,7 +1073,7 @@ fn expr_from_blob(
     bytes: &[u8],
     bump: &bun_alloc::Arena,
     content_type: &[u8],
-    log: &mut Log,
+    log: &Log,
     loc: bun_ast::Loc,
 ) -> crate::Result<Expr> {
     use bun_ast::{E, ExprData, StoreStr as Str};

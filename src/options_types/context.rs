@@ -25,7 +25,7 @@ pub struct ContextData {
     /// `create_context_data()` writes the real `&mut Log` into it.
     // SAFETY: written exactly once in single-threaded CLI startup; thereafter
     // always non-null for the process lifetime. Callers deref via `ctx.log()`.
-    pub log: *mut bun_ast::Log,
+    pub log: *const bun_ast::Log,
     pub positionals: Vec<Box<[u8]>>,
     pub passthrough: Vec<Box<[u8]>>,
     pub install: Option<Box<api::BunInstall>>,
@@ -92,92 +92,14 @@ impl Default for ContextData {
 }
 
 impl ContextData {
-    /// Deref the process-lifetime `*mut Log` set in `create_context_data()`.
-    ///
-    /// Takes `&mut self` (not `&self`) so the borrow checker ties the returned
-    /// `&mut Log` to an exclusive borrow of the `ContextData` — a
-    /// `&self -> &mut Log` accessor would let two
-    /// live `&mut Log` overlap (UB). Note this is *necessary but not
-    /// sufficient*: the same `*Log` is borrowed (not owned) from the CLI
-    /// caller and is also fanned out to and stored by the transpiler/bundler
-    /// options, the install pipeline (migration,
-    /// `PackageManagerOptions`), JSON parsing,
-    /// etc. Exclusive `self` does NOT exclude those
-    /// aliases — see `# Safety` for the full precondition.
-    ///
-    /// # Safety
-    /// - `self.log` must have been populated by `create_context_data()` (i.e.
-    ///   this `ContextData` is the global CLI context) and remain valid for the
-    ///   lifetime of the returned reference.
-    /// - No other reference (`&` or `&mut`) to the pointed-to `Log` — including
-    ///   any derived from the CLI caller's original `*Log` or from copies held
-    ///   by the transpiler/bundler/install/JSON subsystems — may be live for
-    ///   the lifetime of the returned `&mut`.
-    #[inline]
-    pub unsafe fn log(&mut self) -> &mut bun_ast::Log {
-        debug_assert!(!self.log.is_null());
-        // SAFETY: single-threaded CLI startup writes a process-lifetime pointer
-        // and never invalidates it; the caller's `# Safety` contract guarantees
-        // no overlapping borrow of the same `Log` (which is aliased elsewhere —
-        // `&mut self` alone cannot prove exclusivity here).
-        unsafe { &mut *self.log }
-    }
-
-    /// Mutable accessor for the process-lifetime CLI `Log`.
-    ///
-    /// `self.log` is the `*mut bun_ast::Log` written exactly once by
-    /// `create_context_data()` during single-threaded CLI startup, pointing at
-    /// the static `Cli::LOG_` storage. Other subsystems that copy the same
-    /// `*mut Log` (transpiler, install) reborrow it via their own raw-pointer
-    /// accessors. Centralizing the deref here removes ~20 identical
-    /// `unsafe { &mut *ctx.log }` blocks at call sites.
-    ///
-    /// Takes `&self` (not `&mut self`) because several CLI entry points hold
-    /// `&Context<'_>` (= `&&mut ContextData`) and a `&mut self` receiver could
-    /// not prove exclusivity over the `Log` anyway — the pointer is aliased
-    /// outside `ContextData` (see `Transpiler::log_mut`,
-    /// `PackageManager::log_mut`). Note that a `&self` receiver provides **no**
-    /// static guarantee against interleaving two `log_mut()` results — shared
-    /// borrows do not exclude one another — hence this function is `unsafe`.
-    ///
-    /// # Safety
-    /// The caller must ensure that for the lifetime of the returned `&mut Log`
-    /// no other reference to the same `Log` exists: no second `log_mut()`
-    /// borrow, no overlapping [`log_ref`] borrow, and no live `&mut Log`
-    /// obtained via any other aliasing path (`Transpiler::log_mut`,
-    /// `PackageManager::log_mut`, etc.). CLI dispatch is single-threaded, so
-    /// this reduces to "do not hold the result across a call that may itself
-    /// reborrow the log".
-    ///
-    /// # Panics
-    /// If `self.log` is null (i.e. `create_context_data()` has not run).
     #[track_caller]
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub unsafe fn log_mut(&self) -> &mut bun_ast::Log {
+    pub fn log(&self) -> &bun_ast::Log {
         assert!(
             !self.log.is_null(),
-            "ContextData::log_mut() before create_context_data()"
+            "ContextData::log() before create_context_data()"
         );
-        // SAFETY: `self.log` is non-null (asserted) and points at the
-        // process-static `Cli::LOG_` (`'static`); the caller's `# Safety`
-        // contract guarantees no overlapping borrow of the same `Log`.
-        unsafe { &mut *self.log }
-    }
-
-    /// Shared-ref counterpart of [`log_mut`] for read-only inspection
-    /// (`has_errors()`, `print()`).
-    #[track_caller]
-    #[inline]
-    pub fn log_ref(&self) -> &bun_ast::Log {
-        assert!(
-            !self.log.is_null(),
-            "ContextData::log_ref() before create_context_data()"
-        );
-        // SAFETY: `self.log` is non-null (asserted) and points at the
-        // process-static `Cli::LOG_`; shared `&` may freely alias other
-        // shared borrows. Callers of `log_mut` are obligated not to hold a
-        // live `&mut Log` overlapping this.
+        // SAFETY: `self.log` is non-null (asserted) and outlives `self`.
         unsafe { &*self.log }
     }
 }

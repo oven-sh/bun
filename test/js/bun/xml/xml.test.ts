@@ -523,6 +523,120 @@ describe("well-formedness", () => {
   });
 });
 
+describe("error position", () => {
+  // `position` is where the parser stopped, in the document: 1-based `line` and
+  // `column` (UTF-16 code units), the text of that line, and `offset` as an
+  // index into the input (a string index for a string, a byte offset for bytes).
+  const position = (input: string | Uint8Array, options?: XML.ParseOptions) =>
+    (syntaxError(input, options) as SyntaxError & { position: unknown }).position;
+  const doc = "<rss>\n<channel>\n<title>Bots & misinformation</title>\n</channel>\n</rss>\n";
+  const expectedDoc = { line: 3, column: 14, offset: 29, lineText: "<title>Bots & misinformation</title>" };
+
+  test("a string", () => {
+    expect(position(doc)).toEqual(expectedDoc);
+    expect(position(doc, nodes)).toEqual(expectedDoc);
+    expect(position("<rss><title>a</title></rss>\n<script/>")).toEqual({
+      line: 2,
+      column: 1,
+      offset: 28,
+      lineText: "<script/>",
+    });
+    expect(position("")).toEqual({ line: 1, column: 1, offset: 0, lineText: "" });
+    // The message and the inherited call-site properties are as they were.
+    const err = syntaxError(doc) as SyntaxError & { line: number; column: number };
+    expect(err.message).toBe("XML Parse error: Expected an entity name after '&' but found space");
+    expect(err.line).not.toBe(3);
+  });
+
+  test("a Latin-1 string, including one re-parsed for a wide character reference", () => {
+    const text = "<a>\n<b>caf\xe9 & x</b></a>";
+    expect(position(text)).toEqual({ line: 2, column: 10, offset: 13, lineText: "<b>café & x</b></a>" });
+    // `&#x4e2d;` cannot be held in a Latin-1 result, so the text is parsed
+    // again as UTF-8; `offset` is still an index into the string.
+    const wide = "<a>&#x4e2d;" + text.slice(3);
+    expect(position(wide)).toEqual({ line: 2, column: 10, offset: 21, lineText: "<b>café & x</b></a>" });
+    expect(wide[21]).toBe(" ");
+  });
+
+  test("a UTF-16 string: column and offset count code units", () => {
+    const text = "<a>\n<b>\u2014\u{1F600} & x</b></a>";
+    expect(position(text)).toEqual({ line: 2, column: 9, offset: 12, lineText: "<b>—😀 & x</b></a>" });
+    expect(text[12]).toBe(" ");
+  });
+
+  test("\\r and \\r\\n are line ends", () => {
+    expect(position("<a>\r\n<b>\r\n<c>&</c></b></a>")).toEqual({
+      line: 3,
+      column: 5,
+      offset: 14,
+      lineText: "<c>&</c></b></a>",
+    });
+    expect(position("<a>\r<b>\r<c>&</c></b></a>")).toEqual({
+      line: 3,
+      column: 5,
+      offset: 12,
+      lineText: "<c>&</c></b></a>",
+    });
+  });
+
+  test("an error inside entity replacement text points at the reference", () => {
+    const text = `<!DOCTYPE a [<!ENTITY e "<b c='1' c='2'/>">]>\n<a>&e;</a>`;
+    expect(syntaxError(text).message).toBe("XML Parse error: Duplicate attribute 'c'");
+    expect(position(text)).toEqual({ line: 2, column: 4, offset: 49, lineText: "<a>&e;</a>" });
+    expect(text.slice(49, 52)).toBe("&e;");
+    // One that is found after the replacement text ends is where it is found.
+    expect(position(`<!DOCTYPE a [<!ENTITY e "<b>">]>\n<a>&e;</a>`)).toEqual({
+      line: 2,
+      column: 7,
+      offset: 39,
+      lineText: "<a>&e;</a>",
+    });
+  });
+
+  test("UTF-8 bytes: offset is a byte offset", () => {
+    const bytes = Buffer.from("<a>\n<b>\u00e9\u2014 & x</b></a>");
+    expect(position(bytes)).toEqual({ line: 2, column: 8, offset: 14, lineText: "<b>é— & x</b></a>" });
+    expect(bytes[14]).toBe(0x20);
+  });
+
+  test("bytes the parser transcodes: offset is into the bytes given", () => {
+    const le = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("<a>\n<b>\u00e9 & x</b></a>", "utf16le")]);
+    expect(position(le)).toEqual({ line: 2, column: 7, offset: 22, lineText: "<b>é & x</b></a>" });
+    expect(le.readUInt16LE(22)).toBe(0x20);
+
+    const be = Buffer.from(`<?xml version="1.0" encoding="UTF-16"?>\n<a>\n<b>\u00e9 & x</b></a>`, "utf16le").swap16();
+    expect(position(be)).toEqual({ line: 3, column: 7, offset: 100, lineText: "<b>é & x</b></a>" });
+    expect(be.readUInt16BE(100)).toBe(0x20);
+
+    const latin1 = Buffer.from(`<?xml version="1.0" encoding="ISO-8859-1"?>\n<a>\n<b>\xe9 & x</b></a>`, "latin1");
+    expect(position(latin1)).toEqual({ line: 3, column: 7, offset: 54, lineText: "<b>é & x</b></a>" });
+    expect(latin1[54]).toBe(0x20);
+
+    const odd = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("<a/>", "utf16le"), Buffer.from([0x20])]);
+    expect(position(odd)).toEqual({ line: 1, column: 5, offset: 10, lineText: "<a/>" });
+  });
+
+  test("importing the same bytes reports the same place", async () => {
+    const be = Buffer.from(`<?xml version="1.0" encoding="UTF-16"?>\n<a>\n<b>\u00e9 & x</b></a>`, "utf16le").swap16();
+    const latin1 = Buffer.from(`<?xml version="1.0" encoding="ISO-8859-1"?>\n<a>\n<b>\xe9 & x</b></a>`, "latin1");
+    using dir = tempDir("xml-error-position", { "be.xml": be, "latin1.xml": latin1 });
+    for (const [name, bytes] of [
+      ["be.xml", be],
+      ["latin1.xml", latin1],
+    ] as const) {
+      let imported: any;
+      try {
+        await import(join(String(dir), name));
+      } catch (e) {
+        imported = e;
+      }
+      expect(imported.constructor.name).toBe("BuildMessage");
+      const { line, column, offset, lineText } = imported.position;
+      expect({ line, column, offset, lineText }).toEqual(position(bytes));
+    }
+  });
+});
+
 describe("document type declaration", () => {
   test("the internal subset must be well-formed even though nothing is validated", () => {
     expect(XML.parse(`<!DOCTYPE a><a/>`)).toEqual({ a: "" });

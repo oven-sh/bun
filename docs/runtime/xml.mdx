@@ -119,6 +119,19 @@ try {
 }
 ```
 
+The `SyntaxError` says where the parser stopped. Its `position` property has the 1-based `line` and `column` (in UTF-16 code units), the text of that line, and `offset`, an index into the input: a string index for a string, a byte offset for bytes. This is the shape of `BuildMessage.position`, which importing the same document as a file reports.
+
+```ts
+try {
+  XML.parse("<rss>\n<channel>\n<title>Bots & misinformation</title>\n</channel>\n</rss>\n");
+} catch (error) {
+  console.log(error.position);
+  // { line: 3, column: 14, offset: 29, lineText: "<title>Bots & misinformation</title>" }
+}
+```
+
+The error's inherited `line`, `column` and `sourceURL` are the JavaScript call site, as for any error.
+
 ### `Bun.XML.stringify()`
 
 Serialize one element, in either shape, to XML.

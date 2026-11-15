@@ -192,6 +192,33 @@ fn with_text_format_source<R>(
     f(arena, &mut log, &source)
 }
 
+/// Where a parse error stands in the document, for the `position` property
+/// of the `SyntaxError` a text-format parser throws: `{ line, column, offset,
+/// lineText }`, the shape of `BuildMessage.position` without the file. The
+/// location's `line_text` has to be UTF-8. `None` when the parser attached no
+/// location (the `line: -1` sentinel of [`bun_ast::Location::init_or_null`]).
+fn location_to_js(
+    global: &bun_jsc::JSGlobalObject,
+    location: &bun_ast::Location,
+) -> bun_jsc::JsResult<Option<bun_jsc::JSValue>> {
+    if location.line <= 0 {
+        return Ok(None);
+    }
+    let object = bun_jsc::JSValue::create_empty_object(global, 4);
+    object.put(global, b"line", bun_jsc::JSValue::from(location.line));
+    object.put(global, b"column", bun_jsc::JSValue::from(location.column));
+    object.put(global, b"offset", bun_jsc::JSValue::from(location.offset));
+    object.put(
+        global,
+        b"lineText",
+        bun_jsc::bun_string_jsc::create_utf8_for_js(
+            global,
+            location.line_text.as_deref().unwrap_or(b""),
+        )?,
+    );
+    Ok(Some(object))
+}
+
 // ─── shared Expr → JS conversion for the text-format parsers ─────────────────
 
 /// `Expr` → `JSValue` for the text-format parsers (TOML, JSON5), through the

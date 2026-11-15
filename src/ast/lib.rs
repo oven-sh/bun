@@ -677,26 +677,11 @@ impl Location {
                 Some(tracker) => tracker.error_position(source, r.loc),
                 None => source.init_error_position(r.loc),
             };
-            let mut full_line = &source.contents[data.line_start..data.line_end];
-            // Window a long line to ~120 bytes around the error. Bounds are
-            // BYTE offsets; the gate keeps the original shape (no left trim for
-            // an error in the last 80 bytes) so `write_format`'s caret aligns.
+            let full_line = &source.contents[data.line_start..data.line_end];
             let offset_in_line = clamp_error_offset(&source.contents, r.loc)
                 .saturating_sub(data.line_start)
                 .min(full_line.len());
-            if full_line.len() > 80 + offset_in_line {
-                let mut lo = offset_in_line.saturating_sub(40);
-                let mut hi = (offset_in_line + 80).min(full_line.len());
-                while lo > 0 && !bun_core::strings::is_utf8_char_boundary(full_line[lo]) {
-                    lo -= 1;
-                }
-                while hi < full_line.len()
-                    && !bun_core::strings::is_utf8_char_boundary(full_line[hi])
-                {
-                    hi += 1;
-                }
-                full_line = &full_line[lo..hi];
-            }
+            let full_line = window_line_text(full_line, offset_in_line);
 
             return Some(Location {
                 file,
@@ -1495,6 +1480,23 @@ impl Log {
         )
     }
 
+    /// An error whose [`Location`] the parser computed itself, because it
+    /// reads units the byte scan of [`Location::init_or_null`] cannot map
+    /// (UTF-16 or Latin-1, or a buffer it transcoded).
+    #[cold]
+    #[inline(never)]
+    pub fn add_error_with_location(&mut self, location: Location, args: fmt::Arguments<'_>) {
+        self.errors += 1;
+        self.add_msg(Msg {
+            kind: Kind::Err,
+            data: Data {
+                text: alloc_print(args),
+                location: Some(location),
+            },
+            ..Default::default()
+        })
+    }
+
     // TODO(dylan-conway): rename and replace `addErrorFmt`
     #[inline]
     pub fn add_error_fmt_opts(&mut self, args: fmt::Arguments<'_>, opts: AddErrorOptions<'_>) {
@@ -2177,6 +2179,137 @@ impl ErrorPositionState {
             line_end,
             line_count: self.line_count,
             column_count: self.column_number,
+        }
+    }
+}
+
+/// Window a long line of UTF-8 to ~120 bytes around `offset_in_line`, the
+/// byte of the error in it. The shape is kept (no left trim for an error in
+/// the last 80 bytes) so `write_format`'s caret aligns.
+fn window_line_text(full_line: &[u8], offset_in_line: usize) -> &[u8] {
+    if full_line.len() <= 80 + offset_in_line {
+        return full_line;
+    }
+    let mut lo = offset_in_line.saturating_sub(40);
+    let mut hi = (offset_in_line + 80).min(full_line.len());
+    while lo > 0 && !bun_core::strings::is_utf8_char_boundary(full_line[lo]) {
+        lo -= 1;
+    }
+    while hi < full_line.len() && !bun_core::strings::is_utf8_char_boundary(full_line[hi]) {
+        hi += 1;
+    }
+    &full_line[lo..hi]
+}
+
+/// Where a diagnostic stands in a buffer that a parser reads in its own
+/// units: 1-based line and column, and the `[line_start, line_end)` range
+/// of the units of the line that holds it. Columns count UTF-16 code units
+/// (the convention of [`Source::init_error_position`]) so `write_format`
+/// places its caret the same way. Line ends are `\n`, `\r\n` and `\r` only,
+/// the set XML §2.11 normalizes; the U+2028/U+2029 that
+/// `ErrorPositionState` also counts are not line breaks to XML.
+pub struct LinePosition {
+    pub line: i32,
+    pub column: i32,
+    pub line_start: usize,
+    pub line_end: usize,
+}
+
+impl LinePosition {
+    /// Over UTF-8 bytes. `offset` is a byte index.
+    #[cold]
+    #[inline(never)]
+    pub fn utf8(contents: &[u8], offset: usize) -> LinePosition {
+        Self::scan(contents, offset, |rest| {
+            let (cp, size) = bun_core::strings::wtf8_codepoint_at(rest, 0);
+            (cp, size.max(1))
+        })
+    }
+
+    /// Over ISO-8859-1 bytes, one character each. `offset` is a byte index.
+    #[cold]
+    #[inline(never)]
+    pub fn latin1(contents: &[u8], offset: usize) -> LinePosition {
+        Self::scan(contents, offset, |rest| (u32::from(rest[0]), 1))
+    }
+
+    /// Over UTF-16 code units. `offset` is a unit index.
+    #[cold]
+    #[inline(never)]
+    pub fn utf16(contents: &[u16], offset: usize) -> LinePosition {
+        Self::scan(contents, offset, |rest| (u32::from(rest[0]), 1))
+    }
+
+    /// `decode` reads the character at the start of its argument, which is
+    /// never empty, as (code point, width in units). A code point above
+    /// U+FFFF is two columns; a UTF-16 caller decodes surrogates one unit at
+    /// a time, which counts the same.
+    fn scan<U: Copy>(
+        contents: &[U],
+        offset: usize,
+        decode: impl Fn(&[U]) -> (u32, usize),
+    ) -> LinePosition {
+        let offset = offset.min(contents.len());
+        let mut line: i32 = 1;
+        let mut column: i32 = 1;
+        let mut line_start = 0;
+        let mut at = 0;
+        let mut prev_cr = false;
+        while at < offset {
+            let (cp, width) = decode(&contents[at..]);
+            at += width;
+            match cp {
+                0x0A => {
+                    if !prev_cr {
+                        line += 1;
+                    }
+                    column = 1;
+                    line_start = at;
+                }
+                0x0D => {
+                    line += 1;
+                    column = 1;
+                    line_start = at;
+                }
+                _ => column += 1 + (cp > 0xFFFF) as i32,
+            }
+            prev_cr = cp == 0x0D;
+        }
+        let mut line_end = at;
+        while line_end < contents.len() {
+            let (cp, width) = decode(&contents[line_end..]);
+            if cp == 0x0A || cp == 0x0D {
+                break;
+            }
+            line_end += width;
+        }
+        LinePosition {
+            line,
+            column,
+            line_start,
+            line_end,
+        }
+    }
+
+    /// The [`Location`] of a diagnostic at this position, for a source whose
+    /// line holding it is `line_text` as UTF-8 with the error `offset_in_line`
+    /// bytes into it, and whose caller-facing `offset` is given.
+    pub fn to_location(
+        &self,
+        source: &Source,
+        line_text: &[u8],
+        offset_in_line: usize,
+        offset: usize,
+    ) -> Location {
+        let line_text = window_line_text(line_text, offset_in_line.min(line_text.len()));
+        Location {
+            file: Box::from(source.path.text),
+            namespace: Box::from(source.path.namespace),
+            line: self.line,
+            column: self.column,
+            length: 0,
+            line_text: Some(Box::from(line_text)),
+            offset,
         }
     }
 }

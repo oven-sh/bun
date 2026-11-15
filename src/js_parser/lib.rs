@@ -35,6 +35,9 @@ pub use parse::parse_entry::{Options as ParserOptions, Parser};
 // The part of macros that needs no JSC. The rest is in `bun_js_parser_jsc::Macro`.
 #[allow(non_snake_case)]
 pub mod Macro {
+    use bun_collections::{ArrayHashMap, StringArrayHashMap};
+    use core::cell::RefCell;
+
     pub const NAMESPACE: &[u8] = b"macro";
     pub const NAMESPACE_WITH_COLON: &[u8] = b"macro:";
 
@@ -71,25 +74,23 @@ pub mod Macro {
 
     /// Keyed by `MacroEntryPoint::generate_id`. A macro can start a nested parse that uses the same table.
     #[derive(Default)]
-    pub struct MacroLoadStates(
-        core::cell::Cell<bun_collections::ArrayHashMap<i32, MacroLoadState>>,
-    );
+    pub struct MacroLoadStates(RefCell<ArrayHashMap<i32, MacroLoadState>>);
     impl MacroLoadStates {
         pub fn get(&self, id: i32) -> Option<MacroLoadState> {
-            let macros = self.0.take();
-            let state = macros.get(&id).copied();
-            self.0.set(macros);
-            state
+            self.0.borrow().get(&id).copied()
         }
 
         pub fn set(&self, id: i32, state: MacroLoadState) {
-            let mut macros = self.0.take();
-            macros.insert(id, state);
-            self.0.set(macros);
+            self.0.borrow_mut().insert(id, state);
         }
 
-        pub fn swap(&self, other: &Self) {
-            self.0.swap(&other.0);
+        pub fn clear(&self) {
+            self.0.borrow_mut().clear();
+        }
+
+        pub fn replace(&self, states: Self) -> Self {
+            self.0.swap(&states.0);
+            states
         }
     }
     /// Frees this thread's `SOURCE_CODE_PRINTER` if a macro allocated it.
@@ -103,7 +104,7 @@ pub mod Macro {
     #[derive(Clone, Copy)]
     pub struct MacroContext<'a> {
         /// A `bun_bundler::Transpiler`, which this crate cannot name.
-        transpiler: *mut core::ffi::c_void,
+        transpiler: *mut (),
         pub macro_load_states: &'a MacroLoadStates,
         /// Encoded `JSC.JSValue` (the caller-supplied macro JS context).
         /// `bun_js_parser_jsc` reinterprets the bits as a `JSValue`.
@@ -142,7 +143,7 @@ pub mod Macro {
         /// `transpiler` is a `bun_bundler::Transpiler` that is live for `'a`, and nothing else
         /// uses its resolver, or writes to its options, at the time the parser calls a macro.
         pub unsafe fn new(
-            transpiler: *mut core::ffi::c_void,
+            transpiler: *mut (),
             macro_load_states: &'a MacroLoadStates,
             javascript_object: MacroJSCtx,
         ) -> Self {
@@ -153,7 +154,7 @@ pub mod Macro {
             }
         }
 
-        pub fn transpiler(self) -> *mut core::ffi::c_void {
+        pub fn transpiler(self) -> *mut () {
             self.transpiler
         }
 
@@ -185,11 +186,7 @@ pub mod Macro {
     }
 
     /// Matches `bun_resolver::package_json::MacroMap`.
-    pub type MacroRemap = bun_collections::StringArrayHashMap<MacroRemapEntry>;
-
-    /// Values are owned (`Box<[u8]>`) so callers can populate without `unsafe`
-    /// lifetime-extension casts; matches `bun_resolver::package_json::MacroImportReplacementMap`.
-    pub type MacroRemapEntry = bun_collections::StringArrayHashMap<Box<[u8]>>;
+    pub type MacroRemap = StringArrayHashMap<StringArrayHashMap<Box<[u8]>>>;
 }
 use bun_ast::{Ast, Ref};
 

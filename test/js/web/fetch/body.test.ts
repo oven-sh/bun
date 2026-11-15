@@ -2037,3 +2037,98 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     expect(await text).toBe("payload");
   });
 });
+
+// https://github.com/oven-sh/bun/issues/45245
+describe("the Content-Type a body gives does not depend on what is read first", () => {
+  // A type that formData() takes, so that it reads every body below.
+  const urlencoded = "application/x-www-form-urlencoded;custom=1";
+  const formData = () => {
+    const form = new FormData();
+    form.append("a", "1");
+    return form;
+  };
+  const bodies: [string, () => Bun.BodyInit, unknown][] = [
+    ["Blob", () => new Blob(["a=1"], { type: urlencoded }), urlencoded],
+    ["Bun.file", () => file(import.meta.path, { type: urlencoded }), urlencoded],
+    ["URLSearchParams", () => new URLSearchParams("a=1"), "application/x-www-form-urlencoded;charset=UTF-8"],
+    ["FormData", formData, expect.stringMatching(/^multipart\/form-data; boundary=./)],
+  ];
+  const response = (body: Bun.BodyInit) => new Response(body);
+  const request = (body: Bun.BodyInit) => new Request("http://example.com/", { method: "POST", body });
+  const all = (names: object, type: unknown) => Object.fromEntries(Object.keys(names).map(name => [name, type]));
+
+  const reads: Record<string, (owner: Response | Request) => unknown> = {
+    body: owner => owner.body,
+    textStream: owner => owner.textStream(),
+    text: owner => owner.text(),
+    arrayBuffer: owner => owner.arrayBuffer(),
+    bytes: owner => owner.bytes(),
+    blob: owner => owner.blob(),
+    formData: owner => owner.formData(),
+    // None of the bodies is JSON.
+    json: owner => owner.json().catch(() => {}),
+  };
+  describe.each([
+    ["Response", response],
+    ["Request", request],
+  ] as const)("%s", (_, make) => {
+    test.each(bodies)("%s", async (_, body, type) => {
+      const seen: Record<string, string | null> = {};
+      for (const [name, read] of Object.entries(reads)) {
+        const owner = make(body());
+        await read(owner);
+        seen[name] = owner.headers.get("content-type");
+      }
+      expect(seen).toEqual(all(reads, type));
+    });
+
+    test("the FormData boundary is the one in the body", async () => {
+      const owner = make(formData());
+      const text = await owner.text();
+      expect(owner.headers.get("content-type")).toBe(
+        "multipart/form-data; boundary=" + text.slice(2, text.indexOf("\r\n")),
+      );
+    });
+  });
+
+  const copies: Record<string, (body: Bun.BodyInit) => Response> = {
+    "new Response(p.body, p)": body => {
+      const p = response(body);
+      return new Response(p.body, p);
+    },
+    "new Response(p.body, { headers: p.headers })": body => {
+      const p = response(body);
+      return new Response(p.body, { headers: p.headers });
+    },
+    "new Response(null, p)": body => new Response(null, response(body)),
+    "new Response(request.body, request)": body => {
+      const p = request(body);
+      return new Response(p.body, p);
+    },
+    "new Response(null, request)": body => new Response(null, request(body)),
+  };
+  test.each(bodies)("a Response made from the body keeps it (%s)", async (_, body, type) => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: req => copies[decodeURIComponent(new URL(req.url).pathname.slice(1))](body()),
+    });
+    const headers: Record<string, string | null> = {};
+    const wire: Record<string, string | null> = {};
+    for (const [name, copy] of Object.entries(copies)) {
+      headers[name] = copy(body()).headers.get("content-type");
+      wire[name] = (await fetch(new URL(encodeURIComponent(name), server.url))).headers.get("content-type");
+    }
+    expect({ headers, wire }).toEqual({ headers: all(copies, type), wire: all(copies, type) });
+    // A stream gives no type: https://fetch.spec.whatwg.org/#concept-bodyinit-extract
+    expect(new Response(response(body()).body).headers.get("content-type")).toBeNull();
+  });
+
+  test.each(bodies)("fetch(request) leaves it in request.headers (%s)", async (_, body, type) => {
+    using server = Bun.serve({ port: 0, fetch: req => new Response(req.headers.get("content-type")) });
+    const sent = new Request(server.url, { method: "POST", body: body() });
+    expect({
+      wire: await (await fetch(sent)).text(),
+      headers: sent.headers.get("content-type"),
+    }).toEqual({ wire: type, headers: type });
+  });
+});

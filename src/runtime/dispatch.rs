@@ -7,7 +7,7 @@
 //!
 //! Three dispatchers are defined:
 //!   1. [`run_task`] — `bun_event_loop::Task` (~96 variants).
-//!   2. [`run_file_poll`] — `bun_io::FilePoll::Owner` (~13 variants).
+//!   2. [`__bun_run_io`] — `bun_io::Owner`.
 //!
 //! Low-tier crates declare these as `extern "Rust"`; this crate defines them
 //! `#[no_mangle]` so the linker resolves the call directly — no runtime
@@ -21,11 +21,8 @@
 
 use bun_event_loop::{BoxedTask, Task, task_tag};
 
-// `FilePoll::on_update` dispatch is POSIX-only (the symbol is declared
-// `extern "Rust"` in `aio::posix_event_loop` and never referenced on Windows,
-// where libuv drives I/O readiness directly).
 #[cfg(not(windows))]
-use bun_io::posix_event_loop::{FilePoll, Flags as PollFlag, poll_tag};
+use bun_io::posix_event_loop::{Flags as PollFlag, IoEvent, Owner, poll_tag};
 
 use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, Tag as EventLoopTimerTag, Timespec as ElTimespec,
@@ -873,38 +870,25 @@ pub(crate) fn tick_queue_with_count(
 // FilePoll dispatch
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Hot-path dispatcher for `bun_io::FilePoll::on_update`. Declared
-/// `extern "Rust"` in `bun_io::posix_event_loop`; the low-tier `FilePoll`
+/// Hot-path dispatcher for a `bun_io::FilePoll` that fired. Declared
+/// `extern "Rust"` in `bun_io::posix_event_loop`, which
 /// calls this directly (link-time resolved) so it never names `Subprocess` /
 /// `FileSink` / `DNSResolver` / etc.
 ///
 /// # Safety
-/// `poll` must point at a live [`FilePoll`] for the duration of the call
-/// (guaranteed by `FilePoll::on_update`, the only caller).
+/// `owner.ptr()` is the live value that the arm of `owner.tag()` casts it to.
 #[cfg(not(windows))]
 #[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
-    // SAFETY: contract above.
-    let poll_ref = unsafe { &mut *poll };
-    let owner = poll_ref.owner;
-    let hup = poll_ref.flags.contains(PollFlag::Hup);
+unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
+    let (size_or_offset, hup) = (event.size_or_offset, event.is_hup());
 
-    debug_assert!(!owner.is_null());
-
-    /// `ptr.as(T)` — recover the typed owner.
-    macro_rules! owner_as {
-        ($ty:ty) => {{
-            // SAFETY: tag set with this pointee type at `FilePoll::init`.
-            unsafe { &mut *owner.ptr.cast::<$ty>() }
-        }};
-    }
     /// One match-arm body of the poll-tag dispatch. Recovers the typed owner as
     /// a RAW `*mut $Ty` (never `&mut` — re-entrant callees like `DNSResolver`
     /// pick their own deref mode without aliasing UB) then runs `$body`.
     macro_rules! poll_arm {
         ($Ty:ty, |$h:ident| $body:expr) => {{
-            // SAFETY: tag was set together with this pointee type at `FilePoll::init`.
-            let $h: *mut $Ty = owner.ptr.cast::<$Ty>();
+            // SAFETY: tag was set together with this pointee type at `OwnedFilePoll::new`.
+            let $h: *mut $Ty = owner.ptr().cast::<$Ty>();
             $body;
         }};
     }
@@ -914,12 +898,12 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             in_features!(
                 $features,
                 (
-                    h: *mut $Ty = owner.ptr.cast::<$Ty>(),
+                    h: *mut $Ty = owner.ptr().cast::<$Ty>(),
                     size: isize = size_or_offset as isize,
                     hup: bool = hup,
                 ) {
                     // SAFETY: tag matched, so `owner.ptr` was stored as `*mut $Ty` at
-                    // `FilePoll::init` and the owner outlives this dispatch (caller contract).
+                    // `OwnedFilePoll::new` and the owner outlives this dispatch (caller contract).
                     unsafe { (*h).on_poll(size, hup) };
                 }
             )
@@ -929,30 +913,26 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
     match owner.tag() {
         poll_tag::BUFFERED_READER => poll_arm!(bun_io::BufferedReader, |h| {
             // SAFETY: tag matched, so `owner.ptr` is a live `*mut BufferedReader`
-            // set at `FilePoll::init`. Passed raw: `on_poll`'s read loops run
+            // set at `OwnedFilePoll::new`. Passed raw: `on_poll`'s read loops run
             // user JS that can re-enter the reader, so no `&mut` may span the
             // dispatch.
             unsafe { bun_io::BufferedReader::on_poll(h, size_or_offset as isize, hup) }
         }),
         poll_tag::PROCESS => {
-            in_features!([ChildProcess], (proc: *mut Process = owner.ptr.cast::<Process>()) {
+            in_features!([ChildProcess], (proc: *mut Process = owner.ptr().cast::<Process>()) {
                 // SAFETY: a process frees its poll before it is freed, and `wait` ends with the exit handler.
                 Process::wait(unsafe { bun_ptr::ThisPtr::new(proc) }, false);
             })
         }
         poll_tag::MEMORY_PRESSURE => {
-            crate::node::memory_pressure::on_poll(poll_ref.flags, size_or_offset);
+            crate::node::memory_pressure::on_poll(event.flags, size_or_offset);
         }
         poll_tag::PARENT_DEATH_WATCHDOG => {
-            let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);
             // Mac-only — debug-assert elsewhere (Linux uses prctl(PR_SET_PDEATHSIG)).
             #[cfg(target_os = "macos")]
-            bun_io::parent_death_watchdog::on_parent_exit(wd);
+            bun_io::parent_death_watchdog::on_parent_exit();
             #[cfg(not(target_os = "macos"))]
-            {
-                debug_assert!(false, "ParentDeathWatchdog poll on non-mac");
-                let _ = wd;
-            }
+            debug_assert!(false, "ParentDeathWatchdog poll on non-mac");
         }
 
         // A child's stdin pipe is a `FileSink` too, whether or not the program looks at it.
@@ -976,26 +956,26 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
         poll_tag::SHELL_BUFFERED_WRITER => in_features!(
             [Shell],
             (
-                h: *mut ShellBufferedWriterPoll = owner.ptr.cast::<ShellBufferedWriterPoll>(),
+                h: *mut ShellBufferedWriterPoll = owner.ptr().cast::<ShellBufferedWriterPoll>(),
                 size: isize = size_or_offset as isize,
                 hup: bool = hup,
             ) {
                 // SAFETY: tag matched, so `owner.ptr` is a live `*mut ShellBufferedWriterPoll`
-                // set at `FilePoll::init`; exclusive for this dispatch.
+                // set at `OwnedFilePoll::new`; exclusive for this dispatch.
                 unsafe { crate::shell::io_writer::on_poll(&mut *h, size, hup) };
             }
         ),
         poll_tag::DNS_RESOLVER => in_features!(
             [Dns],
             (
-                resolver: *const DNSResolver = owner.ptr.cast_const().cast::<DNSResolver>(),
-                fd: i32 = poll_ref.fd.native(),
-                readable: bool = poll_ref.is_readable(),
-                writable: bool = poll_ref.is_writable(),
+                resolver: *const DNSResolver = owner.ptr().cast_const().cast::<DNSResolver>(),
+                fd: i32 = event.fd.native(),
+                readable: bool = event.flags.contains(PollFlag::Readable),
+                writable: bool = event.flags.contains(PollFlag::Writable),
             ) {
                 // R-2: deref as shared (`&*const`) — `on_dns_poll` takes `&self` and
                 // `Channel::process` re-enters the resolver via c-ares callbacks.
-                // SAFETY: tag set with this pointee type at `FilePoll::init`.
+                // SAFETY: tag set with this pointee type at `OwnedFilePoll::new`.
                 let resolver = unsafe { &*resolver };
                 resolver.on_dns_poll(fd, readable, writable);
             }
@@ -1003,7 +983,9 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
         poll_tag::GET_ADDR_INFO_REQUEST => {
             #[cfg(target_os = "macos")]
             {
-                let shared = owner.ptr.cast::<crate::dns_jsc::dns_sd::SharedConnection>();
+                let shared = owner
+                    .ptr()
+                    .cast::<crate::dns_jsc::dns_sd::SharedConnection>();
                 crate::dns_jsc::dns_sd::SharedConnection::on_readable(shared);
             }
             #[cfg(not(target_os = "macos"))]
@@ -1016,16 +998,12 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
         poll_tag::LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER => {
             poll_arm!(bun_io::BufferedReader, |h| {
                 // SAFETY: tag matched, so `owner.ptr` is a live `*mut BufferedReader`
-                // set at `FilePoll::init`. Passed raw (see BUFFERED_READER above).
+                // set at `OwnedFilePoll::new`. Passed raw (see BUFFERED_READER above).
                 unsafe { bun_io::BufferedReader::on_poll(h, size_or_offset as isize, hup) }
             })
         }
 
-        poll_tag::NULL => {
-            // The low-tier `on_update` already logged before calling the hook
-            // when it was null; here we just no-op the unknown tag.
-            let _ = (size_or_offset, hup);
-        }
+        poll_tag::NULL => debug_assert!(false, "a poll with no owner fired"),
     }
 }
 

@@ -1,3 +1,4 @@
+#[cfg(windows)]
 use core::ffi::c_void;
 use core::mem;
 use core::ptr::NonNull;
@@ -11,9 +12,8 @@ use bun_sys::ReturnCodeExt as _;
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self as sys, Fd};
 
-use crate::EventLoopHandle;
 #[cfg(unix)]
-use crate::{FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
+use crate::{EventLoopHandle, FilePoll, FilePollFlag, Owner, PollTag};
 
 #[cfg(unix)]
 use crate::pipes::{FileType, PollOrFd};
@@ -156,19 +156,11 @@ pub trait PosixPipeWriter {
         let buffer_len = self.get_buffer().len();
         log!("onPoll({})", buffer_len);
         if buffer_len == 0 && !received_hup {
-            let self_addr = std::ptr::from_ref(self).cast::<()>() as usize;
             log!(
-                "PosixPipeWriter(0x{:x}) handle={}",
-                self_addr,
-                self.handle().tag_name()
+                "PosixPipeWriter(0x{:x}) got 0, registered state = {}",
+                std::ptr::from_ref(self).cast::<()>() as usize,
+                self.handle().is_registered()
             );
-            if let PollOrFd::Poll(poll) = self.handle() {
-                log!(
-                    "PosixPipeWriter(0x{:x}) got 0, registered state = {}",
-                    self_addr,
-                    poll.is_registered()
-                );
-            }
             return;
         }
 
@@ -328,7 +320,7 @@ impl<Parent: WriterParent> Drop for KeepParentAlive<Parent> {
 #[cfg(unix)]
 pub trait PosixBufferedWriterParent: WriterParent {
     /// `bun_io::poll_tag` constant for this writer's `FilePoll` owner. The
-    /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll`
+    /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_io`
     /// recovers `*mut PosixBufferedWriter<Self>` from this.
     const POLL_OWNER_TAG: PollTag;
     /// # Safety
@@ -366,7 +358,7 @@ pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
 impl<Parent: PosixBufferedWriterParent> Default for PosixBufferedWriter<Parent> {
     fn default() -> Self {
         Self {
-            handle: PollOrFd::Closed,
+            handle: PollOrFd::closed(),
             parent: None,
             is_done: false,
             pollable: false,
@@ -455,20 +447,13 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         mem::size_of::<Self>()
     }
 
-    pub(crate) fn create_poll(&mut self, fd: Fd) {
-        let owner = Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast());
-        self.handle.set_poll(self.parent_event_loop(), fd, owner);
-    }
-
-    pub fn get_poll(&self) -> Option<FilePollRef<'_>> {
-        self.handle.get_poll()
+    fn create_poll(&mut self, fd: Fd) {
+        self.set_parent(self.parent());
+        self.handle.set_poll(self.parent_event_loop(), fd);
     }
 
     pub(crate) fn get_file_type(&self) -> FileType {
-        let Some(poll) = self.get_poll() else {
-            return FileType::File;
-        };
-        poll.file_type()
+        (self.handle.with_poll(FilePoll::file_type)).unwrap_or(FileType::File)
     }
 
     pub(crate) fn get_fd(&self) -> Fd {
@@ -517,10 +502,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     pub fn register_poll(&mut self) {
-        let Some(poll) = self.get_poll() else { return };
-        // Use the event loop from the parent, not the global one
-        let loop_ = self.parent_event_loop().native_loop();
-        match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
+        match self.handle.register(FilePollFlag::Writable, self.get_fd()) {
             sys::Result::Err(err) => {
                 // Same report as a failed write (the streaming writer does the
                 // same): parents expect every error to be followed by `on_close`.
@@ -528,14 +510,6 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
             }
             sys::Result::Ok(()) => {}
         }
-    }
-
-    pub(crate) fn enable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
-        self.update_ref(event_loop, true);
-    }
-
-    pub fn disable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
-        self.update_ref(event_loop, false);
     }
 
     fn get_buffer_internal(&self) -> &[u8] {
@@ -558,7 +532,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
             debug_assert!(!self.closed_without_reporting);
             self.closed_without_reporting = true;
             if self.close_fd {
-                self.handle.close(None, None::<fn(*mut c_void)>);
+                self.handle.close();
             }
         }
     }
@@ -569,21 +543,15 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
                 self.closed_without_reporting = false;
                 // SAFETY: parent BACKREF valid.
                 unsafe { Parent::on_close(self.parent()) };
-            } else {
-                let parent = self.parent();
-                self.handle.close_impl(
-                    Some(parent.cast()),
-                    // SAFETY: parent was set via set_parent with a *mut Parent.
-                    Some(|ctx: *mut c_void| unsafe { Parent::on_close(ctx.cast::<Parent>()) }),
-                    self.close_fd,
-                );
+            } else if self.handle.close_impl(self.close_fd) {
+                // SAFETY: parent BACKREF valid.
+                unsafe { Parent::on_close(self.parent()) };
             }
         }
     }
 
-    pub fn update_ref(&self, event_loop: EventLoopHandle, value: bool) {
-        let Some(poll) = self.get_poll() else { return };
-        poll.set_keeping_process_alive(event_loop, value);
+    pub fn update_ref(&self, value: bool) {
+        (self.handle).with_poll(|poll| poll.set_keeping_process_alive(value));
     }
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
@@ -592,15 +560,14 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         let parent = core::ptr::NonNull::new(parent).expect("set_parent: parent must not be null");
         // SAFETY: caller passes the live owning `Parent` (write provenance).
         self.parent = Some(unsafe { bun_ptr::ParentRef::from_raw_mut(parent.as_ptr()) });
-        // reshaped for borrowck — capture *mut Self before borrowing field.
-        let owner = std::ptr::from_mut(self).cast::<c_void>();
-        self.handle
-            .set_owner(Owner::new(Parent::POLL_OWNER_TAG, owner.cast()));
+        let owner = Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast());
+        // SAFETY: `handle` is a field of its owner.
+        unsafe { self.handle.set_owner(owner) };
     }
 
     pub fn watch(&mut self) {
         if self.pollable {
-            if matches!(self.handle, PollOrFd::Fd(_)) {
+            if !self.handle.has_poll() && !self.handle.is_closed() {
                 let fd = self.get_fd();
                 self.create_poll(fd);
             }
@@ -617,29 +584,24 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         let fd = rawfd;
         self.pollable = pollable;
         if !pollable {
-            debug_assert!(!matches!(self.handle, PollOrFd::Poll(_)));
-            self.handle = PollOrFd::Fd(fd);
+            debug_assert!(!self.handle.has_poll());
+            self.handle.set_fd(fd);
             return sys::Result::Ok(());
         }
-        let had_poll = self.get_poll().is_some();
+        let had_poll = self.handle.has_poll();
         if !had_poll {
             self.create_poll(fd);
         }
-        let poll = self.get_poll().expect("made above");
-        let loop_ = self.parent_event_loop().native_loop();
 
-        match poll.register_with_fd(loop_, FilePollKind::Writable, fd) {
+        match self.handle.register(FilePollFlag::Writable, fd) {
             sys::Result::Err(err) => {
                 // A poll from an earlier start() still holds that start's fd.
                 if !had_poll {
-                    self.handle = PollOrFd::Closed;
+                    self.handle.set_fd(Fd::INVALID);
                 }
                 return sys::Result::Err(err);
             }
-            sys::Result::Ok(()) => {
-                let event_loop = self.parent_event_loop();
-                self.enable_keeping_process_alive(event_loop);
-            }
+            sys::Result::Ok(()) => self.update_ref(true),
         }
 
         sys::Result::Ok(())
@@ -659,7 +621,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 #[cfg(unix)]
 pub trait PosixStreamingWriterParent: WriterParent {
     /// `bun_io::poll_tag` constant for this writer's `FilePoll` owner. The
-    /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll`
+    /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_io`
     /// recovers `*mut PosixStreamingWriter<Self>` from this.
     const POLL_OWNER_TAG: PollTag;
     /// # Safety
@@ -674,9 +636,6 @@ pub trait PosixStreamingWriterParent: WriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
-    /// # Safety
-    /// `this` must point to a live `Self`.
-    unsafe fn loop_(this: *mut Self) -> crate::LoopRef;
 }
 
 #[cfg(unix)]
@@ -697,7 +656,7 @@ impl<Parent: PosixStreamingWriterParent> Default for PosixStreamingWriter<Parent
     fn default() -> Self {
         Self {
             outgoing: StreamBuffer::default(),
-            handle: PollOrFd::Closed,
+            handle: PollOrFd::closed(),
             parent: core::ptr::null_mut(),
             is_done: false,
             closed_without_reporting: false,
@@ -789,19 +748,12 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         mem::size_of::<Self>() + self.outgoing.memory_cost()
     }
 
-    pub fn get_poll(&self) -> Option<FilePollRef<'_>> {
-        self.handle.get_poll()
-    }
-
     pub(crate) fn get_fd(&self) -> Fd {
         self.handle.get_fd()
     }
 
     pub(crate) fn get_file_type(&self) -> FileType {
-        let Some(poll) = self.get_poll() else {
-            return FileType::File;
-        };
-        poll.file_type()
+        (self.handle.with_poll(FilePoll::file_type)).unwrap_or(FileType::File)
     }
 
     pub fn has_pending_data(&self) -> bool {
@@ -875,25 +827,21 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
         self.parent = parent;
-        // reshaped for borrowck — capture *mut Self before borrowing field.
-        let owner = std::ptr::from_mut(self).cast::<c_void>();
-        self.handle
-            .set_owner(Owner::new(Parent::POLL_OWNER_TAG, owner.cast()));
+        let owner = Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast());
+        // SAFETY: `handle` is a field of its owner.
+        unsafe { self.handle.set_owner(owner) };
     }
 
     fn close_without_reporting(&mut self) {
         if self.get_fd() != Fd::INVALID {
             debug_assert!(!self.closed_without_reporting);
             self.closed_without_reporting = true;
-            self.handle.close(None, None::<fn(*mut c_void)>);
+            self.handle.close();
         }
     }
 
     fn register_poll(&mut self) {
-        let Some(poll) = self.get_poll() else { return };
-        // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-        let loop_ = unsafe { Parent::loop_(self.parent()) };
-        match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
+        match self.handle.register(FilePollFlag::Writable, self.get_fd()) {
             sys::Result::Err(err) => self.report_error_and_close(err),
             sys::Result::Ok(()) => {}
         }
@@ -1063,12 +1011,10 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             return WriteResult::Wrote(0);
         }
 
-        let received_hup = 'brk: {
-            if let Some(poll) = self.get_poll() {
-                break 'brk poll.has_flag(FilePollFlag::Hup);
-            }
-            false
-        };
+        let received_hup = self
+            .handle
+            .with_poll(|poll| poll.has_flag(FilePollFlag::Hup))
+            == Some(true);
 
         let rc = self.drain_buffered_data(usize::MAX, received_hup);
         // update head
@@ -1094,25 +1040,11 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         rc
     }
 
-    pub fn enable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
-        if self.is_done {
+    pub fn update_ref(&self, value: bool) {
+        if value && self.is_done {
             return;
         }
-        let Some(poll) = self.get_poll() else { return };
-        poll.enable_keeping_process_alive(event_loop);
-    }
-
-    pub fn disable_keeping_process_alive(&self, event_loop: EventLoopHandle) {
-        let Some(poll) = self.get_poll() else { return };
-        poll.disable_keeping_process_alive(event_loop);
-    }
-
-    pub fn update_ref(&self, event_loop: EventLoopHandle, value: bool) {
-        if value {
-            self.enable_keeping_process_alive(event_loop);
-        } else {
-            self.disable_keeping_process_alive(event_loop);
-        }
+        (self.handle).with_poll(|poll| poll.set_keeping_process_alive(value));
     }
 
     pub fn end(&mut self) {
@@ -1133,36 +1065,33 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             return;
         }
 
-        let parent = self.parent;
-        self.handle.close(
-            Some(parent.cast()),
-            // SAFETY: parent was set via set_parent with a *mut Parent.
-            Some(|ctx: *mut c_void| unsafe { Parent::on_close(ctx.cast::<Parent>()) }),
-        );
+        if self.handle.close() {
+            // SAFETY: parent BACKREF valid.
+            unsafe { Parent::on_close(self.parent()) };
+        }
     }
 
     /// On `Err` the writer holds nothing; `fd` is still the caller's to close.
     pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
         if !is_pollable {
             self.close();
-            self.handle = PollOrFd::Fd(fd);
+            self.handle.set_fd(fd);
             return sys::Result::Ok(());
         }
 
-        // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-        let loop_ = unsafe { Parent::event_loop(self.parent()) };
-        let had_poll = self.get_poll().is_some();
+        let had_poll = self.handle.has_poll();
         if !had_poll {
-            let owner = Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast());
-            self.handle.set_poll(loop_, fd, owner);
+            self.set_parent(self.parent());
+            // SAFETY: parent BACKREF set via set_parent; outlives this writer.
+            let event_loop = unsafe { Parent::event_loop(self.parent()) };
+            self.handle.set_poll(event_loop, fd);
         }
-        let poll = self.get_poll().expect("made above");
 
-        match poll.register_with_fd(loop_.native_loop(), FilePollKind::Writable, fd) {
+        match self.handle.register(FilePollFlag::Writable, fd) {
             sys::Result::Err(err) => {
                 // A poll from an earlier start() still holds that start's fd.
                 if !had_poll {
-                    self.handle = PollOrFd::Closed;
+                    self.handle.set_fd(Fd::INVALID);
                 }
                 return sys::Result::Err(err);
             }
@@ -1241,14 +1170,6 @@ pub trait BaseWindowsPipeWriter: Sized {
         }
     }
 
-    fn enable_keeping_process_alive(&mut self, event_loop: EventLoopHandle) {
-        self.update_ref(event_loop, true);
-    }
-
-    fn disable_keeping_process_alive(&mut self, event_loop: EventLoopHandle) {
-        self.update_ref(event_loop, false);
-    }
-
     fn close(&mut self) {
         self.close_impl(true);
     }
@@ -1278,7 +1199,7 @@ pub trait BaseWindowsPipeWriter: Sized {
         self.on_close_source();
     }
 
-    fn update_ref(&mut self, _event_loop: EventLoopHandle, value: bool) {
+    fn update_ref(&mut self, value: bool) {
         if let Some(pipe) = self.source_mut().as_mut() {
             if value {
                 pipe.ref_();
@@ -2614,7 +2535,6 @@ macro_rules! impl_streaming_writer_parent {
         on_ready   = $on_ready:ident,
         on_close   = $on_close:ident,
         event_loop = |$el_this:ident| $el:expr,
-        uws_loop   = |$uws_this:ident| $uws:expr,
         uv_loop    = |$uv_this:ident| $uv:expr,
         ref_       = |$ref_this:ident| $ref_:expr,
         deref      = |$deref_this:ident| $deref:expr,
@@ -2647,13 +2567,6 @@ macro_rules! impl_streaming_writer_parent {
                 let $el_this = this;
                 #[allow(unused_unsafe)]
                 unsafe { $el }
-            }
-            #[inline]
-            unsafe fn loop_(this: *mut Self) -> $crate::LoopRef {
-                // SAFETY: see on_write. Shared-only read.
-                let $uws_this = this;
-                #[allow(unused_unsafe)]
-                unsafe { $uws }
             }
         }
 

@@ -293,7 +293,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // Detach the tunnel first so its shutdown callbacks cannot re-enter this path.
         if let Transport::Tunnel(tunnel) = self.transport.take() {
             tunnel.clear_connected_web_socket();
-            WebSocketProxyTunnel::shutdown(tunnel.this_ptr());
+            tunnel.shutdown();
             drop(tunnel);
             // Release the I/O-layer ref taken in init_with_tunnel() — the
             // tunnel was this struct's socket-equivalent owner. In the

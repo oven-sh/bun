@@ -435,6 +435,10 @@ struct AsyncDrive {
 }
 
 impl AsyncDrive {
+    fn find(drives: &mut [AsyncDrive], id: u32) -> Option<&mut AsyncDrive> {
+        drives.iter_mut().find(|drive| drive.id == id)
+    }
+
     fn settle(mut self, global: &JSGlobalObject) -> JsResult<()> {
         match self.thrown.try_swap() {
             Some(thrown) => self.promise.reject(global, Ok(thrown)),
@@ -1103,8 +1107,7 @@ impl FakeTimers {
 
     /// `None` if `useRealTimers()` already settled the drive.
     fn with_drive<R>(&self, id: u32, f: impl FnOnce(&mut AsyncDrive) -> R) -> Option<R> {
-        self.drives
-            .with_taken(|drives| drives.iter_mut().find(|drive| drive.id == id).map(f))
+        self.drives.with_taken(|drives| AsyncDrive::find(drives, id).map(f))
     }
 
     fn set_drive(&self, id: u32, to: Drive, during_tick: bool) {

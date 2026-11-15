@@ -2383,7 +2383,7 @@ impl VirtualMachine {
     ///     listeners, sockets, watchers, subprocess/pipe/tty handles, in-flight
     ///     fetch/S3/Bun.build aborted or cancelled), socket groups and the DNS
     ///     channel closed.
-    ///  B. release — cron, user timers and GC-controller timers cancelled; child
+    ///  B. release — cron, memory pressure watch, user and GC-controller timers cancelled; child
     ///     workers joined; this VM's sqlite connections closed; **the wait**:
     ///     every ticket held off-thread comes back while queued work is
     ///     released without running; the handle closes; main: HTTP thread
@@ -2447,7 +2447,7 @@ impl VirtualMachine {
             unsafe { uws::Timer::close::<true>(t.as_ptr()) };
         }
         if let Some(hooks) = hooks {
-            (hooks.stop_cron_for_vm_teardown)(vm);
+            (hooks.stop_watches_for_vm_teardown)(vm);
             // Drop every TimeoutObject/ImmediateObject's heap node, JS pin and
             // +1 while runtime state and the JSC heap are alive. The heap itself
             // (and the loop handle it embeds) stays up: JSC's own RunLoop timers
@@ -2877,12 +2877,10 @@ pub struct RuntimeHooks {
     /// `None` if parsing failed.
     pub parse_worker_exec_argv_flags:
         unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<WorkerExecArgvFlags>,
-    /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
-    /// `bun_runtime::api::cron`.
-    pub stop_cron_for_vm_teardown: fn(vm: &VirtualMachine),
+    /// Cron jobs and the memory pressure watcher, while the loop and `RareData` are alive.
+    pub stop_watches_for_vm_teardown: fn(vm: &VirtualMachine),
     /// `CronJob.clearAllForVM(vm, .reload)`.
-    /// Same impl as `stop_cron_for_vm_teardown` but
-    /// the `.reload` mode preserves the next-fire schedule across the new
+    /// The `.reload` mode preserves the next-fire schedule across the new
     /// global so timers re-register instead of being torn down.
     pub cron_clear_all_reload: fn(vm: &VirtualMachine),
     /// Standalone-graph sourcemap load.
@@ -5635,7 +5633,7 @@ impl VirtualMachine {
             drop(core::mem::take(&mut (*this).source_mappings));
 
             if let Some(hooks) = runtime_hooks() {
-                (hooks.stop_cron_for_vm_teardown)(&*this);
+                (hooks.stop_watches_for_vm_teardown)(&*this);
             }
             if let Some(rare) = (*this).rare_data.take() {
                 // Paired with `rare_data()`'s `register_root_region`.

@@ -64,35 +64,13 @@ impl FilePoll {
         vm.loop_sub_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
     }
 
-    pub(crate) fn init(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
-        Self::init_with_owner(vm, fd, flags, owner)
-    }
-
-    pub(crate) fn init_with_owner(
-        vm: EventLoopCtx,
-        fd: Fd,
-        flags: FlagsSet,
-        owner: Owner,
-    ) -> *mut FilePoll {
-        // Crate-private backref-deref accessor — single live `&mut Store` borrow.
-        vm.file_polls_mut()
-            .get_init(FilePoll {
-                fd,
-                flags,
-                owner,
-                next_to_free: ptr::null_mut(),
-            })
-            .as_ptr()
-    }
-
-    // Note: not `impl Drop` — FilePoll lives in a HiveArray pool slot, not a Box;
-    // teardown returns the slot to the pool via `Store::put`.
-    pub fn deinit(&mut self) {
-        self.deinit_with_vm(js_vm_ctx());
-    }
-
-    pub(crate) fn deinit_force_unregister(&mut self) {
-        self.deinit()
+    pub(crate) fn init(vm: EventLoopCtx, fd: Fd, owner: Owner) -> ptr::NonNull<FilePoll> {
+        vm.alloc_file_poll(FilePoll {
+            fd,
+            flags: FlagsSet::default(),
+            owner,
+            next_to_free: ptr::null_mut(),
+        })
     }
 
     pub(crate) fn unregister(&mut self, _loop: &WindowsLoop) -> bool {
@@ -104,7 +82,7 @@ impl FilePoll {
         // ever sets the `Poll*` registration flags after construction (this
         // module defines no `register`), and every in-tree constructor passes
         // empty/default flags, so `is_registered()` stays false and
-        // `deinit_possibly_defer` — the only path here — never takes the
+        // `reset` — the only path here — never takes the
         // `unregister` branch. If a Windows registration path is ever added,
         // this cast must be replaced with a real `uv_handle_t` pointer first
         // (see TODO above); `uv_unref` dereferences its argument.
@@ -114,32 +92,17 @@ impl FilePoll {
         true
     }
 
-    fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, loop_: &WindowsLoop) {
+    /// Returns the rest of what `Store::put` takes.
+    pub(crate) fn reset(&mut self, _force_unregister: bool) -> (EventLoopCtx, bool) {
+        let vm = js_vm_ctx();
         if self.is_registered() {
-            let _ = self.unregister(loop_);
+            let _ = self.unregister(vm.loop_());
         }
 
         let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
         self.flags = FlagsSet::default();
         self.fd = Fd::INVALID;
-        // All `self` field writes are done. Decay `self` to a raw slot pointer
-        // *before* materializing `&mut Store` so the `&mut Store` borrow (which
-        // covers the inline hive buffer) is the only live unique reference into
-        // that allocation when `Store::put` runs. `self` is never touched after
-        // this line — `Store::put` itself accesses `this` only via raw-pointer ops.
-        let this: ptr::NonNull<FilePoll> = ptr::NonNull::from(&mut *self);
-        // `file_polls_mut()` is the per-thread set-once `Store` back-pointer
-        // (`BackRef`-shaped); `&mut self` has been retired to `this` above so
-        // the `&mut Store` it produces is the sole unique borrow into the hive.
-        vm.file_polls_mut().put(this, vm, was_ever_registered);
-    }
-
-    pub(crate) fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
-        // Stacked-Borrows: `self` may live inside `Store.hive`'s inline buffer,
-        // so `&mut Store` is materialised only *after* `&mut self` is retired
-        // inside `deinit_possibly_defer` (via `file_polls_mut()`).
-        let loop_ = vm.loop_();
-        self.deinit_possibly_defer(vm, loop_);
+        (vm, was_ever_registered)
     }
 
     pub(crate) fn enable_keeping_process_alive(&mut self, vm: EventLoopCtx) {
@@ -196,7 +159,12 @@ impl Store {
     /// `poll` is a live, fully-initialized slot in `self.hive`. Touched only
     /// through raw pointer ops to avoid forming a `&mut FilePoll` that would
     /// alias `&mut self` (the hive buffer is inline storage).
-    pub fn put(&mut self, poll: ptr::NonNull<FilePoll>, vm: EventLoopCtx, ever_registered: bool) {
+    pub(crate) fn put(
+        &mut self,
+        poll: ptr::NonNull<FilePoll>,
+        vm: EventLoopCtx,
+        ever_registered: bool,
+    ) {
         let poll = poll.as_ptr();
         if !ever_registered {
             // SAFETY: `poll` is a fully-initialized hive slot; FilePoll has no

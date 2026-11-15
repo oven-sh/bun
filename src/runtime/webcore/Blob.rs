@@ -461,8 +461,7 @@ impl BlobExt for Blob {
         if self.is_s3() {
             let store = self.store().expect("infallible: store present");
             let (s3, store) = (store.data.as_s3(), store.clone());
-            let poll = bun_io::KeepAlive::default();
-            poll.ref_(bun_io::js_vm_ctx());
+            let keep_alive = bun_io::JsKeepAlive::active();
             let callback = Box::new(move |result: S3DownloadResult<'_>| {
                 let result = match result {
                     // `body` is owned by us (simple_request.rs); take the Vec's items as-is.
@@ -478,7 +477,7 @@ impl BlobExt for Blob {
                         }))
                     }
                 };
-                poll.unref(bun_io::js_vm_ctx());
+                drop(keep_alive);
                 drop(store);
                 ctx.on_read_bytes(result)
             });
@@ -4757,7 +4756,7 @@ struct S3BlobDownloadTask {
     /// the borrow detaches from `&self` (Copy) for use across `&mut self` calls.
     pub global_this: bun_ptr::BackRef<JSGlobalObject>,
     pub(crate) promise: jsc::JSPromiseStrong,
-    pub poll_ref: bun_io::KeepAlive,
+    _keep_alive: bun_io::JsKeepAlive,
     pub(crate) handler: S3ReadHandler,
 }
 
@@ -4813,10 +4812,9 @@ impl S3BlobDownloadTask {
             global_this: bun_ptr::BackRef::new(cx.global()),
             blob: Blob::dupe(blob),
             promise: jsc::JSPromiseStrong::init(cx.global()),
-            poll_ref: bun_io::KeepAlive::default(),
+            _keep_alive: bun_io::JsKeepAlive::active(),
             handler,
         };
-        this.poll_ref.ref_(bun_io::js_vm_ctx());
         let promise = this.promise.value();
         let callback = Box::new(move |result: S3DownloadResult<'_>| {
             Self::on_s3_download_resolved(&mut this, result)
@@ -4866,13 +4864,6 @@ impl S3BlobDownloadTask {
             )?;
         }
         Ok(promise)
-    }
-}
-
-impl Drop for S3BlobDownloadTask {
-    fn drop(&mut self) {
-        self.poll_ref.unref(bun_io::js_vm_ctx());
-        // promise: Drop handles deinit.
     }
 }
 

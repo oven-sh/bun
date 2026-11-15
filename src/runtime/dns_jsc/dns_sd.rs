@@ -404,9 +404,10 @@ unsafe extern "C" fn on_reply<const INTERNAL: bool>(
 
 /// One per event loop: owns the primary `DNSServiceRef` + `FilePoll`; lookups are ShareConnection subordinates.
 pub(crate) struct SharedConnection {
+    file_poll: bun_io::OwnedFilePoll,
+    /// After `file_poll`, whose fd it closes.
     main_ref: OwnedServiceRef,
-    file_poll: NonNull<FilePoll>,
-    ctx: Async::EventLoopCtx,
+    ctx: bun_io::EventLoopCtx,
     inflight: Vec<Inflight>,
     /// `context` of the previous reply (a different one ends the prior request's contiguous run).
     last_ctx: *mut c_void,
@@ -414,6 +415,17 @@ pub(crate) struct SharedConnection {
     pub(crate) early_out_timer: EventLoopTimer,
     /// Deadline the timer is currently armed for (0 = disarmed).
     early_out_armed_for: Cell<i64>,
+}
+
+impl Drop for SharedConnection {
+    fn drop(&mut self) {
+        debug_assert!(self.inflight.is_empty());
+        if self.early_out_timer.state.get() == EventLoopTimerState::ACTIVE
+            && VirtualMachine::is_loaded()
+        {
+            crate::jsc_hooks::timer_all().remove(&self.early_out_timer);
+        }
+    }
 }
 
 thread_local! {
@@ -427,13 +439,8 @@ impl SharedConnection {
         unsafe { SHARED.get().as_mut() }
     }
 
-    fn file_poll(&mut self) -> &mut FilePoll {
-        // SAFETY: `file_poll` is the live hive slot owned by this connection until `destroy`.
-        unsafe { self.file_poll.as_mut() }
-    }
-
     /// Lazily connect; `None` (caller falls back to getaddrinfo) if mDNSResponder is unreachable.
-    pub(crate) fn get<'a>(ctx: Async::EventLoopCtx) -> Option<&'a mut Self> {
+    pub(crate) fn get<'a>(ctx: bun_io::EventLoopCtx) -> Option<&'a mut Self> {
         if let Some(existing) = Self::current() {
             return Some(existing);
         }
@@ -453,36 +460,30 @@ impl SharedConnection {
         }
         let fd = sys::Fd::from_native(raw_fd);
         let mut this = Box::new(Self {
+            file_poll: bun_io::OwnedFilePoll::new(
+                ctx,
+                fd,
+                bun_io::Owner::new(
+                    bun_io::posix_event_loop::poll_tag::GET_ADDR_INFO_REQUEST,
+                    ptr::null_mut(),
+                ),
+            ),
             main_ref,
-            file_poll: NonNull::dangling(),
             ctx,
             inflight: Vec::new(),
             last_ctx: ptr::null_mut(),
             early_out_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DnsSdConnection),
             early_out_armed_for: Cell::new(0),
         });
-        let poll_ptr = FilePoll::init(
-            ctx,
-            fd,
-            Default::default(),
-            Async::Owner::new(
-                Async::posix_event_loop::poll_tag::GET_ADDR_INFO_REQUEST,
-                (&raw mut *this).cast(),
-            ),
-        );
-        // SAFETY: `FilePoll::init` returned a live pool slot; exclusive here.
-        let poll = unsafe { &mut *poll_ptr };
-        let rc = poll.register_with_fd(
-            ctx.loop_(),
-            Async::PollKind::Readable,
-            Async::posix_event_loop::OneShotFlag::None,
-            fd,
-        );
-        if rc.is_err() {
-            poll.deinit();
-            return None;
-        }
-        this.file_poll = NonNull::new(poll_ptr).unwrap();
+        this.file_poll.owner.ptr = (&raw mut *this).cast();
+        this.file_poll
+            .register_with_fd(
+                ctx.loop_(),
+                bun_io::PollKind::Readable,
+                bun_io::posix_event_loop::OneShotFlag::None,
+                fd,
+            )
+            .ok()?;
         SHARED.set(bun_core::heap::into_raw(this));
         Self::current()
     }
@@ -499,8 +500,7 @@ impl SharedConnection {
             return false;
         };
         if self.inflight.is_empty() {
-            let ctx = self.ctx;
-            self.file_poll().enable_keeping_process_alive(ctx);
+            self.file_poll.enable_keeping_process_alive(self.ctx);
         }
         // SAFETY: `owner` is the caller's live request, tracked here until `finish()`.
         let q = unsafe { owner.query() };
@@ -608,7 +608,7 @@ impl SharedConnection {
                 Self::fail(inf);
             }
             // SAFETY: `detached` was just removed from SHARED and drained.
-            unsafe { Self::destroy(detached) };
+            drop(unsafe { bun_core::heap::take(detached) });
             return;
         }
         let ready = this.take_ready(|q| q.is_ready());
@@ -631,8 +631,7 @@ impl SharedConnection {
             }
         }
         if self.inflight.is_empty() {
-            let ctx = self.ctx;
-            self.file_poll().disable_keeping_process_alive(ctx);
+            self.file_poll.disable_keeping_process_alive(self.ctx);
         }
         ready
     }
@@ -691,20 +690,6 @@ impl SharedConnection {
         }
     }
 
-    /// Free a detached connection. SAFETY: `this` is live, removed from SHARED, `inflight` empty.
-    unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract.
-        let conn = unsafe { bun_core::heap::take(this) };
-        debug_assert!(conn.inflight.is_empty());
-        if conn.early_out_timer.state.get() == EventLoopTimerState::ACTIVE
-            && VirtualMachine::is_loaded()
-        {
-            crate::jsc_hooks::timer_all().remove(&conn.early_out_timer);
-        }
-        // SAFETY: `file_poll` is the live hive slot; `deinit` returns it.
-        unsafe { (*conn.file_poll.as_ptr()).deinit() };
-    }
-
     fn finish(inf: Inflight) {
         // SAFETY: `inf` is a live heap request just removed from `inflight`.
         let q = unsafe { inf.query() };
@@ -743,8 +728,7 @@ impl SharedConnection {
         );
         q.sd_refs = sd_refs;
         if this.inflight.is_empty() {
-            let ctx = this.ctx;
-            this.file_poll().enable_keeping_process_alive(ctx);
+            this.file_poll.enable_keeping_process_alive(this.ctx);
         }
         this.inflight.push(inf);
         true
@@ -773,7 +757,7 @@ impl SharedConnection {
             }
         }
         // SAFETY: `this` is detached and drained.
-        unsafe { Self::destroy(this) };
+        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -792,7 +776,7 @@ pub(crate) fn start(this: &Resolver, query: &GetAddrInfo, pending: Query) -> Res
         return Err(pending);
     }
 
-    let Some(shared) = SharedConnection::get(js_event_loop_ctx()) else {
+    let Some(shared) = SharedConnection::get(bun_io::js_vm_ctx()) else {
         return Err(pending);
     };
 

@@ -1005,6 +1005,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!(
         "--react-compiler                 Compile components and hooks with the React Compiler. Test files, preloads and node_modules are left alone"
     ),
+    parse_param!(
+        "--no-compile-function-source     With --aot: don't embed function source code. fn.toString() returns [native code]"
+    ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(
     TEST_ONLY_PARAMS,

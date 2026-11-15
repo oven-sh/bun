@@ -20,6 +20,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/test-runs-without-function-source.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/memory-of-builds-that-follow-a-path.test.ts": {
     "default": 60000,
     "asan": 240000

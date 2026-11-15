@@ -55,7 +55,6 @@ const HARDENING_NAMES: &[(&[u8], &[&[u8]])] = &[
 /// The words of `BUN_DEBUG_TEST_AOT_WORDS` that start with `TestRun`. With any of them the runner says what the build hands over.
 /// `TestRunLayers:0` asks for one program, which every run is.
 const TEST_RUN_WORDS: &[&[u8]] = &[
-    b"TestRunWithoutFunctionSource",
     b"TestRunSaysItsForm",
     b"TestRunShowsStandIn:1",
     b"TestRunLayers:0",
@@ -1039,8 +1038,8 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         exit_with_unknown_test_run_word(word);
     }
     ctx.bundler_options.aot = Some(Box::new(AotOptions {
-        // For runner tests: no flag of `bun test` omits function source.
-        embeds_function_source: !words_read_here.contains(&&b"TestRunWithoutFunctionSource"[..]),
+        embeds_function_source: !(cmd == Tag::TestCommand
+            && args.flag(b"--no-compile-function-source")),
         erases_types: words_read_here.contains(&&b"erase-types"[..]),
         takes_first_texts: words_read_here.contains(&&b"FirstTexts"[..]),
         ir_output_path: (words_read_here.iter())

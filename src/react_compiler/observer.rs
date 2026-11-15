@@ -235,9 +235,6 @@ impl Host for RecordingHost<'_> {
     fn is_module_level(&self, ref_: Ref) -> bool {
         self.host.is_module_level(ref_)
     }
-    fn source(&self) -> &[u8] {
-        self.host.source()
-    }
     fn arena(&self) -> &Arena {
         self.host.arena()
     }

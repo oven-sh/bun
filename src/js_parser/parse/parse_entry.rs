@@ -945,6 +945,7 @@ impl<'a> Parser<'a> {
                 rc_options,
                 opt_out,
                 import_bindings,
+                &p.source.contents,
             )));
         }
 

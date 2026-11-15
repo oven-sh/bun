@@ -7,14 +7,17 @@ const nativeTests = require("./build/Debug/napitests.node");
 // (script is refused in a worker that is exiting). Written with writeSync so
 // that, if it does run, the line lands in stdout before the worker is gone.
 nativeTests.queue_threadsafe_function_items(
-  () => writeSync(1, "worker: js callback ran\n"),
+  () => {
+    writeSync(1, "worker: js callback ran\n");
+    queueMicrotask(() => process.exit(0));
+  },
   3,
   /* print_finalize */ true,
 );
 
 if (workerData.how === "exit") {
   process.exit(0);
-} else {
+} else if (workerData.how === "terminate") {
   // Stay on the JS stack so nothing is dispatched before the parent's
   // terminate() lands.
   parentPort.postMessage("queued");

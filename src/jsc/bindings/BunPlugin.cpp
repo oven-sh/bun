@@ -8981,7 +8981,6 @@ bool isModuleMockFactoryRunning(Zig::GlobalObject* globalObject, const String& k
 }
 
 // The loader has no entry for a mocked module while an import() of it waits for the factory. Adds those that a module of `evaluating` awaits.
-// With an entry, the import() waits for what the loader has: the fetch, the original that is patched in place, or the module of the mock.
 __attribute__((minsize)) void appendModuleMocksWhoseFactoryAnImportAwaits(Zig::GlobalObject* globalObject, std::span<JSC::CyclicModuleRecord* const> evaluating, Vector<String>& keys)
 {
     JSValue dynamicImports = globalObject->mockModule.dynamicImports.get();
@@ -9000,6 +8999,7 @@ __attribute__((minsize)) void appendModuleMocksWhoseFactoryAnImportAwaits(Zig::G
         if (!key.isString())
             continue;
         String mocked = asString(key)->tryGetValue();
+        // With an entry, the import() waits for the fetch, for the original that the mock patches in place, or for the module of the mock.
         if (keys.contains(mocked) || !isModuleMockFactoryRunning(globalObject, mocked) || loader->registryEntry(JSC::Identifier::fromString(vm, mocked)))
             continue;
         for (auto* record : evaluating) {

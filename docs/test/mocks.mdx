@@ -828,6 +828,8 @@ Bun resolves the module specifier the same way it resolves an `import`, supporti
 - Absolute paths (`'/path/to/module'`)
 - Package names (`'lodash'`)
 
+Some names resolve to one file for `import` and to another for `require()`, such as a package whose `exports` has an `import` and a `require` condition. If your tests mock such a name with `mock.module()`, `jest.mock()` or `jest.doMock()` and also call `mock.module(require.resolve(name), factory)` to make `require()` get the mock, you can delete that line. The mock of the name reaches `require()`. The line still works if you keep it. It makes a second mock, for the file that `require()` loads, and `require()` of the name gets whichever of the two mocks was made last. Keep the line beside `vi.mock()` and `vi.doMock()`. Their mock doesn't reach `require()` of such a name.
+
 ### Import Timing Effects
 
 - **When mocking before first import**: The original module isn't evaluated, unless something still needs it, such as a factory that declares `importOriginal`, `vi.importActual()`, a mock that has neither a factory nor a `__mocks__` file, or a module in `node_modules` that imports a package you mock with `vi.mock()`

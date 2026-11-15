@@ -12,7 +12,7 @@ use bun_boringssl::ssl_ctx_setup;
 use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::strings;
-use bun_ptr::RefPtr;
+use bun_ptr::{AliasableBox, RefCount, RefCounted, RefPtr};
 use bun_uws as uws;
 
 bun_core::declare_scope!(HTTPContext, hidden);
@@ -31,7 +31,7 @@ pub struct HTTPContext<const SSL: bool> {
     /// so deinit() never runs while a request is mid-flight. The last deref
     /// does not run it in place either, see `RefCounted::destroy` below. The global
     /// http_context/https_context start at 1 and are never deref'd.
-    pub(crate) ref_count: bun_ptr::RefCount,
+    pub(crate) ref_count: RefCount,
     pub(crate) pending_sockets: LazyPool<SSL, POOL_SIZE>,
     pub(crate) pending_unix_sockets: LazyPool<SSL, UNIX_POOL_SIZE>,
     /// Incremented per park; the lowest value in a full pool is evicted.
@@ -1218,17 +1218,17 @@ impl<const SSL: bool> HTTPContext<SSL> {
     }
 }
 
-bun_core::intrusive_field!(HTTPContext<true>, ref_count: bun_ptr::RefCount);
+bun_core::intrusive_field!(HTTPContext<true>, ref_count: RefCount);
 
-impl bun_ptr::RefCounted for HTTPContext<true> {
-    type Count = bun_ptr::RefCount;
+impl RefCounted for HTTPContext<true> {
+    type Count = RefCount;
 
     /// The last ref is gone. A request gives its ref up in its result
     /// callback, which runs inside callbacks of this context's own sockets,
     /// and uSockets reads `s->group` (the `group` field here) again when such
     /// a callback returns. So the HTTP thread frees the context between two
     /// loop ticks, whoever held the last ref.
-    fn destroy(last: bun_ptr::AliasableBox<Self>) {
+    fn destroy(last: AliasableBox<Self>) {
         crate::http_thread().dead_ssl_contexts.push(last);
     }
 }

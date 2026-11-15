@@ -31,7 +31,7 @@ use bun_jsc::{
     JSObject, JSValue, JsCell, JsRef, JsResult,
 };
 use bun_paths as path;
-use bun_ptr::{BackRef, RefPtr, ThisPtr};
+use bun_ptr::{BackRef, RefCount, RefPtr, ThisPtr};
 use bun_resolver::fs::FileSystem;
 #[cfg(not(target_os = "macos"))]
 use bun_resolver::fs::RealFS;
@@ -192,7 +192,7 @@ enum JobAction {
 
 #[derive(bun_ptr::RefCounted)]
 struct CronRegisterJob {
-    ref_count: bun_ptr::RefCount,
+    ref_count: RefCount,
     /// The single owning ref; released by `finish`.
     owner: Cell<Option<RefPtr<CronRegisterJob>>>,
     promise: JsCell<jsc::JSPromiseStrong>,
@@ -725,7 +725,7 @@ pub(crate) fn register_os_job(
             )));
     }
     let job = RefPtr::new(CronRegisterJob {
-        ref_count: bun_ptr::RefCount::init(),
+        ref_count: RefCount::init(),
         owner: Cell::new(None),
         promise: JsCell::new(jsc::JSPromiseStrong::init(global)),
         global: GlobalRef::from(global),
@@ -867,7 +867,7 @@ const ASCII_WHITESPACE: [u8; 6] = *b" \t\n\r\x0b\x0c";
 
 #[derive(bun_ptr::RefCounted)]
 struct CronRemoveJob {
-    ref_count: bun_ptr::RefCount,
+    ref_count: RefCount,
     /// The single owning ref; released by `finish`.
     owner: Cell<Option<RefPtr<CronRemoveJob>>>,
     promise: JsCell<jsc::JSPromiseStrong>,
@@ -1133,7 +1133,7 @@ pub(crate) fn remove(cx: &mut JsScope<'_>, title: &[u8]) -> JsResult<JSValue> {
     }
 
     let job = RefPtr::new(CronRemoveJob {
-        ref_count: bun_ptr::RefCount::init(),
+        ref_count: RefCount::init(),
         owner: Cell::new(None),
         promise: JsCell::new(jsc::JSPromiseStrong::init(global)),
         global: GlobalRef::from(global),
@@ -1208,7 +1208,7 @@ impl Drop for CronRemoveJob {
 #[derive(bun_ptr::RefCounted)]
 #[repr(align(16))]
 pub(crate) struct CronJob {
-    ref_count: bun_ptr::RefCount,
+    ref_count: RefCount,
     /// Set from the allocating `RefPtr` so `&self` host fns can reach the
     /// `ThisPtr`-taking paths that may release refs.
     self_ref: Cell<BackRef<CronJob, bun_ptr::Root>>,
@@ -1597,7 +1597,7 @@ impl CronJob {
         let vm = global.bun_vm();
 
         let job = RefPtr::new(CronJob {
-            ref_count: bun_ptr::RefCount::init(),
+            ref_count: RefCount::init(),
             self_ref: Cell::new(BackRef::dangling()),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::CronJob),
             global: GlobalRef::from(global),

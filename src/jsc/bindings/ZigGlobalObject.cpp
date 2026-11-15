@@ -4326,6 +4326,13 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
     return GlobalObject::moduleLoaderResolve(globalObject, loader, key, referrer, WTF::move(fetcher), useImportMap);
 }
 
+// The key that the resolution of this import() call left. A resolution that ended another way leaves its key too: that one is not this call's.
+static String takeKeyOfImportCall(Zig::GlobalObject* globalObject, const String& key)
+{
+    String left = std::exchange(globalObject->onLoadPlugins.keyOfImportCall, {});
+    return left == key ? left : String();
+}
+
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader,
     JSString* moduleNameValue,
@@ -4400,7 +4407,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
 #if ENABLE(AOT)
         if (imported && globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
-            Bun::didStartDynamicImport(globalObject, imported, std::exchange(globalObject->onLoadPlugins.keyOfImportCall, {}));
+            Bun::didStartDynamicImport(globalObject, imported, takeKeyOfImportCall(globalObject, key.string()));
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
 #endif
@@ -4415,7 +4422,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     ASSERT(result);
     if (globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
-        Bun::didStartDynamicImport(globalObject, result, std::exchange(globalObject->onLoadPlugins.keyOfImportCall, {}));
+        Bun::didStartDynamicImport(globalObject, result, takeKeyOfImportCall(globalObject, key.string()));
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     return result;

@@ -968,8 +968,6 @@ static JSC::JSPromise* importModuleFrom(Zig::GlobalObject* globalObject, const S
     globalObject->onResolvePlugins.isResolvingImportCall = true;
     JSC::JSPromise* promise = Bun::testFileModuleLoader(globalObject)->requestImportModule(globalObject, JSC::Identifier::fromString(vm, specifier), JSC::Identifier::fromString(vm, Bun::uncompiledImportReferrer(from)), nullptr, nullptr);
     globalObject->onResolvePlugins.isResolvingImportCall = false;
-    // The resolution has left its key for an import() call of the program. The next such call would take it for its own.
-    globalObject->onLoadPlugins.keyOfImportCall = {};
     if (scope.exception()) [[unlikely]]
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
 #if ENABLE(AOT)

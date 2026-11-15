@@ -1208,6 +1208,36 @@ describe.concurrent("vi.dynamicImportSettled", () => {
     expect(exitCode).toBe(0);
   });
 
+  // vi.importActual() resolves mocked.ts as an import() does. The import() after it is of gated.ts, which is no mock.
+  test("waits for an import() that follows vi.importActual() of a module whose mock waits for its factory", async () => {
+    const { stdout, stderr, exitCode } = await run(["test", "./actual.test.ts"], {
+      "mocked.ts": `export {};`,
+      "gated.ts": `await globalThis.gate; console.log("gated end");`,
+      "actual.test.ts": `
+        import { test, vi } from "bun:test";
+        test("a", async () => {
+          const { promise, resolve } = Promise.withResolvers();
+          globalThis.gate = promise;
+          await vi.importActual("./mocked.ts");
+          void import("./gated.ts");
+          vi.doMock("./mocked.ts", () => new Promise(() => {}));
+          void import("./mocked.ts");
+          const settled = vi.dynamicImportSettled().then(() => console.log("settled"));
+          // vi.dynamicImportSettled() looks at the imports in a timer of 0 ms. This one runs behind it.
+          await new Promise(resolve => setTimeout(resolve, 0));
+          console.log("open");
+          resolve();
+          await settled;
+        });
+      `,
+    });
+    expect({ stdout: stdout.split("\n").slice(1), results: results(stderr), exitCode }).toEqual({
+      stdout: ["open", "gated end", "settled", ""],
+      results: ["(pass) a"],
+      exitCode: 0,
+    });
+  });
+
   test.serial("does not retain the imports that have settled", async () => {
     await import("node:path");
     Bun.gc(true);

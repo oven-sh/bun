@@ -7,11 +7,13 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::Environment;
+use bun_ptr::CellExt as _;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    ArrayBuffer, CommonString, ErrorCode, JSArray, JSGlobalObject, JSObject, JSString, JSValue,
-    JsError, JsThread, PinnedArrayBuffer, Strong, ThreadIsolated, ThreadIsolatedArg,
+    ArrayBuffer, CommonString, EnsureStillAlive, ErrorCode, JSArray, JSGlobalObject, JSObject,
+    JSString, JSValue, JsError, JsThread, PinnedArrayBuffer, Strong, ThreadIsolated,
+    ThreadIsolatedArg,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -1167,13 +1169,12 @@ pub struct StrongWrapper<T>(Strong, PhantomData<*const T>);
 // SAFETY: a `Strong`.
 unsafe impl<T> crate::job::JsAffine for StrongWrapper<T> {}
 
-/// False once the VM is closed: what is left of its teardown destroys rooted cells too.
-fn roots_hold() -> bool {
-    VirtualMachine::get_or_null().is_some_and(|vm| !vm.closed())
+fn is_vm_closed() -> bool {
+    VirtualMachine::get_or_null().is_none_or(|vm| vm.closed())
 }
 
 fn rooted_value(root: &Strong) -> JSValue {
-    assert!(roots_hold());
+    assert!(!is_vm_closed());
     root.get()
 }
 
@@ -1203,59 +1204,56 @@ impl<T: JsPayload> StrongWrapper<T> {
     }
 
     /// `None` once the VM is closed.
-    pub fn lend<R>(&self, f: impl FnOnce(LentWrapper<'_, T>) -> R) -> Option<R> {
-        roots_hold().then(|| f(LentWrapper(self.0.get(), PhantomData)))
+    pub fn try_with<R>(&self, f: impl FnOnce(BorrowedWrapper<'_, T>) -> R) -> Option<R> {
+        (!is_vm_closed()).then(|| f(BorrowedWrapper(self.0.get(), PhantomData)))
     }
 
-    /// As [`lend`](Self::lend), for the root that `find` picks in `cell`. `f` can change `cell` and drop that root.
-    pub fn lend_from<C: Default, R>(
+    /// [`try_with`](Self::try_with) for what `find` returns. `f` can change `cell` and drop that `StrongWrapper`.
+    pub fn try_with_cell<C: Default, R>(
         cell: &Cell<C>,
         find: impl FnOnce(&C) -> Option<&Self>,
-        f: impl FnOnce(LentWrapper<'_, T>) -> R,
+        f: impl FnOnce(BorrowedWrapper<'_, T>) -> R,
     ) -> Option<R> {
-        if !roots_hold() {
+        if is_vm_closed() {
             return None;
         }
-        let roots = cell.take();
-        let found = find(&roots).map(|root| crate::EnsureStillAlive(root.0.get()));
-        cell.set(roots);
-        let held = found?;
-        Some(f(LentWrapper(held.0, PhantomData)))
+        let value = cell.with_taken(|c| find(c).map(|root| EnsureStillAlive(root.0.get())))?;
+        Some(f(BorrowedWrapper(value.0, PhantomData)))
     }
 
-    /// As [`lend`](Self::lend), for a C callback that has the address of the payload. `f` can drop the root.
+    /// [`try_with`](Self::try_with) for a C callback. `f` can drop the `StrongWrapper`.
     ///
     /// # Safety
-    /// A `StrongWrapper` names the wrapper whose payload is at `payload`.
-    pub unsafe fn lend_payload<R>(
+    /// `payload` is the payload of a wrapper that a `StrongWrapper` roots.
+    pub unsafe fn try_with_payload_ptr<R>(
         payload: *const T,
-        f: impl FnOnce(LentWrapper<'_, T>) -> R,
+        f: impl FnOnce(BorrowedWrapper<'_, T>) -> R,
     ) -> Option<R> {
-        if !roots_hold() {
+        if is_vm_closed() {
             return None;
         }
         let cell = payload.wrapping_byte_sub(T::PAYLOAD_OFFSET);
-        let held = crate::EnsureStillAlive(JSValue::from_cell(cell));
-        Some(f(LentWrapper(held.0, PhantomData)))
+        let value = EnsureStillAlive(JSValue::from_cell(cell));
+        Some(f(BorrowedWrapper(value.0, PhantomData)))
     }
 }
 
-/// A wrapper that a root, or the frame that lent it, keeps alive for `'a`.
-pub struct LentWrapper<'a, T>(JSValue, PhantomData<&'a T>);
-impl<T> Clone for LentWrapper<'_, T> {
+/// A wrapper that a [`StrongWrapper`], or the frame of one of its `try_with` functions, keeps alive for `'a`.
+pub struct BorrowedWrapper<'a, T>(JSValue, PhantomData<&'a T>);
+impl<T> Clone for BorrowedWrapper<'_, T> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T> Copy for LentWrapper<'_, T> {}
+impl<T> Copy for BorrowedWrapper<'_, T> {}
 
-impl<'a, T: JsPayload> LentWrapper<'a, T> {
+impl<'a, T: JsPayload> BorrowedWrapper<'a, T> {
     pub fn to_js(self) -> JSValue {
         self.0
     }
 
     pub fn payload(self) -> &'a T {
-        // SAFETY: as `StrongWrapper::payload`, which every `LentWrapper` comes from a root of.
+        // SAFETY: as `StrongWrapper::payload`: only its `try_with` functions make a `BorrowedWrapper`.
         unsafe { &*(self.0.encoded() as *const T).byte_add(T::PAYLOAD_OFFSET) }
     }
 
@@ -1265,12 +1263,12 @@ impl<'a, T: JsPayload> LentWrapper<'a, T> {
         unsafe { &*extern_types::Bun__Bindgen__globalObjectOf(self.0.encoded() as *mut c_void) }
     }
 
-    pub fn root(self) -> StrongWrapper<T> {
+    pub fn to_strong(self) -> StrongWrapper<T> {
         StrongWrapper(Strong::create(self.0, self.global()), PhantomData)
     }
 }
 
-impl<T: JsPayload> core::ops::Deref for LentWrapper<'_, T> {
+impl<T: JsPayload> core::ops::Deref for BorrowedWrapper<'_, T> {
     type Target = T;
     fn deref(&self) -> &T {
         self.payload()

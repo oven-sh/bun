@@ -772,10 +772,7 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
         // Open with `O.NOFOLLOW` (→ `FILE_OPEN_REPARSE_POINT`),
         // `fstat` the handle, then close.
         match openat_windows_a(fd, path.as_bytes(), O::NOFOLLOW, 0) {
-            Ok(file) => {
-                let _close = CloseOnDrop::new(file);
-                fstat(file)
-            }
+            Ok(file) => CloseOnDrop::new(file).stat(),
             Err(err) => Err(err),
         }
     }
@@ -2818,12 +2815,17 @@ mod posix_impl {
             err.syscall = Tag::lchmod;
             err.with_path(path.as_bytes())
         };
-        let fd = open(path, O::PATH | O::NOFOLLOW | O::CLOEXEC, 0).map_err(retag)?;
-        let _close = crate::CloseOnDrop::new(fd);
-        if kind_from_mode(fstat(fd).map_err(retag)?.st_mode as Mode) == FileKind::SymLink {
+        let file = open(path, O::PATH | O::NOFOLLOW | O::CLOEXEC, 0)
+            .map(crate::CloseOnDrop::new)
+            .map_err(retag)?;
+        if kind_from_mode(file.stat().map_err(retag)?.st_mode as Mode) == FileKind::SymLink {
             return Err(retag(Error::from_code_int(libc::EOPNOTSUPP, Tag::lchmod)));
         }
-        chmod(fd_path_z(b"/proc/self/fd/", fd, &mut [0u8; 32]), mode).map_err(retag)
+        chmod(
+            fd_path_z(b"/proc/self/fd/", file.fd(), &mut [0u8; 32]),
+            mode,
+        )
+        .map_err(retag)
     }
     pub fn chown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()> {
         check_p!(
@@ -2999,9 +3001,8 @@ mod posix_impl {
             // `getattrlist` can fail where `open` succeeds: `EPERM` on a resource fork, `EACCES` under an ACL that denies only `readattr`, `ENOSPC` after a prefix, `ENOTSUP` on a volume without it.
             _ => {}
         }
-        let fd = open(path, O::RDONLY | O::NONBLOCK | O::NOCTTY, 0)?;
-        let _close = CloseOnDrop::new(fd);
-        get_fd_path(fd, out).map_err(|err| err.with_path(path.as_bytes()))
+        let file = CloseOnDrop::new(open(path, O::RDONLY | O::NONBLOCK | O::NOCTTY, 0)?);
+        get_fd_path(file.fd(), out).map_err(|err| err.with_path(path.as_bytes()))
     }
     /// Copies `ATTR_CMN_FULLPATH` and its NUL into `out`, and returns the length without the NUL.
     #[cfg(target_os = "macos")]
@@ -3393,12 +3394,11 @@ mod posix_impl {
         wanted_size: Option<usize>,
         offset: usize,
     ) -> Maybe<(&'static mut [u8], usize)> {
-        let fd = open(path, O::RDWR, 0)?;
-        // close fd regardless of mmap outcome (the mapping outlives the fd).
-        let _close = CloseOnDrop::new(fd);
+        // The mapping outlives the descriptor.
+        let file = CloseOnDrop::new(open(path, O::RDWR, 0)?);
 
         let stat_size = {
-            let result = fstat(fd)?;
+            let result = file.stat()?;
             usize::try_from(result.st_size).unwrap_or(0)
         };
 
@@ -3422,7 +3422,7 @@ mod posix_impl {
             map_len,
             libc::PROT_READ | libc::PROT_WRITE,
             flags,
-            fd,
+            file.fd(),
             aligned_offset as i64,
         ) {
             Ok(ptr) => {
@@ -4263,9 +4263,7 @@ mod windows_impl {
         // `openat(fd, path, 0, 0)` (flags=0
         // → FOLLOWS reparse points) then `fstat(file)`. Do NOT use `lstat` here —
         // that's the `lstatat` no-follow variant.
-        let file = openat(fd, path, 0, 0)?;
-        let _close = super::CloseOnDrop::new(file);
-        fstat(file)
+        super::CloseOnDrop::new(openat(fd, path, 0, 0)?).stat()
     }
     pub fn access(path: &ZStr, mode: i32) -> Maybe<()> {
         // GetFileAttributesW, then if
@@ -4371,11 +4369,8 @@ mod windows_impl {
     }
     pub fn realpath<'a>(path: &ZStr, buf: &'a mut bun_core::PathBuffer) -> Maybe<&'a [u8]> {
         // sys_uv.rs:216 — open + GetFinalPathNameByHandle (uv_fs_realpath edge cases).
-        let fd = open(path, O::RDONLY, 0)?;
-        let r = super::get_fd_path(fd, buf);
-        let _ = close(fd);
-        // get_fd_path yields `&mut [u8]`; coerce to shared.
-        r.map(|s| &*s)
+        let file = super::CloseOnDrop::new(open(path, O::RDONLY, 0)?);
+        super::get_fd_path(file.fd(), buf).map(|s| &*s)
     }
     pub fn pipe() -> Maybe<[Fd; 2]> {
         // uv_pipe(fds, 0, 0).
@@ -7509,12 +7504,11 @@ fn linux_kernel_is_freebsd() -> bool {
     let detected: u8 = 'detect: {
         // SAFETY: literal is NUL-terminated.
         let z = ZStr::from_static(b"/proc/version\0");
-        let Ok(fd) = open(z, O::RDONLY | O::NOCTTY, 0) else {
+        let Ok(file) = open(z, O::RDONLY | O::NOCTTY, 0).map(CloseOnDrop::new) else {
             break 'detect 1;
         };
-        let _close = CloseOnDrop::new(fd);
         let mut buf = [0u8; 512];
-        let n = read(fd, &mut buf).unwrap_or(0);
+        let n = file.read(&mut buf).unwrap_or(0);
         if bun_core::strings::contains_case_insensitive_ascii(&buf[..n], b"freebsd") {
             2
         } else {
@@ -7728,34 +7722,7 @@ pub fn move_file_z_with_handle(
             renameat(from_dir, filename, to_dir, destination)
         }
         Err(e) if e.get_errno() == E::EXDEV => {
-            // Cross-device: full `copyFileZSlowWithHandle`.
-            #[cfg(unix)]
-            let st = fstat(from_handle)?;
-            // Unlink dest first — fixes ETXTBUSY on Linux.
-            let _ = unlinkat(to_dir, destination);
-            let dst = openat(
-                to_dir,
-                destination,
-                O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC,
-                0o644,
-            )?;
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            {
-                // Preallocation is best-effort.
-                let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size);
-            }
-            // Seek input to 0 — caller may have left offset at EOF after writing.
-            let _ = lseek(from_handle, 0, libc::SEEK_SET);
-            let r = copy_file(from_handle, dst);
-            // Only stamp mode/owner on success; on copy error
-            // the partially-written dest keeps its openat() defaults.
-            #[cfg(unix)]
-            if r.is_ok() {
-                let _ = safe_libc::fchmod(dst.native(), st.st_mode);
-                let _ = safe_libc::fchown(dst.native(), st.st_uid, st.st_gid);
-            }
-            let _ = close(dst);
-            r?;
+            copy_file_z_slow_with_handle(from_handle, to_dir, destination)?;
             let _ = unlinkat(from_dir, filename);
             Ok(())
         }
@@ -8613,20 +8580,23 @@ pub mod freebsd {
 #[cfg(not(target_os = "freebsd"))]
 pub mod freebsd {}
 
-/// RAII guard that closes a raw [`Fd`] on drop. Most code should prefer
-/// [`File`] / [`Dir`], which are owning RAII handles already; reach for this
-/// only when working with a bare `Fd` in a context where a typed wrapper
-/// would be misleading (e.g. an fd that is sometimes a file, sometimes a
-/// directory, sometimes a pipe).
-#[must_use = "dropping immediately closes the fd; bind to `let _close = ...`"]
+/// A [`File`] that POSIX closes even if `open` gave it the number of a standard stream.
+#[must_use]
 pub struct CloseOnDrop(Fd);
 impl CloseOnDrop {
     #[inline]
     pub fn new(fd: Fd) -> Self {
         Self(fd)
     }
-    pub fn fd(&self) -> Fd {
-        self.0
+    /// As [`File::into_raw`].
+    pub fn into_raw(self) -> Fd {
+        core::mem::ManuallyDrop::new(self).0
+    }
+}
+impl core::ops::Deref for CloseOnDrop {
+    type Target = File;
+    fn deref(&self) -> &File {
+        File::borrow(&self.0)
     }
 }
 impl Drop for CloseOnDrop {
@@ -8948,15 +8918,14 @@ pub(crate) fn move_file_z_slow(
     to_dir: Fd,
     destination: &ZStr,
 ) -> Maybe<()> {
-    let in_handle = openat(
+    let input = CloseOnDrop::new(openat(
         from_dir,
         filename,
         O::RDONLY | O::CLOEXEC,
         if cfg!(windows) { 0 } else { 0o644 },
-    )?;
-    let _close = CloseOnDrop::new(in_handle);
+    )?);
     let _ = unlinkat(from_dir, filename);
-    copy_file_z_slow_with_handle(in_handle, to_dir, destination)
+    copy_file_z_slow_with_handle(input.fd(), to_dir, destination)
 }
 /// `copyFileZSlowWithHandle` (POSIX read/write fallback arm).
 pub(crate) fn copy_file_z_slow_with_handle(
@@ -8968,26 +8937,25 @@ pub(crate) fn copy_file_z_slow_with_handle(
     let st = fstat(in_handle)?;
     // Unlink dest first — fixes ETXTBUSY on Linux.
     let _ = unlinkat(to_dir, destination);
-    let dst = openat(
+    let dst = CloseOnDrop::new(openat(
         to_dir,
         destination,
         O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC,
         0o644,
-    )?;
-    let _close = CloseOnDrop::new(dst);
+    )?);
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // Preallocation is best-effort.
-        let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size);
+        let _ = safe_libc::fallocate(dst.fd().native(), 0, 0, st.st_size);
     }
     let _ = lseek(in_handle, 0, libc::SEEK_SET);
-    let r = copy_file(in_handle, dst);
+    let r = copy_file(in_handle, dst.fd());
     // Only stamp mode/owner on success; on copy error the
     // partially-written dest keeps its openat() defaults.
     #[cfg(unix)]
     if r.is_ok() {
-        let _ = safe_libc::fchmod(dst.native(), st.st_mode);
-        let _ = safe_libc::fchown(dst.native(), st.st_uid, st.st_gid);
+        let _ = safe_libc::fchmod(dst.fd().native(), st.st_mode);
+        let _ = safe_libc::fchown(dst.fd().native(), st.st_uid, st.st_gid);
     }
     r
 }
@@ -9167,8 +9135,9 @@ pub fn write_file_with_path_buffer(
     args: &WriteFileArgs<'_>,
 ) -> Maybe<usize> {
     let WriteFileData::Buffer { buffer } = args.data;
-    let fd = match args.file {
-        PathOrFileDescriptor::Fd(fd) => fd,
+    let opened;
+    let file: &File = match &args.file {
+        PathOrFileDescriptor::Fd(fd) => File::borrow(fd),
         PathOrFileDescriptor::Path(bytes) => {
             if bytes.len() >= path_buf.0.len() {
                 return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(bytes));
@@ -9177,19 +9146,12 @@ pub fn write_file_with_path_buffer(
             path_buf.0[bytes.len()] = 0;
             // SAFETY: NUL-terminated above.
             let z = ZStr::from_buf(&path_buf.0[..], bytes.len());
-            openat(
-                args.dirfd,
-                z,
-                O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC,
-                args.mode,
-            )?
+            let flags = O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC;
+            opened = CloseOnDrop::new(openat(args.dirfd, z, flags, args.mode)?);
+            &opened
         }
     };
-    let r = File::borrow(&fd).write_all(buffer);
-    if !matches!(args.file, PathOrFileDescriptor::Fd(_)) {
-        let _ = close(fd);
-    }
-    r.map(|_| buffer.len())
+    file.write_all(buffer).map(|()| buffer.len())
 }
 
 /// `bun.fetchCacheDirectoryPath` — resolve `$BUN_INSTALL_CACHE_DIR` /

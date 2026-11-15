@@ -273,7 +273,7 @@ impl Binding {
             .is_some_and(|graph| graph.owns_directory(rd_args.path.slice()));
         if rd_args.recursive && !is_bunfs {
             return Ok(AsyncReaddirRecursiveTask::create(
-                &cx, rd_args, vm, callback,
+                &cx, &rd_args, vm, callback,
             ));
         }
         Ok(async_::Readdir::create(&cx, self, rd_args, vm, callback))

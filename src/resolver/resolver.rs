@@ -217,23 +217,14 @@ mod bun_sys {
     // and reach this module via the `pub use ::bun_sys::*` glob above.
 }
 
-/// `bun_sys::Fd` extension surface — thin method-syntax wrappers over the
-/// free functions `::bun_sys::{close, get_fd_path}` and `Fd::native`, so the
-/// resolver body can spell `fd.close()` / `fd.get_fd_path(buf)`.
+/// Lets the resolver body spell `::bun_sys::close` as `fd.close()`.
 trait FdExt: Sized {
     fn close(self);
-    fn get_fd_path<'b>(self, buf: &'b mut ::bun_paths::PathBuffer) -> crate::CrateResult<&'b [u8]>;
 }
 impl FdExt for ::bun_sys::Fd {
     #[inline]
     fn close(self) {
         let _ = ::bun_sys::close(self);
-    }
-    #[inline]
-    fn get_fd_path<'b>(self, buf: &'b mut ::bun_paths::PathBuffer) -> crate::CrateResult<&'b [u8]> {
-        ::bun_sys::get_fd_path(self, buf)
-            .map(|s| &*s)
-            .map_err(Into::into)
     }
 }
 trait FdZero {
@@ -4423,12 +4414,7 @@ impl<'a> Resolver<'a> {
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
-        let entry = self
-            .caches
-            .fs
-            .read_file_with_allocator(file, dirname_fd, false, None, None)?;
-        let _file = entry.fd.unwrap_valid().map(::bun_sys::File::from_fd);
-        let entry_contents = entry.contents;
+        let contents = self.caches.fs.read_file_and_close(file, dirname_fd)?;
 
         // The file name needs to be persistent because it can have errors
         // and if those errors need to print the filename
@@ -4439,16 +4425,7 @@ impl<'a> Resolver<'a> {
             .append_slice(file)
             .expect("unreachable");
 
-        // `use_shared_buffer = false` above, so `entry_contents` is
-        // `Contents::Owned`/`Empty`. `TSConfigJSON` owns `Box<[u8]>` copies of
-        // every field, so the source bytes are dead once `parse` returns and
-        // can be dropped with the local `Source`.
-        let contents = match entry_contents {
-            crate::cache::Contents::Owned(v) => v,
-            crate::cache::Contents::Empty => Vec::new(),
-            other => other.as_slice().to_vec(),
-        };
-
+        // `TSConfigJSON` owns copies of every field, so the bytes drop with `source`.
         let source = bun_ast::Source::init_path_string_owned(key_path, contents);
         let file_dir = source.path.source_dir();
 
@@ -6500,10 +6477,10 @@ impl<'a> Resolver<'a> {
                             fd,
                             bun_paths::path_literal!(b"node_modules/.bin"),
                             Default::default(),
-                        ) else {
+                        )
+                        .map(bun_sys::Dir::from_fd) else {
                             break 'append_bin_dir;
                         };
-                        let _close = bun_sys::CloseOnDrop::new(file);
                         let Ok(bin_path) = file.get_fd_path(bufs!(node_bin_path)) else {
                             break 'append_bin_dir;
                         };
@@ -6517,12 +6494,11 @@ impl<'a> Resolver<'a> {
                             == Fs::file_system::EntryKind::Dir
                         {
                             let Ok(file) = bun_sys::open_dir_z(fd, b".bin\0", Default::default())
+                                .map(bun_sys::Dir::from_fd)
                             else {
                                 break 'append_bin_dir;
                             };
-                            let _close = bun_sys::CloseOnDrop::new(file);
-                            let Ok(bin_path) = bun_sys::get_fd_path(file, bufs!(node_bin_path))
-                            else {
+                            let Ok(bin_path) = file.get_fd_path(bufs!(node_bin_path)) else {
                                 break 'append_bin_dir;
                             };
                             self.add_bin_dir(bin_path);

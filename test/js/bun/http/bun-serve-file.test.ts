@@ -2017,7 +2017,7 @@ test.skipIf(!isLinux)("a Response(Bun.file(fd)) that fails to poll a FIFO does n
       },
     });
     const first = fetch(server.url).then(res => res.text());
-    await polling.promise;
+    await Promise.race([polling.promise, first]);
     const second = await fetch(server.url + "second")
       .then(res => res.text())
       .catch(err => err.code);

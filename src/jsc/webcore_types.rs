@@ -854,6 +854,7 @@ pub mod store {
     // ────────────────────────────────────────────────────────────────────
 
     impl Store {
+        #[inline]
         pub fn new(data: Data, mime_type: MimeType) -> Store {
             Store {
                 data,

@@ -47,7 +47,7 @@ pub struct ExtractTarball {
 
 impl ExtractTarball {
     #[inline]
-    pub(crate) fn run(&self, log: &mut bun_ast::Log, bytes: &[u8]) -> Result<ExtractData, Error> {
+    pub(crate) fn run(&self, log: &bun_ast::Log, bytes: &[u8]) -> Result<ExtractData, Error> {
         if !self.skip_verify && self.integrity.tag.is_supported() {
             if !self.integrity.verify(bytes) {
                 log.add_error_fmt(
@@ -228,7 +228,7 @@ impl ExtractTarball {
         (name, basename)
     }
 
-    pub(crate) fn warn_about_skipped_header(&self, log: &mut bun_ast::Log) {
+    pub(crate) fn warn_about_skipped_header(&self, log: &bun_ast::Log) {
         log.add_warning_fmt(
             None,
             bun_ast::Loc::EMPTY,
@@ -241,7 +241,7 @@ impl ExtractTarball {
 
     fn extract(
         &self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         tgz_bytes: &[u8],
         integrity: &Integrity,
     ) -> Result<ExtractData, Error> {
@@ -492,7 +492,7 @@ impl ExtractTarball {
     /// `resolved` names a GitHub cache entry, `integrity` a `file:` / URL tarball's.
     pub(crate) fn move_to_cache_directory(
         &self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         staging: StagedEntry<'_>,
         name: &[u8],
         basename: &[u8],
@@ -639,7 +639,7 @@ impl ExtractTarball {
                 let mut json_log = bun_ast::Log::init();
                 if let Err(err) = crate::bun_json::ParsedJson::parse_package_json(
                     &bun_ast::Source::init_path_string("package.json", &buf[..]),
-                    &mut json_log,
+                    &json_log,
                 ) {
                     log.add_error_fmt(
                         None,
@@ -651,6 +651,7 @@ impl ExtractTarball {
                             bun_fmt::escape_control_chars(
                                 json_log
                                     .msgs
+                                    .get_mut()
                                     .first()
                                     .map_or(&b"syntax error"[..], |msg| &msg.data.text[..]),
                             ),

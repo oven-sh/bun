@@ -404,12 +404,12 @@ fn find_all_that_is_reached_from(
     const EXTENSIONS: [&[u8]; 8] = [
         b".ts", b".tsx", b".js", b".jsx", b".mjs", b".cjs", b".mts", b".cts",
     ];
-    let mut unread_log = bun_ast::Log::init();
+    let unread_log = bun_ast::Log::init();
     // SAFETY: the resolver and `unread_log` outlive the guard.
     let _log_scope = unsafe {
         bun_resolver::Resolver::scoped_log(
             &raw mut (*vm.transpiler.as_ptr()).resolver,
-            core::ptr::NonNull::from(&mut unread_log),
+            core::ptr::NonNull::from(&unread_log),
         )
     };
     let mut position_of = bun_collections::StringHashMap::<u32>::default();
@@ -595,12 +595,12 @@ fn select_shard_by_reach(
 
 // A preload is named as it was written: "./test/preload.ts", "dotenv/config". Whoever looks for what it imports needs its file.
 fn find_files_of_preloads(vm: &VirtualMachine, preloads: &[Box<[u8]>]) -> Vec<Box<[u8]>> {
-    let mut unread_log = bun_ast::Log::init();
+    let unread_log = bun_ast::Log::init();
     // SAFETY: the resolver and `unread_log` outlive the guard.
     let _log_scope = unsafe {
         bun_resolver::Resolver::scoped_log(
             &raw mut (*vm.transpiler.as_ptr()).resolver,
-            core::ptr::NonNull::from(&mut unread_log),
+            core::ptr::NonNull::from(&unread_log),
         )
     };
     let top = FileSystem::get().top_level_dir();
@@ -2817,7 +2817,7 @@ impl TestCommand {
             transform_options: ctx.args.clone(),
             argv: core::mem::take(&mut ctx.passthrough).leak(),
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
-            log: core::ptr::NonNull::new(ctx.log),
+            log: core::ptr::NonNull::new(ctx.log.cast_mut()),
             env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
             smol: ctx.runtime_options.smol,
             is_main_thread: true,
@@ -4179,11 +4179,11 @@ impl Drop for PrintLogAfterFile {
 
         if let Some(log) = self.0 {
             // SAFETY: the VM owns the Log and outlives `TestCommand::run`.
-            let log = unsafe { &mut *log.as_ptr() };
-            if log.errors > 0 {
+            let log = unsafe { &*log.as_ptr() };
+            if log.errors.get() > 0 {
                 let _ = log.print(Output::error_writer());
-                log.msgs.clear();
-                log.errors = 0;
+                log.with_msgs(Vec::clear);
+                log.errors.set(0);
             }
         }
 

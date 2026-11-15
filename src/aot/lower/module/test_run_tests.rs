@@ -332,8 +332,8 @@ fn link_test_run(files: &[(&str, &str)]) -> Program {
     let mut project = TestProject::new(files, &default_settings());
     project.runs_tests = true;
     project.aot.runs_in_place = true;
-    let mut log = Log::init();
-    match link_program(&project.options(BUNDLED_LIBS), &WithoutServices, &mut log) {
+    let log = Log::init();
+    match link_program(&project.options(BUNDLED_LIBS), &WithoutServices, &log) {
         Ok(linked) => linked.program,
         Err(failed) => panic!(
             "the build failed in stage \"{}\":\n{}",

@@ -28,7 +28,7 @@ struct ExecutableDestination {
     windows: WindowsOptions,
 }
 
-pub(super) fn add_notes(log: &mut Log, lines: Vec<Vec<u8>>) {
+pub(super) fn add_notes(log: &Log, lines: Vec<Vec<u8>>) {
     for line in lines {
         log.add_msg(Msg {
             kind: Kind::Note,
@@ -69,7 +69,7 @@ pub(super) fn plan_bundle_trimming(
 }
 
 fn add_compile_logs(
-    log: &mut Log,
+    log: &Log,
     report_messages: Vec<ReportMessage>,
     trim_log_lines: Vec<Vec<u8>>,
     developer_options: &[u8],
@@ -229,7 +229,7 @@ pub(super) fn compile(
     }
 }
 
-fn fail(log: &mut Log, message: &[u8]) -> bun_bundler::Error {
+fn fail(log: &Log, message: &[u8]) -> bun_bundler::Error {
     if !message.is_empty() {
         log.add_error_fmt(
             None,
@@ -243,7 +243,7 @@ fn fail(log: &mut Log, message: &[u8]) -> bun_bundler::Error {
 pub(super) fn finish(
     config: &JSBundlerConfig,
     compiled: Compiled,
-    log: &mut Log,
+    log: &Log,
 ) -> bun_bundler::Result<BuildResult> {
     let (outcome, full_path) = compiled.map_err(|error| fail(log, error.slice()))?;
     let CompileOutcome {

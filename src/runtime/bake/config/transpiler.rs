@@ -10,7 +10,7 @@ impl Framework {
     pub(crate) fn init_transpiler<'a, 'out>(
         &self,
         arena: &'a Arena,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         mode: Mode,
         renderer: Graph,
         out: &'out mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,

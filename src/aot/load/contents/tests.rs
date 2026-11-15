@@ -49,12 +49,12 @@ impl SourceProvider for EmbedsFiles {
         &self,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> FoldOptions<'s> {
         WithoutServices.fold_options(arena, atoms, log)
     }
 
-    fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
+    fn resolve(&self, request: &ResolveRequest<'_>, log: &Log) -> Result<Resolution, Failed> {
         WithoutServices.resolve(request, log)
     }
 
@@ -62,7 +62,7 @@ impl SourceProvider for EmbedsFiles {
         false
     }
 
-    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+    fn load(&self, request: &LoadRequest<'_>, log: &Log) -> Result<Loaded, Failed> {
         WithoutServices.load(request, log)
     }
 
@@ -70,7 +70,7 @@ impl SourceProvider for EmbedsFiles {
         false
     }
 
-    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+    fn finish_deferred_loads(&self, log: &Log) -> Vec<DeferredLoad> {
         WithoutServices.finish_deferred_loads(log)
     }
 
@@ -125,7 +125,7 @@ impl SourceProvider for EmbedsFiles {
         file: &SourceFile<'_>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<DataModule<'s>, DataFailure> {
         match file.loader {
             Loader::File => Ok(DataModule::Value {
@@ -136,7 +136,7 @@ impl SourceProvider for EmbedsFiles {
         }
     }
 
-    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+    fn check_embedded_files(&self, log: &Log) -> Result<(), Failed> {
         WithoutServices.check_embedded_files(log)
     }
 }
@@ -150,12 +150,12 @@ impl SourceProvider for EmbedsWhatPluginMakes {
         &self,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> FoldOptions<'s> {
         EmbedsFiles.fold_options(arena, atoms, log)
     }
 
-    fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
+    fn resolve(&self, request: &ResolveRequest<'_>, log: &Log) -> Result<Resolution, Failed> {
         EmbedsFiles.resolve(request, log)
     }
 
@@ -163,7 +163,7 @@ impl SourceProvider for EmbedsWhatPluginMakes {
         false
     }
 
-    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+    fn load(&self, request: &LoadRequest<'_>, log: &Log) -> Result<Loaded, Failed> {
         match request.module.path == PATH_OF_WORKER {
             true => Ok(Loaded::Source {
                 contents: Cow::Borrowed(TEXT_MADE_BY_PLUGIN),
@@ -178,7 +178,7 @@ impl SourceProvider for EmbedsWhatPluginMakes {
         module.path == PATH_OF_WORKER
     }
 
-    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+    fn finish_deferred_loads(&self, log: &Log) -> Vec<DeferredLoad> {
         EmbedsFiles.finish_deferred_loads(log)
     }
 
@@ -191,12 +191,12 @@ impl SourceProvider for EmbedsWhatPluginMakes {
         file: &SourceFile<'_>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<DataModule<'s>, DataFailure> {
         EmbedsFiles.parse_data(file, arena, atoms, log)
     }
 
-    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+    fn check_embedded_files(&self, log: &Log) -> Result<(), Failed> {
         EmbedsFiles.check_embedded_files(log)
     }
 }

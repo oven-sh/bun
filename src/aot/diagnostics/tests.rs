@@ -18,8 +18,8 @@ fn text(bytes: &[u8]) -> String {
 }
 
 fn written(diagnostics: Diagnostics) -> Log {
-    let mut log = Log::init();
-    diagnostics.write_to(&mut log);
+    let log = Log::init();
+    diagnostics.write_to(&log);
     log
 }
 
@@ -28,10 +28,8 @@ fn take_diagnostics(build: &mut Build<'_>) -> Diagnostics {
 }
 
 fn kinds_and_texts(log: &Log) -> Vec<(Kind, String)> {
-    let messages = log.msgs.iter();
-    messages
-        .map(|message| (message.kind, text(&message.data.text)))
-        .collect()
+    let kind_and_text = |message: &Msg| (message.kind, text(&message.data.text));
+    log.with_msgs(|messages| messages.iter().map(kind_and_text).collect())
 }
 
 fn code_of(message: &Msg) -> u32 {
@@ -42,10 +40,8 @@ fn code_of(message: &Msg) -> u32 {
 }
 
 fn kinds_and_codes(log: &Log) -> Vec<(Kind, u32)> {
-    let messages = log.msgs.iter();
-    messages
-        .map(|message| (message.kind, code_of(message)))
-        .collect()
+    let kind_and_code = |message: &Msg| (message.kind, code_of(message));
+    log.with_msgs(|messages| messages.iter().map(kind_and_code).collect())
 }
 
 fn describe(log: &Log) -> Vec<String> {
@@ -57,7 +53,7 @@ fn describe(log: &Log) -> Vec<String> {
         });
         format!("{position}{:?} {}", message.kind, text(&message.data.text))
     };
-    log.msgs.iter().map(describe_message).collect()
+    log.with_msgs(|messages| messages.iter().map(describe_message).collect())
 }
 
 fn checker_error(path: &str, position: (u32, u32), code: u32, message: &str) -> driver::Diagnostic {

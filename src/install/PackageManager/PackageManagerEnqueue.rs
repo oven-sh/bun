@@ -247,7 +247,7 @@ pub(crate) fn add_dependency_error(
             escape_backslashes: false,
         },
     ));
-    let log = this.log_mut();
+    let log = this.log();
     if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
         log.add_warning_with_note(
             None,
@@ -499,7 +499,7 @@ pub(crate) fn offline_miss(
         // reserve + mark failed so later dependents take the already-failed path
         let _ = this.has_created_network_task(task_id, true);
         this.mark_network_task_failed(task_id);
-        this.log_mut().add_error_fmt(
+        this.log().add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
             format_args!(
@@ -922,7 +922,7 @@ fn warn_latest_names_no_version(
     if !this.options.log_level.is_verbose() {
         return;
     }
-    this.log_mut().add_warning_fmt(
+    this.log().add_warning_fmt(
         None,
         bun_ast::Loc::EMPTY,
         format_args!(
@@ -1173,7 +1173,7 @@ fn prefetch_manifest(
             bstr::BStr::new(name)
         );
     }
-    let log_mark = this.log_mut().msgs.len();
+    let log_mark = this.log().msgs_len();
     match enqueue_manifest_download(this, task_id, name, cached.as_ref(), true) {
         Ok(()) => ManifestState::Requested(task_id),
         // The dependency that needs the manifest makes the request again and reports the error.
@@ -1921,7 +1921,7 @@ pub(crate) fn bind_row(
     if let Some(invalid_name) = unsafe_name(&this.lockfile, dependency, &asked) {
         let name = bun_fmt::for_terminal(bstr::BStr::new(invalid_name));
         add_error_or_warning(
-            this.log_mut(),
+            this.log(),
             dependency.behavior.is_required(),
             format_args!("invalid dependency name \"{name}\""),
         );
@@ -1966,7 +1966,7 @@ pub(crate) fn bind_row(
                     let resolve_result = match resolve_result_ {
                         Ok(v) => v,
                         Err(err) => {
-                            let log_mark = this.log_mut().msgs.len();
+                            let log_mark = this.log().msgs_len();
                             report_resolve_error(
                                 this, id, dependency, name, version, err, is_root,
                             )?;
@@ -2108,7 +2108,7 @@ pub(crate) fn bind_row(
                         // dependency that comes later still reports the error.
                         if dependency.behavior.is_required() {
                             this.mark_network_task_failed(task_id);
-                            this.log_mut().add_error_fmt(
+                            this.log().add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 format_args!(
@@ -2201,7 +2201,7 @@ fn bind_row_without_manifest(
                 // An import needs it.
                 if is_root {
                     let buf = this.lockfile.buffers.string_bytes.as_slice();
-                    this.log_mut().add_error_fmt(
+                    this.log().add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
@@ -2346,7 +2346,7 @@ fn bind_row_without_manifest(
             }
             if is_link_path {
                 add_error_or_warning(
-                    this.log_mut(),
+                    this.log(),
                     is_required,
                     format_args!(
                         "directory \"{}\" not found for linked dependency \"{}\"",
@@ -2356,7 +2356,7 @@ fn bind_row_without_manifest(
                 );
             } else if dependency_tag == dependency::version::Tag::Workspace {
                 run_tasks::add_error_or_warning_pretty!(
-                    this.log_mut(),
+                    this.log(),
                     is_required,
                     "Workspace dependency \"{}\" not found\n\nSearched in <b>{}<r>\n\nWorkspace documentation: https://bun.com/docs/install/workspaces\n\n",
                     bstr::BStr::new(this.lockfile.str(&name)),
@@ -2367,7 +2367,7 @@ fn bind_row_without_manifest(
                 );
             } else {
                 run_tasks::add_error_or_warning_pretty!(
-                    this.log_mut(),
+                    this.log(),
                     is_required,
                     "Package \"{}\" is not linked\n\nTo install a linked package:\n   <cyan>bun link my-pkg-name-from-package-json<r>\n\nTip: the package name is from package.json, which can differ from the folder name.\n\n",
                     bstr::BStr::new(this.lockfile.str(&name)),
@@ -2567,7 +2567,7 @@ fn report_resolve_error(
     let buf = this.lockfile.buffers.string_bytes.as_slice();
     let name = escape(name.slice(buf));
     let age_gate_s = this.options.minimum_release_age_ms.unwrap_or(0.0) / MS_PER_S;
-    let log = this.log_mut();
+    let log = this.log();
     match err {
         E::DistTagNotFound if let dependency::Value::DistTag(dist_tag) = &version.value => log
             .add_error_fmt(
@@ -2642,7 +2642,7 @@ fn warn_unmet_peer_dependency(
     let name = bstr::BStr::new(this.lockfile.str(&name));
     if err == crate::Error::TooRecentVersion {
         bun_ast::add_warning_pretty!(
-            this.log_mut(),
+            this.log(),
             None,
             bun_ast::Loc::EMPTY,
             "No version matching \"{}\" found for peer dependency \"{}\"<r> <d>(blocked by minimum-release-age: {} seconds)<r>",
@@ -2652,7 +2652,7 @@ fn warn_unmet_peer_dependency(
         );
     } else {
         bun_ast::add_warning_pretty!(
-            this.log_mut(),
+            this.log(),
             None,
             bun_ast::Loc::EMPTY,
             "No version matching \"{}\" found for peer dependency \"{}\"<r> <d>(but package exists)<r>",
@@ -2689,7 +2689,7 @@ fn reject_local_tarball_of_remote_package(
             )),
         )])
     };
-    this.log_mut().add_range_error_fmt_with_notes(
+    this.log().add_range_error_fmt_with_notes(
         None,
         bun_ast::Range::NONE,
         notes,
@@ -2717,7 +2717,7 @@ fn reject_link_path_of_remote_package(
     let name = bun_fmt::escape_control_chars(dependency.name.slice(buf));
     let literal = bun_fmt::escape_control_chars(version.literal.slice(buf));
     match this.lockfile.get_parent_pkg_of_dependency(dependency_id) {
-        Some(declarer) => this.log_mut().add_error_fmt(
+        Some(declarer) => this.log().add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
             format_args!(
@@ -2729,7 +2729,7 @@ fn reject_link_path_of_remote_package(
                 ),
             ),
         ),
-        None => this.log_mut().add_error_fmt(
+        None => this.log().add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
             format_args!("refusing to resolve \"{name}@{literal}\": {REASON}"),
@@ -3072,7 +3072,7 @@ fn warn_deprecated(
     {
         return;
     }
-    this.log_mut().add_warning_fmt(
+    this.log().add_warning_fmt(
         None,
         bun_ast::Loc::EMPTY,
         format_args!(
@@ -3276,7 +3276,7 @@ fn get_or_put_resolved_package_with_find_result(
         }
         return Err(crate::Error::PackageFailedToParse);
     }
-    let log = this.log_mut();
+    let log = this.log();
     let package = Package::from_npm(
         &mut this.lockfile,
         log,
@@ -3299,7 +3299,7 @@ fn get_or_put_resolved_package_with_find_result(
         let package = if this.lockfile.package_extensions.rules.is_empty() {
             package
         } else {
-            let log = this.log_mut();
+            let log = this.log();
             this.lockfile.extend_new_package(log, package.meta.id)?
         };
 
@@ -4472,13 +4472,13 @@ impl PackageManager {
     /// Removes the messages that were logged since `mark` from the log and returns them.
     #[cold]
     pub(crate) fn take_log_since(&mut self, mark: usize) -> Vec<bun_ast::Msg> {
-        let log = self.log_mut();
-        let start = mark.min(log.msgs.len());
-        let msgs: Vec<bun_ast::Msg> = log.msgs.drain(start..).collect();
+        let log = self.log();
+        let msgs: Vec<bun_ast::Msg> =
+            log.with_msgs(|msgs| msgs.drain(mark.min(msgs.len())..).collect());
         for msg in &msgs {
             match msg.kind {
-                bun_ast::Kind::Err => log.errors -= 1,
-                bun_ast::Kind::Warn => log.warnings -= 1,
+                bun_ast::Kind::Err => log.errors.update(|n| n - 1),
+                bun_ast::Kind::Warn => log.warnings.update(|n| n - 1),
                 _ => {}
             }
         }
@@ -4489,34 +4489,36 @@ impl PackageManager {
     /// failure is printed once. Returns false if the log no longer has them.
     #[cold]
     fn raise_copies_to_errors(&mut self, msgs: &[bun_ast::Msg]) -> bool {
-        let log = self.log_mut();
+        let log = self.log();
         let mut raised = false;
-        for logged in &mut log.msgs {
-            if logged.kind == bun_ast::Kind::Warn
-                && msgs.iter().any(|msg| msg.data.text == logged.data.text)
-            {
-                logged.kind = bun_ast::Kind::Err;
-                log.warnings -= 1;
-                log.errors += 1;
-                raised = true;
+        log.with_msgs(|logged| {
+            for logged in logged {
+                if logged.kind == bun_ast::Kind::Warn
+                    && msgs.iter().any(|msg| msg.data.text == logged.data.text)
+                {
+                    logged.kind = bun_ast::Kind::Err;
+                    log.warnings.update(|n| n - 1);
+                    log.errors.update(|n| n + 1);
+                    raised = true;
+                }
             }
-        }
+        });
         raised
     }
 
     /// Logs copies of `msgs`, all as errors or all as warnings.
     #[cold]
     fn log_copies(&mut self, msgs: &[bun_ast::Msg], kind: bun_ast::Kind) {
-        let log = self.log_mut();
+        let log = self.log();
         for msg in msgs {
             match kind {
-                bun_ast::Kind::Err => log.errors += 1,
-                bun_ast::Kind::Warn => log.warnings += 1,
+                bun_ast::Kind::Err => log.errors.update(|n| n + 1),
+                bun_ast::Kind::Warn => log.warnings.update(|n| n + 1),
                 _ => {}
             }
             let mut msg = msg.clone();
             msg.kind = kind;
-            log.msgs.push(msg);
+            log.add_msg(msg);
         }
     }
 
@@ -4566,7 +4568,7 @@ impl PackageManager {
             (lockfile.get_parent_pkg_of_dependency(row))
                 .is_none_or(|owner| tree.is_set(owner as usize))
         };
-        let log = self.log_mut();
+        let log = self.log();
         for (about, msgs) in held {
             let is_needed = match about {
                 HeldAbout::Row(row) => is_in_tree(row),
@@ -4601,11 +4603,11 @@ impl PackageManager {
                     msg.kind = Kind::Warn;
                 }
                 match msg.kind {
-                    Kind::Err => log.errors += 1,
-                    Kind::Warn => log.warnings += 1,
+                    Kind::Err => log.errors.update(|n| n + 1),
+                    Kind::Warn => log.warnings.update(|n| n + 1),
                     _ => {}
                 }
-                log.msgs.push(msg);
+                log.add_msg(msg);
             }
         }
     }
@@ -4670,7 +4672,7 @@ impl PackageManager {
             missing.unset(package_id as usize);
             reported += 1;
             let name = lockfile.str(&lockfile.packages.items_name()[package_id as usize]);
-            self.log_mut().add_error_fmt(
+            self.log().add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(
@@ -4711,7 +4713,7 @@ impl PackageManager {
             let dependent_resolution = bun_fmt::for_terminal(
                 resolutions[dependent as usize].fmt(buf, bun_fmt::PathSep::Posix),
             );
-            self.log_mut().add_warning_fmt(
+            self.log().add_warning_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(

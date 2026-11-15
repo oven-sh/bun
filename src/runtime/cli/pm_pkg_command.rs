@@ -173,8 +173,7 @@ impl PmPkgCommand {
         };
 
         let source = Source::init_path_string(&path[..], &contents[..]);
-        // SAFETY: CLI dispatch is single-threaded; no other borrow of `ctx.log` is live.
-        let log: &mut Log = unsafe { ctx.log_mut() };
+        let log: &Log = ctx.log();
         let result = match json::parse_package_json_utf8_with_opts(
             json::JSONOptions {
                 json_warn_duplicate_keys: false,
@@ -611,11 +610,12 @@ impl PmPkgCommand {
 
         let source = Source::init_path_string(key, data);
         let mut log = Log::init();
-        match json::parse_utf8_impl::<true>(&source, &mut log, cli_arena()) {
+        match json::parse_utf8_impl::<true>(&source, &log, cli_arena()) {
             Ok(expr) if Self::has_only_json_literals(expr, data) => expr,
             _ => {
                 let reason: &[u8] = log
                     .msgs
+                    .get_mut()
                     .iter()
                     .find(|msg| msg.kind == bun_ast::Kind::Err)
                     .map_or(b"Syntax Error", |msg| &msg.data.text);

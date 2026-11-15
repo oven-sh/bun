@@ -169,7 +169,7 @@ impl PackageManager {
                         _ => None,
                     };
                     if missing_from.is_some() && root_has_workspaces.is_none() {
-                        let log = self.log_mut();
+                        let log = self.log();
                         root_has_workspaces = Some(
                             match self.workspace_package_json_cache.get_with_path(
                                 log,

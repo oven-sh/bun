@@ -26,7 +26,7 @@ impl EmbeddedFiles {
         &self,
         context: &BuildContext,
         file: &SourceFile<'_>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<Vec<u8>, Failed> {
         let (output, path) = create_embedded_file(context, file, log)?;
         self.files.lock().push(output);
@@ -37,7 +37,7 @@ impl EmbeddedFiles {
         &self,
         context: &BuildContext,
         file: &SourceFile<'_>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<(), Failed> {
         let (output, _) = create_embedded_file(context, file, log)?;
         let mut files = self.files.lock();
@@ -62,7 +62,7 @@ impl EmbeddedFiles {
         embedded.append(&mut files);
     }
 
-    pub(crate) fn check_names(&self, log: &mut Log) -> Result<(), Failed> {
+    pub(crate) fn check_names(&self, log: &Log) -> Result<(), Failed> {
         let mut files = self.files.lock();
         let order = compute_name_order(&files);
         let mut final_indices = vec![u32::MAX; files.len()];
@@ -88,7 +88,7 @@ pub(crate) fn asset_paths_ignore_contents(context: &BuildContext) -> bool {
 fn create_embedded_file(
     context: &BuildContext,
     file: &SourceFile<'_>,
-    log: &mut Log,
+    log: &Log,
 ) -> Result<(OutputFile, Vec<u8>), Failed> {
     let with_log = read_database_with_log(file.path, file.contents);
     let file = &SourceFile {
@@ -232,7 +232,7 @@ fn retain_distinct_names(
     files: &[OutputFile],
     order: &[u32],
     final_indices: &mut [u32],
-    log: &mut Log,
+    log: &Log,
 ) -> Result<Vec<u32>, Failed> {
     let mut retained: Vec<u32> = Vec::with_capacity(order.len());
     let mut has_collision = false;
@@ -398,30 +398,30 @@ mod tests {
                 };
                 files.iter().map(describe_file).collect::<Vec<_>>()
             };
-            let mut log = Log::init();
+            let log = Log::init();
             let eager = EmbeddedFiles::default();
             let eager_paths = [
                 eager
-                    .embed_file(context, &file(b"/p/a.bin", b"first"), &mut log)
+                    .embed_file(context, &file(b"/p/a.bin", b"first"), &log)
                     .unwrap(),
                 eager
-                    .embed_file(context, &file(b"/p/b.bin", b"second"), &mut log)
+                    .embed_file(context, &file(b"/p/b.bin", b"second"), &log)
                     .unwrap(),
             ];
             let lazy = EmbeddedFiles::default();
             let lazy_paths = [
-                lazy.embed_file(context, &file(b"/p/a.bin", b""), &mut log)
+                lazy.embed_file(context, &file(b"/p/a.bin", b""), &log)
                     .unwrap(),
-                lazy.embed_file(context, &file(b"/p/b.bin", b""), &mut log)
+                lazy.embed_file(context, &file(b"/p/b.bin", b""), &log)
                     .unwrap(),
             ];
-            lazy.set_contents(context, &file(b"/p/b.bin", b"second"), &mut log)
+            lazy.set_contents(context, &file(b"/p/b.bin", b"second"), &log)
                 .unwrap();
-            lazy.set_contents(context, &file(b"/p/a.bin", b"first"), &mut log)
+            lazy.set_contents(context, &file(b"/p/a.bin", b"first"), &log)
                 .unwrap();
             assert_eq!(eager_paths, lazy_paths);
             assert_eq!(describe(eager), describe(lazy));
-            assert_eq!(log.errors, 0);
+            assert_eq!(log.errors.get(), 0);
         });
     }
 
@@ -448,15 +448,15 @@ mod tests {
     #[test]
     fn equal_bytes_share_one_file() {
         let embedded = EmbeddedFiles::default();
-        let mut log = Log::init();
+        let log = Log::init();
         embedded.embed_outputs(vec![
             create_output(b"a.js", b"/a.js", b"a", 1),
             create_output(b"shared.map", b"/shared", b"map", u32::MAX),
             create_output(b"b.js", b"/b.js", b"b", 3),
             create_output(b"shared.map", b"/shared", b"map", u32::MAX),
         ]);
-        assert!(embedded.check_names(&mut log).is_ok());
-        assert_eq!(log.errors, 0);
+        assert!(embedded.check_names(&log).is_ok());
+        assert_eq!(log.errors.get(), 0);
         let files = embedded.into_output_files();
         assert_eq!(
             summarize(&files),
@@ -475,20 +475,20 @@ mod tests {
             |_| {},
             |context| {
                 let embedded = EmbeddedFiles::default();
-                let mut log = Log::init();
+                let log = Log::init();
                 let image = SourceFile {
                     path: b"/project/m.png",
                     contents: b"m",
                     loader: Loader::File,
                 };
-                assert!(embedded.embed_file(context, &image, &mut log).is_ok());
+                assert!(embedded.embed_file(context, &image, &log).is_ok());
                 embedded.embed_outputs(vec![
                     create_output(b"z.js", b"/z.ts", b"z", 3),
                     create_output(b"a.js", b"/a.ts", b"a", 4),
                     create_output(b"z.js.map", b"/z.ts", b"z map", u32::MAX),
                     create_output(b"a.js.map", b"/a.ts", b"a map", u32::MAX),
                 ]);
-                assert!(embedded.check_names(&mut log).is_ok());
+                assert!(embedded.check_names(&log).is_ok());
                 let files = embedded.into_output_files();
                 assert_eq!(files.len(), 5);
                 assert_eq!(&*files[0].src_path, b"/project/m.png");
@@ -507,14 +507,14 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn different_bytes_under_one_name_collide() {
         let embedded = EmbeddedFiles::default();
-        let mut log = Log::init();
+        let log = Log::init();
         embedded.embed_outputs(vec![
             create_output(b"x", b"/first", b"1", u32::MAX),
             create_output(b"x", b"/second", b"2", u32::MAX),
         ]);
-        assert!(embedded.check_names(&mut log).is_err());
-        assert_eq!(log.errors, 1);
-        let text = &log.msgs[0].data.text;
+        assert!(embedded.check_names(&log).is_err());
+        assert_eq!(log.errors.get(), 1);
+        let text = &log.msgs.take()[0].data.text;
         assert!(text.starts_with(b"TS100054"));
         assert!(strings::contains(text, b"/first"));
         assert!(strings::contains(text, b"/second"));
@@ -525,13 +525,13 @@ mod tests {
     fn one_source_embedded_twice_is_one_file() {
         for copies in [[&b""[..], b"text"], [b"text", b""], [b"text", b"text"]] {
             let embedded = EmbeddedFiles::default();
-            let mut log = Log::init();
+            let log = Log::init();
             embedded.embed_outputs(vec![
                 create_output(b"x.min.js", b"/lib/x.min.js", copies[0], u32::MAX),
                 create_output(b"x.min.js", b"/lib/x.min.js", copies[1], u32::MAX),
             ]);
-            assert!(embedded.check_names(&mut log).is_ok());
-            assert_eq!(log.errors, 0);
+            assert!(embedded.check_names(&log).is_ok());
+            assert_eq!(log.errors.get(), 0);
             let files = embedded.into_output_files();
             assert_eq!(files.len(), 1);
             assert_eq!(files[0].value.as_slice(), b"text");
@@ -542,23 +542,24 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn every_collision_is_reported() {
         let embedded = EmbeddedFiles::default();
-        let mut log = Log::init();
+        let log = Log::init();
         embedded.embed_outputs(vec![
             create_output(b"x", b"/a/x", b"1", u32::MAX),
             create_output(b"y", b"/a/y", b"1", u32::MAX),
             create_output(b"x", b"/b/x", b"2", u32::MAX),
             create_output(b"y", b"/b/y", b"2", u32::MAX),
         ]);
-        assert!(embedded.check_names(&mut log).is_err());
-        assert_eq!(log.errors, 2);
-        assert!(strings::contains(&log.msgs[0].data.text, b"/b/x"));
-        assert!(strings::contains(&log.msgs[1].data.text, b"/b/y"));
+        assert!(embedded.check_names(&log).is_err());
+        assert_eq!(log.errors.get(), 2);
+        let msgs = log.msgs.take();
+        assert!(strings::contains(&msgs[0].data.text, b"/b/x"));
+        assert!(strings::contains(&msgs[1].data.text, b"/b/y"));
     }
 
     #[test]
     fn check_names_clears_fields_of_finished_bundle() {
         let embedded = EmbeddedFiles::default();
-        let mut log = Log::init();
+        let log = Log::init();
         let mut output = create_output(b"a.js", b"/a.js", b"a", u32::MAX);
         output.bytecode_index = 1;
         output.module_info_index = 2;
@@ -567,7 +568,7 @@ mod tests {
         output.loads_at_startup = true;
         output.bytecode_entry_offset = 5;
         embedded.embed_outputs(vec![output]);
-        assert!(embedded.check_names(&mut log).is_ok());
+        assert!(embedded.check_names(&log).is_ok());
         let files = embedded.into_output_files();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].bytecode_index, u32::MAX);
@@ -591,11 +592,11 @@ mod tests {
                             contents: b"bytes",
                             loader,
                         };
-                        let path = embedded.embed_file(context, &file, &mut Log::init());
+                        let path = embedded.embed_file(context, &file, &Log::init());
                         path.expect("the path fits")
                     })
                     .collect();
-                assert!(embedded.check_names(&mut Log::init()).is_ok());
+                assert!(embedded.check_names(&Log::init()).is_ok());
                 (paths, embedded.into_output_files())
             },
         )
@@ -632,17 +633,13 @@ mod tests {
                     loader: Loader::File,
                 };
                 let embedded = EmbeddedFiles::default();
-                let mut log = Log::init();
-                assert!(embedded.embed_file(context, &file, &mut log).is_err());
-                assert_eq!(log.errors, 1);
-                assert!(
-                    log.msgs[0]
-                        .data
-                        .text
-                        .starts_with(b"the embedded file \"/project/aaa")
-                );
-                assert!(log.msgs[0].data.text.ends_with(b"\" is too long"));
-                assert!(embedded.check_names(&mut log).is_ok());
+                let log = Log::init();
+                assert!(embedded.embed_file(context, &file, &log).is_err());
+                assert_eq!(log.errors.get(), 1);
+                let text = &log.msgs.take()[0].data.text;
+                assert!(text.starts_with(b"the embedded file \"/project/aaa"));
+                assert!(text.ends_with(b"\" is too long"));
+                assert!(embedded.check_names(&log).is_ok());
                 assert!(embedded.into_output_files().is_empty());
             },
         );
@@ -676,7 +673,7 @@ mod tests {
     fn insertion_order_does_not_change_result() {
         let first = EmbeddedFiles::default();
         let second = EmbeddedFiles::default();
-        let mut log = Log::init();
+        let log = Log::init();
         let outputs: [(&[u8], &[u8]); 3] = [(b"/a", b"z"), (b"/b", b"y"), (b"/c", b"z")];
         for (source, dest_path) in outputs {
             first.embed_outputs(vec![create_output(dest_path, source, b"1", u32::MAX)]);
@@ -684,8 +681,8 @@ mod tests {
         for (source, dest_path) in outputs.into_iter().rev() {
             second.embed_outputs(vec![create_output(dest_path, source, b"1", u32::MAX)]);
         }
-        assert!(first.check_names(&mut log).is_ok());
-        assert!(second.check_names(&mut log).is_ok());
+        assert!(first.check_names(&log).is_ok());
+        assert!(second.check_names(&log).is_ok());
         let first_files = first.into_output_files();
         let second_files = second.into_output_files();
         assert_eq!(summarize(&first_files), summarize(&second_files));
@@ -698,9 +695,9 @@ mod tests {
             |context| {
                 let embedded = EmbeddedFiles::default();
                 for file in files {
-                    assert!(embedded.embed_file(context, file, &mut Log::init()).is_ok());
+                    assert!(embedded.embed_file(context, file, &Log::init()).is_ok());
                 }
-                assert!(embedded.check_names(&mut Log::init()).is_ok());
+                assert!(embedded.check_names(&Log::init()).is_ok());
                 embedded.into_output_files()
             },
         )

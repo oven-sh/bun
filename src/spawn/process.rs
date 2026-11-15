@@ -1126,9 +1126,7 @@ pub mod waiter_thread_posix {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 let one: [u8; 8] = (1usize).to_ne_bytes();
-                // SAFETY: write(2) is async-signal-safe; eventfd valid after start().
-                let n = unsafe { libc::write(INSTANCE.eventfd().native(), one.as_ptr().cast(), 8) };
-                if n < 0 {
+                if bun_sys::write(INSTANCE.eventfd(), &one).is_err() {
                     panic!("Failed to write to eventfd");
                 }
             }
@@ -1141,20 +1139,15 @@ pub mod waiter_thread_posix {
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
-                // SAFETY: sigaction with a valid handler.
-                unsafe {
-                    let mut current_mask: libc::sigset_t = bun_core::ffi::zeroed();
-                    libc::sigemptyset(&raw mut current_mask);
-                    libc::sigaddset(&raw mut current_mask, libc::SIGCHLD);
-                    let act = libc::sigaction {
-                        sa_sigaction: wakeup as *const () as usize,
-                        sa_mask: current_mask,
-                        // Not everything retries after EINTR: an addon, `bun:ffi`, LeakSanitizer.
-                        sa_flags: libc::SA_NOCLDSTOP | libc::SA_RESTART,
-                        sa_restorer: None,
-                    };
-                    libc::sigaction(libc::SIGCHLD, &raw const act, core::ptr::null_mut());
-                }
+                let act = libc::sigaction {
+                    sa_sigaction: wakeup as *const () as usize,
+                    sa_mask: bun_core::signal::sigmask(libc::SIGCHLD),
+                    // Not everything retries after EINTR: an addon, `bun:ffi`, LeakSanitizer.
+                    sa_flags: libc::SA_NOCLDSTOP | libc::SA_RESTART,
+                    sa_restorer: None,
+                };
+                // SAFETY: the handler takes the signal's number, and only writes to the eventfd.
+                unsafe { libc::sigaction(libc::SIGCHLD, &raw const act, core::ptr::null_mut()) };
             }
         }
     }
@@ -1195,19 +1188,11 @@ pub mod waiter_thread_posix {
                     continue 'outer;
                 }
 
-                // SAFETY: valid pollfd array.
-                let _ = unsafe { libc::poll(polls.as_mut_ptr(), 1, i32::MAX) };
+                let _ = bun_core::poll_once(&mut polls, i32::MAX);
             }
+            // Unreachable: `waiter_thread_flag::set` is a no-op on these targets.
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
-            {
-                // SAFETY: sigwait with a valid (empty) mask.
-                unsafe {
-                    let mut mask: libc::sigset_t = bun_core::ffi::zeroed();
-                    libc::sigemptyset(&raw mut mask);
-                    let mut signal: c_int = libc::SIGCHLD;
-                    let _rc = libc::sigwait(&raw const mask, &raw mut signal);
-                }
-            }
+            std::thread::park();
         }
     }
 }
@@ -2238,6 +2223,8 @@ mod spawn_process_body {
             Bun__noOrphans_begin, Bun__noOrphans_onExit, Bun__noOrphans_onFork,
             Bun__noOrphans_releaseKq,
         };
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        use bun_sys::linux::{PrctlOp, prctl};
 
         /// RAII guard around `Bun__registerSignalsForForwarding`: registers on
         /// construction, unregisters on drop.
@@ -2353,17 +2340,8 @@ mod spawn_process_body {
             /// `tcsetpgrp` from a background pgroup raises SIGTTOU (default: stop);
             /// block it for the call per the standard job-control idiom.
             fn ttou_blocked(pgid: libc::pid_t) {
-                // SAFETY: signal mask manipulation
-                unsafe {
-                    let mut set: libc::sigset_t = bun_core::ffi::zeroed();
-                    let mut old: libc::sigset_t = bun_core::ffi::zeroed();
-                    libc::sigemptyset(&raw mut set);
-                    libc::sigemptyset(&raw mut old);
-                    libc::sigaddset(&raw mut set, libc::SIGTTOU);
-                    libc::sigprocmask(libc::SIG_BLOCK, &raw const set, &raw mut old);
-                    let _ = tcsetpgrp(0, pgid);
-                    libc::sigprocmask(libc::SIG_SETMASK, &raw const old, core::ptr::null_mut());
-                }
+                let _restore_mask = bun_core::signal::block(libc::SIGTTOU);
+                let _ = tcsetpgrp(0, pgid);
             }
         }
 
@@ -2399,7 +2377,7 @@ mod spawn_process_body {
                 && bun_spawn_sys::pdeathsig::is_arming_thread()
                 && !(cfg!(target_os = "macos") && options.use_execve_on_macos);
 
-            // Snapshot pre-existing direct children so the disarm defer can tell
+            // Snapshot pre-existing direct children so `_disarm_subreaper` can tell
             // subreaper-adopted orphans (ppid==us) apart from `Bun.spawn` siblings
             // (also ppid==us). Typically empty — `bun run`/`bunx` have no JS VM —
             // but spawnSync can run inside a live VM (the FFI xcrun probe).
@@ -2412,31 +2390,26 @@ mod spawn_process_body {
                 &siblings_buf[0..0]
             };
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            if no_orphans {
+            let _disarm_subreaper = no_orphans.then(|| {
                 // Subreaper: arm *before* spawn so a fast-daemonizing script can't
                 // reparent its grandchild to init in the gap. Process-wide and
                 // only the spawnSync wait loop has a `wait4(-1)` to reap
                 // adoptees, so arming it globally from `enable()` would leak
                 // zombies in `bun foo.js` / `--filter` / `bun test`. Disarmed by
-                // the defer immediately below — registered here (not in the
+                // the guard immediately below — registered here (not in the
                 // post-spawn `defer if (no_orphans)` block) so spawn-failure
                 // early returns don't leave subreaper armed process-wide.
-                // SAFETY: prctl
-                let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) };
-            }
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            scopeguard::defer! {
-                if no_orphans {
+                prctl(PrctlOp::SET_CHILD_SUBREAPER, 1);
+                scopeguard::guard(siblings, |siblings| {
                     // Kill subreaper-adopted setsid daemons (ppid==us, not in the
                     // pre-arm snapshot) *before* disarming, while we can still find
                     // them. Without this, a daemon whose intermediate parent exits
                     // between disarm and `onProcessExit`→`killDescendants()` escapes
                     // to init.
                     ParentDeathWatchdog::kill_subreaper_adoptees(siblings);
-                    // SAFETY: prctl
-                    let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 0) };
-                }
-            }
+                    prctl(PrctlOp::SET_CHILD_SUBREAPER, 0);
+                })
+            });
 
             // macOS no_orphans: kqueue passed to `waitMacKqueue` for ppid/child
             // NOTE_EXIT and per-descendant NOTE_FORK. NOTE_TRACK (auto-attach to
@@ -2530,7 +2503,7 @@ mod spawn_process_body {
                     #[cfg(any(target_os = "linux", target_os = "android"))]
                     {
                         // One last reap for anything we adopted as subreaper before
-                        // the disarm defer above drops it (LIFO: this runs first).
+                        // `_disarm_subreaper` drops it (LIFO: this runs first).
                         loop {
                             match posix_spawn::wait4(-1, libc::WNOHANG as u32, None) {
                                 Err(_) => break,
@@ -2646,8 +2619,7 @@ mod spawn_process_body {
                         break;
                     }
 
-                    // SAFETY: valid pollfd array
-                    let rc = unsafe { libc::poll(poll_fds_buf.as_mut_ptr(), poll_len as _, -1) };
+                    let rc = bun_core::poll_once(&mut poll_fds_buf[..poll_len], -1);
                     match bun_sys::get_errno(rc as isize) {
                         bun_sys::E::SUCCESS => {}
                         bun_sys::E::EAGAIN | bun_sys::E::EINTR => continue,
@@ -2956,33 +2928,14 @@ mod spawn_process_body {
             // (gVisor, ancient kernels). Subreaper means orphaned grandchildren
             // also reparent to us and fire SIGCHLD here — drain them with
             // waitpid(-1, WNOHANG) and only stop when *our* child is reaped.
-            // signalfd takes the *kernel* sigset_t (1 word), sigprocmask the libc
-            // one (16 words) — block via libc, build a separate kernel mask for
-            // signalfd.
-            // SAFETY: signal mask manipulation
-            let (_restore_mask, chld_fd) = unsafe {
-                let mut libc_mask: libc::sigset_t = bun_core::ffi::zeroed();
-                let mut old_mask: libc::sigset_t = bun_core::ffi::zeroed();
-                libc::sigemptyset(&raw mut libc_mask);
-                libc::sigemptyset(&raw mut old_mask);
-                libc::sigaddset(&raw mut libc_mask, libc::SIGCHLD);
-                libc::sigprocmask(libc::SIG_BLOCK, &raw const libc_mask, &raw mut old_mask);
-                let restore = scopeguard::guard(old_mask, |old| {
-                    libc::sigprocmask(libc::SIG_SETMASK, &raw const old, core::ptr::null_mut());
-                });
-                let fd = {
-                    let mut kmask: libc::sigset_t = bun_core::ffi::zeroed();
-                    libc::sigemptyset(&raw mut kmask);
-                    libc::sigaddset(&raw mut kmask, libc::SIGCHLD);
-                    let rc = libc::signalfd(
-                        -1,
-                        &raw const kmask,
-                        libc::SFD_CLOEXEC | libc::SFD_NONBLOCK,
-                    );
-                    (rc >= 0).then(|| File::from_fd(Fd::from_native(rc)))
-                };
-                // Bound in this order: the signalfd closes, then the signal mask is restored.
-                (restore, fd)
+            // Bound in this order: the signalfd closes, then the signal mask is restored.
+            let _restore_mask = bun_core::signal::block(libc::SIGCHLD);
+            let chld_fd = {
+                let mask = bun_core::signal::sigmask(libc::SIGCHLD);
+                let flags = libc::SFD_CLOEXEC | libc::SFD_NONBLOCK;
+                // SAFETY: signalfd(2) only reads `mask`.
+                let rc = unsafe { libc::signalfd(-1, &raw const mask, flags) };
+                (rc >= 0).then(|| File::from_fd(Fd::from_native(rc)))
             };
 
             // Child-exit, take 2: pidfd. signalfd only fires if SIGCHLD stays
@@ -3017,16 +2970,12 @@ mod spawn_process_body {
             // now that we have a parent watch (pidfd or 100ms-getppid fallback);
             // restore on return so the next caller — or `bun run`'s own
             // post-script lifetime — keeps the backstop.
-            if ppid > 1 {
-                // SAFETY: prctl
-                let _ = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, 0) };
-            }
-            scopeguard::defer! {
-                if ppid > 1 {
-                    // SAFETY: prctl
-                    let _ = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) };
-                }
-            }
+            let _restore_pdeathsig = (ppid > 1).then(|| {
+                prctl(PrctlOp::SET_PDEATHSIG, 0);
+                scopeguard::guard((), |()| {
+                    prctl(PrctlOp::SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong);
+                })
+            });
             if ppid > 1 && getppid() != ppid {
                 Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
             }
@@ -3045,7 +2994,7 @@ mod spawn_process_body {
             loop {
                 // Reap *before* poll(). Covers (a) the SIGCHLD-before-block race —
                 // child may have exited between spawnProcessPosix and the
-                // sigprocmask above, in which case the kernel discarded SIGCHLD
+                // `signal::block` above, in which case the kernel discarded SIGCHLD
                 // (default disposition is ignore) and signalfd will never wake;
                 // (b) the no-signalfd fallback; (c) subreaper-adopted orphans that
                 // would otherwise re-fire SIGCHLD forever.
@@ -3121,8 +3070,7 @@ mod spawn_process_body {
                     push(&mut buf, &mut pfds_len, file.fd());
                 }
 
-                // SAFETY: valid pollfd array
-                let rc = unsafe { libc::poll(buf.as_mut_ptr(), pfds_len as _, timeout_ms) };
+                let rc = bun_core::poll_once(&mut buf[..pfds_len], timeout_ms);
                 match bun_sys::get_errno(rc as isize) {
                     bun_sys::E::SUCCESS => {}
                     bun_sys::E::EAGAIN | bun_sys::E::EINTR => {}

@@ -521,12 +521,13 @@ mod draft {
     #[cfg(not(windows))]
     unsafe extern "C" {
         // safe: by-value `c_int` only; no memory-safety preconditions.
-        safe fn _exit(code: c_int) -> !;
         safe fn raise(sig: c_int) -> c_int;
     }
     use super::cpu_features::CPUFeatures;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     use super::debug::{Color, SelfInfo, SourceLocation, TtyConfig};
+    #[cfg(not(windows))]
+    use bun_core::Global::_exit;
 
     /// Print an argv vector as a shell-ish line.
     /// Called when the addr2line spawn fails.
@@ -1353,18 +1354,10 @@ mod draft {
     pub fn handle_root_error(err: impl bun_core::output::ErrName) -> ! {
         use bun_core::{err_generic, pretty_error};
 
-        /// bun_sys::posix has no rlimit yet —
-        /// thin libc wrapper (POD out-param, never fails on supported targets).
         #[cfg(unix)]
-        fn getrlimit_nofile() -> Option<libc::rlimit> {
-            // SAFETY: zeroed rlimit is valid POD; getrlimit only writes to it.
-            let mut lim: libc::rlimit = bun_core::ffi::zeroed();
-            // SAFETY: &mut lim is a valid out-pointer.
-            if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut lim) } == 0 {
-                Some(lim)
-            } else {
-                None
-            }
+        fn getrlimit_nofile() -> Option<u64> {
+            let limit = bun_sys::posix::getrlimit(bun_sys::posix::RlimitResource::NOFILE);
+            limit.ok().map(|limit| limit.cur)
         }
 
         let name: &[u8] = err.name();
@@ -1385,7 +1378,7 @@ mod draft {
         } else if name == b"SystemFdQuotaExceeded" {
             #[cfg(unix)]
             {
-                let limit = getrlimit_nofile().map(|l| l.rlim_cur);
+                let limit = getrlimit_nofile();
                 #[cfg(target_os = "macos")]
                 {
                     pretty_error!(
@@ -1428,7 +1421,7 @@ mod draft {
         } else if name == b"ProcessFdQuotaExceeded" {
             #[cfg(unix)]
             {
-                let limit = getrlimit_nofile().map(|l| l.rlim_cur);
+                let limit = getrlimit_nofile();
                 #[cfg(target_os = "macos")]
                 {
                     pretty_error!(
@@ -1472,13 +1465,12 @@ mod draft {
             // The file descriptor problem may show up as other errors
             #[cfg(unix)]
             {
-                // SAFETY: zeroed rlimit is valid POD (integers).
-                let limit = getrlimit_nofile().unwrap_or(bun_core::ffi::zeroed());
+                let limit = getrlimit_nofile().unwrap_or(0);
 
-                if limit.rlim_cur > 0 && limit.rlim_cur < (8192 * 2) {
+                if limit > 0 && limit < (8192 * 2) {
                     pretty_error!(
                         "\n<r><red>error<r>: An unknown error occurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>\n\n<d>Current limit: {}<r>\n\nTo fix this, try running:\n\n  <cyan>ulimit -n 2147483646<r>\n",
-                        limit.rlim_cur,
+                        limit,
                     );
 
                     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1775,36 +1767,37 @@ mod draft {
     }
 
     #[cfg(unix)]
-    fn update_posix_segfault_handler(mut act: Option<&mut libc::sigaction>) -> crate::Result<()> {
-        if let Some(act_) = act.as_deref_mut() {
-            // SAFETY: single global; only mutated during signal-handler setup
-            if !DID_REGISTER_SIGALTSTACK.load(Ordering::Relaxed) {
-                let stack = libc::stack_t {
-                    ss_flags: 0,
-                    ss_size: 512 * 1024,
-                    // SAFETY: SIGALTSTACK is a process-lifetime static byte buffer; the kernel only writes to it during signal delivery (no Rust aliasing)
-                    ss_sp: SIGALTSTACK.get().cast(),
-                };
+    fn crash_action(flags: c_int) -> libc::sigaction {
+        let mut act: libc::sigaction = bun_core::ffi::zeroed();
+        act.sa_sigaction = handle_segfault_posix as *const () as usize;
+        act.sa_flags = libc::SA_SIGINFO | flags;
+        act
+    }
 
-                // SAFETY: stack points to a valid static buffer
-                if unsafe { libc::sigaltstack(&raw const stack, core::ptr::null_mut()) } == 0 {
-                    act_.sa_flags |= libc::SA_ONSTACK;
-                    // SAFETY: single global; only mutated during signal-handler setup
-                    DID_REGISTER_SIGALTSTACK.store(true, Ordering::Relaxed);
-                }
+    #[cfg(unix)]
+    fn update_posix_segfault_handler(flags: c_int) {
+        let mut act = crash_action(flags);
+
+        if !DID_REGISTER_SIGALTSTACK.load(Ordering::Relaxed) {
+            let stack = libc::stack_t {
+                ss_flags: 0,
+                ss_size: 512 * 1024,
+                ss_sp: SIGALTSTACK.get().cast(),
+            };
+
+            // SAFETY: SIGALTSTACK is a process-lifetime static byte buffer; the kernel only writes to it during signal delivery (no Rust aliasing)
+            if unsafe { libc::sigaltstack(&raw const stack, core::ptr::null_mut()) } == 0 {
+                act.sa_flags |= libc::SA_ONSTACK;
+                DID_REGISTER_SIGALTSTACK.store(true, Ordering::Relaxed);
             }
         }
 
-        let act_ptr: *const libc::sigaction = act
-            .map(|a| std::ptr::from_ref(a))
-            .unwrap_or(core::ptr::null());
         for signal in bun_core::CRASH_HANDLER_SIGNALS {
-            // SAFETY: valid sigaction pointer or null; null oldact is permitted.
+            // SAFETY: the handler has the signature that SA_SIGINFO asks for and is never unloaded.
             unsafe {
-                libc::sigaction(signal, act_ptr, core::ptr::null_mut());
+                libc::sigaction(signal, &raw const act, core::ptr::null_mut());
             }
         }
-        Ok(())
     }
 
     // Windows VEH handle storage lives at T0 (`bun_core::WINDOWS_SEGFAULT_HANDLE`,
@@ -1819,15 +1812,7 @@ mod draft {
         if Environment::ENABLE_ASAN {
             return;
         }
-        // SAFETY: zeroed sigaction is valid POD; we overwrite the fields we need.
-        let mut act: libc::sigaction = bun_core::ffi::zeroed();
-        act.sa_sigaction = handle_segfault_posix as *const () as usize;
-        act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
-        // SAFETY: sa_mask is a valid out-pointer.
-        unsafe {
-            libc::sigemptyset(&raw mut act.sa_mask);
-        }
-        let _ = update_posix_segfault_handler(Some(&mut act));
+        update_posix_segfault_handler(libc::SA_RESTART | libc::SA_RESETHAND);
     }
 
     /// For a process whose threads may crash at the same moment, as the threads of a build do that meet the same broken
@@ -1838,38 +1823,30 @@ mod draft {
         if Environment::ENABLE_ASAN || !bun_core::CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) {
             return;
         }
-        let _ = update_posix_segfault_handler(Some(&mut repeated_crash_action()));
+        update_posix_segfault_handler(repeated_crash_flags());
     }
 
     #[cfg(unix)]
-    fn repeated_crash_action() -> libc::sigaction {
-        // SAFETY: zeroed sigaction is valid POD; we overwrite the fields we need.
-        let mut act: libc::sigaction = bun_core::ffi::zeroed();
-        act.sa_sigaction = handle_segfault_posix as *const () as usize;
-        act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART;
+    fn repeated_crash_flags() -> c_int {
+        let mut flags = libc::SA_RESTART;
         if DID_REGISTER_SIGALTSTACK.load(Ordering::Relaxed) {
-            act.sa_flags |= libc::SA_ONSTACK;
+            flags |= libc::SA_ONSTACK;
         }
-        // SAFETY: sa_mask is a valid out-pointer.
-        unsafe {
-            libc::sigemptyset(&raw mut act.sa_mask);
-        }
-        act
+        flags
     }
 
-    /// # Safety
-    /// `action` must be valid for a write.
     #[cfg(unix)]
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn CrashHandler__getAction(action: *mut libc::sigaction) -> bool {
+    extern "C" fn CrashHandler__getAction(
+        action: &mut core::mem::MaybeUninit<libc::sigaction>,
+    ) -> bool {
         if Environment::ENABLE_ASAN
             || !bun_core::CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed)
             || PANIC_STAGE.with(|stage| stage.get()) != 0
         {
             return false;
         }
-        // SAFETY: caller contract.
-        unsafe { action.write(repeated_crash_action()) };
+        action.write(crash_action(repeated_crash_flags()));
         true
     }
 
@@ -2220,16 +2197,8 @@ mod draft {
         }
 
         #[cfg(unix)]
-        {
-            // SAFETY: zeroed sigaction is valid POD; handler = SIG_DFL (= 0), flags = 0.
-            let mut act: libc::sigaction = bun_core::ffi::zeroed();
-            act.sa_sigaction = libc::SIG_DFL;
-            // SAFETY: sa_mask is a valid out-pointer.
-            unsafe {
-                libc::sigemptyset(&raw mut act.sa_mask);
-            }
-            // To avoid a double-panic, do nothing if an error happens here.
-            let _ = update_posix_segfault_handler(Some(&mut act));
+        for signal in bun_core::CRASH_HANDLER_SIGNALS {
+            bun_core::signal::set_default_action(signal);
         }
     }
 
@@ -3258,14 +3227,6 @@ mod draft {
             let sig = reason.terminal_signal();
 
             // Install default handler so that the raise below will terminate.
-            // bun_sys::posix has no Sigaction yet — use libc directly (async-signal-safe).
-            // SAFETY: all-zero is a valid sigaction (handler = SIG_DFL = 0, flags = 0).
-            let mut sigact: libc::sigaction = bun_core::ffi::zeroed();
-            sigact.sa_sigaction = libc::SIG_DFL;
-            // SAFETY: sa_mask is a valid out-pointer into a zeroed struct.
-            unsafe {
-                libc::sigemptyset(&raw mut sigact.sa_mask);
-            }
             for s in [
                 libc::SIGSEGV,
                 libc::SIGILL,
@@ -3280,23 +3241,14 @@ mod draft {
                 // `signal-exit` package does).
                 libc::SIGTRAP,
             ] {
-                // SAFETY: &sigact is a valid sigaction; null oldact is permitted.
-                unsafe {
-                    libc::sigaction(s, &raw const sigact, core::ptr::null_mut());
-                }
+                bun_core::signal::set_default_action(s);
             }
 
             // We may be running inside the signal handler for `sig`, in which
             // case the kernel added it to this thread's mask and a re-raise
             // would sit pending forever. Unblock it so the raise below is
-            // delivered. pthread_sigmask is async-signal-safe.
-            // SAFETY: zeroed sigset is valid; sigemptyset/sigaddset initialize it.
-            unsafe {
-                let mut set: libc::sigset_t = bun_core::ffi::zeroed();
-                libc::sigemptyset(&raw mut set);
-                libc::sigaddset(&raw mut set, sig);
-                libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, core::ptr::null_mut());
-            }
+            // delivered.
+            bun_core::signal::unblock(sig);
 
             // With SIG_DFL installed and the signal unblocked this terminates the process.
             raise(sig);
@@ -3510,20 +3462,11 @@ mod draft {
     pub fn suppress_core_dumps_if_necessary() {
         #[cfg(unix)]
         {
-            // bun_sys::posix has no rlimit
-            // surface yet — go straight to libc (already a dep, async-signal-safe).
-            // SAFETY: all-zero rlimit is valid POD; getrlimit/setrlimit only read/write the struct.
-            let mut existing_limit: libc::rlimit = bun_core::ffi::zeroed();
-            // SAFETY: &mut existing_limit is a valid out-pointer.
-            if unsafe { libc::getrlimit(libc::RLIMIT_CORE, &raw mut existing_limit) } != 0 {
-                return;
-            }
-            if existing_limit.rlim_cur > 0 || existing_limit.rlim_cur == libc::RLIM_INFINITY {
-                existing_limit.rlim_cur = 0;
-                // SAFETY: &existing_limit is a valid in-pointer.
-                unsafe {
-                    libc::setrlimit(libc::RLIMIT_CORE, &raw const existing_limit);
-                }
+            use bun_sys::posix::{Rlimit, RlimitResource, getrlimit, setrlimit};
+            if let Ok(limit) = getrlimit(RlimitResource::CORE)
+                && limit.cur > 0
+            {
+                let _ = setrlimit(RlimitResource::CORE, Rlimit { cur: 0, ..limit });
             }
         }
     }

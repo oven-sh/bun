@@ -425,6 +425,28 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
     10_000 * ASAN_MULTIPLIER,
   );
 
+  test.each([
+    ["a", { a: ["a-outer.", "reenter!"], b: ["b-first."], c: [] }],
+    ["b", { a: ["a-outer."], b: ["b-first.", "reenter!"], c: [] }],
+    ["c", { a: ["a-outer."], b: ["b-first."], c: ["reenter!"] }],
+  ])(
+    "does not lose a frame it sends on session %s while b hands the cork buffer over to a",
+    async (target, expected) => {
+      const result = await run(/* js */ `
+      const peers = { a: await connect(), b: await connect(), c: await connect() };
+      const pings = ({ duplex }) => duplex.written.join("").match(/a-outer.|b-first.|reenter!/g)?.sort() ?? [];
+      peers.b.duplex.inNextWrite = () => peers.${target}.session.ping(Buffer.from("reenter!"), () => {});
+      peers.b.session.ping(Buffer.from("b-first."), () => {});
+      peers.a.session.ping(Buffer.from("a-outer."), () => {});
+      await until(() => pings(peers.a).includes("a-outer."));
+      console.log(JSON.stringify({ a: pings(peers.a), b: pings(peers.b), c: pings(peers.c) }));
+      for (const { session } of Object.values(peers)) session.destroy();
+    `);
+      expect(result).toEqual({ stdout: JSON.stringify(expected), stderr: "", exitCode: 0 });
+    },
+    10_000 * ASAN_MULTIPLIER,
+  );
+
   test.skipIf(!isASAN)(
     "can exit the process without a leak report",
     async () => {

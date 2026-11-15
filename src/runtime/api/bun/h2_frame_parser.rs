@@ -2230,21 +2230,23 @@ impl H2FrameParser {
         CORKED_H2.with(|c| ManuallyDrop::into_inner(c.replace(ManuallyDrop::new(parser))))
     }
 
-    /// The parser holding the cork slot, if any.
-    fn corked() -> Option<*mut H2FrameParser> {
-        // SAFETY: JS-thread-local; peeks without moving the ref out.
-        CORKED_H2.with(|c| unsafe { (**c.as_ptr()).as_ref().map(RefPtr::as_ptr) })
+    fn with_corked<R>(f: impl FnOnce(Option<&H2FrameParser>) -> R) -> R {
+        CORKED_H2.with(|c| c.with_taken(|corked| f(corked.as_deref())))
+    }
+
+    fn holds_cork(&self) -> bool {
+        Self::with_corked(|corked| corked.is_some_and(|corked| std::ptr::eq(corked, self)))
     }
 
     fn cork(&self) {
-        if let Some(corked) = Self::corked() {
-            if std::ptr::eq(corked, self.as_ctx_ptr()) {
+        while let Some(corked) = Self::set_corked(None) {
+            if std::ptr::eq(&*corked, self) {
                 // already corked
+                Self::set_corked(Some(corked));
                 return;
             }
-            // force uncork
-            // SAFETY: CORKED_H2 holds a ref until `uncork` releases it.
-            unsafe { (*corked.cast_const()).uncork() };
+            // force uncork; JS that runs under the write can take the slot again
+            corked.write_uncorked();
         }
         // cork
         Self::set_corked(Some(self.ref_guard()));
@@ -2630,13 +2632,13 @@ impl H2FrameParser {
     /// `resize()` the buffer: under this session's own transport writes, or when taking the
     /// cork slot first flushes another such session's corked bytes through its transport.
     fn stable_payload<'a>(&self, bytes: &'a [u8]) -> Cow<'a, [u8]> {
-        let foreign_cork_runs_js = || match Self::corked() {
-            Some(other) if !std::ptr::eq(other, self.as_ctx_ptr()) => {
-                CORK_OFFSET.with(|c| c.get()) > 0
-                    // SAFETY: CORKED_H2 holds a ref()'d parser until that parser's uncork().
-                    && unsafe { (*other).transport_write_runs_js() }
-            }
-            _ => false,
+        let foreign_cork_runs_js = || {
+            Self::with_corked(|corked| match corked {
+                Some(other) if !std::ptr::eq(other, self) => {
+                    CORK_OFFSET.with(|c| c.get()) > 0 && other.transport_write_runs_js()
+                }
+                _ => false,
+            })
         };
         if !bytes.is_empty() && (self.transport_write_runs_js() || foreign_cork_runs_js()) {
             Cow::Owned(bytes.to_vec())
@@ -2646,11 +2648,8 @@ impl H2FrameParser {
     }
 
     fn uncork(&self) -> usize {
-        let Some(corked_ptr) = Self::corked() else {
-            return 0;
-        };
-        if !std::ptr::eq(corked_ptr, self.as_ctx_ptr()) {
-            // Another parser owns the cork slot; its own auto_flush /
+        if !self.holds_cork() {
+            // If another parser owns the cork slot, its own auto_flush /
             // on_native_writable will drain it. Draining it here writes to a
             // foreign fd from inside self's writable callback and tears down
             // the other parser's auto-flush registration. cork()'s
@@ -2658,10 +2657,14 @@ impl H2FrameParser {
             // takes it.
             return 0;
         }
+        Self::set_corked(None);
+        self.write_uncorked()
+    }
+
+    /// Writes what `self` corked before it left the slot.
+    fn write_uncorked(&self) -> usize {
         self.unregister_auto_flush();
-        bun_output::scoped_log!(H2FrameParser, "uncork {:p}", corked_ptr);
-        // The slot's ref on `self`, released once the corked bytes are written.
-        let _slot_ref = Self::set_corked(None);
+        bun_output::scoped_log!(H2FrameParser, "uncork {:p}", self);
 
         // _write can re-enter JS (JS-stream-backed sockets, h2-over-h2 tunnels),
         // so no thread-local borrow may be held across it: move the corked bytes
@@ -2826,7 +2829,7 @@ impl H2FrameParser {
         }
         let _ = self.flush();
         // we will unregister ourselves when the buffer is empty
-        if Self::corked() != Some(self.as_ctx_ptr()) {
+        if !self.holds_cork() {
             self.unregister_auto_flush();
         }
         true
@@ -2839,10 +2842,8 @@ impl H2FrameParser {
         // CORK_BUFFER is thread-local across every session: only drain bytes we corked.
         // send_data()'s multi-frame path reaches here without having called cork(), and
         // prepending another session's corked frames to this one's batch sends them to
-        // the wrong peer. uncork() clears CORKED_H2 before calling this, so None passes.
-        if let Some(corked) = Self::corked()
-            && !std::ptr::eq(corked, self.as_ctx_ptr())
-        {
+        // the wrong peer. The slot is empty under write_uncorked(), so None passes.
+        if Self::with_corked(|corked| corked.is_some_and(|corked| !std::ptr::eq(corked, self))) {
             return;
         }
         let off = CORK_OFFSET.with(|c| c.get()) as usize;
@@ -7311,7 +7312,7 @@ impl H2FrameParser {
         }
         // `uncork()` would `_write()` the corked bytes, which re-enters JS on a non-native
         // socket; the process is exiting, so drop them and just release the slot's ref.
-        if Self::corked() == Some(self.as_ctx_ptr()) {
+        if self.holds_cork() {
             CORK_OFFSET.with(|c| c.set(0));
             Self::set_corked(None);
         }

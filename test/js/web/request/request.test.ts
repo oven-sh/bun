@@ -13,6 +13,11 @@ test("undefined args don't throw", () => {
   expect(request.method).toBe("GET");
 });
 
+test("referrer reads the header", () => {
+  expect(new Request("https://example.com/", { headers: { referrer: "x" } }).referrer).toBe("x");
+  expect(new Request("https://example.com/", { headers: { other: "x" } }).referrer).toBe("");
+});
+
 test("request can receive undefined signal", async () => {
   const request = new Request("http://example.com/", {
     method: "POST",

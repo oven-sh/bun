@@ -1,5 +1,3 @@
-use core::ffi::c_void;
-
 use bun_jsc::bindgen::{JsScope, JsWrapper};
 use bun_jsc::{JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult, VM};
 
@@ -24,18 +22,17 @@ impl Expect {
                     let mut any_properties_in_iterator = false;
 
                     extern "C" fn anything_in_iterator(
-                        _: *mut VM,
+                        _: &VM,
                         _: &JSGlobalObject,
-                        any_: *mut c_void,
+                        any_: &mut bool,
                         _: JSValue,
                     ) {
-                        // SAFETY: `any_` is the `&mut bool` passed to `for_each` below.
-                        unsafe { *any_.cast::<bool>() = true };
+                        *any_ = true;
                     }
 
                     value.for_each(
                         global,
-                        (&raw mut any_properties_in_iterator).cast::<c_void>(),
+                        &mut any_properties_in_iterator,
                         anything_in_iterator,
                     )?;
                     pass = !any_properties_in_iterator;

@@ -2072,19 +2072,17 @@ pub const fn is_unicode_space_separator(cp: u32) -> bool {
 /// SIMD-accelerated iterator that yields slices of text between ANSI escape sequences.
 /// The C++ side uses ANSI::findEscapeCharacter (SIMD) and ANSI::consumeANSI.
 #[repr(C)]
-pub struct ANSIIterator {
-    pub(crate) input: *const u8,
-    pub(crate) input_len: usize,
-    pub(crate) cursor: usize,
-    pub(crate) slice_ptr: *const u8,
-    pub(crate) slice_len: usize,
+pub struct ANSIIterator<'a> {
+    input: crate::ffi::FfiSlice<'a>,
+    cursor: usize,
+    slice_ptr: *const u8,
+    slice_len: usize,
 }
 
-impl ANSIIterator {
-    pub fn init(input: &[u8]) -> ANSIIterator {
+impl<'a> ANSIIterator<'a> {
+    pub fn init(input: &'a [u8]) -> Self {
         ANSIIterator {
-            input: input.as_ptr(),
-            input_len: input.len(),
+            input: input.into(),
             cursor: 0,
             slice_ptr: core::ptr::null(),
             slice_len: 0,
@@ -2107,10 +2105,8 @@ impl ANSIIterator {
 unsafe extern "C" {
     // `&mut ANSIIterator` is ABI-identical to the C++ `ANSIIterator*` (thin
     // non-null pointer to a `#[repr(C)]` POD struct); C++ reads `input`/
-    // `input_len`/`cursor` and writes `cursor`/`slice_ptr`/`slice_len`. The
-    // `&mut` encodes the only pointer-validity precondition, so `safe fn`
-    // discharges the link-time proof and callers need no `unsafe`.
-    safe fn Bun__ANSI__next(it: &mut ANSIIterator) -> bool;
+    // `cursor` and writes `cursor`/`slice_ptr`/`slice_len`.
+    safe fn Bun__ANSI__next(it: &mut ANSIIterator<'_>) -> bool;
 }
 
 // Transcoding allocators live in T0 `crate::strings_impl` so collections can

@@ -1474,6 +1474,11 @@ describe("bun test", () => {
     `);
   });
 
+  test("Prints error when the pattern is not a valid regex", () => {
+    const stderr = runTest({ args: ["-t", "("], expectExitCode: 1 });
+    expect(stderr.trim()).toBe(`error: --test-name-pattern expects a valid regular expression but received "("`);
+  });
+
   test("Does not print the regex error when a test fails", () => {
     const stderr = runTest({
       args: ["-t", "not-a-test"],

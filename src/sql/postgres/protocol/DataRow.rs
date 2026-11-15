@@ -3,10 +3,10 @@ use crate::postgres::protocol::new_reader::NewReader;
 
 // The opaque context is forwarded by value to the callback each iteration,
 // so require `C: Copy`.
-pub fn decode<C: Copy>(
+pub fn decode<'a, C: Copy>(
     context: C,
-    reader: &NewReader<'_>,
-    mut for_each: impl FnMut(C, u32, Option<&[u8]>) -> Result<bool, AnyPostgresError>,
+    reader: &NewReader<'a>,
+    mut for_each: impl FnMut(C, u32, Option<&'a [u8]>) -> Result<bool, AnyPostgresError>,
 ) -> Result<(), AnyPostgresError> {
     // The Int32 message length bounds every read below; a field count or cell
     // length that overruns it is a malformed DataRow (libpq: "insufficient

@@ -96,13 +96,13 @@ fn unreachable_block(block: &BasicBlock, preds: IndexSet<BlockId>) -> BasicBlock
     BasicBlock {
         kind: block.kind,
         id: block.id,
-        instructions: super::AstAlloc::vec(),
+        instructions: super::HirAlloc::vec(),
         terminal: Terminal::Unreachable {
             id: block.terminal.evaluation_order(),
             loc: block.terminal.loc().copied(),
         },
         preds,
-        phis: super::AstAlloc::vec(),
+        phis: super::HirAlloc::vec(),
     }
 }
 

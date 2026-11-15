@@ -397,8 +397,8 @@ impl<'p, 'a> Walker<'p, 'a> {
             PendingFunction::StaticBlock(block) => {
                 // To JavaScriptCore a function, which the function that initializes the static fields calls.
                 self.open_function(Some(block.loc.start), None, InnerBody::None);
-                self.declare_stmts(block.stmts.as_slice());
-                self.stmts(block.stmts.as_slice());
+                self.declare_stmts(block.stmts.slice());
+                self.stmts(block.stmts.slice());
             }
         }
         self.opened();

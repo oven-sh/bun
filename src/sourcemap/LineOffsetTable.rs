@@ -1,8 +1,5 @@
-use core::alloc::Allocator;
-use std::alloc::Global;
-
 use bun_alloc::AllocError;
-use bun_ast::Loc;
+use bun_ast::{AstArena, AstVec, Loc, StoreSlice};
 use bun_collections::MultiArrayList;
 use bun_core::strings;
 use smallvec::SmallVec;
@@ -17,14 +14,8 @@ use smallvec::SmallVec;
 /// and takes up a lot of memory. Since most JavaScript is ASCII and the
 /// mapping for ASCII is 1:1, we avoid creating a table for ASCII-only lines
 /// as an optimization.
-///
-/// Generic over `A` so the bundler can put both the SoA slab and every
-/// `columns_for_non_ascii` payload into the per-worker AST heap (`AstAlloc`)
-/// and bulk-free them on `mi_heap_destroy` instead of walking
-/// `LinkerGraph.files` in `BundleV2::drop`. The runtime printer's
-/// lazy table keeps the `Global` default and frees normally.
-pub struct LineOffsetTable<A: Allocator = Global> {
-    pub columns_for_non_ascii: Box<[i32], A>,
+pub struct LineOffsetTable {
+    pub columns_for_non_ascii: Box<[i32]>,
     /// Byte offset of the first non-ASCII byte on this line, or `i32::MAX as u32`
     /// when the line is entirely ASCII (so no `columns_for_non_ascii` table exists).
     /// The sentinel can't be `0` because a line can legitimately start with a
@@ -35,7 +26,15 @@ pub struct LineOffsetTable<A: Allocator = Global> {
     pub byte_offset_to_start_of_line: u32,
 }
 
-pub type List<A = Global> = MultiArrayList<LineOffsetTable<A>, A>;
+pub type List = MultiArrayList<LineOffsetTable>;
+
+/// A [`List`] in an [`AstArena`], so that `BundleV2::drop` does not have to walk `LinkerGraph.files`.
+#[derive(Default)]
+pub struct AstList {
+    pub(crate) columns_for_non_ascii: AstVec<StoreSlice<i32>>,
+    pub(crate) byte_offset_to_first_non_ascii: AstVec<u32>,
+    pub(crate) byte_offset_to_start_of_line: AstVec<u32>,
+}
 
 /// Typed SoA column accessors on [`List`] (= `MultiArrayList<LineOffsetTable>`).
 ///
@@ -47,7 +46,7 @@ pub trait LineOffsetTableColumns {
     fn items_byte_offset_to_first_non_ascii(&self) -> &[u32];
 }
 
-impl<A: Allocator + 'static> LineOffsetTableColumns for List<A> {
+impl LineOffsetTableColumns for List {
     #[inline]
     fn items_byte_offset_to_start_of_line(&self) -> &[u32] {
         self.items::<"byte_offset_to_start_of_line", u32>()
@@ -117,23 +116,49 @@ impl LineOffsetTable {
         Self::find_line(offsets, loc)
     }
 
-    /// `Global`-allocator convenience wrapper around [`generate_in`].
     pub fn generate(contents: &[u8], approximate_line_count: i32) -> Result<List, AllocError> {
-        Self::generate_in::<Global>(contents, approximate_line_count)
-    }
-
-    // Callers pass mixed allocators: the bundler routes `A = AstAlloc` so the
-    // table bulk-frees with the per-worker AST heap, everyone else uses
-    // [`generate`] (`A = Global`).
-    pub fn generate_in<A: Allocator + Copy + Default + 'static>(
-        contents: &[u8],
-        approximate_line_count: i32,
-    ) -> Result<List<A>, AllocError> {
-        let alloc = A::default();
-        let empty_box = || Vec::new_in(alloc).into_boxed_slice();
-        let mut list = List::<A>::new_in(alloc);
+        let mut list = List::default();
         // Preallocate the top-level table using the approximate line count from the lexer
         list.ensure_unused_capacity(approximate_line_count.max(1) as usize)?;
+        Self::for_each_line(contents, |start, first_non_ascii, columns| {
+            list.append(LineOffsetTable {
+                byte_offset_to_start_of_line: start,
+                byte_offset_to_first_non_ascii: first_non_ascii,
+                columns_for_non_ascii: Box::from(columns),
+            })
+        })?;
+
+        // `shrink_and_free` copies every row, so skip it unless the line count was far off.
+        if list.capacity() > list.len() + (list.len() >> 1) {
+            list.shrink_and_free(list.len());
+        }
+        Ok(list)
+    }
+
+    pub fn generate_in(contents: &[u8], approximate_line_count: i32, arena: &AstArena) -> AstList {
+        // The lexer counts newlines, and the last line has none.
+        let capacity = approximate_line_count.max(0) as usize + 1;
+        let mut list = AstList {
+            columns_for_non_ascii: AstVec::with_capacity_in(capacity, arena),
+            byte_offset_to_first_non_ascii: AstVec::with_capacity_in(capacity, arena),
+            byte_offset_to_start_of_line: AstVec::with_capacity_in(capacity, arena),
+        };
+        let Ok(()) = Self::for_each_line(contents, |start, first_non_ascii, columns| {
+            let columns = AstVec::from_slice_in(columns, arena).into_store_slice();
+            list.columns_for_non_ascii.push(arena, columns);
+            list.byte_offset_to_first_non_ascii
+                .push(arena, first_non_ascii);
+            list.byte_offset_to_start_of_line.push(arena, start);
+            Ok::<(), core::convert::Infallible>(())
+        });
+        list
+    }
+
+    /// Calls `line` with the fields of each [`LineOffsetTable`].
+    fn for_each_line<E>(
+        contents: &[u8],
+        mut line: impl FnMut(u32, u32, &[i32]) -> Result<(), E>,
+    ) -> Result<(), E> {
         let mut column: i32 = 0;
         let mut byte_offset_to_first_non_ascii: u32 = i32::MAX as u32;
         let mut column_byte_offset: u32 = 0;
@@ -226,24 +251,12 @@ impl LineOffsetTable {
                         continue;
                     }
 
-                    // The SmallVec scratch reuses its
-                    // inline storage across lines; copy out into an `A`-backed box only when a
-                    // line had non-ASCII bytes. ASCII-only lines (almost all of them) store an
-                    // empty dangling box and leave the scratch untouched.
-                    let owned: Box<[i32], A> = if columns_for_non_ascii.is_empty() {
-                        empty_box()
-                    } else {
-                        let mut v = Vec::with_capacity_in(columns_for_non_ascii.len(), alloc);
-                        v.extend_from_slice(&columns_for_non_ascii);
-                        columns_for_non_ascii.clear();
-                        v.into_boxed_slice()
-                    };
-
-                    list.append(LineOffsetTable {
-                        byte_offset_to_start_of_line: line_byte_offset,
+                    line(
+                        line_byte_offset,
                         byte_offset_to_first_non_ascii,
-                        columns_for_non_ascii: owned,
-                    })?;
+                        &columns_for_non_ascii,
+                    )?;
+                    columns_for_non_ascii.clear();
 
                     column = 0;
                     byte_offset_to_first_non_ascii = i32::MAX as u32;
@@ -269,31 +282,10 @@ impl LineOffsetTable {
             let need = (line_bytes_so_far - column_byte_offset + 1) as usize;
             columns_for_non_ascii.extend(core::iter::repeat_n(column, need));
         }
-        {
-            let owned: Box<[i32], A> = if columns_for_non_ascii.is_empty() {
-                empty_box()
-            } else {
-                let mut v = Vec::with_capacity_in(columns_for_non_ascii.len(), alloc);
-                v.extend_from_slice(&columns_for_non_ascii);
-                v.into_boxed_slice()
-            };
-            list.append(LineOffsetTable {
-                byte_offset_to_start_of_line: line_byte_offset,
-                byte_offset_to_first_non_ascii,
-                columns_for_non_ascii: owned,
-            })?;
-        }
-
-        // `shrink_and_free` has no realloc-in-place fast path — it always does a fresh
-        // aligned_alloc + full SoA row copy + free. `grow_capacity` overshoots a single
-        // bulk reservation by at most ~50%, so when the lexer's line-count hint was
-        // roughly right (the common case) the slack isn't worth a multi-MB memcpy.
-        // Only trim when capacity exceeds 1.5x length, which catches pathological
-        // mismatches (wrong loader, wildly off hint) while skipping the routine ~20%
-        // overshoot.
-        if list.capacity() > list.len() + (list.len() >> 1) {
-            list.shrink_and_free(list.len());
-        }
-        Ok(list)
+        line(
+            line_byte_offset,
+            byte_offset_to_first_non_ascii,
+            &columns_for_non_ascii,
+        )
     }
 }

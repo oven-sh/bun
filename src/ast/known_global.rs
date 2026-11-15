@@ -1,7 +1,5 @@
-use bun_alloc::Arena as Bump;
-use bun_collections::VecExt;
-
 use crate as js_ast;
+use crate::AstArena;
 use crate::E;
 use crate::Symbol;
 
@@ -66,21 +64,20 @@ fn lookup(name: &[u8]) -> Option<KnownGlobal> {
 
 impl KnownGlobal {
     #[inline(always)]
-    fn call_from_new(e: &mut E::New, loc: crate::Loc) -> js_ast::Expr {
+    fn call_from_new(bump: &AstArena, e: &mut E::New, loc: crate::Loc) -> js_ast::Expr {
         let call = E::Call {
             target: e.target,
-            args: bun_alloc::AstAlloc::take(&mut e.args),
+            args: core::mem::take(&mut e.args),
             close_paren_loc: e.close_parens_loc,
             can_be_unwrapped_if_unused: e.can_be_unwrapped_if_unused,
             ..Default::default()
         };
-        js_ast::Expr::init(call, loc)
+        js_ast::Expr::allocate(bump, call, loc)
     }
 
-    // `_bump` is unused; the `Vec` uses the global arena.
     #[inline(never)]
     pub fn minify_global_constructor(
-        _bump: &Bump,
+        bump: &AstArena,
         e: &mut E::New,
         symbols: &[Symbol],
         loc: crate::Loc,
@@ -113,7 +110,7 @@ impl KnownGlobal {
             | KnownGlobal::URIError
             | KnownGlobal::AggregateError => {
                 // Convert `new Error(...)` to `Error(...)` to save bytes
-                Some(Self::call_from_new(e, loc))
+                Some(Self::call_from_new(bump, e, loc))
             }
 
             KnownGlobal::Object => {
@@ -121,7 +118,7 @@ impl KnownGlobal {
 
                 if n == 0 {
                     // new Object() -> {}
-                    return Some(js_ast::Expr::init(E::Object::default(), loc));
+                    return Some(js_ast::Expr::allocate(bump, E::Object::default(), loc));
                 }
 
                 if n == 1 {
@@ -135,14 +132,14 @@ impl KnownGlobal {
                         js_ast::ExprData::ENull(_) | js_ast::ExprData::EUndefined(_) => {
                             // new Object(null) -> {}
                             // new Object(undefined) -> {}
-                            return Some(js_ast::Expr::init(E::Object::default(), loc));
+                            return Some(js_ast::Expr::allocate(bump, E::Object::default(), loc));
                         }
                         _ => {}
                     }
                 }
 
                 // For other cases, just remove 'new'
-                Some(Self::call_from_new(e, loc))
+                Some(Self::call_from_new(bump, e, loc))
             }
 
             KnownGlobal::Array => {
@@ -151,7 +148,7 @@ impl KnownGlobal {
                 match n {
                     0 => {
                         // new Array() -> []
-                        Some(js_ast::Expr::init(E::Array::default(), loc))
+                        Some(js_ast::Expr::allocate(bump, E::Array::default(), loc))
                     }
                     1 => {
                         // For single argument, only convert to literal if we're SURE it's not a number
@@ -162,9 +159,10 @@ impl KnownGlobal {
                             js_ast::ExprData::EObject(_) | js_ast::ExprData::EArray(_) => {
                                 // new Array({}) -> [{}], new Array([1]) -> [[1]]
                                 // These are definitely not numbers, safe to convert
-                                return Some(js_ast::Expr::init(
+                                return Some(js_ast::Expr::allocate(
+                                    bump,
                                     E::Array {
-                                        items: bun_alloc::AstAlloc::take(&mut e.args),
+                                        items: core::mem::take(&mut e.args),
                                         ..Default::default()
                                     },
                                     loc,
@@ -184,9 +182,10 @@ impl KnownGlobal {
                             | js_ast::expr::PrimitiveType::String
                             | js_ast::expr::PrimitiveType::Bigint => {
                                 // These are definitely not numbers, safe to convert
-                                Some(js_ast::Expr::init(
+                                Some(js_ast::Expr::allocate(
+                                    bump,
                                     E::Array {
-                                        items: bun_alloc::AstAlloc::take(&mut e.args),
+                                        items: core::mem::take(&mut e.args),
                                         ..Default::default()
                                     },
                                     loc,
@@ -195,7 +194,7 @@ impl KnownGlobal {
                             js_ast::expr::PrimitiveType::Number => {
                                 let val = match arg.data {
                                     js_ast::ExprData::ENumber(num) => num.value(),
-                                    _ => return Some(Self::call_from_new(e, loc)),
+                                    _ => return Some(Self::call_from_new(bump, e, loc)),
                                 };
                                 if
                                 // only want this with whitespace minification
@@ -213,17 +212,12 @@ impl KnownGlobal {
                                         || val == 10.0)
                                 {
                                     let arg_loc = arg.loc;
-                                    let mut list = bun_alloc::AstAlloc::take(&mut e.args);
+                                    let mut list = core::mem::take(&mut e.args);
                                     list.clear();
-                                    // Vec::resize aborts on OOM
-                                    list.resize(
-                                        val as usize,
-                                        js_ast::Expr {
-                                            data: js_ast::ExprData::EMissing(E::Missing {}),
-                                            loc: arg_loc,
-                                        },
-                                    );
-                                    return Some(js_ast::Expr::init(
+                                    let missing = js_ast::Expr::init(E::Missing {}, arg_loc);
+                                    list.extend(bump, core::iter::repeat_n(missing, val as usize));
+                                    return Some(js_ast::Expr::allocate(
+                                        bump,
                                         E::Array {
                                             items: list,
                                             ..Default::default()
@@ -231,12 +225,12 @@ impl KnownGlobal {
                                         loc,
                                     ));
                                 }
-                                Some(Self::call_from_new(e, loc))
+                                Some(Self::call_from_new(bump, e, loc))
                             }
                             js_ast::expr::PrimitiveType::Unknown
                             | js_ast::expr::PrimitiveType::Mixed => {
                                 // Could be a number, preserve Array() call
-                                Some(Self::call_from_new(e, loc))
+                                Some(Self::call_from_new(bump, e, loc))
                             }
                         }
                     }
@@ -250,11 +244,12 @@ impl KnownGlobal {
                             .iter()
                             .any(|arg| matches!(arg.data, js_ast::ExprData::ESpread(_)))
                         {
-                            return Some(Self::call_from_new(e, loc));
+                            return Some(Self::call_from_new(bump, e, loc));
                         }
-                        Some(js_ast::Expr::init(
+                        Some(js_ast::Expr::allocate(
+                            bump,
                             E::Array {
-                                items: bun_alloc::AstAlloc::take(&mut e.args),
+                                items: core::mem::take(&mut e.args),
                                 ..Default::default()
                             },
                             loc,
@@ -265,7 +260,7 @@ impl KnownGlobal {
 
             KnownGlobal::Function => {
                 // Just remove 'new' for Function
-                Some(Self::call_from_new(e, loc))
+                Some(Self::call_from_new(bump, e, loc))
             }
             KnownGlobal::RegExp => {
                 // Don't optimize RegExp - the semantics are too complex:

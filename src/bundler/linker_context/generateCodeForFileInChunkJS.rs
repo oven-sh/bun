@@ -1,7 +1,7 @@
 use crate::bundled_ast::Flags as AstFlags;
 use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
-use bun_collections::{BoundedArray, VecExt};
+use bun_collections::BoundedArray;
 
 use bun_js_printer::renamer;
 use bun_js_printer::{self as js_printer, PrintResult, PrintResultSuccess};
@@ -68,9 +68,9 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
 
             for part in parts {
                 let part_stmts: &[Stmt] = part.stmts.slice();
-                if let Err(err) =
-                    convert_stmts_for_chunk_for_dev_server(c, stmts, part_stmts, arena, &mut ast)
-                {
+                if let Err(err) = convert_stmts_for_chunk_for_dev_server(
+                    c, stmts, part_stmts, temp_arena, &mut ast,
+                ) {
                     return PrintResult::Err(err.into());
                 }
             }
@@ -135,7 +135,8 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
 
             stmts.all_stmts.push(Stmt::allocate_expr(
                 temp_arena,
-                Expr::init(
+                Expr::allocate(
+                    temp_arena,
                     E::Function {
                         func: G::Fn {
                             args: bun_ast::StoreSlice::new_mut(dup_args),
@@ -232,7 +233,8 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
     {
         stmts
             .inside_wrapper_prefix
-            .append_non_dependency(Stmt::alloc(
+            .append_non_dependency(Stmt::allocate(
+                temp_arena,
                 S::Directive {
                     value: bun_ast::StoreStr::new(b"use strict"),
                 },
@@ -359,7 +361,8 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
 
             // Be careful: the top-level value in a JSON file is not necessarily an object
             if let ExprData::EObject(e_object) = default_expr.data {
-                let mut new_properties = G::PropertyList::from_arena_slice(&e_object.properties);
+                let mut new_properties =
+                    G::PropertyList::from_slice_in(&e_object.properties, temp_arena);
 
                 let resolved_exports = &c.graph.meta.items_resolved_exports()[source_index];
 
@@ -515,21 +518,26 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                 // The wrapper must be a regular function, not an arrow, so that a
                 // top-level `arguments` reference in the CommonJS body binds to the
                 // wrapper's own `arguments` object (Node and esbuild both allow it).
-                let cjs_args = bun_ast::ExprNodeList::from_slice(&[Expr::init(
-                    E::Function {
-                        func: G::Fn {
-                            args: bun_ast::StoreSlice::new(args.into_bump_slice()),
-                            body: G::FnBody {
-                                stmts: body_stmts,
-                                loc: bun_ast::Loc::EMPTY,
+                let cjs_args = bun_ast::ExprNodeList::from_slice_in(
+                    &[Expr::allocate(
+                        temp_arena,
+                        E::Function {
+                            func: G::Fn {
+                                args: bun_ast::StoreSlice::new(args.into_bump_slice()),
+                                body: G::FnBody {
+                                    stmts: body_stmts,
+                                    loc: bun_ast::Loc::EMPTY,
+                                },
+                                ..Default::default()
                             },
-                            ..Default::default()
                         },
-                    },
-                    bun_ast::Loc::EMPTY,
-                )]);
+                        bun_ast::Loc::EMPTY,
+                    )],
+                    temp_arena,
+                );
 
-                let commonjs_wrapper_definition = Expr::init(
+                let commonjs_wrapper_definition = Expr::allocate(
+                    temp_arena,
                     E::Call {
                         target: Expr::init(
                             E::Identifier {
@@ -546,20 +554,24 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
 
                 // "var require_foo = __commonJS(...);"
                 {
-                    let decls = G::DeclList::from_slice(&[G::Decl {
-                        binding: Binding::alloc(
-                            temp_arena,
-                            B::Identifier {
-                                r#ref: ast.wrapper_ref,
-                            },
-                            bun_ast::Loc::EMPTY,
-                        ),
-                        value: Some(commonjs_wrapper_definition),
-                    }]);
+                    let decls = G::DeclList::from_slice_in(
+                        &[G::Decl {
+                            binding: Binding::alloc(
+                                temp_arena,
+                                B::Identifier {
+                                    r#ref: ast.wrapper_ref,
+                                },
+                                bun_ast::Loc::EMPTY,
+                            ),
+                            value: Some(commonjs_wrapper_definition),
+                        }],
+                        temp_arena,
+                    );
 
                     stmts.append(
                         StmtListWhich::OutsideWrapperPrefix,
-                        Stmt::alloc(
+                        Stmt::allocate(
+                            temp_arena,
                             S::Local {
                                 decls,
                                 ..Default::default()
@@ -680,10 +692,10 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                                                 &mut hoist,
                                                 ExportHoist::wrap_identifier,
                                             );
-                                            value = value.join_with_comma(Expr::assign(
-                                                binding,
-                                                initializer,
-                                            ));
+                                            value = value.join_with_comma(
+                                                temp_arena,
+                                                Expr::assign(temp_arena, binding, initializer),
+                                            );
                                         }
                                     } else {
                                         let _ = Binding::to_expr(
@@ -722,6 +734,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                                 break 'stmt Stmt::allocate_expr(
                                     temp_arena,
                                     Expr::assign(
+                                        temp_arena,
                                         lhs,
                                         Expr {
                                             data: ExprData::EClass(class_ref),
@@ -744,11 +757,10 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                 if !hoist.decls.is_empty() {
                     stmts.append(
                         StmtListWhich::OutsideWrapperPrefix,
-                        Stmt::alloc(
+                        Stmt::allocate(
+                            temp_arena,
                             S::Local {
-                                decls: bun_alloc::AstAlloc::vec_from_iter(core::mem::take(
-                                    &mut hoist.decls,
-                                )),
+                                decls: G::DeclList::from_slice_in(&hoist.decls, temp_arena),
                                 ..Default::default()
                             },
                             bun_ast::Loc::EMPTY,
@@ -764,20 +776,25 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                     debug_assert!(!ast.wrapper_ref.is_empty()); // js_parser's needsWrapperRef thought wrapper was not needed
 
                     // "__esm(() => { ... })"
-                    let esm_args = bun_ast::ExprNodeList::from_slice(&[Expr::init(
-                        E::Arrow {
-                            is_async,
-                            body: G::FnBody {
-                                stmts: inner_stmts,
-                                loc: bun_ast::Loc::EMPTY,
+                    let esm_args = bun_ast::ExprNodeList::from_slice_in(
+                        &[Expr::allocate(
+                            temp_arena,
+                            E::Arrow {
+                                is_async,
+                                body: G::FnBody {
+                                    stmts: inner_stmts,
+                                    loc: bun_ast::Loc::EMPTY,
+                                },
+                                ..Default::default()
                             },
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    )]);
+                            bun_ast::Loc::EMPTY,
+                        )],
+                        temp_arena,
+                    );
 
                     // "var init_foo = __esm(...);"
-                    let value = Expr::init(
+                    let value = Expr::allocate(
+                        temp_arena,
                         E::Call {
                             target: Expr::init_identifier(c.esm_runtime_ref, bun_ast::Loc::EMPTY),
                             args: esm_args,
@@ -786,20 +803,24 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                         bun_ast::Loc::EMPTY,
                     );
 
-                    let decls = G::DeclList::from_slice(&[G::Decl {
-                        binding: Binding::alloc(
-                            temp_arena,
-                            B::Identifier {
-                                r#ref: ast.wrapper_ref,
-                            },
-                            bun_ast::Loc::EMPTY,
-                        ),
-                        value: Some(value),
-                    }]);
+                    let decls = G::DeclList::from_slice_in(
+                        &[G::Decl {
+                            binding: Binding::alloc(
+                                temp_arena,
+                                B::Identifier {
+                                    r#ref: ast.wrapper_ref,
+                                },
+                                bun_ast::Loc::EMPTY,
+                            ),
+                            value: Some(value),
+                        }],
+                        temp_arena,
+                    );
 
                     stmts.append(
                         StmtListWhich::OutsideWrapperPrefix,
-                        Stmt::alloc(
+                        Stmt::allocate(
+                            temp_arena,
                             S::Local {
                                 decls,
                                 ..Default::default()
@@ -826,7 +847,8 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                     // via a count of external modules, decremented during
                     // linking.
                     if !ast.wrapper_ref.is_empty() {
-                        let value = Expr::init(
+                        let value = Expr::allocate(
+                            temp_arena,
                             E::Arrow {
                                 is_async,
                                 body: G::FnBody {
@@ -840,18 +862,22 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
 
                         stmts.append(
                             StmtListWhich::OutsideWrapperPrefix,
-                            Stmt::alloc(
+                            Stmt::allocate(
+                                temp_arena,
                                 S::Local {
-                                    decls: G::DeclList::from_slice(&[G::Decl {
-                                        binding: Binding::alloc(
-                                            temp_arena,
-                                            B::Identifier {
-                                                r#ref: ast.wrapper_ref,
-                                            },
-                                            bun_ast::Loc::EMPTY,
-                                        ),
-                                        value: Some(value),
-                                    }]),
+                                    decls: G::DeclList::from_slice_in(
+                                        &[G::Decl {
+                                            binding: Binding::alloc(
+                                                temp_arena,
+                                                B::Identifier {
+                                                    r#ref: ast.wrapper_ref,
+                                                },
+                                                bun_ast::Loc::EMPTY,
+                                            ),
+                                            value: Some(value),
+                                        }],
+                                        temp_arena,
+                                    ),
                                     ..Default::default()
                                 },
                                 bun_ast::Loc::EMPTY,
@@ -893,7 +919,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
     )
 }
 
-fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &AstArena) {
+fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, arena: &AstArena) {
     if stmts.is_empty() {
         return;
     }
@@ -913,20 +939,22 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &AstArena) {
                     if did_merge_with_previous_local {
                         // Avoid O(n^2) behavior for repeated variable declarations
                         // Appending to this decls list is safe because did_merge_with_previous_local is true
-                        before.decls.append_slice(after.decls.slice());
+                        before.decls.extend_from_slice(arena, after.decls.slice());
                     } else {
                         // Append the declarations to the previous variable statement
                         did_merge_with_previous_local = true;
 
-                        let mut clone =
-                            G::DeclList::init_capacity(before.decls.len() + after.decls.len());
-                        clone.append_slice_assume_capacity(before.decls.slice());
-                        clone.append_slice_assume_capacity(after.decls.slice());
+                        let mut clone = G::DeclList::with_capacity_in(
+                            before.decls.len() + after.decls.len(),
+                            arena,
+                        );
+                        clone.extend_from_slice(arena, before.decls.slice());
+                        clone.extend_from_slice(arena, after.decls.slice());
                         // we must clone instead of overwrite in-place incase the same S.Local is used across threads
                         // https://github.com/oven-sh/bun/issues/2942
                         let prev_loc = stmts[end - 1].loc;
                         stmts[end - 1] = Stmt::allocate(
-                            _arena,
+                            arena,
                             S::Local {
                                 decls: clone,
                                 is_export: before.is_export,

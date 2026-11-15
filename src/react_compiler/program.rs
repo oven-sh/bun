@@ -21,12 +21,11 @@ use crate::hir::environment_config::EnvironmentConfig;
 use crate::hir::environment_config::{
     ExhaustiveEffectDepsMode, ExternalFunctionConfig, InstrumentationConfig,
 };
-use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{
-    self as ast, Expr, G, ImportKind, ImportRecord, Loc, Ref, S, Scope, Stmt, StoreSlice, Symbol,
-    b, flags,
+    self as ast, AstArena, Expr, G, ImportKind, ImportRecord, Loc, Ref, S, Scope, Stmt, StoreSlice,
+    Symbol, b, flags,
 };
 
 use crate::ReactCompilerOptions;
@@ -36,6 +35,7 @@ bun_core::declare_scope!(react_compiler, hidden);
 use crate::collections::IndexMap;
 use crate::compile_result::{CompileDiagnostic, CompileOutput};
 use crate::hir::VariableBinding;
+use crate::hir::hir_alloc::with_arena;
 use crate::imports::{ProgramContext, add_imports_to_program, validate_restricted_imports};
 use crate::lowering::FunctionNode;
 use crate::observer::{CompiledFunction, with_observation};
@@ -92,7 +92,6 @@ pub trait Host {
             .is_some_and(|member| member.ref_ == ref_)
     }
     fn source(&self) -> &[u8];
-    fn arena(&self) -> &bun_alloc::Arena;
 
     /// Name bytes for any `Ref`, regardless of tag (`Symbol`,
     /// `SourceContentsSlice`, `AllocatedName`). Post-visit, identifier
@@ -196,11 +195,22 @@ pub fn has_module_scope_opt_out(stmts: &[Stmt]) -> bool {
 /// degrading to `Global`.
 #[inline(never)]
 pub fn collect_import_bindings(
+    arena: &AstArena,
     stmts: &[Stmt],
     records: &[ImportRecord],
     symbols: &[Symbol],
 ) -> IndexMap<Ref, VariableBinding> {
     bun_removable_features::removable_definition!(ReactCompiler, collect_import_bindings);
+    with_arena(arena, || {
+        collect_import_bindings_impl(stmts, records, symbols)
+    })
+}
+
+fn collect_import_bindings_impl(
+    stmts: &[Stmt],
+    records: &[ImportRecord],
+    symbols: &[Symbol],
+) -> IndexMap<Ref, VariableBinding> {
     let mut out = IndexMap::new();
     for stmt in stmts {
         let StmtData::SImport(import) = &stmt.data else {
@@ -1100,22 +1110,6 @@ fn handle_error(
 // AST application helpers
 // -----------------------------------------------------------------------
 
-fn leak_args(params: Vec<G::Arg>) -> StoreSlice<G::Arg> {
-    let mut v: AstVec<G::Arg> = AstAlloc::vec_with_capacity(params.len());
-    for p in params {
-        v.push(p);
-    }
-    StoreSlice::new_mut(v.leak())
-}
-
-fn leak_stmts(body: Vec<Stmt>) -> StoreSlice<Stmt> {
-    let mut v: AstVec<Stmt> = AstAlloc::vec_with_capacity(body.len());
-    for s in body {
-        v.push(s);
-    }
-    StoreSlice::new_mut(v.leak())
-}
-
 fn set_flag(flags: &mut flags::FunctionSet, flag: flags::Function, on: bool) {
     if on {
         flags.insert(flag);
@@ -1124,7 +1118,7 @@ fn set_flag(flags: &mut flags::FunctionSet, flag: flags::Function, on: bool) {
     }
 }
 
-fn build_outlined_decl(outlined: CodegenFunction) -> Stmt {
+fn build_outlined_decl(arena: &AstArena, outlined: CodegenFunction) -> Stmt {
     let mut fn_flags = flags::FUNCTION_NONE;
     if outlined.is_async {
         fn_flags |= flags::Function::IsAsync;
@@ -1135,14 +1129,15 @@ fn build_outlined_decl(outlined: CodegenFunction) -> Stmt {
     if outlined.has_rest_arg {
         fn_flags |= flags::Function::HasRestArg;
     }
-    Stmt::alloc(
+    Stmt::allocate(
+        arena,
         S::Function {
             func: G::Fn {
                 name: outlined.id,
-                args: leak_args(outlined.params),
+                args: StoreSlice::from_iter_in(outlined.params, arena),
                 body: G::FnBody {
                     loc: Loc::EMPTY,
-                    stmts: leak_stmts(outlined.body),
+                    stmts: StoreSlice::from_iter_in(outlined.body, arena),
                 },
                 flags: fn_flags,
                 ..G::Fn::default()
@@ -1343,6 +1338,7 @@ pub struct CompileResult {
 /// args/flags for `visit_func` / arrow-visit to apply.
 #[inline(never)]
 pub fn maybe_compile_pending(
+    arena: &AstArena,
     state: &mut ReactCompilerState,
     host: &mut dyn Host,
     pending: &PendingCompile,
@@ -1352,11 +1348,11 @@ pub fn maybe_compile_pending(
     bun_removable_features::removable_definition!(ReactCompiler, maybe_compile_pending);
     with_observation(|observation| {
         let Some(observation) = observation else {
-            return compile_pending(state, host, pending, body, name);
+            return compile_pending(arena, state, host, pending, body, name);
         };
         let outlined_before = state.outlined_decls.len();
         let mut recording = observation.record(host);
-        let compiled = compile_pending(state, &mut recording, pending, body, name);
+        let compiled = compile_pending(arena, state, &mut recording, pending, body, name);
         let referenced = recording.into_referenced();
         if let Some((body, result)) = &compiled {
             let function = CompiledFunction {
@@ -1375,6 +1371,7 @@ pub fn maybe_compile_pending(
 }
 
 fn compile_pending(
+    arena: &AstArena,
     state: &mut ReactCompilerState,
     host: &mut dyn Host,
     pending: &PendingCompile,
@@ -1392,14 +1389,17 @@ fn compile_pending(
         flags: pending.flags,
         ..G::Fn::default()
     };
-    let cf = maybe_compile_node(
-        state,
-        host,
-        FunctionNode::Function(&tmp),
-        name,
-        pending.in_react_hoc,
-        pending.is_top_level,
-    )?;
+    let cf = with_arena(arena, || {
+        maybe_compile_node(
+            arena,
+            state,
+            host,
+            FunctionNode::Function(&tmp),
+            name,
+            pending.in_react_hoc,
+            pending.is_top_level,
+        )
+    })?;
     let mut flags = pending.flags;
     set_flag(&mut flags, flags::Function::IsAsync, cf.is_async);
     set_flag(&mut flags, flags::Function::IsGenerator, cf.generator);
@@ -1407,13 +1407,14 @@ fn compile_pending(
     Some((
         cf.body,
         CompileResult {
-            args: leak_args(cf.params),
+            args: StoreSlice::from_iter_in(cf.params, arena),
             flags,
         },
     ))
 }
 
 fn maybe_compile_node(
+    arena: &AstArena,
     state: &mut ReactCompilerState,
     host: &mut dyn Host,
     node: FunctionNode<'_>,
@@ -1486,11 +1487,6 @@ fn maybe_compile_node(
     // function-declaration path needs statement-level access; for now a valid
     // directive only opts the function in and registers no extra import.
 
-    // SAFETY: the arena is owned by the `Host` implementor (the parser's `P`)
-    // and outlives the `&mut dyn Host` borrow for the duration of this call.
-    let arena: &bun_alloc::Arena =
-        unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(host.arena()) };
-
     match pipeline::compile_fn(
         &node,
         fn_name.as_deref(),
@@ -1519,7 +1515,9 @@ fn maybe_compile_node(
                 return None;
             }
             for o in core::mem::take(&mut codegen_fn.outlined) {
-                state.outlined_decls.push(build_outlined_decl(o.func));
+                state
+                    .outlined_decls
+                    .push(build_outlined_decl(arena, o.func));
             }
             state.any_compiled = true;
             Some(codegen_fn)
@@ -1537,6 +1535,7 @@ fn maybe_compile_node(
 /// summary `CompileOutput`.
 #[inline(never)]
 pub fn finish(
+    arena: &AstArena,
     state: ReactCompilerState,
     host: &mut dyn Host,
     out_stmts: &mut Vec<Stmt>,
@@ -1544,9 +1543,9 @@ pub fn finish(
     bun_removable_features::removable_definition!(ReactCompiler, finish);
     with_observation(|observation| {
         let Some(observation) = observation else {
-            return finish_program(state, host, out_stmts);
+            return finish_program(arena, state, host, out_stmts);
         };
-        let output = finish_program(state, &mut observation.record(host), out_stmts);
+        let output = finish_program(arena, state, &mut observation.record(host), out_stmts);
         match &output {
             CompileOutput::Error { error, .. } => observation.report_failure(error),
             CompileOutput::Unchanged | CompileOutput::Changed { .. } => {
@@ -1558,6 +1557,7 @@ pub fn finish(
 }
 
 fn finish_program(
+    arena: &AstArena,
     mut state: ReactCompilerState,
     host: &mut dyn Host,
     out_stmts: &mut Vec<Stmt>,
@@ -1580,7 +1580,7 @@ fn finish_program(
     }
 
     out_stmts.append(&mut state.outlined_decls);
-    add_imports_to_program(out_stmts, host, &state.context);
+    add_imports_to_program(arena, out_stmts, host, &state.context);
 
     CompileOutput::Changed {
         diagnostics: state.diagnostics,

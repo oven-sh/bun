@@ -19,6 +19,5 @@ bun_install_types.workspace = true
 bun_parsers.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
-bun_collections.workspace = true
 bun_ast.workspace = true
 bun_url.workspace = true

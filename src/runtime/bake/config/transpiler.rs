@@ -19,11 +19,6 @@ impl Framework {
         &'out mut bun_bundler::Transpiler<'a>,
         *mut bun_bundler::bake_types::Framework,
     )> {
-        // `ASTMemoryAllocator::enter` returns an RAII `Scope` whose `Drop`
-        // runs `exit()` at end-of-fn.
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
-        let _ast_scope = ast_memory_allocator.enter();
-
         // The caller (`DevServer::init`) hands us an uninitialized slot, so
         // use `MaybeUninit::write` (no drop of prior bytes) then reborrow as
         // `&mut Transpiler` for the field assignments below.

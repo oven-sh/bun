@@ -12,6 +12,7 @@ use crate::collections::IndexMap;
 use crate::diagnostics::{CompilerError, ErrorCategory};
 use crate::hir::environment::{Environment, OutputMode};
 use crate::hir::environment_config::{EnvironmentConfig, ExhaustiveEffectDepsMode};
+use crate::hir::hir_alloc::with_arena;
 use crate::hir::{
     HirFunction, InstructionKind, InstructionValue, ReactFunctionType, VariableBinding,
 };
@@ -20,6 +21,7 @@ use crate::lowering::{self, FunctionNode};
 use crate::options::ReactCompilerOptions;
 use crate::pipeline;
 use crate::program::Host;
+use bun_ast::AstArena;
 use core::cell::Cell;
 
 /// What the compiler says of a function.
@@ -93,6 +95,7 @@ impl LatePasses {
 /// `is_more_recorded`: the caller has errors of its own for the function that are wanted, which
 /// an error that a pass throws drops like those that the passes record.
 pub fn lint_function(
+    arena: &AstArena,
     func: &FunctionNode<'_>,
     host: &dyn Host,
     fn_type: ReactFunctionType,
@@ -120,29 +123,31 @@ pub fn lint_function(
             config.validate_exhaustive_effect_dependencies = ExhaustiveEffectDepsMode::Off;
         }
     }
-    let mut bindings = IndexMap::new();
-    for (ref_, binding) in import_bindings {
-        bindings.insert(*ref_, binding.clone());
-    }
-    let mut context = ProgramContext::new(ReactCompilerOptions::default(), None, None, false);
-    context.output_mode = OutputMode::Lint;
-    let mut env = Environment::with_config(config);
-    env.fn_type = fn_type;
-    env.output_mode = OutputMode::Lint;
-    env.seed_uid_known_names(&HashSet::default());
-    let result = run(
-        func,
-        host,
-        &mut env,
-        &mut context,
-        &bindings,
-        late_passes,
-        wants_thrown,
-    );
-    Linted {
-        logged: context.logged,
-        result,
-    }
+    with_arena(arena, || {
+        let mut bindings = IndexMap::new();
+        for (ref_, binding) in import_bindings {
+            bindings.insert(*ref_, binding.clone());
+        }
+        let mut context = ProgramContext::new(ReactCompilerOptions::default(), None, None, false);
+        context.output_mode = OutputMode::Lint;
+        let mut env = Environment::with_config(config);
+        env.fn_type = fn_type;
+        env.output_mode = OutputMode::Lint;
+        env.seed_uid_known_names(&HashSet::default());
+        let result = run(
+            func,
+            host,
+            &mut env,
+            &mut context,
+            &bindings,
+            late_passes,
+            wants_thrown,
+        );
+        Linted {
+            logged: context.logged,
+            result,
+        }
+    })
 }
 
 fn run(

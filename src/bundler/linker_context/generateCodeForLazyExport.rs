@@ -1,6 +1,5 @@
 use crate::Graph::CssAsts;
 use crate::mal_prelude::*;
-use bun_collections::VecExt as _VecExt;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
@@ -102,14 +101,17 @@ pub(crate) fn generate_code_for_lazy_export(
                 debug_assert!(ref_.inner_index() < symbols.len() as u32);
 
                 let name_expr = |name: &ExportedName<'_>| match *name {
-                    ExportedName::Local(ref_) => Expr::init(
+                    ExportedName::Local(ref_) => Expr::allocate(
+                        arena,
                         E::NameOfSymbol {
                             ref_,
                             ..Default::default()
                         },
                         stmt.loc,
                     ),
-                    ExportedName::Global(name) => Expr::init(E::String::init(name), stmt.loc),
+                    ExportedName::Global(name) => {
+                        Expr::allocate(arena, E::String::init(name), stmt.loc)
+                    }
                 };
                 let names = visitor.exported_names(css_ast, ref_, source_index, log);
                 let value = if let [name] = names {
@@ -127,7 +129,8 @@ pub(crate) fn generate_code_for_lazy_export(
                             }
                         }),
                     ));
-                    Expr::init(
+                    Expr::allocate(
+                        arena,
                         E::Template {
                             tag: None,
                             parts: parts_slice,
@@ -144,7 +147,7 @@ pub(crate) fn generate_code_for_lazy_export(
 
             if let StmtData::SLazyExport(mut slot) = stmts[0].data {
                 // `StoreRef<ExprData>` is a Copy `NonNull` — write through the pointer.
-                *slot = Expr::init(exports, stmt.loc).data;
+                *slot = Expr::allocate(arena, exports, stmt.loc).data;
             }
         }
     }
@@ -167,7 +170,9 @@ pub(crate) fn generate_code_for_lazy_export(
     match exports_kind {
         bun_ast::ExportsKind::Cjs => {
             stmts.slice_mut()[0] = Stmt::assign(
-                Expr::init(
+                arena,
+                Expr::allocate(
+                    arena,
                     E::Dot {
                         target: Expr::init_identifier(module_ref, stmt.loc),
                         name: b"exports".as_slice().into(),
@@ -212,8 +217,7 @@ pub(crate) fn generate_code_for_lazy_export(
                         continue;
                     }
 
-                    let alloc = this.arena();
-                    let name: &[u8] = bun_core::handle_oom(key_str.flattened(alloc).string(alloc));
+                    let name: &[u8] = bun_core::handle_oom(key_str.flattened(arena).string(arena));
 
                     // TODO: support non-identifier names
                     if !js_lexer::is_identifier(name) {
@@ -234,17 +238,21 @@ pub(crate) fn generate_code_for_lazy_export(
                     let generated =
                         this.generate_named_export_in_file(source_index, module_ref, name, name)?;
                     let new_stmts: &mut [Stmt] =
-                        alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
+                        arena.alloc_slice_fill_iter(core::iter::once(Stmt::allocate(
+                            arena,
                             S::Local {
                                 is_export: true,
-                                decls: G::DeclList::from_slice(&[G::Decl {
-                                    binding: Binding::alloc(
-                                        alloc,
-                                        B::Identifier { r#ref: generated.0 },
-                                        expr.loc,
-                                    ),
-                                    value: Some(value),
-                                }]),
+                                decls: G::DeclList::from_slice_in(
+                                    &[G::Decl {
+                                        binding: Binding::alloc(
+                                            arena,
+                                            B::Identifier { r#ref: generated.0 },
+                                            expr.loc,
+                                        ),
+                                        value: Some(value),
+                                    }],
+                                    arena,
+                                ),
                                 ..Default::default()
                             },
                             key.loc,
@@ -264,13 +272,13 @@ pub(crate) fn generate_code_for_lazy_export(
                     all_sources[source_index as usize].fmt_identifier()
                 )
                 .expect("write to Vec<u8> cannot fail");
-                let alloc = this.arena();
-                let name = alloc.alloc_slice_copy(&name_buf);
+                let name = arena.alloc_slice_copy(&name_buf);
 
                 let generated =
                     this.generate_named_export_in_file(source_index, module_ref, name, b"default")?;
                 let new_stmts: &mut [Stmt] =
-                    alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
+                    arena.alloc_slice_fill_iter(core::iter::once(Stmt::allocate(
+                        arena,
                         S::ExportDefault {
                             default_name: bun_ast::LocRef {
                                 ref_: generated.0,

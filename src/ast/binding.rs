@@ -1,12 +1,7 @@
-use bun_collections::VecExt;
-
-use bun_alloc::Arena;
-
-use crate::StoreRef;
 use crate::b::B;
 use crate::base::Ref;
 use crate::expr::{Data as ExprData, Expr};
-use crate::{ExprNodeList, flags};
+use crate::{AstArena, ExprNodeList, flags};
 use crate::{e as E, g as G};
 
 /// `Binding`'s payload union lives at `crate::b::B`; re-export it as `Data`
@@ -39,36 +34,36 @@ pub enum Tag {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait BindingAlloc: Sized {
-    fn alloc_into_b(self, bump: &Arena) -> B;
+    fn alloc_into_b(self, bump: &AstArena) -> B;
 }
 impl BindingAlloc for crate::b::Identifier {
     #[inline]
-    fn alloc_into_b(self, bump: &Arena) -> B {
-        B::BIdentifier(StoreRef::from_bump(bump.alloc(self)))
+    fn alloc_into_b(self, bump: &AstArena) -> B {
+        B::BIdentifier(bump.alloc_node(self))
     }
 }
 impl BindingAlloc for crate::b::Array {
     #[inline]
-    fn alloc_into_b(self, bump: &Arena) -> B {
-        B::BArray(StoreRef::from_bump(bump.alloc(self)))
+    fn alloc_into_b(self, bump: &AstArena) -> B {
+        B::BArray(bump.alloc_node(self))
     }
 }
 impl BindingAlloc for crate::b::Object {
     #[inline]
-    fn alloc_into_b(self, bump: &Arena) -> B {
-        B::BObject(StoreRef::from_bump(bump.alloc(self)))
+    fn alloc_into_b(self, bump: &AstArena) -> B {
+        B::BObject(bump.alloc_node(self))
     }
 }
 impl BindingAlloc for crate::b::Missing {
     #[inline]
-    fn alloc_into_b(self, _bump: &Arena) -> B {
+    fn alloc_into_b(self, _bump: &AstArena) -> B {
         B::BMissing(crate::b::Missing {})
     }
 }
 
 impl Binding {
     #[inline]
-    pub fn alloc(bump: &Arena, t: impl BindingAlloc, loc: crate::Loc) -> Binding {
+    pub fn alloc(bump: &AstArena, t: impl BindingAlloc, loc: crate::Loc) -> Binding {
         Binding {
             loc,
             data: t.alloc_into_b(bump),
@@ -77,7 +72,7 @@ impl Binding {
 
     pub fn to_expr<C>(
         binding: &Binding,
-        bump: &Arena,
+        bump: &AstArena,
         ctx: &mut C,
         wrap_identifier: impl Fn(&mut C, crate::Loc, Ref) -> Expr + Copy,
     ) -> Expr {
@@ -98,18 +93,19 @@ impl Binding {
                     let item = &items[i];
                     let expr = Self::to_expr(&item.binding, bump, ctx, wrap_identifier);
                     let converted = if b.has_spread && i == len - 1 {
-                        Expr::init(E::Spread { value: expr }, expr.loc)
+                        Expr::allocate(bump, E::Spread { value: expr }, expr.loc)
                     } else if let Some(default) = item.default_value {
-                        Expr::assign(expr, default)
+                        Expr::assign(bump, expr, default)
                     } else {
                         expr
                     };
                     exprs.push(converted);
                     i += 1;
                 }
-                Expr::init(
+                Expr::allocate(
+                    bump,
                     E::Array {
-                        items: ExprNodeList::from_bump_vec(exprs),
+                        items: ExprNodeList::from_slice_in(&exprs, bump),
                         is_single_line: b.is_single_line,
                         ..Default::default()
                     },
@@ -134,9 +130,10 @@ impl Binding {
                         ..Default::default()
                     });
                 }
-                Expr::init(
+                Expr::allocate(
+                    bump,
                     E::Object {
-                        properties: G::PropertyList::from_bump_vec(properties),
+                        properties: G::PropertyList::from_slice_in(&properties, bump),
                         is_single_line: b.is_single_line,
                         close_brace_loc: b.close_brace_loc,
                         ..Default::default()

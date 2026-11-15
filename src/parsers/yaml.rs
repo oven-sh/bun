@@ -11,9 +11,9 @@ use core::cmp::Ordering;
 use core::fmt;
 
 use bun_alloc::AllocError;
-use bun_ast::{self, E, Expr, G};
+use bun_ast::{self, AstVec, E, Expr, G};
 use bun_ast::{self as ast, Loc};
-use bun_collections::{StringHashMap, VecExt};
+use bun_collections::StringHashMap;
 use bun_core::{self, StackCheck};
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -62,9 +62,9 @@ impl YAML {
             _ => {
                 // multi-document yaml streams are converted into arrays
                 let mut items: ast::ExprNodeList =
-                    ast::ExprNodeList::init_capacity(stream.docs.len());
+                    ast::ExprNodeList::with_capacity_in(stream.docs.len(), bump);
                 for doc in &stream.docs {
-                    items.push(doc.root);
+                    items.push(bump, doc.root);
                 }
                 Ok(Expr::allocate(
                     bump,
@@ -119,8 +119,6 @@ impl YAML {
         read: impl FnOnce(&[Expr], &[SourceToken]) -> T,
     ) -> Result<T, (ParseError, usize)> {
         let bump = ast::AstArena::new();
-        let mut allocator = ast::ASTMemoryAllocator::borrowing(&bump);
-        let _scope = allocator.enter();
         let mut parser: Parser<Utf8> = Parser::init(&bump, text, CyclicAliases::Reject);
         parser.written = Some(Vec::new());
         match parser.parse() {
@@ -2596,7 +2594,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     }
 
     fn parse_flow_sequence_entries(&mut self) -> Result<E::Array, ParseError> {
-        let mut seq: ast::ExprNodeList = bun_alloc::AstAlloc::vec();
+        let mut seq = ast::ExprNodeList::new();
 
         self.context.set(Context::FlowIn)?;
 
@@ -2647,7 +2645,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         ..Default::default()
                     })?
                 };
-                seq.push(item);
+                seq.push(self.bump, item);
 
                 if matches!(self.token.data, TokenData::SequenceEnd) {
                     break;
@@ -2713,22 +2711,28 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 match self.token.data {
                     TokenData::CollectEntry => {
                         let value = Expr::init(E::Null {}, self.token.start.loc());
-                        props.append(G::Property {
-                            key: Some(key),
-                            value: Some(value),
-                            ..Default::default()
-                        })?;
+                        props.append(
+                            self.bump,
+                            G::Property {
+                                key: Some(key),
+                                value: Some(value),
+                                ..Default::default()
+                            },
+                        )?;
 
                         self.scan(ScanOptions::default())?;
                         continue;
                     }
                     TokenData::MappingEnd => {
                         let value = Expr::init(E::Null {}, self.token.start.loc());
-                        props.append(G::Property {
-                            key: Some(key),
-                            value: Some(value),
-                            ..Default::default()
-                        })?;
+                        props.append(
+                            self.bump,
+                            G::Property {
+                                key: Some(key),
+                                value: Some(value),
+                                ..Default::default()
+                            },
+                        )?;
                         continue;
                     }
                     TokenData::MappingValue => {}
@@ -2744,11 +2748,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     TokenData::MappingEnd | TokenData::CollectEntry
                 ) {
                     let value = Expr::init(E::Null {}, self.token.start.loc());
-                    props.append(G::Property {
-                        key: Some(key),
-                        value: Some(value),
-                        ..Default::default()
-                    })?;
+                    props.append(
+                        self.bump,
+                        G::Property {
+                            key: Some(key),
+                            value: Some(value),
+                            ..Default::default()
+                        },
+                    )?;
                 } else {
                     // [147] the value is ns-flow-node; threading the value's
                     // own indent as current_mapping_indent makes the Scalar
@@ -2812,7 +2819,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // Capture the fallible body's result and pop `block_indents` on EVERY
         // exit (including `?` paths).
         let result: Result<E::Array, ParseError> = (|| {
-            let mut seq: ast::ExprNodeList = bun_alloc::AstAlloc::vec();
+            let mut seq = ast::ExprNodeList::new();
 
             let mut prev_line = Line::from(0);
 
@@ -2846,7 +2853,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     BlockIndentedKind::SeqEntry,
                 )?;
 
-                seq.push(item);
+                seq.push(self.bump, item);
             }
 
             Ok(E::Array {
@@ -3035,11 +3042,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         TokenData::Eof => {
                             if explicit_key {
                                 let value = Expr::init(E::Null {}, self.pos.loc());
-                                props.append(G::Property {
-                                    key: Some(key),
-                                    value: Some(value),
-                                    ..Default::default()
-                                })?;
+                                props.append(
+                                    self.bump,
+                                    G::Property {
+                                        key: Some(key),
+                                        value: Some(value),
+                                        ..Default::default()
+                                    },
+                                )?;
                                 continue;
                             }
                             return Err(Self::unexpected_token());
@@ -3051,11 +3061,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                     // [189] e-node — `:` belongs to an outer
                                     // construct; this entry has no value.
                                     let value = Expr::init(E::Null {}, self.pos.loc());
-                                    props.append(G::Property {
-                                        key: Some(key),
-                                        value: Some(value),
-                                        ..Default::default()
-                                    })?;
+                                    props.append(
+                                        self.bump,
+                                        G::Property {
+                                            key: Some(key),
+                                            value: Some(value),
+                                            ..Default::default()
+                                        },
+                                    )?;
                                     continue;
                                 }
                                 return Err(if self.tab_after_indent {
@@ -3076,11 +3089,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                 // [189] explicit-value is optional; the current
                                 // token is the next entry's key.
                                 let value = Expr::init(E::Null {}, self.pos.loc());
-                                props.append(G::Property {
-                                    key: Some(key),
-                                    value: Some(value),
-                                    ..Default::default()
-                                })?;
+                                props.append(
+                                    self.bump,
+                                    G::Property {
+                                        key: Some(key),
+                                        value: Some(value),
+                                        ..Default::default()
+                                    },
+                                )?;
                                 continue;
                             }
                             return Err(Self::unexpected_token());
@@ -3162,26 +3178,31 @@ impl MappingProps {
 
     pub(crate) fn init() -> Self {
         Self {
-            list: bun_alloc::AstAlloc::vec(),
+            list: AstVec::new(),
             merge_index: bun_collections::HashMap::default(),
             merge_indexed: 0,
         }
     }
 
-    pub(crate) fn append(&mut self, mut prop: G::Property) -> Result<(), AllocError> {
+    pub(crate) fn append(
+        &mut self,
+        bump: &ast::AstArena,
+        mut prop: G::Property,
+    ) -> Result<(), AllocError> {
         if let Some(key) = &prop.key {
             prop.flags |= E::own_key_property_flags(key);
         }
-        self.list.push(prop);
+        self.list.push(bump, prop);
         Ok(())
     }
 
     pub(crate) fn merge(
         &mut self,
+        bump: &ast::AstArena,
         merge_props: &[G::Property],
         budget: &mut usize,
     ) -> Result<(), AllocError> {
-        self.list.reserve(merge_props.len().min(*budget));
+        self.list.reserve(bump, merge_props.len().min(*budget));
 
         while self.merge_indexed < self.list.len() {
             let idx = self.merge_indexed;
@@ -3206,7 +3227,7 @@ impl MappingProps {
                 }
             }
             *budget = budget.checked_sub(1).ok_or(AllocError)?;
-            self.list.push(*merge_prop);
+            self.list.push(bump, *merge_prop);
             self.merge_index
                 .get_or_put(merge_hash)?
                 .value_ptr
@@ -3219,7 +3240,7 @@ impl MappingProps {
     pub(crate) fn move_list(&mut self) -> G::PropertyList {
         self.merge_index.clear();
         self.merge_indexed = 0;
-        core::mem::replace(&mut self.list, bun_alloc::AstAlloc::vec())
+        core::mem::take(&mut self.list)
     }
 }
 
@@ -3242,15 +3263,22 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.reject_open_merge_source(&value)?;
             match &value.data {
                 ast::ExprData::EObject(value_obj) => {
-                    props.merge(value_obj.properties.slice(), &mut self.merge_props_budget)?;
+                    props.merge(
+                        self.bump,
+                        value_obj.properties.slice(),
+                        &mut self.merge_props_budget,
+                    )?;
                     return Ok(());
                 }
                 ast::ExprData::EArray(value_arr) => {
                     for item in value_arr.items.slice() {
                         if let ast::ExprData::EObject(item_obj) = &item.data {
                             self.reject_open_merge_source(item)?;
-                            props
-                                .merge(item_obj.properties.slice(), &mut self.merge_props_budget)?;
+                            props.merge(
+                                self.bump,
+                                item_obj.properties.slice(),
+                                &mut self.merge_props_budget,
+                            )?;
                         }
                     }
                     return Ok(());
@@ -3259,11 +3287,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         }
 
-        Ok(props.append(G::Property {
-            key: Some(key),
-            value: Some(value),
-            ..Default::default()
-        })?)
+        Ok(props.append(
+            self.bump,
+            G::Property {
+                key: Some(key),
+                value: Some(value),
+                ..Default::default()
+            },
+        )?)
     }
 
     fn reject_open_merge_source(&mut self, node: &Expr) -> Result<(), ParseError> {

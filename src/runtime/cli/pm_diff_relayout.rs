@@ -6,7 +6,7 @@
 use bun_ast::binding::Data as B;
 use bun_ast::expr::Data as E;
 use bun_ast::stmt::Data as S;
-use bun_ast::{AstArena, Binding, Expr, Stmt, StoreSlice};
+use bun_ast::{AstArena, AstVec, Binding, Expr, Stmt, StoreSlice};
 
 pub(crate) fn relayout(arena: &AstArena, ast: &mut bun_ast::Ast<'_>, split: bool) {
     let cx = Cx { arena, split };
@@ -45,13 +45,11 @@ fn stmt_list(arena: C, list: &mut StoreSlice<Stmt>) {
         match &s.data {
             S::SLocal(l) if l.decls.len() > 1 => {
                 for d in l.decls.iter() {
-                    let mut decls = bun_alloc::AstAlloc::vec();
-                    decls.push(*d);
                     out.push(Stmt::allocate(
                         arena.arena,
                         bun_ast::S::Local {
                             kind: l.kind,
-                            decls,
+                            decls: AstVec::from_slice_in(&[*d], arena.arena),
                             is_export: l.is_export,
                             origin: l.origin,
                         },
@@ -128,11 +126,11 @@ fn class(arena: C, c: &mut bun_ast::G::Class) {
         opt_expr(arena, &mut p.value);
         opt_expr(arena, &mut p.initializer);
         if let Some(block) = &mut p.class_static_block {
-            let mut list = StoreSlice::new_mut(block.stmts.as_mut_slice());
+            let mut list = StoreSlice::new_mut(block.stmts.slice_mut());
             stmt_list(arena, &mut list);
             if list.len() != block.stmts.len() {
                 block.stmts.clear();
-                block.stmts.extend_from_slice(list.slice());
+                block.stmts.extend_from_slice(arena.arena, list.slice());
             }
         }
     }

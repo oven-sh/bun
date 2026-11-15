@@ -1046,6 +1046,11 @@ it("should throw on empty hostname from truthy non-string value", () => {
   }
 });
 
+it("should throw on a null byte in localAddress", () => {
+  const options = { hostname: "127.0.0.1", port: 1, localAddress: "127.0.0.1\0x", socket: { data() {} } };
+  expect(() => Bun.connect(options)).toThrow('"localAddress" must not contain null bytes');
+});
+
 it("should throw on empty unix path from truthy non-string value", () => {
   const socket = { data() {}, open() {}, close() {} };
   // unix uses a strict string type in bindgen, so non-string values are rejected before

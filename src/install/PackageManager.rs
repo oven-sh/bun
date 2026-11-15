@@ -2346,7 +2346,6 @@ pub fn init(
         push_package_json(&mut original_package_json_path_buf);
 
         let new_path_len = original_package_json_path_buf.len() - 1;
-        // SAFETY: NUL written above
         original_package_json_path =
             ZStr::from_buf(&original_package_json_path_buf[..], new_path_len);
         let child_cwd = &original_package_json_path.as_bytes()[..this_cwd.len()];

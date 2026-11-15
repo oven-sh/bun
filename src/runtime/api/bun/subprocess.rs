@@ -1227,17 +1227,4 @@ pub(crate) mod testing_apis {
         PipeReader::inject_error(&pipe, fake_err);
         Ok(true)
     }
-
-    /// Close the stdin pipe's writer as a Windows worker's stop phase does: no JS wrapper.
-    pub(crate) fn close_stdin_writer(
-        _: &mut JsScope<'_>,
-        subprocess: &Subprocess<'static>,
-    ) -> bool {
-        let Writable::Pipe(pipe) = subprocess.stdin.get() else {
-            return false;
-        };
-        let pipe = pipe.clone();
-        pipe.writer.close(&*pipe);
-        true
-    }
 }

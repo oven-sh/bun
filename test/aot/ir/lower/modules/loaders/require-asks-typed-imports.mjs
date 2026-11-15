@@ -4,12 +4,12 @@
 
 // RUN(SHAPE): lower
 // SHAPE: [[first]] = RequireModule module=[[m1]] referrer=[[main]] specifier="./data.json" [onlyIfImported]
-// SHAPE-NEXT: [[isFirst]] = TypeTest [[first]] testedType=object
-// SHAPE-NEXT: Branch [[isFirst]] -> taken [[done]]([[first]]), notTaken [[next]]()
+// SHAPE-NEXT: [[isFirstAbsent]] = TypeTest [[first]] testedType=undefined
+// SHAPE-NEXT: Branch [[isFirstAbsent]] -> taken [[next]](), notTaken [[done]]([[first]])
 // SHAPE-NEXT: [[next]]():
 // SHAPE-NEXT: [[second]] = RequireModule module=[[m2]] referrer=[[main]] specifier="./data.json" [onlyIfImported]
-// SHAPE-NEXT: [[isSecond]] = TypeTest [[second]] testedType=object
-// SHAPE-NEXT: Branch [[isSecond]] -> taken [[done]]([[second]]), notTaken [[last]]()
+// SHAPE-NEXT: [[isSecondAbsent]] = TypeTest [[second]] testedType=undefined
+// SHAPE-NEXT: Branch [[isSecondAbsent]] -> taken [[last]](), notTaken [[done]]([[second]])
 // SHAPE-NEXT: [[last]]():
 // SHAPE-NEXT: [[read]] = RequireModule module=[[m3]] referrer=[[main]] specifier="./data.json"
 // SHAPE-NOT: onlyIfImported

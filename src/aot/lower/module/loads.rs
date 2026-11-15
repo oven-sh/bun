@@ -1685,12 +1685,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let done = self.create_block();
         for (_, form) in forms {
             let form = (self.file.fragment).declare_module(ModuleRef::File(form));
-            let namespace = (self.builder).require_module(form, referrer, specifier, None, true);
-            let is_held = self.builder.type_test(namespace, TypeTable::OBJECT);
-            self.builder.write_variable(answer, namespace);
+            let held = (self.builder).require_module(form, referrer, specifier, None, true);
+            let is_not_held = self.builder.type_test(held, TypeTable::UNDEFINED);
+            self.builder.write_variable(answer, held);
             let not_held = self.create_block();
             self.builder
-                .branch(is_held, Edge::to(done), Edge::to(not_held));
+                .branch(is_not_held, Edge::to(not_held), Edge::to(done));
 
             self.continue_in(not_held);
         }

@@ -528,11 +528,24 @@ fn answer_require_with_what_the_loader_holds(
     }
     let mut checked_first: Vec<(FileId, FileId)> = Vec::new();
     let mut code_checked_first: Vec<(FileId, FileId)> = Vec::new();
+    let mut keeps_entries = None;
     for &(file, form) in forms {
         let Some(interop) = interops[file.idx()].filter(|it| it.kind == ModuleKind::Data) else {
+            if interops[file.idx()].is_none() {
+                continue;
+            }
             // Once the code at the path has been required, require() of a typed form answers with its exports.
-            if interops[file.idx()].is_some() && (is_any_required || is_required[form.idx()]) {
+            if is_any_required || is_required[form.idx()] {
                 code_checked_first.push((form, file));
+            }
+            let is_imported_after_require = (is_any_required || is_required[form.idx()])
+                && (is_any_imported || is_imported[file.idx()]);
+            if (is_any_required || is_required[file.idx()] || is_imported_after_require)
+                && *keeps_entries.get_or_insert_with(|| {
+                    !runs_code_out_of_sight && keeps_entries_of_module_cache(input, compiled_files)
+                })
+            {
+                checked_first.push((file, form));
             }
             continue;
         };
@@ -574,6 +587,26 @@ fn answer_require_with_what_the_loader_holds(
         (file, form != file, is_read_as_json(form), form)
     });
     checked_first
+}
+
+fn keeps_entries_of_module_cache(input: &BindInput<'_, '_>, compiled_files: &[FileId]) -> bool {
+    if input.runs_tests || input.files_are_named_out_of_sight {
+        return false;
+    }
+    compiled_files.iter().all(|&file| {
+        if input.sources.kind(file) != SourceKind::Program {
+            return true;
+        }
+        parsed_source(input.files, file).is_some_and(|source| {
+            let builtins = &source.builtins;
+            !builtins.reaches_module_cache()
+                && !builtins.loses_sight_of_module_cache()
+                && !builtins.resets_modules()
+                && builtins.keys_taken_out_of_module_cache().is_empty()
+                && builtins.places_that_hand_module_cache_on().is_empty()
+                && !builtins.evaluator_comes_out()
+        })
+    })
 }
 
 /// The CommonJS files that are ES modules too where an import loads them, each with that module.

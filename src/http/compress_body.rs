@@ -1,6 +1,6 @@
 //! Automatic request-body compression for `fetch({ compress })`.
 //!
-//! Runs on the HTTP thread inside `HTTPClient::start()` so it can reuse
+//! Runs on the HTTP thread inside `HTTPClient::compress_body_for_send()` so it can reuse
 //! [`LibdeflateState`]'s 512 KiB scratch buffer and cached libdeflate handle
 //! (the same struct that backs the response-decompression fast path).
 //! gzip/deflate go through libdeflate; brotli/zstd use their one-shot

@@ -2,11 +2,23 @@ import axios from "axios";
 import type { Server } from "bun";
 import { proxyInternals } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isIPv6, isWindows, tempDir, tls as tlsCert } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectRssDeltaBelow,
+  isASAN,
+  isIPv6,
+  isLinux,
+  isWindows,
+  tempDir,
+  tls as tlsCert,
+} from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
+import { mkfifo } from "mkfifo";
 import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
+import { join } from "node:path";
 import tls from "node:tls";
 import { decodeErrorAlert, startMalformedServerHelloServer } from "../../node/tls/tls-handshake-alert-utils";
 import { createAdversarialProxy, deadPort, proxyFreeEnv } from "./proxy-stress-helpers";
@@ -1616,6 +1628,24 @@ test("a bad record delivered with a 101 through a proxy tunnel does not free the
   expect(stdout).toContain(`injected: ${iterations}\n`);
   expect(stdout).toEndWith("probe: probe-ok\n");
   expect(exitCode).toBe(0);
+});
+
+// The fixture reads /proc/net/tcp.
+test.skipIf(!isLinux)("a reset delivered with a 101 through an https proxy rejects with ECONNRESET", async () => {
+  using dir = tempDir("proxy-upgrade-reset", {});
+  const fifo = join(String(dir), "ca.pem");
+  mkfifo(fifo);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), require.resolve("./proxy-upgrade-reset-fixture.ts"), fifo],
+    env: { ...bunEnv, ...proxyFreeEnv },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ upgrade: "ECONNRESET", blocker: "FailedToOpenSocket", probe: "probe-ok" }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 describe.concurrent("proxy object format with headers", () => {

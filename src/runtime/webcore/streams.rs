@@ -3,7 +3,7 @@ use core::ffi::c_void;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
-use bun_ptr::{BackRef, OptionCellExt as _, RefPtr};
+use bun_ptr::{BackRef, OptionCellExt as _, RefCount, RefPtr};
 
 use crate::webcore::jsc::{
     self as jsc, ArrayBuffer, CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject,
@@ -1915,10 +1915,10 @@ pub(crate) type HTTPResponseSink = HTTPServerWritable<false>;
 // NetworkSink
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct NetworkSink {
     /// `s3file.writer()`: the JS wrapper's ref and the upload's. Unused in `S3UploadStreamWrapper`'s box.
-    pub(crate) ref_count: core::cell::Cell<u32>,
+    pub(crate) ref_count: RefCount,
     /// The sink's ref on the upload.
     pub task: Option<RefPtr<bun_s3::MultiPartUpload>>,
     pub(crate) source: SourceHandle,
@@ -1948,7 +1948,7 @@ pub(crate) struct NetworkSink {
 impl Default for NetworkSink {
     fn default() -> Self {
         Self {
-            ref_count: core::cell::Cell::new(1),
+            ref_count: RefCount::init(),
             task: None,
             source: SourceHandle::default(),
             global_this: None,

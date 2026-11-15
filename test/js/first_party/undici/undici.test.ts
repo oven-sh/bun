@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { Readable } from "node:stream";
-import { bunEnv, bunExe } from "harness";
 // @ts-ignore undici 5's types don't declare ping()
 import { ping, request, fetch as undiciFetch, WebSocket as UndiciWebSocket } from "undici";
 

@@ -332,7 +332,7 @@ macro_rules! h2_route_methods {
     ($($name:ident => $kind:ident),* $(,)?) => {$(
         pub fn $name<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
         where
-            H: Fn(ThisPtr<UD>, &mut Request, &mut Response) + Copy + 'static,
+            H: Fn(*mut UD, &mut Request, &mut Response) + Copy + 'static,
         {
             Self::route(RouteKind::$kind, self, p, ud, h);
         }
@@ -397,20 +397,16 @@ impl App {
     /// The handler gets no `&UD`, because it can replace the routes and free `*ud`.
     fn route<UD, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: *mut UD, _handler: H)
     where
-        H: Fn(ThisPtr<UD>, &mut Request, &mut Response) + Copy + 'static,
+        H: Fn(*mut UD, &mut Request, &mut Response) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD, H>(res: *mut Response, req: *mut Request, p: *mut c_void)
         where
-            H: Fn(ThisPtr<UD>, &mut Request, &mut Response) + Copy + 'static,
+            H: Fn(*mut UD, &mut Request, &mut Response) + Copy + 'static,
         {
-            // SAFETY: uWS callback contract — `res`/`req` live disjoint handles,
-            // `p` is the registered `*mut UD` (non-null by route registration).
-            unsafe {
-                let ud = ThisPtr::new(p.cast::<UD>());
-                thunk::zst::<H>()(ud, thunk::handle_mut(req), thunk::handle_mut(res));
-            }
+            // SAFETY: uWS callback contract — `res`/`req` live disjoint handles.
+            unsafe { thunk::zst::<H>()(p.cast(), thunk::handle_mut(req), thunk::handle_mut(res)) }
         }
         Self::route_raw(which, this, pattern, Some(cb::<UD, H>), ud.cast());
     }
@@ -468,7 +464,7 @@ impl App {
 
     pub fn method<UD, H>(&mut self, m: bun_http_types::Method::Method, p: &[u8], ud: *mut UD, h: H)
     where
-        H: Fn(ThisPtr<UD>, &mut Request, &mut Response) + Copy + 'static,
+        H: Fn(*mut UD, &mut Request, &mut Response) + Copy + 'static,
     {
         if let Some(kind) = RouteKind::from_method(m) {
             Self::route(kind, self, p, ud, h);

@@ -35,7 +35,7 @@ use bun_jsc::{
     Node, PendingAbortSignal, StringJsc as _, VirtualMachine, host_fn,
 };
 use bun_paths as paths;
-use bun_ptr::{AsCtxPtr, CellExt as _, RefPtr, ThisPtr};
+use bun_ptr::{AsCtxPtr, CellExt as _, RefPtr};
 use bun_removable_features::{Feature, is_removed};
 use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
@@ -2232,28 +2232,32 @@ where
     /// Route handler for the HTTP/2 and HTTP/3 apps (`R` = `uws::H2::Response`
     /// or `uws::H3::Response`); both hand us the same decoded-header request.
     pub(super) fn on_mux_request<R: RespLike>(
-        this: ThisPtr<Self>,
+        this: *mut Self,
         req: &mut uws::H3::Request,
         resp: &mut R,
     ) {
-        if this.config.get().on_request.is_empty() {
+        // SAFETY: the server that `set_routes` registered, which outlives its apps.
+        let server = unsafe { &*this };
+        if server.config.get().on_request.is_empty() {
             return Self::on_mux_404(this, req, resp);
         }
-        this.on_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(req, resp);
+        server.on_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(req, resp);
     }
 
     pub(super) fn on_mux_user_route_request<R: RespLike>(
-        user_route: ThisPtr<UserRoute<SSL, DEBUG>>,
+        user_route: *mut UserRoute<SSL, DEBUG>,
         req: &mut uws::H3::Request,
         resp: &mut R,
     ) {
+        // SAFETY: the entry that `set_routes` registered, whose server outlives the request.
+        let (server, index, method) = unsafe { UserRoute::read_fields(user_route) };
         Self::on_user_route_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(
-            user_route, req, resp,
+            server, index, method, req, resp,
         );
     }
 
     pub(super) fn on_mux_404<R: RespLike>(
-        _this: ThisPtr<Self>,
+        _this: *mut Self,
         _req: &mut uws::H3::Request,
         resp: &mut R,
     ) {
@@ -2317,27 +2321,20 @@ where
     // been removed.
 
     fn on_user_route_request_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
-        user_route: ThisPtr<UserRoute<SSL, DEBUG>>,
+        server: &Self,
+        index: u32,
+        method: Option<http::Method>,
         req: &mut Ctx::Req,
         resp: &mut R,
     ) {
-        debug_assert!(!user_route.server.is_null());
-        // SAFETY: `UserRoute.server` is a back-pointer to the owning server,
-        // which outlives every route it registered.
-        let server = unsafe { &*user_route.server };
-        let index = user_route.id;
-
         let Some(server_js) = server.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
         };
 
-        let Some(mut prepared) = server.prepare_js_request_context_for::<Ctx, R>(
-            req,
-            resp,
-            CreateJsRequest::No,
-            user_route.route.method.specific(),
-        ) else {
+        let Some(mut prepared) =
+            server.prepare_js_request_context_for::<Ctx, R>(req, resp, CreateJsRequest::No, method)
+        else {
             return;
         };
 
@@ -2631,21 +2628,13 @@ where
     }
 
     fn upgrade_web_socket_user_route(
-        this: ThisPtr<UserRoute<SSL, DEBUG>>,
+        server: &Self,
+        index: u32,
         resp: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws::Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
         method: Option<http::Method>,
     ) {
-        // BACKREF: `UserRoute.server` is set at construction from the owning
-        // `NewServer` (which outlives every `UserRoute` in its `user_routes`
-        // vec); non-null by invariant.
-        debug_assert!(!this.server.is_null());
-        // SAFETY: `UserRoute.server` is the owning `NewServer`, set at
-        // construction and non-null while the route is registered.
-        let server = unsafe { &*this.server };
-        let index = this.id;
-
         let Some(server_js) = server.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
@@ -2699,9 +2688,9 @@ where
     ) {
         jsc::mark_binding!();
         if id == 1 {
-            // SAFETY: `app.ws(path, ud, 1, ..)` registered a `UserRoute`, which lives until the handler reloads.
-            let user_route = unsafe { ThisPtr::new(this.cast::<UserRoute<SSL, DEBUG>>()) };
-            Self::upgrade_web_socket_user_route(user_route, resp, req, upgrade_ctx, None);
+            // SAFETY: `app.ws(path, ud, 1, ..)` registered a `UserRoute`, whose server outlives the request.
+            let (server, index, _) = unsafe { UserRoute::read_fields(this.cast()) };
+            Self::upgrade_web_socket_user_route(server, index, resp, req, upgrade_ctx, None);
             return;
         }
         // Access `this` as *ThisServer only if id is 0

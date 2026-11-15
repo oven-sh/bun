@@ -362,9 +362,7 @@ unsafe fn init_runtime_state(
         // SAFETY: `vm` is the live VM being initialized. `VirtualMachine::init`
         // wrote `handle` before calling this hook.
         #[cfg(unix)]
-        uv_loop: unsafe {
-            crate::napi::uv_posix::UvLoop::new(ptr::NonNull::new_unchecked(vm), (*vm).handle())
-        },
+        uv_loop: crate::napi::uv_posix::UvLoop::new(unsafe { (*vm).handle() }),
     });
     let state = owned.as_ptr();
     RUNTIME_STATE.set(state);
@@ -943,7 +941,7 @@ fn auto_tick(vm: &VirtualMachine) {
     // ── addons' uv_idle_t / uv_prepare_t ────────────────────────────────
     // Run them before reading `has_pending_immediate` because their callbacks can queue work.
     #[cfg(unix)]
-    let uv_idle_started = state.uv_loop.before_poll();
+    let uv_idle_started = state.uv_loop.before_poll(vm);
     #[cfg(not(unix))]
     let uv_idle_started = false;
 
@@ -988,7 +986,7 @@ fn auto_tick(vm: &VirtualMachine) {
     #[cfg(unix)]
     {
         // ── addons' uv_check_t (libuv runs them right after its poll) ────
-        state.uv_loop.after_poll();
+        state.uv_loop.after_poll(vm);
         state.timer.drain_timers(vm);
     }
 
@@ -1044,7 +1042,7 @@ fn auto_tick_active(vm: &VirtualMachine) {
     state.timer.update_date_header_timer_if_necessary(loop_, vm);
 
     #[cfg(unix)]
-    let uv_idle_started = state.uv_loop.before_poll();
+    let uv_idle_started = state.uv_loop.before_poll(vm);
     #[cfg(not(unix))]
     let uv_idle_started = false;
 
@@ -1078,7 +1076,7 @@ fn auto_tick_active(vm: &VirtualMachine) {
 
     #[cfg(unix)]
     {
-        state.uv_loop.after_poll();
+        state.uv_loop.after_poll(vm);
         state.timer.drain_timers(vm);
     }
 

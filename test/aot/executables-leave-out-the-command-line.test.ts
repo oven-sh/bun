@@ -206,11 +206,11 @@ function removedFeaturesOf(executable: Build): string[] {
     });
   }, 600_000);
 
-  test.each(["--help", "-h", "--check", "--aot", "-i"])(
+  test.each(["--help", "-h", "-i", "--install=force", "--install=fallback", "--aot --aot-allow-code-from-disk"])(
     "%s in BUN_OPTIONS says to run bun",
     async option => {
       const hello = await built("hello");
-      const label = option === "-h" ? "--help" : option;
+      const label = option === "-h" ? "--help" : option.replace(/^--aot |=.*/g, "");
       expect(await run([hello.executable], folder, { ...bunEnv, BUN_OPTIONS: option })).toEqual({
         stdout: "",
         stderr: `error: ${label} ${noCommandLine}\n`,

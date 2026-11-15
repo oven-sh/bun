@@ -51,8 +51,9 @@ const needTheCli = [
   ["--help", "--help"],
   ["--help", "-h"],
   ["--help", "-bh"],
-  ["--aot", "--aot"],
   ["--aot-allow-code-from-disk", "--aot-allow-code-from-disk"],
+  ["--aot-allow-code-from-disk", "--aot --aot-allow-code-from-disk"],
+  ["--install", "--install=disable --install=force"],
   ["--help", "--smol --title=-h --help"],
 ];
 const needAFeature = [...needEveryRuntimeFeature, ...needTheCli];
@@ -87,7 +88,8 @@ function removedFeaturesOf(executable: Build) {
     ["nothing", "--stack-trace-limit=3", true],
     ["every runtime feature", "--trace-exit", true],
     ["a client", "--sql-preconnect", false],
-    ["the compiler", "--aot", false],
+    ["nothing that an executable has", "--check --aot --install=disable", false],
+    ["the compiler", "--debug-aot", false],
     ["the command line", "--smol --title=-h --help", false],
   ])("it needs %s: %j: the executable behaves like the untrimmed one", async (_, options, runsTheProgram) => {
     const said = await behavesLikeUntrimmed(["build", "--compile"], options);
@@ -164,6 +166,11 @@ function removedFeaturesOf(executable: Build) {
         }
         for (const options of [
           ...needNothing.map(([, options]) => options),
+          "--check",
+          "--aot",
+          "--install=disable",
+          "--install disable",
+          "--install=auto",
           "--title=--help",
           "--title --help",
           "--title -h",

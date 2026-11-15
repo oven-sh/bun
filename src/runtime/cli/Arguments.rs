@@ -445,6 +445,7 @@ pub(crate) const UNHANDLED_REJECTIONS_PARAM: usize =
     startup_options::index_of_long(AUTO_PARAMS, b"unhandled-rejections");
 pub(crate) const CODE_GENERATION_PARAM: usize =
     startup_options::index_of_long(AUTO_PARAMS, b"disallow-code-generation-from-strings");
+pub(crate) const INSTALL_PARAM: usize = startup_options::index_of_long(AUTO_PARAMS, b"install");
 /// These need `Feature::HotReload` besides what their rows say.
 pub(crate) const HOT_RELOAD_PARAMS: [usize; 2] = [
     startup_options::index_of_long(AUTO_PARAMS, b"watch"),
@@ -471,11 +472,8 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"watch-kill-signal"), Nothing),
         (Long(b"hot"), RuntimeCode),
         (Long(b"no-clear-screen"), Nothing),
-        (Long(b"check"), RuntimeRequirement::Feature(Feature::Check)),
-        (
-            Long(b"aot"),
-            RuntimeRequirement::Feature(Feature::AotCompiler),
-        ),
+        (Long(b"check"), Nothing),
+        (Long(b"aot"), Nothing),
         (
             Long(b"aot-allow-code-from-disk"),
             RuntimeRequirement::Feature(Feature::AotCompiler),

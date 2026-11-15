@@ -1158,7 +1158,7 @@ impl<'l, 'a, T: ComputedFromSource> SourceMapTasks<'l, 'a, T> {
         // before the wait group is done.
         let task =
             unsafe { &mut *bun_core::from_field_ptr!(SourceMapDataTask<'l, 'a, T>, task, task) };
-        // What `compute` allocates with `AstAlloc` lands in this worker's heap, which `pool.deinit()` frees.
+        // What `compute` allocates with `AstAlloc` lands in this worker's heap, which dropping the pool frees.
         let _worker = crate::thread_pool::Worker::get(task.bundle);
         task.result = T::compute(&task.bundle.graph, task.source_index);
     }

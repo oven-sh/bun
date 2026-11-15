@@ -63,9 +63,10 @@ pub struct PendingImport {
 pub struct BundleV2<'a> {
     pub transpiler: &'a mut Transpiler<'a>,
     pub(crate) other_transpilers: OtherTranspilers<'a>,
+    /// Before what tasks borrow: dropping it joins the threads of a pool it owns.
+    pub graph: Graph<'a>,
     /// When Bun Bake is used, the resolved framework is passed here.
     pub(crate) framework: Option<bake::Framework>,
-    pub graph: Graph<'a>,
     pub(crate) r#loop: EventLoop,
     pub(crate) has_any_css_locals: AtomicU32,
     /// The order files of `--bytecode-order` / `compile.bytecodeOrder`, read and merged when the bundle started.
@@ -3126,7 +3127,6 @@ pub mod bv2_impl {
                 thread_pool,
                 heap,
             );
-            // `Graph::pool` wraps the `BackRef` deref; `start()` takes `&self`.
             this.graph.pool().start();
             this
         }
@@ -3155,13 +3155,7 @@ pub mod bv2_impl {
                 transpiler,
                 other_transpilers: Default::default(),
                 framework: None,
-                graph: Graph {
-                    pool: bun_ptr::BackRef::dangling(), // set below
-                    heap,
-                    kit_referenced_server_data: false,
-                    kit_referenced_client_data: false,
-                    ..Graph::new(heap)
-                },
+                graph: Graph::new(heap, ThreadPool::init(thread_pool)),
                 r#loop: event_loop,
                 has_any_css_locals: Default::default(),
                 bytecode_order: None,
@@ -3273,8 +3267,6 @@ pub mod bv2_impl {
                 }
             }
 
-            let tp = ThreadPool::init(&*this, thread_pool);
-            this.graph.pool = bun_ptr::BackRef::new_mut(this.arena().alloc(tp));
             // The watcher keeps a raw `*mut BundleV2`: `generate_from_cli` leaks the box.
             if cli_watch_flag {
                 // CYCLEBREAK GENUINE: hot_reloader is T6; runtime constructs the
@@ -5146,7 +5138,7 @@ pub mod bv2_impl {
             // Dropping the linker waits too, but leaking it does not.
             self.line_offset_wait_group.wait();
             self.quoted_contents_wait_group.wait();
-            // The last IO callback may still be using the worker pool that `pool.deinit()` frees.
+            // The last IO callback may still be using the worker pool that `graph` frees.
             self.graph.pool().wait_for_io_tasks();
 
             // We do this before the rest to make it harder for any dangling pointers to data to be used in there.
@@ -5189,16 +5181,6 @@ pub mod bv2_impl {
                     unsafe { core::ptr::drop_in_place(css_ref.as_ptr()) };
                 }
             }
-
-            // Drop the lazily-created client transpiler (if any) before tearing
-            // down workers — the slot
-            // is invalidated ahead of `pool.workers_assignments` so no worker can
-            // observe a half-torn-down transpiler.
-            if let Some(super::ClientTranspiler::Owned(_)) = self.other_transpilers.client {
-                self.other_transpilers.client = None;
-            }
-
-            self.graph.pool_mut().deinit();
         }
     }
 

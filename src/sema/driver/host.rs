@@ -293,7 +293,7 @@ pub struct Disk {
     /// and configuration files.
     reader_limit: Option<bun_threading::Semaphore>,
     /// `Host::io_pool`
-    io_pool: Option<bun_threading::io_thread_pool::Ref>,
+    io_pool: Option<&'static bun_threading::ThreadPool>,
     /// Readers that aren't in use, least recently used first.
     idle_readers: bun_threading::Guarded<Vec<Reader>>,
     idle_buffers: bun_threading::Guarded<Vec<Vec<u8>>>,
@@ -584,7 +584,7 @@ impl Disk {
             }),
             // The bundler's condition, plus the same threshold for this check's own threads.
             io_pool: (threads > 3 && bun_threading::io_thread_pool::uses_io_pool())
-                .then(|| bun_threading::io_thread_pool::acquire().into()),
+                .then(bun_threading::io_thread_pool::get),
             idle_readers: bun_threading::Guarded::new(Vec::new()),
             idle_buffers: bun_threading::Guarded::new(Vec::new()),
             unreadable: bun_threading::Guarded::new(Vec::new()),
@@ -599,9 +599,7 @@ impl Disk {
     /// As on a system where the threads that read files are not the threads that parse them.
     #[cfg(test)]
     pub(crate) fn with_reader_threads(mut self) -> Self {
-        if self.io_pool.is_none() {
-            self.io_pool = Some(bun_threading::io_thread_pool::acquire().into());
-        }
+        self.io_pool = Some(bun_threading::io_thread_pool::get());
         self
     }
 
@@ -846,14 +844,6 @@ impl Disk {
             [&b"/"[..], listed_name].concat()
         } else {
             inside(real_parent, listed_name)
-        }
-    }
-}
-
-impl Drop for Disk {
-    fn drop(&mut self) {
-        if self.io_pool.is_some() {
-            bun_threading::io_thread_pool::release();
         }
     }
 }
@@ -1652,7 +1642,7 @@ impl Host for Disk {
         // The I/O threads serve one load at a time.
         match *self.shares.lock() {
             Some(_) => None,
-            None => self.io_pool.as_deref(),
+            None => self.io_pool,
         }
     }
     fn with_helpers(&self, helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {

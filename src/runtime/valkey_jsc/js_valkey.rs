@@ -258,7 +258,7 @@ impl JSValkeyClient {
 
         // After we go through every single callback, we will have to update the poll ref.
         // The user may, for example, unsubscribe in the callbacks, or even stop the client.
-        let _update = scopeguard::guard(self, |p| p.update_poll_ref());
+        let _update = UpdatePollRefOnDrop(self);
 
         // If callbacks is an array, iterate and call each one
         let mut iter = callbacks.array_iterator(global_object)?;
@@ -907,7 +907,7 @@ impl JSValkeyClient {
         // Without this, every subsequent command rejects with "Connection has
         // failed" forever — see https://github.com/oven-sh/bun/issues/29925.
         self.client_mut().flags.failed = false;
-        let _update = scopeguard::guard(self, |p| p.update_poll_ref());
+        let _update = UpdatePollRefOnDrop(self);
 
         if self.client.get().status == valkey::Status::NeverConnected {
             self.poll_ref.ref_(vm_event_loop_ctx());
@@ -1316,7 +1316,7 @@ impl JSValkeyClient {
     // Callback for when Valkey client closes
     pub(crate) fn on_valkey_close(&self) -> JsResult<()> {
         let global_object = self.global_object;
-        let _defer = scopeguard::guard(self, |p| p.update_poll_ref());
+        let _defer = UpdatePollRefOnDrop(self);
 
         // Bounded the attempt that just ended; a dial that fails outright
         // arms no timer of its own, so left armed this one would fire into it.
@@ -1492,7 +1492,7 @@ impl JSValkeyClient {
 
         self.ensure_dialing();
 
-        let _update = scopeguard::guard(self, |p| p.update_poll_ref());
+        let _update = UpdatePollRefOnDrop(self);
         self.client_mut().send(global_this, command)
     }
 
@@ -1814,7 +1814,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // Before `on_close()`: it runs `onclose` and settles the connect()
         // promise, and a connect() called from either must see Disconnected.
         this.client_mut().status = valkey::Status::Disconnected;
-        let _defer = scopeguard::guard(this, |p| p.update_poll_ref());
+        let _defer = UpdatePollRefOnDrop(this);
 
         this.client_mut().on_close()
     }
@@ -1839,7 +1839,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // SAFETY: as in `on_close`; a dial that fails gets this event instead.
         let _socket_ref = unsafe { RefPtr::from_raw(this.as_ctx_ptr()) };
         this.client_mut().status = valkey::Status::Disconnected;
-        let _defer = scopeguard::guard(this, |p| p.update_poll_ref());
+        let _defer = UpdatePollRefOnDrop(this);
 
         this.client_mut().on_close()
     }

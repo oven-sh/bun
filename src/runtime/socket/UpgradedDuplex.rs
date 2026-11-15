@@ -39,8 +39,7 @@ pub(crate) struct UpgradedDuplex {
     /// One ref for the open connection and one per entry point on the stack ([`Self::keep_alive`]). At zero the `Close` hop frees `self`.
     ref_count: Cell<u32>,
     handle: bun_uws::TransportHandle,
-    /// The connection's ref is still held. Cleared by [`Self::take_connection_ref`].
-    connection_ref: Cell<bool>,
+    connection_ref: JsCell<Option<RefPtr<Self>>>,
     /// The socket that hears this engine's events. `None` once it heard its close or its connect error.
     tls: JsCell<Option<RefPtr<TLSSocket>>>,
     task_event: Cell<EventState>,
@@ -166,7 +165,7 @@ impl UpgradedDuplex {
     #[inline]
     fn debug_assert_kept_alive(&self) {
         debug_assert!(
-            self.ref_count.get() > u32::from(self.connection_ref.get()),
+            self.ref_count.get() > u32::from(self.connection_ref.get().is_some()),
             "UpgradedDuplex dispatch with no keep_alive() on the stack"
         );
     }
@@ -436,21 +435,11 @@ impl UpgradedDuplex {
         ));
     }
 
-    /// The connection is over. Returns true the first time: the caller then releases the connection's ref.
-    fn take_connection_ref(&self) -> bool {
-        if !self.connection_ref.replace(false) {
-            return false;
-        }
-        // Nothing is left for the owning context to close, and its hook would take a ref.
-        self.abort_handle.leave();
-        true
-    }
-
     /// The transport closed, or `StartTLS` could not start it.
     fn release_connection(&self) {
-        if self.take_connection_ref() {
-            // SAFETY: `self` is live and the ref released is the connection's.
-            unsafe { Self::deref(std::ptr::from_ref(self).cast_mut()) };
+        if let Some(_connection_ref) = self.connection_ref.take() {
+            // Nothing is left for the owning context to close, and its hook would take a ref.
+            self.abort_handle.leave();
         }
     }
 
@@ -458,10 +447,6 @@ impl UpgradedDuplex {
     fn queue_free(this: *mut Self) {
         // SAFETY: the count just reached zero; `this` is live until that hop runs.
         let this = unsafe { ThisPtr::new(this) };
-        debug_assert!(
-            !this.queued.get(),
-            "UpgradedDuplex released its last ref with a hop still queued"
-        );
         this.enqueue(EventState::Close);
     }
 
@@ -524,7 +509,7 @@ impl UpgradedDuplex {
         let this = bun_core::heap::into_raw(Box::new(UpgradedDuplex {
             ref_count: Cell::new(1),
             handle: Default::default(),
-            connection_ref: Cell::new(true),
+            connection_ref: JsCell::new(None),
             tls: JsCell::new(Some(tls)),
             task_event: Cell::new(EventState::StartTLS),
             queued: Cell::new(false),
@@ -548,8 +533,10 @@ impl UpgradedDuplex {
             paused_origin: Cell::new(false),
         }));
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
-        // SAFETY: nothing frees `this` before the hop queued below runs.
-        let engine = unsafe { ThisPtr::new(this) };
+        // SAFETY: the ref it was made with.
+        let connection_ref = unsafe { RefPtr::from_raw(this) };
+        let engine = connection_ref.this_ptr();
+        engine.connection_ref.set(Some(connection_ref));
         engine.handle.set(this);
         if let Some(tls) = engine.tls.get() {
             tls.socket.set(engine.socket());
@@ -756,17 +743,15 @@ impl bun_event_loop::Taskable for UpgradedDuplex {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract; the single queue entry for `this`.
         let engine = unsafe { ThisPtr::new(this) };
-        engine.queued.set(false);
         if let Some(tls) = engine.tls.replace(None) {
             // Neuter the listener thunks while the wrapper is still strongly held.
             engine.teardown();
             // Detaches the socket, so its finalizer finds nothing to reach into. `Err` is left for the release dispatcher's fold.
             let _ = TLSSocket::on_close(tls, engine.socket(), 0, None);
         }
-        // Not `release_connection`: at zero that queues the hop this call stands in for.
-        if engine.take_connection_ref() {
-            engine.ref_count.set(engine.ref_count.get() - 1);
-        }
+        // Still `queued`, so at zero `queue_free` leaves the free to this call.
+        engine.release_connection();
+        engine.queued.set(false);
         // An entry point on the stack still holds it: the release of that ref queues the free.
         if engine.ref_count.get() == 0 {
             // SAFETY: fn contract; nothing holds `this` and no borrow of it is live.

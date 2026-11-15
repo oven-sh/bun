@@ -4,6 +4,7 @@
 // Pinned nightly — enable the structural-match subset directly instead of the
 // `PlatformT` sealed-trait workaround.
 #![feature(adt_const_params)]
+#![feature(core_io_borrowed_buf)]
 
 pub mod error;
 pub use error::{Error, Result};
@@ -325,10 +326,6 @@ pub type OSPathBuffer = PathBuffer;
 
 pub mod path_buffer_pool;
 
-// resolve_path: enum const-generics lowered to sealed `PlatformT` trait + ZSTs
-// (done). 46× E0106 remain — TLS-buf-returning wrappers need `'static` lifetime
-// or out-param redesign. The `_buf`-suffixed fns (explicit `&mut [u8]` param)
-// compile; the convenience wrappers don't yet. Gate the module; expose Platform.
 pub mod resolve_path;
 pub use resolve_path::{Platform, platform};
 pub mod component_iterator;
@@ -344,7 +341,7 @@ pub use resolve_path::{
     dangerously_convert_path_to_posix_in_place, dangerously_convert_path_to_windows_in_place,
     dirname_w, is_drive_letter, is_drive_letter_t, is_sep_any, is_sep_any_t, is_sep_native,
     is_sep_native_t, join_abs_string_buf, join_abs_string_buf_z, path_to_posix_buf,
-    relative_to_common_path_buf, slashes_to_posix_in_place, slashes_to_windows_in_place,
+    slashes_to_posix_in_place, slashes_to_windows_in_place,
 };
 // Re-export the pool *type* at crate root so `bun_paths::os_path_buffer_pool::get()`
 // resolves on both targets (= `WPathBuffer` pool on Windows, `PathBuffer` on
@@ -639,23 +636,13 @@ pub mod fs {
         }
 
         /// The dir component with its trailing separator restored
-        /// (`"./"` when the dir is empty).
+        /// (`"./"` when the dir is empty). `path` is what [`Self::init`] parsed.
         #[inline]
-        pub fn dir_with_trailing_slash(&self) -> &'a [u8] {
-            // The three strings basically always point to the same underlying ptr
-            // so if dir does not have a trailing slash, but is spaced one apart from the basename
-            // we can assume there is a trailing slash there
-            // so we extend the original slice's length by one
-            if self.dir.is_empty() {
+        pub fn dir_with_trailing_slash(&self, path: &'a [u8]) -> &'a [u8] {
+            let Some(&last) = self.dir.last() else {
                 return b"./";
-            }
-            let extend = (!is_sep_any(self.dir[self.dir.len() - 1])
-                && (self.dir.as_ptr() as usize + self.dir.len() + 1) == self.base.as_ptr() as usize)
-                as usize;
-            // SAFETY: when `extend == 1`, `dir.ptr[dir.len]` is the separator byte
-            // immediately preceding `base` — both slices borrow the same underlying
-            // allocation (the `path_` passed to `init`).
-            unsafe { core::slice::from_raw_parts(self.dir.as_ptr(), self.dir.len() + extend) }
+            };
+            &path[..self.dir.len() + usize::from(!is_sep_any(last))]
         }
 
         /// Parses `path_` into its (dir, base, ext, filename) components; all
@@ -886,13 +873,13 @@ pub mod fs {
         /// Directory of `text`, with trailing separator.
         #[inline]
         pub fn source_dir(&self) -> &'a [u8] {
-            self.name().dir_with_trailing_slash()
+            self.name().dir_with_trailing_slash(self.text)
         }
 
         /// Directory used for display purposes, with trailing separator.
         #[inline]
         pub fn pretty_dir(&self) -> &'a [u8] {
-            self.name().dir_with_trailing_slash()
+            self.name().dir_with_trailing_slash(self.text)
         }
 
         /// Checks for `<sep>node_modules<sep>` in the

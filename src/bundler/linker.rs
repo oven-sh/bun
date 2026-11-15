@@ -5,6 +5,7 @@ use std::sync::LazyLock;
 use bun_alloc::BSSStringList;
 use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
+use bun_paths::resolve_path::{SpillBuf, relative_spill};
 use bun_paths::{self, SEP};
 // two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
 // the singleton `FileSystem` / `DirnameStore`; `bun_paths::fs` (`PFs`) defines
@@ -117,8 +118,6 @@ pub fn link<const IGNORE_RUNTIME: bool, const IS_BUN: bool>(
 
                 if !IGNORE_RUNTIME {
                     if import_record.path.namespace == b"runtime" {
-                        let relative_name =
-                            bun_paths::resolve_path::relative(source_dir, RUNTIME_SOURCE_PATH);
                         import_record.path = match import_path_format {
                             ImportPathFormat::AbsoluteUrl => PFs::Path::init_with_namespace(
                                 dupe(&origin.join_alloc(b"", b"", b"bun:wrap", b"", b"")?),
@@ -126,9 +125,13 @@ pub fn link<const IGNORE_RUNTIME: bool, const IS_BUN: bool>(
                             ),
                             ImportPathFormat::AbsolutePath => PFs::Path::init_with_pretty(
                                 RUNTIME_SOURCE_PATH,
-                                dupe(relative_name),
+                                SpillBuf::with_scratch(|buf| {
+                                    dupe(relative_spill(buf, source_dir, RUNTIME_SOURCE_PATH))
+                                }),
                             ),
-                            ImportPathFormat::Relative => {
+                            ImportPathFormat::Relative => SpillBuf::with_scratch(|buf| {
+                                let relative_name =
+                                    relative_spill(buf, source_dir, RUNTIME_SOURCE_PATH);
                                 let text = if relative_name.len() > 1
                                     && !(relative_name[0] == SEP || relative_name[0] == b'.')
                                 {
@@ -137,7 +140,7 @@ pub fn link<const IGNORE_RUNTIME: bool, const IS_BUN: bool>(
                                     dupe(relative_name)
                                 };
                                 PFs::Path::init_with_pretty(text, text)
-                            }
+                            }),
                             ImportPathFormat::PackagePath => unreachable!(),
                         };
                         continue;

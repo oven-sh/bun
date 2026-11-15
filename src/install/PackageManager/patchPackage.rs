@@ -6,7 +6,7 @@ use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::platform;
-use bun_paths::resolve_path;
+use bun_paths::resolve_path::{self, SpillBuf};
 use bun_paths::{AbsPath, Platform, SEP};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
 
@@ -317,12 +317,8 @@ fn path_argument_from_root(
     if workspace_package_id != 0 && !Platform::AUTO.is_absolute(argument) {
         let workspace =
             *lockfile.packages.items_resolution()[workspace_package_id as usize].workspace();
-        let mut spill = Vec::new();
-        let from_root = resolve_path::join_spill::<platform::Posix>(
-            &mut spill,
-            &[lockfile.str(&workspace), argument],
-        )
-        .to_vec();
+        let from_root =
+            resolve_path::join_string_vec::<platform::Posix>(&[lockfile.str(&workspace), argument]);
         // The hoisted linker may have put the package in the root's node_modules only.
         if sys::exists(&from_root) || !sys::exists(argument) {
             return from_root;
@@ -334,9 +330,9 @@ fn path_argument_from_root(
 fn read_name_and_version(log: &bun_ast::Log, folder: &[u8]) -> (Vec<u8>, Vec<u8>) {
     // `folder` is user input of any length, so the join can spill to the heap. A path that is too
     // long then simply fails to open.
-    let mut spill = Vec::new();
+    let mut path_buf = SpillBuf::default();
     let package_json_path =
-        resolve_path::join_z_spill::<platform::Auto>(&mut spill, &[folder, b"package.json"]);
+        resolve_path::join_z_spill::<platform::Auto>(&mut path_buf, &[folder, b"package.json"]);
     let package_json_source: bun_ast::Source =
         match bun_ast::to_source(package_json_path, Default::default()) {
             Ok(s) => s,
@@ -523,7 +519,7 @@ pub fn do_patch_commit(
     let cache_dir_subpath = cache_result.cache_dir_subpath.as_bytes();
     let cache_path = cache_dir_path(cache_dir);
     let old_folder =
-        resolve_path::join::<platform::Posix>(&[&cache_path, cache_dir_subpath]).to_vec();
+        resolve_path::join_string_vec::<platform::Posix>(&[&cache_path, cache_dir_subpath]);
     let new_folder = real_folder(&manager.lockfile, &cache_path, &target.folder, false);
     make_bins_executable(
         &manager.lockfile,
@@ -659,15 +655,17 @@ pub fn do_patch_commit(
         && resolve_path::is_parent_or_equal(&project, &patches_dir)
             != resolve_path::ParentEqual::Unrelated
     {
-        patches_dir = with_slashes(resolve_path::relative(&project, &patches_dir));
+        patches_dir = SpillBuf::with_scratch(|buf| {
+            with_slashes(resolve_path::relative_spill(buf, &project, &patches_dir))
+        });
     }
 
-    // Copy the result: `join_spill` usually returns the thread-local buffer that every later join
-    // overwrites.
-    let path_in_patches_dir = ZBox::from_bytes(resolve_path::join_spill::<platform::Posix>(
-        &mut Vec::new(),
-        &[&patches_dir, &patch_filename],
-    ));
+    let path_in_patches_dir = SpillBuf::with_scratch(|buf| {
+        ZBox::from_bytes(resolve_path::join_spill::<platform::Posix>(
+            buf,
+            &[&patches_dir, &patch_filename],
+        ))
+    });
 
     if manager.options.dry_run {
         bun_core::prettyln!(
@@ -863,8 +861,9 @@ impl HiddenFromDiff {
             return Ok(());
         };
         // The bundled dependencies, which are part of the package.
+        let mut buf = SpillBuf::default();
         let bundled = match Dir::cwd().open_dir(
-            resolve_path::join::<platform::Auto>(&[cache_entry, b"node_modules"]),
+            resolve_path::join_spill::<platform::Auto>(&mut buf, &[cache_entry, b"node_modules"]),
             Default::default(),
         ) {
             Ok(dir) => Some(dir),
@@ -1043,10 +1042,10 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         Global::crash();
     }
 
-    let mut spill = Vec::new();
+    let mut folder_buf = SpillBuf::default();
     let shown_folder: &[u8] = if target.not_in_workspace_root {
         resolve_path::join_spill::<platform::Posix>(
-            &mut spill,
+            &mut folder_buf,
             &[
                 FileSystem::get().top_level_dir_without_trailing_slash(),
                 &target.folder,
@@ -1232,9 +1231,10 @@ fn resolve_links(path: &[u8]) -> sys::Result<Vec<u8>> {
         });
         match sys::realpath(&existing_z, &mut buf) {
             Ok(real) => {
-                return Ok(
-                    resolve_path::join::<platform::Auto>(&[real, &path[existing.len()..]]).to_vec(),
-                );
+                return Ok(resolve_path::join_string_vec::<platform::Auto>(&[
+                    real,
+                    &path[existing.len()..],
+                ]));
             }
             Err(e) if e.get_errno() == sys::E::ENOENT => {
                 let parent = resolve_path::dirname::<platform::Auto>(existing);
@@ -1256,8 +1256,8 @@ fn is_in_global_store(cache_path: &[u8], real: &[u8]) -> bool {
 /// Returns the part of `folder` before its first `node_modules`. A `..` can lead out of one again,
 /// so it is applied first.
 fn outermost_package(folder: &[u8]) -> Vec<u8> {
-    let mut spill = Vec::new();
-    let folder = resolve_path::join_spill::<platform::Posix>(&mut spill, &[folder]);
+    let mut folder_buf = SpillBuf::default();
+    let folder = resolve_path::join_spill::<platform::Posix>(&mut folder_buf, &[folder]);
     let mut start = 0;
     for name in strings::split(folder, b"/") {
         if name == b"node_modules" {
@@ -1276,7 +1276,7 @@ fn is_in_project(lockfile: &Lockfile, folder: &[u8], subfolder: &[u8], real: &[u
         .into_iter()
         .chain(workspaces.map(|path| lockfile.str(path)))
         .any(|package| {
-            let parent = resolve_path::join::<platform::Auto>(&[package, subfolder]).to_vec();
+            let parent = resolve_path::join_string_vec::<platform::Auto>(&[package, subfolder]);
             resolve_links(&parent).is_ok_and(|parent| {
                 resolve_path::is_parent_or_equal(&parent, real) == resolve_path::ParentEqual::Parent
             })
@@ -1305,11 +1305,10 @@ fn real_folder(
 
     let real = resolve(folder);
     let link = strings::without_trailing_slash(folder);
-    let link = resolve_path::join::<platform::Auto>(&[
+    let link = resolve_path::join_string_vec::<platform::Auto>(&[
         &resolve(resolve_path::dirname::<platform::Auto>(link)),
         bun_paths::basename(link),
-    ])
-    .to_vec();
+    ]);
     // The only link that an install puts in a package's place leads into the isolated store.
     let installed_in: &[u8] = if is_link(&link) {
         b"node_modules/.bun"
@@ -1531,7 +1530,7 @@ fn link_store_siblings(cache_path: &[u8], link: &[u8], folder: &[u8]) -> sys::Re
     if strings::starts_with_char(bun_paths::basename(siblings), b'@') {
         siblings = resolve_path::dirname::<platform::Auto>(siblings);
     }
-    let node_modules = resolve_path::join::<platform::Auto>(&[folder, b"node_modules"]).to_vec();
+    let node_modules = resolve_path::join_string_vec::<platform::Auto>(&[folder, b"node_modules"]);
     link_entries(siblings, &node_modules, &package)
 }
 
@@ -1540,10 +1539,17 @@ fn link_store_siblings(cache_path: &[u8], link: &[u8], folder: &[u8]) -> sys::Re
 fn link_entries(from: &[u8], to: &[u8], except: &[u8]) -> sys::Result<()> {
     let dir = Dir::cwd().open_dir(from, ITERATE)?;
     let mut iter = sys::iterate_dir(dir.fd);
+    let mut buf = SpillBuf::default();
     while let Some(entry) = iter.next()? {
         let name = entry.name.slice_u8();
-        let target = ZBox::from_bytes(resolve_path::join::<platform::Auto>(&[from, name]));
-        let link = ZBox::from_bytes(resolve_path::join::<platform::Auto>(&[to, name]));
+        let target = ZBox::from_bytes(resolve_path::join_spill::<platform::Auto>(
+            &mut buf,
+            &[from, name],
+        ));
+        let link = ZBox::from_bytes(resolve_path::join_spill::<platform::Auto>(
+            &mut buf,
+            &[to, name],
+        ));
         if target.as_bytes() == except {
             continue;
         }
@@ -1571,9 +1577,10 @@ fn from_cwd(cwd: &[u8], path: &[u8]) -> Vec<u8> {
     if cfg!(windows) {
         return path.to_vec();
     }
-    // Both paths are already absolute and normalized. `relative` would normalize them again, and
+    // Both paths are already absolute and normalized. `relative_spill` would normalize them again, and
     // that treats a `\` as a separator.
-    let relative = resolve_path::relative_normalized::<platform::Auto, false>(cwd, path);
+    let mut buf = SpillBuf::default();
+    let relative = resolve_path::relative_normalized_spill::<platform::Auto>(&mut buf, cwd, path);
     [&b"./"[..], relative].concat()
 }
 
@@ -1632,18 +1639,19 @@ fn copy_cache_entry(
 
 /// The cache entry does not have the packages that the hoisted linker nested under the old folder.
 fn keep_nested_packages(old: &[u8], folder: &[u8]) -> sys::Result<()> {
+    let mut buf = SpillBuf::default();
     let from = match Dir::cwd().open_dir(
-        resolve_path::join::<platform::Auto>(&[old, b"node_modules"]),
+        resolve_path::join_spill::<platform::Auto>(&mut buf, &[old, b"node_modules"]),
         ITERATE,
     ) {
         Ok(dir) => dir,
         Err(e) if e.get_errno() == sys::E::ENOENT => return Ok(()),
         Err(e) => return Err(e),
     };
-    let to = Fd::cwd().make_open_path(resolve_path::join::<platform::Auto>(&[
-        folder,
-        b"node_modules",
-    ]))?;
+    let to = Fd::cwd().make_open_path(resolve_path::join_spill::<platform::Auto>(
+        &mut buf,
+        &[folder, b"node_modules"],
+    ))?;
     move_entries_absent_from(&from, Some(&to), &to, true)
 }
 
@@ -1882,6 +1890,6 @@ fn pkg_info_for_name_and_version(
     }
     (
         pkg_id,
-        resolve_path::join::<platform::Auto>(&[&node_modules, folder_name]).to_vec(),
+        resolve_path::join_string_vec::<platform::Auto>(&[&node_modules, folder_name]),
     )
 }

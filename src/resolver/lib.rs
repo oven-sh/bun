@@ -320,50 +320,14 @@ pub mod fs {
             normalize_string_buf::<false, platform::Auto, false>(str, buf)
         }
 
-        /// Joins against `top_level_dir`
-        /// into the resolver-shared threadlocal join buffer.
-        pub fn abs(&self, parts: &[&[u8]]) -> &[u8] {
-            use bun_paths::resolve_path::{join_abs_string, platform};
-            join_abs_string::<platform::Loose>(self.top_level_dir(), parts)
-        }
-
-        /// `ENAMETOOLONG` on overflow.
-        pub(crate) fn abs_checked(
+        /// Like `abs_buf`, for a result of any length.
+        pub fn abs_spill<'b>(
             &self,
             parts: &[&[u8]],
-        ) -> core::result::Result<&[u8], bun_errno::SystemErrno> {
-            use bun_paths::resolve_path::{join_abs_string_checked, platform};
-            join_abs_string_checked::<platform::Loose>(self.top_level_dir(), parts)
-                .ok_or(bun_errno::SystemErrno::ENAMETOOLONG)
-        }
-
-        /// Like `abs`, but interns the joined path into `DirnameStore` and
-        /// returns the `'static` copy.
-        pub(crate) fn abs_alloc(
-            &self,
-            parts: &[&[u8]],
-        ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-            use bun_paths::resolve_path::{join_abs_string, platform};
-            let joined = join_abs_string::<platform::Loose>(self.top_level_dir(), parts);
-            // Route through DirnameStore so
-            // the resolver's `&'static [u8]` storage contract holds.
-            DirnameStore::instance()
-                .append_slice(joined)
-                .map_err(|_| bun_alloc::AllocError)
-        }
-
-        /// Relative path from `from` to `to`. Returns a slice into the
-        /// resolver-shared threadlocal relative buffer; caller must dup
-        /// before the next call.
-        pub fn relative(&self, from: &[u8], to: &[u8]) -> &'static [u8] {
-            bun_paths::resolve_path::relative(from, to)
-        }
-
-        /// Relative path from
-        /// `top_level_dir` to `to`. Returns a slice into the resolver-shared
-        /// threadlocal relative buffer; caller must dup before the next call.
-        pub fn relative_to(&self, to: &[u8]) -> &'static [u8] {
-            bun_paths::resolve_path::relative(self.top_level_dir(), to)
+            buf: &'b mut bun_paths::resolve_path::SpillBuf<'_>,
+        ) -> &'b [u8] {
+            use bun_paths::resolve_path::{join_abs_string_spill, platform};
+            join_abs_string_spill::<platform::Loose>(self.top_level_dir(), buf, parts)
         }
 
         /// Returns the process cwd. `process.chdir()` on any thread replaces it.

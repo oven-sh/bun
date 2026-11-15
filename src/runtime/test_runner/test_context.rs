@@ -510,7 +510,7 @@ fn mode(base: &BaseScope) -> &'static str {
 }
 
 fn file_name(buntest: &BunTest) -> Vec<u8> {
-    let mut name = resolve_path::relative(FileSystem::instance().top_level_dir(), buntest.file.path).to_vec();
+    let mut name = resolve_path::relative_vec(FileSystem::instance().top_level_dir(), buntest.file.path);
     resolve_path::platform_to_posix_in_place::<u8>(&mut name);
     name
 }

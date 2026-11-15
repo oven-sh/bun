@@ -5,7 +5,7 @@ use bun_collections::StringArrayHashMap;
 use bun_core::strings;
 use bun_glob as glob;
 use bun_paths as path;
-use bun_paths::resolve_path;
+use bun_paths::resolve_path::{self, SpillBuf};
 use bun_paths::{MAX_PATH_BYTES, SEP_STR};
 
 use super::DependencyGroup;
@@ -337,7 +337,7 @@ fn relative_workspace_path<'b>(
     root_dir: &[u8],
     abs_workspace_dir: &[u8],
 ) -> &'b [u8] {
-    let len = resolve_path::relative_platform_buf::<path::platform::Auto, true>(
+    let len = resolve_path::relative_platform_buf::<path::platform::Auto>(
         buf,
         root_dir,
         abs_workspace_dir,
@@ -530,10 +530,11 @@ impl WorkspaceMap {
                     b"package.json"
                 } else {
                     let parts: [&[u8]; 2] = [user_pattern, b"package.json"];
-                    let mut spill: Vec<u8> = Vec::new();
-                    arena.alloc_slice_copy(resolve_path::join_spill::<path::platform::Auto>(
-                        &mut spill, &parts,
-                    ))
+                    SpillBuf::with_scratch(|buf| {
+                        arena.alloc_slice_copy(resolve_path::join_spill::<path::platform::Auto>(
+                            buf, &parts,
+                        ))
+                    })
                 };
 
                 let mut walker = match GlobWalker::init_with_cwd(
@@ -727,12 +728,8 @@ fn glob_lists(user_pattern: &[u8], dir: &[u8], abs_dir: &[u8]) -> bool {
     if strings::split_any(dir, b"/\\").any(ignored_workspace_paths) {
         return false;
     }
-    let mut spill: Vec<u8> = Vec::new();
-    let mut pattern = resolve_path::join_spill::<path::platform::Auto>(
-        &mut spill,
-        &[user_pattern, b"package.json"],
-    )
-    .to_vec();
+    let mut pattern =
+        resolve_path::join_string_vec::<path::platform::Auto>(&[user_pattern, b"package.json"]);
     resolve_path::platform_to_posix_in_place::<u8>(&mut pattern);
     glob::matcher::match_prepared::<{ cfg!(windows) }>(
         &pattern,

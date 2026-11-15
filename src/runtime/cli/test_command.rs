@@ -21,7 +21,7 @@ use bun_options_types::aot_options::ReplacedByTests;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_options_types::context::{JunitSuites, ReactCompilerScope, TestEnvironment, TestGlobals};
 use bun_paths as bun_path;
-use bun_paths::resolve_path;
+use bun_paths::resolve_path::{self, SpillBuf};
 use bun_paths::string_paths::without_leading_path_separator;
 use bun_ptr::{CellExt as _, Interned, VecCellExt as _};
 use bun_resolver::fs::FileSystem;
@@ -49,13 +49,16 @@ mod coverage {
         relative_dir: &[u8],
         source_url: &[u8],
     ) -> bool {
+        use bun_paths::resolve_path::{SpillBuf, relative_spill};
         if ignore_patterns.is_empty() {
             return false;
         }
-        let relative_path = bun_paths::resolve_path::relative(relative_dir, source_url);
-        ignore_patterns
-            .iter()
-            .any(|pattern| pattern.r#match(relative_path).matches())
+        SpillBuf::with_scratch(|buf| {
+            let relative_path = relative_spill(buf, relative_dir, source_url);
+            ignore_patterns
+                .iter()
+                .any(|pattern| pattern.r#match(relative_path).matches())
+        })
     }
 }
 use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
@@ -362,11 +365,10 @@ fn add_files_behind_pattern(
         [b'/', ..] => (!written_folder.is_empty()).then(|| written_folder.to_vec()),
         // As long as it stays in the package of the file.
         [b'.', ..] => {
-            let joined = resolve_path::join_abs_string::<bun_path::platform::Auto>(
+            let joined = resolve_path::join_abs_string_vec::<bun_path::platform::Auto>(
                 folder,
                 &[written_folder],
-            )
-            .to_vec();
+            );
             let mut package = folder;
             while !holds_named_manifest(package) {
                 let parent = resolve_path::dirname::<bun_path::platform::Auto>(package);
@@ -727,11 +729,10 @@ fn make_stand_in_for_window() -> Box<[u8]> {
 if (name === \"\\0never\") (globalThis as any)[name] = require(name);
 ";
     // The name of the module. No file is there.
-    let path = resolve_path::join_abs_string::<bun_path::platform::Auto>(
+    let path = resolve_path::join_abs_string_vec::<bun_path::platform::Auto>(
         FileSystem::get().top_level_dir(),
         &[b"node_modules/.cache/bun-test-window.ts"],
-    )
-    .to_vec();
+    );
     run_compiled::set_stand_in(&path, text);
     path.into_boxed_slice()
 }
@@ -1100,9 +1101,11 @@ impl TestFailure {
         }
         body.push(b'\n');
         let dir = FileSystem::get().top_level_dir();
+        let mut file_buf = SpillBuf::default();
         for frame in exception.stack.frames() {
             let source_url = frame.source_url.to_utf8();
-            let file = jsc::ZigStackFrame::relative_source_url(dir, source_url.slice());
+            let file =
+                jsc::ZigStackFrame::relative_source_url(&mut file_buf, dir, source_url.slice());
             let func = frame.function_name.to_utf8();
             if file.is_empty() && func.slice().is_empty() {
                 continue;
@@ -1711,13 +1714,16 @@ pub(crate) fn react_compiler_filter(
     scope: &ReactCompilerScope,
     root: &'static [u8],
 ) -> &'static (dyn Fn(&[u8]) -> bool + Sync) {
-    let entries = |written: &[Box<[u8]>]| -> Vec<ReactCompilerEntry> {
+    let entries = |buf: &mut SpillBuf<'_>, written: &[Box<[u8]>]| -> Vec<ReactCompilerEntry> {
         written
             .iter()
             .map(|written| {
                 let written: &[u8] = written;
-                let absolute =
-                    resolve_path::join_abs_string::<bun_path::platform::Auto>(root, &[written]);
+                let absolute = resolve_path::join_abs_string_spill::<bun_path::platform::Auto>(
+                    root,
+                    buf,
+                    &[written],
+                );
                 let absolute = with_forward_slashes(absolute);
                 let written = written.strip_prefix(b"./").unwrap_or(written);
                 ReactCompilerEntry {
@@ -1727,9 +1733,10 @@ pub(crate) fn react_compiler_filter(
             })
             .collect()
     };
-    let (include, exclude) = (entries(&scope.include), entries(&scope.exclude));
+    let (include, exclude) =
+        SpillBuf::with_scratch(|buf| (entries(buf, &scope.include), entries(buf, &scope.exclude)));
     Box::leak(Box::new(move |path: &[u8]| {
-        // A `data:` URL is in no folder, and can be longer than the buffers `relative()` uses.
+        // A `data:` URL is in no folder.
         if !bun_paths::is_absolute(path) {
             return false;
         }
@@ -1743,16 +1750,18 @@ pub(crate) fn react_compiler_filter(
         {
             return false;
         }
-        let relative = with_forward_slashes(resolve_path::relative(root, path));
-        let path = with_forward_slashes(path);
-        let matches = |entry: &ReactCompilerEntry| {
-            // A folder matches everything inside it.
-            path.strip_prefix(&*entry.absolute)
-                .is_some_and(|rest| rest.is_empty() || rest[0] == b'/')
-                || bun_glob::r#match(&entry.written, &relative).matches()
-                || bun_glob::r#match(&entry.absolute, &path).matches()
-        };
-        (include.is_empty() || include.iter().any(matches)) && !exclude.iter().any(matches)
+        SpillBuf::with_scratch(|buf| {
+            let relative = with_forward_slashes(resolve_path::relative_spill(buf, root, path));
+            let path = with_forward_slashes(path);
+            let matches = |entry: &ReactCompilerEntry| {
+                // A folder matches everything inside it.
+                path.strip_prefix(&*entry.absolute)
+                    .is_some_and(|rest| rest.is_empty() || rest[0] == b'/')
+                    || bun_glob::r#match(&entry.written, &relative).matches()
+                    || bun_glob::r#match(&entry.absolute, &path).matches()
+            };
+            (include.is_empty() || include.iter().any(matches)) && !exclude.iter().any(matches)
+        })
     }))
 }
 
@@ -2441,9 +2450,10 @@ fn print_coverage_table<const COLORS: bool>(
 ) {
     use coverage::text;
     let thresholds = *thresholds;
+    let mut buf = SpillBuf::default();
     let max_filepath_length = reports
         .iter()
-        .map(|r| resolve_path::relative(relative_dir, &r.source_url).len())
+        .map(|r| resolve_path::relative_spill(&mut buf, relative_dir, &r.source_url).len())
         .fold(b"All files".len(), usize::max);
 
     let zero = Fraction {
@@ -3893,10 +3903,7 @@ impl TestCommand {
         vm.clear_entry_point()?;
         vm.enter_module_graph_for_test_isolation()?;
 
-        run_compiled::will_run_test_file(resolve_path::relative(
-            FileSystem::get().top_level_dir(),
-            file_path,
-        ));
+        run_compiled::will_run_test_file(file_path);
         let file = reporter.jest.get_or_put_file(file_path);
 
         // In Github Actions, append a special prefix that will group
@@ -3946,16 +3953,16 @@ impl TestCommand {
                 next_load_shares_global,
             };
 
-            // Recompute on every repeat because the reporters overwrite `relative`'s buffer while the file runs.
-            let file_title = resolve_path::relative(FileSystem::get().top_level_dir(), file_path);
-            reporter.jest.current_file.set(
-                file_title,
-                file_prefix,
-                repeat_count,
-                repeat_index,
-                reporter.worker.get().is_some(),
-                &reporter.reporters,
-            );
+            SpillBuf::with_scratch(|buf| {
+                reporter.jest.current_file.set(
+                    resolve_path::relative_spill(buf, FileSystem::get().top_level_dir(), file_path),
+                    file_prefix,
+                    repeat_count,
+                    repeat_index,
+                    reporter.worker.get().is_some(),
+                    &reporter.reporters,
+                )
+            });
 
             bun_output::scoped_log!(
                 bun_test,
@@ -4104,8 +4111,8 @@ impl TestCommand {
                         Output::enable_ansi_colors_stderr(),
                     ));
                     let top_level_dir = FileSystem::instance().top_level_dir();
-                    let title = resolve_path::relative(top_level_dir, file_path);
-                    let _ = writeln!(failures, " {}", bstr::BStr::new(title));
+                    let title = resolve_path::fmt_relative(top_level_dir, file_path);
+                    let _ = writeln!(failures, " {}", title);
                     reporter.failures_to_repeat_buf.set(failures);
                 }
 

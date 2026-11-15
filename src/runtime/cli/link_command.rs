@@ -250,8 +250,12 @@ fn link(ctx: command::Context) -> crate::Result<()> {
             link_path_buf.0[..top_level.len()].copy_from_slice(top_level);
             let link_path = ZStr::nul_terminate(&mut link_path_buf, top_level.len());
             let global_path = pm::global_link_dir(&manager.options).path;
-            let dest_path =
-                resolve_path::join_abs_string_z::<platform::Windows>(global_path, &[name]);
+            let mut dest_buf = resolve_path::SpillBuf::default();
+            let dest_path = resolve_path::join_abs_string_z_spill::<platform::Windows>(
+                global_path,
+                &mut dest_buf,
+                &[name],
+            );
             if let Err(e) = bun_sys::sys_uv::symlink_uv(
                 link_path,
                 dest_path,

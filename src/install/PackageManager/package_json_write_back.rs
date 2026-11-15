@@ -3,7 +3,7 @@ use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::{Global, Output};
 use bun_install_types::DependencyGroup;
 use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{join_abs_string_buf, platform};
+use bun_paths::resolve_path::{fmt_relative, join_abs_string_buf, platform};
 
 use crate::bun_fs::FileSystem;
 use crate::dependency::DependencyExt as _;
@@ -96,7 +96,10 @@ pub fn write_migrated(manager: &mut PackageManager) {
         bun_core::pretty_errorln!(
             "<d>{} in <r><green>{}<r>",
             file.edits.join(", "),
-            bstr::BStr::new(FileSystem::get().relative_to(&file.target.package_json_path)),
+            fmt_relative(
+                FileSystem::get().top_level_dir(),
+                &file.target.package_json_path
+            ),
         );
     }
 }

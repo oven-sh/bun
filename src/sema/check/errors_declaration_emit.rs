@@ -32,7 +32,7 @@ use crate::util::SharedSort;
 use bstr::ByteSlice;
 use bun_core::strings;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::{dirname, relative_normalized};
+use bun_paths::resolve_path::{SpillBuf, dirname, relative_normalized_spill};
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::rc::Rc;
@@ -6840,7 +6840,15 @@ impl<'p, 's> Checker<'p, 's> {
         let relative_to_root_dirs = |path: &[u8]| -> Vec<Vec<u8>> {
             root_dirs
                 .iter()
-                .map(|root_dir| [b"/", relative_normalized::<Posix, true>(root_dir, path)].concat())
+                .map(|root_dir| {
+                    SpillBuf::with_scratch(|buf| {
+                        [
+                            b"/",
+                            relative_normalized_spill::<Posix>(buf, root_dir, path),
+                        ]
+                        .concat()
+                    })
+                })
                 .filter(|relative| !relative.starts_with(b"/.."))
                 .collect()
         };
@@ -6848,9 +6856,9 @@ impl<'p, 's> Checker<'p, 's> {
         let mut shortest: Option<Vec<u8>> = None;
         for source_path in relative_to_root_dirs(source_directory) {
             for target_path in &target_paths {
-                let candidate = ensure_path_is_non_module_name(
-                    relative_normalized::<Posix, true>(&source_path, target_path).to_vec(),
-                );
+                let candidate = ensure_path_is_non_module_name(SpillBuf::with_scratch(|buf| {
+                    relative_normalized_spill::<Posix>(buf, &source_path, target_path).to_vec()
+                }));
                 let separators = strings::count_char(&candidate, b'/');
                 if shortest
                     .as_ref()
@@ -6878,8 +6886,9 @@ impl<'p, 's> Checker<'p, 's> {
         for (key, values) in paths {
             for pattern_text in values {
                 let normalized = join(base_directory, pattern_text);
-                let pattern =
-                    relative_normalized::<Posix, true>(base_directory, &normalized).to_vec();
+                let pattern = SpillBuf::with_scratch(|buf| {
+                    relative_normalized_spill::<Posix>(buf, base_directory, &normalized).to_vec()
+                });
                 let mut candidates: Vec<Vec<u8>> = allowed_endings
                     .iter()
                     .map(|&ending| self.process_ending(relative_to_base_url, &[ending]))

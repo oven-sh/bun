@@ -133,7 +133,7 @@ fn is_inside_node_modules(folder: &[u8]) -> bool {
 
 /// `path` as a specifier relative to `folder`. Both are absolute.
 fn to_relative_specifier(folder: &[u8], path: &[u8]) -> Option<Vec<u8>> {
-    let relative = bun_paths::resolve_path::relative_alloc(folder, path).ok()?;
+    let relative = bun_paths::resolve_path::relative_vec(folder, path);
     if bun_paths::is_absolute(&relative) {
         return None;
     }

@@ -1,6 +1,7 @@
 use bstr::BStr;
 
 use bun_core::Global;
+use bun_paths::resolve_path::SpillBuf;
 use bun_paths::{platform, resolve_path};
 use bun_sys::{self as sys, Dir};
 
@@ -23,8 +24,10 @@ impl UnlinkCommand {
         let (lockfile, package) = link_command::load_package_for_link(manager, "unlinking")?;
         let name = lockfile.str(&package.name);
 
-        let link_path = resolve_path::join_abs_string_z::<platform::Auto>(
+        let mut buf = SpillBuf::default();
+        let link_path = resolve_path::join_abs_string_z_spill::<platform::Auto>(
             global_link_dir(&manager.options).path,
+            &mut buf,
             &[name],
         );
         if !sys::lstat(link_path).is_ok_and(|stat| sys::S::ISLNK(stat.st_mode as _)) {

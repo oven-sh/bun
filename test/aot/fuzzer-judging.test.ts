@@ -61,6 +61,12 @@ const untilTheCount = 280;
 // The tests run concurrently: each has its own folders, and none waits for the clock.
 const test = one.concurrent;
 const unless = (condition: boolean) => (condition ? one.skip : one.concurrent);
+// The project of `bun init` has Bun's typings installed beside the program. The cases that ask about it need them.
+const typings = bunTypesFolder();
+if (!typings)
+  console.error(
+    `SKIPPED: ${import.meta.file}: the cases about the project of \`bun init\`: Bun's typings are not installed`,
+  );
 /** A folder for one call of a runner, so that calls do not have to wait for each other. */
 const within = (folder: unknown, name: string) => (
   mkdirSync(join(String(folder), name), { recursive: true }),
@@ -99,7 +105,7 @@ function runnerThatAsksTypeScript(): ProductRunner {
 }
 afterAll(() => asksTypeScript?.folder[Symbol.dispose]());
 
-unless(isWindows || !typeChecker())(
+unless(isWindows || !typeChecker() || !typings)(
   "a build rejected for a type error is a finding if TypeScript accepts the program",
   async () => {
     using folder = tempDir("aot-fuzzer-judges", {});
@@ -113,7 +119,7 @@ unless(isWindows || !typeChecker())(
       judge(`const n: number = 1;\nconsole.log(n);\n`),
       judge(`const n: number = "text";\nconsole.log(n);\n`),
       judge(reads, ["--project=no-tsconfig"]),
-      bunTypesFolder() ? judge(reads, ["--project=bun-init"]) : undefined,
+      judge(reads, ["--project=bun-init"]),
       // In a shared build each program is judged separately.
       judge(`console.log(1);\n`, ["--decoy-shapes=1"]),
     ]);
@@ -121,7 +127,7 @@ unless(isWindows || !typeChecker())(
       accepted: refusedByTheBuildAlone,
       refused: refusedByTypeScriptToo,
       withoutOptions: refusedByTheBuildAlone,
-      asBunInitLeavesIt: bunTypesFolder() ? refusedByTypeScriptToo : undefined,
+      asBunInitLeavesIt: refusedByTypeScriptToo,
       shared: refusedByTheBuildAlone,
     });
   },
@@ -161,14 +167,13 @@ unless(isWindows)(
   timeout,
 );
 
-unless(isWindows)(
+unless(isWindows || !typings)(
   "--project selects the project files",
   async () => {
     using folder = tempDir("aot-fuzzer-beside", {});
     const runner = new ProductRunner(refusesEveryBuild(String(folder), "it builds nothing"), options);
-    const asked = Object.entries(projects).filter(([, { hasTypings }]) => !hasTypings || bunTypesFolder());
     await Promise.all(
-      asked.map(async ([name, { tsconfig, hasTypings }]) => {
+      Object.entries(projects).map(async ([name, { tsconfig, hasTypings }]) => {
         const where = within(folder, name);
         const program: Program = { text: `console.log(1);\n`, extension: "ts" };
         const [{ verdict }] = await runner.judge(where, [program], [`--project=${name}`]);
@@ -712,7 +717,9 @@ test(
     });
     expect(summary.programs).toBe(8);
     expect(judged).toBe(8);
-    expect(countsOf(summary.status).skipped).toMatch(/\bplain run failed, not tried in mode erased 8\b/);
+    expect(countsOf(summary.status).skipped).toBe(
+      "base differs 0, plain run failed, not tried in mode erased 8, plain run too slow 8",
+    );
   },
   timeout,
 );

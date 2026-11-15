@@ -285,9 +285,4 @@ impl OffsetByteList {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-
-    pub fn clear_and_free(&mut self) {
-        // Drop on the taken value frees `byte_list`; nothing is reused.
-        drop(core::mem::take(self));
-    }
 }

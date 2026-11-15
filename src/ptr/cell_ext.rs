@@ -163,6 +163,18 @@ impl<T: RefCounted> RefPtrDequeCellExt<T> for Cell<VecDeque<RefPtr<T>>> {
     }
 }
 
+pub trait KeyedDequeCellExt<K: Copy> {
+    /// As `get(index).map(|&(key, _)| key)`.
+    fn get_key(&self, index: usize) -> Option<K>;
+}
+
+impl<K: Copy, V> KeyedDequeCellExt<K> for Cell<VecDeque<(K, V)>> {
+    fn get_key(&self, index: usize) -> Option<K> {
+        // SAFETY: a shared `Cell` lends no reference to its value, and copying a `K` runs no code.
+        unsafe { &*self.as_ptr() }.get(index).map(|&(key, _)| key)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,6 +236,14 @@ mod tests {
         let item = queue.get_cloned(0).unwrap();
         assert!(RefPtr::has_one_ref(&item));
         assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn get_key_leaves_the_entry() {
+        let cell = Cell::new(VecDeque::from([(1, Box::new(2))]));
+        assert_eq!(cell.get_key(0), Some(1));
+        assert_eq!(cell.get_key(1), None);
+        assert_eq!(cell.pop_front(), Some((1, Box::new(2))));
     }
 
     #[test]

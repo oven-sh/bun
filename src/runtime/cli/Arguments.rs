@@ -750,6 +750,12 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--aot-erase-types"),
         parse_param!("--aot-refuse-code-from-disk"),
         parse_param!("--aot-out <STR>"),
+        parse_param!(
+            "--aot-order <STR>...             With --aot: lay code and data out by order file(s) that runs of an executable built by --aot-record-order wrote; comma-separated or repeated, most important first"
+        ),
+        parse_param!(
+            "--aot-record-order               With --aot: build an executable that writes an order file when it runs (BUN_AOT_ORDER_OUT)"
+        ),
         parse_param!("--aot-stored-strings <STR>"),
         parse_param!("--aot-stored-strings-json <STR>"),
         parse_param!("--aot-symbols"),

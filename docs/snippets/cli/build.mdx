@@ -244,6 +244,17 @@ bun build <entry points>
   that isn't in the executable from disk at run time. Makes it larger and slower
 </ParamField>
 
+<ParamField path="--aot-order" type="string">
+  With <code>--aot</code>: lay the executable out by the order file that runs of it wrote (
+  <code>--aot-record-order</code>), so that it starts faster from a cold disk. Takes a list of files, most important
+  first
+</ParamField>
+
+<ParamField path="--aot-record-order" type="boolean">
+  With <code>--aot</code>: build an executable that writes an order file when it runs with{" "}
+  <code>BUN_AOT_ORDER_OUT</code>
+</ParamField>
+
 <ParamField path="--aot-harden" type="string">
   With <code>--aot</code>: make a bug in the compiler harder to turn into a memory bug. Takes a list of{" "}
   <code>proof-checks</code> and <code>ignore-told-ranges</code>. The executable runs slower

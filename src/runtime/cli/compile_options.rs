@@ -27,7 +27,9 @@ pub(crate) const COMPILE_AOT_KEYS: &[&str] = &[
     "aotCheck",
     "aotExplain",
     "aotHarden",
+    "aotOrder",
     "aotOut",
+    "aotRecordOrder",
     "aotTesting",
 ];
 const EXPLAIN_ALLOWED: &str =
@@ -95,6 +97,8 @@ const DEVELOPER_FLAGS: &[(&str, &str, Form)] = &[
     developer_flag!("erase-types", Form::Flag),
     developer_flag!("refuse-code-from-disk", Form::Flag),
     developer_flag!("out", Form::One),
+    developer_flag!("order", Form::Many),
+    developer_flag!("record-order", Form::Flag),
     developer_flag!("symbols", Form::Flag),
     ("no-builtin-modules", "--no-builtin-modules", Form::Flag),
 ];
@@ -274,6 +278,8 @@ fn write_spelling(option: OptionName, origin: RequestOrigin, out: &mut Vec<u8>) 
         (Name::Developer("harden"), BuildApi) => "compile.aotHarden",
         (Name::Developer("testing"), BuildApi) => "compile.aotTesting",
         (Name::Developer("out"), BuildApi) => "compile.aotOut",
+        (Name::Developer("order"), BuildApi) => "compile.aotOrder",
+        (Name::Developer("record-order"), BuildApi) => "compile.aotRecordOrder",
         (Name::Developer(key), _) => developer_flag_name(key),
     };
     out.extend_from_slice(spelling.as_bytes());
@@ -643,6 +649,10 @@ pub(crate) fn apply_developer_word<'a>(
         "symbols" => options.emits_symbols = true,
         "no-builtin-modules" => options.omits_builtin_modules = true,
         "out" => options.ir_output_path = Some(Box::from(text)),
+        "order" => options
+            .order_paths
+            .extend(strings::split(text, b",").map(Box::from)),
+        "record-order" => options.records_order = true,
         // The other words of --aot-testing are the engine's.
         "testing" if text == b"NoExecutable" => options.writes_no_executable = true,
         "testing" if text == b"FirstTexts" => options.takes_first_texts = true,

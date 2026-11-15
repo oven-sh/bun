@@ -1899,6 +1899,7 @@
     "aot/cli/frames-of-built-in-modules.test.ts",
     "aot/test-runs-without-function-source.test.ts",
     "aot/options-of-the-run-that-need-nothing.test.ts",
-    "aot/a-constructor-inside-what-an-entry-exports-keeps-its-features.test.ts"
+    "aot/a-constructor-inside-what-an-entry-exports-keeps-its-features.test.ts",
+    "aot/order-file.test.ts"
   ]
 }

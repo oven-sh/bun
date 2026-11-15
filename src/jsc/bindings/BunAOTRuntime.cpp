@@ -7,6 +7,7 @@
 #include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/AOTImageLoading.h>
 #include <JavaScriptCore/AOTModuleHost.h>
+#include <JavaScriptCore/AOTOrderRecorder.h>
 #include <JavaScriptCore/AOTRealmStartup.h>
 #include <JavaScriptCore/AOTRuntimeDescription.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -335,6 +336,28 @@ extern "C" void Bun__AOT__setVerbose(bool isVerbose)
     JSC::AOT::setVerbose(isVerbose);
 }
 
+extern "C" bool Bun__AOT__recordsOrder()
+{
+    return JSC::AOT::recordsOrder();
+}
+
+extern "C" BunAOTBytes Bun__AOT__startOrderRecording(const char* path)
+{
+    WTF::ASCIILiteral failure = JSC::callRemovable<JSC::RemovableFeature::OrderRecorder, JSC::RemovedFeatureStub::Abort, JSC::AOT::startOrderRecording>(path);
+    return { failure.isNull() ? nullptr : reinterpret_cast<const uint8_t*>(failure.characters()), failure.isNull() ? 0 : failure.length() };
+}
+
+extern "C" void Bun__AOT__finishOrderRecording()
+{
+    if (JSC::AOT::isRecordingOrder())
+        JSC::callRemovable<JSC::RemovableFeature::OrderRecorder, JSC::RemovedFeatureStub::Abort, JSC::AOT::finishOrderRecording>();
+}
+
+extern "C" bool Bun__AOT__isRecordingOrder()
+{
+    return JSC::AOT::isRecordingOrder();
+}
+
 extern "C" int64_t Bun__AOT__offsetInCode(const void* address)
 {
     auto offset = JSC::AOT::imageCodeOffset(address);
@@ -438,6 +461,10 @@ extern "C" void Bun__askForAddressSpaceToStart() {}
 extern "C" void Bun__AOT__listRefusedChanges() {}
 extern "C" void Bun__AOT__openNameWithoutImage(uint32_t, const uint8_t*, size_t) {}
 extern "C" void Bun__AOT__setVerbose(bool) {}
+extern "C" BunAOTBytes Bun__AOT__startOrderRecording(const char*) { return { nullptr, 0 }; }
+extern "C" void Bun__AOT__finishOrderRecording() {}
+extern "C" bool Bun__AOT__recordsOrder() { return false; }
+extern "C" bool Bun__AOT__isRecordingOrder() { return false; }
 extern "C" int64_t Bun__AOT__offsetInCode(const void*) { return -1; }
 extern "C" int64_t Bun__AOT__frameAtReturnAddress(const void*) { return -1; }
 extern "C" size_t Bun__AOT__addressOfOffsetInCode(size_t offset) { return offset; }

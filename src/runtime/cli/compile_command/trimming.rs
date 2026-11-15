@@ -2,7 +2,8 @@ use std::borrow::Cow;
 
 use bun_core::{ZBox, ZStr};
 use bun_options_types::aot_options::{AotOptions, ExplainSet};
-use bun_options_types::trim::TrimRequest;
+use bun_options_types::trim::{Feature, TrimRequest};
+use bun_removable_features::RuntimeRequirement;
 use bun_standalone_graph::StandaloneModuleGraph::{Flags, target_executable};
 use bun_standalone_graph::with_executable_image;
 use bun_trim::{
@@ -29,6 +30,12 @@ pub(super) fn add_build_option_requirements(
         requirements.push(OptionRequirement {
             requirement: INSPECTOR_REQUIREMENT,
             label: Box::from(&b"--compile-inspector"[..]),
+        });
+    }
+    if options.records_order {
+        requirements.push(OptionRequirement {
+            requirement: RuntimeRequirement::Feature(Feature::OrderRecorder),
+            label: Box::from(&b"--aot-record-order"[..]),
         });
     }
 }

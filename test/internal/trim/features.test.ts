@@ -152,6 +152,7 @@ const neverOffered: Record<string, string> = {
     "NodeWorker Bunfig CliOptions CompressionFunctions BunZstdCompress BunDeflate CompressionStreams CompressionStream DecompressionStream Histogram LegacyEncodings LibdeflateCompressor MessageChannel NodeZlib NodeZlibBrotli NodeZlibZstd PerformanceTimeline PerformanceMarks PostMessage Tls TlsSockets X509 ZstdCompressor",
   "its built-ins still work when the features used with it are removed":
     "ElementsToLocaleString ProcessListeners ProcessListenerRemoval",
+  "--aot-record-order alone asks for it": "OrderRecorder",
   "the image of a compiled program lists what it calls of it, and nothing else can": model.features
     .filter(feature => feature.enteredFrom === "compiled-code")
     .map(feature => feature.name)

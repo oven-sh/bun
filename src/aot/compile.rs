@@ -623,6 +623,29 @@ impl<'a> Build<'a> {
         Err(Stage::LinkAndEmit)
     }
 
+    fn read_order_files(&self) -> Vec<u8> {
+        let mut joined = Vec::new();
+        for path in &self.options.aot.order_paths {
+            match File::read_from(Fd::cwd(), path) {
+                Ok(bytes) if bytes.starts_with(b"aot-order v1\n") => {
+                    let end =
+                        bun_core::strings::last_index_of_char(&bytes, b'\n').map_or(0, |at| at + 1);
+                    joined.extend_from_slice(&bytes[..end]);
+                }
+                Ok(_) => bun_core::warn!(
+                    "--aot-order: {} is not an order file. Nothing is placed by it",
+                    bstr::BStr::new(path),
+                ),
+                Err(error) => bun_core::warn!(
+                    "--aot-order: {} cannot be read: {}",
+                    bstr::BStr::new(path),
+                    error,
+                ),
+            }
+        }
+        joined
+    }
+
     fn threads_of_engine(&self, bytes: &ProgramBytes) -> NonZeroUsize {
         const PROGRAM_BYTES_PER_THREAD: usize = 256 << 10;
         let useful = bytes
@@ -644,6 +667,7 @@ impl<'a> Build<'a> {
         if self.options.aot.thread_count.is_none() {
             bun_sema_driver::allow_threads(self.threads_of_engine(&bytes));
         }
+        let order_file = self.read_order_files();
         let leftovers = core::mem::take(&mut self.leftovers);
         let beside = self.beside_runner();
         let clock = &mut self.clock;
@@ -662,7 +686,7 @@ impl<'a> Build<'a> {
             || {
                 clock.stop();
                 let entered = Instant::now();
-                let engine = engine::compile(bytes, engine_options, &output.texts);
+                let engine = engine::compile(bytes, engine_options, &output.texts, &order_file);
                 (engine, entered.elapsed())
             },
         );

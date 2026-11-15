@@ -323,7 +323,7 @@ fn fill_map<V: Copy>(
 pub(crate) fn load(
     lockfile: &mut Lockfile,
     stream: &mut Stream,
-    log: &mut Log,
+    log: &Log,
     manager: Option<&PackageManager>,
 ) -> Result<SerializerLoadResult, Error> {
     let mut res = SerializerLoadResult::default();
@@ -443,7 +443,7 @@ pub(crate) fn load(
             .ensure_total_capacity(overrides_name_hashes.len())?;
         let override_versions_external: Vec<dependency::External> = buffers::read_array(stream)?;
         let mut context = dependency::Context {
-            log: &mut *log,
+            log,
             buffer: lockfile.buffers.string_bytes.as_slice(),
         };
         debug_assert_eq!(
@@ -499,7 +499,7 @@ pub(crate) fn load(
             existing_buf: string_bytes,
         };
         let mut context = dependency::Context {
-            log: &mut *log,
+            log,
             buffer: string_bytes,
         };
 
@@ -559,7 +559,7 @@ pub(crate) fn load(
         let string_bytes: &[u8] = buffers.string_bytes.as_slice();
         overrides.scoped.reserve(parents.len());
         let mut context = dependency::Context {
-            log: &mut *log,
+            log,
             buffer: string_bytes,
         };
         for ((parent, range), dep) in parents.iter().zip(ranges.iter()).zip(deps.iter()) {

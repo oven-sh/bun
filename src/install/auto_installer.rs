@@ -295,7 +295,7 @@ impl hooks::AutoInstaller for PackageManager {
                 .map(|path| path.len());
         } else if len.is_err() && r.tag != resolution::Tag::Npm {
             let buf = self.lockfile.buffers.string_bytes.as_slice();
-            self.log_mut().add_error_fmt(
+            self.log().add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(
@@ -378,7 +378,7 @@ impl hooks::AutoInstaller for PackageManager {
         name_hash: Option<u64>,
         version: &[u8],
         sliced: &SlicedString,
-        log: Option<&mut bun_ast::Log>,
+        log: Option<&bun_ast::Log>,
     ) -> Option<hooks::DependencyVersion> {
         // `pm` is threaded so `parse_with_tag` can record `npm:` aliases into
         // `pm.known_npm_aliases`.
@@ -392,7 +392,7 @@ impl hooks::AutoInstaller for PackageManager {
         version: &[u8],
         tag: hooks::DependencyVersionTag,
         sliced: &SlicedString,
-        log: Option<&mut bun_ast::Log>,
+        log: Option<&bun_ast::Log>,
     ) -> Option<hooks::DependencyVersion> {
         dependency::parse_with_tag(name, Some(name_hash), version, tag, sliced, log, None)
     }
@@ -410,7 +410,7 @@ fn __bun_resolver_parse_dependency(
     name_hash: hooks::PackageNameHash,
     version: &[u8],
     sliced: &SlicedString,
-    log: Option<&mut bun_ast::Log>,
+    log: Option<&bun_ast::Log>,
 ) -> Option<hooks::DependencyVersion> {
     dependency::parse(
         name,
@@ -439,7 +439,7 @@ fn __bun_resolver_parse_dependency(
 #[unsafe(no_mangle)]
 #[inline(never)]
 unsafe fn __bun_resolver_init_package_manager(
-    mut log: core::ptr::NonNull<bun_ast::Log>,
+    log: core::ptr::NonNull<bun_ast::Log>,
     install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
     mut env: core::ptr::NonNull<bun_dotenv::Loader>,
     prefer_offline: bool,
@@ -459,8 +459,8 @@ unsafe fn __bun_resolver_init_package_manager(
         install.map(|p| unsafe { p.as_ref() });
     // SAFETY: caller guarantees `log` / `env` point at process-lifetime
     // Transpiler-owned storage with no aliasing `&mut` live across this call.
-    let (log_ref, env_ref): (&mut bun_ast::Log, &mut bun_dotenv::Loader) =
-        unsafe { (log.as_mut(), env.as_mut()) };
+    let (log_ref, env_ref): (&bun_ast::Log, &mut bun_dotenv::Loader) =
+        unsafe { (log.as_ref(), env.as_mut()) };
 
     let pm: *mut PackageManager = crate::package_manager::init_with_runtime(
         log_ref,

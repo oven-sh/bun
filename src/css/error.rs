@@ -50,7 +50,7 @@ impl<'bump> Err<ParserError<'bump>> {
 impl<T: fmt::Display> Err<T> {
     pub fn add_to_logger(
         &self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &bun_ast::Source,
     ) -> Result<(), bun_core::Error> {
         use std::io::Write as _;
@@ -70,7 +70,7 @@ impl<T: fmt::Display> Err<T> {
             ..Default::default()
         });
 
-        log.errors += 1;
+        log.errors.update(|n| n + 1);
         Ok(())
     }
 }

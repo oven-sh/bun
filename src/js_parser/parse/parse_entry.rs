@@ -121,8 +121,8 @@ pub fn parse_only_text<R>(
     options.jsc_builtin_syntax = jsc_builtin_syntax;
     options.suppress_warnings_about_weird_code = true;
     let define = Define::default();
-    let mut log = bun_ast::Log::init();
-    let parser = Parser::init(options, &mut log, &source, &define, &arena).ok()?;
+    let log = bun_ast::Log::init();
+    let parser = Parser::init(options, &log, &source, &define, &arena).ok()?;
     parser.parse_only(f).ok()
 }
 
@@ -449,13 +449,13 @@ pub struct ParsedForCache {
 impl<'a> Parser<'a> {
     pub fn init(
         options: Options<'a>,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &'a bun_ast::Source<'a>,
         define: &'a Define,
         bump: &'a Arena,
     ) -> Result<Parser<'a>, Error> {
         source.check_parseable_len(log, "File")?;
-        let orig_error_count = log.errors;
+        let orig_error_count = log.errors.get();
         let mut lexer = js_lexer::Lexer::init_without_reading(log, source, bump);
         // Must be set before the priming `next()` so leading comments are seen.
         lexer.track_comments = options.features.minify_identifiers;
@@ -535,7 +535,7 @@ impl<'a> Parser<'a> {
         if p.lexer.token == js_lexer::T::THashbang {
             p.lexer.next()?;
         }
-        if p.log().errors > self.orig_error_count {
+        if p.log().errors.get() > self.orig_error_count {
             return Err(crate::Error::SyntaxError);
         }
         let mut opts = ParseStatementOptions {
@@ -544,7 +544,7 @@ impl<'a> Parser<'a> {
         };
         let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)?;
         // What the parser only logs is still an error: the statements are its best guess.
-        if p.log().errors > self.orig_error_count {
+        if p.log().errors.get() > self.orig_error_count {
             return Err(crate::Error::SyntaxError);
         }
         Ok(f(&ParsedOnly {
@@ -969,7 +969,7 @@ impl<'a> Parser<'a> {
         }
 
         // The first token may already have logged an error; halt before the early returns below.
-        if p.log().errors > orig_error_count {
+        if p.log().errors.get() > orig_error_count {
             return Err(crate::Error::SyntaxError);
         }
 
@@ -1046,7 +1046,7 @@ impl<'a> Parser<'a> {
         // In a number of situations, we continue to parsing despite errors so that we can report more errors to the user
         //   Example where NOT halting causes a crash: A TS enum with a number literal as a member name
         //     https://discord.com/channels/876711213126520882/876711213126520885/1039325382488371280
-        if p.log().errors > orig_error_count {
+        if p.log().errors.get() > orig_error_count {
             return Err(crate::Error::SyntaxError);
         }
 
@@ -1322,7 +1322,7 @@ impl<'a> Parser<'a> {
         visit_tracer.end();
 
         // If there were errors while visiting, also halt here
-        if p.log().errors > orig_error_count {
+        if p.log().errors.get() > orig_error_count {
             return Err(crate::Error::SyntaxError);
         }
 
@@ -2698,7 +2698,7 @@ impl<'a> Parser<'a> {
         }
 
         // If there were errors during to_ast, also halt here
-        if p.log().errors > orig_error_count {
+        if p.log().errors.get() > orig_error_count {
             return Err(crate::Error::SyntaxError);
         }
 

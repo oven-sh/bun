@@ -380,7 +380,7 @@ unsafe fn init_runtime_state(
     // zeroed bytes are not a valid `Transpiler` to drop).
     // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
     // `VirtualMachine::init` immediately before this hook fires.
-    let log: *mut bun_ast::Log = unsafe { (*vm).log.get() }
+    let log: *const bun_ast::Log = unsafe { (*vm).log.get() }
         .map(|p| p.as_ptr())
         .unwrap_or(ptr::null_mut());
     // `bun_bundler::Transpiler::init` (transpiler.rs) returns `Ok` on the
@@ -735,9 +735,8 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
             } {
                 ResolveResultUnion::Success(r) => r,
                 ResolveResultUnion::Failure(e) => {
-                    if let Some(log) = vm.log.get() {
-                        // SAFETY: `log` is the unique per-VM `Box<Log>`.
-                        let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
+                    if let Some(log) = vm.log() {
+                        log.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(
@@ -750,9 +749,8 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
                     return Err(e.into());
                 }
                 ResolveResultUnion::NotFound => {
-                    if let Some(log) = vm.log.get() {
-                        // SAFETY: `log` is the unique per-VM `Box<Log>`.
-                        let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
+                    if let Some(log) = vm.log() {
+                        log.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(
@@ -2110,8 +2108,10 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             // `transpiler.log` / `args.log` are never-null (set in
             // `Transpiler::init` / by the C++ caller respectively).
             let old_log = jsc_vm.transpiler.get().log;
-            let old_log_nn = core::ptr::NonNull::new(old_log).expect("transpiler.log is non-null");
-            let args_log_nn = core::ptr::NonNull::new(args.log).expect("args.log is non-null");
+            let old_log_nn =
+                core::ptr::NonNull::new(old_log.cast_mut()).expect("transpiler.log is non-null");
+            let args_log_nn =
+                core::ptr::NonNull::new(args.log.cast_mut()).expect("args.log is non-null");
             let transpiler = jsc_vm.transpiler.as_ptr();
             // SAFETY: field writes on the JS thread;
             // `args.log` is non-null (checked above) and outlives this call.
@@ -2322,7 +2322,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 }
 
                 // SAFETY: `transpiler.log` was swapped to non-null `args.log` above.
-                if unsafe { (*(*transpiler).log).errors > 0 } {
+                if unsafe { (*(*transpiler).log).errors.get() > 0 } {
                     arena_guard.2 = false;
                     // Node compile cache: record the failed module so exit-time
                     // persist logs the "was not initialized" skip (Node parity).
@@ -2858,7 +2858,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         path.text,
                         args.virtual_source,
                         // SAFETY: `args.log` is the caller's live `Log`; nothing else borrows it in this arm.
-                        unsafe { &mut *args.log }
+                        unsafe { &*args.log }
                     )?;
                     return Ok(ResolvedSource {
                         jsvalue_for_export: exports,
@@ -2987,7 +2987,7 @@ fn css_module_exports(
     global: &JSGlobalObject,
     path_text: &[u8],
     virtual_source: Option<&bun_ast::Source<'_>>,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) -> crate::Result<JSValue> {
     use bun_bundler::css_module_graph::{Failure, load_exports, read};
 
@@ -3701,7 +3701,7 @@ fn unreadable_file_error(
     global: &JSGlobalObject,
     specifier: &bun_core::String,
     referrer: &bun_core::String,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     path: &[u8],
 ) -> Option<JSValue> {
     let mut buffer = bun_paths::path_buffer_pool::get();
@@ -3738,7 +3738,7 @@ fn loader_refusal_error<const DATA_ONLY: bool>(
     is_commonjs_require: bool,
     loader: Loader,
     lr: &LoaderResult<'_>,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) -> Option<JSValue> {
     let refusal =
         refusal_of_what_loading_gives::<DATA_ONLY>(global, specifier, is_commonjs_require, loader)?;
@@ -3898,7 +3898,7 @@ fn transpile_file<const DATA_ONLY: bool>(
 
     // Create a fresh parse log.
     // Note: per §Allocators the explicit allocator threads are dropped.
-    let mut log = bun_ast::Log::init();
+    let log = bun_ast::Log::init();
 
     let _specifier = specifier.to_utf8();
     let referrer_slice = referrer.to_utf8();
@@ -3957,7 +3957,7 @@ fn transpile_file<const DATA_ONLY: bool>(
             is_commonjs_require,
             loader,
             &lr,
-            &mut log,
+            &log,
         )
     {
         *ret = ErrorableResolvedSource::err(error);
@@ -4081,7 +4081,7 @@ fn transpile_file<const DATA_ONLY: bool>(
             is_commonjs_require,
             synchronous_loader,
             &lr,
-            &mut log,
+            &log,
         )
     {
         *ret = ErrorableResolvedSource::err(error);
@@ -4101,7 +4101,7 @@ fn transpile_file<const DATA_ONLY: bool>(
         specifier: lr.specifier,
         referrer: referrer_slice.slice(),
         input_specifier: specifier,
-        log: &raw mut log,
+        log: &raw const log,
         virtual_source: lr.virtual_source,
         global_object: global,
         flags: FetchFlags::Transpile,
@@ -4111,7 +4111,7 @@ fn transpile_file<const DATA_ONLY: bool>(
     match transpile_source_code_inner::<DATA_ONLY>(jsc_vm, &args) {
         Ok(resolved) => *ret = ErrorableResolvedSource::ok(resolved),
         Err(err) => {
-            if let Some(value) = transpile_error_value(global, specifier, referrer, &mut log, err) {
+            if let Some(value) = transpile_error_value(global, specifier, referrer, &log, err) {
                 *ret = ErrorableResolvedSource::err(value);
             }
         }
@@ -4125,7 +4125,7 @@ fn transpile_error_value(
     global: &JSGlobalObject,
     specifier: &bun_core::String,
     referrer: &bun_core::String,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     err: crate::Error,
 ) -> Option<JSValue> {
     match err {
@@ -4158,7 +4158,7 @@ pub(crate) fn transpile_as_loaded(
 ) -> Option<ResolvedSource> {
     let jsc_vm = global.bun_vm();
     let virtual_source = bun_ast::Source::init_path_string(path, source);
-    let mut log = bun_ast::Log::init();
+    let log = bun_ast::Log::init();
     let fs_path = Fs::Path::init(path);
     let loaders = &jsc_vm.transpiler.get().options.loaders;
     let loader = loaders.get(fs_path.name().ext).copied()?;
@@ -4176,7 +4176,7 @@ pub(crate) fn transpile_as_loaded(
         specifier: path,
         referrer: b"",
         input_specifier: &specifier,
-        log: &raw mut log,
+        log: &raw const log,
         virtual_source: Some(&virtual_source),
         global_object: global,
         flags: FetchFlags::Transpile,
@@ -4266,7 +4266,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
     let referrer_slice = referrer_str.to_utf8();
 
     let virtual_source = bun_ast::Source::init_path_string(specifier, source_code_slice.slice());
-    let mut log = bun_ast::Log::init();
+    let log = bun_ast::Log::init();
     let path = Fs::Path::init(specifier);
 
     // Pick the loader: the explicit API loader if given, else by file
@@ -4310,7 +4310,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         specifier,
         referrer: referrer_slice.slice(),
         input_specifier: specifier_str,
-        log: &raw mut log,
+        log: &raw const log,
         virtual_source: Some(&virtual_source),
         global_object: global,
         flags: FetchFlags::Transpile,
@@ -4326,7 +4326,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         }
         Err(err) => {
             if let Some(value) =
-                transpile_error_value(global, specifier_str, referrer_str, &mut log, err)
+                transpile_error_value(global, specifier_str, referrer_str, &log, err)
             {
                 *ret = ErrorableResolvedSource::err(value);
             }

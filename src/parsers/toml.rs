@@ -195,16 +195,14 @@ impl TOML {
         let source = Source::init_path_string(b"".as_slice(), text);
         let mut log = Log::init();
         let bump = Bump::new();
-        let is_short_enough = source
-            .check_parseable_len(&mut log, "TOML document")
-            .is_ok();
+        let is_short_enough = source.check_parseable_len(&log, "TOML document").is_ok();
         let mut tokenizer = Tokenizer {
             scanner: Scanner {
                 src: text,
                 pos: 0,
                 bump: &bump,
                 source: &source,
-                log: &mut log,
+                log: &log,
                 redact: false,
                 keeps_text: true,
             },
@@ -213,7 +211,7 @@ impl TOML {
         if is_short_enough && tokenizer.document().is_ok() {
             return Ok(tokenizer.tokens);
         }
-        Err(match log.msgs.first() {
+        Err(match log.msgs.get_mut().first() {
             Some(first) => (
                 first.data.text.to_vec(),
                 first.data.location.as_ref().map_or(0, |it| it.offset),
@@ -224,7 +222,7 @@ impl TOML {
 
     pub fn parse<'a>(
         source: &'a Source<'a>,
-        log: &mut Log,
+        log: &Log,
         bump: &'a Bump,
         redact_logs: bool,
     ) -> crate::Result<Expr> {
@@ -300,7 +298,7 @@ struct Scanner<'a, 'log> {
     pos: usize,
     bump: &'a Bump,
     source: &'a Source<'a>,
-    log: &'log mut Log,
+    log: &'log Log,
     redact: bool,
     /// The caller goes by the text of a number, so its value need not fit anything.
     keeps_text: bool,

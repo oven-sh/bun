@@ -694,7 +694,7 @@ pub(crate) fn expand_home(path: &[u8]) -> Box<[u8]> {
 impl Options {
     pub(crate) fn load(
         &mut self,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         env: &mut DotEnvLoader,
         cli: &CommandLineArguments,
         // Every access below is a read of `config.*`; no field is ever written.
@@ -1151,7 +1151,7 @@ impl Options {
             cli.log_level
         };
         if cli.log_level.is_silent() {
-            log.level = bun_ast::Level::Err;
+            log.level.set(bun_ast::Level::Err);
             bun_ast::DEFAULT_LOG_LEVEL.store(bun_ast::Level::Err);
         }
         // SAFETY: main-thread CLI option load — single writer.

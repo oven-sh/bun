@@ -42,8 +42,8 @@ macro_rules! define_linked_functions {
 }
 
 linked_functions! {
-    pub fn bun_aot_compile(options: &Options<'_>, provider: &dyn SourceProvider, log: &mut Log) -> Result<Compilation, BuildFailed>;
-    pub fn bun_aot_log_diagnostic(log: &mut Log, code: Code, arguments: &[&[u8]]);
+    pub fn bun_aot_compile(options: &Options<'_>, provider: &dyn SourceProvider, log: &Log) -> Result<Compilation, BuildFailed>;
+    pub fn bun_aot_log_diagnostic(log: &Log, code: Code, arguments: &[&[u8]]);
     pub(crate) fn bun_aot_parse_json<'s>(text: &[u8], arena: &'s Arena, atoms: &Interner<'s>) -> Option<&'s DataValue<'s>>;
     pub fn bun_aot_check_option_word(earlier_words: &[Box<[u8]>], word: &[u8]) -> Result<(), RejectedOptionWord>;
     pub fn bun_aot_used_features(result: &EngineResult) -> UsedFeatures;

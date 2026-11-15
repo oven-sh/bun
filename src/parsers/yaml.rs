@@ -38,7 +38,7 @@ pub enum CyclicAliases {
 impl YAML {
     pub fn parse(
         source: &bun_ast::Source,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         bump: &bun_alloc::Arena,
         cyclic_aliases: CyclicAliases,
     ) -> Result<Expr, YamlParseError> {
@@ -2006,7 +2006,7 @@ impl ParseResultError {
     pub(crate) fn add_to_log(
         &self,
         source: &bun_ast::Source,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
     ) -> Result<(), YamlParseError> {
         match self {
             ParseResultError::Oom => return Err(YamlParseError::OutOfMemory),

@@ -13,9 +13,6 @@ import { join } from "path";
 // The fixture's cleanup hook and its instance data finalizer print what ran
 // before them. A callback that runs after the instance data finalizer prints
 // a line of its own.
-//
-// The rows run one at a time: each starts a Bun and a Node with a Worker, and
-// a debug build is slow to start either.
 
 const napiAppDir = join(__dirname, "napi-app");
 const source = join(napiAppDir, "test_instance_data_finalizer_order.c");
@@ -102,7 +99,8 @@ function scripts(target: string) {
       }
     };
     // Bun's thread pool holds a ticket of the VM until it has posted the completion of async work. Node waits for
-    // the work when it tears the env down.
+    // the work when it tears the env down. concurrentTasksEmpty does not show the post: uv_close and a call of a
+    // threadsafe function post to that queue too, and it is not always empty when the script of a Worker starts.
     const untilPosted = () => {
       if (typeof Bun !== "object") return;
       const { getEventLoopStats } = require("bun:internal-for-testing");
@@ -158,7 +156,7 @@ function onlyBun(rows: Row[]) {
 // value that is alive at the exit. Also not covered: a queued finalizer or completion that joins a thread which ends
 // only when a call of its threadsafe function returns napi_closing. The functions are open then, as in Node, and the
 // join does not return, in Node or in Bun.
-describe.skipIf(!canBuildNodeAddons())(
+describe.concurrent.skipIf(!canBuildNodeAddons())(
   "finalizers, completions, uv_close callbacks and threadsafe function calls that are queued when a VM exits run before the cleanup of the env",
   () => {
     describe("a regular module", () => {
@@ -320,7 +318,8 @@ describe.skipIf(!canBuildNodeAddons())(
         },
         {
           // Node runs the queued finalizers first, then turns its loop: the close callbacks, the completions of the
-          // thread pool, then the calls of the threadsafe functions.
+          // thread pool, then the calls of the threadsafe functions. Bun runs a close callback and a completion in
+          // the order of their posts, so the script closes the handle before it queues the work.
           name: "the order of the callbacks that are queued when a Worker exits",
           code: inWorker(
             `addon.reportEveryCallback(); addon.createThreadsafeFunction(); addon.closeUvHandle(); ${completedWork} let values = addon.create("external", 1); values = null; collect(); addon.callThreadsafeFunction(2); process.exit(0);`,

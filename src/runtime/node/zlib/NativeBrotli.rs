@@ -154,7 +154,7 @@ mod _impl {
             }
 
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
-            // outlives the `stream.init` call below (E0716 otherwise).
+            // outlives the `Context::init` call below (E0716 otherwise).
             let dictionary_buf;
             let dictionary = if dictionary.is_undefined() {
                 &[]
@@ -199,6 +199,7 @@ mod _impl {
                     .context
                     .set_params(u32::try_from(i).expect("int cast") as c_uint, d)
                 {
+                    // No `emit_error`: zlib.ts sets `onerror` after `init()`.
                     drop(stream);
                     self.close();
                     return Ok(false);
@@ -314,7 +315,7 @@ mod _impl {
             self.avail_out = buffers.avail_out();
         }
 
-        fn write_result(&mut self) -> Result<[u32; 2], Error> {
+        fn write_result(&self) -> Result<[u32; 2], Error> {
             match self.mode {
                 bun_zlib::NodeMode::BROTLI_ENCODE => {
                     if self.last_result == 0 {

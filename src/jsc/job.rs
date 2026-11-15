@@ -186,7 +186,7 @@ pub trait JobContext: Sized + 'static {
     /// can wait on something external. Only such jobs are tracked by the VM.
     const CANCELLABLE: bool = false;
 
-    /// Whether [`then`](Self::then) also runs for a script that has stopped. Such a job has no context.
+    /// Whether the job is queued under `ContextId::NONE`: [`then`](Self::then) also runs after the scheduling context stops or `bun test --isolate` moves on.
     const OUTLIVES_SCRIPT: bool = false;
 
     /// Pool thread, VM not yet in its final wait when the pool reached the job
@@ -228,7 +228,7 @@ pub struct JobHeader {
     prev: *mut JobHeader,
     next: *mut JobHeader,
     /// The context whose script scheduled the job: once it stops, the
-    /// completion is released without running.
+    /// completion is released without running. `NONE` with `OUTLIVES_SCRIPT`.
     context: crate::ContextId,
     /// `VirtualMachine::test_isolation_generation` when scheduled.
     generation: u32,
@@ -320,7 +320,7 @@ impl<C: JobContext> bun_event_loop::Taskable for Job<C> {
         // SAFETY: fn contract; JS thread with the heap alive.
         drop(unsafe { Self::take(this, VirtualMachine::get()) })
     }
-    /// The context whose script scheduled the job.
+    /// `JobHeader::context`.
     unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
         // SAFETY: fn contract.
         unsafe { (*this).header.context }
@@ -471,7 +471,7 @@ pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult
         unsafe { ((*header).release_unrun)(header) };
         return Ok(());
     }
-    // The completion continues the script that scheduled the job.
+    // The completion continues the script that scheduled the job, except with `OUTLIVES_SCRIPT`.
     let context = match context {
         crate::ContextId::NONE => vm.root_context(),
         context => vm.context_of(context),

@@ -1161,13 +1161,12 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
     }
 }
 
-/// A [`JsWrapper`] that outlives its call: a GC root that lends the payload it keeps alive.
+/// A [`JsWrapper`] that outlives its call, as a GC root. The accessors panic once the VM is closed: the rest of its teardown destroys rooted cells too.
 pub struct StrongWrapper<T>(Strong, PhantomData<*const T>);
 
 // SAFETY: a `Strong`.
 unsafe impl<T> crate::job::JsAffine for StrongWrapper<T> {}
 
-/// Panics once the VM is closed: what is left of its teardown destroys rooted cells too.
 fn rooted_value(root: &Strong) -> JSValue {
     assert!(VirtualMachine::get_or_null().is_some_and(|vm| !vm.closed()));
     root.get()
@@ -1190,7 +1189,7 @@ impl<T: JsPayload> StrongWrapper<T> {
         unsafe { &*(self.to_js().encoded() as *const T).byte_add(T::PAYLOAD_OFFSET) }
     }
 
-    /// The global object of the wrapper's class, which a `ShadowRealm` has its own of.
+    /// The global object of the wrapper's class. In a `ShadowRealm` it is not the VM's.
     pub fn global(&self) -> &JSGlobalObject {
         // SAFETY: as `payload`. Every structure that the cell takes holds this global object.
         unsafe {

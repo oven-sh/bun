@@ -807,6 +807,8 @@ impl FetchTasklet {
         }
         let Some(global_this) = self.global_this.get() else {
             self.abandon_response_body();
+            drop(lock);
+            self.cancel_request_body_sink(JSValue::UNDEFINED);
             return Ok(());
         };
 
@@ -1997,10 +1999,8 @@ impl FetchTasklet {
         bun_output::scoped_log!(FetchTasklet, "abortListener");
         let this = self;
         reason.ensure_still_alive();
-        let Some(global_this) = this.global_this.get() else {
-            return this.abandon_response_body();
-        };
-        this.abort_reason.set(&global_this, reason);
+        this.abort_reason
+            .set(VirtualMachine::get().global(), reason);
         this.abort_task();
         if this.sink_mut().is_some() {
             this.cancel_request_body_sink(reason);
@@ -2013,7 +2013,9 @@ impl FetchTasklet {
         if this.is_waiting_request_stream_start {
             if let HTTPRequestBody::ReadableStream(stream_ref) = &this.request_body {
                 this.is_waiting_request_stream_start = false;
-                if let Some(stream) = stream_ref.get() {
+                if let Some(stream) = stream_ref.get()
+                    && let Some(global_this) = this.global_this.get()
+                {
                     crate::dispatch::fold(stream.cancel_with_reason(&global_this, reason));
                 }
             }

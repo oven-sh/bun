@@ -1029,7 +1029,7 @@ impl SendQueue {
         {
             let _ = reason;
             let is_open = self.with_pipe(|pipe| pipe.read_stop()).is_some();
-            if is_open && self.windows.windows_write.is_some() && from != CloseFrom::Deinit {
+            if is_open && self.windows.windows_write.get().is_some() && from != CloseFrom::Deinit {
                 log!("SendQueue#closeSocket -> mark ready for close");
                 // currently writing; wait for the write to complete
                 self.windows.try_close_after_write.set(true);
@@ -1482,7 +1482,7 @@ impl SendQueue {
         #[cfg(debug_assertions)]
         debug_assert!(self.has_written_version.get() == 0);
         debug_assert!(self.queue_is_empty());
-        debug_assert!(!self.waiting_for_ack.is_some());
+        debug_assert!(self.waiting_for_ack.is_none());
         let bytes = get_version_packet(self.mode);
         if !bytes.is_empty() {
             self.queue.with_taken(|queue| {
@@ -1537,24 +1537,24 @@ impl SendQueue {
         if !cfg!(debug_assertions) {
             return;
         }
-        let queue = self.queue.take();
-        log!("IPC message queue ({} items)", queue.len());
-        for item in &queue {
-            if item.data.list.len() > 100 {
-                log!(
-                    " {}|{}",
-                    item.data.cursor,
-                    item.data.list.len() - item.data.cursor
-                );
-            } else {
-                log!(
-                    "  \"{}\"|\"{}\"",
-                    bstr::BStr::new(&item.data.list[0..item.data.cursor]),
-                    bstr::BStr::new(&item.data.list[item.data.cursor..])
-                );
+        self.queue.with_taken(|queue| {
+            log!("IPC message queue ({} items)", queue.len());
+            for item in queue {
+                if item.data.list.len() > 100 {
+                    log!(
+                        " {}|{}",
+                        item.data.cursor,
+                        item.data.list.len() - item.data.cursor
+                    );
+                } else {
+                    log!(
+                        "  \"{}\"|\"{}\"",
+                        bstr::BStr::new(&item.data.list[0..item.data.cursor]),
+                        bstr::BStr::new(&item.data.list[item.data.cursor..])
+                    );
+                }
             }
-        }
-        self.queue.set(queue);
+        });
     }
 
     #[cfg(windows)]
@@ -1601,7 +1601,7 @@ impl SendQueue {
             write_req.write_buffer = uv::uv_buf_t::init(&write_req.write_slice);
             let write_req = bun_ptr::AliasableBox::from(write_req);
             let req = write_req.as_ptr();
-            debug_assert!(!self.windows.windows_write.is_some());
+            debug_assert!(self.windows.windows_write.get().is_none());
 
             // SAFETY: `req` stays put until the write callback takes it.
             let result = unsafe {

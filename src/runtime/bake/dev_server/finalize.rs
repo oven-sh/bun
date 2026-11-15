@@ -142,9 +142,7 @@ pub(super) fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) 
             "current_bundle.requests.first != null. this leaves pending requests without an error page!",
         );
     }
-    while let Some(req) = current_bundle.requests.pop_first() {
-        req.take_handler().fail();
-    }
+    current_bundle.requests.fail_all();
 }
 
 /// Called at the end of BundleV2 to index bundle contents into the `IncrementalGraph`s

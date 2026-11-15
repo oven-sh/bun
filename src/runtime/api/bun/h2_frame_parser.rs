@@ -27,7 +27,7 @@ use bun_jsc::{
     AbortSignal, AbortSignalRef, GlobalRef, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
     Strong, StrongCell, StrongOptional,
 };
-use bun_ptr::{AliasableBox, CellExt as _, RefPtr};
+use bun_ptr::{AliasableBox, CellExt as _, OptionCellExt as _, RefPtr};
 
 use crate::generated_bindgen::h2_frame_parser::js_H2FrameParser as js;
 
@@ -83,7 +83,7 @@ impl NativeSocket {
     }
 
     fn is_attached(&self) -> bool {
-        self.socket.with_taken(|socket| socket.is_some())
+        self.socket.is_some()
     }
 
     fn is_tcp(&self) -> bool {
@@ -2566,7 +2566,7 @@ impl H2FrameParser {
     }
 
     fn register_auto_flush(&self) {
-        if self.auto_flush_ref.with_taken(|r| r.is_some()) {
+        if self.auto_flush_ref.is_some() {
             return;
         }
         self.auto_flush_ref.set(Some(self.ref_guard()));
@@ -2581,7 +2581,7 @@ impl H2FrameParser {
     }
 
     fn unregister_auto_flush(&self) {
-        if self.auto_flush_ref.with_taken(|r| r.is_none()) {
+        if self.auto_flush_ref.is_none() {
             return;
         }
         // A write that drains the buffer must not cancel the deferred tick that a pending session

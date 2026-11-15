@@ -5,7 +5,7 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-use bun_ptr::CellExt as _;
+use bun_ptr::{CellExt as _, OptionCellExt as _};
 
 use crate::{JSGlobalObject, JSValue};
 
@@ -151,7 +151,7 @@ impl StrongCell {
     }
 
     pub fn is_some(&self) -> bool {
-        self.0.with_taken(|value| value.is_some())
+        self.0.is_some()
     }
 
     pub fn set(&self, value: Strong) {

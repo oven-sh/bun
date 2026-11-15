@@ -25,9 +25,8 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, ArrayBuffer, EncodedSliceJsc as _, JSGlobalObject, JSPromise, JSValue, JsCell,
-    JsClass as _, JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
+    JsClass as _, JsRef, JsResult, StringJsc as _, Strong, StrongCell, SysErrorJsc as _,
 };
-use bun_ptr::CellExt as _;
 use bun_sys as sys;
 
 use super::codecs;
@@ -59,7 +58,7 @@ pub(crate) struct Image {
     /// Empty while `unread_blob` is `Some`.
     source: OnceCell<Source>,
     /// A Blob with no bytes in memory (`Bun.file()`, `Bun.s3()`, an fd), until `set_source`.
-    unread_blob: Cell<Option<Strong>>,
+    unread_blob: StrongCell,
     /// The bytes that `source` owns. Read on GC threads.
     estimated_size: AtomicUsize,
     pipeline: Cell<Pipeline>,
@@ -85,7 +84,7 @@ impl Default for Image {
     fn default() -> Self {
         Self {
             source: OnceCell::new(),
-            unread_blob: Cell::new(None),
+            unread_blob: StrongCell::default(),
             estimated_size: AtomicUsize::new(0),
             pipeline: Cell::new(Pipeline::default()),
             max_pixels: codecs::DEFAULT_MAX_PIXELS,
@@ -289,7 +288,7 @@ impl Image {
     fn set_source_from_js(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         match source_from_js(global, value)? {
             Some(source) => self.set_source(source),
-            None => self.unread_blob.set(Some(Strong::create(value, global))),
+            None => self.unread_blob.set(Strong::create(value, global)),
         }
         Ok(())
     }
@@ -306,13 +305,8 @@ impl Image {
         };
         if self.source.set(source).is_ok() {
             self.estimated_size.store(size, Ordering::Relaxed);
-            self.unread_blob.set(None);
+            self.unread_blob.clear();
         }
-    }
-
-    fn unread_blob(&self) -> Option<JSValue> {
-        self.unread_blob
-            .with_taken(|blob| blob.as_ref().map(Strong::get))
     }
 
     pub(crate) fn estimated_size(&self) -> usize {
@@ -1095,7 +1089,7 @@ impl Image {
         kind: Kind,
         deliver: Deliver,
     ) -> JsResult<JSValue> {
-        if let Some(blob_js) = self.unread_blob() {
+        if let Some(blob_js) = self.unread_blob.get() {
             return BlobReadChain::start(self, cx, this_value, blob_js, kind, deliver);
         }
         let (input, pin) = match self.pin_for_task(this_value, cx.global()) {
@@ -1156,7 +1150,7 @@ impl Image {
         // fall back to the `.path` source — `run()` reads it inline. fd/S3-backed
         // BunFiles would block or need network; refuse with a clear message until
         // the body path is made `.Locked`.
-        if let Some(blob_js) = self.unread_blob() {
+        if let Some(blob_js) = self.unread_blob.get() {
             const REFUSE: &str = "Image: fd/S3-backed Bun.file as a Response body — pass `await file.bytes()` or a path string";
             let Some(blob) = blob_js.as_class_ref::<Blob>() else {
                 return Err(global.throw(format_args!("{REFUSE}")));

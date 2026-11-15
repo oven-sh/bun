@@ -1385,13 +1385,24 @@ describe.concurrent("--parallel: the run ends", () => {
   });
 
   test("with the crash of a worker that closes fd 3 while it shuts down", async () => {
-    // Nothing shows that the coordinator has seen the end of the channel, so it gets a moment.
-    const crashesAtExit = `process.on("exit", () => {
+    // Linux shows when the coordinator is through with the end of the channel: it has closed its side, and sleeps again.
+    const closesAndWaitsForThat = `
+      const parent = "/proc/" + process.ppid;
+      const isSocket = fd => statSync(parent + "/fd/" + fd, {throwIfNoEntry: false})?.isSocket();
+      const sockets = () => readdirSync(parent + "/fd").filter(isSocket).length;
+      const before = sockets();
       closeSync(3);
-      Bun.sleepSync(20);
+      const deadline = performance.now() + 20_000;
+      while (sockets() === before || !readFileSync(parent + "/status", "utf8").includes("State:\\tS")) {
+        if (performance.now() > deadline) return console.log("the coordinator has not closed its side");
+        Bun.sleepSync(1);
+      }`;
+    const crashesAtExit = `process.on("exit", () => {
+      ${isLinux ? closesAndWaitsForThat : `closeSync(3); Bun.sleepSync(20);`}
       require("bun:internal-for-testing").crash_handler.fastfail();
     });`;
-    const { stderr, exitCode } = await run(file("a"), file("b", crashesAtExit, "node:test"), ["--no-isolate"]);
+    const b = `import {readdirSync, readFileSync, statSync} from "fs"; ${file("b", crashesAtExit, "node:test")}`;
+    const { stderr, exitCode } = await run(file("a"), b, ["--no-isolate"]);
     const status = isWindows ? "exit code 0xC0000409" : "SIGABRT";
     expect(stderr).toContain(`crashed with ${status} while it was not running a test file`);
     expect(stderr).toContain("\n 2 pass\n 0 fail\n 1 error\n");

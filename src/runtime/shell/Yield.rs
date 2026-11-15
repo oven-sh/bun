@@ -10,14 +10,15 @@ use bun_collections::smallvec::SmallVec;
 use crate::shell::interpreter::{Interpreter, NodeId, StateKind};
 use crate::shell::io_reader::{IOReader, IOReaderId};
 use crate::shell::io_writer::IOWriterId;
+use crate::shell::states::cmd::JsRedirect;
 use crate::shell::states::pipeline::Pipeline;
-use crate::shell::{ExitCode, ShellErr, ast};
+use crate::shell::{ExitCode, ShellErr};
 
 /// A "continuation" of the shell interpreter. Shell state-machine functions
 /// return a `Yield`; `Yield::run(&mut Interpreter)` is the trampoline that
 /// drives execution without blowing up the call stack.
 ///
-/// Variants name the *next state to step* by `NodeId`. The trampoline looks
+/// Most variants name the *next state to step* by `NodeId`. The trampoline looks
 /// up the node and matches on its kind (hoisted dispatch — see
 /// `Interpreter::next_node`).
 // OnIoWriterChunk's `err` is constructed inline at several sites in IOWriter.rs;
@@ -52,9 +53,9 @@ pub(crate) enum Yield {
 
 /// Can run JS or I/O callbacks: `ShellInterpreter::run_yield` does it with no borrow of the `Interpreter`.
 pub(crate) enum ReentrantAction {
-    /// The node holds nothing in flight.
+    /// Throws the error, then runs `Yield::Failed`.
     Throw(NodeId, Box<ShellErr>),
-    StartBuiltinWithJsBuf(NodeId, ast::JSBuf, ast::RedirectFlags),
+    StartBuiltinWithJsBuf(NodeId, JsRedirect),
     Spawn(NodeId),
     TickMiniLoop(NodeId),
     Finish(ExitCode),

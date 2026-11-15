@@ -50,7 +50,7 @@ impl<'a> Async<'a> {
             state: AsyncState::Idle,
             event_loop: evtloop,
             task: bun_ptr::AliasableBox::new(crate::shell::dispatch_tasks::ShellAsyncTask {
-                interp: interp.as_ctx_ptr(),
+                interp: interp.shell_interp,
                 node: core::cell::Cell::new(NodeId::NONE),
             }),
         }));
@@ -185,7 +185,8 @@ impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellAsyncTask {
 }
 
 impl crate::shell::dispatch_tasks::ShellAsyncTask {
-    /// SAFETY: `this` was queued by `enqueue_self`, and the queue is running it.
+    /// # Safety
+    /// `this` was queued by `enqueue_self`, and the queue is running it.
     pub(crate) unsafe fn run_from_main_thread(this: *mut Self) {
         // SAFETY: fn contract. The node that owns it is freed at the tail of this bounce chain,
         // which the script waits for.

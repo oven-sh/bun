@@ -122,7 +122,6 @@ pub(crate) use yield_::Yield;
 /// owning modules are still gated. See `dispatch_tasks.rs` header.
 pub(crate) mod dispatch_tasks;
 
-/// `bun.shell.subproc`.
 #[path = "subproc.rs"]
 pub(crate) mod subproc;
 

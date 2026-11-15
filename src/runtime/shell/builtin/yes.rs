@@ -1,9 +1,9 @@
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinState, Impl, Kind};
-use crate::shell::interpreter::{EventLoopHandle, Interpreter, Node, NodeId, ShellInterpreter};
+use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId, ShellInterpreter};
 use crate::shell::io::OutFd;
 use crate::shell::io_writer::{ChildPtr, WriterTag};
-use crate::shell::states::cmd::{Cmd, Exec};
+use crate::shell::states::cmd::Exec;
 use crate::shell::yield_::{ReentrantAction, Yield};
 
 use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
@@ -65,7 +65,7 @@ impl Yes {
         }
 
         let evtloop = interp.event_loop;
-        let interp_ptr = interp.as_ctx_ptr();
+        let interp_ptr = interp.shell_interp;
         {
             let me = Self::state_mut(interp, cmd);
             me.buffer = buf;
@@ -93,9 +93,7 @@ impl Yes {
         // are accessible simultaneously — the buffer is written zero-copy,
         // which matters for `yes` throughput.
         let err = {
-            let Node::Cmd(cmd_node) = &mut interp.nodes[cmd.idx()] else {
-                unreachable!()
-            };
+            let cmd_node = interp.nodes[cmd.idx()].as_cmd_mut();
             let shell = cmd_node.shell.id();
             let Exec::Builtin(me) = &mut cmd_node.exec else {
                 unreachable!()
@@ -149,11 +147,7 @@ impl Yes {
     fn enqueue_chunk(interp: &mut Interpreter<'_>, cmd: NodeId, fd: OutFd) -> Yield {
         let child = ChildPtr::new(cmd, WriterTag::Builtin);
         // Split-borrow so the tiled buffer is enqueued zero-copy.
-        let Node::Cmd(Cmd {
-            exec: Exec::Builtin(me),
-            ..
-        }) = &mut interp.nodes[cmd.idx()]
-        else {
+        let Exec::Builtin(me) = &mut interp.nodes[cmd.idx()].as_cmd_mut().exec else {
             unreachable!()
         };
         let yes = Self::extract(&mut me.impl_);
@@ -254,7 +248,8 @@ impl YesTask {
         }
     }
 
-    /// SAFETY: `this` was queued by [`enqueue`](Self::enqueue), and the queue is running it.
+    /// # Safety
+    /// `this` was queued by [`enqueue`](Self::enqueue), and the queue is running it.
     pub(crate) unsafe fn run_from_main_thread(this: *mut Self) {
         // SAFETY: fn contract. The script does not finish before the task has run.
         let (shell_interp, cmd) = unsafe { ((*this).interp.as_ref(), (*this).cmd) };

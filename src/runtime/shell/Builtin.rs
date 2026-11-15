@@ -9,13 +9,13 @@ use crate::node::fs::{note_shell_redirect, open_embedded_shell_operand, refuse_s
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{
-    Interpreter, Node, NodeId, ParseError, ShellExecEnv, ShellExecEnvId, ShellExecEnvs,
-    ShellInterpreter, is_pollable_from_mode, shell_openat,
+    Interpreter, NodeId, ParseError, ShellExecEnv, ShellExecEnvId, ShellExecEnvs, ShellInterpreter,
+    is_pollable_from_mode, shell_openat,
 };
 use crate::shell::io::{OutFd, OutKind};
 use crate::shell::io_reader::{IOReader, IOReaderId};
 use crate::shell::io_writer::{self, IOWriter, IOWriterId};
-use crate::shell::states::cmd::{Cmd, CmdState};
+use crate::shell::states::cmd::{Cmd, CmdState, JsRedirect};
 use crate::shell::yield_::{ReentrantAction, Yield};
 
 pub(crate) struct Builtin {
@@ -220,11 +220,7 @@ impl Kind {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum IoKind {
-    Stdout,
-    Stderr,
-}
+pub(crate) use crate::shell::ast::IoKind;
 
 // ──────────────────────────────────────────────────────────────────────────
 // BuiltinIO
@@ -235,7 +231,7 @@ pub(crate) enum IoKind {
 // of a local Vec flushed in `done()`, `write_no_io` appends straight to the
 // shell env's captured buffer (one less copy). The variant carries its flush
 // target so `2>&1` (which makes `stderr` a shallow copy of `stdout`) routes
-// stderr writes to `buffered_stdout`.
+// stderr writes to `_buffered_stdout`.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// One output stream of a builtin (stdout or stderr).
@@ -277,7 +273,7 @@ impl BuiltinIO {
         }
     }
 
-    /// Bump refcounts and return a shallow copy. Only reachable from the
+    /// Returns a shallow copy. Only reachable from the
     /// `duplicate_out` path, which fires before any `.jsbuf` redirect, so
     /// `ArrayBuf`/`Blob` are unreachable here. The `Buf` target is copied
     /// verbatim so stderr writes accumulate in (and flush from) stdout's
@@ -543,7 +539,11 @@ impl Builtin {
                 }
             }
             Some(ast::Redirect::JsBuf(jsbuf)) => {
-                let action = ReentrantAction::StartBuiltinWithJsBuf(cmd, *jsbuf, redirect);
+                let redirect = JsRedirect {
+                    buf: *jsbuf,
+                    flags: redirect,
+                };
+                let action = ReentrantAction::StartBuiltinWithJsBuf(cmd, redirect);
                 return Some(Yield::Action(action));
             }
             None if redirect.duplicate_out() => {
@@ -567,8 +567,10 @@ impl Builtin {
     pub(crate) fn start_with_jsbuf_redirection(
         shell_interp: &ShellInterpreter,
         cmd: NodeId,
-        jsbuf: ast::JSBuf,
-        redirect: ast::RedirectFlags,
+        JsRedirect {
+            buf: jsbuf,
+            flags: redirect,
+        }: JsRedirect,
     ) -> JsResult<Yield> {
         let Some(global) = shell_interp.global_this_ref() else {
             return Err(shell_interp.throw(crate::shell::ShellErr::Custom(
@@ -728,7 +730,7 @@ impl Builtin {
     }
 
     /// Write `buf` to stdout/stderr without going through IOWriter (the
-    /// stream is a captured buffer / arraybuffer / blob / /dev/null).
+    /// stream is a captured buffer / arraybuffer / blob).
     ///
     /// Returns `Err(ENOSPC)` when an ArrayBuffer target is already full.
     /// **WARNING**: caller must have checked `needs_io() == None` first.
@@ -743,9 +745,7 @@ impl Builtin {
         }
         // Split-borrow the interpreter so `shells`
         // and the builtin's stdout/stderr are accessible simultaneously.
-        let Node::Cmd(cmd_node) = &mut interp.nodes[cmd.idx()] else {
-            unreachable!()
-        };
+        let cmd_node = interp.nodes[cmd.idx()].as_cmd_mut();
         let shell = cmd_node.shell.id();
         let crate::shell::states::cmd::Exec::Builtin(me) = &mut cmd_node.exec else {
             panic!("Cmd {} is not running a builtin", cmd);

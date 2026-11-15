@@ -78,7 +78,7 @@ pub(crate) struct SubprocExec<'a> {
     /// `spawn_async` has not returned, so `finish_if_done` must not finish the `Cmd`.
     pub(crate) is_spawning: bool,
 
-    /// Keeps it inside its `Interpreter<'a>`.
+    /// Ties it to `Interpreter<'a>`, so it cannot leave a `with_interp` closure.
     _interp: PhantomData<&'a ()>,
 }
 
@@ -220,7 +220,7 @@ impl<'a> SubprocExec<'a> {
         cmd: NodeId,
         mut spawn_args: SpawnArgs<'_>,
     ) -> sh::Result<Spawned> {
-        let (shell_interp, event_loop) = (interp.as_ctx_ptr(), interp.event_loop);
+        let (shell_interp, event_loop) = (interp.shell_interp, interp.event_loop);
         let owner_ptr = shell_interp.as_ptr().cast();
 
         #[cfg(unix)]
@@ -239,7 +239,7 @@ impl<'a> SubprocExec<'a> {
             stdin: spawn_option(0)?,
             stdout: spawn_option(1)?,
             stderr: spawn_option(2)?,
-            cwd: interp.shells[interp.as_cmd(cmd).shell.id()].cwd().into(),
+            cwd: Builtin::shell(interp, cmd).cwd().into(),
             #[cfg(unix)]
             no_sigpipe,
             #[cfg(windows)]
@@ -253,7 +253,10 @@ impl<'a> SubprocExec<'a> {
 
         let args = core::mem::take(&mut interp.as_cmd_mut(cmd).args);
         let mut argv = Vec::with_capacity(args.len() + 1);
-        argv.extend((args.iter()).map(|arg| Some(CStrRef::from_slice_with_nul(arg))));
+        argv.extend(
+            args.iter()
+                .map(|arg| Some(CStrRef::from_slice_with_nul(arg))),
+        );
         let argv = CStrList::from_unterminated(&mut argv);
         let envp = CStrList::from_unterminated(&mut spawn_args.env_array);
 
@@ -477,19 +480,21 @@ impl ShellSubprocess {
         event: Option<IoEvent>,
     ) -> ReadResult {
         let event_loop = shell_interp.event_loop.as_event_loop_ctx();
-        (self.reader(kind)).read_chunks(event_loop, event, |chunk, has_more| {
-            log!(
-                "PipeReader({}, {}) onReadChunk(chunk_len={}, has_more={})",
-                self.cmd,
-                io_kind_str(kind),
-                chunk.len(),
-                read_state_str(has_more)
-            );
-            shell_interp
-                .run_yield_with(|interp| PipeReader::on_read_chunk(interp, self.cmd, kind, &chunk));
-            // The read loop re-registers the poll itself based on the bool we return.
-            has_more != ReadState::Eof
-        })
+        self.reader(kind)
+            .read_chunks(event_loop, event, |chunk, has_more| {
+                log!(
+                    "PipeReader({}, {}) onReadChunk(chunk_len={}, has_more={})",
+                    self.cmd,
+                    io_kind_str(kind),
+                    chunk.len(),
+                    read_state_str(has_more)
+                );
+                shell_interp.run_yield_with(|interp| {
+                    PipeReader::on_read_chunk(interp, self.cmd, kind, &chunk)
+                });
+                // The read loop re-registers the poll itself based on the bool we return.
+                has_more != ReadState::Eof
+            })
     }
 
     /// # Safety
@@ -740,7 +745,9 @@ impl PipeReader {
 
     fn is_done(&self) -> bool {
         !matches!(self.state, PipeReaderState::Pending)
-            && (self.captured_writer.as_ref())
+            && self
+                .captured_writer
+                .as_ref()
                 .is_none_or(|cw| cw.errno.is_some() || cw.written >= self.buffered_output.len())
     }
 

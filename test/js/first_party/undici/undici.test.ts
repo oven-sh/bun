@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { Readable } from "node:stream";
-// @ts-ignore undici 5's types don't declare ping() and the undici 8 names
 import * as undici from "undici";
+// @ts-ignore undici 5's types don't declare ping() and the undici 8 names
 import {
   Agent,
   Dispatcher,
@@ -638,6 +638,7 @@ describe.concurrent("undici 8 exports", () => {
       expect(wrapper instanceof Dispatcher).toBe(true);
       expect(wrapper instanceof Dispatcher1Wrapper).toBe(true);
     }
+    expect(undici.getGlobalDispatcher() instanceof Agent).toBe(true);
     expect(new Dispatcher1Wrapper(undici.getGlobalDispatcher()) instanceof Dispatcher).toBe(true);
 
     for (const bad of [undefined, null, {}, { dispatch: 1 }]) {
@@ -660,6 +661,16 @@ describe.concurrent("undici 8 exports", () => {
       expect(await new Dispatcher1Wrapper(dispatcher).close()).toBe(null);
       expect(await new Dispatcher1Wrapper(dispatcher).destroy(new Error("why"))).toBe(null);
     }
+    expect(await new Dispatcher1Wrapper(undici.getGlobalDispatcher()).close()).toBe(null);
+    for (const bad of [null, 42, "done"]) {
+      expect(() => new Agent().close(bad)).toThrow(
+        expect.objectContaining({ name: "InvalidArgumentError", message: "invalid callback" }),
+      );
+      expect(() => new Agent().destroy(new Error("why"), bad)).toThrow(
+        expect.objectContaining({ name: "InvalidArgumentError", message: "invalid callback" }),
+      );
+    }
+    expect(new errors.InvalidArgumentError("bad", { cause: 1 }).cause).toBe(1);
     const closed = Promise.withResolvers<unknown[]>();
     const destroyed = Promise.withResolvers<unknown[]>();
     new Agent().close((...args: unknown[]) => closed.resolve(args));

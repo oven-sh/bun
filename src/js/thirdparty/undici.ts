@@ -266,13 +266,15 @@ type DispatcherCallback = (err: Error | null, data: null) => void;
 // https://github.com/nodejs/undici/blob/v8.12.4/lib/dispatcher/dispatcher-base.js
 class DispatcherBase extends Dispatcher {
   close(callback?: DispatcherCallback) {
-    if (callback === undefined) return Promise.resolve(null);
+    if (callback === undefined) return Promise.$resolve(null);
+    if (typeof callback !== "function") throw new InvalidArgumentError("invalid callback");
     queueMicrotask(() => callback(null, null));
   }
 
   destroy(err?: Error | DispatcherCallback | null, callback?: DispatcherCallback) {
     if (typeof err === "function") callback = err;
-    if (callback === undefined) return Promise.resolve(null);
+    if (callback === undefined) return Promise.$resolve(null);
+    if (typeof callback !== "function") throw new InvalidArgumentError("invalid callback");
     queueMicrotask(() => callback(null, null));
   }
 }
@@ -415,8 +417,8 @@ class ResponseStatusCodeError extends UndiciError {}
 class InvalidArgumentError extends UndiciError {
   declare code: string;
 
-  constructor(message?: string) {
-    super(message || "Invalid Argument Error");
+  constructor(message?: string, options?: ErrorOptions) {
+    super(message || "Invalid Argument Error", options);
     this.name = "InvalidArgumentError";
     this.code = "UND_ERR_INVALID_ARG";
   }
@@ -621,7 +623,7 @@ function setGlobalDispatcher(dispatcher: Dispatcher) {
 }
 
 function getGlobalDispatcher() {
-  return (globalDispatcher ??= new Dispatcher());
+  return (globalDispatcher ??= new Agent());
 }
 
 // Add missing origin functions

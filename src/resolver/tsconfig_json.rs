@@ -211,17 +211,10 @@ impl TSConfigJSON {
     // "${configDir}" with "./" and then convert it to an absolute path sometimes.
     // We convert it to an absolute path during module resolution, so we shouldn't need to do that here.
     // https://github.com/microsoft/TypeScript/blob/ef802b1e4ddaf8d6e61d6005614dd796520448f8/src/compiler/commandLineParser.ts#L3243-L3245
-    fn str_replacing_templates(
-        input: Box<[u8]>,
-        source: &bun_ast::Source,
-    ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+    fn str_replacing_templates(input: Box<[u8]>, source: &bun_ast::Source) -> Box<[u8]> {
         const TEMPLATE: &[u8] = b"${configDir}";
         let mut remaining: &[u8] = &input;
-        let mut string_builder = bun_core::StringBuilder {
-            len: 0,
-            cap: 0,
-            ptr: None,
-        };
+        let mut string_builder = bun_core::StringBuilder::default();
         let config_dir = source.path.source_dir();
 
         // There's only one template variable we support, so we can keep this simple for now.
@@ -233,11 +226,11 @@ impl TSConfigJSON {
 
         // If we didn't find any template variables, return the original string without allocating.
         if remaining.len() == input.len() {
-            return Ok(input);
+            return input;
         }
 
-        string_builder.count_z(remaining);
-        string_builder.allocate()?;
+        string_builder.count(remaining);
+        let mut string_builder = string_builder.allocate();
 
         remaining = &input;
         while let Some(index) = strings::index_of(remaining, TEMPLATE) {
@@ -246,12 +239,8 @@ impl TSConfigJSON {
             remaining = &remaining[index + TEMPLATE.len()..];
         }
 
-        // The extra null-byte here is unnecessary. But it's kind of nice in the debugger sometimes.
-        let _ = string_builder.append_z(remaining);
-
-        let len = string_builder.len - 1;
-        let written = string_builder.allocated_slice();
-        Ok(Box::from(&written[..len]))
+        let _ = string_builder.append(remaining);
+        string_builder.into_boxed_slice()
     }
 
     #[inline(never)]
@@ -374,11 +363,7 @@ impl TSConfigJSON {
             // Parse "baseUrl"
             if let Some(base_url_prop) = base_url_v {
                 if let Some(base_url) = base_url_prop.as_str() {
-                    result.base_url =
-                        match Self::str_replacing_templates(Box::from(base_url), source) {
-                            Ok(v) => v,
-                            Err(_) => return Ok(None),
-                        };
+                    result.base_url = Self::str_replacing_templates(Box::from(base_url), source);
                     has_base_url = true;
                 }
             }
@@ -565,13 +550,10 @@ impl TSConfigJSON {
                                         });
                                         if let Some(str_) = item.as_str() {
                                             let item_loc = this_item_loc;
-                                            let str = match Self::str_replacing_templates(
+                                            let str = Self::str_replacing_templates(
                                                 Box::from(str_),
                                                 source,
-                                            ) {
-                                                Ok(v) => v,
-                                                Err(_) => return Ok(None),
-                                            };
+                                            );
                                             // errdefer allocator.free(str) — handled by Drop.
                                             if Self::is_valid_tsconfig_path_pattern(
                                                 &str, log, source, item_loc,

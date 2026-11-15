@@ -168,7 +168,7 @@ impl PackageManager {
                 .get_package_id(package.name_hash, None, &package.resolution)
         {
             *package_id = existing_id;
-            let mut existing = *self.lockfile.packages.get(existing_id as usize);
+            let mut existing = self.lockfile.packages.get(existing_id as usize);
             let from_lockfile = existing_id < self.lockfile.loaded_package_count;
             let moved = match existing.resolution.tag {
                 // A nested git ref can move, so `bun update` resolves the dependencies again.

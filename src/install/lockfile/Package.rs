@@ -3464,8 +3464,7 @@ pub mod serializer {
         for field in PackageField::ALL {
             if matches!(field, PackageField::Resolution) {
                 // copy each resolution to make sure the union is zero initialized
-                let resolutions: &[Resolution<SemverIntType>] =
-                    list.items::<"resolution", Resolution<SemverIntType>>();
+                let resolutions: &[Resolution<SemverIntType>] = list.items_resolution();
                 for val in resolutions {
                     // `ResolutionType::copy` builds a fresh zero-initialised
                     // `Resolution` and writes only the active union member.
@@ -3575,7 +3574,7 @@ pub mod serializer {
             )?;
 
             for pkg_id in 0..list_for_migrating_from_v2.len() {
-                let old: OldPackageV2 = *list_for_migrating_from_v2.get(pkg_id);
+                let old: OldPackageV2 = list_for_migrating_from_v2.get(pkg_id);
                 let new = Package::<SemverIntType> {
                     name: old.name,
                     name_hash: old.name_hash,
@@ -3711,7 +3710,7 @@ pub mod serializer {
                     // need to check if any values were created from an older version of bun
                     // (currently just `has_install_script`). If any are found, the values need
                     // to be updated before saving the lockfile.
-                    let metas: &[Meta] = list.items::<"meta", Meta>();
+                    let metas: &[Meta] = list.items_meta();
                     *needs_update |= metas.iter().any(Meta::needs_update);
                 }
             } else if matches!(field, PackageField::Scripts) {

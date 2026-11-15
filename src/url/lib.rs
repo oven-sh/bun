@@ -1346,10 +1346,7 @@ impl From<DecodeError> for crate::Error {
 }
 
 impl PercentEncoding {
-    pub(crate) fn decode(
-        writer: &mut impl bun_core::io::Write,
-        input: &[u8],
-    ) -> Result<u32, DecodeError> {
+    pub fn decode(writer: &mut impl bun_core::io::Write, input: &[u8]) -> Result<u32, DecodeError> {
         Self::decode_fault_tolerant::<_, false>(writer, input)
     }
 

@@ -308,7 +308,7 @@ pub(crate) fn parse_root_overrides(
     if json.as_property(b"overrides").is_none() && json.as_property(b"resolutions").is_none() {
         return Ok(());
     }
-    let root_package = *this.packages.get(0);
+    let root_package = this.packages.get(0);
     let (mut builder, lf) = this.string_builder_split();
     let fields = &mut ParseFields::new(manager);
     lf.overrides

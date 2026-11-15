@@ -1885,8 +1885,7 @@ pub mod bv2_impl {
             // ordinary assignment (every field is owned by the clone, so `Drop` on
             // the overwritten value is correct), then boxes it on the global heap
             // (NOT the bump arena — the clone holds `Box`/`Vec`/`MimallocArena`
-            // fields that need `Drop` to run) and wires the self-referential
-            // `macro_context`.
+            // fields that need `Drop` to run).
 
             // `arena` is only the scratch param for `Transpiler::for_worker`; the
             // returned `Transpiler` itself is NOT placed in it.
@@ -1926,14 +1925,10 @@ pub mod bv2_impl {
                 ct.options.public_path = b"/".to_vec().into_boxed_slice();
             }
 
-            // Move into a stable heap slot, then wire self-refs at the final
-            // address. `Box` (global mimalloc heap) so `Drop` runs on the
+            // `Box` (global mimalloc heap) so `Drop` runs on the
             // deep-cloned `BundleOptions`/`Resolver` fields; `arena.alloc` would
             // leak them (bumpalo never drops).
             let mut boxed: Box<Transpiler<'a>> = Box::new(ct);
-            // Log/allocator/linker-resolver/macro-context/cache wiring is all
-            // handled by `for_worker` + `wire_after_move`.
-            boxed.wire_after_move();
 
             // `configure_defines` early-returns on `options.defines_loaded` (cloned
             // as `true`); kept for spec parity.

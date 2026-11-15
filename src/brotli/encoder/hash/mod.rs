@@ -349,6 +349,6 @@ pub(super) trait Hasher {
         }
     }
 
-    /// The best match, or one with [`MIN_SCORE`]. Stores the position. `longer_than` is a hint.
+    /// The best match, or one with [`MIN_SCORE`]. Stores the position. `longer_than` is for [`Quick`], which skips what cannot be.
     fn find(&mut self, search: &Search<'_>, recent: &RecentDistances, longer_than: usize) -> Match;
 }

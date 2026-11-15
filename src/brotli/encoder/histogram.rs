@@ -61,7 +61,12 @@ impl<const N: usize> Histogram<N> {
 
     /// An estimate of the bits for the prefix code and for the symbols.
     pub(super) fn cost(&self) -> f64 {
-        cost(&self.used(), self.total, |symbol| self.counts[symbol])
+        self.cost_of(&self.used())
+    }
+
+    /// For a caller that knows what is [`used`](Self::used).
+    pub(super) fn cost_of(&self, used: &SymbolSet) -> f64 {
+        cost(used, self.total, |symbol| self.counts[symbol])
     }
 
     /// `used` has the symbols of both.

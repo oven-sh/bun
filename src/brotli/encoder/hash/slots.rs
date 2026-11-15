@@ -2,7 +2,6 @@
 
 use core::hint::select_unpredictable;
 
-use super::prefetch_for_store;
 use crate::memory::{self, Result};
 
 pub(in crate::encoder) trait Slots {
@@ -34,9 +33,7 @@ impl<const SIZE: usize> Slots for Dense<SIZE> {
 
     #[inline(always)]
     fn set(&mut self, index: usize, position: usize) {
-        let slot = &mut self.0[index % SIZE];
-        prefetch_for_store(slot);
-        *slot = position as u32;
+        self.0[index % SIZE] = position as u32;
     }
 
     fn clear(&mut self) {
@@ -54,9 +51,9 @@ pub(in crate::encoder) struct Paged<const PAGES: usize> {
 }
 
 impl<const PAGES: usize> Paged<PAGES> {
-    pub(in crate::encoder) fn new(input_size: u16) -> Result<Self> {
+    pub(in crate::encoder) fn new(input_size: usize) -> Result<Self> {
         let first_page = 1 + PAGES / PAGE_SIZE;
-        let pages = first_page + PAGES.min(usize::from(input_size));
+        let pages = first_page + PAGES.min(input_size);
         Ok(Self {
             entries: memory::zeroed(pages * PAGE_SIZE)?,
             next_page: first_page as u16,

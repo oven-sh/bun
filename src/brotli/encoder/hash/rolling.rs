@@ -88,7 +88,7 @@ impl<H: Hasher, const STEP: usize> Hasher for WithRolling<H, STEP> {
             };
             let found = !core::mem::replace(slot, !(position as u32));
             let distance = (position as u32).wrapping_sub(found) as usize;
-            if position == search.position && found != u32::MAX && search.reaches(distance) {
+            if position == search.position && search.reaches(distance) {
                 let length = search.match_length_at(search.window.index(found as usize));
                 if length >= 4 && length > best.length {
                     let score = score(length, distance);

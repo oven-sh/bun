@@ -19,13 +19,14 @@ pub(in crate::encoder) struct Small {
 }
 
 impl Small {
-    pub(in crate::encoder) const MAX_INPUT_SIZE: usize = NOT_STORED as usize;
+    pub(in crate::encoder) const MAX_INPUT_SIZE: usize = 1 << 16;
 
     pub(in crate::encoder) fn new(
         key_bits: u32,
         max_hops: usize,
         recent_count: usize,
     ) -> Result<Self> {
+        const { assert!(Self::MAX_INPUT_SIZE - Self::LOOKAHEAD + 1 < NOT_STORED as usize) };
         Ok(Self {
             heads: memory::zeroed(1 << key_bits)?,
             links: Vec::new(),

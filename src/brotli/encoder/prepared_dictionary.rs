@@ -1,17 +1,55 @@
+use core::ops::Range;
+
 use super::hash::{Candidate, Match, score, score_of_recent};
 use super::matching::{HASH_MULTIPLIER_64, load32, load64, match_length};
 use crate::format::MAX_ALLOWED_DISTANCE;
 use crate::memory::{self, Result};
 
 const BUCKET_LIMIT: u8 = 32;
+/// So many buckets have fewer than 2^16 entries.
+const GROUP_SIZE: usize = 1024;
 
 /// What came before the stream, and a hash table over it.
 pub(super) struct PreparedDictionary {
     bytes: Vec<u8>,
     bucket_bits: u32,
-    /// Where each bucket starts in `offsets`, and where the last one ends.
-    starts: Vec<u32>,
+    buckets: Buckets,
     offsets: Vec<u32>,
+}
+
+struct Buckets {
+    /// The low bits of where each one starts, and of where the last one ends.
+    starts: Vec<u16>,
+    group_starts: Vec<u32>,
+}
+
+impl Buckets {
+    /// And the sum of `sizes`.
+    fn new(sizes: &[u8]) -> Result<(Self, usize)> {
+        let mut starts = memory::empty(sizes.len() + 1)?;
+        let mut group_starts = memory::empty(sizes.len() / GROUP_SIZE)?;
+        let mut total = 0;
+        starts.push(0);
+        for group in sizes.as_chunks::<GROUP_SIZE>().0 {
+            group_starts.push(total);
+            starts.extend(group.iter().map(|&size| {
+                total += u32::from(size);
+                total as u16
+            }));
+        }
+        let buckets = Self {
+            starts,
+            group_starts,
+        };
+        Ok((buckets, total as usize))
+    }
+
+    #[inline(always)]
+    fn range(&self, key: usize) -> Range<usize> {
+        let base = self.group_starts[key / GROUP_SIZE];
+        let at = |i: usize| base as usize + usize::from(self.starts[i].wrapping_sub(base as u16));
+        at(key)..at(key + 1)
+    }
 }
 
 #[inline(always)]
@@ -33,24 +71,18 @@ impl PreparedDictionary {
         for (_, key) in keys() {
             room[key] = (room[key] + 1).min(BUCKET_LIMIT);
         }
-        let mut starts = memory::empty(room.len() + 1)?;
-        let mut total = 0;
-        starts.push(total);
-        starts.extend(room.iter().map(|&size| {
-            total += u32::from(size);
-            total
-        }));
-        let mut offsets = memory::zeroed(total as usize)?;
+        let (buckets, total) = Buckets::new(&room)?;
+        let mut offsets = memory::zeroed(total)?;
         for (offset, key) in keys().rev() {
             if room[key] != 0 {
-                offsets[starts[key + 1] as usize - usize::from(room[key])] = offset as u32;
+                offsets[buckets.range(key).end - usize::from(room[key])] = offset as u32;
                 room[key] -= 1;
             }
         }
         Ok(Self {
             bytes,
             bucket_bits,
-            starts,
+            buckets,
             offsets,
         })
     }
@@ -62,7 +94,7 @@ impl PreparedDictionary {
     /// The latest first.
     fn offsets_for(&self, eight_bytes: u64) -> impl Iterator<Item = usize> {
         let key = hash(eight_bytes, self.bucket_bits);
-        let bucket = &self.offsets[self.starts[key] as usize..self.starts[key + 1] as usize];
+        let bucket = &self.offsets[self.buckets.range(key)];
         bucket.iter().map(|&offset| offset as usize)
     }
 
@@ -71,7 +103,7 @@ impl PreparedDictionary {
         if distance > MAX_ALLOWED_DISTANCE as usize {
             return None;
         }
-        let length = distance.checked_sub(end_distance).filter(|&n| n != 0)?;
+        let length = distance.checked_sub(end_distance)?;
         Some(&self.bytes[self.bytes.len().checked_sub(length)?..])
     }
 

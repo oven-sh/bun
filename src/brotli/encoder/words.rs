@@ -40,7 +40,7 @@ impl QuickWordSearch {
                 continue;
             };
             let distance = first_distance + word.address(transform);
-            if length == 0 || distance > max_distance {
+            if distance > max_distance {
                 continue;
             }
             let score = score(length, distance);

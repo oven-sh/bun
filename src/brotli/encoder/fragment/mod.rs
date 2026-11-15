@@ -418,15 +418,17 @@ impl Fragments {
         trees: &mut TreeBuilder,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        try_reserve_for(input.len(), writer)?;
-        let start = writer.position();
-        match self {
-            Self::OnePass(method) => method.compress(input, trees, writer)?,
-            Self::TwoPass(method) => method.compress(input, trees, writer)?,
-        }
-        if writer.position() - start > 31 + 8 * input.len() {
-            writer.rewind(start);
-            write_uncompressed(writer, [input, &[]]);
+        if !input.is_empty() {
+            try_reserve_for(input.len(), writer)?;
+            let start = writer.position();
+            match self {
+                Self::OnePass(method) => method.compress(input, trees, writer)?,
+                Self::TwoPass(method) => method.compress(input, trees, writer)?,
+            }
+            if writer.position() - start > 31 + 8 * input.len() {
+                writer.rewind(start);
+                write_uncompressed(writer, [input, &[]]);
+            }
         }
         if is_last {
             write_empty_last(writer);

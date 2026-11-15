@@ -43,9 +43,9 @@ pub(crate) fn collected<T>(items: impl ExactSizeIterator<Item = T>) -> Result<Ve
     Ok(vec)
 }
 
-pub(crate) fn copied(bytes: &[u8]) -> Result<Vec<u8>> {
-    let mut vec = empty(bytes.len())?;
-    vec.extend_from_slice(bytes);
+pub(crate) fn copied<T: Copy>(items: &[T]) -> Result<Vec<T>> {
+    let mut vec = empty(items.len())?;
+    vec.extend_from_slice(items);
     Ok(vec)
 }
 

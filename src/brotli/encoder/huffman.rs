@@ -626,7 +626,7 @@ pub(super) fn smooth_counts(counts: &mut [u32]) {
             || (i != 0 && in_good_run[i - 1])
             || (fixed(counts[i]) as usize + STREAK_LIMIT).wrapping_sub(limit) >= 2 * STREAK_LIMIT
         {
-            if stride >= 4 || (stride >= 3 && sum == 0) {
+            if stride >= 4 {
                 let average = if sum == 0 {
                     0
                 } else {
@@ -636,11 +636,9 @@ pub(super) fn smooth_counts(counts: &mut [u32]) {
             }
             stride = 0;
             sum = 0;
-            limit = if i + 2 < length {
-                average_of_three(counts, i)
-            } else {
-                counts.get(i).map_or(0, |&count| fixed(count) as usize)
-            };
+            if i + 2 < length {
+                limit = average_of_three(counts, i);
+            }
         }
         stride += 1;
         if let Some(&count) = counts.get(i) {

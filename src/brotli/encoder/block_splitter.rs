@@ -276,34 +276,26 @@ fn cluster_blocks<const N: usize>(data: &[u16], lengths: &[usize]) -> Result<Blo
 
     let mut combiner = Combiner::default();
     let mut clusters = Vec::new();
-    let mut assignments = memory::empty(lengths.len())?;
     let mut batch = memory::empty(lengths.len().min(BATCH))?;
     let mut histograms = histograms_of_blocks();
-    while assignments.len() < lengths.len() {
+    for _ in 0..lengths.len().div_ceil(BATCH) {
         batch.clear();
         batch.extend(histograms.by_ref().take(BATCH).map(|h| Cluster::new(&h)));
-        let mut live: [u32; BATCH] = from_fn(|i| i as u32);
-        let mut merged_into = live;
-        let (live, merged_into) = (&mut live[..batch.len()], &mut merged_into[..batch.len()]);
-        let left = combiner.combine(&mut batch, merged_into, live, BATCH)?;
+        let (mut live, count): ([u32; BATCH], _) = (from_fn(|i| i as u32), batch.len());
+        let left = combiner.combine(&mut batch, &mut live[..count], BATCH)?;
         memory::try_reserve(&mut clusters, left)?;
-        let mut moved_to = [0; BATCH];
-        for &id in &live[..left] {
-            moved_to[id as usize] = clusters.len() as u32;
-            clusters.push(batch[id as usize]);
-        }
-        assignments.extend(merged_into.iter().map(|&id| moved_to[id as usize]));
+        clusters.extend(live[..left].iter().map(|&id| batch[id as usize]));
     }
     drop(batch);
 
     let mut live = memory::collected(0..clusters.len() as u32)?;
-    let left = combiner.combine(&mut clusters, &mut assignments, &mut live, MAX_BLOCK_TYPES)?;
+    let left = combiner.combine(&mut clusters, &mut live, MAX_BLOCK_TYPES)?;
     live.truncate(left);
-    let mut previous = assignments[0];
-    for (assignment, histogram) in assignments.iter_mut().zip(histograms_of_blocks()) {
+    let mut previous = 0;
+    let mut assignments = memory::collected(histograms_of_blocks().map(|histogram| {
         previous = closest(&histogram, &clusters, &live, previous);
-        *assignment = previous;
-    }
+        previous
+    }))?;
     let type_count = renumber(&mut assignments, clusters.len())?;
     BlockSplit::joined(type_count, &assignments, lengths)
 }

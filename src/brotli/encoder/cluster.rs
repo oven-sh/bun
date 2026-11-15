@@ -14,15 +14,24 @@ pub(super) struct Cluster<const N: usize> {
     cost: f64,
     /// How many histograms went into it.
     size: u32,
+    /// See [`weigh`].
+    weight: f64,
+}
+
+#[inline(always)]
+fn weigh(size: u32) -> f64 {
+    f64::from(size) * fast_log2(size as usize)
 }
 
 impl<const N: usize> Cluster<N> {
     pub(super) fn new(histogram: &Histogram<N>) -> Self {
+        let used = histogram.used();
         Self {
             histogram: *histogram,
-            used: histogram.used(),
-            cost: histogram.cost(),
+            used,
+            cost: histogram.cost_of(&used),
             size: 1,
+            weight: weigh(1),
         }
     }
 }
@@ -37,11 +46,7 @@ impl Pair {
     fn new(first: u32, second: u32, cost_change: f64) -> Self {
         // Adding zero takes the sign off a negative zero.
         let bits = (cost_change + 0.0).to_bits();
-        let sorted = if bits >= Self::SIGN {
-            !bits
-        } else {
-            bits | Self::SIGN
-        };
+        let sorted = bits ^ ((bits as i64 >> 63) as u64 | Self::SIGN);
         let clusters = (u64::from(second - first) << 32) | u64::from(first);
         Self((u128::from(sorted) << 64) | u128::from(clusters))
     }
@@ -49,6 +54,16 @@ impl Pair {
     #[inline(always)]
     fn clusters(self) -> [u32; 2] {
         [self.0 as u32, self.0 as u32 + (self.0 >> 32) as u32]
+    }
+
+    /// There are fewer than 2^31 clusters.
+    #[inline(always)]
+    fn involves(self, a: u32, b: u32) -> bool {
+        const ONES: u64 = (1 << 32) | 1;
+        let both = (self.0 as u64).wrapping_mul(ONES);
+        // A half that is zero borrows.
+        let [a, b] = [a, b].map(|id| (both ^ (u64::from(id) * ONES)).wrapping_sub(ONES));
+        (a | b) & (ONES << 31) != 0
     }
 
     fn cost_change(self) -> f64 {
@@ -61,18 +76,28 @@ impl Pair {
     }
 
     #[inline(always)]
+    fn rank(self) -> u128 {
+        self.0 & !u128::from(u32::MAX)
+    }
+
+    #[inline(always)]
     fn is_worse_than(self, other: Self) -> bool {
-        self.0 & !u128::from(u32::MAX) > other.0
+        self.rank() > other.0
     }
 }
 
+#[inline(always)]
 fn combined_cost<const N: usize>(a: &Cluster<N>, b: &Cluster<N>) -> f64 {
+    #[inline(never)]
+    fn of_both<const N: usize>(a: &Cluster<N>, b: &Cluster<N>) -> f64 {
+        a.histogram.cost_with(&b.histogram, &a.used.union(&b.used))
+    }
     if a.histogram.total == 0 {
         b.cost
     } else if b.histogram.total == 0 {
         a.cost
     } else {
-        a.histogram.cost_with(&b.histogram, &a.used.union(&b.used))
+        of_both(a, b)
     }
 }
 
@@ -90,9 +115,7 @@ impl Combiner {
         }
         let (first, second) = (a.min(b), a.max(b));
         let (a, b) = (&clusters[first as usize], &clusters[second as usize]);
-        let weigh = |size: u32| f64::from(size) * fast_log2(size as usize);
-        let cost_change =
-            0.5 * (weigh(a.size) + weigh(b.size) - weigh(a.size + b.size)) - a.cost - b.cost;
+        let cost_change = 0.5 * (a.weight + b.weight - weigh(a.size + b.size)) - a.cost - b.cost;
         let cost = combined_cost(a, b);
         if a.histogram.total != 0 && b.histogram.total != 0 {
             let best = self.pairs.first();
@@ -112,11 +135,10 @@ impl Combiner {
         }
     }
 
-    /// Merges while that saves bits or there are too many. Returns how many are left at the start of `live`.
+    /// Merges while that saves bits or there are too many. Returns how many are left at the start of `live`. The first one stays.
     pub(super) fn combine<const N: usize>(
         &mut self,
         clusters: &mut [Cluster<N>],
-        assignments: &mut [u32],
         live: &mut [u32],
         max_clusters: usize,
     ) -> Result<usize> {
@@ -145,14 +167,7 @@ impl Combiner {
             kept.histogram.merge(&merged.histogram);
             kept.used = kept.used.union(&merged.used);
             kept.size += merged.size;
-            // An unconditional store becomes vector instructions.
-            for assignment in assignments.iter_mut() {
-                *assignment = if *assignment == second {
-                    first
-                } else {
-                    *assignment
-                };
-            }
+            kept.weight = weigh(kept.size);
             if let Some(at) = live[..count].iter().position(|&id| id == second) {
                 live.copy_within(at + 1..count, at);
             }
@@ -166,19 +181,22 @@ impl Combiner {
         Ok(count)
     }
 
+    #[inline(never)]
     fn remove_pairs_with(&mut self, a: u32, b: u32) {
         let pairs = &mut *self.pairs;
         let mut best = Pair(u128::MAX);
+        // The compiler does not keep it in registers by itself.
+        let mut rank = best.rank();
         let mut kept = 0;
         for i in 0..pairs.len() {
             let pair = pairs[i];
-            let [first, second] = pair.clusters();
-            let keep = (first != a) & (first != b) & (second != a) & (second != b);
+            let keep = !pair.involves(a, b);
             pairs[kept] = pair;
-            if best.is_worse_than(pair) {
+            if rank > pair.0 {
                 core::hint::cold_path();
                 if keep {
                     pairs[kept] = core::mem::replace(&mut best, pair);
+                    rank = best.rank();
                 }
             }
             kept += usize::from(keep);
@@ -234,25 +252,22 @@ pub(super) fn cluster_histograms<const N: usize>(
     max_clusters: usize,
 ) -> Result<(Vec<Histogram<N>>, Vec<u32>)> {
     let mut clusters = memory::collected(histograms.iter().map(Cluster::new))?;
-    let mut assignments = memory::collected(0..histograms.len() as u32)?;
     let mut live = memory::empty(histograms.len())?;
     let mut combiner = Combiner::default();
-    for (batch, assignments) in assignments.chunks_mut(BATCH).enumerate() {
+    for first in (0..histograms.len()).step_by(BATCH) {
         let start = live.len();
-        let first = (batch * BATCH) as u32;
-        live.extend(first..first + assignments.len() as u32);
-        let left =
-            combiner.combine(&mut clusters, assignments, &mut live[start..], max_clusters)?;
+        live.extend(first as u32..histograms.len().min(first + BATCH) as u32);
+        let left = combiner.combine(&mut clusters, &mut live[start..], max_clusters)?;
         live.truncate(start + left);
     }
-    let left = combiner.combine(&mut clusters, &mut assignments, &mut live, max_clusters)?;
+    let left = combiner.combine(&mut clusters, &mut live, max_clusters)?;
     live.truncate(left);
 
-    let mut previous = assignments[0];
-    for (assignment, histogram) in assignments.iter_mut().zip(histograms) {
+    let mut previous = 0;
+    let mut assignments = memory::collected(histograms.iter().map(|histogram| {
         previous = closest(histogram, &clusters, &live, previous);
-        *assignment = previous;
-    }
+        previous
+    }))?;
     drop(clusters);
     let count = renumber(&mut assignments, histograms.len())?;
     let mut merged = memory::filled(Histogram::EMPTY, count)?;

@@ -66,7 +66,7 @@ impl MatchFinder {
         };
         let is_small = is_only && first.length <= max_small_size;
         let bucket_size_bits = quality - 1;
-        Ok(match (quality, is_small.then_some(first.length as u16)) {
+        Ok(match (quality, is_small.then_some(first.length)) {
             (..=2, Some(size)) => Self::Quick2Small(Quick::new(Paged::new(size)?)),
             (..=2, None) => Self::Quick2(Quick::new(Dense::new()?)),
             (3, _) if rolling => Self::Quick3Rolling(WithRolling::new(Quick::new(Dense::new()?))?),
@@ -99,7 +99,7 @@ impl MatchFinder {
                 6 => Self::Tagged6Large(TaggedBuckets::new()?),
                 _ => Self::BucketsLarge(Buckets::new(bucket_size_bits, recent_count)?),
             },
-            (5 | 6, _) if first.length <= max_small_size => {
+            (5 | 6, _) if is_small || first.length < max_small_size => {
                 Self::Small(Small::new(14, 1 << bucket_size_bits, recent_count)?)
             }
             (5, _) => Self::Tagged5(TaggedBuckets::new()?),
@@ -299,7 +299,6 @@ fn add_greedily<H: Hasher>(
     let block = *block;
     let store_end = block.store_end(H::LOOKAHEAD);
     let patience = if block.params.quality < 9 { 64 } else { 512 };
-    let thorough = block.params.quality >= 5;
     let mut position = block.position;
     let mut padded = block.padded();
     let mut literals_start = position - commands.pending_literals;
@@ -330,11 +329,6 @@ fn add_greedily<H: Hasher>(
 
         for _ in 0..4 {
             let after = &padded[1..];
-            let longer_than = if thorough {
-                0
-            } else {
-                (best.length - 1).min(after.len() - SLACK)
-            };
             let next = find(
                 hasher,
                 &block,
@@ -342,7 +336,7 @@ fn add_greedily<H: Hasher>(
                 &recent,
                 position + 1,
                 after,
-                longer_than,
+                best.length - 1,
             );
             if next.score < best.score + LAZY_MARGIN {
                 break;

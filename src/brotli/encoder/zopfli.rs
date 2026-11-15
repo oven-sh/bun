@@ -11,12 +11,13 @@ use super::hash::{BinaryTree, BytePair, Candidate};
 use super::histogram::DISTANCE_SYMBOLS;
 use super::input_block::InputBlock;
 use super::literal_cost;
-use super::log2::fast_log2;
+use super::log2::{const_log2, fast_log2};
 use super::matching::match_length;
+use super::ring_buffer::Window;
 use super::symbol_set::SymbolSet;
 use crate::format::{
-    COMMAND_SYMBOLS, COPY_LENGTH_CODES, INSERT_LENGTH_CODES, LITERAL_SYMBOLS, SHORT_CODE_BASES,
-    SHORT_CODE_DELTAS, SHORT_COPY_END,
+    Alphabet, COMMAND_SYMBOLS, COPY_LENGTH_CODES, INSERT_LENGTH_CODES, LITERAL_SYMBOLS,
+    SHORT_CODE_BASES, SHORT_CODE_DELTAS, SHORT_COPY_END,
 };
 use crate::memory::{self, Result};
 
@@ -80,99 +81,103 @@ const LANES: usize = 4;
 
 type CostByCopyLength = [f32; SHORT_COPY_END + LANES];
 
+const SHORT_COPY_CODES: [u8; SHORT_COPY_END + LANES] = codes_of_short_lengths(&COPY_LENGTH_CODES);
+
 static COPY_EXTRA_BITS: CostByCopyLength = {
-    let codes: [u8; SHORT_COPY_END + LANES] = codes_of_short_lengths(&COPY_LENGTH_CODES);
     let (mut bits, mut length) = ([0.0; _], 0);
-    while length < codes.len() {
-        bits[length] = COPY_LENGTH_CODES[codes[length] as usize].extra_bits as f32;
+    while length < bits.len() {
+        bits[length] = COPY_LENGTH_CODES[SHORT_COPY_CODES[length] as usize].extra_bits as f32;
         length += 1;
     }
     bits
 };
 
-struct CostModel {
-    commands: Box<[f32; COMMAND_SYMBOLS]>,
+#[derive(Clone, Copy)]
+struct SymbolCosts {
+    commands: [f32; COMMAND_SYMBOLS],
     /// Of the command symbol, for each insert length code.
-    with_distance: Box<[CostByCopyLength; 24]>,
-    with_last_distance: Box<[CostByCopyLength; 8]>,
-    distances: Box<[f32; DISTANCE_SYMBOLS]>,
+    with_distance: [CostByCopyLength; 24],
+    with_last_distance: [CostByCopyLength; 8],
+    distances: [f32; DISTANCE_SYMBOLS],
     cheapest_command: f32,
-    /// Of all the bytes before each position.
-    literals: Vec<f32>,
 }
 
-impl CostModel {
-    fn from_literal_costs(data: &[u8]) -> Result<Self> {
-        let mut literals = memory::empty(data.len() + 1)?;
-        literals.push(0.0);
-        literal_cost::estimate(data, &mut literals);
-        accumulate(&mut literals);
-        let mut model = Self {
-            commands: memory::filled_array(0.0)?,
-            with_distance: memory::filled_array([0.0; _])?,
-            with_last_distance: memory::filled_array([0.0; _])?,
-            distances: memory::filled_array(0.0)?,
-            cheapest_command: 0.0,
-            literals,
-        };
-        for (costs, first) in [
-            (&mut model.commands[..], 11),
-            (&mut model.distances[..], 20),
-        ] {
-            for (i, cost) in costs.iter_mut().enumerate() {
-                *cost = fast_log2(first + i) as f32;
-            }
+static FIRST_GUESS: SymbolCosts = {
+    const fn logarithms_from<const N: usize>(first: u32) -> [f32; N] {
+        let (mut costs, mut i) = ([0.0; N], 0);
+        while i < N {
+            costs[i] = const_log2(first + i as u32);
+            i += 1;
         }
-        model.commands_changed();
-        Ok(model)
+        costs
     }
+    let mut costs = SymbolCosts {
+        commands: logarithms_from(11),
+        with_distance: [[0.0; _]; _],
+        with_last_distance: [[0.0; _]; _],
+        distances: logarithms_from(20),
+        cheapest_command: 0.0,
+    };
+    costs.commands_changed();
+    costs
+};
 
-    fn commands_changed(&mut self) {
-        self.cheapest_command = self.commands.iter().copied().fold(UNREACHED, f32::min);
-        for (rows, use_last) in [
-            (&mut self.with_distance[..], false),
-            (&mut self.with_last_distance[..], true),
-        ] {
-            for (insert_code, row) in rows.iter_mut().enumerate() {
-                for (length, cost) in row.iter_mut().enumerate() {
-                    let copy_code = copy_length_code(length);
-                    let symbol = combine_length_codes(insert_code, copy_code, use_last);
-                    *cost = self.commands[usize::from(symbol)];
+impl SymbolCosts {
+    const fn commands_changed(&mut self) {
+        self.cheapest_command = UNREACHED;
+        let mut i = 0;
+        while i < COMMAND_SYMBOLS {
+            self.cheapest_command = self.cheapest_command.min(self.commands[i]);
+            i += 1;
+        }
+        let mut length = 0;
+        while length < SHORT_COPY_CODES.len() {
+            let (copy_code, mut insert_code) = (SHORT_COPY_CODES[length] as usize, 0);
+            while insert_code < self.with_distance.len() {
+                let symbol = combine_length_codes(insert_code, copy_code, false);
+                self.with_distance[insert_code][length] = self.commands[symbol as usize];
+                if insert_code < self.with_last_distance.len() {
+                    let symbol = combine_length_codes(insert_code, copy_code, true);
+                    self.with_last_distance[insert_code][length] = self.commands[symbol as usize];
                 }
+                insert_code += 1;
             }
+            length += 1;
         }
     }
 
-    /// `commands` start at `start`, which may be before the block.
-    fn set_from_commands(&mut self, block: &InputBlock<'_>, start: usize, commands: &[Command]) {
-        let mut literals = [0; LITERAL_SYMBOLS];
+    fn set_from(&mut self, commands: &[Command], alphabet: Alphabet) {
         let mut symbols = [0; COMMAND_SYMBOLS];
         let mut distances = [0; DISTANCE_SYMBOLS];
-        let mut position = start;
         for command in commands {
             symbols[command.symbol()] += 1;
-            if command.has_distance_symbol() {
-                distances[command.distance().symbol()] += 1;
-            }
-            for part in block.window.parts(position, command.insert_length()) {
-                for &literal in part {
-                    literals[usize::from(literal)] += 1;
-                }
-            }
-            position += command.insert_length() + command.copy_length();
+            distances[command.distance().symbol()] += u32::from(command.has_distance_symbol());
         }
-        let mut literal_costs = [0.0; LITERAL_SYMBOLS];
-        set_costs(&literals, false, &mut literal_costs);
-        set_costs(&symbols, true, &mut *self.commands);
-        let used = block.params.distance.alphabet.size as usize;
-        set_costs(&distances[..used], true, &mut *self.distances);
+        set_costs(&symbols, true, &mut self.commands);
+        let distances = &distances[..alphabet.size as usize];
+        set_costs(distances, true, &mut self.distances);
         self.commands_changed();
-        let data = block.data_from(block.position);
-        for (cost, &literal) in self.literals[1..].iter_mut().zip(data) {
-            *cost = literal_costs[usize::from(literal)];
-        }
-        accumulate(&mut self.literals);
     }
+}
+
+/// `commands` start at `position`.
+fn literal_costs_in(
+    commands: &[Command],
+    window: Window<'_>,
+    mut position: usize,
+) -> [f32; LITERAL_SYMBOLS] {
+    let mut literals = [0; LITERAL_SYMBOLS];
+    for command in commands {
+        for part in window.parts(position, command.insert_length()) {
+            for &literal in part {
+                literals[usize::from(literal)] += 1;
+            }
+        }
+        position += command.insert_length() + command.copy_length();
+    }
+    let mut costs = [0.0; LITERAL_SYMBOLS];
+    set_costs(&literals, false, &mut costs);
+    costs
 }
 
 fn set_costs(histogram: &[u32], count_missing: bool, costs: &mut [f32]) {
@@ -205,31 +210,76 @@ fn accumulate(costs: &mut [f32]) {
 
 const MAX_STARTS: usize = 5;
 
+#[derive(Clone, Copy, Default)]
+struct Start {
+    cost: f32,
+    last_distances: [i32; 4],
+}
+
 /// The best positions for a command to start at: those that cost the least, compared with nothing but literals.
-#[derive(Default)]
 struct Starts {
-    /// The bits of the difference, which is not positive, and below them the offset. The largest number is the best.
+    /// From the high bits: the difference, which is not positive, the offset, and the slot. The largest number is the best.
     sorted: [u64; MAX_STARTS],
     count: usize,
+    slots: [Start; Self::SLOTS],
+    free_slot: u64,
 }
 
 impl Starts {
-    #[inline(always)]
-    fn push(&mut self, offset: usize, relative_cost: f32, max_count: usize) {
-        let mut moved = (u64::from(relative_cost.to_bits()) << 32) | offset as u64;
-        for slot in &mut self.sorted {
-            (*slot, moved) = (moved.max(*slot), moved.min(*slot));
+    const SLOTS: usize = (MAX_STARTS + 1).next_power_of_two();
+
+    fn new() -> Self {
+        Self {
+            sorted: core::array::from_fn(|rank| (MAX_STARTS - 1 - rank) as u64),
+            count: 0,
+            slots: Default::default(),
+            free_slot: MAX_STARTS as u64,
         }
-        self.count = max_count.min(self.count + 1);
     }
 
     #[inline(always)]
-    fn get(&self, rank: usize) -> (usize, f32) {
+    fn push(&mut self, offset: usize, relative_cost: f32, start: Start, max_count: usize) {
+        self.slots[self.free_slot as usize % Self::SLOTS] = start;
+        let mut moved = (u64::from(relative_cost.to_bits()) << 32)
+            | ((offset * Self::SLOTS) as u64 + self.free_slot);
+        for slot in &mut self.sorted {
+            (*slot, moved) = (moved.max(*slot), moved.min(*slot));
+        }
+        self.free_slot = moved % Self::SLOTS as u64;
+        self.count = max_count.min(self.count + 1);
+    }
+
+    /// The offset, the difference, and the rest.
+    #[inline(always)]
+    fn get(&self, rank: usize) -> (usize, f32, Start) {
         let packed = self.sorted[rank];
         (
-            packed as u32 as usize,
+            packed as u32 as usize / Self::SLOTS,
             f32::from_bits((packed >> 32) as u32),
+            self.slots[packed as usize % Self::SLOTS],
         )
+    }
+}
+
+/// Takes the place of the cost of an offset that went into [`Starts`].
+#[derive(Clone, Copy)]
+struct Link(u32);
+
+impl Link {
+    /// `earlier`: where the last command before this one ends that changes the last distances, or zero.
+    #[inline(always)]
+    fn new(earlier: usize, changes_last_distances: bool) -> Self {
+        Self((earlier as u32 * 2) | u32::from(changes_last_distances))
+    }
+
+    #[inline(always)]
+    fn earlier(self) -> usize {
+        self.0 as usize / 2
+    }
+
+    #[inline(always)]
+    fn changes_last_distances(self) -> bool {
+        self.0 & 1 != 0
     }
 }
 
@@ -246,38 +296,51 @@ fn lanes(values: &[f32], at: usize) -> &[f32; LANES] {
 
 struct Paths<'a> {
     block: InputBlock<'a>,
-    model: CostModel,
+    symbols: &'a SymbolCosts,
+    /// The cost of all the bytes before each offset.
+    literals: Vec<f32>,
     /// Longer matches are only tried in full.
     max_varied_length: usize,
     starts_to_try: usize,
     starts: Starts,
     /// Where `costs` is below [`UNREACHED`].
     nodes: Vec<Node>,
-    /// With [`LANES`] more at the end.
+    /// With [`LANES`] more at the end. See [`Link`].
     costs: Vec<f32>,
-    /// At the offsets that went into `starts`.
-    last_distances: Vec<[i32; 4]>,
+    /// Before the block.
+    first_distances: [i32; 4],
 }
 
 impl<'a> Paths<'a> {
-    fn new(block: &InputBlock<'a>, last_distances: [i32; 4]) -> Result<Self> {
+    fn new(block: &InputBlock<'a>, first_distances: [i32; 4]) -> Result<Self> {
         let thorough = block.params.quality > 10;
+        let mut literals = memory::empty(block.length + 1)?;
+        literals.push(0.0);
+        literal_cost::estimate(block.data_from(block.position), &mut literals);
+        accumulate(&mut literals);
         let mut paths = Self {
             block: *block,
-            model: CostModel::from_literal_costs(block.data_from(block.position))?,
+            symbols: &FIRST_GUESS,
+            literals,
             max_varied_length: if thorough { 325 } else { 150 },
             starts_to_try: if thorough { MAX_STARTS } else { 1 },
-            starts: Starts::default(),
+            starts: Starts::new(),
             nodes: memory::filled(Node::default(), block.length + 1)?,
             costs: memory::filled(UNREACHED, block.length + 1 + LANES)?,
-            last_distances: memory::filled(last_distances, block.length + 1)?,
+            first_distances,
         };
         paths.costs[0] = 0.0;
         Ok(paths)
     }
 
-    fn reset(&mut self) {
-        self.starts = Starts::default();
+    fn start_over(&mut self, symbols: &'a SymbolCosts, literal_costs: &[f32; LITERAL_SYMBOLS]) {
+        self.symbols = symbols;
+        let data = self.block.data_from(self.block.position);
+        for (cost, &literal) in self.literals[1..].iter_mut().zip(data) {
+            *cost = literal_costs[usize::from(literal)];
+        }
+        accumulate(&mut self.literals);
+        self.starts = Starts::new();
         self.costs[1..].fill(UNREACHED);
     }
 
@@ -291,29 +354,63 @@ impl<'a> Paths<'a> {
     /// The way to `offset` is final.
     #[inline(always)]
     fn settle(&mut self, offset: usize) {
-        let (cost, as_literals) = (self.costs[offset], self.model.literals[offset]);
+        let (cost, as_literals) = (self.costs[offset], self.literals[offset]);
+        debug_assert!(offset == 0 || cost >= 1.0);
         if cost > as_literals {
             return;
         }
+        let mut last_distances = self.first_distances;
         if offset != 0 {
             let node = self.nodes[offset];
-            let before @ [a, b, c, _] = self.last_distances[offset - node.command_length()];
-            self.last_distances[offset] = select_unpredictable(
-                self.changes_last_distances(&node, offset),
-                [node.distance as i32, a, b, c],
-                before,
-            );
+            let earlier = self.last_change_up_to(offset - node.command_length());
+            let changes = self.changes_last_distances(&node, offset);
+            self.costs[offset] = f32::from_bits(Link::new(earlier, changes).0);
+            last_distances = self.distances_from(select_unpredictable(changes, offset, earlier));
         }
+        let start = Start {
+            cost,
+            last_distances,
+        };
         self.starts
-            .push(offset, cost - as_literals, self.starts_to_try);
+            .push(offset, cost - as_literals, start, self.starts_to_try);
+    }
+
+    #[inline(always)]
+    fn link(&self, offset: usize) -> Link {
+        let link = Link(self.costs[offset].to_bits());
+        debug_assert!(link.earlier() <= offset);
+        link
+    }
+
+    /// `offset` went into `starts`. See [`Link::new`].
+    #[inline(always)]
+    fn last_change_up_to(&self, offset: usize) -> usize {
+        let link = self.link(offset);
+        select_unpredictable(link.changes_last_distances(), offset, link.earlier())
+    }
+
+    /// The last distances after the command that ends at `change` changed them.
+    #[inline(always)]
+    fn distances_from(&self, mut change: usize) -> [i32; 4] {
+        let mut distances = [0; 4];
+        let mut first_distances = self.first_distances.iter();
+        for distance in &mut distances {
+            if change != 0 {
+                *distance = self.nodes[change].distance as i32;
+                change = self.link(change).earlier();
+            } else if let Some(&first) = first_distances.next() {
+                *distance = first;
+            }
+        }
+        distances
     }
 
     /// Shorter copies lead to positions that are reached more cheaply already.
     #[inline(always)]
     fn min_useful_length(&self, offset: usize) -> usize {
-        let (start, _) = self.starts.get(0);
-        let literals = self.model.literals[offset] - self.model.literals[start];
-        let mut min_cost = self.costs[start] + self.model.cheapest_command + literals;
+        let (start, _, Start { cost, .. }) = self.starts.get(0);
+        let literals = self.literals[offset] - self.literals[start];
+        let mut min_cost = cost + self.symbols.cheapest_command + literals;
         let (mut length, mut bucket, mut bucket_end) = (2, 4, 10);
         loop {
             let dearer = less([min_cost; LANES], lanes(&self.costs, offset + length));
@@ -362,9 +459,9 @@ impl<'a> Paths<'a> {
         node: Node,
     ) -> usize {
         let (first, last) = lengths.into_inner();
-        let (base, symbol_costs) = match self.model.with_last_distance.get(insert_code) {
+        let (base, symbol_costs) = match self.symbols.with_last_distance.get(insert_code) {
             Some(costs) if node.insert_length >> 27 == 1 => (without_distance, costs),
-            _ => (with_distance, &self.model.with_distance[insert_code]),
+            _ => (with_distance, &self.symbols.with_distance[insert_code]),
         };
         let short_end = SHORT_COPY_END.min(last + 1);
         let mut length = first;
@@ -404,7 +501,7 @@ impl<'a> Paths<'a> {
             let range = COPY_LENGTH_CODES[copy_code];
             let symbol = combine_length_codes(insert_code, copy_code, false);
             let cost =
-                base + f32::from(range.extra_bits) + self.model.commands[usize::from(symbol)];
+                base + f32::from(range.extra_bits) + self.symbols.commands[usize::from(symbol)];
             let end = (last + 1).min(usize::from(range.base) + (1 << range.extra_bits));
             let (from, to) = (offset + length, offset + end);
             let targets = (self.costs[from..to].iter_mut()).zip(&mut self.nodes[from..to]);
@@ -459,14 +556,13 @@ impl<'a> Paths<'a> {
         let mut longest = 0;
 
         for rank in 0..self.starts.count {
-            let (start, relative_cost) = self.starts.get(rank);
+            let (start, relative_cost, Start { last_distances, .. }) = self.starts.get(rank);
             let insert_length = offset - start;
             let insert_code = insert_length_code(insert_length);
             let base_cost = relative_cost
                 + f32::from(INSERT_LENGTH_CODES[insert_code].extra_bits)
-                + self.model.literals[offset];
+                + self.literals[offset];
 
-            let last_distances = self.last_distances[start];
             let mut tried = min_length - 1;
             let mut promising = 0;
             if tried < comparable {
@@ -486,7 +582,7 @@ impl<'a> Paths<'a> {
                     distance: distance as u32,
                     insert_length: (((code + 1) << 27) | insert_length) as u32,
                 };
-                let bases = [base_cost + self.model.distances[code], base_cost];
+                let bases = [base_cost + self.symbols.distances[code], base_cost];
                 let lengths = tried + 1..=matched;
                 longest = longest.max(self.try_lengths(offset, lengths, insert_code, bases, node));
                 tried = matched;
@@ -505,8 +601,9 @@ impl<'a> Paths<'a> {
                     candidate.distance() + DISTANCE_CODE_OFFSET,
                     &self.block.params.distance,
                 );
-                let with_distance =
-                    base_cost + prefix.extra_bits() as f32 + self.model.distances[prefix.symbol()];
+                let with_distance = base_cost
+                    + prefix.extra_bits() as f32
+                    + self.symbols.distances[prefix.symbol()];
                 let node = Node {
                     copy_length: 0,
                     distance: candidate.distance() as u32,
@@ -515,7 +612,7 @@ impl<'a> Paths<'a> {
                 if let Some(word_length) = candidate.word_length() {
                     let cost = with_distance
                         + COPY_EXTRA_BITS[word_length]
-                        + self.model.with_distance[insert_code][word_length];
+                        + self.symbols.with_distance[insert_code][word_length];
                     if cost < self.costs[offset + matched] {
                         self.costs[offset + matched] = cost;
                         self.nodes[offset + matched] = node.with_word(matched, word_length);
@@ -547,6 +644,17 @@ impl<'a> Paths<'a> {
             self.settle(skipped);
         }
         next
+    }
+
+    /// `counts` has how many of `found` there are for each offset.
+    fn extend_all(&mut self, mut found: &[Candidate], counts: &[u8]) {
+        let (mut offset, searched) = (0, searched_length(&self.block));
+        while offset < searched {
+            let next = self.step(offset, &found[..usize::from(counts[offset])]);
+            let passed = counts[offset..next.min(searched)].iter();
+            found = &found[passed.map(|&count| usize::from(count)).sum()..];
+            offset = next;
+        }
     }
 
     fn add_cheapest_to(&self, commands: &mut Commands) {
@@ -581,7 +689,8 @@ impl<'a> Paths<'a> {
         }
         if end != 0 {
             let node = self.nodes[end];
-            commands.last_distances = self.last_distances[end - node.command_length()];
+            let earlier = self.last_change_up_to(end - node.command_length());
+            commands.last_distances = self.distances_from(earlier);
             if self.changes_last_distances(&node, end) {
                 commands.remember_distance(node.distance as usize);
             }
@@ -671,6 +780,7 @@ pub(super) fn add_commands(
         in_window: memory::empty(scratch)?,
         in_dictionary: memory::empty(scratch)?,
     };
+    let mut refined;
     let mut paths = Paths::new(block, commands.last_distances)?;
     let long = paths.max_varied_length;
     let searched = searched_length(block);
@@ -710,27 +820,19 @@ pub(super) fn add_commands(
 
     let (first, literal_count) = (commands.list.len(), commands.literal_count);
     let pending_literals = commands.pending_literals;
-    for pass in 0..2 {
-        if pass == 1 {
-            let start = block.position - pending_literals;
-            paths
-                .model
-                .set_from_commands(block, start, &commands.list[first..]);
-            paths.reset();
-            commands.list.truncate(first);
-            commands.literal_count = literal_count;
-            commands.pending_literals = pending_literals;
-            commands.last_distances = paths.last_distances[0];
-        }
-        let mut rest = &*found;
-        let mut offset = 0;
-        while offset < searched {
-            let next = paths.step(offset, &rest[..usize::from(counts[offset])]);
-            let passed = counts[offset..next.min(searched)].iter();
-            rest = &rest[passed.map(|&count| usize::from(count)).sum()..];
-            offset = next;
-        }
-        paths.add_cheapest_to(commands);
-    }
+    paths.extend_all(&found, &counts);
+    paths.add_cheapest_to(commands);
+
+    let added = &commands.list[first..];
+    refined = memory::copied(core::slice::from_ref(&FIRST_GUESS))?;
+    refined[0].set_from(added, block.params.distance.alphabet);
+    let literal_costs = literal_costs_in(added, block.window, block.position - pending_literals);
+    paths.start_over(&refined[0], &literal_costs);
+    commands.list.truncate(first);
+    commands.literal_count = literal_count;
+    commands.pending_literals = pending_literals;
+    commands.last_distances = paths.first_distances;
+    paths.extend_all(&found, &counts);
+    paths.add_cheapest_to(commands);
     Ok(())
 }

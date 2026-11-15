@@ -1,6 +1,6 @@
 use super::slots::Slots;
 use super::{Hasher, MIN_SCORE, Match, RecentDistances, Search, score, score_of_recent};
-use crate::encoder::matching::{HASH_MULTIPLIER_64, load32};
+use crate::encoder::matching::{HASH_MULTIPLIER_64, load32, load64};
 use crate::encoder::ring_buffer::Window;
 use crate::encoder::words::QuickWordSearch;
 
@@ -77,58 +77,76 @@ impl<S: Slots, const SWEEP: usize, const HASHED: u32, const USE_WORDS: bool> Has
 
     #[inline(always)]
     fn find(&mut self, search: &Search<'_>, recent: &RecentDistances, longer_than: usize) -> Match {
-        let bytes = search.window.bytes;
         let key = Self::key(search.first_eight());
         let candidates: [u32; SWEEP] = core::array::from_fn(|i| self.slots.get(key + 8 * i));
         self.slots
             .set(Self::slot_for(key, search.position), search.position);
         let mut best = Match::new(longer_than, 0, MIN_SCORE);
-        let mut next_byte = search.padded[longer_than];
 
         let distance = recent[0] as usize;
         let earlier = search.window.index(search.position.wrapping_sub(distance));
-        if search.reaches(distance)
-            && (longer_than == 0 || bytes.get(earlier + longer_than) == Some(&next_byte))
+        if let Some(difference) = promising_difference(search, earlier, longer_than)
+            && search.reaches(distance)
         {
-            let difference = search.difference_at(earlier);
-            if difference as u32 == 0 {
-                let length = search.match_length_with(earlier, difference);
-                best = Match::new(length, distance, score_of_recent(length, 0));
-                if SWEEP == 1 {
-                    return best;
-                }
-                next_byte = search.padded[length];
-            }
-        }
-
-        for &candidate in &candidates {
-            let distance = search.position.wrapping_sub(candidate as usize);
-            let earlier = search.window.index(candidate as usize);
-            if !search.reaches(distance)
-                || (best.length != 0 && bytes.get(earlier + best.length) != Some(&next_byte))
-            {
-                if SWEEP == 1 {
-                    return best;
-                }
-                continue;
-            }
-            let difference = search.difference_at(earlier);
-            if difference as u32 == 0 {
-                let length = search.match_length_with(earlier, difference);
-                let score = score(length, distance);
-                if best.score < score {
-                    best = Match::new(length, distance, score);
-                    next_byte = search.padded[length];
-                }
-            } else if SWEEP == 1
-                && (!self.words.is_active() || difference as u8 != 0 && longer_than == 0)
-            {
+            let length = search.match_length_with(earlier, difference);
+            best = Match::new(length, distance, score_of_recent(length, 0));
+            if SWEEP == 1 {
                 return best;
             }
         }
-        if USE_WORDS {
-            search.try_words(&mut self.words, 1, &mut best);
+
+        // One after the other, since a loop would not be unrolled.
+        const { assert!(matches!(SWEEP, 1 | 2 | 4)) };
+        try_candidate(search, candidates[0], &mut best);
+        if SWEEP > 1 {
+            try_candidate(search, candidates[1 % SWEEP], &mut best);
+        }
+        if SWEEP > 2 {
+            try_candidate(search, candidates[2 % SWEEP], &mut best);
+            try_candidate(search, candidates[3 % SWEEP], &mut best);
+        }
+        if USE_WORDS && best.score == MIN_SCORE && self.words.is_active() {
+            let candidate = candidates[0] as usize;
+            let at = search.window.index(candidate) + longer_than;
+            if SWEEP > 1
+                || (search.window.bytes.get(at) == Some(&search.padded[longer_than])
+                    && search.reaches(search.position.wrapping_sub(candidate)))
+            {
+                search.try_words(&mut self.words, 1, &mut best);
+            }
         }
         best
+    }
+}
+
+/// The bits that differ in the first eight bytes, unless that rules out a match, or the byte after `length` does.
+#[inline(always)]
+fn promising_difference(search: &Search<'_>, earlier: usize, length: usize) -> Option<u64> {
+    let bytes = search.window.bytes;
+    // The same test in both arms, so that the compiler can tell after which of them there is still no match.
+    if length == 0 {
+        let eight = bytes.get(earlier..earlier + 8)?;
+        (load32(eight, 0) == search.first_eight() as u32)
+            .then(|| load64(eight, 0) ^ search.first_eight())
+    } else if *bytes.get(earlier + length)? == search.padded[length] {
+        let difference = load64(bytes.get(earlier..earlier + 8)?, 0) ^ search.first_eight();
+        (difference as u32 == 0).then_some(difference)
+    } else {
+        None
+    }
+}
+
+#[inline(always)]
+fn try_candidate(search: &Search<'_>, candidate: u32, best: &mut Match) {
+    let earlier = search.window.index(candidate as usize);
+    if let Some(difference) = promising_difference(search, earlier, best.length) {
+        let distance = search.position.wrapping_sub(candidate as usize);
+        if search.reaches(distance) {
+            let length = search.match_length_with(earlier, difference);
+            let score = score(length, distance);
+            if best.score < score {
+                *best = Match::new(length, distance, score);
+            }
+        }
     }
 }

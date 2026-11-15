@@ -31,6 +31,9 @@ fn wrap(position: u64) -> usize {
     }
 }
 
+/// A meta-block of up to this size is stored as is.
+const MAX_ALWAYS_STORED: usize = 2;
+
 pub(super) struct Windowed {
     ring: RingBuffer,
     /// Depends on the size hint, which the first block may set.
@@ -103,7 +106,9 @@ impl Windowed {
     ) -> Result<()> {
         let is_last = operation == Operation::Finish;
         let has_context_now = self.bytes_without_context.take_if(|n| *n == 0).is_some();
-        if self.unprocessed() != 0 {
+        if is_last && self.ring.received() - self.written <= MAX_ALWAYS_STORED as u64 {
+            self.processed = self.ring.received();
+        } else if self.unprocessed() != 0 {
             self.add_commands(params, dictionary, is_last)?;
         }
         if operation == Operation::Process && !has_context_now && self.can_wait(params) {
@@ -195,7 +200,7 @@ fn is_worth_compressing(source: &Source<'_>, commands: &Commands) -> bool {
     const SAMPLE_RATE: usize = 13;
     const MIN_ENTROPY: f64 = 7.92;
     let size = source.length as f64;
-    if source.length <= 2 {
+    if source.length <= MAX_ALWAYS_STORED {
         return false;
     }
     if commands.list.len() >= (source.length >> 8) + 2

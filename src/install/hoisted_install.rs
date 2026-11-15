@@ -339,6 +339,7 @@ pub(crate) fn install_hoisted_packages(
                 pkg_name_hashes,
                 resolutions,
                 lockfile: lockfile_ptr,
+                log: this.log(),
                 root_node_modules_folder: node_modules_folder,
                 staging_lock: None,
                 tree_dir: None,

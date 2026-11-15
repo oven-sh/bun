@@ -558,7 +558,7 @@ impl TranspilerJob {
                 &specifier,
                 &referrer,
                 Some(loader),
-                &log,
+                &mut log,
                 crate::module_loader::FetchFlags::Transpile,
             );
         }

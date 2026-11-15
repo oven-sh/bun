@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { existsSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -1072,11 +1072,11 @@ describe("macro VM env loader", () => {
 });
 
 describe("diagnostics of a file that calls a macro", () => {
-  async function run(files: Record<string, string>, args: string[]) {
+  async function run(files: Record<string, string>, args: string[], env: Record<string, string> = {}) {
     using dir = tempDir("macro-diagnostics", files);
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
-      env: bunEnv,
+      env: { ...bunEnv, ...env },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -1098,5 +1098,98 @@ describe("diagnostics of a file that calls a macro", () => {
     );
     expect(stdout).toBe(`ResolveMessage: Could not resolve: "node:nope". Maybe you need to "bun install"?\n`);
     expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.each(["transformSync", "scan"])(
+    "Bun.Transpiler#%s throws them when the macro uses the same transpiler",
+    async method => {
+      const { stdout, exitCode } = await run(
+        {
+          "macro.ts": `export const again = () => globalThis.transpiler.transformSync("1").length;`,
+          "main.ts": `
+            globalThis.transpiler = new Bun.Transpiler({ loader: "ts" });
+            const macro = JSON.stringify(import.meta.dir + "/macro.ts");
+            try {
+              transpiler.${method}(\`import { again } from \${macro} with { type: "macro" }; again(); const y = 1; y = 2;\`);
+            } catch (e) {
+              console.log(e.name + ": " + e.message);
+            }
+          `,
+        },
+        ["main.ts"],
+      );
+      expect(stdout).toBe(`BuildMessage: This assignment will throw because "y" is a constant\n`);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // After it has reported the error of a handler, the server clears the log of its VM.
+  const failingHandler = `
+    export const one = () => 1;
+    export async function status() {
+      using server = Bun.serve({ port: 0, development: false, fetch() { throw new Error("from the handler"); } });
+      return (await fetch(server.url)).status;
+    }
+  `;
+
+  test.concurrent("bun build keeps them when a server in the macro reports an error", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "macro.ts": failingHandler,
+        "entry.ts": `import { status } from "./macro.ts" with { type: "macro" };\nconst y = 1;\ny = 2;\nconsole.log(status());`,
+      },
+      ["build", "entry.ts"],
+    );
+    expect(stderr.split("\n").filter(line => line.startsWith("error: "))).toEqual([
+      "error: from the handler",
+      `error: Cannot assign to "y" because it is a constant`,
+    ]);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("a pool thread's macro VM outlives the log of the first file it served", async () => {
+    const files: Record<string, string> = {
+      "macro.ts": failingHandler,
+      "main.ts": `
+        const all = [0, 1, 2, 3];
+        await Bun.build({ entrypoints: all.map(i => "./built" + i + ".ts") });
+        for (const i of all) console.log((await import("./imported" + i + ".ts")).default);
+      `,
+    };
+    for (let i = 0; i < 4; i++) {
+      files[`built${i}.ts`] = `import { one } from "./macro.ts" with { type: "macro" };\nexport default one();`;
+      files[`imported${i}.ts`] =
+        `import { status } from "./macro.ts" with { type: "macro" };\nexport default status();`;
+    }
+    const { stdout, stderr, exitCode } = await run(files, ["main.ts"], { UV_THREADPOOL_SIZE: "2" });
+    expect(stderr.split("\n").filter(line => line.startsWith("error: "))).toEqual(
+      Array(4).fill("error: from the handler"),
+    );
+    expect(stdout).toBe("500\n500\n500\n500\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.skipIf(!isASAN)("Bun.build frees what resolving the macro logged", async () => {
+    const result = await run(
+      {
+        "broken/package.json": `{ "name": `,
+        "entry.ts": `import { one } from "./broken/missing.ts" with { type: "macro" };\nexport default one();`,
+        "main.ts": `
+          import { bundlerWorkerLiveCount } from "bun:internal-for-testing";
+          const { logs } = await Bun.build({ entrypoints: ["./entry.ts"], throw: false });
+          const deadline = Date.now() + 5000;
+          while (bundlerWorkerLiveCount() > 0 && Date.now() < deadline) await Bun.sleep(5);
+          console.log(logs[0].message, bundlerWorkerLiveCount());
+        `,
+      },
+      ["main.ts"],
+      {
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../leaksan.supp")}`,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+      },
+    );
+    expect(result).toEqual({ stdout: `Macro "./broken/missing.ts" not found 0\n`, stderr: "", exitCode: 0 });
   });
 });

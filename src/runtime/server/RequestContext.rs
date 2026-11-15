@@ -3484,22 +3484,21 @@ where
             vm.on_unhandled_rejection_exception_list
                 .set(prev_exception_list);
 
-            let log = vm.log().unwrap();
             bun_core::pretty_errorln!(
                 "<r><red>{:?}<r> - <b>{}<r> failed",
                 self.method,
                 self.ensure_pathname()
             );
             let msg = format!("{:?} - {} failed", self.method, self.ensure_pathname());
-            self.render_default_error(log, &exception_list, msg.as_bytes());
-            log.reset();
+            self.render_default_error(vm.log, &exception_list, msg.as_bytes());
+            vm.log.reset();
             return;
         }
         if status != 404 {
             report_unhandled_error(vm, global_this, value);
         }
         self.render_production_error(status);
-        vm.log().unwrap().reset();
+        vm.log.reset();
     }
 
     pub(crate) fn run_error_handler_with_status_code_dont_check_responded(

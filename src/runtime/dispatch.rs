@@ -217,8 +217,8 @@ pub(crate) fn run_task(
         ($feature:ident, $T:ty) => {
             feature_arm!([$feature], |stream: $T| {
                 // SAFETY: §Dispatch — tag identifies pointee; the task owns the ref `write()` took.
-                let stream = unsafe { bun_ptr::RefPtr::from_raw(stream) };
-                node_zlib_binding::run_from_js_thread(stream);
+                let write = unsafe { node_zlib_binding::PendingWrite::from_raw(stream) };
+                node_zlib_binding::run_from_js_thread(write);
             })
         };
     }

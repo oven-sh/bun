@@ -352,7 +352,7 @@ test("a pending close event survives GC after the port becomes unreachable", asy
   expect(fired).toBe(50);
 });
 
-// The peer's notifyPeerClosed() task only holds a weak ref back to this port, so a
+// The pipe's drain task only holds a weak ref back to this port, so a
 // port whose only listener is 'close' must survive GC until the event is delivered.
 test("a close event from the peer survives GC of the unreachable port", async () => {
   let fired = 0;
@@ -411,9 +411,8 @@ test("explicitly-closed close-listener ports are collected; open ones are pinned
   expect(count() - afterClosed).toBeGreaterThanOrEqual(40);
 });
 
-// registerCloseContext()'s retroactive peer-Closed check posts a peerClosed task before
-// attach()'s drain when on('close') precedes on('message'); peerClosed() must still flush
-// the queued messages first so 'close' stays terminal.
+// The peer closed before this side had a listener. The pipe hands over that close only
+// once the inbox is empty, so the order of the two registrations does not matter.
 test("on('close') before on('message') still delivers queued messages before 'close'", async () => {
   require("worker_threads"); // installs .on/.off on MessagePort
   const { port1, port2 } = new MessageChannel();
@@ -431,10 +430,9 @@ test("on('close') before on('message') still delivers queued messages before 'cl
   expect(order).toEqual(["m1", "m2", "close"]);
 });
 
-// A 'message' handler running inside peerClosed()'s flush can transfer this port; the
-// remaining inbox belongs to the new owner and must not be popped-and-dropped by the
-// stale port. flushQueuedMessagesBeforeClose() breaks on m_isDetached to guard this.
-test("transferring a port from inside peerClosed()'s flush preserves the remaining inbox", async () => {
+// A 'message' handler can transfer this port while the peer's close is still behind the
+// rest of the inbox. The rest, and then that close, belong to the new owner.
+test("transferring a port whose peer already closed preserves the remaining inbox", async () => {
   require("worker_threads");
   const { port1, port2 } = new MessageChannel();
   const carrier = new MessageChannel();
@@ -456,4 +454,132 @@ test("transferring a port from inside peerClosed()'s flush preserves the remaini
   await done.promise;
   // m1 delivered to the old owner; m2/m3 buffered for the new owner.
   expect(seen).toEqual(["old:m1", "new:m2", "new:m3"]);
+});
+
+// The peer's close is handed to each owner of the port in turn. bun only: node rejects this
+// transfer with a DataCloneError, because a port that was told of the close is closed there.
+test("a port transferred after it was told of its peer's close tells its next owner", async () => {
+  require("worker_threads");
+  const { port1, port2 } = new MessageChannel();
+  const carrier = new MessageChannel();
+  const told: string[] = [];
+  const first = Promise.withResolvers<void>();
+  port1.on("close", () => {
+    told.push("first owner");
+    first.resolve();
+  });
+  port2.close();
+  await first.promise;
+  carrier.port2.on("message", (received: MessagePort) => received.on("close", () => told.push("next owner")));
+  carrier.port1.postMessage(port1, [port1]);
+  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+  expect(told).toEqual(["first owner", "next owner"]);
+  carrier.port1.close();
+});
+
+// The hand-over of the close can move the port: a 'close' listener transfers it, and the next
+// owner registers for the close before that listener returns. What the pipe clears after the
+// listener must not be the next owner's pending task, which is all that keeps its port alive.
+test("a 'close' listener that transfers its own port does not unpin the next owner", async () => {
+  const { receiveMessageOnPort } = require("worker_threads");
+  const carrier = new MessageChannel();
+  const told: string[] = [];
+  const nextTold = Promise.withResolvers<void>();
+  (() => {
+    const { port1, port2 } = new MessageChannel();
+    port2.addEventListener("close", function (this: MessagePort) {
+      told.push("first owner");
+      carrier.port1.postMessage(this, [this]);
+      (() => {
+        const next: MessagePort = receiveMessageOnPort(carrier.port2)!.message;
+        next.addEventListener("close", () => {
+          told.push("next owner");
+          nextTold.resolve();
+        });
+      })();
+      // After this listener has returned to the pipe, and before the next owner's task.
+      queueMicrotask(() => {
+        Bun.gc(true);
+        Bun.gc(true);
+      });
+    });
+    port1.close();
+  })();
+  await nextTold.promise;
+  expect(told).toEqual(["first owner", "next owner"]);
+  carrier.port1.close();
+  carrier.port2.close();
+});
+
+// The drain task that hands over the peer's close is what keeps a close-only port alive
+// between that close and its event.
+test("a close event from the peer survives a GC that runs before it is delivered", async () => {
+  let closes = 0;
+  const peers: MessagePort[] = [];
+  (() => {
+    for (let i = 0; i < 50; i++) {
+      const { port1, port2 } = new MessageChannel();
+      port2.addEventListener("close", () => closes++);
+      peers.push(port1);
+    }
+  })();
+  await new Promise(r => setImmediate(r));
+  for (const peer of peers) peer.close();
+  Bun.gc(true);
+  Bun.gc(true);
+  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+  expect(closes).toBe(50);
+});
+
+// The same order through the web API alone: no node:worker_threads listener methods.
+test.each<[string, (port: MessagePort, seen: string[]) => void]>([
+  ["onmessage", (port, seen) => (port.onmessage = e => seen.push(e.data))],
+  [
+    "addEventListener() and start()",
+    (port, seen) => {
+      port.addEventListener("message", e => seen.push((e as MessageEvent).data));
+      port.start();
+    },
+  ],
+])("the peer's 'close' comes after its messages for %s set a loop turn later", async (_name, listen) => {
+  const { port1, port2 } = new MessageChannel();
+  const seen: string[] = [];
+  const closed = Promise.withResolvers<void>();
+  port2.addEventListener("close", () => {
+    seen.push("close");
+    closed.resolve();
+  });
+  port1.postMessage("a");
+  port1.postMessage("b");
+  port1.close();
+  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+  expect(seen).toEqual([]);
+  listen(port2, seen);
+  await closed.promise;
+  expect(seen).toEqual(["a", "b", "close"]);
+});
+
+// A 'close' listener pins its port until the event lands. The peer's close waits behind
+// unread messages, and only script that still holds the port can read them, so an
+// unreachable port in that state must not stay pinned until the context dies.
+test("a close-listener port with unread messages and a closed peer is collected", async () => {
+  const { heapStats } = require("bun:jsc");
+  const count = () => heapStats().objectTypeCounts.MessagePort ?? 0;
+  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+  Bun.gc(true);
+  const base = count();
+  let closes = 0;
+  (() => {
+    for (let i = 0; i < 20; i++) {
+      const { port1, port2 } = new MessageChannel();
+      port2.addEventListener("close", () => closes++);
+      port1.postMessage("unread");
+      port1.close();
+    }
+  })();
+  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+  Bun.gc(true);
+  Bun.gc(true);
+  // Allow small slack for GC nondeterminism.
+  expect({ closes, pinned: count() - base <= 4 ? "none" : count() - base }).toEqual({ closes: 0, pinned: "none" });
 });

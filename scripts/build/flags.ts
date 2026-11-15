@@ -1429,6 +1429,13 @@ export const linkerFlags: Flag[] = [
     desc: "Retry pthread_create EAGAIN caused by an in-flight execve",
   },
   {
+    // BunSignalActions.cpp: __wrap_abort puts the crash handler back, so that a
+    // failed assertion is reported under a listener for SIGABRT.
+    flag: "-Wl,--wrap=abort",
+    when: c => c.aot && (c.linux || c.freebsd) && !c.asan,
+    desc: "Report abort() in a compiled program whatever handles SIGABRT",
+  },
+  {
     flag: ["-static-libstdc++", "-static-libgcc"],
     when: c => c.linux && c.abi === "gnu",
     desc: "Static C++ runtime (don't depend on host libstdc++)",

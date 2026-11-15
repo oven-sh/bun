@@ -41,7 +41,7 @@ mod compiled_frames;
 ))]
 mod fault_registers;
 mod stopped_builds;
-pub use compiled_frames::{DecodedReport, ShortBuildId, report_compiled_frames};
+pub use compiled_frames::{DecodedReport, ShortBuildId, keep_own_segments, report_compiled_frames};
 pub use stopped_builds::{BuildDescribers, DescribeBuild, report_stopped_builds};
 
 /// Link-time target for `bun_alloc::out_of_memory()` — declared
@@ -1691,21 +1691,27 @@ mod draft {
         // What Linux says of an instruction that may not be run at all: on x86-64 removed code is filled with `hlt`.
         const SI_KERNEL: c_int = 0x80;
         let pc = context.map(|(pc, _, _)| pc);
-        // macOS raises SIGSEGV only where nothing is mapped, on ARM64 with SEGV_ACCERR.
         // SAFETY: kernel provides a valid siginfo_t.
-        let is_unmapped = cfg!(target_os = "macos") || unsafe { (*info).si_code } == SEGV_MAPERR;
-        let entered = match sig {
-            libc::SIGTRAP if cfg!(target_arch = "x86_64") => pc.map(|pc| pc.wrapping_sub(1)),
-            libc::SIGTRAP | libc::SIGILL => pc,
-            libc::SIGSEGV if is_unmapped => pc.filter(|&pc| pc == addr),
-            // SAFETY: kernel provides a valid siginfo_t.
-            libc::SIGSEGV if unsafe { (*info).si_code } == SI_KERNEL => pc,
+        let code = unsafe { (*info).si_code };
+        let is_page_fault = match sig {
+            // macOS raises SIGSEGV only where nothing is mapped, on ARM64 with SEGV_ACCERR.
+            libc::SIGSEGV => cfg!(target_os = "macos") || code == SEGV_MAPERR,
             // macOS raises SIGBUS where something that cannot be run is mapped in their place.
-            libc::SIGBUS if cfg!(target_os = "macos") => pc.filter(|&pc| pc == addr),
+            libc::SIGBUS => cfg!(target_os = "macos"),
+            _ => false,
+        };
+        let entered = match sig {
+            _ if is_page_fault => pc.filter(|&pc| pc == addr),
+            libc::SIGTRAP if cfg!(all(target_os = "macos", target_arch = "x86_64")) => {
+                pc.map(|pc| pc.wrapping_sub(1))
+            }
+            libc::SIGILL if cfg!(target_arch = "aarch64") => pc,
+            libc::SIGSEGV if code == SI_KERNEL => pc,
             _ => None,
         };
         if let Some(entered) = entered
             && let Some(feature) = crate::compiled_frames::removed_feature_entered(entered)
+            && (is_page_fault || crate::compiled_frames::is_at_trap_of_removed_code(entered))
         {
             let return_address = return_address_at_function_entry(ctx);
             bun_removable_features::abort_for_removed_feature_entered(
@@ -1832,6 +1838,11 @@ mod draft {
         if Environment::ENABLE_ASAN || !bun_core::CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) {
             return;
         }
+        let _ = update_posix_segfault_handler(Some(&mut repeated_crash_action()));
+    }
+
+    #[cfg(unix)]
+    fn repeated_crash_action() -> libc::sigaction {
         // SAFETY: zeroed sigaction is valid POD; we overwrite the fields we need.
         let mut act: libc::sigaction = bun_core::ffi::zeroed();
         act.sa_sigaction = handle_segfault_posix as *const () as usize;
@@ -1843,7 +1854,43 @@ mod draft {
         unsafe {
             libc::sigemptyset(&raw mut act.sa_mask);
         }
-        let _ = update_posix_segfault_handler(Some(&mut act));
+        act
+    }
+
+    /// # Safety
+    /// `action` must be valid for a write.
+    #[cfg(unix)]
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn CrashHandler__getAction(action: *mut libc::sigaction) -> bool {
+        if Environment::ENABLE_ASAN
+            || !bun_core::CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed)
+            || PANIC_STAGE.with(|stage| stage.get()) != 0
+        {
+            return false;
+        }
+        // SAFETY: caller contract.
+        unsafe { action.write(repeated_crash_action()) };
+        true
+    }
+
+    #[cfg(unix)]
+    #[unsafe(no_mangle)]
+    extern "C" fn CrashHandler__reportOwnCrash(
+        sig: c_int,
+        info: *mut libc::siginfo_t,
+        ctx: *mut c_void,
+    ) {
+        if Environment::ENABLE_ASAN || !bun_core::CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) {
+            return;
+        }
+        let Some((pc, _, _)) = fault_context_from_ucontext(ctx) else {
+            return;
+        };
+        // SAFETY: kernel provides a valid siginfo_t.
+        let (code, address) = unsafe { ((*info).si_code, (*info).si_addr() as usize) };
+        if crate::compiled_frames::is_own_stop(sig, code, address, pc) {
+            handle_segfault_posix(sig, info, ctx);
+        }
     }
 
     pub fn init() {

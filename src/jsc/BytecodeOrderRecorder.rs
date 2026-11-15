@@ -170,6 +170,7 @@ pub(crate) fn write_at_exit(
         return;
     };
     if graph.compiled_program().is_some() {
+        crate::compiled_program::finish_order_recording();
         return;
     }
     if WRITTEN.swap(true, core::sync::atomic::Ordering::Relaxed) {

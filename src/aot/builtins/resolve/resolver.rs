@@ -9,8 +9,8 @@ use super::{
     WhereTestsLayNamesAbove,
 };
 use crate::builtins::runtime_uses::{
-    ENTRIES_LEADING_TO_HOOK_OF_INSTANCEOF, Mentions, RuntimeUses, SyntaxWithHelpers, is_evaluator,
-    is_unknown_module_loader, reaches_unknown_module_loader,
+    ENTRIES_LEADING_TO_HOOK_OF_INSTANCEOF, Mentions, RoadsToNamespaces, RuntimeUses,
+    SyntaxWithHelpers, is_evaluator, is_unknown_module_loader, reaches_unknown_module_loader,
 };
 use crate::builtins::table::{
     self, BuiltinId, BuiltinName, Intrinsic, Mutability, Platforms, RuntimeFunction, RuntimeModule,
@@ -315,6 +315,8 @@ pub(super) struct ResolverOutput {
     pub(super) aliases_global_object: bool,
     pub(super) syntax: SyntaxWithHelpers,
     pub(super) may_hand_values_to_natives: bool,
+    pub(super) roads_to_namespaces: RoadsToNamespaces,
+    pub(super) namespace_names_read: Vec<BuiltinName>,
 }
 
 #[derive(Copy, Clone)]
@@ -352,6 +354,7 @@ pub(super) struct Resolver<'a, 's> {
     names_by_variable: OnceCell<Vec<(u32, u32)>>,
     pub(super) kept_variables: RefCell<FxHashMap<(SymbolId, BuiltinId), bool>>,
     pub(super) variables_asked_for_numbers: RefCell<FxHashMap<(SymbolId, u32), bool>>,
+    pub(super) variables_that_may_be_undefined: RefCell<FxHashMap<SymbolId, bool>>,
     pub(super) variables_let_out_of_sight: OnceCell<FxHashSet<SymbolId>>,
     known_sets: RefCell<KnownSets<'a, 's>>,
     evaluated: Range<u32>,
@@ -493,6 +496,7 @@ impl<'a, 's> Resolver<'a, 's> {
             names_by_variable: OnceCell::new(),
             kept_variables: RefCell::default(),
             variables_asked_for_numbers: RefCell::default(),
+            variables_that_may_be_undefined: RefCell::default(),
             variables_let_out_of_sight: OnceCell::new(),
             known_sets: RefCell::new(KnownSets::new(
                 input.hir,
@@ -772,7 +776,7 @@ impl<'a, 's> Resolver<'a, 's> {
                 | Decision::Constant(_)
                 | Decision::Data(_)
                 | Decision::DeferredData => {
-                    if matches!(kind, ExprKind::This) {
+                    if matches!(kind, ExprKind::This | ExprKind::Super) {
                         self.found_or_this.push(expr);
                     }
                     self.states.set_code(expr, UNRESOLVED);
@@ -1017,6 +1021,8 @@ impl<'a, 's> Resolver<'a, 's> {
             aliases_global_object: output.aliases_global_object,
             syntax: output.syntax,
             may_hand_values_to_natives: output.may_hand_values_to_natives,
+            roads_to_namespaces: output.roads_to_namespaces,
+            namespace_names_read: &sorted_unique(output.namespace_names_read),
             called: &output.called,
             is_of_program: input.dialect == SourceDialect::Program,
             holds_language: input.holds_language,

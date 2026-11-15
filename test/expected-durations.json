@@ -16,6 +16,30 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/type-errors-that-several-projects-are-asked-about.test.ts": {
+    "default": 30000,
+    "asan": 120000
+  },
+  "aot/order-file.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-constructor-inside-what-an-entry-exports-keeps-its-features.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/options-of-the-run-that-need-nothing.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/cli/frames-of-built-in-modules.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/test-runs-without-function-source.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/memory-of-builds-that-follow-a-path.test.ts": {
     "default": 60000,
     "asan": 240000

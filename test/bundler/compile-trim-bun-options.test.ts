@@ -11,6 +11,8 @@ import {
   formsByAllowing,
   formsByUse,
   formsOf,
+  formsThatNeedNothing,
+  formsWithAnUnknownValue,
   hasNoCommandLine,
   hasNoFunctionSource,
   ignoredWithAWarning,
@@ -183,15 +185,25 @@ test("every option that a compiled executable reads is in one of the lists: it w
         const folder = laidOut(join(root, String(folders++)), "trimmed");
         await builtAllowing(folder, allow);
         const ran = await started(folder, name, form);
-        if (form.endsWith("=nonsense"))
-          expect(ran).toMatchObject({
-            stdout: "",
-            stderr: expect.stringContaining(`error: Invalid value for ${name}: "nonsense".`),
-            exitCode: 1,
-          });
-        else expect(ran).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
+        expect(ran).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
       },
     );
+
+    test.each(formsThatNeedNothing)("%s needs nothing, and the program runs, with and without --trim", async form => {
+      const ran = { stdout: "hello world\n", stderr: "", exitCode: 0 };
+      expect(await started(trimmed, "--install", form)).toEqual(ran);
+      expect(await started(whole, "--install", form)).toEqual(ran);
+    });
+
+    test.each(formsWithAnUnknownValue)("%s: the value is refused, with and without --trim", async form => {
+      const refused = {
+        stdout: "",
+        stderr: expect.stringContaining(`error: Invalid value for --install: "nonsense".`),
+        exitCode: 1,
+      };
+      expect(await started(trimmed, "--install", form)).toEqual(refused);
+      expect(await started(whole, "--install", form)).toEqual(refused);
+    });
 
     test("as arguments of the executable they all belong to the program", async () => {
       const args = [
@@ -205,6 +217,7 @@ test("every option that a compiled executable reads is in one of the lists: it w
         ].flatMap(formsOf),
         ...formsByUse,
         ...formsByAllowing,
+        ...[...formsThatNeedNothing, ...formsWithAnUnknownValue].map(form => ["--install", form]),
       ].flatMap(([, form]) => form.split(" "));
       expect(await started(trimmed, "", undefined, args)).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
     });

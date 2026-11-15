@@ -4,6 +4,7 @@ pub mod entry_point;
 mod feature_set;
 mod requirement;
 mod state;
+pub mod trap;
 
 mod generated {
     use super::{EnteredFrom, FeatureRecord, TrimFeatureRecord};

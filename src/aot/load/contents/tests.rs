@@ -495,7 +495,7 @@ fn each_form_of_a_name_finds_the_file_that_the_worker_starts_from() {
 
 #[test]
 fn preloads_are_entry_points() {
-    let rows: [(&str, &str, &[&str]); 8] = [
+    let rows: [(&str, &str, &[&str]); 13] = [
         ("", r#"{ preload: "./first.ts" }"#, &["first.ts"]),
         (
             "",
@@ -526,6 +526,32 @@ fn preloads_are_entry_points() {
             r#"const options: object = { ...options, preload: "./first.ts" };"#,
             "options",
             &["first.ts"],
+        ),
+        (
+            r#"const second = new URL("./second.ts", import.meta.url);"#,
+            r#"{ preload: [new URL("./first.ts", import.meta.url).href, second] }"#,
+            &["first.ts", "second.ts"],
+        ),
+        (
+            r#"import { fileURLToPath } from "node:url";
+            const first = fileURLToPath(new URL("./first.ts", import.meta.url));"#,
+            "{ preload: first }",
+            &["first.ts"],
+        ),
+        (
+            r#"import { join } from "node:path";"#,
+            r#"{ preload: [join(import.meta.dir, "first.ts"), `${import.meta.dir}/second.ts`] }"#,
+            &["first.ts", "second.ts"],
+        ),
+        (
+            "",
+            r#"{ preload: import.meta.resolve("./first.ts") }"#,
+            &["first.ts"],
+        ),
+        (
+            r#"const some = ["./first.ts"];"#,
+            r#"{ preload: process.argv[2] ? [...some] : "./second.ts" }"#,
+            &["first.ts", "second.ts"],
         ),
         ("", r#"{ name: "./first.ts" }"#, &[]),
     ];

@@ -445,6 +445,7 @@ pub(crate) const UNHANDLED_REJECTIONS_PARAM: usize =
     startup_options::index_of_long(AUTO_PARAMS, b"unhandled-rejections");
 pub(crate) const CODE_GENERATION_PARAM: usize =
     startup_options::index_of_long(AUTO_PARAMS, b"disallow-code-generation-from-strings");
+pub(crate) const INSTALL_PARAM: usize = startup_options::index_of_long(AUTO_PARAMS, b"install");
 /// These need `Feature::HotReload` besides what their rows say.
 pub(crate) const HOT_RELOAD_PARAMS: [usize; 2] = [
     startup_options::index_of_long(AUTO_PARAMS, b"watch"),
@@ -471,11 +472,8 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"watch-kill-signal"), Nothing),
         (Long(b"hot"), RuntimeCode),
         (Long(b"no-clear-screen"), Nothing),
-        (Long(b"check"), RuntimeRequirement::Feature(Feature::Check)),
-        (
-            Long(b"aot"),
-            RuntimeRequirement::Feature(Feature::AotCompiler),
-        ),
+        (Long(b"check"), Nothing),
+        (Long(b"aot"), Nothing),
         (
             Long(b"aot-allow-code-from-disk"),
             RuntimeRequirement::Feature(Feature::AotCompiler),
@@ -752,6 +750,12 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--aot-erase-types"),
         parse_param!("--aot-refuse-code-from-disk"),
         parse_param!("--aot-out <STR>"),
+        parse_param!(
+            "--aot-order <STR>...             With --aot: lay code and data out by order file(s) that runs of an executable built by --aot-record-order wrote; comma-separated or repeated, most important first"
+        ),
+        parse_param!(
+            "--aot-record-order               With --aot: build an executable that writes an order file when it runs (BUN_AOT_ORDER_OUT)"
+        ),
         parse_param!("--aot-stored-strings <STR>"),
         parse_param!("--aot-stored-strings-json <STR>"),
         parse_param!("--aot-symbols"),
@@ -1004,6 +1008,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     ),
     parse_param!(
         "--react-compiler                 Compile components and hooks with the React Compiler. Test files, preloads and node_modules are left alone"
+    ),
+    parse_param!(
+        "--no-compile-function-source     With --aot: don't embed function source code. fn.toString() returns [native code]"
     ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(

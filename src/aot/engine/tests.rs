@@ -185,6 +185,10 @@ fn options_fill_record() {
         filled_record(|options| options.runs_in_several_realms = true),
         expected_record(|record| record.output = OutputOptions::RUNS_IN_SEVERAL_REALMS)
     );
+    assert_eq!(
+        filled_record(|options| options.records_order = true),
+        expected_record(|record| record.output = OutputOptions::RECORDS_ORDER)
+    );
 }
 
 #[test]

@@ -880,22 +880,81 @@ impl ContentsScan<'_, '_> {
 
     fn add_files_preloaded(&mut self, construction: ExprId, preload: ExprId) {
         let hir = self.request.hir;
-        let preload = self.find_value_under_name(preload);
-        let names: Vec<ExprId> = match hir[preload].kind {
-            ExprKind::Array(names) => hir.ids(names).collect(),
-            _ => vec![preload],
-        };
-        for name_node in names {
-            if let Some(text) = self.find_constant_text(name_node) {
+        let mut values = vec![self.find_value_under_name(preload)];
+        let mut looked_at = 0;
+        while let Some(&value) = values.get(looked_at) {
+            looked_at += 1;
+            let held: Vec<ExprId> = match hir[value].kind {
+                ExprKind::Array(held) => hir.ids(held).collect(),
+                ExprKind::Spread(held) => vec![held],
+                ExprKind::Cond { branches, .. } => {
+                    let branches = hir.branches(branches);
+                    vec![branches.yes, branches.no]
+                }
+                _ => Vec::new(),
+            };
+            for held in held {
+                let held = self.find_value_under_name(held);
+                if !values.contains(&held) {
+                    values.push(held);
+                }
+            }
+            if let Some((name, form)) = self.find_file_preloaded(value) {
                 self.found.worker_starts.push(WorkerStart {
                     at: construction,
-                    name_node,
-                    name: ImportSpecifier::Constant(text),
-                    form: WorkerNameForm::AsWritten,
+                    name_node: value,
+                    name: ImportSpecifier::Constant(name),
+                    form,
                     place: PlaceOfName::Preload,
                     is_on_trust: false,
                 });
             }
+        }
+    }
+
+    fn find_file_preloaded(&self, written: ExprId) -> Option<(Atom, WorkerNameForm)> {
+        let &FinishedFile {
+            hir,
+            analysis,
+            atoms,
+            ..
+        } = self.request;
+        if let Some(text) = self.find_constant_text(written) {
+            return Some((text, WorkerNameForm::AsWritten));
+        }
+        let mut paths = analysis.decisions.paths_written_from_own_directory().iter();
+        if let Some(&(_, path)) = paths.find(|it| it.0 == written) {
+            return Some((path, WorkerNameForm::FromOwnFolder));
+        }
+        if let Some(load) = self.find_load_at(written) {
+            let site = &analysis.import_sites[load];
+            return match (site.kind, site.specifier) {
+                (ImportSiteKind::RequireResolve(_), ImportSpecifier::Constant(name)) => {
+                    Some((name, WorkerNameForm::Resolved(ResolvedForm::Path)))
+                }
+                (ImportSiteKind::ImportMetaResolve(_), ImportSpecifier::Constant(name)) => {
+                    Some((name, WorkerNameForm::Resolved(ResolvedForm::Url)))
+                }
+                _ => None,
+            };
+        }
+        let url = match (hir[written].kind, hir.member_key(written)) {
+            (ExprKind::Call(call), _) if self.spells_same_file(call) => {
+                hir.ids(hir[call].args).next()?
+            }
+            (_, Some((url, MemberKey::Name(name))))
+                if matches!(atoms.bytes(name), b"href" | b"pathname") =>
+            {
+                url
+            }
+            _ => written,
+        };
+        match hir[self.find_value_under_name(url)].kind {
+            ExprKind::New(call) if self.find_constructor_called(call) == Some(Constructor::Url) => {
+                let (_, name) = self.find_file_by_url(call)?;
+                Some((name, WorkerNameForm::FromOwnFolder))
+            }
+            _ => None,
         }
     }
 

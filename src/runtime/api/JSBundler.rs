@@ -488,6 +488,8 @@ pub(crate) mod js_bundler {
         harden: Vec<Vec<u8>>,
         testing: Vec<Vec<u8>>,
         out: Vec<Vec<u8>>,
+        order: Vec<Vec<u8>>,
+        record_order: Vec<Vec<u8>>,
         omits_function_source: bool,
         obfuscates: bool,
         admits_inspector: bool,
@@ -548,6 +550,10 @@ pub(crate) mod js_bundler {
             self.harden = read_names(global_this, compile, "aotHarden")?;
             self.testing = read_names(global_this, compile, "aotTesting")?;
             self.out = read_names(global_this, compile, "aotOut")?;
+            self.order = read_names(global_this, compile, "aotOrder")?;
+            if compile.get_boolean_loose(global_this, "aotRecordOrder")? == Some(true) {
+                self.record_order.push(Vec::new());
+            }
             Ok(())
         }
 
@@ -616,6 +622,8 @@ pub(crate) mod js_bundler {
                     .chain(with_key("harden", &self.harden))
                     .chain(with_key("testing", &self.testing))
                     .chain(with_key("out", &self.out))
+                    .chain(with_key("order", &self.order))
+                    .chain(with_key("record-order", &self.record_order))
                     .collect(),
                 is_cross_compile: !compile.compile_target.is_this_bun(),
                 exec_argv: &compile.exec_argv.list,

@@ -131,7 +131,7 @@ static void ensureHostBindings()
     });
 }
 
-extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::ExternalFunctionBodies* externalBodies, void (*releaseProgram)(void* owner), void (*releaseBytesOfProgram)(void* owner), void* programOwner, const Wire::CompileOptions* options, const JSC::AOT::HostThreadPool* threadPool, size_t (*functionSourceSize)(void* owner, uint32_t module), void (*copyFunctionSource)(void* owner, uint32_t module, uint8_t* destination), const uint8_t* (*viewFunctionSource)(void* owner, uint32_t module), void (*releaseFunctionSources)(void* owner))
+extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::ExternalFunctionBodies* externalBodies, void (*releaseProgram)(void* owner), void (*releaseBytesOfProgram)(void* owner), void* programOwner, const Wire::CompileOptions* options, const JSC::AOT::HostThreadPool* threadPool, size_t (*functionSourceSize)(void* owner, uint32_t module), void (*copyFunctionSource)(void* owner, uint32_t module, uint8_t* destination), const uint8_t* (*viewFunctionSource)(void* owner, uint32_t module), void (*releaseFunctionSources)(void* owner), BunAOTBytes orderFile)
 {
     ensureHostBindings();
 
@@ -141,7 +141,7 @@ extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::
 #endif
 
     auto* result = new BunAOTResult;
-    result->output = JSC::callRemovable<JSC::RemovableFeature::ImageCompiler, JSC::RemovedFeatureStub::Abort, JSC::AOT::compileProgram>(std::span { program.ptr, program.len }, *options, threadPool, JSC::AOT::ProgramOwner { releaseProgram, programOwner, externalBodies, { programOwner, functionSourceSize, copyFunctionSource, viewFunctionSource, releaseFunctionSources }, releaseBytesOfProgram, { encodeForBuffer } });
+    result->output = JSC::callRemovable<JSC::RemovableFeature::ImageCompiler, JSC::RemovedFeatureStub::Abort, JSC::AOT::compileProgram>(std::span { program.ptr, program.len }, *options, threadPool, JSC::AOT::ProgramOwner { releaseProgram, programOwner, externalBodies, { programOwner, functionSourceSize, copyFunctionSource, viewFunctionSource, releaseFunctionSources }, releaseBytesOfProgram, { encodeForBuffer }, { orderFile.ptr, orderFile.len } });
     return result;
 }
 

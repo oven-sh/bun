@@ -2132,14 +2132,8 @@ fn is_object(hir: &File<'_>, e: ExprId) -> bool {
 }
 
 fn import_call_attributes(hir: &File<'_>, options: ExprId) -> ExprId {
-    let Some(ExprKind::Object(props)) = expr_kind(hir, options) else {
-        return ExprId::NONE;
-    };
-    let mut all = props.iter().map(|prop| &hir[prop]);
-    let with =
-        all.find(|prop| prop.kind == PropKind::Init && prop.key == PropKey::Name(known::with));
-    match with {
-        Some(prop) if is_object(hir, prop.value) => prop.value,
+    match hir.import_attribute_value(options, known::with) {
+        Some(with) if is_object(hir, with) => with,
         Some(_) | None => ExprId::NONE,
     }
 }

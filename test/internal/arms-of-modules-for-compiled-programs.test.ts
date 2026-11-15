@@ -260,10 +260,22 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
     ["? IS_COMPILED_AHEAD_OF_TIME", arm("what-stands-below-the-prototype-of-functions-is-printed.cjs")],
   ],
   "ahead-of-time/node/fs.ts": [
-    ["appendFileSync = IS_COMPILED_AHEAD_OF_TIME", arm("the-functions-of-node-fs-that-node-net-calls.mjs")],
-    ["closeSync = IS_COMPILED_AHEAD_OF_TIME", arm("the-functions-of-node-fs-that-node-net-calls.mjs")],
-    ["chmodSync = IS_COMPILED_AHEAD_OF_TIME", arm("the-functions-of-node-fs-that-node-net-calls.mjs")],
-    ["fstatSync = IS_COMPILED_AHEAD_OF_TIME", arm("the-functions-of-node-fs-that-node-net-calls.mjs")],
+    [
+      "IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME",
+      arm("the-functions-of-node-fs-that-node-net-calls.mjs"),
+    ],
+    [
+      "IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME",
+      arm("the-functions-of-node-fs-that-node-net-calls.mjs"),
+    ],
+    [
+      "IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME",
+      arm("the-functions-of-node-fs-that-node-net-calls.mjs"),
+    ],
+    [
+      "IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME",
+      arm("the-functions-of-node-fs-that-node-net-calls.mjs"),
+    ],
     ["IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME", "parallel/node-module-results/every-import-form.ts"],
     ["IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME", "parallel/node-module-results/every-import-form.ts"],
     ["IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME", "parallel/node-module-results/every-import-form.ts"],
@@ -272,6 +284,10 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
     [
       "return IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME",
       arm("exists-sync-with-no-operand-and-with-two.mjs"),
+    ],
+    [
+      "if (!(IS_COMPILED_AHEAD_OF_TIME && !CAN_LOAD_CODE_AT_RUN_TIME)) {",
+      arm("the-functions-of-node-fs-that-node-net-calls.mjs"),
     ],
   ],
   "ahead-of-time/node/path.ts": [

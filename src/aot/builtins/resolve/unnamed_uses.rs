@@ -1,23 +1,28 @@
 use super::mention_use::{MentionUse, lookup_passes_holder_linked_anew};
+use super::mentions::mentioned_id;
 use super::resolver::{ExprState, Resolver};
 use super::{SourceDialect, passes_every_assertion, reads_what_wrapper_hands_in};
 use crate::builtins::names::BuiltinNames;
 use crate::builtins::runtime_uses::{
-    SyntaxWithHelpers, is_name_of_language_member_with_code, is_name_under_which_evaluator_hangs,
+    RoadsToNamespaces, SyntaxWithHelpers, is_name_of_language_member_with_code,
+    is_name_of_namespace_member_with_code, is_name_of_prototype_property,
+    is_name_under_which_evaluator_hangs,
 };
-use crate::builtins::table::{self, BuiltinId, BuiltinName, Intrinsic, Platforms};
+use crate::builtins::table::{self, BuiltinId, BuiltinName, Intrinsic, Mutability, Platforms};
 use bun_core::strings;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
-    Binding, BindingKind, BindingStability, Decl, Parent, PatParent, StoreKind, SymbolId,
+    Binding, BindingInitializer, BindingKind, BindingStability, Decl, Parent, PatParent, StoreKind,
+    SymbolId,
 };
 use bun_sema::fold::{Constant, Decision, Decisions, FoldedValue};
 use bun_sema::hir::{
-    self, BinOp, ExprId, ExprKind, Flags, FnKind, MemberKey, MemberKind, PatId, PatKind, PropKey,
-    StmtKind, TemplatePart, UnOp, VarDeclId, VarKind,
+    self, BinOp, Chain, ExprId, ExprKind, Flags, FnKind, MemberKey, MemberKind, PatId, PatKind,
+    PropKey, StmtKind, TemplatePart, UnOp, VarDeclId, VarKind,
 };
 use bun_sema::hir_from_data::DataValue;
 use core::ops::Range;
+use smallvec::SmallVec;
 
 pub(super) const MOST_VARIABLES_FOLLOWED: u32 = 4;
 
@@ -467,6 +472,17 @@ impl Resolver<'_, '_> {
         if let Some(name) = self.input.names.find_name_of_language_member(name) {
             self.output.members_read.push(name);
         }
+        if self.input.dialect != SourceDialect::Program {
+            return;
+        }
+        if let Some(name) = self.input.names.get(name) {
+            if is_name_of_prototype_property(name) {
+                self.output.roads_to_namespaces |= RoadsToNamespaces::CLIMBS_PROTOTYPES;
+            }
+            if is_name_of_namespace_member_with_code(name) {
+                self.output.namespace_names_read.push(name);
+            }
+        }
     }
 
     fn head_of(&self, declaration: VarDeclId) -> Head {
@@ -739,6 +755,59 @@ impl Resolver<'_, '_> {
         }
     }
 
+    fn is_read_off_variable_that_may_be_undefined(&self, read: ExprId) -> bool {
+        if self.input.dialect != SourceDialect::Program {
+            return false;
+        }
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let mut answers = self.variables_that_may_be_undefined.borrow_mut();
+        let mut followed: SmallVec<[SymbolId; 4]> = SmallVec::new();
+        let mut current = read;
+        let answer = loop {
+            current = hir.skip_type_assertions(current);
+            current = match hir[current].kind {
+                ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => {
+                    let is_constant = || {
+                        let value = self.value_of(current);
+                        value.is_some_and(|it| it.path.mutability == Mutability::AlwaysLocked)
+                    };
+                    if !followed.is_empty() && !matches!(chain, Chain::No) && !is_constant() {
+                        break true;
+                    }
+                    match hir.member_key(current) {
+                        Some((object, _)) => object,
+                        None => break false,
+                    }
+                }
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    right,
+                    ..
+                } => right,
+                ExprKind::Ident(_) => {
+                    let Binding::Symbol(variable) = bound.binding(current) else {
+                        break false;
+                    };
+                    if let Some(&known) = answers.get(&variable) {
+                        break known;
+                    }
+                    answers.insert(variable, false);
+                    followed.push(variable);
+                    match bound.binding_initializer(hir, variable) {
+                        BindingInitializer::Expression(initializer) => initializer,
+                        BindingInitializer::PatternProperty { source, .. } => source,
+                        _ => break false,
+                    }
+                }
+                _ => break false,
+            };
+        };
+        if answer {
+            answers.extend(followed.into_iter().map(|variable| (variable, true)));
+        }
+        answer
+    }
+
     fn collect_members_read(&mut self) {
         for index in 0..self.computed.len() {
             let expr = self.computed[index];
@@ -752,6 +821,8 @@ impl Resolver<'_, '_> {
                     self.note_name_read(table::name_of_symbol(symbol));
                     continue;
                 }
+                ExprState::Builtin(_) | ExprState::Held(_)
+                    if self.is_read_off_variable_that_may_be_undefined(expr) => {}
                 ExprState::Builtin(_) | ExprState::Held(_) | ExprState::Intrinsic(_) => continue,
                 _ => {}
             }
@@ -766,8 +837,12 @@ impl Resolver<'_, '_> {
                     self.output.may_call_evaluator |= !is_only_looked_at(self);
                     self.note_text_read(name);
                 }
-                Some((_, MemberKey::Name(name))) => {
+                Some((object, MemberKey::Name(name))) => {
                     let names = self.input.names;
+                    let object = self.input.hir.skip_type_assertions(object);
+                    if name == known::__proto__ && mentioned_id(self.state(object)).is_some() {
+                        self.output.roads_to_namespaces |= RoadsToNamespaces::HANDS_ON_BUILTIN;
+                    }
                     if names.is_name_of_method_that_hands_out_global_object(name)
                         && self.is_taken_as_value(expr)
                     {

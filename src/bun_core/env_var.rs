@@ -78,6 +78,8 @@ new!(pub BUN_CONFIG_WS_CLOSE_TIMEOUT: unsigned, "BUN_CONFIG_WS_CLOSE_TIMEOUT", {
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
 #[cfg(not(bun_locked_environment))]
 new!(pub BUN_AOT_VERBOSE: boolean, "BUN_AOT_VERBOSE", { default: false });
+#[cfg(not(bun_locked_environment))]
+new!(pub BUN_AOT_ORDER_OUT: string, "BUN_AOT_ORDER_OUT", {});
 // Bun's own tests, behind BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: `bun build --compile --aot` writes the program alone where it would write an
 // executable.
 #[cfg(not(bun_locked_environment))]

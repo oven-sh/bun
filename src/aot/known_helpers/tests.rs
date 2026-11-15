@@ -5,10 +5,10 @@ use super::find::{
 use super::published::{Helper, PUBLISHED_FUNCTIONS, Shape};
 use super::resolve::{KnownCallee, ResolveInput, resolve_callee, resolve_reference};
 use super::table::{Table, analyze, find_published_function};
-use super::{KnownHelpers, Reference};
+use super::{KnownHelpers, Reference, is_made_behind};
 use crate::ir::run_serially;
 use crate::modules::testing::{file_named, with_graph};
-use bun_sema::hir::{ExprKind, StmtKind};
+use bun_sema::hir::{ExprId, ExprKind, StmtId, StmtKind};
 
 pub(super) const CREATE_BINDING: &str = r#"var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -1248,6 +1248,44 @@ fn a_declaration_that_another_file_may_call_early_guards_the_variable_that_it_na
     assert!(!variable_needs_guard(TSLIB_ES_MODULE));
     let on_a_cycle = format!("import \"./main.mjs\";\n{TSLIB_ES_MODULE}");
     assert!(variable_needs_guard(&on_a_cycle));
+}
+
+#[test]
+fn a_later_statement_makes_what_runs_behind_a_definition() {
+    let cases = [
+        ("var f = 1;\nf;", true),
+        ("var f = 1;\nclass A { m() { f; } }", true),
+        ("var f = 1;\nexport default () => f;", true),
+        ("var f = 1;\nexport const o = { m() { return f; } };", true),
+        (
+            "var f = 1;\nif (globalThis.a) { function g() { f; } }",
+            true,
+        ),
+        ("f;\nvar f = 1;", false),
+        ("class A { m() { f; } }\nvar f = 1;", false),
+        ("var f = 1, g = () => f;", false),
+        ("var f = 1;\nfunction g() { f; }", false),
+        (
+            "var f = 1;\nexport function g() { class A { m() { f; } } }",
+            false,
+        ),
+        ("var f = 1;\nexport default function () { f; }", false),
+        ("{ var f = 1; }\nf;", false),
+    ];
+    for (source, is_behind) in cases {
+        analyze("/a.mjs", source, |file| {
+            let hir = file.hir;
+            let mut names = (0..hir.exprs.len() as u32).map(ExprId).filter(|&it| {
+                matches!(hir[it].kind, ExprKind::Ident(name) if file.atoms.bytes(name) == b"f")
+            });
+            let named = names.next_back().expect("the text names the variable");
+            let mut statements = (0..hir.stmts.len() as u32).map(StmtId);
+            let defined = statements.find(|&it| matches!(hir[it].kind, StmtKind::Var(_)));
+            let defined = defined.expect("the text declares the variable");
+            let found = is_made_behind(hir, defined, hir[named].pos);
+            assert_eq!(found, is_behind, "{source}");
+        });
+    }
 }
 
 const REQUIRE_OF_ESBUILD: &str = r#"var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {

@@ -56,7 +56,7 @@ pub use plan::{Member, ModuleRef, Shape, Site, View};
 pub use reexport_paths::{PathStep, ReexportPath};
 pub use referents::{Library, LinkedProject, find_name_stored_as_module_exports};
 pub use requests::Spelling;
-pub(crate) use spelled_files::directory_of;
+pub(crate) use spelled_files::{directory_of, find_files_that_unknown_names_may_require};
 pub(crate) use test_replacements::asks_for_original_beside_mock;
 pub use unlinked_files::UnlinkedFiles;
 pub use wrapped::{InnerModule, InnerModuleKind, WrappedModules};
@@ -995,6 +995,7 @@ fn bind_scanned_modules(
         folders_of_databases: modules.folders_of_databases,
         star_names_left_out,
         names_laid_on_object_prototype,
+        enums_stored_into: OnceLock::new(),
     };
     let ((), graph) = run_steps_beside(
         input.beside,

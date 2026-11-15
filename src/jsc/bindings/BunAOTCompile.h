@@ -43,7 +43,8 @@ extern "C" BunAOTResult* Bun__AOT__compile(
     size_t (*functionSourceSize)(void* owner, uint32_t module),
     void (*copyFunctionSource)(void* owner, uint32_t module, uint8_t* destination),
     const uint8_t* (*viewFunctionSource)(void* owner, uint32_t module),
-    void (*releaseFunctionSources)(void* owner));
+    void (*releaseFunctionSources)(void* owner),
+    BunAOTBytes orderFile);
 extern "C" BunAOTBytes Bun__AOT__resultSection(const BunAOTResult*, JSC::AOT::Wire::ResultSection);
 extern "C" void Bun__AOT__freeResult(BunAOTResult*);
 extern "C" size_t Bun__AOT__imageAlignment();
@@ -71,6 +72,10 @@ extern "C" bool Bun__AOT__admittedCode(BunAOTBytes image, JSC::AOT::Wire::Admitt
 #endif
 extern "C" BunAOTBytes Bun__AOT__imageCode();
 extern "C" void Bun__AOT__setVerbose(bool isVerbose);
+extern "C" BunAOTBytes Bun__AOT__startOrderRecording(const char* path);
+extern "C" void Bun__AOT__finishOrderRecording();
+extern "C" bool Bun__AOT__recordsOrder();
+extern "C" bool Bun__AOT__isRecordingOrder();
 extern "C" int64_t Bun__AOT__offsetInCode(const void* address);
 extern "C" size_t Bun__AOT__addressOfOffsetInCode(size_t offset);
 extern "C" int64_t Bun__AOT__frameAtReturnAddress(const void* returnAddress);

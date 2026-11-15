@@ -102,6 +102,13 @@ const programs = {
     }
   `,
   "entry.ts": `console.log("built by an executable" as string);`,
+  "compiles.ts": `
+    const { FOLDER } = process.env;
+    const compile = { aot: true, outfile: FOLDER + "/by-" + process.argv[2] };
+    console.log((await Bun.build({ entrypoints: [FOLDER + "/imports.ts"], compile })).success);
+  `,
+  "imports.ts": `import "./imported.ts";\nconsole.log("imports");`,
+  "imported.ts": `console.log("imported" as string);`,
   "installs/bunfig.toml": `[install]\nauto = "force"\n`,
 };
 
@@ -206,11 +213,11 @@ function removedFeaturesOf(executable: Build): string[] {
     });
   }, 600_000);
 
-  test.each(["--help", "-h", "--check", "--aot", "-i"])(
+  test.each(["--help", "-h", "-i", "--install=force", "--install=fallback", "--aot --aot-allow-code-from-disk"])(
     "%s in BUN_OPTIONS says to run bun",
     async option => {
       const hello = await built("hello");
-      const label = option === "-h" ? "--help" : option;
+      const label = option === "-h" ? "--help" : option.replace(/^--aot |=.*/g, "");
       expect(await run([hello.executable], folder, { ...bunEnv, BUN_OPTIONS: option })).toEqual({
         stdout: "",
         stderr: `error: ${label} ${noCommandLine}\n`,
@@ -332,6 +339,32 @@ function removedFeaturesOf(executable: Build): string[] {
       const text = `Bun.build({ entrypoints: [process.env.FOLDER + "/entry.ts"], ${options} })`;
       expect(await run([outfile, text], folder, { ...bunEnv, FOLDER: folder })).toEqual({
         stdout: "true\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    600_000,
+  );
+
+  test.each([
+    ["by-default", {}],
+    ["allowed", { trim: { allow: ["bundler", "aot"] } }],
+  ])(
+    "an executable compiles a program that imports a file: %s",
+    async (name, options) => {
+      const outfile = join(folder, `compiles-${name}`);
+      const entrypoints = [join(folder, "compiles.ts")];
+      const request = JSON.stringify({ entrypoints, compile: { aot: true, outfile, ...options } });
+      expect(await run([bunExe(), "-e", `console.log((await Bun.build(${request})).success)`], folder)).toMatchObject({
+        stdout: "true\n",
+        exitCode: 0,
+      });
+      expect(await run([outfile, name], folder, { ...bunEnv, FOLDER: folder })).toMatchObject({
+        stdout: "true\n",
+        exitCode: 0,
+      });
+      expect(await run([join(folder, `by-${name}`)], folder)).toEqual({
+        stdout: "imported\nimports\n",
         stderr: "",
         exitCode: 0,
       });

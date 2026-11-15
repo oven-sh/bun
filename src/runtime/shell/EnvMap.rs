@@ -1,22 +1,20 @@
-use bun_collections::array_hash_map::{self, ArrayHashContext, ArrayHashMap, Iter};
+use bun_collections::array_hash_map::{self, ArrayHashContext, ArrayHashMap};
 
 use crate::shell::EnvStr;
 
-pub(crate) struct EnvMap {
-    map: EnvMapInner,
+pub(crate) struct EnvMap<'a> {
+    map: EnvMapInner<'a>,
 }
-
-pub(crate) type Iterator<'a> = Iter<'a, EnvStr, EnvStr>;
 
 // Named `EnvMapInner` to avoid rustc confusing it with the unrelated mmap
 // `sys::c::MapType` / `sys::posix::MapType` in diagnostic suggestions.
-type EnvMapInner = ArrayHashMap<EnvStr, EnvStr, EnvMapContext>;
+type EnvMapInner<'a> = ArrayHashMap<EnvStr<'a>, EnvStr<'a>, EnvMapContext>;
 
 #[derive(Default)]
 struct EnvMapContext;
 
-impl ArrayHashContext<EnvStr> for EnvMapContext {
-    fn hash(&self, s: &EnvStr) -> u32 {
+impl<'a> ArrayHashContext<EnvStr<'a>> for EnvMapContext {
+    fn hash(&self, s: &EnvStr<'a>) -> u32 {
         #[cfg(windows)]
         {
             return <array_hash_map::CaseInsensitiveAsciiStringContext as ArrayHashContext<[u8]>>::hash(
@@ -30,7 +28,7 @@ impl ArrayHashContext<EnvStr> for EnvMapContext {
         }
     }
 
-    fn eql(&self, a: &EnvStr, b: &EnvStr, _b_index: usize) -> bool {
+    fn eql(&self, a: &EnvStr<'a>, b: &EnvStr<'a>, _b_index: usize) -> bool {
         #[cfg(windows)]
         {
             // Must be length-checked: "PATH" must NOT match "PATHEXT".
@@ -46,8 +44,8 @@ impl ArrayHashContext<EnvStr> for EnvMapContext {
     }
 }
 
-impl EnvMap {
-    pub(crate) fn init() -> EnvMap {
+impl<'a> EnvMap<'a> {
+    pub(crate) fn init() -> EnvMap<'a> {
         EnvMap {
             map: EnvMapInner::new(),
         }
@@ -65,21 +63,17 @@ impl EnvMap {
         size
     }
 
-    pub(crate) fn init_with_capacity(cap: usize) -> EnvMap {
+    pub(crate) fn init_with_capacity(cap: usize) -> EnvMap<'a> {
         EnvMap {
             map: EnvMapInner::with_capacity(cap),
         }
     }
 
-    pub(crate) fn insert(&mut self, key: EnvStr, val: EnvStr) {
+    pub(crate) fn insert(&mut self, key: EnvStr<'a>, val: EnvStr<'a>) {
         self.map.put(key, val).expect("OOM");
     }
 
-    pub(crate) fn iterator(&mut self) -> Iterator<'_> {
-        self.map.iterator()
-    }
-
-    pub(crate) fn iter(&self) -> impl core::iter::Iterator<Item = (&EnvStr, &EnvStr)> {
+    pub(crate) fn iter(&self) -> impl ExactSizeIterator<Item = (&EnvStr<'a>, &EnvStr<'a>)> {
         self.map.keys().iter().zip(self.map.values())
     }
 
@@ -87,11 +81,12 @@ impl EnvMap {
         self.map.ensure_total_capacity(new_capacity).expect("OOM");
     }
 
-    pub(crate) fn get(&self, key: &[u8]) -> Option<&[u8]> {
-        self.map.get(&EnvStr::init_slice(key)).map(EnvStr::slice)
+    pub(crate) fn get<'s>(&'s self, key: &'s [u8]) -> Option<&'s [u8]> {
+        let map: &EnvMapInner<'s> = &self.map;
+        map.get(&EnvStr::init_slice(key)).map(EnvStr::slice)
     }
 
-    pub(crate) fn clone(&self) -> EnvMap {
+    pub(crate) fn clone(&self) -> EnvMap<'a> {
         EnvMap {
             map: self.map.clone().expect("OOM"),
         }

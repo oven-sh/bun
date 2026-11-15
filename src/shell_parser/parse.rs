@@ -2099,8 +2099,8 @@ impl Token {
 
 // ───────────────────────────── Lexer ─────────────────────────────
 
-pub type LexerAscii<'bump> = Lexer<'bump, { StringEncoding::Ascii }>;
-pub type LexerUnicode<'bump> = Lexer<'bump, { StringEncoding::Wtf8 }>;
+pub type LexerAscii<'bump, 'src> = Lexer<'bump, 'src, { StringEncoding::Ascii }>;
+pub type LexerUnicode<'bump, 'src> = Lexer<'bump, 'src, { StringEncoding::Wtf8 }>;
 
 #[derive(Clone, Copy)]
 pub struct LexResult<'bump> {
@@ -2174,15 +2174,15 @@ enum AddDelimiter {
 }
 
 #[derive(Clone, Copy)]
-struct BacktrackSnapshot<'bump, const ENCODING: StringEncoding> {
-    chars: ShellCharIter<'bump, ENCODING>,
+struct BacktrackSnapshot<'src, const ENCODING: StringEncoding> {
+    chars: ShellCharIter<'src, ENCODING>,
     j: u32,
     word_start: u32,
     delimit_quote: bool,
 }
 
-pub struct Lexer<'bump, const ENCODING: StringEncoding> {
-    pub(crate) chars: ShellCharIter<'bump, ENCODING>,
+pub struct Lexer<'bump, 'src, const ENCODING: StringEncoding> {
+    pub(crate) chars: ShellCharIter<'src, ENCODING>,
 
     /// Tell us the beginning of a "word", indexes into the string pool (`buf`)
     /// Anytime a word is added, this needs to be updated
@@ -2207,17 +2207,17 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
 
     /// Contains a list of strings we need to escape
     /// Not owned by this struct
-    pub(crate) string_refs: &'bump [BunString],
+    pub(crate) string_refs: &'src [BunString],
 
     /// Number of JS object references expected (for bounds validation)
     pub(crate) jsobjs_len: u32,
 }
 
-impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
+impl<'bump, 'src, const ENCODING: StringEncoding> Lexer<'bump, 'src, ENCODING> {
     pub fn new(
         bump: &'bump Bump,
-        src: &'bump [u8],
-        strings_to_escape: &'bump [BunString],
+        src: &'src [u8],
+        strings_to_escape: &'src [BunString],
         jsobjs_len: u32,
     ) -> Self {
         Self {
@@ -2300,8 +2300,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.delimit_quote = sublexer.delimit_quote;
     }
 
-    fn make_snapshot(&self) -> BacktrackSnapshot<'bump, ENCODING> {
-        // explicit `'bump` so the snapshot borrows the arena, not
+    fn make_snapshot(&self) -> BacktrackSnapshot<'src, ENCODING> {
+        // explicit `'src` so the snapshot borrows the source, not
         // `&self` — otherwise holding a snapshot would freeze the lexer.
         BacktrackSnapshot {
             chars: self.chars,
@@ -2311,7 +2311,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         }
     }
 
-    fn backtrack(&mut self, snap: &BacktrackSnapshot<'bump, ENCODING>) {
+    fn backtrack(&mut self, snap: &BacktrackSnapshot<'src, ENCODING>) {
         self.chars = snap.chars;
         self.j = snap.j;
         self.word_start = snap.word_start;
@@ -2335,7 +2335,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             // would do for any byte NOT in SPECIAL_CHARS_TABLE: append to
             // strpool and advance, with no state change.
             if ENCODING == StringEncoding::Ascii && self.chars.state == CharState::Normal {
-                let scan: Option<(&'bump [u8], usize, usize)> = match &self.chars.src {
+                let scan: Option<(&'src [u8], usize, usize)> = match &self.chars.src {
                     Src::Ascii(a) => {
                         let bytes = a.bytes;
                         let start = a.i;
@@ -3351,7 +3351,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         None
     }
 
-    fn eat_js_string_ref(&mut self) -> Option<&'bump BunString> {
+    fn eat_js_string_ref(&mut self) -> Option<&'src BunString> {
         if let Some(idx) = self.eat_js_substitution_idx(
             LEX_JS_STRING_PREFIX,
             "JS string ref",

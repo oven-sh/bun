@@ -6,7 +6,6 @@ use crate::shell::yield_::Yield;
 #[derive(Default)]
 pub(crate) struct Dirname {
     state: State,
-    buf: Vec<u8>,
 }
 
 #[derive(Default)]
@@ -18,7 +17,7 @@ enum State {
 }
 
 impl Dirname {
-    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         let bltn = Builtin::of(interp, cmd);
         let argc = bltn.args_slice().len();
         if argc == 0 {
@@ -36,25 +35,21 @@ impl Dirname {
         }
 
         Self::state_mut(interp, cmd).state = State::Done;
-        if let Some(safeguard) = stdout_needs_io {
-            Self::state_mut(interp, cmd).buf = buf;
-            let owned = Self::state_mut(interp, cmd).buf.clone();
+        if let Some(fd) = stdout_needs_io {
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stdout
-                .enqueue(child, &owned, safeguard);
+            return interp.enqueue(fd, child, &buf);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         Builtin::done(interp, cmd, 0)
     }
 
-    fn fail(interp: &Interpreter, cmd: NodeId, msg: &[u8]) -> Yield {
+    fn fail(interp: &mut Interpreter<'_>, cmd: NodeId, msg: &[u8]) -> Yield {
         Self::state_mut(interp, cmd).state = State::Err;
         Builtin::write_failing_error(interp, cmd, msg, 1)
     }
 
     pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         _: usize,
         err: Option<bun_sys::SystemError>,

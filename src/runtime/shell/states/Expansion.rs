@@ -5,19 +5,21 @@
 //! produces zero or more output strings.
 
 use crate::shell::ast;
+use crate::shell::builtin::IoKind;
 use crate::shell::interpreter::{
-    EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind, log,
+    EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvId, ShellExecEnvKind,
+    StateKind, log,
 };
 use crate::shell::io::{IO, OutKind};
-use crate::shell::states::base::{Base, Env, InheritedEnv};
+use crate::shell::states::base::{Base, Env};
 use crate::shell::states::script::Script;
 use crate::shell::yield_::Yield;
 use crate::shell::{ExitCode, ShellErr};
 
-pub(crate) struct Expansion {
+pub(crate) struct Expansion<'a> {
     pub(crate) base: Base,
-    shell: InheritedEnv,
-    pub node: bun_ptr::BackRef<ast::Atom>,
+    shell: ShellExecEnvId,
+    pub node: &'a ast::Atom<'a>,
     pub(crate) state: ExpansionState,
     /// Index of the next sub-atom to expand. For `Atom::Simple` this is 0/1;
     /// for `Atom::Compound` it walks `c.atoms`.
@@ -85,18 +87,18 @@ pub(crate) struct ExpansionOut {
     pub(crate) has_quoted_empty: bool,
 }
 
-impl Expansion {
+impl<'a> Expansion<'a> {
     pub(crate) fn init(
-        interp: &Interpreter,
-        shell: *mut ShellExecEnv,
-        node: &ast::Atom,
+        interp: &mut Interpreter<'a>,
+        shell: ShellExecEnvId,
+        node: &'a ast::Atom<'a>,
         parent: NodeId,
         assign_ctx: bool,
     ) -> NodeId {
         interp.alloc_node(Node::Expansion(Expansion {
             base: Base::new(parent),
-            shell: InheritedEnv(shell),
-            node: bun_ptr::BackRef::new(node),
+            shell,
+            node,
             state: ExpansionState::Idle,
             word_idx: 0,
             out: ExpansionOut::default(),
@@ -110,7 +112,7 @@ impl Expansion {
         }))
     }
 
-    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &mut Interpreter<'a>, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
@@ -118,11 +120,13 @@ impl Expansion {
     /// atom, appending no-IO expansions to `current_out` and yielding to a
     /// child `Script` whenever a `$(...)` is encountered. Re-entered after
     /// `child_done` advances `word_idx`.
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &mut Interpreter<'a>, this: NodeId) -> Yield {
         loop {
             let event_loop = interp.event_loop;
             let command_ctx = interp.command_ctx;
-            let me = interp.as_expansion_mut(this);
+            let Node::Expansion(me) = &mut interp.nodes[this.idx()] else {
+                unreachable!()
+            };
             match me.state {
                 ExpansionState::Idle => {
                     me.state = ExpansionState::Walking;
@@ -146,10 +150,7 @@ impl Expansion {
                 ExpansionState::Walking => {}
             }
 
-            // Copy the BackRef out so `atom` borrows a local, leaving `me`
-            // free for the `&mut me.*` field writes below.
-            let node = me.node;
-            let atom = node.get();
+            let atom = me.node;
             let atoms_len = atom.atoms_len();
             // Leading `~` in a compound is skipped during the walk and
             // post-processed below.
@@ -160,24 +161,21 @@ impl Expansion {
             }
 
             while me.word_idx < atoms_len {
-                let simple: &ast::SimpleAtom = match atom {
+                let simple = match atom {
                     ast::Atom::Simple(s) => s,
                     ast::Atom::Compound(c) => &c.atoms[me.word_idx as usize],
                 };
-                let shell = &*me.shell;
-                let is_cmd_subst = interp.vm_args_utf8.with_mut(|vm_args_utf8| {
-                    Self::expand_simple_no_io(
-                        shell,
-                        simple,
-                        &mut me.current_out,
-                        &mut me.meta_offsets,
-                        &mut me.has_quoted_empty,
-                        true,
-                        event_loop,
-                        command_ctx,
-                        vm_args_utf8,
-                    )
-                });
+                let is_cmd_subst = Self::expand_simple_no_io(
+                    &interp.shells[me.shell],
+                    simple,
+                    &mut me.current_out,
+                    &mut me.meta_offsets,
+                    &mut me.has_quoted_empty,
+                    true,
+                    event_loop,
+                    command_ctx,
+                    &mut interp.vm_args_utf8,
+                );
                 if !is_cmd_subst {
                     me.word_idx += 1;
                     continue;
@@ -192,26 +190,26 @@ impl Expansion {
                 me.cmd_subst_quoted = quoted;
 
                 let io = IO {
-                    stdin: interp.root_io().stdin.clone(),
+                    stdin: interp.root_io.stdin,
                     stdout: OutKind::Pipe,
-                    stderr: interp.root_io().stderr.clone(),
+                    stderr: interp.root_io.stderr,
                 };
-                let duped = match me.shell.dupe_for_subshell(&io, ShellExecEnvKind::CmdSubst) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        drop(io);
-                        interp.throw(ShellErr::new_sys(&e));
-                        return Yield::Failed(this);
-                    }
-                };
-                let script = Script::init(interp, Env::Owned(duped), &sub.script, this, io);
+                let duped =
+                    match interp
+                        .shells
+                        .dupe_for_subshell(me.shell, io, ShellExecEnvKind::CmdSubst)
+                    {
+                        Ok(d) => d,
+                        Err(e) => return Yield::throw(this, ShellErr::new_sys(&e)),
+                    };
+                let script = Script::init(interp, Env::Owned(duped), sub.script, this, io);
                 interp.as_expansion_mut(this).child_script = Some(script);
                 return Script::start(interp, script);
             }
 
             // All sub-atoms expanded — post-process leading tilde then finish.
             if leading_tilde {
-                let home = me.shell.get_homedir();
+                let home = interp.shells[me.shell].get_homedir();
                 let len_before = me.current_out.len();
                 match me.current_out.first() {
                     Some(b'/') | Some(b'\\') => {
@@ -261,7 +259,7 @@ impl Expansion {
     /// Re-tokenize `current_out` (the
     /// fully-expanded word with `{`/`,`/`}` markers preserved by
     /// `expand_simple_no_io`) and push each variant as a separate argv word.
-    fn do_brace_expand(me: &mut Expansion) {
+    fn do_brace_expand(me: &mut Expansion<'a>) {
         use bun_shell_parser::braces;
         // Only the `{`/`,`/`}` bytes recorded in `meta_offsets` (written
         // by literal BraceBegin/Comma/BraceEnd atoms) are brace-expansion
@@ -328,9 +326,7 @@ impl Expansion {
             me.out.buf.extend_from_slice(&s);
         }
 
-        let node = me.node;
-        let atom = node.get();
-        if atom.has_glob_expansion() {
+        if me.node.has_glob_expansion() {
             // brace + glob composes. Keep
             // `current_out` (the original pattern, e.g. `src/*.{ts,tsx}`) so
             // the glob walker brace-expands and globs it; its matches are
@@ -412,18 +408,17 @@ impl Expansion {
 
     /// Kick off an off-thread
     /// glob walk for the assembled pattern in `current_out`.
-    fn transition_to_glob_state(interp: &Interpreter, this: NodeId) -> Yield {
+    fn transition_to_glob_state(interp: &mut Interpreter<'a>, this: NodeId) -> Yield {
         use crate::shell::dispatch_tasks::ShellGlobTask;
         let pattern: Vec<u8>;
-        let cwd: Vec<u8>;
         {
             let me = interp.as_expansion_mut(this);
             me.state = ExpansionState::Glob;
             pattern = Self::neutralize_glob_metachars(&me.current_out, &me.meta_offsets);
-            cwd = me.shell.cwd().to_vec();
         }
+        let cwd = interp.shells[interp.as_expansion(this).shell].cwd();
         let walker = match bun_glob::BunGlobWalkerZ::init_with_cwd(
-            &pattern, &cwd, false, false, false, false, false, None,
+            &pattern, cwd, false, false, false, false, false, None,
         ) {
             Ok(Ok(w)) => w,
             Ok(Err(e)) => {
@@ -446,14 +441,14 @@ impl Expansion {
     /// one [`ast::SimpleAtom`] to `out`. Returns `true` for `CmdSubst` so the
     /// caller spawns a `Script` for it.
     fn expand_simple_no_io(
-        shell: &ShellExecEnv,
-        atom: &ast::SimpleAtom,
+        shell: &ShellExecEnv<'a>,
+        atom: &ast::SimpleAtom<'a>,
         out: &mut Vec<u8>,
         meta_offsets: &mut Vec<u32>,
         has_quoted_empty: &mut bool,
         expand_tilde: bool,
         event_loop: EventLoopHandle,
-        command_ctx: *mut bun_options_types::context::ContextData,
+        command_ctx: Option<&bun_options_types::context::ContextData>,
         vm_args_utf8: &mut Vec<bun_core::Utf8Bytes<'static>>,
     ) -> bool {
         match atom {
@@ -476,7 +471,6 @@ impl Expansion {
                 }
             }
             ast::SimpleAtom::VarArgv(int) => {
-                // SAFETY: `command_ctx` is the live VM ctx; `vm_args_utf8` borrows it.
                 Interpreter::append_var_argv(out, *int, event_loop, command_ctx, vm_args_utf8);
             }
             ast::SimpleAtom::Asterisk => {
@@ -518,7 +512,7 @@ impl Expansion {
     /// as the next argv word. The word boundary is recorded as the *previous*
     /// end-offset so the consumer's `[prev..bound]` slicing reconstructs each
     /// word and the trailing `[prev..]` slice yields the final one.
-    fn push_current_out(me: &mut Expansion) {
+    fn push_current_out(me: &mut Expansion<'a>) {
         if !me.out.buf.is_empty() {
             me.out.bounds.push(me.out.buf.len() as u32);
         }
@@ -528,7 +522,7 @@ impl Expansion {
 
     /// Newlines→spaces, trim, then split on whitespace runs into separate
     /// argv words.
-    fn post_subshell_expansion(me: &mut Expansion, mut stdout: Vec<u8>) {
+    fn post_subshell_expansion(me: &mut Expansion<'a>, mut stdout: Vec<u8>) {
         // Strip a single trailing newline, then convert remaining newlines
         // to spaces.
         if stdout.last() == Some(&b'\n') {
@@ -575,13 +569,13 @@ impl Expansion {
     }
 
     pub(crate) fn child_done(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'a>,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
     ) -> Yield {
         // Child is a Script (command substitution). Its captured stdout lives
-        // in the duped `ShellExecEnv` it owns; read it before deinit.
+        // in the duped `ShellExecEnv` it owns; take it before deinit.
         debug_assert!(matches!(interp.node(child).kind(), StateKind::Script));
         if interp.failed() {
             // The script failed: the rest of the word is not expanded.
@@ -594,9 +588,8 @@ impl Expansion {
             let parent = interp.as_expansion(this).base.parent;
             return interp.child_done(parent, this, 1);
         }
-        // SAFETY: single trampoline frame; the child script's env (and its
-        // parent buffer in the `Borrowed` case) has no other live borrow.
-        let mut stdout = unsafe { interp.as_script_mut(child).shell.buffered_stdout_mut() }.clone();
+        let child_env = interp.as_script(child).shell.id();
+        let mut stdout = core::mem::take(interp.shells.buffered_mut(child_env, IoKind::Stdout));
         // Like bash and dash, drop NUL bytes before trimming and field splitting.
         let had_nul = bun_core::strings::contains_char(&stdout, 0);
         if had_nul {
@@ -606,7 +599,7 @@ impl Expansion {
         // Propagate the exit code if the *whole* atom was a single `$(...)`
         // (so `$(false)` as argv0 fails the command).
         let sole_cmd_subst = matches!(
-            interp.as_expansion(this).node.get(),
+            interp.as_expansion(this).node,
             ast::Atom::Simple(ast::SimpleAtom::CmdSubst(_))
         );
 
@@ -644,7 +637,7 @@ impl Expansion {
     /// off-thread glob walker — splice each match as a separate word into
     /// `out` then resume the atom-walk trampoline.
     pub(crate) fn on_glob_walk_done(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'a>,
         this: NodeId,
         result: Vec<Vec<u8>>,
         err: Option<crate::shell::dispatch_tasks::ShellGlobErr>,
@@ -707,7 +700,7 @@ impl Expansion {
 
     /// Take the error out of `state == Err(_)` (called by the parent on
     /// `child_done(_, 1)` to print it). Leaves `state == Done`.
-    pub(crate) fn take_err(interp: &Interpreter, this: NodeId) -> Option<ShellErr> {
+    pub(crate) fn take_err(interp: &mut Interpreter<'a>, this: NodeId) -> Option<ShellErr> {
         let me = interp.as_expansion_mut(this);
         match core::mem::replace(&mut me.state, ExpansionState::Done) {
             ExpansionState::Err(e) => Some(*e),
@@ -718,7 +711,7 @@ impl Expansion {
         }
     }
 
-    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(interp: &mut Interpreter<'a>, this: NodeId) {
         log!("Expansion {} deinit", this);
         let child = interp.as_expansion_mut(this).child_script.take();
         if let Some(c) = child {
@@ -727,7 +720,7 @@ impl Expansion {
     }
 
     /// Take the expanded output (called by the parent after `child_done`).
-    pub(crate) fn take_out(interp: &Interpreter, this: NodeId) -> ExpansionOut {
+    pub(crate) fn take_out(interp: &mut Interpreter<'a>, this: NodeId) -> ExpansionOut {
         let me = interp.as_expansion_mut(this);
         let mut out = core::mem::take(&mut me.out);
         out.out_exit_code = me.out_exit_code;

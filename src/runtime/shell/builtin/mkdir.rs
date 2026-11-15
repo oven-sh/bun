@@ -46,7 +46,7 @@ pub(crate) struct Exec {
 }
 
 impl Mkdir {
-    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         let (args_start, mut opts) = {
             let mut opts = Opts::default();
             let args = Builtin::of(interp, cmd).args_slice();
@@ -59,9 +59,9 @@ impl Mkdir {
                     return Self::fail_usage(interp, cmd);
                 }
                 Err(e) => {
-                    return Builtin::fail_parse(interp, cmd, Kind::Mkdir, &e, || {
-                        Self::state_mut(interp, cmd).state = State::WaitingWriteErr
-                    });
+                    let buf = Builtin::parse_error_to_string(Kind::Mkdir, &e);
+                    Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
+                    return Builtin::write_failing_error(interp, cmd, &buf, 1);
                 }
             }
         };
@@ -81,12 +81,12 @@ impl Mkdir {
         Self::next(interp, cmd)
     }
 
-    fn fail_usage(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn fail_usage(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
         Builtin::write_failing_error(interp, cmd, Kind::Mkdir.usage_string(), 1)
     }
 
-    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn next(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         // NOTE: reshaped for borrowck — read scalars, drop the borrow,
         // then act.
         let action = match &mut Self::state_mut(interp, cmd).state {
@@ -140,7 +140,7 @@ impl Mkdir {
     }
 
     pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         written: usize,
         e: Option<bun_sys::SystemError>,
@@ -156,7 +156,7 @@ impl Mkdir {
         Self::next(interp, cmd)
     }
 
-    fn on_shell_mkdir_task_done(interp: &Interpreter, task: &mut ShellMkdirTask) -> Yield {
+    fn on_shell_mkdir_task_done(interp: &mut Interpreter<'_>, task: &mut ShellMkdirTask) -> Yield {
         let cmd = task.cmd;
         let output = core::mem::take(&mut task.created_directories);
         let err = task.err.take();
@@ -166,7 +166,7 @@ impl Mkdir {
 
         let output_task = OutputTask::<Mkdir>::new(cmd, OutputSrc::Arrlist(output));
         let errstr: Option<Vec<u8>> = err.map(|e| {
-            let s = Builtin::task_error_to_string(interp, cmd, Kind::Mkdir, &e).to_vec();
+            let s = Builtin::task_error_to_string(Kind::Mkdir, &e);
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.err = Some(e);
             }
@@ -183,7 +183,7 @@ enum NextAction {
 
 impl OutputTaskVTable for Mkdir {
     fn write_err(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         child: Box<OutputTask<Self>>,
         errbuf: &[u8],
@@ -191,7 +191,7 @@ impl OutputTaskVTable for Mkdir {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+        if let Some(fd) = Builtin::of(interp, cmd).stderr.needs_io() {
             // OutputTask has no `WriterTag` of its own (it is not directly
             // dispatchable as an IOWriter child), so the enqueue is tagged
             // `WriterTag::Builtin` and `child` is stashed on `output_queue`;
@@ -202,57 +202,48 @@ impl OutputTaskVTable for Mkdir {
             };
             exec.output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return ControlFlow::Break(
-                Builtin::of_mut(interp, cmd)
-                    .stderr
-                    .enqueue(childptr, errbuf, safeguard),
-            );
+            return ControlFlow::Break(interp.enqueue(fd, childptr, errbuf));
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
         ControlFlow::Continue(child)
     }
 
-    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
+    fn on_write_err(interp: &mut Interpreter<'_>, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_done += 1;
         }
     }
 
     fn write_out(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         child: Box<OutputTask<Self>>,
     ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            let buf = child.output.slice().to_vec();
+        if let Some(fd) = Builtin::of(interp, cmd).stdout.needs_io() {
+            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
+            let next = interp.enqueue(fd, childptr, child.output.slice());
             // See write_err — stash `child` so the chunk callback routes to
             // OutputTask::on_io_writer_chunk.
             let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
                 unreachable!()
             };
             exec.output_queue.push_back(child);
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return ControlFlow::Break(
-                Builtin::of_mut(interp, cmd)
-                    .stdout
-                    .enqueue(childptr, &buf, safeguard),
-            );
+            return ControlFlow::Break(next);
         }
-        let buf = child.output.slice().to_vec();
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, child.output.slice());
         ControlFlow::Continue(child)
     }
 
-    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
+    fn on_write_out(interp: &mut Interpreter<'_>, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_done += 1;
         }
     }
 
-    fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn on_done(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }
 }
@@ -336,7 +327,7 @@ impl ShellWork for ShellMkdirTask {
         }
     }
 
-    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+    fn run_from_main_thread(&mut self, interp: &mut Interpreter<'_>) -> Yield {
         Mkdir::on_shell_mkdir_task_done(interp, self)
     }
 }

@@ -635,16 +635,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    /// Resume a handshake suspended by an asynchronous SNICallback. The ctx
-    /// reference is consumed (freed here when no TLS engine is left to resume).
-    pub fn sni_resolve(&self, ctx: *mut crate::SslCtx, error: bool) {
+    /// Resume a handshake suspended by an asynchronous SNICallback.
+    pub fn sni_resolve(&self, ctx: Option<bun_boringssl_sys::OwnedSslCtx>, error: bool) {
         if let InternalSocket::Connected(s) | InternalSocket::UwsHttp(s) = self.socket {
             return sock(s).sni_resolve(ctx, error);
         }
-        let Some(ssl) = self.ssl_mut() else {
-            // SAFETY: the caller passed an owned SSL_CTX reference, or null.
-            return unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
-        };
+        let Some(ssl) = self.ssl_mut() else { return };
+        let ctx = ctx.map_or(core::ptr::null_mut(), |ctx| ctx.into_raw());
         // SAFETY: `ssl` is live, and the callee takes the reference `ctx` carries.
         if unsafe { crate::ssl::us_ssl_sni_resolve(ssl, ctx, c_int::from(error)) } != 0 {
             // Drives the handshake again.

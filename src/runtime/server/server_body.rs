@@ -510,14 +510,14 @@ pub(crate) enum ServePluginsState {
     Unqueued(Box<[Box<[u8]>]>),
     Pending {
         /// Promise may be empty if the plugin load finishes synchronously.
-        plugin: Box<JSBundler::Plugin>,
+        plugin: JSBundler::OwnedPlugin,
         promise: jsc::JSPromiseStrong,
         /// Each holds a ref, released once the route is told the outcome.
         html_bundle_routes: Vec<RefPtr<html_bundle::Route>>,
         /// Server whose DevServer is waiting for the plugins to load.
         dev_server: Option<super::AnyServer>,
     },
-    Loaded(Box<JSBundler::Plugin>),
+    Loaded(JSBundler::OwnedPlugin),
     /// Error information is not stored as it is already reported.
     Err,
 }
@@ -607,9 +607,7 @@ impl ServePlugins {
         // here would give it a tag that is invalidated by the writes to `self.state`
         // below (Stacked Borrows), making the eventual `heap::take` in `deref_` UB.
 
-        let plugin = JSBundler::Plugin::create(global, JSBundler::BunPluginTarget::Browser);
-        // SAFETY: `Plugin::create` returns a freshly-boxed `*mut Plugin` (single owner).
-        let plugin: Box<JSBundler::Plugin> = unsafe { bun_core::heap::take(plugin) };
+        let plugin = JSBundler::OwnedPlugin::new(global, JSBundler::BunPluginTarget::Browser);
         let mut bunstring_array: Vec<StringView<'_>> = Vec::with_capacity(plugin_list.len());
         for raw_plugin in &plugin_list {
             bunstring_array.push(StringView::from_bytes(raw_plugin));
@@ -635,7 +633,7 @@ impl ServePlugins {
         global.bun_vm().event_loop().enter();
         let result = jsc::host_fn::from_js_host_call(global, || {
             match &self.state {
-                ServePluginsState::Pending { plugin, .. } => plugin.as_ref(),
+                ServePluginsState::Pending { plugin, .. } => plugin,
                 _ => unreachable!(),
             }
             .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
@@ -708,23 +706,18 @@ impl ServePlugins {
         };
         drop(promise); // Drop on JscStrong releases the slot.
 
+        let loaded = plugin.as_non_null();
         self.state = ServePluginsState::Loaded(plugin);
-        let plugin_ref = match &self.state {
-            ServePluginsState::Loaded(p) => &**p,
-            _ => unreachable!(),
-        };
 
         for route in html_bundle_routes {
             bun_core::handle_oom(html_bundle::Route::on_plugins_resolved(
                 route.this_ptr(),
-                Some(NonNull::from(plugin_ref)),
+                Some(loaded),
             ));
         }
         if let Some(server) = dev_server {
             if let Some(dev) = server.dev_server_mut() {
-                bun_core::handle_oom(dev.on_plugins_resolved(Some(
-                    std::ptr::from_ref::<JSBundler::Plugin>(plugin_ref).cast_mut(),
-                )));
+                bun_core::handle_oom(dev.on_plugins_resolved(loaded));
             }
         }
     }
@@ -742,7 +735,7 @@ impl ServePlugins {
         else {
             unreachable!()
         };
-        drop(plugin); // pending.plugin.deinit()
+        drop(plugin);
         drop(promise); // Drop on JscStrong releases the slot.
 
         for route in html_bundle_routes {
@@ -770,12 +763,8 @@ impl ServePlugins {
 
 impl Drop for ServePlugins {
     fn drop(&mut self) {
-        match &self.state {
-            ServePluginsState::Unqueued(_) => {}
-            ServePluginsState::Pending { .. } => debug_assert!(false), // should have one ref while pending!
-            ServePluginsState::Loaded(_) => {}                         // Box<Plugin> drops
-            ServePluginsState::Err => {}
-        }
+        // The promise reaction holds a ref while pending.
+        debug_assert!(!matches!(self.state, ServePluginsState::Pending { .. }));
     }
 }
 
@@ -1367,7 +1356,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // Keep the upgrader alive across option getters below, which run
         // arbitrary user JS. A re-entrant server.upgrade(req) from a getter
         // would otherwise be able to deref this context out from under us.
-        let _upgrader_ref = super::request_context::RequestContextRef::retain(upgrader);
+        let _upgrader_ref = upgrader.ref_guard();
 
         // Validate the handshake against `request.headers`, never the raw uWS request.
         // Copy the values, because the option getters below can modify the headers.
@@ -1448,7 +1437,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // See https://github.com/oven-sh/bun/issues/1339
             upgrader.upgrade_context.set(UpgradeState::Upgraded);
             let signal = upgrader.signal.take();
-            upgrader.resp.set(None);
+            let detached = upgrader.resp.take();
 
             // Snapshot the lazy url before detaching (mirrors to_async_without_abort_handler).
             // SAFETY: re-derived after the JS-running option getters above; still
@@ -1481,7 +1470,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // on_abort nor an end path can reclaim a parked handler promise's
             // claim later. Reclaim it here.
             upgrader.reclaim_promise_cell();
-            upgrader.deref();
+            drop(detached);
 
             if resp
                 .upgrade(

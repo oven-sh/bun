@@ -73,7 +73,7 @@ use bun_core::{EncodedSlice, String as BunString, StringView, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 use bun_shell_parser::braces as Braces;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 use bun_zlib as zlib;
 
 use crate::node;
@@ -600,7 +600,7 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
                 break 'use_resolved_path;
             }
 
-            let Ok(fd) = sys::openat_a(
+            let Ok(file) = sys::File::openat(
                 if cfg!(windows) {
                     Fd::INVALID
                 } else {
@@ -618,7 +618,7 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
                 break 'use_resolved_path;
             };
 
-            let _close = scopeguard::guard(fd, |fd: Fd| fd.close());
+            let fd = file.fd();
             #[cfg(windows)]
             {
                 let mut wpath = bun_paths::w_path_buffer_pool::get();

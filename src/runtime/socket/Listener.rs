@@ -992,8 +992,6 @@ impl Drop for Listener {
             (&raw const this.group).cast::<c_void>(),
             size_of::<uws::SocketGroup>(),
         );
-        // SAFETY: zeroed or init'd in listen(); not concurrently walked.
-        unsafe { uws::SocketGroup::destroy(&raw const this.group) };
     }
 }
 

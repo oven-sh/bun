@@ -1087,10 +1087,9 @@ impl Members<'_> {
 
     /// Resumes the handshake that an asynchronous SNICallback suspended. `None` keeps the listener's context.
     fn resume_sni(&self, _: &mut JsScope<'_>, context: Option<&SecureContext>, is_error: bool) {
-        let ctx = match context {
-            Some(context) if !is_error => context.ctx.clone().into_raw(),
-            _ => core::ptr::null_mut(),
-        };
+        let ctx = context
+            .filter(|_| !is_error)
+            .map(|context| context.ctx.clone());
         self.tls_socket().sni_resolve(ctx, is_error);
     }
 }

@@ -268,9 +268,9 @@ impl DevServer {
 
     pub(crate) fn on_plugins_resolved(
         &mut self,
-        plugins: Option<*mut crate::api::js_bundler::Plugin>,
+        plugins: ::core::ptr::NonNull<crate::api::js_bundler::Plugin>,
     ) -> crate::Result<()> {
-        self.bundler_options.plugin = plugins.and_then(::core::ptr::NonNull::new);
+        self.plugins = Some(plugins);
         self.plugin_state = PluginState::Loaded;
         self.start_next_bundle_if_present();
         Ok(())
@@ -389,7 +389,7 @@ impl DevServer {
                 framework: self.framework.as_bundler_view(),
                 client_transpiler: ::core::ptr::NonNull::from(&mut *self.client_transpiler),
                 ssr_transpiler: ::core::ptr::NonNull::from(&mut self.ssr_transpiler).cast(),
-                plugins: self.bundler_options.plugin,
+                plugins: self.plugins,
             }),
             heap_ref,
             event_loop,

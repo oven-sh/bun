@@ -7,7 +7,7 @@ use bun_paths::{self as path, OSPathChar, OSPathSlice};
 use bun_semver::String as SemverString;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
-use bun_sys::{self as sys, Dir, EntryKind, Fd, FdExt, walker_skippable};
+use bun_sys::{self as sys, Dir, EntryKind, Fd, walker_skippable};
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
 use bun_threading::work_pool::Task as WorkPoolTask;
 #[cfg(windows)]
@@ -1191,9 +1191,11 @@ impl<'a> PackageInstall<'a> {
         }
         #[cfg(not(unix))]
         {
-            match sys::openat(&destination_dir, patch_tag_path, sys::O::RDONLY, 0) {
-                Err(_) => return false,
-                Ok(fd) => fd.close(),
+            if sys::openat(&destination_dir, patch_tag_path, sys::O::RDONLY, 0)
+                .map(sys::File::from_fd)
+                .is_err()
+            {
+                return false;
             }
         }
 
@@ -2171,7 +2173,7 @@ impl<'a> PackageInstall<'a> {
         let opened = sys::sys_uv::open(path, 0, 0);
         #[cfg(not(windows))]
         let opened = sys::open(path, sys::O::PATH, 0);
-        opened.map(|fd| fd.close()).is_err()
+        opened.map(sys::File::from_fd).is_err()
     }
 
     pub(crate) fn install_from_link(
@@ -2220,20 +2222,18 @@ impl<'a> PackageInstall<'a> {
             // `symlinked_path` is always a package *directory*; `O::DIRECTORY`
             // routes to `open_dir_at_windows_nt_path`, then `get_fd_path`
             // resolves via `GetFinalPathNameByHandleW`.
-            let fd = match sys::openat(
+            let dir = match sys::openat(
                 self.cache_dir,
                 symlinked_path,
                 sys::O::RDONLY | sys::O::DIRECTORY,
                 0,
             ) {
-                Ok(fd) => fd,
+                Ok(fd) => sys::File::from_fd(fd),
                 Err(err) => {
                     return InstallResult::fail(realpath_err(err), Step::LinkingDependency);
                 }
             };
-            let res = sys::get_fd_path(fd, &mut to_buf);
-            fd.close();
-            match res {
+            match sys::get_fd_path(dir.fd(), &mut to_buf) {
                 Ok(s) => &*s,
                 Err(err) => {
                     return InstallResult::fail(realpath_err(err), Step::LinkingDependency);

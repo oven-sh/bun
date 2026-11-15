@@ -66,7 +66,7 @@ pub(crate) struct Image {
     /// synchronously after the first await.
     last_width: Cell<i32>,
     last_height: Cell<i32>,
-    /// Strong while at least one PipelineTask is in flight, weak otherwise. The
+    /// Strong while at least one `PendingTask` is alive, weak otherwise. The
     /// Strong→wrapper→sourceJS-slot chain is what keeps the borrowed ArrayBuffer
     /// alive across the WorkPool roundtrip; switching to weak when idle lets GC
     /// collect the wrapper.
@@ -1218,7 +1218,7 @@ fn into_buffer(out: codecs::Encoded, global: &JSGlobalObject) -> JsResult<JSValu
 /// read+decode+ops+encode. After the first read, subsequent terminals on the
 /// same instance reuse the `.owned` bytes without re-reading.
 struct BlobReadChain {
-    image: *const Image,
+    image: PendingTask,
     global: bun_ptr::BackRef<JSGlobalObject>,
     /// The context of the script that asked: the task the read is followed by is that script's.
     context: jsc::ContextId,
@@ -1249,17 +1249,8 @@ impl BlobReadChain {
                 .throw(format_args!("Image: Blob source is no longer a Blob")));
         };
 
-        // Same Strong-ref contract as the regular pending_tasks bump — keeps
-        // the wrapper (and its sourceJS slot) alive until the read settles.
-        if image.pending_tasks.get() == 0 {
-            image
-                .this_ref
-                .with_mut(|r| r.set_strong(this_value, cx.global()));
-        }
-        image.pending_tasks.set(image.pending_tasks.get() + 1);
-
         let chain = Box::new(BlobReadChain {
-            image: std::ptr::from_ref::<Image>(image),
+            image: PendingTask::new(image, this_value, cx.global()),
             global: bun_ptr::BackRef::new(cx.global()),
             context: cx.context().id(),
             kind,
@@ -1275,23 +1266,14 @@ impl BlobReadChain {
     /// JS thread — `read_bytes_to_handler` guarantees this. `r.ok` is owned by us.
     fn on_read_bytes_impl(self, r: ReadBytesResult) -> JsResult<()> {
         let global = self.global.get();
-        // SAFETY: `image` is a BACKREF kept alive by the Strong `this_ref`
-        // bump in `start()`; we are on the JS thread. R-2: shared deref —
-        // mutation goes through `Cell`/`JsCell`.
-        let image = unsafe { &*self.image };
         let mut outer = self.outer;
         let kind = self.kind;
         let deliver = self.deliver;
-        // `bun.destroy(self)` — Box drops at end of scope.
-
-        image.pending_tasks.set(image.pending_tasks.get() - 1);
-        if image.pending_tasks.get() == 0 {
-            image.this_ref.with_mut(|r| r.downgrade());
-        }
-        // `defer outer.deinit()` — `JSPromiseStrong` Drop handles this.
 
         match r {
             ReadBytesResult::Ok(bytes) => {
+                let cx = global.js_thread(global.bun_vm().context_of(self.context));
+                let image = self.image.image(&cx);
                 // Concurrent terminals can have started multiple BlobReadChains
                 // (no in-flight serialisation — `start()` re-enters every time
                 // it sees `.blob`). The FIRST resolver wins and swaps to
@@ -1305,23 +1287,10 @@ impl BlobReadChain {
                 } else {
                     drop(bytes);
                 }
-                let Some(this_value) = image.this_ref.get().try_get() else {
-                    drop(deliver);
-                    return outer.reject(
-                        global,
-                        Ok(global.create_error_instance(format_args!(
-                            "Image: collected before read completed"
-                        ))),
-                    );
-                };
+                let this_value = image.this_ref.get().get();
                 // Source is now `.owned`; this re-entry takes the regular path. If `schedule()` threw,
                 // `deliver` was already dropped there and the pending exception is the rejection.
-                let inner = image.schedule(
-                    &global.js_thread(global.bun_vm().context_of(self.context)),
-                    this_value,
-                    kind,
-                    deliver,
-                );
+                let inner = image.schedule(&cx, this_value, kind, deliver);
                 outer.settle(global, inner)
             }
             ReadBytesResult::Err(e) => {
@@ -1401,7 +1370,7 @@ impl PendingTask {
 }
 impl Drop for PendingTask {
     fn drop(&mut self) {
-        // JS thread (a job's Js side is only ever dropped there).
+        // JS thread: a job's Js side and a `BlobReadChain` are only ever dropped there.
         // SAFETY: as `image()`.
         let image = unsafe { &*self.0.as_ptr() };
         image.pending_tasks.set(image.pending_tasks.get() - 1);

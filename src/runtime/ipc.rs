@@ -1168,28 +1168,18 @@ impl SendQueue {
         if self.deferred_scheduled.replace(true) {
             return;
         }
-        self.ref_();
+        // SAFETY: the root of the live allocation that holds `self`.
+        let queue = unsafe { RefPtr::init_ref(self.root_ptr()) };
         self.get_global_this()
             .bun_vm()
             .event_loop()
-            .enqueue_task(Task::init(self.root_ptr()));
+            .enqueue_task(Task::init(queue.into_raw()));
     }
 
-    /// `task_tag::SendQueueDeferred` dispatch: drain the pending flags, then
-    /// release the task's ref as the tail (nothing touches `*this` after).
-    ///
-    /// # Safety
-    /// `this` is the queued root pointer, live via the ref taken at schedule.
-    pub(crate) unsafe fn run_deferred(this: *mut SendQueue) {
-        {
-            // SAFETY: caller contract — the queued task owns a ref on `this`.
-            let sq = unsafe { &*this };
-            sq.deferred_scheduled.set(false);
-            sq.run_pending();
-        }
-        // Release the task's ref; the SendQueue may be freed here.
-        // SAFETY: `this` is live and owns the ref taken at schedule.
-        unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
+    /// `task_tag::SendQueueDeferred` dispatch, under the task's ref: drain the pending flags.
+    pub(crate) fn run_deferred(&self) {
+        self.deferred_scheduled.set(false);
+        self.run_pending();
     }
 
     /// Does now what the queued task would do. A pending flag means that task is still queued, and its ref keeps `self` alive through the callbacks.
@@ -1227,16 +1217,6 @@ impl SendQueue {
                 }
             }
         }
-    }
-
-    /// `Taskable::release_unrun`: a scheduled deferred task that will never
-    /// run still owns a ref; drop it (skipping the JS callbacks).
-    ///
-    /// # Safety
-    /// `this` is the queued root pointer, live via the ref taken at schedule.
-    pub(crate) unsafe fn release_deferred_unrun(this: *mut SendQueue) {
-        // SAFETY: caller contract.
-        unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
     }
 
     /// `uv::open_handles` closes the channel's pipe through here at a thread
@@ -1905,7 +1885,7 @@ impl bun_event_loop::Taskable for SendQueue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::SendQueueDeferred;
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the SendQueue root queued with a held ref.
-        unsafe { SendQueue::release_deferred_unrun(this) }
+        drop(unsafe { RefPtr::from_raw(this) });
     }
     /// The channel's own close hop.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {

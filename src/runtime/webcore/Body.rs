@@ -349,9 +349,9 @@ impl Action {
             Action::GetFormData(_) => body.use_as_any_blob(),
             _ => body.use_as_any_blob_allow_non_utf8_string(),
         };
-        let result = match self {
+        match self {
             Action::GetText => blob.to_string(cx, Lifetime::Transfer),
-            Action::GetJSON => blob.to_json(cx, Lifetime::Share),
+            Action::GetJSON => blob.to_json(cx),
             Action::GetArrayBuffer => blob.to_array_buffer(cx, Lifetime::Transfer),
             Action::GetBytes => blob.to_uint8_array(cx, Lifetime::Transfer),
             Action::GetFormData(encoding) => {
@@ -359,9 +359,7 @@ impl Action {
                 webcore::form_data::FormData::to_js(cx.global(), blob.slice(), &encoding)
             }
             Action::None | Action::GetBlob => unreachable!(),
-        };
-        blob.detach();
-        result
+        }
     }
 }
 
@@ -808,9 +806,8 @@ impl Value {
             }
             Value::InternalBlob(_) | Value::WTFStringImpl(_) => {
                 let mut blob = self.use_as_any_blob_allow_non_utf8_string();
-                let string = blob.to_string(cx, Lifetime::Transfer);
-                blob.detach();
-                ReadableStream::from_decoded_text(cx.global(), string?)
+                let string = blob.to_string(cx, Lifetime::Transfer)?;
+                ReadableStream::from_decoded_text(cx.global(), string)
             }
             Value::Blob(_) => {
                 let stream = {
@@ -1042,11 +1039,10 @@ impl Value {
                     .map(|bytes| {
                         // BACKREF: `Source::bytes()` payload is live for the
                         // ReadableStream JS wrapper's lifetime.
-                        let mut blob = new.use_as_any_blob_allow_non_utf8_string();
+                        let blob = new.use_as_any_blob_allow_non_utf8_string();
                         bytes.on_data(streams::Result::TemporaryAndDone(bun_ptr::RawSlice::new(
                             blob.slice(),
                         )));
-                        blob.detach();
                     });
 
                 if fed.is_some() {

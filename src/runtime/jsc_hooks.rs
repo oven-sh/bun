@@ -33,7 +33,7 @@ use bun_jsc::virtual_machine::{
 };
 use bun_jsc::{
     AnyPromise, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSModuleLoader,
-    JSValue, JsResult, ResolvedSource, StringJsc as _,
+    JSValue, JsCell, JsResult, ResolvedSource, StringJsc as _,
 };
 
 use bun_ast::ImportKind;
@@ -47,6 +47,7 @@ use bun_resolver::{GlobalCache, ResultUnion as ResolveResultUnion};
 
 use crate::api::SSLContextCache::SSLContextCache;
 use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
+use crate::node::node_fs_stat_watcher::StatWatcherScheduler;
 use crate::timer;
 use crate::webcore::blob::BlobExt as _;
 
@@ -109,6 +110,7 @@ pub(crate) struct RuntimeState {
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
     /// `clear_all_for_vm`.
     pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
+    pub(crate) stat_watcher_scheduler: JsCell<Option<bun_ptr::RefPtr<StatWatcherScheduler>>>,
     /// Innermost entered `Pass`, borrowed from a caller's stack frame; `EnteredPass::drop` pops it.
     pub(crate) matcher_pass: Cell<*const crate::test_runner::expect::expect_deferred::Pass>,
     /// `bun lint`: what runs the rules of JavaScript plugins in this VM.
@@ -198,6 +200,16 @@ pub(crate) fn request_pools() -> &'static crate::server::RequestPools {
     // address is stable for the VM's lifetime and only read (interior
     // mutability via `OnceCell`).
     unsafe { &(*state).request_pools }
+}
+
+/// [`RuntimeState::stat_watcher_scheduler`] of `vm`.
+pub(crate) fn stat_watcher_scheduler(
+    vm: &VirtualMachine,
+) -> &JsCell<Option<bun_ptr::RefPtr<StatWatcherScheduler>>> {
+    let state = vm.runtime_state.get().cast::<RuntimeState>();
+    debug_assert!(!state.is_null(), "RuntimeState not installed");
+    // SAFETY: as `timer_all`.
+    unsafe { &(*state).stat_watcher_scheduler }
 }
 
 /// [`RuntimeState::ssl_ctx_cache`] of this thread's VM.
@@ -385,6 +397,7 @@ unsafe fn init_runtime_state(
         path_watchers: Default::default(),
         wake_ctx: None,
         cron_jobs: Vec::new(),
+        stat_watcher_scheduler: JsCell::new(None),
         matcher_pass: Cell::new(ptr::null()),
         lint: core::cell::OnceCell::new(),
         // SAFETY: `vm` is the live VM being initialized. `VirtualMachine::init`
@@ -1554,7 +1567,7 @@ fn cancel_timers(vm: &VirtualMachine, only: Option<bun_jsc::ContextId>) {
         // watcher still queued at exit forms a cycle and leaks. Runs before
         // `cancel_all_timeout_objects` so the scheduler's `EventLoopTimer` is still
         // linked when `set_timer(0)` removes it.
-        crate::node::node_fs_stat_watcher::StatWatcherScheduler::shutdown_for_exit(vm);
+        StatWatcherScheduler::shutdown_for_exit(vm);
         // The realm is going (the VM's end, or the end of a test file under `--isolate`), and its
         // connections are closed.
         sql_rare(vm).forget_callbacks();
@@ -2928,7 +2941,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             written,
                             input_specifier,
                             path.text,
-                            None,
                         )
                         .map_err(|_| global_object.throw_string_too_long())?;
                     resolved_source.module_info = module_info;

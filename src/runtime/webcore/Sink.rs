@@ -130,9 +130,9 @@ pub(crate) trait ControlledSink: JsSinkType {
     /// co-owned by another GC cell releases the controller's claim here (sweep
     /// order between the two cells is unspecified, so neither destructor alone
     /// may free it). Never free the allocation inline: the caller holds
-    /// `&mut Self` and the controller keeps using the sink in the same frame;
+    /// `&Self` and the controller keeps using the sink in the same frame;
     /// defer a last-owner free to the event loop.
-    fn controller_detached(&mut self) {}
+    fn controller_detached(&self) {}
 
     /// A controller died still attached to `this`, right after
     /// [`controller_detached`](Self::controller_detached). The default gives up

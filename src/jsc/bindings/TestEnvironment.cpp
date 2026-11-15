@@ -3,8 +3,10 @@
 #include "TestEnvironment.h"
 
 #include "BunClientData.h"
+#include "BunProcess.h"
 #include "ConsoleObject.h"
 #include "InternalModuleRegistry.h"
+#include "JSEventListener.h"
 #include "ScriptExecutionContext.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/AOTRealmStartup.h>
@@ -145,6 +147,20 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionDeleteOwnProperty, __attribut
     RETURN_IF_EXCEPTION(scope, {});
     JSC::VM::DeletePropertyModeScope ignoreConfigurable(vm, JSC::VM::DeletePropertyMode::IgnoreConfigurable);
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsBoolean(JSC::JSCell::deleteProperty(object, globalObject, key))));
+}
+
+// Takes a listener off `process`. Unlike process.removeListener(), it calls no 'removeListener' listener: a finished test file may have left some.
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionRemoveProcessListenerSilently, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    auto* process = zigGlobalObject->processObject();
+    auto eventType = callFrame->uncheckedArgument(0).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto listener = WebCore::JSEventListener::create(*asObject(callFrame->uncheckedArgument(1)), *process, false, zigGlobalObject->world());
+    process->wrapped().removeListener(eventType, listener.get(), WebCore::ListenerRemoval::Silent);
+    return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
 } // namespace Bun

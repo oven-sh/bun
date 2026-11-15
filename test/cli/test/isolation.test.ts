@@ -1562,6 +1562,59 @@ describe.concurrent("bun test --isolate=modules", () => {
     );
   });
 
+  test("the listeners that a file left on process are taken off without a call of its 'removeListener' listeners", async () => {
+    await passes(
+      {
+        "a.test.js": `
+          import { writeFileSync } from "node:fs";
+          let ended = false;
+          afterAll(() => {
+            ended = true;
+          });
+          test("a", () => {
+            const heard = [];
+            function f() {}
+            function hears(name) {
+              if (ended) writeFileSync(import.meta.dir + "/heard-after-a", String(name));
+              else heard.push(name);
+            }
+            function throws() {
+              if (ended) throw new Error("a 'removeListener' listener of a.test.js ran after the file");
+            }
+            function addsAgain() {
+              if (ended) process.on("zz_late", f);
+            }
+            process.on("removeListener", hears);
+            process.on("removeListener", throws);
+            process.on("removeListener", addsAgain);
+            process.on("zz_a", f);
+            process.off("zz_a", f);
+            expect(heard).toEqual(["zz_a"]);
+            process.on("exit", f);
+          });
+        `,
+        "b.test.js": `
+          import { existsSync } from "node:fs";
+          test("b", () => {
+            const left = ["removeListener", "exit", "zz_late"]
+              .flatMap(name => process.listeners(name).map(listener => name + " " + listener.name))
+              .filter(entry => / (hears|throws|addsAgain|f)$/.test(entry));
+            const heard = [];
+            const hears = name => heard.push(name);
+            function other() {}
+            process.on("removeListener", hears);
+            process.on("zz_b", other);
+            process.off("zz_b", other);
+            process.off("removeListener", hears);
+            expect({ left, heardAfterA: existsSync(import.meta.dir + "/heard-after-a"), heard })
+              .toEqual({ left: [], heardAfterA: false, heard: ["zz_b"] });
+          });
+        `,
+      },
+      2,
+    );
+  });
+
   test("every file finds the builtins as the first one did, whatever the files before it did to them", async () => {
     const state = `JSON.stringify([
       typeof Math.max, Math.PI, "extra" in Array.prototype.map, Array.prototype.map.name, Array.prototype[0], Object.keys(Math), process.title === title,

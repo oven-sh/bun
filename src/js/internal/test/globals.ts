@@ -18,6 +18,12 @@ const deleteOwnProperty: (object: object, key: PropertyKey) => boolean = $newCpp
   "jsFunctionDeleteOwnProperty",
   2,
 );
+// Unlike `process.removeListener`, it calls no "removeListener" listener: a finished file may have left some.
+const removeProcessListenerSilently: (name: string | symbol, listener: Function) => void = $newCppFunction(
+  "TestEnvironment.cpp",
+  "jsFunctionRemoveProcessListenerSilently",
+  2,
+);
 
 // Builtin modules are loaded once and shared by all files. These two patch `Performance.prototype` and
 // `MessagePort.prototype` on load, so load them before the snapshot. Otherwise the restore would remove their patches.
@@ -28,7 +34,7 @@ require("node:worker_threads");
 // so only use what's captured here, $-private names, index loops and null-prototype descriptors.
 const { getPrototypeOf, getOwnPropertyDescriptor, defineProperty, getOwnPropertyNames } = Object;
 const { ownKeys } = Reflect;
-const { eventNames, rawListeners, removeListener } = process;
+const { eventNames, rawListeners } = process;
 
 type Properties = Map<PropertyKey, PropertyDescriptor>;
 
@@ -156,7 +162,7 @@ function restoreListeners() {
     for (let j = 0; j < current.length; j++) {
       let isSaved = false;
       for (let k = 0; saved && k < saved.length; k++) isSaved ||= saved[k] === current[j];
-      if (!isSaved) removeListener.$call(process, names[i], current[j]);
+      if (!isSaved) removeProcessListenerSilently(names[i], current[j]);
     }
   }
 }

@@ -41,6 +41,41 @@ test("the setter of the name of a Blob keeps the value", () => {
   for (const row of rowsOf("Blob.prototype.name", "Set")) expect(row.parameters[0].uses).toContain("Retains");
 });
 
+test("what takes a listener off process hands the name and the listener to the listeners of removeListener", () => {
+  const name = { toString: () => "made-up" };
+  const heard: unknown[][] = [];
+  const hears = (...event: unknown[]) => heard.push(event);
+  function listener() {}
+  process.on("removeListener", hears);
+  try {
+    for (const method of ["off", "removeListener", "removeAllListeners"] as const) {
+      process.on("made-up", listener);
+      (process[method] as (name: unknown, listener: Function) => unknown)(name, listener);
+    }
+  } finally {
+    process.off("removeListener", hears);
+  }
+  expect(heard.map(([heardName, heardListener]) => [heardName === name, heardListener === listener])).toEqual([
+    [true, true],
+    [true, true],
+    [true, true],
+  ]);
+  for (const method of ["off", "removeListener", "removeAllListeners"]) {
+    const rows = rowsOf(`%EventEmitter%.prototype.${method}`) as (Overload & {
+      capability: string;
+      runsOnlyOperandCode: boolean;
+    })[];
+    // The rows of the emitter of `process`: the last one takes any receiver, and believes nothing of it.
+    const ofTheHost = rows.filter(row => !row.receiver?.accepted.isAnything);
+    expect(ofTheHost, method).not.toBeEmpty();
+    for (const row of ofTheHost) {
+      expect([row.token, row.capability, row.runsOnlyOperandCode]).toEqual([row.token, "js", false]);
+      if (takesAnObject(row.parameters[0])) expect(row.parameters[0].uses, row.token).toContain("Retains");
+    }
+    expect(ofTheHost.map(row => row.parameters[0]).filter(takesAnObject), method).not.toBeEmpty();
+  }
+});
+
 test("a topic that is no string is described by the error that refuses it", async () => {
   const methods = ["subscribe", "unsubscribe", "isSubscribed", "publish", "publishText", "publishBinary"] as const;
   let asked = 0;

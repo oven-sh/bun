@@ -185,6 +185,7 @@ pub(crate) fn select_packages(
         }
         let Some(json) = bun_resolver::PackageJSON::parse::<{ IncludeDependencies::Main }>(
             resolver,
+            &mut root_buf,
             dir,
             bun_sys::Fd::invalid(),
             None,

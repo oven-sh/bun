@@ -1,5 +1,3 @@
-use core::cell::{OnceCell, UnsafeCell};
-
 use bun_ast as js_ast;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::StackCheck;
@@ -372,6 +370,7 @@ impl PackageJSON {
     #[inline(never)]
     pub fn parse<const INCLUDE_DEPENDENCIES: IncludeDependencies>(
         r: &mut resolver::Resolver<'_>,
+        buf: &mut PathBuffer,
         input_path: &[u8],
         dirname_fd: Fd,
         package_id: Option<PackageID>,
@@ -389,7 +388,7 @@ impl PackageJSON {
 
         // TODO: remove this extra copy
         let parts: [&[u8]; 2] = [input_path, b"package.json"];
-        let mut path_buf = SpillBuf::default();
+        let mut path_buf = SpillBuf::new(buf);
         let package_json_path_ = r_fs.abs_spill(&parts, &mut path_buf);
         if package_json_path_.len() > MAX_PACKAGE_JSON_PATH_LEN {
             r_log.add_error_fmt(
@@ -1313,6 +1312,8 @@ impl Entry {
 pub type ConditionsMap = StringArrayHashMap<()>;
 
 pub(crate) struct ESModule<'a> {
+    pub(crate) resolve_target_buf: &'a mut PathBuffer,
+    pub(crate) resolve_target_buf2: &'a mut PathBuffer,
     pub(crate) debug_logs: Option<&'a mut resolver::DebugLogs>,
     pub(crate) conditions: &'a ConditionsMap,
     /// `resolve_target` uses bigger stack frames than the JSON parser, so it can overflow on a target that parsed.
@@ -1520,37 +1521,6 @@ use bun_core::strings::{replace, replacement_size};
 
 const INVALID_PERCENT_CHARS: [&[u8]; 4] = [b"%2f", b"%2F", b"%5c", b"%5C"];
 
-struct ModuleBufs {
-    resolved_path_buf_percent: PathBuffer,
-    resolve_target_buf: PathBuffer,
-    resolve_target_buf2: PathBuffer,
-}
-
-thread_local! {
-    // Heap-allocate the buffer struct on first use and store only a pointer
-    // in TLS so the static-TLS template stays small (PE/COFF has no
-    // TLS-BSS; ELF PT_TLS MemSiz scales with this — see test/js/bun/binary/tls-segment-size).
-    // resolve_target / resolve_target_reverse are RECURSIVE (Map/Array arms call themselves), so a
-    // RefCell + escaped `&mut PathBuffer` would create aliased `&mut` at the inner call → UB.
-    // Use raw-pointer access; only form `&mut PathBuffer` inside the non-recursive `String` arms
-    // where the buffers are actually written (no overlap with a live outer `&mut`).
-    static MODULE_BUFS: OnceCell<Box<UnsafeCell<ModuleBufs>>> = const { OnceCell::new() };
-}
-
-#[inline]
-fn module_bufs() -> *mut ModuleBufs {
-    MODULE_BUFS.with(|slot| {
-        slot.get_or_init(|| {
-            Box::new(UnsafeCell::new(ModuleBufs {
-                resolved_path_buf_percent: PathBuffer::ZEROED,
-                resolve_target_buf: PathBuffer::ZEROED,
-                resolve_target_buf2: PathBuffer::ZEROED,
-            }))
-        })
-        .get()
-    })
-}
-
 impl<'a> ESModule<'a> {
     pub(crate) fn resolve(
         &mut self,
@@ -1559,7 +1529,7 @@ impl<'a> ESModule<'a> {
         exports: &Entry,
     ) -> Resolution {
         let r = self.resolve_exports(package_url, subpath, exports);
-        Self::finalize(r)
+        self.finalize(r)
     }
 
     pub(crate) fn resolve_imports(&mut self, specifier: &[u8], imports: &Entry) -> Resolution {
@@ -1577,11 +1547,11 @@ impl<'a> ESModule<'a> {
                 status: Status::PackageImportNotDefined,
                 ..Default::default()
             },
-            _ => Self::finalize(result),
+            _ => self.finalize(result),
         }
     }
 
-    pub(crate) fn finalize(result_: Resolution) -> Resolution {
+    pub(crate) fn finalize(&mut self, result_: Resolution) -> Resolution {
         let mut result = result_;
         if result.status != Status::Exact
             && result.status != Status::ExactEndsWithStar
@@ -1613,10 +1583,7 @@ impl<'a> ESModule<'a> {
             };
         }
 
-        // SAFETY: threadlocal UnsafeCell; finalize() does not recurse, so this is the unique
-        // live `&mut` to resolved_path_buf_percent on this thread.
-        let resolved_path_buf_percent: &mut PathBuffer =
-            unsafe { &mut (*module_bufs()).resolved_path_buf_percent };
+        let resolved_path_buf_percent = &mut *self.resolve_target_buf;
         let len = match bun_url::PercentEncoding::decode_into(
             &mut resolved_path_buf_percent.0,
             &result.path,
@@ -1835,15 +1802,8 @@ impl<'a> ESModule<'a> {
         }
         match &target.data {
             EntryData::String(str) => {
-                let mb = module_bufs();
-                // SAFETY: threadlocal UnsafeCell; the `String` arm does NOT recurse into
-                // resolve_target, so these are the unique live `&mut`s on this thread for
-                // the duration of this arm. Map/Array arms below DO recurse and must not
-                // hold these — that's why acquisition is here, not at fn entry.
-                let resolve_target_buf: &mut PathBuffer = unsafe { &mut (*mb).resolve_target_buf };
-                // SAFETY: see above — disjoint field of the same threadlocal struct.
-                let resolve_target_buf2: &mut PathBuffer =
-                    unsafe { &mut (*mb).resolve_target_buf2 };
+                let resolve_target_buf = &mut *self.resolve_target_buf;
+                let resolve_target_buf2 = &mut *self.resolve_target_buf2;
                 let str: &[u8] = str;
                 if let Some(log) = self.debug_logs.as_deref_mut() {
                     log.add_note_fmt(format_args!(

@@ -1,3 +1,5 @@
+use core::cell::Cell;
+
 use bun_ptr::RefPtr;
 use bun_sys::Error as SysError;
 
@@ -211,8 +213,8 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
 
     crate::impl_js_sink_forwarders!();
 
-    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(self, cx)
+    fn end_from_js(this: &mut Self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(this, cx)
     }
 }
 
@@ -226,7 +228,7 @@ impl crate::webcore::sink::ControlledSink for FetchRequestBodySink {
         drop(unsafe { (*this).task.take() });
     }
 
-    fn source(&mut self) -> &mut SourceHandle {
-        &mut self.source
+    fn source(this: &mut Self) -> &Cell<SourceHandle> {
+        Cell::from_mut(&mut this.source)
     }
 }

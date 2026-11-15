@@ -449,3 +449,198 @@ impl DefineDataExt for DefineData {
 
 // `dots: StringHashMap<Vec<DotDefine>>` and `identifiers` drop their
 // contents automatically; `Box<Define>` frees `self`. No explicit Drop needed.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // What `\s` matches.
+    const WHITESPACE: [char; 25] = [
+        '\t', '\n', '\x0b', '\x0c', '\r', ' ', '\u{a0}', '\u{1680}', '\u{2000}', '\u{2001}',
+        '\u{2002}', '\u{2003}', '\u{2004}', '\u{2005}', '\u{2006}', '\u{2007}', '\u{2008}',
+        '\u{2009}', '\u{200a}', '\u{2028}', '\u{2029}', '\u{202f}', '\u{205f}', '\u{3000}',
+        '\u{feff}',
+    ];
+
+    /// What `text` is as the value of a define, and how many messages it logged at `level`.
+    fn parse_at(level: bun_ast::Level, text: &[u8]) -> (String, usize) {
+        bun_ast::initialize_store_or_reset();
+        let _reset = bun_ast::StoreResetGuard::new();
+        let arena = bun_alloc::Arena::new();
+        let mut log = bun_ast::Log {
+            level,
+            ..Default::default()
+        };
+        let parsed = DefineData::parse(b"K", text, false, false, &mut log, &arena);
+        let value = match parsed.map(|data| data.value) {
+            Err(_) => "error".to_owned(),
+            Ok(ExprData::EBoolean(boolean)) => boolean.value.to_string(),
+            Ok(ExprData::ENull(_)) => "null".to_owned(),
+            Ok(ExprData::EUndefined(_)) => "undefined".to_owned(),
+            Ok(ExprData::ENumber(number)) => number.value().to_string(),
+            Ok(ExprData::EString(string)) if string.is_utf16 => {
+                format!("\"{}\"", String::from_utf16_lossy(string.slice16()))
+            }
+            Ok(ExprData::EString(string)) => match bun_core::strings::str_utf8(string.slice8()) {
+                Some(text) => format!("\"{text}\""),
+                None => format!("not UTF-8: {:?}", string.slice8()),
+            },
+            Ok(ExprData::EArray(array)) => format!("array of {}", array.items.len()),
+            Ok(ExprData::EObject(object)) => format!("object of {}", object.properties.len()),
+            Ok(ExprData::EIdentifier(_)) => "identifier".to_owned(),
+            Ok(_) => "another kind".to_owned(),
+        };
+        (value, log.msgs.len())
+    }
+
+    fn parse(text: &str) -> (String, usize) {
+        parse_at(bun_ast::Level::Warn, text.as_bytes())
+    }
+
+    fn read(text: &str) -> String {
+        parse(text).0
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn whitespace_around_one_whole_value_is_not_part_of_it() {
+        // One value for each first byte that `parse_env_json` reads as JSON, and each keyword.
+        for (value, read_as) in [
+            ("false", "false"),
+            ("true", "true"),
+            ("null", "null"),
+            ("undefined", "undefined"),
+            ("0", "0"),
+            ("1", "1"),
+            ("2", "2"),
+            ("3", "3"),
+            ("4", "4"),
+            ("5", "5"),
+            ("6", "6"),
+            ("7", "7"),
+            ("8", "8"),
+            ("9", "9"),
+            ("-1", "-1"),
+            ("- 1", "-1"),
+            (".5", "0.5"),
+            ("-.5", "-0.5"),
+            ("1e3", "1000"),
+            ("0x10", "16"),
+            ("01", "1"),
+            ("1_000", "1000"),
+            ("\"s\"", "\"s\""),
+            ("'s'", "\"s\""),
+            ("{}", "object of 0"),
+            ("{\"a\":1,}", "object of 1"),
+            ("[1]", "array of 1"),
+            ("[1, 2,]", "array of 2"),
+        ] {
+            assert_eq!(read(value), read_as, "{value:?}");
+            for space in WHITESPACE {
+                for text in [
+                    format!("{space}{value}"),
+                    format!("{space}{value}{space}"),
+                    format!("{space}\r\n {space}{value}\n"),
+                ] {
+                    assert_eq!(read(&text), read_as, "{text:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn other_text_behind_whitespace_is_the_string_it_was() {
+        for text in [
+            // It starts as a value does, and it is not one.
+            "1.2.3",
+            "2026-11-07",
+            "1px",
+            "10%",
+            "1/2",
+            "12abc",
+            "1n",
+            "1e",
+            "0x",
+            "1..2",
+            "{a:1}",
+            "[",
+            "{",
+            "\"",
+            "\"unclosed",
+            // One value, and more text.
+            "7 days",
+            "1 2",
+            "1,2",
+            "1 // c",
+            "false x",
+            "true-ish",
+            "true;",
+            "null,",
+            "undefined x",
+            "[1] x",
+            "{} x",
+            "1\"",
+            // A name, and other text.
+            "production",
+            "a.b.c",
+            "NaN",
+            "falsy",
+            "two words",
+            "http://x/y",
+            "-abc",
+            "(1)",
+            "a+b",
+            "",
+        ] {
+            for space in WHITESPACE {
+                let text = format!("{space}{text}");
+                assert_eq!(parse(&text), (format!("\"{text}\""), 0), "{text:?}");
+            }
+        }
+        // A backslash is read as it is with nothing before the whitespace.
+        assert_eq!(read(" \\u0066alse"), "\" false\"");
+        assert_eq!(read(" false\\"), "\" false\"");
+        assert_eq!(read(" \\\"s\\\""), "\" \"s\"\"");
+        // Not whitespace.
+        assert_eq!(read("\u{85}false"), "\"\u{85}false\"");
+        assert_eq!(read("\u{200b}false"), "\"\u{200b}false\"");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn text_that_is_not_utf8_behind_whitespace_is_the_string_it_was() {
+        let read = |text: &[u8]| parse_at(bun_ast::Level::Warn, text);
+        // The JSON parser keeps such bytes as they are. The implicit string has U+FFFD for each.
+        assert_eq!(
+            read(b" \"Jos\xe9 M\""),
+            ("\" \"Jos\u{fffd} M\"\"".to_owned(), 0)
+        );
+        assert_eq!(
+            read(b" {\"k\xc2\":\"v\xe9\"}"),
+            ("\" {\"k\u{fffd}\":\"v\u{fffd}\"}\"".to_owned(), 0)
+        );
+        // A byte that is whitespace in Latin-1 is not whitespace.
+        assert_ne!(read(b"\xa0false").0, "false");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn only_a_whole_value_behind_whitespace_logs_its_warning() {
+        assert_eq!(parse("{\"a\":1,\"a\":2}"), ("object of 2".to_owned(), 1));
+        assert_eq!(parse(" {\"a\":1,\"a\":2}"), ("object of 2".to_owned(), 1));
+        // What the parser logs about a text that is not one value is dropped.
+        assert_eq!(
+            parse(" {\"a\":1,\"a\":2} x"),
+            ("\" {\"a\":1,\"a\":2} x\"".to_owned(), 0)
+        );
+        // The caller's level decides, as with nothing before the value.
+        for text in ["{\"a\":1,\"a\":2}", " {\"a\":1,\"a\":2}"] {
+            assert_eq!(
+                parse_at(bun_ast::Level::Err, text.as_bytes()),
+                ("object of 2".to_owned(), 0),
+                "{text:?}"
+            );
+        }
+    }
+}

@@ -187,7 +187,7 @@ impl Request {
     }
 
     /// R-2: short-hand for `unsafe { self.headers.get_mut() }`. The
-    /// single-JS-thread invariant (see `JsCell` docs) means no other
+    /// single-JS-thread invariant means no other
     /// `&mut Option<HeadersRef>` is live for the duration of the borrow.
     #[inline]
     #[allow(clippy::mut_from_ref)]

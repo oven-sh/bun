@@ -1039,7 +1039,7 @@ impl FetchTasklet {
     /// certificate to show it.
     fn run_check_server_identity(
         &mut self,
-        global_object: &JSGlobalObject,
+        global_this: &JSGlobalObject,
         certificate_info: &CertificateInfo,
     ) -> Result<(), Option<JSValue>> {
         let Some(check_server_identity) = self.check_server_identity_callback() else {
@@ -1050,20 +1050,20 @@ impl FetchTasklet {
             return Err(None);
         }
         let mut x509 = OwnedX509::from_der(&certificate_info.cert).ok_or(None)?;
-        let js_cert = X509::to_js(&mut x509, global_object)
-            .map_err(|e| Some(global_object.take_exception(e)))?;
+        let js_cert =
+            X509::to_js(&mut x509, global_this).map_err(|e| Some(global_this.take_exception(e)))?;
         let js_hostname: JSValue =
-            bun_string_jsc::create_utf8_for_js(global_object, &certificate_info.hostname)
-                .map_err(|e| Some(global_object.take_exception(e)))?;
+            bun_string_jsc::create_utf8_for_js(global_this, &certificate_info.hostname)
+                .map_err(|e| Some(global_this.take_exception(e)))?;
         js_hostname.ensure_still_alive();
         js_cert.ensure_still_alive();
         let check_result = match check_server_identity.call(
-            global_object,
+            global_this,
             JSValue::UNDEFINED,
             &[js_hostname, js_cert],
         ) {
             Ok(v) => v,
-            Err(e) => return Err(Some(global_object.take_exception(e))),
+            Err(e) => return Err(Some(global_this.take_exception(e))),
         };
 
         // > Returns <Error> object [...] on failure
@@ -1073,10 +1073,10 @@ impl FetchTasklet {
         }
         // Like Node, fail on any other truthy value, a Promise included: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1671-L1688
         if check_result.to_boolean() {
-            let received = JSGlobalObject::determine_specific_type(global_object, check_result)
-                .map_err(|e| Some(global_object.take_exception(e)))?;
+            let received = JSGlobalObject::determine_specific_type(global_this, check_result)
+                .map_err(|e| Some(global_this.take_exception(e)))?;
             return Err(Some(
-                global_object
+                global_this
                     .err(
                         jsc::ErrorCode::INVALID_RETURN_VALUE,
                         format_args!(
@@ -1093,7 +1093,7 @@ impl FetchTasklet {
     /// Fail the request for a rejected certificate. Returns whether it may proceed.
     fn enforce_server_identity_verdict(
         &mut self,
-        global_object: &JSGlobalObject,
+        global_this: &JSGlobalObject,
         verdict: Result<(), Option<JSValue>>,
     ) -> bool {
         match verdict {
@@ -1101,7 +1101,7 @@ impl FetchTasklet {
             Err(Some(reason)) => {
                 // mark to wait until deinit
                 self.is_waiting_abort = self.result.has_more;
-                self.abort_reason.set(global_object, reason);
+                self.abort_reason.set(global_this, reason);
                 self.abort_task();
                 self.result.fail = Some(http::Error::ERR_TLS_CERT_ALTNAME_INVALID);
                 false

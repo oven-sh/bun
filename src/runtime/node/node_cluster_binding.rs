@@ -21,16 +21,14 @@ pub(crate) fn on_internal_message_child<'a>(
     cx: &mut JsScope<'a>,
     worker: JsLocal<'a>,
     callback: JsLocal<'a>,
-) -> JsResult<()> {
+) {
     bun_output::scoped_log!(IPC, "onInternalMessageChild");
     let global = cx.global();
     if let Some(channel) = get_ipc_instance(global.bun_vm()) {
         let queue = &channel.data().internal_msg_queue;
-        // TODO: we should not create two jsc.Strong here. If absolutely necessary, a single Array. should be all we use.
         queue.set_listener(worker.to_js(), callback.to_js(), global);
         queue.flush(global);
     }
-    Ok(())
 }
 
 pub(crate) fn send_helper_primary<'a>(
@@ -169,7 +167,7 @@ pub(crate) fn handle_internal_message_primary(
     let Some(ipc_data) = subprocess.ipc() else {
         return Ok(());
     };
-    let Some((worker, cb)) = ipc_data.internal_msg_queue.worker_and_cb() else {
+    let Some((worker, cb)) = ipc_data.internal_msg_queue.listener() else {
         return Ok(());
     };
 

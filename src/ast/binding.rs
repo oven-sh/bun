@@ -9,9 +9,9 @@ use crate::{e as E, g as G};
 pub use crate::b::B as Data;
 
 #[derive(Copy, Clone, Default)]
-pub struct Binding {
+pub struct Binding<'a> {
     pub loc: crate::Loc,
-    pub data: B,
+    pub data: B<'a>,
 }
 
 #[repr(u8)]
@@ -33,37 +33,37 @@ pub enum Tag {
 // variant; `Binding::alloc` stays monomorphic per call-site.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub trait BindingAlloc: Sized {
-    fn alloc_into_b(self, bump: &AstArena) -> B;
+pub trait BindingAlloc<'a>: Sized {
+    fn alloc_into_b(self, bump: &'a AstArena) -> B<'a>;
 }
-impl BindingAlloc for crate::b::Identifier {
+impl<'a> BindingAlloc<'a> for crate::b::Identifier {
     #[inline]
-    fn alloc_into_b(self, bump: &AstArena) -> B {
+    fn alloc_into_b(self, bump: &'a AstArena) -> B<'a> {
         B::BIdentifier(bump.alloc_node(self))
     }
 }
-impl BindingAlloc for crate::b::Array {
+impl<'a> BindingAlloc<'a> for crate::b::Array<'a> {
     #[inline]
-    fn alloc_into_b(self, bump: &AstArena) -> B {
+    fn alloc_into_b(self, bump: &'a AstArena) -> B<'a> {
         B::BArray(bump.alloc_node(self))
     }
 }
-impl BindingAlloc for crate::b::Object {
+impl<'a> BindingAlloc<'a> for crate::b::Object<'a> {
     #[inline]
-    fn alloc_into_b(self, bump: &AstArena) -> B {
+    fn alloc_into_b(self, bump: &'a AstArena) -> B<'a> {
         B::BObject(bump.alloc_node(self))
     }
 }
-impl BindingAlloc for crate::b::Missing {
+impl<'a> BindingAlloc<'a> for crate::b::Missing {
     #[inline]
-    fn alloc_into_b(self, _bump: &AstArena) -> B {
+    fn alloc_into_b(self, _bump: &'a AstArena) -> B<'a> {
         B::BMissing(crate::b::Missing {})
     }
 }
 
-impl Binding {
+impl<'a> Binding<'a> {
     #[inline]
-    pub fn alloc(bump: &AstArena, t: impl BindingAlloc, loc: crate::Loc) -> Binding {
+    pub fn alloc(bump: &'a AstArena, t: impl BindingAlloc<'a>, loc: crate::Loc) -> Self {
         Binding {
             loc,
             data: t.alloc_into_b(bump),
@@ -71,11 +71,11 @@ impl Binding {
     }
 
     pub fn to_expr<C>(
-        binding: &Binding,
-        bump: &AstArena,
+        binding: &Self,
+        bump: &'a AstArena,
         ctx: &mut C,
-        wrap_identifier: impl Fn(&mut C, crate::Loc, Ref) -> Expr + Copy,
-    ) -> Expr {
+        wrap_identifier: impl Fn(&mut C, crate::Loc, Ref) -> Expr<'a> + Copy,
+    ) -> Expr<'a> {
         let loc = binding.loc;
         match binding.data {
             B::BMissing(_) => Expr {

@@ -277,7 +277,7 @@ pub mod EntryPoint {
     pub(crate) use crate::entry_point::Kind;
 }
 use crate::bundled_ast::{BundledAstRow, Flags as AstFlags};
-type DeclaredSymbolList = bun_ast::DeclaredSymbolList;
+use bun_ast::DeclaredSymbolList;
 
 impl<'l, 'a> LinkerContext<'l, 'a> {
     pub(crate) fn arena(&self) -> &'a Bump {
@@ -1061,12 +1061,12 @@ pub enum LinkerOptionsMode {
 }
 
 pub(crate) struct SourceMapData<'l, 'a> {
-    pub(crate) line_offsets: SourceMapTasks<'l, 'a, LineOffsets>,
-    pub(crate) quoted_contents: SourceMapTasks<'l, 'a, QuotedContents>,
+    pub(crate) line_offsets: SourceMapTasks<'l, 'a, LineOffsets<'a>>,
+    pub(crate) quoted_contents: SourceMapTasks<'l, 'a, QuotedContents<'a>>,
 }
 
-type LineOffsets = SourceMap::line_offset_table::AstList;
-type QuotedContents = Option<QuotedSourceContents>;
+type LineOffsets<'a> = SourceMap::line_offset_table::AstList<'a>;
+type QuotedContents<'a> = Option<QuotedSourceContents<'a>>;
 
 /// One task per file. They run while the link goes on, so each keeps its result to itself.
 pub(crate) struct SourceMapTasks<'l, 'a, T> {
@@ -1087,7 +1087,7 @@ impl<T> Drop for SourceMapTasks<'_, '_, T> {
     }
 }
 
-impl<'l, 'a, T: SourceMapColumn> SourceMapTasks<'l, 'a, T> {
+impl<'l, 'a, T: SourceMapColumn<'a>> SourceMapTasks<'l, 'a, T> {
     fn new(wait_group: &'l WaitGroup) -> Self {
         Self {
             wait_group,
@@ -1140,12 +1140,17 @@ impl<'l, 'a, T: SourceMapColumn> SourceMapTasks<'l, 'a, T> {
     }
 }
 
-pub(crate) trait SourceMapColumn: Default {
-    fn compute(arena: &AstArena, parse_graph: &Graph<'_>, source_index: crate::IndexInt) -> Self;
+pub(crate) trait SourceMapColumn<'a>: Default {
+    fn compute(arena: &'a AstArena, parse_graph: &Graph<'_>, source_index: crate::IndexInt)
+    -> Self;
 }
 
-impl SourceMapColumn for LineOffsets {
-    fn compute(arena: &AstArena, parse_graph: &Graph<'_>, source_index: crate::IndexInt) -> Self {
+impl<'a> SourceMapColumn<'a> for LineOffsets<'a> {
+    fn compute(
+        arena: &'a AstArena,
+        parse_graph: &Graph<'_>,
+        source_index: crate::IndexInt,
+    ) -> Self {
         debug!("Computing LineOffsetTable: {}", source_index);
         let source: &Source = &parse_graph.input_files.items_source()[source_index as usize];
         let loader: Loader = parse_graph.input_files.items_loader()[source_index as usize];
@@ -1167,8 +1172,12 @@ impl SourceMapColumn for LineOffsets {
     }
 }
 
-impl SourceMapColumn for QuotedContents {
-    fn compute(arena: &AstArena, parse_graph: &Graph<'_>, source_index: crate::IndexInt) -> Self {
+impl<'a> SourceMapColumn<'a> for QuotedContents<'a> {
+    fn compute(
+        arena: &'a AstArena,
+        parse_graph: &Graph<'_>,
+        source_index: crate::IndexInt,
+    ) -> Self {
         debug!("Computing Quoted Source Contents: {}", source_index);
         let loader: Loader = parse_graph.input_files.items_loader()[source_index as usize];
         if !loader.can_have_source_map() {
@@ -1202,14 +1211,16 @@ pub(crate) struct ImportMemberResolution {
     r#ref: Ref,
     re_exports: Vec<Dependency>,
 }
-pub(crate) type ImportMemberResolutions =
-    bun_collections::HashMap<(crate::IndexInt, bun_ast::StoreStr), Option<ImportMemberResolution>>;
+pub(crate) type ImportMemberResolutions<'a> = bun_collections::HashMap<
+    (crate::IndexInt, bun_ast::StoreStr<'a>),
+    Option<ImportMemberResolution>,
+>;
 
 // Clone: bitwise OK — `alias` borrows from the AST arena (non-owning); all
 // other fields are POD.
 #[derive(Clone, Default)]
-pub struct MatchImport {
-    alias: bun_ast::StoreStr, // string borrowed from AST arena
+pub struct MatchImport<'a> {
+    alias: bun_ast::StoreStr<'a>, // string borrowed from AST arena
     kind: MatchImportKind,
     namespace_ref: Ref,
     source_index: u32,
@@ -1542,12 +1553,12 @@ impl<'a> LinkerContext<'_, 'a> {
 
     pub(crate) fn should_remove_import_export_stmt(
         &self,
-        stmts: &mut StmtList,
+        stmts: &mut StmtList<'a>,
         loc: Loc,
         namespace_ref: Ref,
         import_record_index: u32,
-        alloc: &AstArena,
-        ast: &BundledAstRow<'_>,
+        alloc: &'a AstArena,
+        ast: &BundledAstRow<'_, 'a>,
     ) -> Result<bool, BunError> {
         let record = &ast.import_records[import_record_index as usize];
         // Barrel optimization: deferred import records should be dropped
@@ -1688,10 +1699,10 @@ impl<'a> LinkerContext<'_, 'a> {
     pub(crate) fn print_code_for_file_in_chunk_js(
         &self,
         r: renamer::Renamer,
-        alloc: &AstArena,
+        alloc: &'a AstArena,
         writer: &mut js_printer::BufferWriter,
-        out_stmts: &mut [Stmt],
-        ast: &BundledAstRow<'_>,
+        out_stmts: &[Stmt<'a>],
+        ast: &BundledAstRow<'_, 'a>,
         flags: crate::js_meta::Flags,
         to_esm_ref: Ref,
         to_commonjs_ref: Ref,
@@ -1700,11 +1711,6 @@ impl<'a> LinkerContext<'_, 'a> {
         source: &Source,
         module_info: Option<&mut crate::analyze_transpiled_module::ModuleInfo>,
     ) -> js_printer::PrintResult {
-        let parts_to_print = &[Part {
-            stmts: bun_ast::StoreSlice::new_mut(out_stmts),
-            ..Default::default()
-        }];
-
         let print_options = js_printer::Options {
             bundling: true,
             // TODO: IIFE
@@ -1788,7 +1794,7 @@ impl<'a> LinkerContext<'_, 'a> {
                 source,
                 print_options,
                 ast.import_records,
-                parts_to_print,
+                out_stmts,
                 r,
             )
         } else {
@@ -1800,7 +1806,7 @@ impl<'a> LinkerContext<'_, 'a> {
                 source,
                 print_options,
                 ast.import_records,
-                parts_to_print,
+                out_stmts,
                 r,
             )
         };
@@ -1852,8 +1858,6 @@ impl<'a> LinkerContext<'_, 'a> {
 
                         let source = &all_sources[r#ref.source_index() as usize];
 
-                        // SAFETY: `Symbol.original_name` is a `*const [u8]` arena
-                        // pointer; valid for the link step.
                         let original_name: &[u8] = symbol.original_name.slice();
                         // The hash itself is short-lived; use a scratch bump.
                         let scratch = ::bun_alloc::Arena::new();
@@ -2881,11 +2885,11 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
 }
 
 /// One `X.name` read that can bind to an export.
-struct PropertyAccess {
+struct PropertyAccess<'a> {
     part_index: usize,
     base: Ref,
     target_source: crate::IndexInt,
-    name: bun_ast::StoreStr,
+    name: bun_ast::StoreStr<'a>,
     count: u32,
     is_call_target: bool,
 }
@@ -2896,13 +2900,13 @@ struct ImportMatcher<'m, 'a> {
     bundle: &'m BundleV2<'a>,
     ast: &'m MultiArrayList<JSAst<'a>>,
     meta_flags: &'m [crate::js_meta::Flags],
-    resolved_exports: &'m [crate::ResolvedExports],
-    resolved_export_star: &'m [crate::ExportData],
-    top_level_symbol_to_parts_overlay: &'m [crate::linker_graph::TopLevelSymbolToParts],
+    resolved_exports: &'m [crate::ResolvedExports<'a>],
+    resolved_export_star: &'m [crate::ExportData<'a>],
+    top_level_symbol_to_parts_overlay: &'m [crate::linker_graph::TopLevelSymbolToParts<'a>],
     entry_point_kinds: &'m [EntryPoint::Kind],
     code_splitting: bool,
     output_format: Format,
-    symbols: &'m mut bun_ast::symbol::Map,
+    symbols: &'m mut bun_ast::symbol::Map<'a>,
     cycle_detector: &'m mut Vec<ImportTracker>,
     log: &'m Log,
 }
@@ -2912,7 +2916,7 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
         &self.bundle.graph.input_files.items_source()[index as usize]
     }
 
-    fn symbol_mut(&mut self, ref_: Ref) -> &mut bun_ast::Symbol {
+    fn symbol_mut(&mut self, ref_: Ref) -> &mut bun_ast::Symbol<'a> {
         let symbol = self.symbols.get_mut(ref_);
         symbol.expect("infallible: ref in symbol table")
     }
@@ -3006,7 +3010,6 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
             && flags.contains(AstFlags::HAS_LAZY_EXPORT)
             // ESM exports
             && !flags.contains(AstFlags::USES_EXPORT_KEYWORD)
-            // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
             && alias.map(|a| a.slice() != b"default").unwrap_or(true)
             // CommonJS exports
             && !flags.contains(AstFlags::USES_EXPORTS_REF)
@@ -3154,8 +3157,8 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
     fn match_import_with_export(
         &mut self,
         init_tracker: ImportTracker,
-        re_exports: &mut DependencyList,
-    ) -> MatchImport {
+        re_exports: &mut DependencyList<'a>,
+    ) -> MatchImport<'a> {
         self.match_import_with_export_inner(init_tracker, None, re_exports)
     }
 
@@ -3164,8 +3167,8 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
         &mut self,
         init_tracker: ImportTracker,
         mut first_hop: Option<(crate::IndexInt, bun_ast::StoreStr)>,
-        re_exports: &mut DependencyList,
-    ) -> MatchImport {
+        re_exports: &mut DependencyList<'a>,
+    ) -> MatchImport<'a> {
         let cycle_detector_top = self.cycle_detector.len();
         // Note: `cycle_detector` is restored by an explicit
         // `truncate` after the `'loop_` below — the only
@@ -3274,7 +3277,6 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
                         && !self.is_call_record(prev_source_index, named_import.import_record_index)
                     {
                         let source = self.get_source(tracker.source_index.get());
-                        // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
                         let alias = named_import
                             .alias
                             .expect("infallible: alias present")
@@ -3341,7 +3343,6 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
 
                     let next_source = self.get_source(next_tracker.source_index.get());
                     let r = source.range_of_identifier(named_import.alias_loc);
-                    // SAFETY: arena `*const [u8]` valid for the link pass.
                     let alias = named_import
                         .alias
                         .expect("infallible: alias present")
@@ -3645,10 +3646,10 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
     /// Records a `Normal`/`NormalAndNamespace` match for `import_ref`.
     fn bind_matched_import(
         &mut self,
-        imports_to_bind: &mut crate::RefImportData,
+        imports_to_bind: &mut crate::RefImportData<'a>,
         import_ref: Ref,
-        result: &MatchImport,
-        re_exports: DependencyList,
+        result: &MatchImport<'a>,
+        re_exports: DependencyList<'a>,
     ) {
         imports_to_bind.put(
             self.arena,
@@ -3679,8 +3680,8 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
         &mut self,
         source_index: crate::IndexInt,
         imports_to_bind: &crate::RefImportData,
-        member_resolutions: &mut ImportMemberResolutions,
-    ) -> (Vec<PropertyAccess>, Vec<(Ref, bun_ast::StoreStr)>) {
+        member_resolutions: &mut ImportMemberResolutions<'a>,
+    ) -> (Vec<PropertyAccess<'a>>, Vec<(Ref, bun_ast::StoreStr<'a>)>) {
         if self.output_format == Format::InternalBakeDev {
             return Default::default();
         }
@@ -3704,7 +3705,7 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
                 for (name, prop_use) in properties.iter() {
                     // Missing, or only reachable through `export *` from CommonJS: stays an access.
                     let name = if let Some(index) = resolved_exports.get_index(name) {
-                        bun_ast::StoreStr::new(&resolved_exports.keys()[index])
+                        resolved_exports.keys()[index]
                     } else if name == b"default"
                         && self.ast.items_flags()[target_source as usize]
                             .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
@@ -3935,7 +3936,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         log: &Log,
         cycle_detector: &mut Vec<ImportTracker>,
         source_index: crate::IndexInt,
-        member_resolutions: &mut ImportMemberResolutions,
+        member_resolutions: &mut ImportMemberResolutions<'a>,
     ) {
         let arena = self.graph.ast_arena();
         let meta = self.graph.meta.split_mut();
@@ -4026,7 +4027,6 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 MatchImportKind::Cycle => {
                     let source = matcher.get_source(source_index);
                     let r = lex::range_of_identifier(source, named_import.alias_loc);
-                    // SAFETY: arena `*const [u8]` valid for the link pass.
                     let alias = named_import
                         .alias
                         .expect("infallible: alias present")
@@ -4050,7 +4050,6 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                     // TODO: log locations of the ambiguous exports
 
                     let symbol = matcher.symbol_mut(import_ref);
-                    // SAFETY: arena `*const [u8]` valid for the link pass.
                     let alias = named_import
                         .alias
                         .expect("infallible: alias present")
@@ -4131,7 +4130,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
     fn bind_import_property_accesses(
         &mut self,
         source_index: crate::IndexInt,
-        accesses: &[PropertyAccess],
+        accesses: &[PropertyAccess<'a>],
         keeps_this: &[(Ref, bun_ast::StoreStr)],
         member_resolutions: &ImportMemberResolutions,
     ) {
@@ -4258,7 +4257,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         &mut self,
         source_index: crate::IndexInt,
         module_ref: Ref,
-        name: &[u8],
+        name: &'a [u8],
         alias: &[u8],
     ) -> Result<(Ref, u32), AllocError> {
         let arena = self.graph.ast_arena();
@@ -4422,7 +4421,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
 }
 
 // PartialEq for MatchImport (used by match_import_with_export)
-impl PartialEq for MatchImport {
+impl PartialEq for MatchImport<'_> {
     fn eq(&self, other: &Self) -> bool {
         // Note: intentionally compares the raw fat pointer
         // (address + length metadata), not contents.
@@ -4441,23 +4440,23 @@ impl PartialEq for MatchImport {
 // StmtList
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct StmtList {
+pub struct StmtList<'a> {
     // Temporary scratch buffers: plain `Vec`s on the global allocator
     // (cleared/reused per chunk, freed by Drop).
-    pub(crate) inside_wrapper_prefix: InsideWrapperPrefix,
-    pub(crate) outside_wrapper_prefix: Vec<Stmt>,
-    pub(crate) inside_wrapper_suffix: Vec<Stmt>,
-    pub(crate) all_stmts: Vec<Stmt>,
+    pub(crate) inside_wrapper_prefix: InsideWrapperPrefix<'a>,
+    pub(crate) outside_wrapper_prefix: Vec<Stmt<'a>>,
+    pub(crate) inside_wrapper_suffix: Vec<Stmt<'a>>,
+    pub(crate) all_stmts: Vec<Stmt<'a>>,
 }
 
-pub struct InsideWrapperPrefix {
-    pub(crate) stmts: Vec<Stmt>,
+pub struct InsideWrapperPrefix<'a> {
+    pub(crate) stmts: Vec<Stmt<'a>>,
     pub(crate) sync_dependencies_end: usize,
     // if true it will exist at `sync_dependencies_end`
     pub(crate) has_async_dependency: bool,
 }
 
-impl InsideWrapperPrefix {
+impl InsideWrapperPrefix<'_> {
     fn init() -> Self {
         Self {
             stmts: Vec::new(),
@@ -4475,21 +4474,24 @@ impl InsideWrapperPrefix {
     }
 }
 
-impl InsideWrapperPrefix {
-    pub(crate) fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
+impl<'a> InsideWrapperPrefix<'a> {
+    pub(crate) fn append_non_dependency(&mut self, stmt: Stmt<'a>) -> Result<(), AllocError> {
         self.stmts.push(stmt);
         Ok(())
     }
 
-    pub(crate) fn append_non_dependency_slice(&mut self, stmts: &[Stmt]) -> Result<(), AllocError> {
+    pub(crate) fn append_non_dependency_slice(
+        &mut self,
+        stmts: &[Stmt<'a>],
+    ) -> Result<(), AllocError> {
         self.stmts.extend_from_slice(stmts);
         Ok(())
     }
 
     fn append_sync_dependency(
         &mut self,
-        alloc: &AstArena,
-        call_expr: Expr,
+        alloc: &'a AstArena,
+        call_expr: Expr<'a>,
     ) -> Result<(), AllocError> {
         self.stmts.insert(
             self.sync_dependencies_end,
@@ -4508,8 +4510,8 @@ impl InsideWrapperPrefix {
 
     fn append_async_dependency(
         &mut self,
-        alloc: &AstArena,
-        call_expr: Expr,
+        alloc: &'a AstArena,
+        call_expr: Expr<'a>,
         promise_all_ref: Ref,
     ) -> Result<(), AllocError> {
         if !self.has_async_dependency {
@@ -4617,7 +4619,7 @@ impl InsideWrapperPrefix {
     }
 }
 
-impl StmtList {
+impl<'a> StmtList<'a> {
     pub(crate) fn reset(&mut self) {
         self.inside_wrapper_prefix.reset();
         self.outside_wrapper_prefix.clear();
@@ -4636,7 +4638,7 @@ impl StmtList {
         }
     }
 
-    pub(crate) fn append_slice(&mut self, list: StmtListWhich, stmts: &[Stmt]) {
+    pub(crate) fn append_slice(&mut self, list: StmtListWhich, stmts: &[Stmt<'a>]) {
         match list {
             StmtListWhich::OutsideWrapperPrefix => {
                 self.outside_wrapper_prefix.extend_from_slice(stmts)
@@ -4648,7 +4650,7 @@ impl StmtList {
         }
     }
 
-    pub(crate) fn append(&mut self, list: StmtListWhich, stmt: Stmt) {
+    pub(crate) fn append(&mut self, list: StmtListWhich, stmt: Stmt<'a>) {
         match list {
             StmtListWhich::OutsideWrapperPrefix => self.outside_wrapper_prefix.push(stmt),
             StmtListWhich::InsideWrapperSuffix => self.inside_wrapper_suffix.push(stmt),

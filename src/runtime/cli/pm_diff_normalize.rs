@@ -458,9 +458,9 @@ fn print_js<'a>(
 /// A name is `<letters for the symbol's index in its scope><scope depth>`, so nothing inner can capture something
 /// outer and sibling scopes are independent. Within a scope the two sides are aligned (LCS on symbol kind + use
 /// count) and matched symbols share an index, so inserting a function does not renumber everything after it.
-struct Namer<'s> {
-    arenas: [&'s AstArena; 2],
-    symbols: [&'s mut [bun_ast::Symbol]; 2],
+struct Namer<'s, 'ast> {
+    arenas: [&'ast AstArena; 2],
+    symbols: [&'s mut [bun_ast::Symbol<'ast>]; 2],
     renamed: [Vec<bool>; 2],
     /// Every name that is not renamed, such as a global or a long local, sorted. A renamed local is
     /// never given one of these names.
@@ -470,7 +470,7 @@ struct Namer<'s> {
     too_deep: bool,
     scratch: Vec<u8>,
     /// Subtree member counts, computed once per scope.
-    weights: WeightMemo,
+    weights: WeightMemo<'ast>,
     /// Rename every local (the comparison key), not only mangled-looking ones (the un-minified display).
     all_names: bool,
     /// Per side, per symbol: name-free use-site profile hash (0 = unused / not computed).
@@ -497,13 +497,13 @@ fn count_bucket(n: u32) -> u64 {
     }
 }
 
-impl<'s> Namer<'s> {
+impl<'s, 'ast> Namer<'s, 'ast> {
     fn new(
-        arena_o: &'s AstArena,
-        arena_n: &'s AstArena,
-        old: &'s mut [bun_ast::Symbol],
-        new: &'s mut [bun_ast::Symbol],
-    ) -> Namer<'s> {
+        arena_o: &'ast AstArena,
+        arena_n: &'ast AstArena,
+        old: &'s mut [bun_ast::Symbol<'ast>],
+        new: &'s mut [bun_ast::Symbol<'ast>],
+    ) -> Self {
         let mut taken = Vec::new();
         for sym in old.iter().chain(new.iter()) {
             if sym.slot_namespace() == bun_ast::symbol::SlotNamespace::MustNotBeRenamed
@@ -629,8 +629,8 @@ impl<'s> Namer<'s> {
     /// `depth` is the naming digit (only scopes that named something bump it); `level` is the real nesting.
     fn plan(
         &mut self,
-        old: Option<&bun_ast::Scope>,
-        new: Option<&bun_ast::Scope>,
+        old: Option<&bun_ast::Scope<'ast>>,
+        new: Option<&bun_ast::Scope<'ast>>,
         depth: usize,
         level: usize,
     ) {
@@ -685,16 +685,19 @@ impl<'s> Namer<'s> {
 /// Which child scope on the old side is "the same" scope on the new side. Only scopes that declare a lot need a
 /// good answer (small ones name positionally either way), so those are matched by kind and closest member count
 /// first; the rest fall to an in-order alignment on kind.
-type WeightMemo = bun_collections::HashMap<*const bun_ast::Scope, usize>;
+type WeightMemo<'a> = bun_collections::HashMap<*const bun_ast::Scope<'a>, usize>;
 
-fn pair_scopes<'a>(
-    old: &[&'a bun_ast::Scope],
-    new: &[&'a bun_ast::Scope],
-    memo: &mut WeightMemo,
-) -> Vec<(Option<&'a bun_ast::Scope>, Option<&'a bun_ast::Scope>)> {
+fn pair_scopes<'a, 'ast>(
+    old: &[&'a bun_ast::Scope<'ast>],
+    new: &[&'a bun_ast::Scope<'ast>],
+    memo: &mut WeightMemo<'ast>,
+) -> Vec<(
+    Option<&'a bun_ast::Scope<'ast>>,
+    Option<&'a bun_ast::Scope<'ast>>,
+)> {
     const BIG: usize = 24;
     // Post-order fill: every scope's subtree count lands in `memo` the first time any ancestor asks.
-    fn weight(root: &bun_ast::Scope, memo: &mut WeightMemo) -> usize {
+    fn weight<'a>(root: &bun_ast::Scope<'a>, memo: &mut WeightMemo<'a>) -> usize {
         if let Some(&w) = memo.get(&std::ptr::from_ref(root)) {
             return w;
         }
@@ -932,6 +935,7 @@ fn normalize_json(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
     let mut printer = bun_js_printer::BufferPrinter::init(writer);
     bun_js_printer::print_json(
         &mut printer,
+        &arena,
         expr,
         &source,
         bun_js_printer::PrintJsonOptions {

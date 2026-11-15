@@ -1,20 +1,20 @@
 use crate::mal_prelude::*;
 use core::sync::atomic::Ordering;
 
-use bun_ast::Scope;
+use bun_ast::{AstArena, Scope};
 use bun_js_printer::{self as js_printer, PrintResult};
 
 use crate::analyze_transpiled_module::ModuleInfo;
-use crate::linker_context_mod::LinkerContext;
+use crate::linker_context_mod::{LinkerContext, StmtList};
 use crate::options::OutputFormat;
 use crate::thread_pool::Worker;
 use crate::{Chunk, CompileResult, Index, PartRange};
 
 use super::generate_code_for_file_in_chunk_js::generate_code_for_file_in_chunk_js;
 
-pub(crate) fn generate_compile_result_for_js_chunk(
+pub(crate) fn generate_compile_result_for_js_chunk<'a>(
     worker: &mut Worker,
-    c: &LinkerContext,
+    c: &LinkerContext<'_, 'a>,
     chunk: &Chunk,
     part_range: PartRange,
 ) -> CompileResult {
@@ -34,7 +34,15 @@ pub(crate) fn generate_compile_result_for_js_chunk(
     let arena = scopeguard::guard(&mut worker.temporary_arena, |a| {
         a.reset_retain_with_limit(8 * 1024 * 1024);
     });
-    let stmt_list = &mut worker.stmt_list;
+    // SAFETY: what is allocated in `arena` is only stored there and in `stmt_list`, never in the
+    // graph, and the result is text. The statements left in `stmt_list` are not read again: the
+    // next task resets it first.
+    let (stmt_list, temp_arena) = unsafe {
+        core::mem::transmute::<
+            (&mut StmtList<'static>, &AstArena),
+            (&'a mut StmtList<'a>, &'a AstArena),
+        >((&mut worker.stmt_list, &**arena))
+    };
     stmt_list.reset();
 
     let runtime_scope: &Scope = &c.graph.ast.items_module_scope()[Index::RUNTIME.get() as usize];
@@ -77,7 +85,7 @@ pub(crate) fn generate_compile_result_for_js_chunk(
         runtime_require_ref,
         stmt_list,
         worker_alloc,
-        &**arena,
+        temp_arena,
         module_info.as_deref_mut(),
     );
 

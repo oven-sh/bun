@@ -239,7 +239,7 @@ pub(crate) fn assign_minified(
 }
 
 /// Writes the names into the cross-chunk `export {}` / `import {}` clause items.
-pub(crate) fn apply_to_clauses(c: &LinkerContext, chunks: &mut [Chunk]) {
+pub(crate) fn apply_to_clauses<'a>(c: &LinkerContext<'_, 'a>, chunks: &mut [Chunk<'a>]) {
     if c.cross_chunk_names.is_empty() {
         return;
     }

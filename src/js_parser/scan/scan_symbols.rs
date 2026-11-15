@@ -115,11 +115,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 });
             }
 
-            // SAFETY: `name` is a slice of the source or the lexer's string table.
-            let gpe = unsafe {
-                self.module_scope
-                    .get_or_put_member_with_hash(self.ast_arena, name, hash)
-            };
+            let gpe = self
+                .module_scope
+                .get_or_put_member_with_hash(self.ast_arena, name, hash);
 
             // I don't think this happens?
             if gpe.found_existing {
@@ -135,12 +133,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 self.jest.did_declare_unbound(name, new_ref);
             }
 
-            // SAFETY: as above.
-            *unsafe {
-                self.module_scope
-                    .get_or_put_member_with_hash(self.ast_arena, name, hash)
-            }
-            .value_ptr = js_ast::scope::Member { ref_: new_ref, loc };
+            *self
+                .module_scope
+                .get_or_put_member_with_hash(self.ast_arena, name, hash)
+                .value_ptr = js_ast::scope::Member { ref_: new_ref, loc };
 
             declare_loc = loc;
             scope_use = false;

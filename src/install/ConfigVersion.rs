@@ -10,7 +10,7 @@ pub enum ConfigVersion {
 impl ConfigVersion {
     pub(crate) const CURRENT: ConfigVersion = ConfigVersion::V1;
 
-    pub(crate) fn from_json(expr: JsonView<'_>) -> Option<ConfigVersion> {
+    pub(crate) fn from_json(expr: JsonView<'_, '_>) -> Option<ConfigVersion> {
         let version: f64 = expr.as_number()?;
 
         if version == 0.0 {

@@ -312,7 +312,7 @@ impl<'a, 's> TreeWriter<'a, 's> {
     pub(super) fn replace_function(
         &mut self,
         function: FnId,
-        compiled: &CompiledFunction<'_>,
+        compiled: &CompiledFunction<'_, '_>,
     ) -> Written<()> {
         self.function = self.create_function_context(function, compiled);
         let original = self.file[function];
@@ -426,7 +426,7 @@ impl<'a, 's> TreeWriter<'a, 's> {
     fn create_function_context(
         &mut self,
         function: FnId,
-        compiled: &CompiledFunction<'_>,
+        compiled: &CompiledFunction<'_, '_>,
     ) -> FunctionContext {
         let record = self.file[function];
         let outside = (compiled.symbols.iter()).filter(|it| it.origin == SymbolOrigin::Source);

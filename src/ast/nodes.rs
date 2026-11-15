@@ -1,5 +1,6 @@
 //! Core AST node payload types and arena-slice helpers.
 
+use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
@@ -15,8 +16,7 @@ pub use crate::flags as Flags;
 // StoreRef — pointer to a node in an arena.
 //
 // Thin `NonNull<T>` newtype — `Copy`, `Deref`/`DerefMut`. The pointee lives
-// until the owning arena is `reset()`; callers must not hold a `StoreRef`
-// across that boundary.
+// for `'a`. Invariant in `T`, because any copy can write a `T`.
 //
 // `packed(4)` lowers the alignment to 4 without changing the single-scalar
 // representation: still passed/returned in one register, `self.0` is one `mov`,
@@ -26,7 +26,7 @@ pub use crate::flags as Flags;
 // ───────────────────────────────────────────────────────────────────────────
 
 #[repr(C, packed(4))]
-pub struct StoreRef<T>(NonNull<T>);
+pub struct StoreRef<'a, T>(NonNull<T>, PhantomData<&'a mut T>);
 
 const _: () = assert!(core::mem::size_of::<StoreRef<u8>>() == 8);
 const _: () = assert!(core::mem::align_of::<StoreRef<u8>>() == 4);
@@ -38,80 +38,59 @@ const _: () = assert!(core::mem::size_of::<Option<StoreRef<u8>>>() == 8);
 // responsible for not actually sharing an arena across threads.
 //
 // Bounded on `T` so `StoreRef` cannot launder a `!Send`/`!Sync` payload (e.g.
-// `StoreRef<Cell<_>>`) past auto-trait inference: `Deref` yields `&T` (needs
-// `T: Sync` to share), and a `Send`-moved `StoreRef` yields `&mut T` via
-// `DerefMut` (needs `T: Send`).
-unsafe impl<T: Send> Send for StoreRef<T> {}
-// SAFETY: see the `Send` impl above — same single-threaded bump-arena contract;
-// bounded on `T: Sync` so the `Deref`-yielded `&T` is sound to share.
-unsafe impl<T: Sync> Sync for StoreRef<T> {}
+// `StoreRef<Cell<_>>`) past auto-trait inference: it is `Copy`, and every copy
+// yields `&T` (needs `T: Sync`) and `&mut T` (needs `T: Send`).
+unsafe impl<T: Send + Sync> Send for StoreRef<'_, T> {}
+// SAFETY: see the `Send` impl above.
+unsafe impl<T: Send + Sync> Sync for StoreRef<'_, T> {}
 
-impl<T> StoreRef<T> {
-    #[inline]
-    pub const fn from_non_null(p: NonNull<T>) -> Self {
-        StoreRef(p)
-    }
-    /// Wrap a raw pointer. Panics if `p` is null. Alignment and arena-lifetime
-    /// are caller-tracked just like the already-safe `from_non_null` /
-    /// `From<NonNull<T>>` constructors — the only invariant `unsafe` was
-    /// guarding here was non-null, which we now check.
-    #[inline]
-    pub fn from_raw(p: *mut T) -> Self {
-        StoreRef(NonNull::new(p).expect("StoreRef::from_raw: null pointer"))
-    }
+impl<'a, T> StoreRef<'a, T> {
     /// Wrap a `bumpalo::Bump::alloc` result.
     #[inline]
-    pub fn from_bump(r: &mut T) -> Self {
-        StoreRef(NonNull::from(r))
+    pub fn from_bump(r: &'a mut T) -> Self {
+        StoreRef(NonNull::from(r), PhantomData)
     }
     #[inline]
     pub const fn as_ptr(self) -> *mut T {
         self.0.as_ptr()
     }
-    /// Wrap a `&'static T` (compile-time/global singleton — e.g. Prefill
-    /// constants). Mutation through the resulting `StoreRef` is UB.
+    /// Borrow the pointee for as long as it lives.
     #[inline]
-    pub const fn from_static(r: &'static T) -> Self {
-        StoreRef(NonNull::from_ref(r))
-    }
-    /// Borrow the pointee (explicit form of `Deref`).
-    #[inline]
-    pub fn get(&self) -> &T {
-        self
-    }
-}
-impl<T> Clone for StoreRef<T> {
-    #[inline]
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<T> Copy for StoreRef<T> {}
-impl<T> Deref for StoreRef<T> {
-    type Target = T;
-    #[inline]
-    fn deref(&self) -> &T {
-        // SAFETY: StoreRef invariant — points into a live arena block.
+    pub fn get(&self) -> &'a T {
+        // SAFETY: every constructor takes a borrow that is valid for `'a`.
         unsafe { &*self.as_ptr() }
     }
-}
-impl<T> DerefMut for StoreRef<T> {
+    /// `DerefMut` for as long as the pointee lives.
     #[inline]
-    fn deref_mut(&mut self) -> &mut T {
-        // SAFETY: StoreRef invariant. AST nodes are mutated in-place during
+    pub fn into_mut(self) -> &'a mut T {
+        // SAFETY: valid for `'a`, as in `get`. AST nodes are mutated in-place during
         // visiting; no two `StoreRef` to the same node are deref'd `&mut`
         // simultaneously in single-threaded parser/visitor passes.
         unsafe { &mut *self.as_ptr() }
     }
 }
-impl<T> From<NonNull<T>> for StoreRef<T> {
+impl<T> Clone for StoreRef<'_, T> {
     #[inline]
-    fn from(p: NonNull<T>) -> Self {
-        StoreRef::from_non_null(p)
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T> Copy for StoreRef<'_, T> {}
+impl<T> Deref for StoreRef<'_, T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        self.get()
+    }
+}
+impl<T> DerefMut for StoreRef<'_, T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T {
+        self.into_mut()
     }
 }
 /// Pointer-identity comparison.
-impl<T> PartialEq for StoreRef<T> {
+impl<T> PartialEq for StoreRef<'_, T> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         // Copy out of the packed field before comparing (`NonNull::eq` takes
@@ -120,70 +99,59 @@ impl<T> PartialEq for StoreRef<T> {
         a == b
     }
 }
-impl<T> Eq for StoreRef<T> {}
+impl<T> Eq for StoreRef<'_, T> {}
 
-pub type ExprNodeIndex = Expr;
-pub type StmtNodeIndex = Stmt;
-pub type BindingNodeIndex = Binding;
+pub type ExprNodeIndex<'a> = Expr<'a>;
+pub type StmtNodeIndex<'a> = Stmt<'a>;
+pub type BindingNodeIndex<'a> = Binding<'a>;
 
 // ─── arena-slice helpers ────────────────────────────────────────────────────
 // Legacy alias: AST string fields now uniformly use `StoreStr` (safe `Deref`
 // wrapper around an arena `[u8]`). Kept as a type alias so existing field
 // declarations / call sites that spell `ArenaStr` continue to compile.
-pub(crate) type ArenaStr = StoreStr;
+pub(crate) type ArenaStr<'a> = StoreStr<'a>;
 #[inline]
-const fn empty_arena_str() -> ArenaStr {
+const fn empty_arena_str() -> ArenaStr<'static> {
     StoreStr::EMPTY
 }
 // (former `empty_arena_slice_mut<T>()` removed — use `StoreSlice::<T>::EMPTY`.)
 
 // ─── StoreStr — arena-owned string slice (StoreRef's [u8] sibling) ──────────
 //
-// AST string fields (`E::Dot.name`, `E::String.data`, …) borrow from the parse
-// arena and are bulk-freed with it. `StoreStr` mirrors
-// `StoreRef<T>` (raw `NonNull<T>`) and `StmtNodeList` (`StoreSlice<Stmt>`): a
-// thin lifetime-erased pointer with safe construction and `Deref<Target=[u8]>`
-// under the same callers-must-not-outlive-the-arena contract that `StoreRef`
-// already imposes. Avoids cascading `<'arena>` through `Expr`/`Stmt`/`Data`
-// (~100 types, 12 downstream crates) — that cascade is the follow-up round
-// once `StoreRef` itself carries `'arena`.
+// A `&'a [u8]` for AST string fields (`E::Dot.name`, `E::String.data`, …).
 // Layout matches `StoreSlice<u8>`: `packed(4)` lowers `NonNull<u8>` to align 4
 // so the struct is 12 bytes instead of 16. The `u32` length keeps the 4 GB
 // source-file limit explicit.
 #[derive(Copy, Clone)]
 #[repr(C, packed(4))]
-pub struct StoreStr {
+pub struct StoreStr<'a> {
     ptr: NonNull<u8>,
     len: u32,
+    _marker: PhantomData<&'a [u8]>,
 }
 
 const _: () = assert!(core::mem::size_of::<StoreStr>() == 12);
 const _: () = assert!(core::mem::align_of::<StoreStr>() == 4);
 
-// SAFETY: same rationale as `StoreRef` — points into a single-threaded bump
-// arena. Asserted Send/Sync so payload types can sit in
-// `static` Prefill tables; callers must not actually share an arena across
-// threads (unchanged contract).
-unsafe impl Send for StoreStr {}
-// SAFETY: see the `Send` impl above — `StoreStr` is a raw `(ptr, len)` into a
-// single-threaded bump arena; never actually shared across threads.
-unsafe impl Sync for StoreStr {}
+// SAFETY: it is made from a `&'a [u8]` and only hands one out.
+unsafe impl Send for StoreStr<'_> {}
+// SAFETY: see the `Send` impl above.
+unsafe impl Sync for StoreStr<'_> {}
 
-impl StoreStr {
-    pub const EMPTY: StoreStr = StoreStr {
+impl<'a> StoreStr<'a> {
+    pub const EMPTY: StoreStr<'a> = StoreStr {
         ptr: NonNull::<u8>::dangling(),
         len: 0,
+        _marker: PhantomData,
     };
 
-    /// Wrap an arena-owned (or `'static`) slice. Safe: no lifetime is forged;
-    /// the pointer is stored raw and re-borrowed under the `StoreRef` contract
-    /// (valid until the owning arena resets).
     #[inline]
-    pub const fn new(s: &[u8]) -> Self {
+    pub const fn new(s: &'a [u8]) -> Self {
         debug_assert!(s.len() <= u32::MAX as usize);
         StoreStr {
             ptr: NonNull::from_ref(s).cast(),
             len: s.len() as u32,
+            _marker: PhantomData,
         }
     }
 
@@ -197,15 +165,9 @@ impl StoreStr {
         self.len as usize
     }
 
-    /// Re-borrow as `&[u8]`. Same safety contract as `StoreRef::get`: the
-    /// pointee lives until arena reset, which the caller must not cross.
-    /// Takes `self` by value (it's `Copy`) so the returned borrow is not tied
-    /// to a stack temporary — mirrors `StoreRef::Deref`'s arena contract.
     #[inline]
-    pub fn slice<'a>(self) -> &'a [u8] {
-        // SAFETY: StoreStr invariant — `ptr` is non-null, points at `len`
-        // initialized bytes valid for the arena lifetime (or `'static`); caller
-        // must not outlive the owning arena (same as `StoreRef`).
+    pub fn slice(self) -> &'a [u8] {
+        // SAFETY: `ptr` and `len` are the start of a `&'a [u8]`, or `EMPTY`.
         unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len as usize) }
     }
 
@@ -215,14 +177,14 @@ impl StoreStr {
     }
 }
 
-impl Default for StoreStr {
+impl Default for StoreStr<'_> {
     #[inline]
     fn default() -> Self {
         StoreStr::EMPTY
     }
 }
 
-impl core::ops::Deref for StoreStr {
+impl core::ops::Deref for StoreStr<'_> {
     type Target = [u8];
     #[inline]
     fn deref(&self) -> &[u8] {
@@ -230,76 +192,76 @@ impl core::ops::Deref for StoreStr {
     }
 }
 
-impl AsRef<[u8]> for StoreStr {
+impl AsRef<[u8]> for StoreStr<'_> {
     #[inline]
     fn as_ref(&self) -> &[u8] {
         self.slice()
     }
 }
-impl core::borrow::Borrow<[u8]> for StoreStr {
+impl core::borrow::Borrow<[u8]> for StoreStr<'_> {
     #[inline]
     fn borrow(&self) -> &[u8] {
         self.slice()
     }
 }
 
-impl<const N: usize> From<&[u8; N]> for StoreStr {
+impl<'a, const N: usize> From<&'a [u8; N]> for StoreStr<'a> {
     #[inline]
-    fn from(s: &[u8; N]) -> Self {
+    fn from(s: &'a [u8; N]) -> Self {
         StoreStr::new(s)
     }
 }
-impl From<&[u8]> for StoreStr {
+impl<'a> From<&'a [u8]> for StoreStr<'a> {
     #[inline]
-    fn from(s: &[u8]) -> Self {
+    fn from(s: &'a [u8]) -> Self {
         StoreStr::new(s)
     }
 }
-impl From<&str> for StoreStr {
+impl<'a> From<&'a str> for StoreStr<'a> {
     #[inline]
-    fn from(s: &str) -> Self {
+    fn from(s: &'a str) -> Self {
         StoreStr::new(s.as_bytes())
     }
 }
 
-impl PartialEq for StoreStr {
+impl PartialEq for StoreStr<'_> {
     #[inline]
-    fn eq(&self, other: &StoreStr) -> bool {
+    fn eq(&self, other: &Self) -> bool {
         self.slice() == other.slice()
     }
 }
-impl Eq for StoreStr {}
-impl PartialEq<[u8]> for StoreStr {
+impl Eq for StoreStr<'_> {}
+impl PartialEq<[u8]> for StoreStr<'_> {
     #[inline]
     fn eq(&self, other: &[u8]) -> bool {
         self.slice() == other
     }
 }
-impl<const N: usize> PartialEq<&[u8; N]> for StoreStr {
+impl<const N: usize> PartialEq<&[u8; N]> for StoreStr<'_> {
     #[inline]
     fn eq(&self, other: &&[u8; N]) -> bool {
         self.slice() == *other
     }
 }
-impl<const N: usize> PartialEq<[u8; N]> for StoreStr {
+impl<const N: usize> PartialEq<[u8; N]> for StoreStr<'_> {
     #[inline]
     fn eq(&self, other: &[u8; N]) -> bool {
         self.slice() == other
     }
 }
-impl PartialEq<&[u8]> for StoreStr {
+impl PartialEq<&[u8]> for StoreStr<'_> {
     #[inline]
     fn eq(&self, other: &&[u8]) -> bool {
         self.slice() == *other
     }
 }
-impl core::hash::Hash for StoreStr {
+impl core::hash::Hash for StoreStr<'_> {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, h: &mut H) {
         self.slice().hash(h)
     }
 }
-impl core::fmt::Debug for StoreStr {
+impl core::fmt::Debug for StoreStr<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         bstr::BStr::new(self.slice()).fmt(f)
     }
@@ -309,89 +271,64 @@ impl core::fmt::Debug for StoreStr {
 //
 // Generalizes `StoreStr` to `[T]` for AST list fields (`E::Arrow.args`,
 // per-node `[Stmt]`/`[Expr]` views, …) that borrow from the parse arena.
-// Same contract as `StoreRef`/`StoreStr`: safe `::new`, `Deref<Target=[T]>`,
-// valid until the owning arena resets.
+// The items live for `'a`. Invariant in `T`, as `StoreRef` is.
 //
 // Layout: `packed(4)` lowers `NonNull<T>` to align 4 so the field is 12 bytes
 // instead of 16. The pointer stays a single scalar (one `mov` to read), and the
 // `u32` length keeps the 4 G-element ceiling explicit.
 #[repr(C, packed(4))]
-pub struct StoreSlice<T> {
+pub struct StoreSlice<'a, T> {
     ptr: NonNull<T>,
     len: u32,
+    _marker: PhantomData<&'a mut [T]>,
 }
 
 const _: () = assert!(core::mem::size_of::<StoreSlice<u8>>() == 12);
 const _: () = assert!(core::mem::align_of::<StoreSlice<u8>>() == 4);
 
 // Manual Copy/Clone: derive would add a spurious `T: Copy` bound.
-impl<T> Copy for StoreSlice<T> {}
-impl<T> Clone for StoreSlice<T> {
+impl<T> Copy for StoreSlice<'_, T> {}
+impl<T> Clone for StoreSlice<'_, T> {
     #[inline]
     fn clone(&self) -> Self {
         *self
     }
 }
 
-// SAFETY: same rationale as `StoreStr` — points into a single-threaded bump
-// arena. Asserted Send/Sync so payload types can sit in `static` Prefill
-// tables; callers must not actually share an arena across threads. Bounded on
-// `T: Send` so the impl can't smuggle a non-`Send` payload across a thread
-// boundary through the safe `slice()`/`Deref` accessors.
-unsafe impl<T: Send> Send for StoreSlice<T> {}
-// SAFETY: see the `Send` impl above — `StoreSlice` is a raw `(ptr, len)` into a
-// single-threaded bump arena; never actually shared across threads. Bounded on
-// `T: Sync` for the same reason `Send` is bounded on `T: Send`.
-unsafe impl<T: Sync> Sync for StoreSlice<T> {}
+// SAFETY: same rationale as `StoreRef`.
+unsafe impl<T: Send + Sync> Send for StoreSlice<'_, T> {}
+// SAFETY: see the `Send` impl above.
+unsafe impl<T: Send + Sync> Sync for StoreSlice<'_, T> {}
 
-impl<T> StoreSlice<T> {
-    pub const EMPTY: StoreSlice<T> = StoreSlice {
+impl<'a, T> StoreSlice<'a, T> {
+    pub const EMPTY: StoreSlice<'a, T> = StoreSlice {
         ptr: NonNull::<T>::dangling(),
         len: 0,
+        _marker: PhantomData,
     };
 
-    /// Wrap an arena-owned (or `'static`) slice. Safe: no lifetime is forged;
-    /// the pointer is stored raw and re-borrowed under the `StoreRef` contract
-    /// (valid until the owning arena resets).
+    /// Wrap an arena-owned mutable slice (e.g. `bump.alloc_slice_*`).
     #[inline]
-    pub const fn new(s: &[T]) -> Self {
-        debug_assert!(s.len() <= u32::MAX as usize);
-        StoreSlice {
-            ptr: NonNull::from_ref(s).cast(),
-            len: s.len() as u32,
-        }
-    }
-
-    /// Wrap an arena-owned mutable slice (e.g. `bump.alloc_slice_*`). Same
-    /// contract as `new`; provided so callers don't need a `&mut → &` reborrow
-    /// at every site.
-    #[inline]
-    pub fn new_mut(s: &mut [T]) -> Self {
+    pub fn new_mut(s: &'a mut [T]) -> Self {
         debug_assert!(s.len() <= u32::MAX as usize);
         StoreSlice {
             ptr: NonNull::from_mut(s).cast(),
             len: s.len() as u32,
+            _marker: PhantomData,
         }
     }
 
-    pub fn from_iter_in(items: impl IntoIterator<Item = T>, arena: &AstArena) -> Self {
+    pub fn from_iter_in(items: impl IntoIterator<Item = T>, arena: &'a AstArena) -> Self {
         AstVec::from_iter_in(items, arena).into_store_slice()
     }
 
-    /// Re-borrow as `&[T]`. Same safety contract as `StoreStr::slice` /
-    /// `StoreRef::get`: the pointee lives until arena reset, which the caller
-    /// must not cross. Takes `self` by value (Copy) so the returned borrow is
-    /// not tied to a stack temporary.
     #[inline]
-    pub fn slice<'a>(self) -> &'a [T] {
-        // SAFETY: StoreSlice invariant — `ptr` is non-null, points at `len`
-        // initialized `T` valid for the arena lifetime (or `'static`); caller
-        // must not outlive the owning arena (same as `StoreRef`).
+    pub fn slice(self) -> &'a [T] {
+        // SAFETY: `ptr` and `len` are the start of a slice that is valid for `'a`, or `EMPTY`.
         unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len as usize) }
     }
 
-    /// Re-borrow as `&mut [T]`. Same `StoreRef` contract as [`slice`]: the
-    /// pointee lives until arena reset, and the single-threaded parser/visitor
+    /// Re-borrow as `&mut [T]`. The single-threaded parser/visitor
     /// pass holds at most one live `&mut` per node (mirrors `StoreRef`'s safe
     /// `DerefMut`, which already encodes this invariant). The arena hands out
     /// unique allocations and `StoreSlice` is `Copy`, so aliasing cannot be
@@ -399,9 +336,9 @@ impl<T> StoreSlice<T> {
     /// two share one safety story. Callers must not overlap a `slice_mut()`
     /// borrow with another `slice()`/`slice_mut()` of the same allocation.
     #[inline]
-    pub fn slice_mut<'a>(self) -> &'a mut [T] {
+    pub fn slice_mut(self) -> &'a mut [T] {
         // SAFETY: StoreSlice invariant — `ptr` is non-null, points at `len`
-        // initialized `T` valid for the arena lifetime; uniqueness is upheld
+        // initialized `T` valid for `'a`; uniqueness is upheld
         // by the single-threaded visitor contract (same as `StoreRef::DerefMut`).
         unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize) }
     }
@@ -419,27 +356,27 @@ impl<T> StoreSlice<T> {
     /// Convenience for the common
     /// `StoreSlice::new_mut(v.into_bump_slice_mut())` pattern.
     #[inline]
-    pub fn from_bump<'b>(v: bun_alloc::ArenaVec<'b, T>) -> Self {
+    pub fn from_bump(v: bun_alloc::ArenaVec<'a, T>) -> Self {
         use bun_alloc::ArenaVecExt as _;
         StoreSlice::new_mut(v.into_bump_slice_mut())
     }
 }
 
-impl<'a, T> From<bun_alloc::ArenaVec<'a, T>> for StoreSlice<T> {
+impl<'a, T> From<bun_alloc::ArenaVec<'a, T>> for StoreSlice<'a, T> {
     #[inline]
     fn from(v: bun_alloc::ArenaVec<'a, T>) -> Self {
         StoreSlice::from_bump(v)
     }
 }
 
-impl<T> Default for StoreSlice<T> {
+impl<T> Default for StoreSlice<'_, T> {
     #[inline]
     fn default() -> Self {
         StoreSlice::EMPTY
     }
 }
 
-impl<T> core::ops::Deref for StoreSlice<T> {
+impl<T> core::ops::Deref for StoreSlice<'_, T> {
     type Target = [T];
     #[inline]
     fn deref(&self) -> &[T] {
@@ -447,27 +384,21 @@ impl<T> core::ops::Deref for StoreSlice<T> {
     }
 }
 
-impl<T> AsRef<[T]> for StoreSlice<T> {
+impl<T> AsRef<[T]> for StoreSlice<'_, T> {
     #[inline]
     fn as_ref(&self) -> &[T] {
         self.slice()
     }
 }
 
-impl<T> From<&[T]> for StoreSlice<T> {
+impl<'a, T> From<&'a mut [T]> for StoreSlice<'a, T> {
     #[inline]
-    fn from(s: &[T]) -> Self {
-        StoreSlice::new(s)
-    }
-}
-impl<T> From<&mut [T]> for StoreSlice<T> {
-    #[inline]
-    fn from(s: &mut [T]) -> Self {
+    fn from(s: &'a mut [T]) -> Self {
         StoreSlice::new_mut(s)
     }
 }
 
-impl<T: core::fmt::Debug> core::fmt::Debug for StoreSlice<T> {
+impl<T: core::fmt::Debug> core::fmt::Debug for StoreSlice<'_, T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.slice().fmt(f)
     }
@@ -511,12 +442,10 @@ pub const NAMESPACE_EXPORT_PART_INDEX: u32 = 0;
 // But we must have pointers somewhere in here because can't have types that contain themselves
 
 /// Slice that stores capacity and length in the same space as a regular slice.
-pub type ExprNodeList = AstVec<Expr>;
+pub type ExprNodeList<'a> = AstVec<'a, Expr<'a>>;
 
 // Arena-owned `[Stmt]` view — see `StoreSlice<T>` doc above.
-// A `PhantomData<&'arena ()>` can be added to `StoreSlice` later as a
-// one-struct change once `'arena` is threaded through `Expr`/`Stmt`/`Data`.
-pub type StmtNodeList = StoreSlice<Stmt>;
+pub type StmtNodeList<'a> = StoreSlice<'a, Stmt<'a>>;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
@@ -559,12 +488,12 @@ impl Default for LocRef {
 }
 
 #[derive(Clone, Copy)]
-pub struct ClauseItem {
+pub struct ClauseItem<'a> {
     /// The local alias used for the imported/exported symbol in the current module.
     /// For imports: `import { foo as bar }` - "bar" is the alias
     /// For exports: `export { foo as bar }` - "bar" is the alias
     /// For re-exports: `export { foo as bar } from 'path'` - "bar" is the alias
-    pub alias: ArenaStr,
+    pub alias: ArenaStr<'a>,
     pub alias_loc: crate::Loc,
     /// Reference to the actual symbol being imported/exported.
     /// For imports: `import { foo as bar }` - ref to the symbol representing "foo" from the source module
@@ -580,14 +509,14 @@ pub struct ClauseItem {
     /// In this case both "foo" and "bar" are aliases because it's a re-export.
     /// We need to preserve both aliases in case the symbol is renamed. In this
     /// example, "foo" is "OriginalName" and "bar" is "Alias".
-    pub original_name: ArenaStr,
+    pub original_name: ArenaStr<'a>,
 }
 
-impl ClauseItem {
+impl ClauseItem<'_> {
     pub const DEFAULT_ALIAS: &'static [u8] = b"default";
 }
 
-impl Default for ClauseItem {
+impl Default for ClauseItem<'_> {
     fn default() -> Self {
         Self {
             alias: empty_arena_str(),
@@ -665,41 +594,41 @@ pub enum OptionalChain {
     Continuation,
 }
 
-pub struct EnumValue {
+pub struct EnumValue<'a> {
     pub loc: crate::Loc,
     pub ref_: Ref,
-    pub name: ArenaStr,
-    pub value: Option<ExprNodeIndex>,
+    pub name: ArenaStr<'a>,
+    pub value: Option<ExprNodeIndex<'a>>,
 }
 
-impl EnumValue {
-    pub fn name_as_e_string(&self, bump: &bun_alloc::Arena) -> E::String {
+impl<'a> EnumValue<'a> {
+    pub fn name_as_e_string(&self, bump: &'a bun_alloc::Arena) -> E::String<'a> {
         E::String::init_re_encode_utf8(self.name.slice(), bump)
     }
 }
 
-pub struct Catch {
+pub struct Catch<'a> {
     pub loc: crate::Loc,
-    pub binding: Option<BindingNodeIndex>,
-    pub body: StmtNodeList,
+    pub binding: Option<BindingNodeIndex<'a>>,
+    pub body: StmtNodeList<'a>,
     pub body_loc: crate::Loc,
 }
 
-pub struct Finally {
+pub struct Finally<'a> {
     pub loc: crate::Loc,
-    pub stmts: StmtNodeList,
+    pub stmts: StmtNodeList<'a>,
     pub body_loc: crate::Loc,
 }
 
-pub struct Case {
+pub struct Case<'a> {
     pub loc: crate::Loc,
-    pub value: Option<ExprNodeIndex>,
-    pub body: StmtNodeList,
+    pub value: Option<ExprNodeIndex<'a>>,
+    pub body: StmtNodeList<'a>,
 }
 
-pub struct ArrayBinding {
-    pub binding: BindingNodeIndex,
-    pub default_value: Option<ExprNodeIndex>,
+pub struct ArrayBinding<'a> {
+    pub binding: BindingNodeIndex<'a>,
+    pub default_value: Option<ExprNodeIndex<'a>>,
 }
 
 /// TLA => Top Level Await
@@ -721,12 +650,12 @@ impl Default for TlaCheck {
 }
 
 #[derive(Copy, Clone)]
-pub struct Span {
-    pub text: ArenaStr,
+pub struct Span<'a> {
+    pub text: ArenaStr<'a>,
     pub range: crate::Range,
 }
 
-impl Default for Span {
+impl Default for Span<'_> {
     fn default() -> Self {
         Self {
             text: empty_arena_str(),
@@ -739,18 +668,18 @@ impl Default for Span {
 /// This type special cases an encoding similar to JSValue, where nan-boxing is used
 /// to encode both a 64-bit pointer or a 64-bit float using 64 bits.
 #[derive(Copy, Clone)]
-pub struct InlinedEnumValue {
-    pub(crate) raw_data: u64,
+pub struct InlinedEnumValue<'a> {
+    raw_data: u64,
+    _marker: PhantomData<InlinedEnumValueDecoded<'a>>,
 }
 
 #[derive(Copy, Clone)]
-pub enum InlinedEnumValueDecoded {
-    // LIFETIMES.tsv: ARENA → *const e::String
-    String(*const E::String),
+pub enum InlinedEnumValueDecoded<'a> {
+    String(StoreRef<'a, E::String<'a>>),
     Number(f64),
 }
 
-impl InlinedEnumValue {
+impl<'a> InlinedEnumValue<'a> {
     /// See JSCJSValue.h in WebKit for more details
     const DOUBLE_ENCODE_OFFSET: u64 = 1 << 49;
     /// See PureNaN.h in WebKit for more details
@@ -764,20 +693,21 @@ impl InlinedEnumValue {
         }
     }
 
-    pub fn encode(decoded: InlinedEnumValueDecoded) -> InlinedEnumValue {
+    pub fn encode(decoded: InlinedEnumValueDecoded<'a>) -> Self {
         let encoded = InlinedEnumValue {
             raw_data: match decoded {
-                InlinedEnumValueDecoded::String(ptr) => {
-                    (ptr as usize as u64) & 0x0000_FFFF_FFFF_FFFF
+                InlinedEnumValueDecoded::String(str_) => {
+                    (str_.as_ptr() as usize as u64) & 0x0000_FFFF_FFFF_FFFF
                 } // @truncate to u48
                 InlinedEnumValueDecoded::Number(num) => {
                     Self::purify_nan(num).to_bits() + Self::DOUBLE_ENCODE_OFFSET
                 }
             },
+            _marker: PhantomData,
         };
         debug_assert!(match encoded.decode() {
             InlinedEnumValueDecoded::String(str_) => match decoded {
-                InlinedEnumValueDecoded::String(orig) => core::ptr::eq(str_, orig),
+                InlinedEnumValueDecoded::String(orig) => str_ == orig,
                 _ => false,
             },
             InlinedEnumValueDecoded::Number(num) => match decoded {
@@ -789,14 +719,15 @@ impl InlinedEnumValue {
         encoded
     }
 
-    pub fn decode(self) -> InlinedEnumValueDecoded {
+    pub fn decode(self) -> InlinedEnumValueDecoded<'a> {
         if self.raw_data > 0x0000_FFFF_FFFF_FFFF {
             InlinedEnumValueDecoded::Number(f64::from_bits(
                 self.raw_data - Self::DOUBLE_ENCODE_OFFSET,
             ))
         } else {
-            // SAFETY: encoded from a valid arena `*const E::String` (see `encode`); low 48 bits hold the address.
-            InlinedEnumValueDecoded::String(self.raw_data as usize as *const E::String)
+            // SAFETY: `encode` stored the address of a `StoreRef<'a, _>`, which fits in 48 bits.
+            let node = unsafe { NonNull::new_unchecked(self.raw_data as usize as *mut E::String) };
+            InlinedEnumValueDecoded::String(StoreRef(node, PhantomData))
         }
     }
 }
@@ -858,21 +789,21 @@ pub struct DeclaredSymbol {
 }
 
 #[derive(Default)]
-pub struct DeclaredSymbolList {
-    refs: AstVec<Ref>,
-    is_top_level: AstVec<bool>,
+pub struct DeclaredSymbolList<'a> {
+    refs: AstVec<'a, Ref>,
+    is_top_level: AstVec<'a, bool>,
 }
 
-impl DeclaredSymbolList {
+impl<'a> DeclaredSymbolList<'a> {
     pub fn refs(&self) -> &[Ref] {
         &self.refs
     }
 
-    pub fn to_owned_slice(&mut self) -> DeclaredSymbolList {
+    pub fn to_owned_slice(&mut self) -> Self {
         core::mem::take(self)
     }
 
-    pub fn clone_in(&self, arena: &AstArena) -> DeclaredSymbolList {
+    pub fn clone_in(&self, arena: &'a AstArena) -> Self {
         DeclaredSymbolList {
             refs: AstVec::from_slice_in(&self.refs, arena),
             is_top_level: AstVec::from_slice_in(&self.is_top_level, arena),
@@ -884,12 +815,12 @@ impl DeclaredSymbolList {
         self.refs.len()
     }
 
-    pub fn append(&mut self, arena: &AstArena, entry: DeclaredSymbol) {
+    pub fn append(&mut self, arena: &'a AstArena, entry: DeclaredSymbol) {
         self.refs.push(arena, entry.ref_);
         self.is_top_level.push(arena, entry.is_top_level);
     }
 
-    pub fn append_list(&mut self, arena: &AstArena, other: &DeclaredSymbolList) {
+    pub fn append_list(&mut self, arena: &'a AstArena, other: &DeclaredSymbolList) {
         self.refs.extend_from_slice(arena, &other.refs);
         self.is_top_level
             .extend_from_slice(arena, &other.is_top_level);
@@ -900,14 +831,14 @@ impl DeclaredSymbolList {
         self.is_top_level.clear();
     }
 
-    pub fn with_capacity_in(capacity: usize, arena: &AstArena) -> DeclaredSymbolList {
+    pub fn with_capacity_in(capacity: usize, arena: &'a AstArena) -> Self {
         DeclaredSymbolList {
             refs: AstVec::with_capacity_in(capacity, arena),
             is_top_level: AstVec::with_capacity_in(capacity, arena),
         }
     }
 
-    pub fn from_slice_in(entries: &[DeclaredSymbol], arena: &AstArena) -> DeclaredSymbolList {
+    pub fn from_slice_in(entries: &[DeclaredSymbol], arena: &'a AstArena) -> Self {
         DeclaredSymbolList {
             refs: AstVec::from_iter_in(entries.iter().map(|entry| entry.ref_), arena),
             is_top_level: AstVec::from_iter_in(
@@ -948,7 +879,7 @@ pub struct Dependency {
     pub part_index: u32, // Index.Int
 }
 
-pub type DependencyList = AstVec<Dependency>;
+pub type DependencyList<'a> = AstVec<'a, Dependency>;
 
 // PERF: these may be arena-backed in callers; revisit with
 // bumpalo::collections::Vec if profiling shows churn.
@@ -958,32 +889,32 @@ pub type DependencyList = AstVec<Dependency>;
 /// splitting analysis. Individual parts of a file can be discarded by tree
 /// shaking and can be assigned to separate chunks (i.e. output files) by code
 /// splitting.
-pub struct Part {
-    pub stmts: StoreSlice<Stmt>,
-    pub scopes: StoreSlice<*mut Scope>, // TODO: &'bump mut [&'bump mut Scope]
+pub struct Part<'a> {
+    pub stmts: StmtNodeList<'a>,
+    pub scopes: StoreSlice<'a, StoreRef<'a, Scope<'a>>>,
 
     /// Each is an index into the file-level import record list
-    pub import_record_indices: PartImportRecordIndices,
+    pub import_record_indices: PartImportRecordIndices<'a>,
 
     /// All symbols that are declared in this part. Note that a given symbol may
     /// have multiple declarations, and so may end up being declared in multiple
     /// parts (e.g. multiple "var" declarations with the same name). Also note
     /// that this list isn't deduplicated and may contain duplicates.
-    pub declared_symbols: DeclaredSymbolList,
+    pub declared_symbols: DeclaredSymbolList<'a>,
 
     /// An estimate of the number of uses of all symbols used within this part.
-    pub symbol_uses: PartSymbolUseMap,
+    pub symbol_uses: PartSymbolUseMap<'a>,
 
     /// This tracks property accesses off of imported symbols. We don't know
     /// during parsing if an imported symbol is going to be an inlined enum
     /// value or not. This is only known during linking. So we defer adding
     /// a dependency on these imported symbols until we know whether the
     /// property access is an inlined enum value or not.
-    pub import_symbol_property_uses: Option<AstBox<PartSymbolPropertyUseMap>>,
+    pub import_symbol_property_uses: Option<AstBox<'a, PartSymbolPropertyUseMap<'a>>>,
 
     /// The indices of the other parts in this file that are needed if this part
     /// is needed.
-    pub dependencies: DependencyList,
+    pub dependencies: DependencyList<'a>,
 
     /// If true, this part can be removed if none of the declared symbols are
     /// used. If the file containing this part is imported, then all parts that
@@ -1001,8 +932,8 @@ pub struct Part {
     pub tag: PartTag,
 }
 
-pub type PartImportRecordIndices = AstVec<u32>;
-pub type PartList<'a> = bun_alloc::ArenaVec<'a, Part>;
+pub type PartImportRecordIndices<'a> = AstVec<'a, u32>;
+pub type PartList<'a> = bun_alloc::ArenaVec<'a, Part<'a>>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PartTag {
@@ -1017,8 +948,8 @@ pub enum PartTag {
     ImportToConvertFromRequire,
 }
 
-pub type PartSymbolUseMap = AstArrayHashMap<Ref, symbol::Use>;
-pub type PartSymbolPropertyUseMap = AstArrayHashMap<Ref, AstStringHashMap<PropertyUse>>;
+pub type PartSymbolUseMap<'a> = AstArrayHashMap<'a, Ref, symbol::Use>;
+pub type PartSymbolPropertyUseMap<'a> = AstArrayHashMap<'a, Ref, AstStringHashMap<'a, PropertyUse>>;
 
 /// The reads of one `X.name` in `Part::import_symbol_property_uses`.
 #[derive(Default, Clone, Copy)]
@@ -1028,7 +959,7 @@ pub struct PropertyUse {
     pub is_call_target: bool,
 }
 
-impl Default for Part {
+impl Default for Part<'_> {
     fn default() -> Self {
         Self {
             stmts: StoreSlice::EMPTY,
@@ -1046,19 +977,19 @@ impl Default for Part {
 }
 
 #[derive(Clone, Copy)]
-pub enum StmtOrExpr {
-    Stmt(Stmt),
-    Expr(Expr),
+pub enum StmtOrExpr<'a> {
+    Stmt(Stmt<'a>),
+    Expr(Expr<'a>),
 }
 
-impl Default for StmtOrExpr {
+impl Default for StmtOrExpr<'_> {
     fn default() -> Self {
         StmtOrExpr::Expr(Expr::default())
     }
 }
 
-impl StmtOrExpr {
-    pub fn to_expr(self, bump: &AstArena) -> Expr {
+impl<'a> StmtOrExpr<'a> {
+    pub fn to_expr(self, bump: &'a AstArena) -> Expr<'a> {
         match self {
             StmtOrExpr::Expr(expr) => expr,
             StmtOrExpr::Stmt(stmt) => match stmt.data {
@@ -1081,9 +1012,9 @@ impl StmtOrExpr {
     }
 }
 
-pub struct NamedImport {
+pub struct NamedImport<'a> {
     /// Parts within this file that use this import
-    pub local_parts_with_uses: AstVec<u32>,
+    pub local_parts_with_uses: AstVec<'a, u32>,
 
     /// The original export name from the source module being imported.
     /// Examples:
@@ -1092,7 +1023,7 @@ pub struct NamedImport {
     /// - `import * as ns from 'module'` → alias_is_star = true, alias = ""
     /// This field is used by the bundler to match imports with their corresponding
     /// exports and for error reporting when imports can't be resolved.
-    pub alias: Option<ArenaStr>,
+    pub alias: Option<ArenaStr<'a>>,
     pub alias_loc: crate::Loc,
     pub namespace_ref: Ref,
     pub import_record_index: u32,
@@ -1162,6 +1093,3 @@ pub mod math {
         Bun__JSC__operationMathPow(x, y)
     }
 }
-// ─── from bun_bundler::v2::MangledProps ─────────────────────────────────────
-// LIFETIMES.tsv: value slices point into the parser arena → `StoreStr`
-// (arena-owned, no `'bump` cascade).

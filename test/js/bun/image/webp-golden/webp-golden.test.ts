@@ -4,13 +4,14 @@
 //   random/    valid streams of modes, coefficients, transforms, prefix codes and copies chosen at random
 //   handmade/  at the limits of the format and beyond
 //   changed/   the above with bytes changed at random
+//   extreme/   what no encoder writes, for the same result on every CPU
 // and the pictures to encode:
 //   layers/, noise/, sequence/  made by the function of that name in picture.ts
 //   stored/, large/             made for a decision of an encoder that nothing else gets to
 //
-// Bun 1.4 with libwebp 1.6.0 makes the same of the files, and writes the same lossless ones. With
+// Bun 1.4 with libwebp 1.6.0 makes the same of the files, but for extreme/, and writes the same lossless ones. With
 // https://github.com/webmproject/libwebp/commit/80bda3fdb882bc4131b223124c0411ac8b366386 that goes for the lossy ones
-// too, but for large/3. A case is here because it tells src/webp and its kernels from a version with one small
+// too, but for large/8. A case is here because it tells src/webp and its kernels from a version with one small
 // mistake, or takes a branch that no other takes.
 import { describe, expect, test } from "bun:test";
 import { decodeDifferences, encodeDifferences, inParts, loadCases } from "./observe";
@@ -19,7 +20,7 @@ const cases = await loadCases();
 
 describe("Bun.Image reads and writes WebP the way it was recorded to", () => {
   test("decode", async () => {
-    expect(cases.decode.length).toBe(301);
+    expect(cases.decode.length).toBe(320);
     expect(await decodeDifferences(cases.decode)).toBe("");
   });
 

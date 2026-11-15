@@ -394,7 +394,8 @@ const webp = await loadCases();
 describe("WebP codec: Highway runtime dispatch", () => {
   // src/jsc/bindings/highway_webp_*.cpp are compiled for SSSE3 and AVX2 on x64, and webp-golden.test.ts gets to see
   // the one that suits the machine. In small parts, for the sake of Intel SDE.
-  test.each(inParts(webp.decode, ["encoded", "random", "handmade", "changed"], 20))("decode, part %#", async some => {
+  const kinds = ["encoded", "random", "handmade", "changed", "extreme"];
+  test.each(inParts(webp.decode, kinds, 20))("decode, part %#", async some => {
     expect(await decodeDifferences(some)).toBe("");
   });
 

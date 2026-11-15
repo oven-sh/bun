@@ -16,7 +16,7 @@ mod tokens;
 use bun_highway::webp::Scratch;
 
 use self::bool_writer::BoolWriter;
-use self::cost::{Costs, SUBBLOCK_MODES_COST};
+use self::cost::Costs;
 use self::header::Modes;
 use self::memo::Memo;
 use self::picture::Picture;
@@ -53,25 +53,23 @@ pub(crate) fn encode(
             tokens: Tokens::new(segments.map.len())?,
             modes: vec::with_room(segments.map.len())?,
             modes_cost: segments.map_cost,
-            highest_subblock_modes_cost: 0,
+            has_subblock_modes: false,
             max_edges: [0; SEGMENTS],
         };
         pass.run(&picture, &segments.map, &codings, &mut costs)?;
-        let highest = pass.highest_subblock_modes_cost;
-        if highest == 0 || pass.modes_cost <= MAX_MODES_COST {
+        let can_cut_down = pass.has_subblock_modes;
+        if !can_cut_down || pass.modes_cost <= MAX_MODES_COST {
             let probabilities = pass.tokens.probabilities();
             match pass.write_modes(&mut segments, &probabilities, width, height) {
-                Err(Error::TooLarge) if highest != 0 => {}
+                Err(Error::TooLarge) if can_cut_down => {}
                 out => {
                     drop(picture);
                     return pass.tokens.append_to(out?, &probabilities);
                 }
             }
         }
-        // A limit that no macroblock is above makes next to no difference.
-        while max_subblock_modes_cost >= highest {
-            max_subblock_modes_cost /= 2;
-        }
+        // Once it is below `16 * MIN_SUBBLOCK_MODE_COST`, there are no such modes.
+        max_subblock_modes_cost /= 2;
     }
 }
 
@@ -80,8 +78,7 @@ struct Pass {
     tokens: Tokens,
     modes: Vec<Modes>,
     modes_cost: u64,
-    /// Of the macroblocks that have such modes, if any.
-    highest_subblock_modes_cost: i32,
+    has_subblock_modes: bool,
     max_edges: [u16; SEGMENTS],
 }
 
@@ -161,8 +158,7 @@ impl Pass {
                     .record(BlockType::LumaWithoutDc, &luma.residuals)?;
             }
             luma::Mode::Subblocks(_) => {
-                let highest = &mut self.highest_subblock_modes_cost;
-                *highest = (luma.mode_cost - SUBBLOCK_MODES_COST).max(*highest);
+                self.has_subblock_modes = true;
                 self.tokens.record(BlockType::LumaWithDc, &luma.residuals)?;
             }
         }

@@ -797,7 +797,10 @@ impl RareData {
     /// release Strong handles and touch heap-owned state. RareData.deinit() runs
     /// after `WebWorker__teardownJSCVM`, so doing the closeAll there would touch
     /// freed JSC heap.
-    pub(crate) fn close_all_socket_groups(
+    ///
+    /// # Safety
+    /// No frame up the stack uses a closed socket again.
+    pub(crate) unsafe fn close_all_socket_groups(
         vm: &VirtualMachine,
     ) -> crate::virtual_machine::SweepResult {
         // A native close path can cascade (closing one socket completes or
@@ -826,7 +829,8 @@ impl RareData {
         // every us_socket_t is libc-allocated and otherwise becomes an LSAN leak
         // (the only pointer into it lives in mimalloc-backed RareData, which LSAN
         // can't trace once we unregister the root region).
-        vm.uws_loop().drain_closed_sockets();
+        // SAFETY: fn contract.
+        unsafe { vm.uws_loop().drain_closed_sockets() };
         result
     }
 }

@@ -2516,9 +2516,12 @@ impl VirtualMachine {
                 VMHolder::set_cached_global_object(Some(core::ptr::null_mut()));
             }
         }
+        let uws_loop = vm.uws_loop();
+        uws_loop.internal_loop_data.jsc_vm.set(core::ptr::null());
         // Finalizers just closed the sockets only they owned; `us_socket_close`
         // queues onto `loop->data.closed_head`, normally freed on the next tick.
-        vm.uws_loop().drain_closed_sockets();
+        // SAFETY: a worker's stack has unwound, and the main thread exits without returning.
+        unsafe { uws_loop.drain_closed_sockets() };
         // Nothing schedules a WTFTimer any more: the timer heap's loop handles
         // can go (Windows uv_timer/uv_idle), before the loop close unlinks them.
         if let Some(hooks) = hooks {
@@ -2536,8 +2539,6 @@ impl VirtualMachine {
             if let Some(rare) = vm.rare_data.get() {
                 rare.detach_socket_groups_from_loop();
             }
-            let uws_loop = vm.uws_loop();
-            uws_loop.internal_loop_data.jsc_vm.set(core::ptr::null());
             // SAFETY: what was on the loop has been closed, and the thread only frees from here on.
             unsafe {
                 bun_uws::free_thread_loop();
@@ -2588,7 +2589,8 @@ impl VirtualMachine {
         }
         let _ = kind;
         if vm.rare_data.get().is_some() {
-            result = result.and(RareData::close_all_socket_groups(vm));
+            // SAFETY: a worker's stack has unwound, and the main thread exits without returning.
+            result = result.and(unsafe { RareData::close_all_socket_groups(vm) });
         }
         if let Some(hooks) = hooks {
             result = result.and((hooks.stop_dns_for_vm_teardown)());

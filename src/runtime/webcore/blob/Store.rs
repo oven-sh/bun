@@ -36,8 +36,7 @@ pub(crate) trait StoreExt {
     fn to_any_blob(&mut self) -> Option<super::Any>;
     fn init_s3(
         pathlike: PathLike<'static>,
-        mime_type: Option<MimeType>,
-        credentials: S3Credentials,
+        aws_options: S3CredentialsWithOptions,
     ) -> Result<RefPtr<Store>, crate::Error>
     where
         Self: Sized;
@@ -104,17 +103,13 @@ impl StoreExt for Store {
 
     fn init_s3(
         pathlike: PathLike<'static>,
-        mime_type: Option<MimeType>,
-        credentials: S3Credentials,
+        aws_options: S3CredentialsWithOptions,
     ) -> Result<RefPtr<Store>, crate::Error> {
         let path = pathlike.thread_isolated_copy();
-
-        // Compute the extension-derived fallback before moving `path` into the
-        // Store so we don't need to clone the owned PathLike.
-        let mime_type = mime_type.or_else(|| mime_from_path_ext(path.slice()));
+        let mime_type = mime_from_path_ext(path.slice());
 
         Ok(RefPtr::new(Store::new(
-            Data::S3(S3::init(path, mime_type, credentials)),
+            Data::S3(S3::init(path, mime_type, aws_options)),
             bun_http_types::MimeType::NONE,
         )))
     }
@@ -211,13 +206,9 @@ impl S3Ext for S3 {
         options: Option<JSValue>,
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions> {
-        // The associated fn (surfaced via `S3CredentialsExt` in `webcore/S3Client.rs`)
-        // takes `&S3Credentials` instead of by-value because `S3Credentials` carries a
-        // private intrusive ref-count and cannot be struct-copied; the impl deep-copies
-        // internally.
         use crate::webcore::s3_client::S3CredentialsExt as _;
         S3Credentials::get_credentials_with_options(
-            self.get_credentials(),
+            &self.credentials,
             self.options,
             options,
             self.acl,

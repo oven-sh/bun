@@ -145,11 +145,6 @@ impl UpgradedDuplex {
     // SAFETY (all handlers): the SSLWrapper handlers ctx is `self as *mut
     // Self`, live for the wrapper's lifetime.
 
-    #[inline]
-    fn wrapper_ref(&self) -> Option<&WrapperType> {
-        self.wrapper.get()
-    }
-
     /// Holds a ref on the owning context until the returned guard drops.
     ///
     /// The context must not be freed while a frame of this engine is on the
@@ -274,7 +269,7 @@ impl UpgradedDuplex {
     pub(crate) fn pause_stream(&self) -> bool {
         let _keep_alive = self.keep_alive();
         // Like a connecting fd: `on_open` forgets the owner's pause, so nothing would resume this one.
-        let paused = self.wrapper_ref().is_some() && self.call_origin("pause");
+        let paused = self.wrapper.get().is_some() && self.call_origin("pause");
         self.paused_origin.set(self.paused_origin.get() || paused);
         paused
     }
@@ -325,7 +320,7 @@ impl UpgradedDuplex {
         // duplex whose write side already ended (TLS-inception teardown) only
         // surface a spurious EPIPE - drop them. Ordinary data writes skip the
         // probe so write-after-end still errors like node.
-        let teardown = data.is_none() || self.wrapper_ref().is_some_and(|w| w.is_shutdown());
+        let teardown = data.is_none() || self.wrapper.get().is_some_and(|w| w.is_shutdown());
         if teardown {
             // A teardown payload (close_notify) after the transport's readable
             // side ended has no reader behind it: node writes nothing there,
@@ -412,13 +407,13 @@ impl UpgradedDuplex {
     #[uws_callback(export = "UpgradedDuplex__flush")]
     pub(crate) fn flush(&self) {
         let _keep_alive = self.keep_alive();
-        if let Some(w) = self.wrapper_ref() {
+        if let Some(w) = self.wrapper.get() {
             let _ = w.flush();
         }
     }
 
     fn on_internal_receive_data(&self, data: &[u8]) {
-        if let Some(w) = self.wrapper_ref() {
+        if let Some(w) = self.wrapper.get() {
             self.reset_timeout();
             w.receive_data(data);
             return;
@@ -437,7 +432,7 @@ impl UpgradedDuplex {
         // Nothing to replay, or the engine never came up (the socket died
         // before `StartTLS`). Bail before taking so the bytes are not
         // destroyed by a drain that could not deliver them.
-        if self.wrapper_ref().is_none() {
+        if self.wrapper.get().is_none() {
             return;
         }
         if self.pending_data.get().is_empty() {
@@ -447,7 +442,7 @@ impl UpgradedDuplex {
         // Taking ownership is load-bearing: a re-entrant `teardown()` clears `pending_data`.
         let staged = self.pending_data.replace(Vec::new());
         self.reset_timeout();
-        if let Some(w) = self.wrapper_ref() {
+        if let Some(w) = self.wrapper.get() {
             w.receive_data(&staged);
         }
         self.drain_pending_shutdown();
@@ -615,7 +610,7 @@ impl UpgradedDuplex {
     pub(crate) fn encode_and_write(&self, data: &[u8]) -> i32 {
         bun_output::scoped_log!(UpgradedDuplex, "encodeAndWrite (len: {})", data.len());
         let _keep_alive = self.keep_alive();
-        if let Some(w) = self.wrapper_ref() {
+        if let Some(w) = self.wrapper.get() {
             let written = w.write_data(data).unwrap_or(0);
             return i32::try_from(written).expect("int cast");
         }
@@ -641,7 +636,7 @@ impl UpgradedDuplex {
     #[uws_callback(export = "UpgradedDuplex__close")]
     pub(crate) fn close(&self) {
         let _keep_alive = self.keep_alive();
-        let Some(w) = self.wrapper_ref() else {
+        let Some(w) = self.wrapper.get() else {
             // `start_tls` is still queued: no SSL, and no close callback yet.
             self.pending_close.set(true);
             return;
@@ -653,7 +648,7 @@ impl UpgradedDuplex {
     #[uws_callback(export = "UpgradedDuplex__shutdown")]
     pub(crate) fn shutdown(&self) {
         let _keep_alive = self.keep_alive();
-        let Some(w) = self.wrapper_ref() else {
+        let Some(w) = self.wrapper.get() else {
             self.pending_shutdown.set(true);
             return;
         };
@@ -663,7 +658,7 @@ impl UpgradedDuplex {
 
     #[uws_callback(export = "UpgradedDuplex__shutdown_read")]
     pub(crate) fn shutdown_read(&self) {
-        if let Some(w) = self.wrapper_ref() {
+        if let Some(w) = self.wrapper.get() {
             w.shutdown_read();
         }
     }
@@ -671,13 +666,13 @@ impl UpgradedDuplex {
     /// `None` means `start_tls` has not run yet (teardown never clears the slot), not shut down.
     #[uws_callback(export = "UpgradedDuplex__is_shutdown", no_catch)]
     pub(crate) fn is_shutdown(&self) -> bool {
-        self.wrapper_ref().is_some_and(|w| w.is_shutdown())
+        self.wrapper.get().is_some_and(|w| w.is_shutdown())
     }
 
     /// See [`Self::is_shutdown`] for the not-yet-started case.
     #[uws_callback(export = "UpgradedDuplex__is_closed", no_catch)]
     pub(crate) fn is_closed(&self) -> bool {
-        self.wrapper_ref().is_some_and(|w| w.is_closed())
+        self.wrapper.get().is_some_and(|w| w.is_closed())
     }
 
     #[uws_callback(export = "UpgradedDuplex__is_established", no_catch)]
@@ -732,7 +727,7 @@ impl UpgradedDuplex {
         // clear the timer
         self.set_timeout(0);
 
-        if let Some(w) = self.wrapper_ref() {
+        if let Some(w) = self.wrapper.get() {
             w.stop();
         }
 
@@ -825,7 +820,7 @@ pub(crate) fn on_writable(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
         let _keep_alive = this.keep_alive();
         // flush pending data
-        if let Some(w) = this.wrapper_ref() {
+        if let Some(w) = this.wrapper.get() {
             let _ = w.flush();
         }
         // call onWritable (will flush on demand)
@@ -857,7 +852,7 @@ pub(crate) fn on_close_js(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
 
 #[unsafe(no_mangle)]
 extern "C" fn UpgradedDuplex__set_inline_reject(this: &UpgradedDuplex) {
-    if let Some(wrapper) = this.wrapper_ref() {
+    if let Some(wrapper) = this.wrapper.get() {
         wrapper.set_inline_reject();
     }
 }
@@ -866,10 +861,10 @@ extern "C" fn UpgradedDuplex__set_inline_reject(this: &UpgradedDuplex) {
 extern "C" fn UpgradedDuplex__latest_session(
     this: &UpgradedDuplex,
 ) -> Option<bun_boringssl_sys::OwnedSslSession> {
-    this.wrapper_ref()?.latest_session()
+    this.wrapper.get()?.latest_session()
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn UpgradedDuplex__ssl(this: &UpgradedDuplex) -> Option<&bun_boringssl_sys::SSL> {
-    this.wrapper_ref()?.ssl()
+    this.wrapper.get()?.ssl()
 }

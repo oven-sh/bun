@@ -245,7 +245,6 @@ impl WebSocketProxyTunnel {
         if reject_unauthorized {
             wrapper.set_inline_reject();
         }
-        let ssl = wrapper.ssl();
 
         // Configure SNI with hostname.
         //
@@ -255,20 +254,15 @@ impl WebSocketProxyTunnel {
         // `&SslWrapper` across the `on_open` dispatch. The observable order vs
         // BoringSSL is identical: SNI is set on the `SSL*` before the handshake
         // is driven.
-        if let Some(ssl) = ssl {
-            if let Some(hostname) = this.sni_hostname.as_deref() {
-                if !bun_core::ip_address::is_ip_host(hostname) {
-                    // Route through bun_http's
-                    // tier-neutral helper which does SNI + ALPN(h1) (no
-                    // verify-hostname — that is checked manually in
-                    // `on_handshake`).
-                    bun_http::configure_http_client_with_alpn(
-                        ssl,
-                        hostname,
-                        bun_http::AlpnOffer::H1,
-                    );
-                }
-            }
+        if let Some(ssl) = wrapper.ssl()
+            && let Some(hostname) = this.sni_hostname.as_deref()
+            && !bun_core::ip_address::is_ip_host(hostname)
+        {
+            // Route through bun_http's
+            // tier-neutral helper which does SNI + ALPN(h1) (no
+            // verify-hostname — that is checked manually in
+            // `on_handshake`).
+            bun_http::configure_http_client_with_alpn(ssl, hostname, bun_http::AlpnOffer::H1);
         }
 
         // `start*()` synchronously fires `on_open(ctx)` / `write_encrypted(ctx)`

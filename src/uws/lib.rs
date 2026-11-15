@@ -1380,7 +1380,7 @@ pub mod ssl_wrapper {
     /// As for `us_ssl_wrapper_server_identity`, and `offered` is readable for `offered_len` bytes until BoringSSL has copied from `out`.
     #[unsafe(no_mangle)]
     unsafe extern "C" fn us_ssl_wrapper_alpn_select(
-        state: *const CallbackState,
+        state_ptr: *const CallbackState,
         ssl: &boring_sys::SSL,
         out: &mut *const u8,
         out_len: &mut u8,
@@ -1390,7 +1390,7 @@ pub mod ssl_wrapper {
         // SAFETY: caller contract; `alpn_select` is `SSLWrapper::<T>::alpn_select` for the `T` of that wrapper.
         unsafe {
             let offered = core::slice::from_raw_parts(offered, offered_len as usize);
-            ((*state).alpn_select)(state, ssl, offered).write_to(out, out_len)
+            ((*state_ptr).alpn_select)(state_ptr, ssl, offered).write_to(out, out_len)
         }
     }
 

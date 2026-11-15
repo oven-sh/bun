@@ -851,7 +851,7 @@ it.each(["TLSv1.3", "TLSv1.2"] as const)(
       await once(other, "secureConnect");
       const { promise, resolve } = Promise.withResolvers<string>();
       let echoed = "";
-      other.on("data", chunk => (echoed += chunk) === "one;two;" && resolve(echoed));
+      other.on("data", chunk => (echoed += chunk).endsWith("two;") && resolve(echoed));
       other.on("error", (err: NodeJS.ErrnoException) => resolve(`${echoed}${err.code}`));
       other.on("close", () => resolve(`${echoed}close`));
 

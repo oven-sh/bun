@@ -259,8 +259,8 @@ pub enum LineOffsetTables<'a> {
     None,
     /// `LinkerGraph.files[i].line_offset_table`. The linker keeps ownership
     /// (one source prints into several chunks) and bulk-frees it with the
-    /// worker's AST heap.
-    Borrowed(&'a line_offset_table::List<bun_alloc::AstAlloc>),
+    /// worker's arena.
+    Borrowed(&'a line_offset_table::AstList),
     /// Runtime/transpiler print path: the first `add_source_mapping` call
     /// generates the table from `contents` (`Source.contents`) and replaces
     /// this with `Owned`, so modules that emit no mappings (asset/JSON shims,
@@ -278,7 +278,7 @@ impl LineOffsetTables<'_> {
     #[inline]
     fn len(&self) -> usize {
         match self {
-            Self::Borrowed(list) => list.len(),
+            Self::Borrowed(list) => list.byte_offset_to_start_of_line.len(),
             Self::Owned(table) => table.0.len(),
             Self::None | Self::Deferred { .. } => 0,
         }
@@ -290,8 +290,8 @@ impl LineOffsetTables<'_> {
     fn columns(&self) -> (&[u32], &[u32]) {
         match self {
             Self::Borrowed(list) => (
-                list.items_byte_offset_to_start_of_line(),
-                list.items_byte_offset_to_first_non_ascii(),
+                &list.byte_offset_to_start_of_line,
+                &list.byte_offset_to_first_non_ascii,
             ),
             Self::Owned(table) => (
                 table.0.items_byte_offset_to_start_of_line(),
@@ -304,9 +304,7 @@ impl LineOffsetTables<'_> {
     #[inline]
     fn columns_for_non_ascii(&self, line: usize) -> &[i32] {
         match self {
-            Self::Borrowed(list) => {
-                &list.items::<"columns_for_non_ascii", Box<[i32], bun_alloc::AstAlloc>>()[line]
-            }
+            Self::Borrowed(list) => &list.columns_for_non_ascii[line],
             Self::Owned(table) => &table.0.items::<"columns_for_non_ascii", Box<[i32]>>()[line],
             Self::None | Self::Deferred { .. } => &[],
         }
@@ -369,10 +367,7 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
 ///
 /// `MultiArrayList::Drop` is **slab-only** — it frees the SoA buffer but never
 /// runs column destructors (a bitwise `clone` can alias two lists onto the same
-/// column heap pointers; see its docs). The `LineOffsetTables::Borrowed` table
-/// is `List<AstAlloc>` and is never dropped here (it bulk-frees with the
-/// per-worker AST heap); the table generated for `LineOffsetTables::Deferred`
-/// is `List<Global>` and needs the per-row drain, so wrap it in a type that
+/// column heap pointers; see its docs). The `LineOffsetTables::Deferred` table needs the drain, so wrap it in a type that
 /// does it automatically. (A `Drop` impl on `NewBuilder` itself would forbid the
 /// `..Default::default()` struct-update used to build it in
 /// `get_source_map_builder`, hence the newtype.)
@@ -592,11 +587,7 @@ impl NewBuilder<'_, VLQSourceMap> {
             ));
         }
 
-        // `Borrowed` (`AstAlloc`) and `Owned` (`Global`) are different `List<A>`
-        // instantiations, so we can't unify them behind one `&List`. Instead,
-        // cache the two `u32` columns the hot path reads (both are `&[u32]`
-        // regardless of `A`) and re-dispatch only for the rare
-        // `columns_for_non_ascii` lookup below.
+        // Cache the two `u32` columns the hot path reads and re-dispatch only for the rare lookup below.
         let list_len = self.line_offset_tables.len();
 
         // We have no sourcemappings.

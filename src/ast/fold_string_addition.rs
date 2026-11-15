@@ -1,11 +1,11 @@
-use crate::expr::{Data, PrimitiveType, data};
-use crate::{E, Expr, e};
+use crate::expr::{Data, PrimitiveType};
+use crate::{AstArena, E, Expr, e};
 use bun_alloc::Arena; // bumpalo::Bump re-export
 
 /// Links both ropes into the result (see `EString::push`); sound because shared strings are never ropes.
-fn join_strings(left: &E::EString, right: &E::EString) -> E::EString {
+fn join_strings(bump: &AstArena, left: &E::EString, right: &E::EString) -> E::EString {
     let mut new = left.shallow_clone();
-    let mut rhs = data::Store::append(right.shallow_clone());
+    let mut rhs = bump.alloc_node(right.shallow_clone());
 
     new.push(&mut *rhs);
     new.prefer_template = new.prefer_template || right.prefer_template;
@@ -51,7 +51,7 @@ pub enum FoldStringAdditionKind {
 pub fn fold_string_addition(
     l: Expr,
     r: Expr,
-    bump: &Arena,
+    bump: &AstArena,
     kind: FoldStringAdditionKind,
 ) -> Option<Expr> {
     // "See through" inline enum constants
@@ -82,8 +82,9 @@ pub fn fold_string_addition(
                     // "bar" + "baz" => "barbaz"
                     Data::EString(right) => {
                         if right.is_utf8() {
-                            return Some(Expr::init(
-                                join_strings(left.get(), right.get()),
+                            return Some(Expr::allocate(
+                                bump,
+                                join_strings(bump, left.get(), right.get()),
                                 lhs.loc,
                             ));
                         }
@@ -91,11 +92,13 @@ pub fn fold_string_addition(
                     // "bar" + `baz${bar}` => `barbaz${bar}`
                     Data::ETemplate(right) => {
                         if right.head.is_utf8() {
-                            return Some(Expr::init(
+                            return Some(Expr::allocate(
+                                bump,
                                 E::Template {
                                     tag: None,
                                     parts: right.parts,
                                     head: e::TemplateContents::Cooked(join_strings(
+                                        bump,
                                         left.get(),
                                         right.head.cooked(),
                                     )),
@@ -147,6 +150,7 @@ pub fn fold_string_addition(
                                 let last_tail = &left.parts()[i].tail;
                                 if last_tail.is_utf8() {
                                     let new_tail = e::TemplateContents::Cooked(join_strings(
+                                        bump,
                                         last_tail.cooked(),
                                         right.get(),
                                     ));
@@ -154,7 +158,7 @@ pub fn fold_string_addition(
                                     return Some(lhs);
                                 }
                             } else if left.head.is_utf8() {
-                                let new_head = join_strings(left.head.cooked(), right.get());
+                                let new_head = join_strings(bump, left.head.cooked(), right.get());
                                 left.head = e::TemplateContents::Cooked(new_head);
                                 return Some(lhs);
                             }
@@ -168,6 +172,7 @@ pub fn fold_string_addition(
                                 let last_tail = &left.parts()[i].tail;
                                 if last_tail.is_utf8() && right.head.is_utf8() {
                                     let new_tail = e::TemplateContents::Cooked(join_strings(
+                                        bump,
                                         last_tail.cooked(),
                                         right.head.cooked(),
                                     ));
@@ -183,7 +188,7 @@ pub fn fold_string_addition(
                                 }
                             } else if left.head.is_utf8() && right.head.is_utf8() {
                                 let new_head =
-                                    join_strings(left.head.cooked(), right.head.cooked());
+                                    join_strings(bump, left.head.cooked(), right.head.cooked());
                                 left.head = e::TemplateContents::Cooked(new_head);
                                 left.parts = right.parts;
                                 return Some(lhs);

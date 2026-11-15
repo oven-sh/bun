@@ -5,7 +5,6 @@
 //! single `maybe_compile_*` call, then dropped — it owns no state of its own.
 
 use bun_ast as js_ast;
-use bun_collections::VecExt;
 
 use crate::JSXImport;
 use crate::p::P;
@@ -70,9 +69,6 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     }
     fn source(&self) -> &[u8] {
         &self.p.source.contents
-    }
-    fn arena(&self) -> &bun_alloc::Arena {
-        self.p.arena
     }
 
     fn ref_name(&self, ref_: js_ast::Ref) -> &[u8] {
@@ -139,7 +135,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         let p = &mut *self.p;
         let name = p.arena.alloc_slice_copy(name);
         let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name);
-        VecExt::append(&mut p.module_scope_mut().generated, ref_);
+        p.module_scope.generated.push(p.ast_arena, ref_);
         ref_
     }
 
@@ -148,7 +144,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         let name = p.arena.alloc_slice_copy(name);
         let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name);
         // current_scope is the FunctionBody of the function being compiled.
-        VecExt::append(&mut p.current_scope_mut().generated, ref_);
+        p.current_scope.generated.push(p.ast_arena, ref_);
         ref_
     }
 
@@ -156,7 +152,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         let p = &mut *self.p;
         let name = p.arena.alloc_slice_copy(name);
         let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, name);
-        VecExt::append(&mut p.module_scope_mut().generated, ref_);
+        p.module_scope.generated.push(p.ast_arena, ref_);
         p.is_import_item.insert(ref_, ());
         ref_
     }
@@ -188,7 +184,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         let path = p.arena.alloc_slice_copy(path);
         let index = p.add_import_record_by_range(kind, bun_ast::Range::NONE, path);
         let namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, path);
-        VecExt::append(&mut p.module_scope_mut().generated, namespace_ref);
+        p.module_scope.generated.push(p.ast_arena, namespace_ref);
         (index, namespace_ref)
     }
 }
@@ -210,7 +206,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, '_, TS, SCAN_ONLY> {
                     // SAFETY: `put` stores `key` by reference, so it has to
                     // outlive `args`. It is already the key of a member of
                     // `args`, stored under the same contract.
-                    unsafe { kept.put(key, *member) };
+                    unsafe { kept.put(self.ast_arena, key, *member) };
                 }
             }
             args.members = kept;

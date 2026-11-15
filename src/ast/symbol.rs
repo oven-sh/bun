@@ -1,9 +1,9 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::cell::Cell;
 
-use crate::ImportItemStatus;
 use crate::base::Ref;
 use crate::g as G;
+use crate::{AstBox, ImportItemStatus};
 
 pub struct Symbol {
     /// This is the name that came from the parser. Printed names may be renamed
@@ -27,11 +27,8 @@ pub struct Symbol {
     /// if it has a namespace alias.
     ///
     /// Boxed: this is `None` for the overwhelming majority of symbols, so we
-    /// pay 8 bytes inline instead of ~32. `AstBox` so the header lives in the
-    /// same spill heap as the rest of the per-file AST and is reclaimed on
-    /// reset (`Symbol` is held in `ArenaVec<'a, Symbol>`; `Drop` is not
-    /// guaranteed to run).
-    pub namespace_alias: Option<bun_alloc::AstBox<G::NamespaceAlias>>,
+    /// pay 8 bytes inline instead of ~32.
+    pub namespace_alias: Option<AstBox<G::NamespaceAlias>>,
 
     /// Used by the parser for single pass parsing.
     ///
@@ -161,7 +158,7 @@ symbol_flag_accessors! {
     call_ignores_this, set_call_ignores_this => CALL_IGNORES_THIS;
 }
 
-const _: () = assert!(core::mem::size_of::<Option<bun_alloc::AstBox<G::NamespaceAlias>>>() == 8);
+const _: () = assert!(core::mem::size_of::<Option<AstBox<G::NamespaceAlias>>>() == 8);
 const _: () = assert!(core::mem::size_of::<Symbol>() <= 48);
 
 const INVALID_CHUNK_INDEX: u32 = u32::MAX;

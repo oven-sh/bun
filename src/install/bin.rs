@@ -2,7 +2,7 @@ use core::fmt;
 
 use crate::Error;
 use bun_alloc::AllocError;
-use bun_collections::{DynamicBitSet, StringHashMap, VecExt};
+use bun_collections::{DynamicBitSet, StringHashMap};
 use bun_core::ZStr;
 #[cfg(windows)]
 use bun_core::w;

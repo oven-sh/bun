@@ -5,7 +5,7 @@ use crate::parser::{JSXTag, options};
 use bun_ast::expr::Data as ExprData;
 use bun_ast::flags;
 use bun_ast::op::Level;
-use bun_ast::{E, Expr, ExprNodeIndex, G};
+use bun_ast::{AstVec, E, Expr, ExprNodeIndex, ExprNodeList, G};
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn parse_jsx_element(&mut self, loc: bun_ast::Loc) -> crate::CrateResult<Expr> {
@@ -28,7 +28,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         }
 
         let mut previous_string_with_backslash_loc = bun_ast::Loc::default();
-        let mut properties = bun_alloc::AstAlloc::vec();
+        let mut properties = AstVec::new();
         let mut key_prop_i: i32 = -1;
         let mut flags = flags::JSXElementBitset::empty();
         let mut start_tag: Option<ExprNodeIndex> = None;
@@ -218,7 +218,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             if is_key_after_spread {
                 flags.insert(flags::JSXElement::IsKeyAfterSpread);
             }
-            properties = bun_alloc::AstAlloc::vec_from_iter(props);
+            properties = G::PropertyList::from_slice_in(&props, p.ast_arena);
             if is_key_after_spread
                 && p.options.jsx.runtime == options::JSXRuntime::Automatic
                 && !p.has_classic_runtime_warned
@@ -363,7 +363,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     return Ok(p.new_expr(
                         E::JSXElement {
                             tag: tag.data.as_expr(),
-                            children: bun_alloc::AstAlloc::vec_from_iter(children),
+                            children: ExprNodeList::from_slice_in(&children, p.ast_arena),
                             properties,
                             key_prop_index: key_prop_i,
                             flags,

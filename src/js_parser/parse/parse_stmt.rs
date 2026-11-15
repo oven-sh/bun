@@ -1,6 +1,5 @@
 #![allow(clippy::single_match)]
 #![warn(unused_must_use)]
-use bun_collections::VecExt;
 use bun_core;
 
 use crate::lexer as js_lexer;
@@ -232,7 +231,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 prev_if.no = Some(if_stmt);
             }
 
-            // Set current if for next iteration. The S::If was just allocated via Stmt::alloc;
+            // Set current if for next iteration. The S::If was just allocated;
             // recover its arena handle through the StmtData payload.
             current_if = match if_stmt.data {
                 js_ast::StmtData::SIf(s_if) => Some(s_if),
@@ -1951,7 +1950,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 // of the declared bindings. That "export var" statement will later
                 // cause identifiers to be transformed into property accesses.
                 if opts.scope.is_namespace() && opts.is_export {
-                    let mut decls: G::DeclList = bun_alloc::AstAlloc::vec();
+                    let mut decls = G::DeclList::new();
                     match &stmt.data {
                         js_ast::StmtData::SLocal(local) => {
                             let mut _decls = bun_alloc::ArenaVec::<G::Decl>::with_capacity_in(
@@ -1961,7 +1960,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                             for decl in local.decls.slice() {
                                 Self::extract_decls_for_binding(decl.binding, &mut _decls)?;
                             }
-                            decls = G::DeclList::from_bump_vec(_decls);
+                            decls = G::DeclList::from_slice_in(&_decls, p.ast_arena);
                         }
                         _ => {}
                     }

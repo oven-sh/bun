@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, withoutAsanQuarantine } from "harness";
 import path from "node:path";
 
 test("dev server deinitializes itself", () => {
@@ -386,5 +386,51 @@ test.skipIf(isWindows)("a client that leaves while the page of a failed bundle i
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   expect(JSON.parse(stdout)).toEqual({ status: "HTTP/1.1 500 Internal Server Error", during: 1, after: 0 });
+  expect(exitCode).toBe(0);
+});
+
+test("dev server does not leak the export names of a bundle", async () => {
+  using dir = tempDir("bake-export-names-leak", {
+    "index.html": `<!DOCTYPE html><script type="module" src="./entry.js"></script>`,
+    "entry.js": `const a = 1;\nexport { a as "${Buffer.alloc(4 * 1024 * 1024, "x")}" };`,
+    "fixture.ts": `
+      import { bundlerWorkerLiveCount } from "bun:internal-for-testing";
+      import html from "./index.html";
+      const statuses = new Set();
+      async function rssAfterBundling(times) {
+        for (let i = 0; i < times; i++) {
+          const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+          const response = await fetch(server.url);
+          statuses.add(response.status);
+          await response.text();
+          await server.stop(true);
+          Bun.gc(true);
+        }
+        // The pool threads free the arenas of their workers.
+        const deadline = Date.now() + 5000;
+        while (bundlerWorkerLiveCount() > 0 && Date.now() < deadline) await Bun.sleep(5);
+        Bun.gc(true);
+        return process.memoryUsage.rss();
+      }
+      const before = await rssAfterBundling(3);
+      const deltaMiB = ((await rssAfterBundling(8)) - before) / 1024 / 1024;
+      console.log(JSON.stringify({ statuses: [...statuses], workers: bundlerWorkerLiveCount(), deltaMiB }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: { ...withoutAsanQuarantine(bunEnv), MIMALLOC_PURGE_DELAY: "0" },
+    cwd: String(dir),
+    stdout: "pipe",
+    // The dev server reports each bundle here.
+    stderr: "ignore",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  const { deltaMiB, ...rest } = JSON.parse(stdout);
+  expect(rest).toEqual({ statuses: [200], workers: 0 });
+  // A leak keeps 4 MiB per bundle.
+  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? 11 : 9);
   expect(exitCode).toBe(0);
 });

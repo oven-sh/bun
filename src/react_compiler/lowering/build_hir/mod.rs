@@ -19,7 +19,7 @@ use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory,
 };
 use crate::hir::{
-    AstAlloc, BlockKind, Effect, EvaluationOrder, HirFunction, HirVec, IdentifierId,
+    BlockKind, Effect, EvaluationOrder, HirAlloc, HirFunction, HirVec, IdentifierId,
     InstructionKind, InstructionValue, ParamPattern, Place, PrimitiveValue, ReactFunctionType,
     ReturnVariant, SourceLocation, SpreadPattern, StoreStr, Terminal, VariableBinding,
     environment::Environment,
@@ -154,7 +154,7 @@ pub(super) fn lower_inner<'h>(
     builder.push_scope(func.body().loc);
 
     // Build context places from the captured refs
-    let mut context: HirVec<Place> = AstAlloc::vec();
+    let mut context: HirVec<Place> = HirAlloc::vec();
     for (&ref_, ctx_loc) in &context_map {
         let identifier = builder.resolve_binding(ref_)?;
         context.push(Place {
@@ -167,7 +167,7 @@ pub(super) fn lower_inner<'h>(
     builder.set_context(context_map);
 
     // Process parameters
-    let mut hir_params: HirVec<ParamPattern> = AstAlloc::vec();
+    let mut hir_params: HirVec<ParamPattern> = HirAlloc::vec();
     let last = params.len().saturating_sub(1);
     for (i, param) in params.iter().enumerate() {
         let is_rest = has_rest_arg && i == last;
@@ -256,7 +256,7 @@ pub(super) fn lower_inner<'h>(
     }
 
     // Lower the body
-    let mut directives: HirVec<StoreStr> = AstAlloc::vec();
+    let mut directives: HirVec<StoreStr> = HirAlloc::vec();
     let expr_body = arrow_expression_body(func);
     match expr_body {
         Some(expr) => {

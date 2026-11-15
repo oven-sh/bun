@@ -1,5 +1,4 @@
 use crate::lockfile::package::PackageColumns as _;
-use bun_collections::VecExt;
 use core::fmt;
 
 use bstr::BStr;

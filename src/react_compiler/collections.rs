@@ -1,6 +1,6 @@
 //! Drop-in `IndexMap` / `IndexSet` for the React Compiler port.
 //!
-//! The allocator is fixed to [`bun_alloc::AstAlloc`], so every map/set built during a compile
+//! The allocator is fixed to [`HirAlloc`], so every map/set built during a compile
 //! lives in the per-parse arena and is bulk-freed on reset (no per-entry `Drop`). Keyed by an id
 //! they are an [`IdMap`], keyed by anything else a [`bun_collections::ArrayHashMap`]: see [`Key`].
 //! Method surface mirrors `indexmap::IndexMap` / `indexmap::IndexSet` closely enough that
@@ -15,10 +15,10 @@ use core::hash::Hash;
 use core::iter::{FromIterator, Zip};
 use core::slice;
 
-use bun_alloc::{AstAlloc, AstVec};
 use bun_collections::array_hash_map::{ArrayHashMap, AutoContext};
 
 pub use crate::hir::id_map::{IdBitSet, IdMap};
+use crate::hir::{HirAlloc, HirVec};
 /// Stable, as `Array.prototype.sort` is: for what upstream sorts, where equals can be told apart. Like it, it takes a comparison
 /// that isn't a total order.
 pub(crate) use bun_collections::index_sort::merge_sort_slice_by as sort_slice_by;
@@ -50,7 +50,7 @@ pub trait Entries<K, V>: Default {
     where
         K: 'a,
         V: 'a;
-    fn into_entries(self) -> (AstVec<K>, AstVec<V>);
+    fn into_entries(self) -> (HirVec<K>, HirVec<V>);
     fn position(&self, key: &K) -> Option<usize>;
     /// A key that is there keeps its place.
     fn insert(&mut self, key: K, value: V) -> Option<V>;
@@ -65,7 +65,7 @@ pub trait Entries<K, V>: Default {
         V: Clone;
 }
 
-type Hashed<K, V> = ArrayHashMap<K, V, AutoContext, AstAlloc>;
+type Hashed<K, V> = ArrayHashMap<K, V, AutoContext, HirAlloc>;
 
 impl<K: Hash + Eq, V> Entries<K, V> for Hashed<K, V> {
     #[inline]
@@ -87,7 +87,7 @@ impl<K: Hash + Eq, V> Entries<K, V> for Hashed<K, V> {
     {
         self.iterator().map(|e| (&*e.key_ptr, &mut *e.value_ptr))
     }
-    fn into_entries(self) -> (AstVec<K>, AstVec<V>) {
+    fn into_entries(self) -> (HirVec<K>, HirVec<V>) {
         self.into_entries()
     }
     #[inline]
@@ -123,7 +123,7 @@ impl<K: Hash + Eq, V> Entries<K, V> for Hashed<K, V> {
     }
 }
 
-impl<K: Copy + Into<u32>, V> Entries<K, V> for IdMap<K, V, AstAlloc> {
+impl<K: Copy + Into<u32>, V> Entries<K, V> for IdMap<K, V, HirAlloc> {
     #[inline]
     fn keys(&self) -> &[K] {
         self.as_slices().0
@@ -144,7 +144,7 @@ impl<K: Copy + Into<u32>, V> Entries<K, V> for IdMap<K, V, AstAlloc> {
         let (keys, values) = self.as_mut_slices();
         keys.iter().zip(values)
     }
-    fn into_entries(self) -> (AstVec<K>, AstVec<V>) {
+    fn into_entries(self) -> (HirVec<K>, HirVec<V>) {
         self.into_entries()
     }
     #[inline]
@@ -187,7 +187,7 @@ macro_rules! keys {
         }
     )*};
 }
-type ById<K, V> = IdMap<K, V, AstAlloc>;
+type ById<K, V> = IdMap<K, V, HirAlloc>;
 keys!(ById:
     crate::hir::BlockId,
     crate::hir::DeclarationId,
@@ -357,8 +357,8 @@ impl<K: Key, V> core::ops::Index<&K> for IndexMap<K, V> {
 extern crate alloc;
 
 pub struct IntoIter<K, V> {
-    keys: alloc::vec::IntoIter<K, AstAlloc>,
-    values: alloc::vec::IntoIter<V, AstAlloc>,
+    keys: alloc::vec::IntoIter<K, HirAlloc>,
+    values: alloc::vec::IntoIter<V, HirAlloc>,
 }
 impl<K, V> Iterator for IntoIter<K, V> {
     type Item = (K, V);
@@ -492,7 +492,7 @@ impl<K: Key, const N: usize> From<[K; N]> for IndexSet<K> {
 
 impl<K: Key> IntoIterator for IndexSet<K> {
     type Item = K;
-    type IntoIter = alloc::vec::IntoIter<K, AstAlloc>;
+    type IntoIter = alloc::vec::IntoIter<K, HirAlloc>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_entries().0.into_iter()
     }

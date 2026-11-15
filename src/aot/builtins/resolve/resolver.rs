@@ -354,6 +354,7 @@ pub(super) struct Resolver<'a, 's> {
     names_by_variable: OnceCell<Vec<(u32, u32)>>,
     pub(super) kept_variables: RefCell<FxHashMap<(SymbolId, BuiltinId), bool>>,
     pub(super) variables_asked_for_numbers: RefCell<FxHashMap<(SymbolId, u32), bool>>,
+    pub(super) variables_that_may_be_undefined: RefCell<FxHashMap<SymbolId, bool>>,
     pub(super) variables_let_out_of_sight: OnceCell<FxHashSet<SymbolId>>,
     known_sets: RefCell<KnownSets<'a, 's>>,
     evaluated: Range<u32>,
@@ -495,6 +496,7 @@ impl<'a, 's> Resolver<'a, 's> {
             names_by_variable: OnceCell::new(),
             kept_variables: RefCell::default(),
             variables_asked_for_numbers: RefCell::default(),
+            variables_that_may_be_undefined: RefCell::default(),
             variables_let_out_of_sight: OnceCell::new(),
             known_sets: RefCell::new(KnownSets::new(
                 input.hir,

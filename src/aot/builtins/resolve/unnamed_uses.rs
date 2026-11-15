@@ -760,9 +760,10 @@ impl Resolver<'_, '_> {
             return false;
         }
         let (hir, bound) = (self.input.hir, self.input.bound);
+        let mut answers = self.variables_that_may_be_undefined.borrow_mut();
         let mut followed: SmallVec<[SymbolId; 4]> = SmallVec::new();
         let mut current = read;
-        loop {
+        let answer = loop {
             current = hir.skip_type_assertions(current);
             current = match hir[current].kind {
                 ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => {
@@ -771,11 +772,11 @@ impl Resolver<'_, '_> {
                         value.is_some_and(|it| it.path.mutability == Mutability::AlwaysLocked)
                     };
                     if !followed.is_empty() && !matches!(chain, Chain::No) && !is_constant() {
-                        return true;
+                        break true;
                     }
                     match hir.member_key(current) {
                         Some((object, _)) => object,
-                        None => return false,
+                        None => break false,
                     }
                 }
                 ExprKind::Binary {
@@ -785,22 +786,28 @@ impl Resolver<'_, '_> {
                 } => right,
                 ExprKind::Ident(_) => {
                     let Binding::Symbol(variable) = bound.binding(current) else {
-                        return false;
+                        break false;
                     };
-                    if followed.contains(&variable) {
-                        return false;
+                    if let Some(&known) = answers.get(&variable) {
+                        break known;
                     }
+                    answers.insert(variable, false);
                     followed.push(variable);
                     match bound.binding_initializer(hir, variable) {
                         BindingInitializer::Expression(initializer) => initializer,
                         BindingInitializer::PatternProperty { source, .. } => source,
-                        _ => return false,
+                        _ => break false,
                     }
                 }
-                _ => return false,
+                _ => break false,
             };
+        };
+        if answer {
+            answers.extend(followed.into_iter().map(|variable| (variable, true)));
         }
+        answer
     }
+
     fn collect_members_read(&mut self) {
         for index in 0..self.computed.len() {
             let expr = self.computed[index];

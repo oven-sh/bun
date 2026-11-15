@@ -4,15 +4,13 @@ use bun_paths::strings;
 use bun_semver as Semver;
 use bun_semver::{SlicedString, String};
 
+use crate::PackageNameHash;
 use crate::hosted_git_info;
+use crate::package_manager_real::NpmAliasMap;
 use crate::repository::Repository;
-use crate::{PackageManager, PackageNameHash};
 
 // ──────────────────────────────────────────────────────────────────────────
-// NpmAliasRegistry — exposes only the one `PackageManager` method `parse`
-// actually touches (`known_npm_aliases.put`) so `parse_with_tag` can take an
-// `Option<&mut dyn NpmAliasRegistry>` and stay decoupled from the full
-// `PackageManager` surface.
+// NpmAliasRegistry
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait NpmAliasRegistry {
@@ -21,19 +19,7 @@ pub trait NpmAliasRegistry {
     fn record_npm_alias(&mut self, hash: PackageNameHash, specifier: &[u8]);
 }
 
-impl NpmAliasRegistry for PackageManager {
-    #[inline]
-    fn record_npm_alias(&mut self, hash: PackageNameHash, specifier: &[u8]) {
-        self.known_npm_aliases.record_npm_alias(hash, specifier);
-    }
-}
-
-/// Field-level impl so callers that have already split-borrowed
-/// `PackageManager` (e.g. they hold `&mut manager.lockfile` for a
-/// `StringBuilder`) can pass `&mut manager.known_npm_aliases` directly to
-/// `Dependency::clone_in` / `OverrideMap::clone` instead of a full
-/// `&mut PackageManager`.
-impl NpmAliasRegistry for crate::package_manager_real::NpmAliasMap {
+impl NpmAliasRegistry for NpmAliasMap {
     #[inline]
     fn record_npm_alias(&mut self, hash: PackageNameHash, specifier: &[u8]) {
         // An install parses the same alias several times. Skip the allocation if it is unchanged.
@@ -75,7 +61,7 @@ pub trait DependencyExt {
         tag: Option<version::Tag>,
         sliced: &SlicedString,
         log: impl Into<Option<&'a bun_ast::Log>>,
-        package_manager: impl Into<Option<&'b mut PackageManager>>,
+        aliases: impl Into<Option<&'b mut NpmAliasMap>>,
     ) -> Option<Version>;
     fn count_with_different_buffers<SB: StringBuilderLike>(
         &self,
@@ -106,7 +92,7 @@ pub trait DependencyExt {
         dependency: &[u8],
         sliced: &SlicedString,
         log: impl Into<Option<&'a bun_ast::Log>>,
-        manager: impl Into<Option<&'b mut PackageManager>>,
+        aliases: impl Into<Option<&'b mut NpmAliasMap>>,
     ) -> Option<Version>;
 }
 
@@ -137,8 +123,8 @@ impl DependencyExt for Dependency {
 
     /// Forwards to the module-level `parse_with_optional_tag`.
     ///
-    /// `alias_hash`, `log`, and `package_manager` accept either the bare value
-    /// (`u64` / `&Log` / `&mut PackageManager`) or `Option<_>` via
+    /// `alias_hash`, `log`, and `aliases` accept either the bare value
+    /// (`u64` / `&Log` / `&mut NpmAliasMap`) or `Option<_>` via
     /// `impl Into<Option<_>>`.
     #[inline]
     fn parse_with_optional_tag<'a, 'b>(
@@ -148,17 +134,9 @@ impl DependencyExt for Dependency {
         tag: Option<version::Tag>,
         sliced: &SlicedString,
         log: impl Into<Option<&'a bun_ast::Log>>,
-        package_manager: impl Into<Option<&'b mut PackageManager>>,
+        aliases: impl Into<Option<&'b mut NpmAliasMap>>,
     ) -> Option<Version> {
-        parse_with_optional_tag(
-            alias,
-            alias_hash,
-            dependency,
-            tag,
-            sliced,
-            log,
-            package_manager,
-        )
+        parse_with_optional_tag(alias, alias_hash, dependency, tag, sliced, log, aliases)
     }
 
     fn count_with_different_buffers<SB: StringBuilderLike>(
@@ -260,7 +238,7 @@ impl DependencyExt for Dependency {
     /// the actual implementation is a free fn. Delegate so downstream callers
     /// (`bun_install_jsc`) keep type-checking.
     ///
-    /// `alias_hash`, `log`, and `manager` accept either bare values or
+    /// `alias_hash`, `log`, and `aliases` accept either bare values or
     /// `Option<_>`.
     #[inline]
     fn parse<'a, 'b>(
@@ -269,9 +247,9 @@ impl DependencyExt for Dependency {
         dependency: &[u8],
         sliced: &SlicedString,
         log: impl Into<Option<&'a bun_ast::Log>>,
-        manager: impl Into<Option<&'b mut PackageManager>>,
+        aliases: impl Into<Option<&'b mut NpmAliasMap>>,
     ) -> Option<Version> {
-        parse(alias, alias_hash, dependency, sliced, log, manager)
+        parse(alias, alias_hash, dependency, sliced, log, aliases)
     }
 }
 
@@ -1144,7 +1122,7 @@ pub fn parse<'a, 'b>(
     dependency: &[u8],
     sliced: &SlicedString,
     log: impl Into<Option<&'a bun_ast::Log>>,
-    manager: impl Into<Option<&'b mut PackageManager>>,
+    aliases: impl Into<Option<&'b mut NpmAliasMap>>,
 ) -> Option<Version> {
     let dep = trim_literal(dependency);
     parse_with_tag(
@@ -1154,7 +1132,7 @@ pub fn parse<'a, 'b>(
         Tag::infer(dep),
         sliced,
         log.into(),
-        manager.into().map(|m| m as &mut dyn NpmAliasRegistry),
+        aliases.into().map(|m| m as &mut dyn NpmAliasRegistry),
     )
 }
 
@@ -1165,7 +1143,7 @@ pub(crate) fn parse_with_optional_tag<'a, 'b>(
     tag: Option<Tag>,
     sliced: &SlicedString,
     log: impl Into<Option<&'a bun_ast::Log>>,
-    package_manager: impl Into<Option<&'b mut PackageManager>>,
+    aliases: impl Into<Option<&'b mut NpmAliasMap>>,
 ) -> Option<Version> {
     let dep = trim_literal(dependency);
     parse_with_tag(
@@ -1175,9 +1153,7 @@ pub(crate) fn parse_with_optional_tag<'a, 'b>(
         tag.unwrap_or_else(|| Tag::infer(dep)),
         sliced,
         log.into(),
-        package_manager
-            .into()
-            .map(|m| m as &mut dyn NpmAliasRegistry),
+        aliases.into().map(|m| m as &mut dyn NpmAliasRegistry),
     )
 }
 

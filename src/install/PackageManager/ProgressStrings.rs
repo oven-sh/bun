@@ -3,7 +3,7 @@ use const_format::concatcp;
 
 use crate::bun_progress::NodeId;
 
-use super::PackageManager;
+use super::InstallState;
 
 pub struct ProgressStrings;
 
@@ -85,7 +85,7 @@ impl ProgressStrings {
     }
 }
 
-impl PackageManager {
+impl InstallState {
     pub(crate) fn set_node_name(&self, node: NodeId, name: &[u8], emoji: &[u8]) {
         let node = self.progress.node(node);
         if Output::enable_ansi_colors_stderr() {

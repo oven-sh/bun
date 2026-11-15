@@ -3,19 +3,22 @@
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use bun_collections::HiveBox;
 use bun_core::{MutableString, Output, strings};
 use bun_http::{AsyncHTTP, HTTPClientResult, HTTPResponseMetadata};
 use bun_threading::{Condition, Guarded};
 
 use crate::package_manager_real::run_tasks::download_outcome;
-use crate::package_manager_real::{INBOX, enqueue, package_manager_options::LogLevel};
+use crate::package_manager_real::{
+    INBOX, InstallFields, InstallState, Options, enqueue, package_manager_options::LogLevel,
+};
 use crate::{NetworkTask, PackageManager};
 
 /// Only used on the install thread. Its tasks aren't counted in `pending_tasks`, so
 /// `pending_task_count` adds `len()`.
 #[derive(Default)]
 pub(crate) struct RetryQueue {
-    waiting: Vec<(Instant, *mut NetworkTask)>,
+    waiting: Vec<(Instant, HiveBox<NetworkTask>)>,
     /// True once "registry requests failed, retrying" has been printed. It's printed at most once
     /// per install, after a timeout.
     announced: bool,
@@ -29,7 +32,7 @@ impl RetryQueue {
         self.waiting.len()
     }
 
-    pub(crate) fn pop_due(&mut self) -> Option<*mut NetworkTask> {
+    pub(crate) fn pop_due(&mut self) -> Option<HiveBox<NetworkTask>> {
         if self.waiting.is_empty() {
             return None;
         }
@@ -39,23 +42,21 @@ impl RetryQueue {
     }
 }
 
-/// Returns the wait. `attempt` is 1 for the first retry.
-pub(crate) fn retry(
-    manager: &mut PackageManager,
-    task: *mut NetworkTask,
-    attempt: u16,
-    response: &HTTPClientResult<'static>,
-) -> Duration {
-    let (wait, asked) = wait_before(manager, attempt, response);
+/// Returns the wait. `task.retried` is 1 for the first retry.
+pub(crate) fn retry(manager: &mut InstallFields<'_>, mut task: HiveBox<NetworkTask>) -> Duration {
+    let attempt = task.retried;
+    // `on_done` keeps the metadata it finds here if the next attempt gets none.
+    let response = core::mem::take(&mut task.response);
+    let (wait, asked) = wait_before(manager.options, manager.state, attempt, &response);
     if wait.is_zero() {
-        enqueue::enqueue_network_task(manager, task);
+        enqueue::enqueue_network_task(manager.state, task);
         return Duration::ZERO;
     }
     // A host that never answers costs minutes per attempt, so that is said at the first retry, also
     // with `--verbose`, whose lines are only printed once everything is resolved.
     let timed_out = matches!(response.fail, Some(bun_http::Error::Timeout));
     // `--verbose` prints a line for every retry of every request.
-    let (queue, log_level) = (&mut manager.retry_queue, manager.options.log_level);
+    let (queue, log_level) = (&mut manager.state.retry_queue, manager.options.log_level);
     // The requests of a later wave start at the first attempt again.
     if queue.len() == 0 {
         queue.announced_asked = 0;
@@ -74,15 +75,15 @@ pub(crate) fn retry(
     };
     if let Some(line) = line.filter(|_| log_level != LogLevel::Silent) {
         Output::flush();
-        manager.progress.log(format_args!("warn: {line}\n"));
+        manager.state.progress.log(format_args!("warn: {line}\n"));
     }
 
     let due = Instant::now() + wait;
     if !wake_at(due) {
-        enqueue::enqueue_network_task(manager, task);
+        enqueue::enqueue_network_task(manager.state, task);
         return Duration::ZERO;
     }
-    manager.retry_queue.waiting.push((due, task));
+    manager.state.retry_queue.waiting.push((due, task));
     wait
 }
 
@@ -105,7 +106,7 @@ impl PackageManager {
                 return response.into_metadata();
             }
             attempt += 1;
-            let (wait, asked) = wait_before(self, attempt, &response);
+            let (wait, asked) = wait_before(&self.options, &self.state, attempt, &response);
             if self.options.log_level != LogLevel::Silent {
                 if asked {
                     bun_core::warn!("registry asked to wait {}s before retrying", wait.as_secs(),);
@@ -126,17 +127,18 @@ impl PackageManager {
 /// Returns how long to wait before retry number `attempt`, and whether the registry asked for that
 /// wait. Zero means the retry starts immediately.
 fn wait_before(
-    manager: &PackageManager,
+    options: &Options,
+    state: &InstallState,
     attempt: u16,
     response: &HTTPClientResult<'static>,
 ) -> (Duration, bool) {
-    let base_ms = manager
+    let base_ms = state
         .env()
         .get(b"BUN_CONFIG_HTTP_RETRY_BACKOFF")
         .and_then(|ms| bun_core::parse_unsigned::<u32>(ms, 10).ok())
         .unwrap_or(50);
     // Under auto-install the JS thread is blocked on this request.
-    if base_ms == 0 || manager.options.runtime_auto_install {
+    if base_ms == 0 || options.runtime_auto_install {
         return (Duration::ZERO, false);
     }
     let wait = backoff(base_ms, attempt);

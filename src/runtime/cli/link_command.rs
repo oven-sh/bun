@@ -8,7 +8,8 @@ use bun_sys::{Dir, Fd, FdDirExt};
 
 use bun_install::Features;
 use bun_install::bin_real as bin;
-use bun_install::lockfile_real::{Lockfile, package::Package};
+use bun_install::lockfile_real::Lockfile;
+use bun_install::lockfile_real::package::{Package, ParseFields};
 use bun_install::package_manager_real::{
     self as pm, CommandLineArguments, PackageManager, Subcommand, attempt_to_create_package_json,
     options::LogLevel, package_manager_options, setup_global_dir,
@@ -88,7 +89,7 @@ pub(crate) fn load_package_for_link(
     let log = manager.log();
     package.parse::<()>(
         &mut lockfile,
-        manager,
+        &mut ParseFields::new(manager),
         log,
         &package_json_source,
         &mut (),
@@ -129,7 +130,7 @@ pub(crate) fn exit_if_dry_run(manager: &PackageManager, verb: &str, name: &[u8])
     Global::exit(0);
 }
 
-/// Opens the global directory (kept in `manager.global_dir`) and its `node_modules`, which it creates.
+/// Opens the `node_modules` of the global directory, which it creates.
 pub(crate) fn open_global_node_modules(
     manager: &mut PackageManager,
     ctx: &mut command::ContextData,
@@ -138,18 +139,13 @@ pub(crate) fn open_global_node_modules(
         Some(install_) => install_.global_dir.as_deref().unwrap_or(b""),
         None => b"",
     };
-    manager.global_dir = Some(Dir::from_fd(package_manager_options::open_global_dir(
+    let global_dir = Dir::from_fd(package_manager_options::open_global_dir(
         explicit_global_dir,
-    )?));
+    )?);
 
     setup_global_dir(manager, &&mut *ctx)?;
 
-    match manager
-        .global_dir
-        .as_ref()
-        .unwrap()
-        .make_open_path(b"node_modules", Default::default())
-    {
+    match global_dir.make_open_path(b"node_modules", Default::default()) {
         Ok(d) => Ok(d),
         Err(e) => {
             if manager.options.log_level != LogLevel::Silent {
@@ -254,7 +250,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
             link_path_buf.0[..top_level.len()].copy_from_slice(top_level);
             link_path_buf.0[top_level.len()] = 0;
             let link_path = ZStr::from_buf(&link_path_buf.0[..], top_level.len());
-            let global_path = pm::global_link_dir_path(manager);
+            let global_path = pm::global_link_dir(&manager.options).path;
             let dest_path =
                 resolve_path::join_abs_string_z::<platform::Windows>(global_path, &[name]);
             if let Err(e) = bun_sys::sys_uv::symlink_uv(

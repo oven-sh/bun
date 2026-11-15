@@ -95,9 +95,9 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
 
     {
         let alphabetizer = Alphabetizer::<u64> {
-            names: names.into(),
-            buf: string_buf.into(),
-            resolutions: resolved.into(),
+            names,
+            buf: string_buf,
+            resolutions: resolved,
         };
         index_sort::sort_indices_unstable(&mut alphabetized_names, &mut |a, b| {
             alphabetizer.order(a, b)

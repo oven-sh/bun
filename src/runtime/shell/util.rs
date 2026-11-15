@@ -8,12 +8,16 @@ use bun_core::GenericIndex;
 // `bun_spawn` *crate* re-exports under the same name.
 pub(crate) use crate::api::bun_spawn::stdio::Stdio;
 
-/// A slot is not used again after `remove`, so an id never refers to a later value.
+/// Values addressed by `GenericIndex`. An index is not reused after `remove`.
 pub(crate) struct Slots<T, M>(SmallVec<[Option<T>; 2]>, PhantomData<M>);
 
 impl<T, M> Slots<T, M> {
     pub(crate) fn new() -> Self {
         Slots(SmallVec::new(), PhantomData)
+    }
+
+    pub(crate) fn insert(&mut self, value: T) -> GenericIndex<u32, M> {
+        self.insert_with(|_| value)
     }
 
     pub(crate) fn insert_with(

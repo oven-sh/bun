@@ -11,11 +11,10 @@ use crate::shell::interpreter::{
     Interpreter, Node, NodeId, OwnedFd, ShellInterpreter, StateKind, log,
 };
 use crate::shell::io::{IO, OutKind};
-use crate::shell::shell_body::subproc::StdioKind;
 use crate::shell::states::assigns::{AssignCtx, Assigns};
 use crate::shell::states::base::{Base, Env};
 use crate::shell::states::expansion::Expansion;
-use crate::shell::subproc::{ShellSubprocess, SpawnArgs, SubprocExec};
+use crate::shell::subproc::{ShellSubprocess, SpawnArgs, StdioKind, SubprocExec};
 use crate::shell::util::Stdio;
 use crate::shell::yield_::{ReentrantAction, Yield};
 use bun_collections::VecExt;
@@ -55,6 +54,11 @@ pub(crate) enum Exec<'a> {
     None,
     Builtin(Box<Builtin>),
     Subproc(Box<SubprocExec<'a>>),
+}
+
+pub(crate) struct JsRedirect {
+    pub(crate) buf: ast::JSBuf,
+    pub(crate) flags: ast::RedirectFlags,
 }
 
 impl<'a> Cmd<'a> {
@@ -325,8 +329,8 @@ impl<'a> Cmd<'a> {
         });
         match inited.expect("the script waits for this Cmd") {
             ControlFlow::Continue(None) => {}
-            ControlFlow::Continue(Some((jsbuf, flags))) => {
-                Self::init_subproc_jsbuf_redirection(shell_interp, jsbuf, flags, &mut spawn_args)?;
+            ControlFlow::Continue(Some(redirect)) => {
+                Self::init_subproc_jsbuf_redirection(shell_interp, redirect, &mut spawn_args)?;
             }
             ControlFlow::Break(y) => return Ok(y),
         }
@@ -340,7 +344,7 @@ impl<'a> Cmd<'a> {
         this: NodeId,
         spawn_args: &mut SpawnArgs<'_>,
         redirection_fd: &mut Option<OwnedFd>,
-    ) -> ControlFlow<Yield, Option<(ast::JSBuf, ast::RedirectFlags)>> {
+    ) -> ControlFlow<Yield, Option<JsRedirect>> {
         let me = interp.as_cmd(this);
         let env = &interp.shells[me.shell.id()];
         spawn_args.fill_env(&env.export_env);
@@ -406,7 +410,7 @@ impl<'a> Cmd<'a> {
         this: NodeId,
         stdio: &mut [Stdio; 3],
         redirection_fd: &mut Option<OwnedFd>,
-    ) -> ControlFlow<Yield, Option<(ast::JSBuf, ast::RedirectFlags)>> {
+    ) -> ControlFlow<Yield, Option<JsRedirect>> {
         let node = interp.as_cmd(this).node;
         let flags = node.redirect;
 
@@ -429,7 +433,9 @@ impl<'a> Cmd<'a> {
         };
 
         match redirect {
-            ast::Redirect::JsBuf(val) => return ControlFlow::Continue(Some((*val, flags))),
+            ast::Redirect::JsBuf(buf) => {
+                return ControlFlow::Continue(Some(JsRedirect { buf: *buf, flags }));
+            }
             ast::Redirect::Atom(_) => {
                 if interp.as_cmd(this).redirection_file.is_empty() {
                     let argv0 = interp
@@ -452,7 +458,7 @@ impl<'a> Cmd<'a> {
                 let path_buf = core::mem::take(&mut interp.as_cmd_mut(this).redirection_file);
                 let path = bun_core::ZStr::from_buf(&path_buf, path_buf.len() - 1);
                 log!("Expanded Redirect: {}\n", bstr::BStr::new(path.as_bytes()));
-                let shell = &interp.shells[interp.as_cmd(this).shell.id()];
+                let shell = Builtin::shell(interp, this);
                 let cwd_fd = shell.cwd_fd.fd();
                 let refused = refuse_shell_redirect(shell.cwd(), path.as_bytes(), flags.to_flags());
                 let opened = refused.and_then(|()| {
@@ -493,8 +499,7 @@ impl<'a> Cmd<'a> {
     /// `< ${blob}`, `> ${arraybuffer}`, …
     fn init_subproc_jsbuf_redirection(
         shell_interp: &ShellInterpreter,
-        val: ast::JSBuf,
-        flags: ast::RedirectFlags,
+        JsRedirect { buf: val, flags }: JsRedirect,
         spawn_args: &mut SpawnArgs<'_>,
     ) -> crate::jsc::JsResult<()> {
         let SpawnArgs {
@@ -626,17 +631,15 @@ impl<'a> Cmd<'a> {
         output: &[u8],
         errno: Option<ExitCode>,
     ) -> Yield {
-        let Node::Cmd(me) = &mut interp.nodes[this.idx()] else {
-            unreachable!()
-        };
+        let me = interp.nodes[this.idx()].as_cmd_mut();
         if errno.is_some() {
             me.exit_code = errno;
         }
-        let (io, ast_kind) = match kind {
-            IoKind::Stdout => (me.io.stdout, ast::IoKind::Stdout),
-            IoKind::Stderr => (me.io.stderr, ast::IoKind::Stderr),
+        let io = match kind {
+            IoKind::Stdout => me.io.stdout,
+            IoKind::Stderr => me.io.stderr,
         };
-        if !me.node.redirect.redirects_elsewhere(ast_kind) {
+        if !me.node.redirect.redirects_elsewhere(kind) {
             let shell_buf = match io {
                 // Tee into the JS-side captured buffer.
                 OutKind::Fd(fd) => fd

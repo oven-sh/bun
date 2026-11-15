@@ -919,7 +919,7 @@ impl WindowsBufferedReader {
         self.source.is_some()
     }
 
-    pub fn has_open_source(&self) -> bool {
+    fn has_open_source(&self) -> bool {
         self.with_source(|source| !source.is_closed()) == Some(true)
     }
 

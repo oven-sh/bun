@@ -27,7 +27,7 @@
 
 use bun_collections::VecExt;
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
-use bun_jsc::{JsCell, JsCellRefExt as _, JsRef};
+use bun_jsc::{GlobalRef, JsCell, JsCellRefExt as _, JsRef};
 use bun_options_types::context::ContextData;
 use bun_ptr::{AliasableBox, CellExt as _};
 use core::cell::Cell;
@@ -43,7 +43,7 @@ use crate::shell::builtin::{Builtin, IoKind};
 use crate::shell::builtins::yes::Yes;
 pub(crate) use crate::shell::env_map::EnvMap;
 use crate::shell::io::{IO, OutFd, OutKind};
-use crate::shell::io_writer::IOWriterId;
+use crate::shell::io_writer;
 use crate::shell::states::assigns::Assigns;
 use crate::shell::states::r#async::Async;
 use crate::shell::states::base::{Base, Env};
@@ -57,7 +57,7 @@ use crate::shell::states::script::Script;
 use crate::shell::states::stmt::Stmt;
 use crate::shell::states::subshell::Subshell;
 use crate::shell::util::Slots;
-use crate::shell::yield_::{Deferred, DeferredStack, ReentrantAction, Yield};
+use crate::shell::yield_::{DeferredStack, ReentrantAction, Yield};
 use crate::shell::{EnvStr, ShellErr, ast};
 
 bun_core::declare_scope!(SHELL, visible);
@@ -196,33 +196,47 @@ impl Node<'_> {
     }
 }
 
-/// Generate `Interpreter::as_<kind>{,_mut}` typed accessors. These panic on
+/// Generate `{Node, Interpreter}::as_<kind>{,_mut}` typed accessors. These panic on
 /// tag mismatch.
 macro_rules! node_accessors {
     ($($variant:ident => $ty:ident, $get:ident, $get_mut:ident);* $(;)?) => {
-        impl<'a> Interpreter<'a> {
+        impl<'a> Node<'a> {
             $(
                 #[inline]
                 #[track_caller]
-                pub(crate) fn $get(&self, id: NodeId) -> &$ty<'a> {
-                    match &self.nodes[id.idx()] {
+                pub(crate) fn $get(&self) -> &$ty<'a> {
+                    match self {
                         Node::$variant(v) => v,
                         other => panic!(
-                            concat!("expected Node::", stringify!($variant), " at {}, got {:?}"),
-                            id, other.kind()
+                            concat!("expected Node::", stringify!($variant), ", got {:?}"),
+                            other.kind()
                         ),
                     }
                 }
                 #[inline]
                 #[track_caller]
-                pub(crate) fn $get_mut(&mut self, id: NodeId) -> &mut $ty<'a> {
-                    match &mut self.nodes[id.idx()] {
+                pub(crate) fn $get_mut(&mut self) -> &mut $ty<'a> {
+                    match self {
                         Node::$variant(v) => v,
                         other => panic!(
-                            concat!("expected Node::", stringify!($variant), " at {}, got {:?}"),
-                            id, other.kind()
+                            concat!("expected Node::", stringify!($variant), ", got {:?}"),
+                            other.kind()
                         ),
                     }
+                }
+            )*
+        }
+        impl<'a> Interpreter<'a> {
+            $(
+                #[inline]
+                #[track_caller]
+                pub(crate) fn $get(&self, id: NodeId) -> &$ty<'a> {
+                    self.nodes[id.idx()].$get()
+                }
+                #[inline]
+                #[track_caller]
+                pub(crate) fn $get_mut(&mut self, id: NodeId) -> &mut $ty<'a> {
+                    self.nodes[id.idx()].$get_mut()
                 }
             )*
         }
@@ -267,7 +281,7 @@ pub enum StateKind {
 }
 
 /// The shell promise's `reject` function and the error to call it with. Kept on the stack, where the GC sees it.
-pub(crate) type Rejection = (crate::jsc::JSValue, crate::jsc::JSValue);
+type Rejection = (crate::jsc::JSValue, crate::jsc::JSValue);
 
 // ────────────────────────────────────────────────────────────────────────────
 // Interpreter
@@ -293,13 +307,15 @@ pub(crate) struct Interpreter<'a> {
     script_ast: ast::Script<'a>,
 
     /// Back-ref to the owner of this interpreter.
-    shell_interp: NonNull<ShellInterpreter>,
+    pub(crate) shell_interp: NonNull<ShellInterpreter>,
     /// Same as [`ShellInterpreter::context`].
     pub(crate) context: Option<bun_jsc::ContextId>,
 
     pub(crate) async_commands_executing: u32,
 
-    flags: InterpreterFlags,
+    quiet: bool,
+    /// Set by [`Interpreter::fail`].
+    failed: bool,
     exit_code: Option<ExitCode>,
 
     /// Lazily-populated UTF-8 cache for the JS-side argv (`$@`/`$N` expansion
@@ -322,33 +338,14 @@ pub(crate) struct ShellInterpreter {
     /// The `Bun.ModuleGraph` context whose script started this (`run_from_js`), if any.
     context: Cell<Option<bun_jsc::ContextId>>,
 
-    /// Null on the mini event loop.
-    global_this: *mut crate::jsc::JSGlobalObject,
+    /// `None` on the mini event loop.
+    global_this: Option<GlobalRef>,
 
     /// Set by `finish`.
     exit_code: Cell<Option<ExitCode>>,
     /// The JS wrapper. Strong from `run_from_js` until `finish` has settled the promise.
     this_value: JsCell<JsRef>,
     estimated_size_for_gc: usize,
-}
-
-#[repr(transparent)]
-#[derive(Clone, Copy, Default)]
-pub(crate) struct InterpreterFlags(u8);
-impl InterpreterFlags {
-    pub(crate) const fn quiet(self) -> bool {
-        self.0 & 0b10 != 0
-    }
-    pub(crate) fn set_quiet(&mut self, v: bool) {
-        if v { self.0 |= 0b10 } else { self.0 &= !0b10 }
-    }
-    /// Set by [`Interpreter::fail`].
-    pub(crate) const fn failed(self) -> bool {
-        self.0 & 0b100 != 0
-    }
-    pub(crate) fn set_failed(&mut self, v: bool) {
-        if v { self.0 |= 0b100 } else { self.0 &= !0b100 }
-    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -484,7 +481,7 @@ impl<'a> Interpreter<'a> {
 
         // ── assemble ───────────────────────────────────────────────────────
         let mut shells = Slots::new();
-        let root_shell = shells.insert_with(|_| ShellExecEnv {
+        let root_shell = shells.insert(ShellExecEnv {
             _buffered_stdout: Bufio::default(),
             _buffered_stderr: Bufio::default(),
             shell_env: EnvMap::init(),
@@ -517,7 +514,8 @@ impl<'a> Interpreter<'a> {
             shell_interp,
             context: None,
             async_commands_executing: 0,
-            flags: InterpreterFlags::default(),
+            quiet: false,
+            failed: false,
             // Starts at `None` so `async_cmd_done` only finishes once
             // `on_root_child_done` has recorded the real exit code.
             exit_code: None,
@@ -538,7 +536,7 @@ impl<'a> Interpreter<'a> {
 impl ShellInterpreter {
     fn new(
         event_loop: EventLoopHandle,
-        global_this: *mut crate::jsc::JSGlobalObject,
+        global_this: Option<GlobalRef>,
         estimated_size_for_gc: usize,
     ) -> ShellInterpreter {
         ShellInterpreter {
@@ -553,7 +551,8 @@ impl ShellInterpreter {
         }
     }
 
-    /// SAFETY: `this` is live, and is neither moved nor borrowed mutably until it is dropped.
+    /// # Safety
+    /// `this` is live, and is neither moved nor borrowed mutably until it is dropped.
     unsafe fn init(
         this: NonNull<Self>,
         ctx: Option<&'static ContextData>,
@@ -657,7 +656,7 @@ impl ShellInterpreter {
         for (key, value) in env_loader.map.map.iter() {
             export_env.insert(EnvStr::init_slice(key), EnvStr::init_slice(&value.value));
         }
-        let interp = AliasableBox::new(Self::new(evtloop, core::ptr::null_mut(), 0));
+        let interp = AliasableBox::new(Self::new(evtloop, None, 0));
         // SAFETY: the box keeps it in place and is never borrowed mutably.
         let result =
             unsafe { Self::init(interp.as_non_null(), Some(ctx), shargs, export_env, cwd) };
@@ -747,12 +746,6 @@ macro_rules! shell_state_dispatch {
 }
 
 impl<'a> Interpreter<'a> {
-    /// The owning [`ShellInterpreter`], for ctx slots.
-    #[inline]
-    pub(crate) fn as_ctx_ptr(&self) -> NonNull<ShellInterpreter> {
-        self.shell_interp
-    }
-
     // ── arena management ───────────────────────────────────────────────────
 
     /// Allocate a fresh slot in the node arena and return its id. Reuses
@@ -1042,25 +1035,15 @@ impl ShellInterpreter {
         }
     }
 
-    pub(crate) fn on_writer_io(&self, id: IOWriterId, event: bun_io::IoEvent) {
-        if let Some(y) =
-            self.with_interp(|interp| interp.io_writers[id].on_io(&mut interp.shells, event))
-        {
-            let mut stack = DeferredStack::new();
-            stack.push(Deferred::WritePending(id));
-            self.run_yield(y, stack);
-        }
-    }
-
     pub(crate) fn run_yield(&self, mut y: Yield, mut stack: DeferredStack) {
         let _keep = self.ensure_still_alive();
         let mut rejection = None;
-        while let Some(action) = (self.with_interp(|interp| y.run(interp, &mut stack))).flatten() {
+        while let Some(Some(action)) = self.with_interp(|interp| y.run(interp, &mut stack)) {
             let (node, result) = match action {
                 ReentrantAction::Throw(node, err) => (node, Err(self.throw(*err))),
-                ReentrantAction::StartBuiltinWithJsBuf(cmd, jsbuf, redirect) => (
+                ReentrantAction::StartBuiltinWithJsBuf(cmd, redirect) => (
                     cmd,
-                    Builtin::start_with_jsbuf_redirection(self, cmd, jsbuf, redirect),
+                    Builtin::start_with_jsbuf_redirection(self, cmd, redirect),
                 ),
                 ReentrantAction::Spawn(cmd) => (cmd, Cmd::spawn(self, cmd)),
                 ReentrantAction::TickMiniLoop(cmd) => (cmd, Ok(Yes::tick_mini_loop(self, cmd))),
@@ -1086,10 +1069,7 @@ impl ShellInterpreter {
 
     /// Whose script the shell's completion continues.
     fn task_context(&self) -> bun_jsc::ContextId {
-        match self.context.get() {
-            Some(context) => context,
-            None => bun_jsc::ContextId::NONE,
-        }
+        self.context.get().unwrap_or(bun_jsc::ContextId::NONE)
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -1108,14 +1088,7 @@ impl ShellInterpreter {
     /// `None` on the mini-event-loop path.
     #[inline]
     pub(crate) fn global_this_ref(&self) -> Option<&crate::jsc::JSGlobalObject> {
-        let g = self.global_this;
-        if g.is_null() {
-            return None;
-        }
-        // `JSGlobalObject` is an `opaque_ffi!` ZST — `opaque_ref` is the safe
-        // deref. `global_this` is set exactly once by `create_shell_interpreter`
-        // from a live `&JSGlobalObject`; the global is process-lifetime.
-        Some(crate::jsc::JSGlobalObject::opaque_ref(g))
+        self.global_this.as_deref()
     }
 
     /// The `idx`th JS object interpolated into the script.
@@ -1156,7 +1129,7 @@ impl Interpreter<'_> {
     /// `captured` slot is also wired to `_buffered_stdout/err` so
     /// `Bun.$` callers can read it back.
     fn setup_io_before_run(&mut self) -> bun_sys::Result<()> {
-        if self.flags.quiet() {
+        if self.quiet {
             return Ok(());
         }
 
@@ -1224,10 +1197,7 @@ impl Interpreter<'_> {
         debug_assert_eq!(self.free_list.len(), self.nodes.len());
         debug_assert_eq!(self.shells.count(), 1);
         debug_assert_eq!(self.io_readers.count(), 1);
-        debug_assert_eq!(
-            self.io_writers.count(),
-            if self.flags.quiet() { 0 } else { 2 }
-        );
+        debug_assert_eq!(self.io_writers.count(), if self.quiet { 0 } else { 2 });
         Yield::Action(ReentrantAction::Finish(exit_code))
     }
 
@@ -1238,12 +1208,12 @@ impl Interpreter<'_> {
     /// A node threw a JS error (`fail`): the script winds down and `finish` settles nothing.
     #[inline]
     pub(crate) fn failed(&self) -> bool {
-        self.flags.failed()
+        self.failed
     }
 
     /// Node `id` threw and holds nothing in flight: kill the subprocesses and wind the tree down.
     pub(crate) fn fail(&mut self, id: NodeId) -> Yield {
-        self.flags.set_failed(true);
+        self.failed = true;
         for node in &self.nodes {
             if let Node::Cmd(cmd) = node {
                 cmd.kill_subprocess();
@@ -1331,7 +1301,7 @@ impl ShellInterpreter {
     }
 
     /// Runs JS, which can turn the event loop and free any node of the script.
-    pub(crate) fn reject(&self, (reject, error): Rejection) {
+    fn reject(&self, (reject, error): Rejection) {
         let global_this = self
             .global_this_ref()
             .expect("take_failure returned a rejection on the Js path");
@@ -1672,7 +1642,7 @@ impl ShellExecEnvs<'_> {
             __cwd: env.__cwd,
             cwd_fd,
         };
-        Ok(self.insert_with(|_| duped))
+        Ok(self.insert(duped))
     }
 }
 
@@ -1812,7 +1782,7 @@ impl<'a> ShellExecEnv<'a> {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// ShellArgs (AST + arena)
+// ShellArgs (arena, AST and `Interpreter`)
 // ────────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct ShellArgs(AliasableBox<ShellArgsInner>);
@@ -1848,7 +1818,7 @@ pub(crate) use bun_event_loop::EventLoopHandle;
 // ────────────────────────────────────────────────────────────────────────────
 
 pub(crate) use crate::shell::io_reader::IOReader;
-pub(crate) use crate::shell::io_writer::{self, IOWriter};
+pub(crate) use crate::shell::io_writer::IOWriter;
 pub(crate) use crate::shell::states::assigns::AssignCtx;
 
 /// Open `/dev/null` `O_RDWR`
@@ -2184,7 +2154,7 @@ pub(crate) fn parse_flags<'a, O: FlagParser>(
     }
     let mut idx = 0usize;
     while idx < args.len() {
-        let flag = bun_core::ffi::slice_to_nul(&args[idx]);
+        let flag = bun_core::slice_to_nul(&args[idx]);
         match parse_one_flag(opts, flag) {
             ParseFlagResult::Done => return Ok(Some(&args[idx..])),
             ParseFlagResult::ContinueParsing => {}
@@ -2481,7 +2451,7 @@ impl ShellTask {
             poster: None,
             event_loop,
             keep_alive: Default::default(),
-            interp: interp.as_ctx_ptr(),
+            interp: interp.shell_interp,
             concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(event_loop),
         }
     }
@@ -2719,7 +2689,7 @@ pub(crate) fn create_shell_interpreter<'a>(
     let export_env = export_env.unwrap_or_else(EnvMap::init);
     let this_value = ShellInterpreter::new(
         event_loop,
-        std::ptr::from_ref::<crate::jsc::JSGlobalObject>(global).cast_mut(),
+        Some(GlobalRef::new(global)),
         shargs.memory_cost() + export_env.memory_cost(),
     )
     .into_js(&cx.heap);
@@ -2732,7 +2702,7 @@ pub(crate) fn create_shell_interpreter<'a>(
         Ok(()) => unsafe { payload.as_ref() },
         Err(e) => return Err(ShellErr::new_sys(&e).throw_js(global)),
     };
-    interp.with_interp(|interp| interp.flags.set_quiet(quiet));
+    interp.with_interp(|interp| interp.quiet = quiet);
 
     let js_value = this_value.to_js();
     js::resolve_set_cached(js_value, global, resolve.to_js());

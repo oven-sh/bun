@@ -124,9 +124,7 @@ impl<'a> Expansion<'a> {
         loop {
             let event_loop = interp.event_loop;
             let command_ctx = interp.command_ctx;
-            let Node::Expansion(me) = &mut interp.nodes[this.idx()] else {
-                unreachable!()
-            };
+            let me = interp.nodes[this.idx()].as_expansion_mut();
             match me.state {
                 ExpansionState::Idle => {
                     me.state = ExpansionState::Walking;
@@ -410,13 +408,10 @@ impl<'a> Expansion<'a> {
     /// glob walk for the assembled pattern in `current_out`.
     fn transition_to_glob_state(interp: &mut Interpreter<'a>, this: NodeId) -> Yield {
         use crate::shell::dispatch_tasks::ShellGlobTask;
-        let pattern: Vec<u8>;
-        {
-            let me = interp.as_expansion_mut(this);
-            me.state = ExpansionState::Glob;
-            pattern = Self::neutralize_glob_metachars(&me.current_out, &me.meta_offsets);
-        }
-        let cwd = interp.shells[interp.as_expansion(this).shell].cwd();
+        let me = interp.nodes[this.idx()].as_expansion_mut();
+        me.state = ExpansionState::Glob;
+        let pattern = Self::neutralize_glob_metachars(&me.current_out, &me.meta_offsets);
+        let cwd = interp.shells[me.shell].cwd();
         let walker = match bun_glob::BunGlobWalkerZ::init_with_cwd(
             &pattern, cwd, false, false, false, false, false, None,
         ) {

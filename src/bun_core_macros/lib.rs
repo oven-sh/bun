@@ -214,7 +214,7 @@ pub fn comptime_string_set_impl(input: TokenStream) -> TokenStream {
 
 /// Implements `bun_ptr::RefCounted` over the field named `ref_count`.
 ///
-/// `#[ref_count(destroy = path, did_ref = path, will_deref = path)]` on the
+/// `#[ref_count(destroy = path, did_ref = path, will_release = path)]` on the
 /// struct overrides the trait methods of those names.
 #[proc_macro_derive(RefCounted, attributes(ref_count))]
 pub fn derive_ref_counted(input: TokenStream) -> TokenStream {
@@ -227,14 +227,14 @@ fn expand_ref_counted(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStre
     let name = &input.ident;
     let (impl_g, ty_g, where_g) = input.generics.split_for_impl();
 
-    let count = match &input.data {
+    let field = match &input.data {
         Data::Struct(s) => s
             .fields
             .iter()
             .find(|f| f.ident.as_ref().is_some_and(|i| i == "ref_count")),
         _ => None,
     };
-    let Some(syn::Field { ty: count, .. }) = count else {
+    let Some(syn::Field { ty: count_ty, .. }) = field else {
         return Err(syn::Error::new_spanned(
             name,
             "RefCounted: expected a struct with a `ref_count` field",
@@ -242,14 +242,15 @@ fn expand_ref_counted(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStre
     };
 
     let mut hooks = Vec::new();
-    for attr in input.attrs.iter() {
-        if !attr.path().is_ident("ref_count") {
-            continue;
-        }
+    for attr in input
+        .attrs
+        .iter()
+        .filter(|a| a.path().is_ident("ref_count"))
+    {
         attr.parse_nested_meta(|meta| {
-            let argument = if meta.path.is_ident("destroy") {
+            let this_ty = if meta.path.is_ident("destroy") {
                 quote! { ::bun_ptr::AliasableBox<Self> }
-            } else if meta.path.is_ident("did_ref") || meta.path.is_ident("will_deref") {
+            } else if meta.path.is_ident("did_ref") || meta.path.is_ident("will_release") {
                 quote! { &::bun_ptr::RefPtr<Self> }
             } else {
                 return Err(meta.error("unknown ref_count attribute key"));
@@ -258,7 +259,7 @@ fn expand_ref_counted(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStre
             let path: Expr = meta.value()?.parse()?;
             hooks.push(quote! {
                 #[inline]
-                fn #hook(this: #argument) {
+                fn #hook(this: #this_ty) {
                     (#path)(this)
                 }
             });
@@ -268,11 +269,11 @@ fn expand_ref_counted(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStre
 
     Ok(quote! {
         // SAFETY: `OFFSET` is the offset of the `ref_count` field, which has this type.
-        unsafe impl #impl_g ::bun_ptr::IntrusiveField<#count> for #name #ty_g #where_g {
+        unsafe impl #impl_g ::bun_ptr::IntrusiveField<#count_ty> for #name #ty_g #where_g {
             const OFFSET: usize = ::core::mem::offset_of!(Self, ref_count);
         }
         impl #impl_g ::bun_ptr::RefCounted for #name #ty_g #where_g {
-            type Count = #count;
+            type Count = #count_ty;
             #(#hooks)*
         }
     })

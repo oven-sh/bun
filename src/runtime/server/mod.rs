@@ -1824,7 +1824,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         httplog!("scheduleDeinit");
 
         if server.vm().is_shutting_down() {
-            // No more ticks. `TERMINATED` means `app.close()` already ran, so destroying it can't orphan a keep-alive socket.
+            // No more ticks. Leak it if `app.close()` has not run (`TERMINATED`) or `deinit_running` is set; otherwise it drops here.
             if !server.flags.get().contains(ServerFlags::TERMINATED) || server.deinit_running.get()
             {
                 server.into_raw();

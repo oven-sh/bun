@@ -82,11 +82,6 @@ pub(crate) struct FileSink {
     closes_with_test_file: Cell<bool>,
 }
 
-// `bun.ptr.RefCount(FileSink, "ref_count", deinit, .{})` — intrusive single-thread
-// refcount derived via #[derive(RefCounted)] above. `*FileSink` crosses FFI
-// (JSSink wrapper, `@fieldParentPtr`, `b.promisePtr`), so this stays intrusive
-// rather than `Rc<T>`.
-
 /// Count of live native FileSink instances. Incremented at allocation,
 /// decremented in `deinit`. Exposed to tests via `bun:internal-for-testing`
 /// so leak tests can detect native FileSink leaks that are invisible to
@@ -1382,7 +1377,7 @@ impl bun_event_loop::Taskable for FileSink {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FlushPendingFileSinkTask;
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: the ref that was queued with the task.
-        drop(unsafe { RefPtr::from_raw(this) });
+        unsafe { RefPtr::decrement_strong_count(this) };
     }
     /// Flushes what the sink has buffered.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {

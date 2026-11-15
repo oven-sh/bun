@@ -825,7 +825,7 @@ pub trait SourceContext: Sized {
 // adjacent fields as the loader, returning empty bodies.
 #[repr(C)]
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(did_ref = Self::did_ref, will_deref = Self::will_deref, destroy = Self::destroy)]
+#[ref_count(did_ref = Self::did_ref, will_release = Self::will_release, destroy = Self::destroy)]
 pub struct NewSource<C: SourceContext> {
     pub context: C,
     pub cancelled: Cell<bool>,
@@ -843,7 +843,7 @@ pub struct NewSource<C: SourceContext> {
     /// wrapper. Starts `Weak` (set in [`Self::to_readable_stream`]), is
     /// [`JsRef::upgrade`]d to `Strong` in [`Self::did_ref`] while a
     /// native I/O ref is held (FileReader `io_ref`), and
-    /// [`JsRef::downgrade`]d back to `Weak` in [`Self::will_deref`] when
+    /// [`JsRef::downgrade`]d back to `Weak` in [`Self::will_release`] when
     /// only the wrapper's own ref remains. [`Self::finalize`] flips it to
     /// `Finalized` so [`Self::on_close`] reads `None` instead of a
     /// dead-but-unswept cell.
@@ -1087,7 +1087,7 @@ impl<C: SourceContext> NewSource<C> {
         }
     }
 
-    fn will_deref(this: &bun_ptr::RefPtr<Self>) {
+    fn will_release(this: &bun_ptr::RefPtr<Self>) {
         if this.ref_count.get() == 2 {
             // Only the JS wrapper's own ref will remain: drop the Strong root so that it is collectable again.
             this.this_jsvalue.with_mut(jsc::JsRef::downgrade);

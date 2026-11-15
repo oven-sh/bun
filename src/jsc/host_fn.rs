@@ -150,7 +150,8 @@ pub unsafe fn host_fn_finalize_ref_counted<T: bun_ptr::RefCounted>(
     f: impl FnOnce(&T),
 ) {
     // SAFETY: fn contract.
-    f(&*unsafe { bun_ptr::RefPtr::from_raw(this) });
+    let this = unsafe { bun_ptr::RefPtr::from_raw(this) };
+    f(&this);
 }
 
 /// Convert the return value of a function returning an error union into a maybe-empty `JSValue`.

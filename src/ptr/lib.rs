@@ -7,6 +7,7 @@
 // Tests lock std's Mutex: bun_threading depends on this crate.
 #![cfg_attr(test, allow(clippy::disallowed_types))]
 #![warn(unused_must_use)]
+#![feature(abort_immediate)] // a trap, as in `Rc::clone`: callers of `process::abort` are inlined less
 //! The `ptr` module contains smart pointer types that are used throughout Bun.
 //!
 //! Per PORTING.md §Pointers, most consumers of `bun.ptr.*` map directly to std
@@ -654,8 +655,8 @@ impl<T> Default for DetachablePtr<T> {
 // The returned pointer carries **shared (read-only) provenance** — it is
 // derived from `&self`, so writing through it directly is UB. The `*mut`
 // spelling exists purely to match C-shaped signatures (`void *`, uSockets
-// ext slots, `RefPtr::init_ref`, vtable thunks, intrusive
-// `RefCount::deref`). Consumers must deref as `&*p` and route mutation
+// ext slots, `RefPtr::init_ref`, vtable thunks).
+// Consumers must deref as `&*p` and route mutation
 // through `Cell` / `JsCell` / `UnsafeCell` interior-mutability fields.
 //
 // Blanket-implemented for all `T`: bring the trait into scope with
@@ -670,7 +671,7 @@ pub trait AsCtxPtr {
     /// `RefPtr::init_ref` ctx slots. The closures/trampolines deref it as shared
     /// (`&*p`) — every method they reach is `&self` post-R-2, so no write
     /// provenance is required; the `*mut` spelling is purely to match the
-    /// `HasAutoFlush` / `RefCount` ABI.
+    /// `HasAutoFlush` ABI.
     #[inline(always)]
     fn as_ctx_ptr(&self) -> *mut Self
     where

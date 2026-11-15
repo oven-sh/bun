@@ -1577,12 +1577,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(value) = self.this_value.get().try_get() {
             return value;
         }
-        self.create_this_value(global)
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn create_this_value(&self, global: &JSGlobalObject) -> JSValue {
         if matches!(self.this_value.get(), JsRef::Finalized) {
             // The JS wrapper was already garbage-collected. Creating a new one
             // here would result in a second `finalize` later.
@@ -3938,7 +3932,8 @@ impl DuplexUpgradeContext {
     #[inline]
     pub(in crate::socket) fn debug_assert_kept_alive(&self) {
         debug_assert!(
-            self.ref_count.get() > u32::from(self.connection_ref.get().is_some()),
+            self.task_event.get() != EventState::Close
+                && self.ref_count.get() > u32::from(self.connection_ref.get().is_some()),
             "DuplexUpgradeContext dispatch with no keep_alive() on the stack"
         );
     }

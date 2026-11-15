@@ -7,7 +7,7 @@ use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, Output};
 use bun_errno::SystemErrno;
-use bun_ptr::{AliasableBox, RefPtr};
+use bun_ptr::{AliasableBox, RefCount, RefPtr};
 use bun_threading::{Guarded, UnboundedQueue};
 use bun_uws as uws;
 
@@ -138,7 +138,7 @@ impl HttpThread {
     fn new() -> Self {
         Self {
             http_context: NewHttpContext::<false> {
-                ref_count: bun_ptr::RefCount::init(),
+                ref_count: RefCount::init(),
                 pending_sockets: crate::http_context::LazyPool::new(),
                 pending_unix_sockets: crate::http_context::LazyPool::new(),
                 park_seq: 0,
@@ -149,7 +149,7 @@ impl HttpThread {
                 session_cache: crate::session_cache::SessionCache::new(),
             },
             https_context: NewHttpContext::<true> {
-                ref_count: bun_ptr::RefCount::init(),
+                ref_count: RefCount::init(),
                 pending_sockets: crate::http_context::LazyPool::new(),
                 pending_unix_sockets: crate::http_context::LazyPool::new(),
                 park_seq: 0,
@@ -394,7 +394,7 @@ impl HttpThread {
 
                 // Cache miss - create new SSL context
                 let ctx = RefPtr::new(NewHttpContext::<true> {
-                    ref_count: bun_ptr::RefCount::init(),
+                    ref_count: RefCount::init(),
                     pending_sockets: crate::http_context::LazyPool::new(),
                     pending_unix_sockets: crate::http_context::LazyPool::new(),
                     park_seq: 0,

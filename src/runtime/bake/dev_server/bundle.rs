@@ -279,8 +279,6 @@ impl DevServer {
 
     pub(crate) fn on_plugins_rejected(&mut self) -> crate::Result<()> {
         self.plugin_state = PluginState::Err;
-        // Completing the last request on a stopped server frees `self`, so count as a pending request until the end.
-        let _pending = self.server.map(PendingRequest::new);
         while let Some(item) = self.next_bundle.requests.pop_first() {
             item.take_handler().fail();
         }

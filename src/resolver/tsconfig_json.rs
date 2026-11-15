@@ -11,109 +11,6 @@ pub mod options {
     pub use bun_options_types::jsx;
 }
 
-/// Selects strict JSON vs JSONC (comments + trailing commas) parsing in
-/// `JsonCache::parse_json`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum JsonMode {
-    Json,
-    Jsonc,
-}
-
-/// JSON parse cache. Lives below `bun_bundler::cache` so the resolver names it
-/// directly — `bun_parsers::json_parser` is lower-tier than the resolver, so no
-/// cycle exists.
-///
-/// The arena is lazy-initialized on first `parse()`. `Resolver::for_worker`
-/// creates one `CacheSet` (and thus one `JsonCache`) per bundler worker thread,
-/// but those workers share the global `DirInfo` cache and almost never call
-/// `parse_*` themselves — eagerly constructing `Arena::new()` here costs one
-/// `mi_heap_new` per worker (≈11 empty heaps on a typical build/elysia run).
-pub struct JsonCache {
-    bump: Option<bun_alloc::Arena>,
-}
-
-impl JsonCache {
-    pub(crate) fn init() -> JsonCache {
-        JsonCache { bump: None }
-    }
-
-    #[inline]
-    fn parse(
-        &mut self,
-        log: &bun_ast::Log,
-        source: &bun_ast::Source,
-        func: fn(
-            &bun_ast::Source,
-            &bun_ast::Log,
-            &bun_alloc::Arena,
-        ) -> Result<bun_ast::Expr, bun_parsers::Error>,
-    ) -> Result<Option<bun_ast::Expr>, crate::Error> {
-        let temp_log = bun_ast::Log::init();
-        let bump = self.bump.get_or_insert_with(bun_alloc::Arena::new);
-        let result = func(source, &temp_log, bump).ok();
-        temp_log.append_to(log);
-        Ok(result)
-    }
-
-    #[inline]
-    fn parse_rows(
-        &mut self,
-        log: &bun_ast::Log,
-        source: &bun_ast::Source,
-        func: fn(
-            &bun_ast::Source,
-            &bun_ast::Log,
-        ) -> Result<json_parser::ParsedJson, bun_parsers::Error>,
-    ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
-        let temp_log = bun_ast::Log::init();
-        let result = func(source, &temp_log).ok();
-        temp_log.append_to(log);
-        Ok(result)
-    }
-
-    /// Parses tsconfig.json/jsconfig.json source as JSONC into the immutable row AST.
-    #[inline]
-    pub(crate) fn parse_tsconfig(
-        &mut self,
-        log: &bun_ast::Log,
-        source: &bun_ast::Source,
-    ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
-        self.parse_rows(log, source, json_parser::ParsedJson::parse_jsonc)
-    }
-
-    /// Parses package.json source into the immutable row AST.
-    #[inline]
-    pub(crate) fn parse_package_json(
-        &mut self,
-        log: &bun_ast::Log,
-        source: &bun_ast::Source,
-    ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
-        self.parse_rows(log, source, json_parser::ParsedJson::parse_package_json)
-    }
-
-    /// Parses JSON source into the cache arena using `mode` to pick strict
-    /// JSON vs JSONC.
-    #[inline]
-    pub fn parse_json(
-        &mut self,
-        log: &bun_ast::Log,
-        source: &bun_ast::Source,
-        mode: JsonMode,
-    ) -> Result<Option<bun_ast::Expr>, crate::Error> {
-        // tsconfig.* and jsconfig.* files are JSON files, but they are not valid JSON files.
-        // They are JSON files with comments and trailing commas.
-        // Sometimes tooling expects this to work.
-        self.parse(
-            log,
-            source,
-            match mode {
-                JsonMode::Jsonc => json_parser::parse_ts_config,
-                JsonMode::Json => json_parser::parse_utf8,
-            },
-        )
-    }
-}
-
 // Heuristic: you probably don't have 100 of these
 // Probably like 5-10
 // Array iteration is faster and deterministically ordered in that case.
@@ -361,7 +258,6 @@ impl TSConfigJSON {
     pub fn parse(
         log: &bun_ast::Log,
         source: &bun_ast::Source,
-        json_cache: &mut JsonCache,
     ) -> Result<Option<Box<TSConfigJSON>>, crate::Error> {
         bun_removable_features::removable_definition!(PackageFiles, Self::parse);
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
@@ -373,11 +269,13 @@ impl TSConfigJSON {
         // emulation of what the TypeScript compiler does (e.g. string escape
         // behavior may also be different).
 
-        let parsed = match json_cache.parse_tsconfig(log, source).ok().flatten() {
-            Some(p) => p,
-            None => return Ok(None),
+        let arena = bun_ast::AstArena::new();
+        let temp_log = bun_ast::Log::init();
+        let parsed = json_parser::ParsedJson::parse_jsonc(source, &temp_log, &arena);
+        temp_log.append_to(log);
+        let Ok(parsed) = parsed else {
+            return Ok(None);
         };
-        let json: bun_ast::Expr = parsed.root;
 
         bun_analytics::features::tsconfig.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
@@ -398,8 +296,8 @@ impl TSConfigJSON {
         // `jsxImportSource`) is preserved.
         let mut extends_value: Option<&bun_ast::E::JsonValue> = None;
         let mut compiler_opts: Option<&bun_ast::E::JsonValue> = None;
-        if let bun_ast::ExprData::EObjectJSON(obj) = &json.data {
-            for property in obj.get().properties() {
+        if let Some(obj) = parsed.root().as_e_object_json() {
+            for property in obj.properties() {
                 match property.key.slice() {
                     b"extends" if extends_value.is_none() => extends_value = Some(&property.value),
                     b"compilerOptions" if compiler_opts.is_none() => {

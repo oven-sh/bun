@@ -445,6 +445,12 @@ impl MimallocArena {
         }
     }
 
+    /// `false` for [`Self::borrowing_default`].
+    #[inline]
+    pub fn owns_heap(&self) -> bool {
+        self.owns
+    }
+
     /// Raw `mi_heap_t*`.
     ///
     /// This is the sole accessor for the `heap` field. A `&Heap`-returning

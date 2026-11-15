@@ -120,13 +120,6 @@ impl Drop for ASTMemoryAllocator {
 }
 
 impl ASTMemoryAllocator {
-    /// Construct with an **owned** arena (recycled via the per-thread pool).
-    /// Callers whose `fallback` arena outlives the allocator should use
-    /// [`Self::borrowing`] instead.
-    pub fn new(_fallback: &Arena) -> Self {
-        Self::default()
-    }
-
     /// Construct an allocator that routes every allocation into `arena`
     /// instead of owning a heap of its own. `arena` must outlive the returned
     /// allocator (and every `Scope` derived from it); the caller owns its
@@ -233,38 +226,6 @@ impl ASTMemoryAllocator {
         ast_scope
     }
 
-    pub fn reset(&mut self) {
-        // Skip the `mi_heap_destroy` + `mi_heap_new` when already pristine.
-        if self.arena_dirty {
-            // The AST state's spill pointer targets the arena's heap; null it
-            // before that heap is destroyed.
-            self.reset_ast_state();
-            if self.external_arena.is_null() {
-                self.arena.reset();
-            }
-            self.arena_dirty = false;
-        }
-    }
-
-    /// Per-iteration reset for hot reuse paths (`initialize_mini_store`'s
-    /// per-workspace-child re-entry). Thin delegate to
-    /// [`bun_alloc::Arena::reset_retain_with_limit`].
-    pub fn reset_retain_with_limit(&mut self, limit: usize) {
-        if self.arena_dirty {
-            debug_assert!(
-                self.external_arena.is_null(),
-                "reset_retain_with_limit on a borrowing ASTMemoryAllocator"
-            );
-            // The AstAlloc state follows the arena's retain-or-recycle
-            // decision: callers like `--define` hold `StoreRef`s across a
-            // retained reset, so only clear it when the heap is recycled.
-            if !self.arena.reset_retain_with_limit(limit) {
-                self.reset_ast_state();
-            }
-            self.arena_dirty = false;
-        }
-    }
-
     pub fn push(&mut self) {
         // `push()` arms `arena` for allocation (the bundler workers allocate
         // directly into it across many modules with no intervening `reset()`).
@@ -287,7 +248,7 @@ impl ASTMemoryAllocator {
             self.previous_ast_state = ast_alloc::swap_state(Some(state));
             self.ast_pushed = true;
         } else {
-            // Re-arming push (no intervening `pop()`, e.g. `MiniStore`):
+            // Re-arming push (no intervening `pop()`):
             // re-publish the override and re-point the spill at the (possibly
             // recycled) arena heap.
             crate::set_data_store_override(arena);

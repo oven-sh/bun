@@ -61,7 +61,6 @@ pub(super) fn package_json_entry_or_crash<'a>(
         path,
         GetJSONOptions {
             guess_indentation: true,
-            ..Default::default()
         },
     ) {
         GetResult::Entry(entry) => return entry,

@@ -29,8 +29,6 @@ use super::package_json_editor::{self as PackageJSONEditor, EditOptions};
 use super::update_package_json_and_install::{package_json_entry_or_crash, save_entry};
 use super::{PackageManager, Subcommand, UpdateRequest};
 
-type ExprDisabler = bun_ast::expr::Disabler;
-
 type RootEntry = (Box<[u8]>, Box<[u8]>);
 
 #[derive(Default)]
@@ -169,7 +167,7 @@ fn refuse_declared(literal: &[u8], target: &[u8], name: &[u8], flag: &[u8]) -> !
     Global::crash();
 }
 
-fn estring(arena: &bun_alloc::Arena, bytes: &[u8]) -> Expr {
+fn estring(arena: &bun_ast::AstArena, bytes: &[u8]) -> Expr {
     Expr::allocate(
         arena,
         E::EString::init(arena.alloc_slice_copy(bytes)),
@@ -187,7 +185,7 @@ fn reference_literal<'a>(arena: &'a bun_alloc::Arena, name: &[u8]) -> &'a [u8] {
     arena.alloc_slice_copy(&literal)
 }
 
-fn set_property(mut object: Expr, arena: &bun_alloc::Arena, key: &[u8], value: Expr) {
+fn set_property(mut object: Expr, arena: &bun_ast::AstArena, key: &[u8], value: Expr) {
     let obj = object
         .data
         .e_object_mut()
@@ -201,7 +199,7 @@ fn set_property(mut object: Expr, arena: &bun_alloc::Arena, key: &[u8], value: E
 fn object_property(
     mut container: Expr,
     key: &[u8],
-    create: Option<&bun_alloc::Arena>,
+    create: Option<&bun_ast::AstArena>,
 ) -> Option<Expr> {
     let obj = container.data.e_object_mut()?;
     let existing = obj.as_property(key);
@@ -257,7 +255,7 @@ fn entries_object(
     root: &Expr,
     group: &[u8],
     dep: &[u8],
-    create: Option<&bun_alloc::Arena>,
+    create: Option<&bun_ast::AstArena>,
 ) -> Option<Expr> {
     let Some(container) = catalogs_container(root) else {
         if create.is_some() {
@@ -873,7 +871,6 @@ pub(crate) fn edit_root_before_install(
     let quiet = manager.options.log_level == LogLevel::Silent;
     let mut replaced: Vec<(usize, Box<[u8]>)> = Vec::new();
     {
-        let _guard = ExprDisabler::scope();
         let arena = &manager.ast_arena;
         let adds = &mut manager.catalog_add.adds;
 
@@ -984,7 +981,6 @@ pub(crate) fn edit_root_after_install(
     if adds.is_empty() {
         return Ok(false);
     }
-    let _guard = ExprDisabler::scope();
 
     let arena = &manager.ast_arena;
     let exact = manager.options.enable.exact_versions();

@@ -842,7 +842,7 @@ fn package_json_declares_dependencies(manager: &mut PackageManager) -> crate::Re
         manager,
         log,
         &source,
-        json,
+        bun_ast::JsonView::from(&json),
         &mut resolver,
         Features::main(),
     ) {

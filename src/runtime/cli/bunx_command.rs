@@ -8,7 +8,7 @@ use crate::cli::{self, Command};
 use crate::run_command::{ConfigureEnvOptions, RunCommand as Run};
 
 use bun_alloc::AllocError;
-use bun_ast::ExprData;
+use bun_ast::E::JsonValue;
 use bun_bundler::Transpiler;
 use bun_core::{self, Global, Output};
 use bun_core::{ZBox, ZStr, strings};
@@ -369,14 +369,13 @@ impl BunxCommand {
         let package_json_contents = package_json_bytes.as_slice();
         let source = bun_ast::Source::init_path_string(subpath_z.as_bytes(), package_json_contents);
 
-        bun_ast::initialize_store();
-
-        let parsed = json::ParsedJson::parse_package_json(&source, transpiler.log())?;
-        let expr = parsed.root;
+        let arena = bun_ast::AstArena::new();
+        let parsed = json::ParsedJson::parse_package_json(&source, transpiler.log(), &arena)?;
+        let expr = parsed.root();
 
         if let Some(bin_expr) = expr.get(b"bin") {
-            match &bin_expr.data {
-                ExprData::EObjectJSON(object) => {
+            match bin_expr.as_json_value() {
+                Some(JsonValue::Object(object)) => {
                     let mut first: Option<PackageBin> = None;
                     for prop in object.get().properties() {
                         let bin_name = prop.key.slice();
@@ -399,7 +398,7 @@ impl BunxCommand {
                         return Ok(bin);
                     }
                 }
-                ExprData::EString(_) => {
+                Some(JsonValue::String(_)) => {
                     // The command name of a scoped `name` (`@scope/pkg`) is its unscoped portion.
                     if let Some(name_expr) = expr.get(b"name")
                         && let Some(name) = name_expr.as_utf8_string_literal()
@@ -418,8 +417,8 @@ impl BunxCommand {
 
         // Same values the bin linker refuses to link from (`bin.rs`, `Tag::Dir`).
         if let Some(dirs) = expr.as_property(b"directories")
-            && let Some(bin_prop) = dirs.expr.as_property(b"bin")
-            && let Some(dir_name) = bin_prop.expr.as_utf8_string_literal()
+            && let Some(bin_prop) = dirs.value.as_property(b"bin")
+            && let Some(dir_name) = bin_prop.value.as_utf8_string_literal()
             && !dir_name.is_empty()
             && !bun_install::bin::bin_target_escapes_package_dir(dir_name)
         {
@@ -624,10 +623,10 @@ impl BunxCommand {
                 let Some(dependencies) = root.get(kind) else {
                     continue;
                 };
-                let ExprData::EObjectJSON(dependencies) = &dependencies.data else {
+                let Some(dependencies) = dependencies.as_e_object_json() else {
                     continue;
                 };
-                for dependency in dependencies.get().properties().iter() {
+                for dependency in dependencies.properties().iter() {
                     let name = dependency.key.slice();
                     // `node_modules` can be a link to a folder of another name, which is the name in `real`.
                     let Some((parent, _)) =
@@ -651,13 +650,14 @@ impl BunxCommand {
     fn read_package_json<T>(
         transpiler: &mut Transpiler,
         path: &[u8],
-        read: impl FnOnce(&bun_ast::Expr) -> T,
+        read: impl FnOnce(bun_ast::JsonView<'_>) -> T,
     ) -> Option<T> {
         let contents = bun_sys::File::read_from(Fd::cwd(), path).ok()?;
         let source = bun_ast::Source::init_path_string(path, contents.as_slice());
-        bun_ast::initialize_store();
-        let parsed = json::ParsedJson::parse_package_json(&source, transpiler.log()).ok()?;
-        Some(read(&parsed.root))
+        let arena = bun_ast::AstArena::new();
+        let parsed =
+            json::ParsedJson::parse_package_json(&source, transpiler.log(), &arena).ok()?;
+        Some(read(parsed.root()))
     }
 
     fn tree_state(bunx_cache_dir: &[u8]) -> Tree {

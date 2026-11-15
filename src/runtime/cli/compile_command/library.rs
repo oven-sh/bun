@@ -4,7 +4,7 @@ mod package_files;
 mod typed_files;
 
 use bstr::BStr;
-use bun_alloc::Arena;
+use bun_ast::AstArena;
 use bun_ast::Expr;
 use bun_core::{Global, Output};
 use bun_options_types::context::ContextData;
@@ -91,11 +91,10 @@ impl Project {
     }
 
     // The result refers to `self` and to `arena`.
-    fn parse_package_json(&self, arena: &Arena) -> Result<Option<Expr>, LibraryError> {
+    fn parse_package_json(&self, arena: &AstArena) -> Result<Option<Expr>, LibraryError> {
         let Some(file) = &self.package_json else {
             return Ok(None);
         };
-        bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(&file.path[..], &file.contents[..]);
         let log = bun_ast::Log::init();
         match bun_parsers::json::parse_package_json_utf8(&source, &log, arena) {
@@ -136,7 +135,7 @@ pub(super) fn find_default_library_entry_points(
     let project = Project::find(working_directory);
     let outdir = absolute_path(working_directory, outdir);
     check_outdir(&project, &outdir)?;
-    let arena = Arena::new();
+    let arena = AstArena::new();
     let package_json = project.parse_package_json(&arena)?;
     let found = entry_points::find_entry_points(&project.directory, package_json.as_ref(), &outdir);
     if found.is_empty() {
@@ -162,7 +161,7 @@ fn find_external_packages(
             entry_point: entry_point.to_vec(),
         });
     }
-    let arena = Arena::new();
+    let arena = AstArena::new();
     let mut packages: Vec<Box<[u8]>> = Vec::new();
     if let Some(package_json) = project.parse_package_json(&arena)? {
         for field in EXTERNAL_PACKAGE_FIELDS {

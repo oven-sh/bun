@@ -243,7 +243,7 @@ impl PmPkgCommand {
                     };
                     object.put(cli_arena(), label, *value)?;
                 }
-                Expr::init(object, Loc::EMPTY)
+                Expr::allocate(cli_arena(), object, Loc::EMPTY)
             }
         };
 
@@ -596,8 +596,10 @@ impl PmPkgCommand {
                 );
                 Global::exit(1);
             }
-            _ if next.creates_array() => Expr::init(E::Array::default(), Loc::EMPTY),
-            _ => Expr::init(E::Object::default(), Loc::EMPTY),
+            _ if next.creates_array() => {
+                Expr::allocate(cli_arena(), E::Array::default(), Loc::EMPTY)
+            }
+            _ => Expr::allocate(cli_arena(), E::Object::default(), Loc::EMPTY),
         }
     }
 
@@ -605,7 +607,7 @@ impl PmPkgCommand {
     fn parse_value(key: &[u8], value: &[u8], parse_json: bool) -> Expr {
         let data: &[u8] = cli_arena().alloc_slice_copy(value);
         if !parse_json {
-            return Expr::init(E::String::init(data), Loc::EMPTY);
+            return Expr::allocate(cli_arena(), E::String::init(data), Loc::EMPTY);
         }
 
         let source = Source::init_path_string(key, data);

@@ -621,7 +621,7 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
             &mut *pm,
             log,
             &source,
-            json,
+            bun_ast::JsonView::from(&json),
             &mut resolver,
             Features::main(),
         );
@@ -1165,7 +1165,6 @@ impl<'a> HoistedTree<'a> {
 
 fn installed_package_json(package: &Dir) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
     let bytes = sys::File::read_from(package.fd(), b"package.json").ok()?;
-    crate::initialize_store();
     let source = bun_ast::Source::init_path_string_owned(b"package.json", bytes);
     let log = bun_ast::Log::init();
     let mut checker = crate::bun_json::PackageJSONVersionChecker::init(&source, &log);
@@ -1232,10 +1231,7 @@ fn plan_hoisted(
     };
 
     // bun.lock doesn't always mark bundled dependencies, so also check the installed package.json.
-    let declares_bundled_deps = |package: &Dir| {
-        crate::initialize_store();
-        crate::git_runner::bundles_dependencies(package)
-    };
+    let declares_bundled_deps = crate::git_runner::bundles_dependencies;
     // Packages that bundle dependencies and also have their own tree, as (parent tree, folder
     // name). Trees are ordered parent first.
     let mut bundling_packages: Vec<(tree::Id, &[u8])> = Vec::new();

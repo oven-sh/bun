@@ -604,7 +604,6 @@ fn unchanged_on_disk(manager: &mut PackageManager, target: &WorkspaceTarget) -> 
         &bun_ast::Log::init(),
         &target.package_json_path,
         GetJSONOptions {
-            init_reset_store: false,
             guess_indentation: true,
         },
     ) else {
@@ -642,8 +641,12 @@ pub(crate) fn flush(manager: &mut PackageManager) -> Result<(), crate::Error> {
     for e in &edited {
         if e.received_requests && !trusted.is_empty() {
             let mut root = fetch_entry_root(manager, &e.target);
-            PackageJSONEditor::edit_trusted_dependencies(&mut root, &mut trusted)?;
-            // The new nodes live in the AST store and their strings in `trusted`.
+            PackageJSONEditor::edit_trusted_dependencies(
+                &manager.ast_arena,
+                &mut root,
+                &mut trusted,
+            )?;
+            // The new nodes borrow their strings from `trusted`.
             store_entry(manager, &e.target, root);
         }
         if unchanged_on_disk(manager, &e.target) {

@@ -2,7 +2,6 @@ use core::cell::{OnceCell, UnsafeCell};
 
 use bun_ast as js_ast;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_core::Output;
 use bun_core::StackCheck;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
@@ -290,11 +289,6 @@ impl SideEffects {
 
 // ── Local extension shims so `parse` can call shapes that live in higher-tier
 //    crates (full FileSystem). Bodies forward to bun_paths. ────────────────
-//
-// the former `JsonCachePackageJsonExt` shim trait is removed —
-// `JsonCacheVTable` now has a real `parse_package_json` slot and `JsonCache`
-// exposes the inherent forwarder (tsconfig_json.rs).
-// `bun_bundler::cache::JSON_CACHE_VTABLE` wires it to `bun_parsers::json`.
 
 /// Thin extension trait that delegates to `bun_paths::resolve_path`.
 trait FileSystemPackageJsonExt {
@@ -336,7 +330,7 @@ impl PackageJSON {
             if !value.is_object() {
                 log.add_warning_fmt(
                     Some(json_source),
-                    json_parser::value_loc_of_property(&json_source.contents, key_loc, &value),
+                    json_parser::value_loc_of_property(&json_source.contents, key_loc, value.loc),
                     format_args!(
                         "Invalid macro remapping in \"{}\": expected object where the keys are import names and the value is a string path to replace",
                         bstr::BStr::new(key)
@@ -361,7 +355,7 @@ impl PackageJSON {
                         json_parser::value_loc_of_property(
                             &json_source.contents,
                             remap_key_loc,
-                            &remap_value,
+                            remap_value.loc,
                         ),
                         format_args!(
                             "Invalid macro remapping for import \"{}\": expected string to remap to. e.g. \"graphql\": \"bun-macro-relay\" ",
@@ -471,21 +465,13 @@ impl PackageJSON {
         let contents_static: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&entry_contents) };
         let json_source = bun_ast::Source::init_path_string(package_json_path, contents_static);
 
-        let parsed_json = match r.caches.json.parse_package_json(r_log, &json_source) {
-            Ok(Some(v)) => v,
-            Ok(None) => return None,
-            Err(err) => {
-                if cfg!(debug_assertions) {
-                    Output::print_error(format_args!(
-                        "{}: JSON parse error: {}",
-                        bstr::BStr::new(package_json_path),
-                        bstr::BStr::new(err.name())
-                    ));
-                }
-                return None;
-            }
-        };
-        let json: js_ast::Expr = parsed_json.root;
+        let arena = js_ast::AstArena::new();
+        let temp_log = bun_ast::Log::init();
+        let parsed_json =
+            json_parser::ParsedJson::parse_package_json(&json_source, &temp_log, &arena);
+        temp_log.append_to(r_log);
+        let parsed_json = parsed_json.ok()?;
+        let json = parsed_json.root();
 
         if !json.is_object() {
             // Invalid package.json in node_modules is noisy.
@@ -525,7 +511,7 @@ impl PackageJSON {
         // Feels like a codegen issue.
         // or that looping over every property doesn't really matter because most package.jsons are < 20 properties
         if let Some(version_json) = json.as_property(b"version") {
-            if let Some(version_str) = version_json.expr.as_utf8_string_literal() {
+            if let Some(version_str) = version_json.value.as_utf8_string_literal() {
                 if !version_str.is_empty() {
                     package_json.version = Box::from(version_str);
                 }
@@ -533,7 +519,7 @@ impl PackageJSON {
         }
 
         if let Some(name_json) = json.as_property(b"name") {
-            if let Some(name_str) = name_json.expr.as_utf8_string_literal() {
+            if let Some(name_str) = name_json.value.as_utf8_string_literal() {
                 if !name_str.is_empty() {
                     package_json.name = Box::from(name_str);
                 }
@@ -541,7 +527,7 @@ impl PackageJSON {
         }
 
         if let Some(type_json) = json.as_property(b"type") {
-            if let Some(type_str) = type_json.expr.as_utf8_string_literal() {
+            if let Some(type_str) = type_json.value.as_utf8_string_literal() {
                 match ModuleType::LIST
                     .get(type_str)
                     .copied()
@@ -577,9 +563,7 @@ impl PackageJSON {
         // Read the "main" fields
         for main in r.opts.main_fields.iter() {
             if let Some(main_json) = json.as_property(main) {
-                let expr: &js_ast::Expr = &main_json.expr;
-
-                if let Some(str) = expr.as_utf8_string_literal() {
+                if let Some(str) = main_json.value.as_utf8_string_literal() {
                     if !str.is_empty() {
                         package_json
                             .main_fields
@@ -607,12 +591,12 @@ impl PackageJSON {
             //   },
             //
             if let Some(browser_prop) = json.as_property(b"browser") {
-                if let js_ast::ExprData::EObjectJSON(obj) = &browser_prop.expr.data {
+                if let Some(obj) = browser_prop.value.as_e_object_json() {
                     // The value is an object
 
                     // Remap all files in the browser field
                     let mut key_spill: Vec<u8> = Vec::new();
-                    for prop in obj.get().properties() {
+                    for prop in obj.properties() {
                         // Normalize the path so we can compare against it without getting
                         // confused by "./". There is no distinction between package paths and
                         // relative paths for these values because some tools (i.e. Browserify)
@@ -668,13 +652,13 @@ impl PackageJSON {
         }
 
         if let Some(exports_prop) = json.as_property(b"exports") {
-            if let Some(exports_map) = ExportsMap::parse(json_source, r_log, exports_prop.expr) {
+            if let Some(exports_map) = ExportsMap::parse(json_source, r_log, exports_prop.value) {
                 package_json.exports = Some(exports_map);
             }
         }
 
         if let Some(imports_prop) = json.as_property(b"imports") {
-            if let Some(imports_map) = ExportsMap::parse(json_source, r_log, imports_prop.expr) {
+            if let Some(imports_map) = ExportsMap::parse(json_source, r_log, imports_prop.value) {
                 package_json.imports = Some(imports_map);
             }
         }
@@ -684,9 +668,9 @@ impl PackageJSON {
                 if !boolean {
                     package_json.side_effects = SideEffects::False;
                 }
-            } else if let js_ast::ExprData::EArrayJSON(e_array) = &side_effects_field.data {
+            } else if let Some(e_array) = side_effects_field.as_e_array_json() {
                 // Handle arrays, including empty arrays
-                let items = e_array.get().items();
+                let items = e_array.items();
                 let mut map = SideEffectsMap::default();
                 let mut glob_list = GlobList::default();
                 let mut has_globs = false;
@@ -860,9 +844,9 @@ impl PackageJSON {
                             .zip(&mut package_json.installed_dependency_rows)
                         {
                             if let Some(group_json) = json.get(group.prop)
-                                && let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data
+                                && let Some(group_obj) = group_json.as_e_object_json()
                             {
-                                *rows = group_obj.get().rows();
+                                *rows = group_obj.rows();
                             }
                         }
                         break 'update_dependencies;
@@ -886,8 +870,8 @@ impl PackageJSON {
                             let Some(group_json) = json.get(group.prop) else {
                                 continue;
                             };
-                            if let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data {
-                                for prop in group_obj.get().properties() {
+                            if let Some(group_obj) = group_json.as_e_object_json() {
+                                for prop in group_obj.properties() {
                                     visit(prop.key.slice());
                                     if let Some(version) = prop.value.as_str() {
                                         visit(version);
@@ -918,8 +902,8 @@ impl PackageJSON {
 
                     for group in dependency_groups {
                         if let Some(group_json) = json.get(group.prop) {
-                            if let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data {
-                                for prop in group_obj.get().properties() {
+                            if let Some(group_obj) = group_json.as_e_object_json() {
+                                for prop in group_obj.properties() {
                                     let name_str = slice_in_source_buf(
                                         source_buf,
                                         copied,
@@ -983,11 +967,7 @@ impl PackageJSON {
             // top-level object property.
             let property_string_map =
                 |name: &[u8]| -> Option<Box<StringArrayHashMap<&'static [u8]>>> {
-                    let prop = json.as_property(name)?;
-                    let js_ast::ExprData::EObjectJSON(obj) = &prop.expr.data else {
-                        return None;
-                    };
-                    let obj = obj.get();
+                    let obj = json.get(name)?.as_e_object_json()?;
                     let mut map = StringArrayHashMap::<&'static [u8]>::default();
                     map.ensure_total_capacity(obj.properties().len()).ok()?;
                     for p in obj.properties() {
@@ -1036,7 +1016,7 @@ impl PackageJSON {
         // backing buffer into the returned struct (replaces the prior
         // `mem::forget`, forbidden per docs/PORTING.md §Forbidden patterns).
         package_json.source_contents = entry_contents;
-        package_json.json_tape = parsed_json.tape;
+        package_json.json_tape = parsed_json.into_tape();
         Some(package_json)
     }
 }
@@ -1096,7 +1076,7 @@ impl ExportsMap {
     pub(crate) fn parse(
         source: &bun_ast::Source,
         log: &bun_ast::Log,
-        json: js_ast::Expr,
+        json: js_ast::JsonView<'_>,
     ) -> Option<ExportsMap> {
         let mut visitor = Visitor {
             source,
@@ -1104,7 +1084,8 @@ impl ExportsMap {
             stack_check: StackCheck::init(),
         };
 
-        let root = visitor.visit(json);
+        let vloc = json_parser::ValueLocation::Property(json.loc);
+        let root = visitor.visit_value(json.as_json_value()?, vloc);
 
         if matches!(root.data, EntryData::Null) {
             return None;
@@ -1121,24 +1102,6 @@ pub(crate) struct Visitor<'a> {
 }
 
 impl<'a> Visitor<'a> {
-    pub(crate) fn visit(&mut self, expr: js_ast::Expr) -> Entry {
-        let vloc = json_parser::ValueLocation::Property(expr.loc);
-        match &expr.data {
-            js_ast::ExprData::ENull(_) => Entry {
-                data: EntryData::Null,
-            },
-            js_ast::ExprData::EString(str) => {
-                debug_assert!(!str.is_utf16);
-                Entry {
-                    data: EntryData::String(Box::from(str.data.slice())),
-                }
-            }
-            js_ast::ExprData::EObjectJSON(e_obj) => self.visit_object(e_obj.get()),
-            js_ast::ExprData::EArrayJSON(e_array) => self.visit_array(e_array.get(), &vloc),
-            data => self.invalid_root(data, vloc),
-        }
-    }
-
     fn visit_value(
         &mut self,
         value: &js_ast::E::JsonValue,
@@ -1254,29 +1217,6 @@ impl<'a> Visitor<'a> {
         Entry {
             data: EntryData::Array(array.into_boxed_slice()),
         }
-    }
-
-    #[cold]
-    fn invalid_root(
-        &mut self,
-        data: &js_ast::ExprData,
-        vloc: json_parser::ValueLocation<'_>,
-    ) -> Entry {
-        let first_token = match data {
-            js_ast::ExprData::EBoolean(_) => {
-                js_lexer::range_of_identifier(self.source, vloc.resolve(&self.source.contents))
-            }
-            // TODO: range of number
-            js_ast::ExprData::ENumber(_) => bun_ast::Range {
-                loc: vloc.resolve(&self.source.contents),
-                len: 1,
-            },
-            _ => bun_ast::Range {
-                loc: vloc.resolve(&self.source.contents),
-                ..bun_ast::Range::NONE
-            },
-        };
-        self.invalid(first_token)
     }
 
     #[cold]

@@ -1,6 +1,6 @@
 //! The Bake config: one type for both `bun index.html` (no config) and `bun ./app.ts` (an `app` export).
 
-use bun_alloc::Arena;
+use bun_ast::AstArena;
 use bun_core::{ZBox, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
@@ -20,7 +20,7 @@ const API_NAME: &str = "app";
 pub(crate) struct UserOptions {
     pub(crate) bundler_options: SplitBundlerOptions,
     /// Backs the transpilers set up from these options.
-    pub(crate) arena: Arena,
+    pub(crate) arena: AstArena,
 
     pub(crate) root: ZBox,
     pub(crate) framework: Framework,
@@ -29,7 +29,7 @@ pub(crate) struct UserOptions {
 impl UserOptions {
     /// Currently, this function must run at the top of the event loop.
     pub(crate) fn from_js(config: JSValue, global: &JSGlobalObject) -> JsResult<UserOptions> {
-        let arena = Arena::new();
+        let arena = AstArena::new();
         let mut bundler_options = SplitBundlerOptions::default();
 
         if !config.is_object() {

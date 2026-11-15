@@ -662,11 +662,8 @@ impl PostgresSQLConnection {
         } else if let Some(hostname) = self.native_identity_hostname() {
             // SAFETY: this is the handshake handler of `socket`, and `ssl` is used at once.
             let identity_ok = !hostname.is_empty()
-                && unsafe {
-                    socket
-                        .ssl()
-                        .is_some_and(|ssl| uws::check_server_identity(ssl, hostname))
-                };
+                && unsafe { socket.ssl() }
+                    .is_some_and(|ssl| uws::check_server_identity(ssl, hostname));
             if !identity_ok {
                 let v = verify_error_to_js(&ssl_error, self.global());
                 self.fail_with_js_value(v);

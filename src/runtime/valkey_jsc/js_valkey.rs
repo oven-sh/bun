@@ -1726,11 +1726,8 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 // With no `SSL*` there is no certificate to match: fail closed.
                 // SAFETY: this is the handshake handler of `socket`, and `ssl` is used at once.
                 let identity_ok = hostname.is_empty()
-                    || unsafe {
-                        socket
-                            .ssl()
-                            .is_some_and(|ssl| uws::check_server_identity(ssl, hostname))
-                    };
+                    || unsafe { socket.ssl() }
+                        .is_some_and(|ssl| uws::check_server_identity(ssl, hostname));
                 if !identity_ok {
                     return Self::fail_handshake_with_altname_error(this, vm, hostname);
                 }

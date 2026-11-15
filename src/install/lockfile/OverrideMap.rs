@@ -1,16 +1,16 @@
-use core::cell::RefCell;
 use core::cmp::Ordering;
 
 use crate::DependencyID;
 use crate::Error;
+use crate::lockfile_real::package::ParseFields;
 use crate::package_manager::workspace_package_json_cache::{GetJSONOptions, GetResult};
 use crate::{PackageID, invalid_package_id};
 use bun_collections::{ArrayHashMap, index_sort};
+use bun_install::PackageNameHash;
 use bun_install::dependency::{
     self, Behavior, Dependency, DependencyExt as _, NpmAliasRegistry, Tag as VersionTag,
     VersionExt as _,
 };
-use bun_install::{PackageManager, PackageNameHash};
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::resolve_path;
 use bun_semver::String as SemverString;
@@ -148,7 +148,7 @@ pub struct OverrideMap {
     pub(crate) map: ArrayHashMap<PackageNameHash, Dependency>,
     pub(crate) scoped: Vec<ScopedOverride>,
     scoped_names: ArrayHashMap<PackageNameHash, ()>,
-    owner_index: RefCell<OwnerIndex>,
+    owner_index: bun_threading::Guarded<OwnerIndex>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -206,7 +206,7 @@ fn is_comment_key(key: &[u8]) -> bool {
 
 struct ParseContext<'a, 'b> {
     field: Field,
-    pm: &'a mut PackageManager,
+    fields: ParseFields<'a>,
     lockfile_dependencies: &'a [Dependency],
     root_package: &'a Package,
     log: &'a bun_ast::Log,
@@ -384,7 +384,7 @@ impl OverrideMap {
     fn owner_package_id(&self, lockfile: &Lockfile, dependency_id: DependencyID) -> PackageID {
         let dep_slices = lockfile.packages.items_dependencies();
         let dependencies_len = lockfile.buffers.dependencies.len();
-        let mut index = self.owner_index.borrow_mut();
+        let mut index = self.owner_index.lock();
         let index = &mut *index;
         if index.packages_indexed < dep_slices.len() {
             for (pkg_id, slice) in dep_slices.iter().enumerate().skip(index.packages_indexed) {
@@ -740,7 +740,7 @@ impl OverrideMap {
 
     pub(crate) fn parse_count(
         &mut self,
-        pm: &mut PackageManager,
+        fields: &mut ParseFields<'_>,
         log: &bun_ast::Log,
         json_source: &bun_ast::Source,
         workspace_names: &WorkspaceMap,
@@ -763,7 +763,15 @@ impl OverrideMap {
                         }
                     }
                     builder.count(value);
-                    count_ref_value(pm, log, json_source, workspace_names, expr, value, builder);
+                    count_ref_value(
+                        fields,
+                        log,
+                        json_source,
+                        workspace_names,
+                        expr,
+                        value,
+                        builder,
+                    );
                     return;
                 }
                 if field != Field::Overrides || !value.is_object() {
@@ -784,7 +792,7 @@ impl OverrideMap {
                     if let Some(child_value) = child_value.as_utf8_string_literal() {
                         builder.count(child_value);
                         count_ref_value(
-                            pm,
+                            fields,
                             log,
                             json_source,
                             workspace_names,
@@ -800,7 +808,7 @@ impl OverrideMap {
 
     pub(crate) fn parse_append(
         &mut self,
-        pm: &mut PackageManager,
+        fields: &mut ParseFields<'_>,
         lockfile_dependencies: &[Dependency],
         root_package: &Package,
         log: &bun_ast::Log,
@@ -815,7 +823,7 @@ impl OverrideMap {
         };
         let mut ctx = ParseContext {
             field,
-            pm,
+            fields: fields.reborrow(),
             lockfile_dependencies,
             root_package,
             log,
@@ -1105,14 +1113,7 @@ fn lockfile_range(
     let range = buf.append(range)?;
     let sliced = range.sliced(buf.bytes.as_slice());
     Ok(
-        match dependency::parse(
-            name,
-            name_hash,
-            sliced.slice,
-            &sliced,
-            log,
-            None::<&mut PackageManager>,
-        ) {
+        match dependency::parse(name, name_hash, sliced.slice, &sliced, log, None) {
             Some(version) if is_selector_range(&version, is_target) => Some(version),
             _ => None,
         },
@@ -1223,14 +1224,7 @@ fn parse_range(
     }
     let appended = ctx.builder.append::<SemverString>(range);
     let sliced = appended.sliced(ctx.builder.string_bytes.as_slice());
-    match dependency::parse(
-        name,
-        name_hash,
-        sliced.slice,
-        &sliced,
-        ctx.log,
-        None::<&mut PackageManager>,
-    ) {
+    match dependency::parse(name, name_hash, sliced.slice, &sliced, ctx.log, None) {
         Some(version) if is_selector_range(&version, is_target) => Some(version),
         _ => {
             ctx.log.add_warning_fmt(
@@ -1304,7 +1298,7 @@ fn parse_override_value(
         match root_ref {
             Some(root_ref) => root_ref,
             None => match workspace_ref_literal(
-                ctx.pm,
+                &mut ctx.fields,
                 ctx.log,
                 ctx.source,
                 ctx.workspace_names,
@@ -1342,11 +1336,7 @@ fn parse_override_value(
     };
 
     let sliced = literal.sliced(ctx.builder.string_bytes.as_slice());
-    let alias_registry: Option<&mut PackageManager> = if register_aliases {
-        Some(&mut *ctx.pm)
-    } else {
-        None
-    };
+    let alias_registry = register_aliases.then_some(&mut ctx.fields.project.known_npm_aliases);
     let Some(version) = Dependency::parse(
         name,
         name_hash,
@@ -1385,7 +1375,7 @@ fn declared_dependency<'t>(root: JsonView<'t>, name: &[u8]) -> Option<JsonView<'
 }
 
 fn count_ref_value(
-    pm: &mut PackageManager,
+    fields: &mut ParseFields<'_>,
     log: &bun_ast::Log,
     source: &bun_ast::Source,
     workspace_names: &WorkspaceMap,
@@ -1402,21 +1392,26 @@ fn count_ref_value(
         }
         return;
     }
-    if let Ok(Some(literal)) = workspace_ref_literal(pm, log, source, workspace_names, ref_name) {
+    if let Ok(Some(literal)) = workspace_ref_literal(fields, log, source, workspace_names, ref_name)
+    {
         builder.count(&literal);
     }
 }
 
 fn workspace_ref_literal(
-    pm: &mut PackageManager,
+    fields: &mut ParseFields<'_>,
     log: &bun_ast::Log,
     source: &bun_ast::Source,
     workspace_names: &WorkspaceMap,
     ref_name: &[u8],
 ) -> Result<Option<Vec<u8>>, Ambiguous> {
-    if workspace_names.count() == 0 {
+    let Some(workspaces) = fields
+        .workspaces
+        .as_mut()
+        .filter(|_| workspace_names.count() > 0)
+    else {
         return Ok(None);
-    }
+    };
     let root_dir: &[u8] = package_json_dir(source);
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let mut found: Option<Vec<u8>> = None;
@@ -1430,7 +1425,7 @@ fn workspace_ref_literal(
         else {
             continue;
         };
-        let GetResult::Entry(entry) = pm.workspace_package_json_cache.get_with_path(
+        let GetResult::Entry(entry) = workspaces.json_cache.get_with_path(
             log,
             abs_package_json_path,
             GetJSONOptions {

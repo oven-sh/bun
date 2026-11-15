@@ -94,11 +94,11 @@ impl PackageManifestMap {
     /// `by_name_hash` without the disk fallback, so callers holding
     /// `&mut PackageManager` can borrow only `pm.manifests`.
     pub(crate) fn by_name_hash_in_memory(
-        &mut self,
+        &self,
         name: &[u8],
         name_hash: PackageNameHash,
-    ) -> Option<&mut npm::PackageManifest> {
-        match self.hash_map.get_mut(&name_hash)? {
+    ) -> Option<&npm::PackageManifest> {
+        match self.hash_map.get(&name_hash)? {
             Value::Manifest(m) if m.name() == name => Some(m),
             _ => None,
         }

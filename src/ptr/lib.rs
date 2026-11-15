@@ -30,6 +30,9 @@ pub use bun_core::{RawSlice, cast_fn_ptr};
 mod aliasable_box;
 pub use aliasable_box::AliasableBox;
 
+mod owned_ptr;
+pub use owned_ptr::OwnedPtr;
+
 pub mod weak_ptr;
 
 pub mod tagged_pointer;

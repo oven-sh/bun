@@ -34,8 +34,8 @@ impl Options {
     }
 
     // What `bun install` would link with the manager's `--production` / `--omit` / platform.
-    pub(crate) fn install(manager: &PackageManager) -> Options {
-        let features = manager.options.local_package_features;
+    pub(crate) fn install(options: &crate::package_manager_real::Options) -> Options {
+        let features = options.local_package_features;
         Options {
             root: 0,
             dev: features.dev_dependencies,
@@ -43,11 +43,7 @@ impl Options {
             peer: features.peer_dependencies,
             optional_peer: features.peer_dependencies,
             bundled: false,
-            platform: Some((
-                manager.options.cpu,
-                manager.options.os,
-                manager.options.libc,
-            )),
+            platform: Some((options.cpu, options.os, options.libc)),
         }
     }
 
@@ -102,7 +98,7 @@ impl Linked {
         lockfile: &Lockfile,
         resolutions: &[PackageID],
     ) -> bool {
-        let options = Options::install(manager);
+        let options = Options::install(&manager.options);
         let deps = lockfile.buffers.dependencies.as_slice();
         let dep_slices = lockfile.packages.items_dependencies();
         if !options.omits_optional_peer(

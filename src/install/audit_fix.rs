@@ -270,7 +270,7 @@ pub fn exit_unless_lockfile_matches_package_json(
 }
 
 pub fn exit_unless_lockfile_writable(manager: &PackageManager) {
-    if manager.options.dry_run || manager.options.do_.save_lockfile() {
+    if manager.options.dry_run || manager.effective_do().save_lockfile() {
         return;
     }
     if manager.options.log_level != LogLevel::Silent {

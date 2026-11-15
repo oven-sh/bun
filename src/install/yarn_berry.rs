@@ -258,13 +258,7 @@ struct PackageExtension {
 /// The first value found wins: `YARN_*` variables, then the rc file of the project, of each parent
 /// folder, and of the home folder.
 fn read_yarnrc(log: &bun_ast::Log, manager: &PackageManager) -> Result<YarnRc, Error> {
-    let env = |key: &[u8]| -> Option<&[u8]> {
-        manager
-            .env
-            .as_ref()
-            .and_then(|env| env.get().get(key))
-            .filter(|v| !v.is_empty())
-    };
+    let env = |key: &[u8]| -> Option<&[u8]> { manager.env().get(key).filter(|v| !v.is_empty()) };
     let mut out = YarnRc {
         registry: env(b"YARN_NPM_REGISTRY_SERVER").map(Box::from),
         transparent_workspaces: env(b"YARN_ENABLE_TRANSPARENT_WORKSPACES").and_then(yarn_bool),
@@ -816,7 +810,7 @@ pub(crate) fn migrate_yarn_berry_lockfile(
     let requested: Vec<(&[u8], Vec<u8>)> = manager
         .update_requests
         .iter()
-        .map(|r| (r.name, r.version.literal.slice(r.version_buf()).to_vec()))
+        .map(|r| (r.name, r.input_literal().to_vec()))
         .collect();
     let being_added = |name: &[u8], spec: &[u8]| -> bool {
         requested.iter().any(|(requested_name, literal)| {
@@ -1393,9 +1387,12 @@ pub(crate) fn migrate_yarn_berry_lockfile(
         return Err(Error::LockfileResolveFailed);
     }
 
+    let swap_into_manager = true;
     // bins and os/cpu that older lockfiles did not record, and tarball integrity
     this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
-        manager, true, // update_os_cpu
+        manager,
+        swap_into_manager,
+        true, // update_os_cpu
         true, // fill_integrity
         None,
     )?;

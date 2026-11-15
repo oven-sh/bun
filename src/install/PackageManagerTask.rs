@@ -1,42 +1,43 @@
 //! Schedule long-running callbacks for a task
 //! Slow stuff is broken into tasks, each can run independently without locks
 
-use core::ptr::NonNull;
-
 use bun_ast::{Loc, Log};
+use bun_collections::{AtomicHiveArray, HasStaticHive, HiveBox};
 use bun_core::Output;
 use bun_core::StringOrTinyString;
 use bun_semver as semver;
 use bun_sys::{Fd, File};
-use bun_threading::thread_pool;
+use bun_threading::{OwnedTaskIn, thread_pool};
 use bun_wyhash::Wyhash11;
 
 use crate::npm;
 use crate::package_manager::INBOX;
 use crate::package_manager::directories::TemporaryDirectory;
-use crate::{
-    DependencyID, ExtractData, ExtractTarball, NetworkTask, PackageManager, PatchTask, Resolution,
-};
+use crate::{DependencyID, ExtractData, ExtractTarball, NetworkTask, PatchTask, Resolution};
 
-/// TODO: lifetime — Task lives in an intrusive cross-thread queue
-/// (`next`). A `&'static mut NetworkTask` cannot soundly
-/// cross that boundary; Phase B should likely demote to `*mut NetworkTask`.
 pub struct Task {
     pub(crate) job: Job,
     /// default: `Status::Waiting`
     pub(crate) status: Status,
-    /// default: `thread_pool::Task { callback: Task::callback }`
-    pub(crate) threadpool_task: thread_pool::Task,
+    threadpool_task: thread_pool::Task,
     pub(crate) log: Log,
     pub(crate) id: Id,
     /// default: `None`
     pub(crate) err: Option<crate::Error>,
-    /// The filesystem tail of a clone or checkout task; `callback` runs it. default: `None`
+    /// The filesystem tail of a clone or checkout task; `run` runs it. default: `None`
     pub(crate) git_finalize: Option<crate::git_runner::Finalize>,
     /// INTRUSIVE — `bun.UnboundedQueue(Task, .next)`
     /// default: null
-    pub(crate) next: bun_threading::Link<Task>,
+    next: bun_threading::Link<Task>,
 }
+
+static HIVE: [AtomicHiveArray<Task>; 1] = [AtomicHiveArray::new()];
+
+impl HasStaticHive for Task {
+    const HIVE: &'static [AtomicHiveArray<Self>] = &HIVE;
+}
+
+bun_threading::intrusive_work_task!(Task, threadpool_task);
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`;
 // `link()` always projects to it.
@@ -117,29 +118,41 @@ impl Id {
 }
 
 impl Task {
-    /// In a slot of `manager.preallocated_resolve_tasks`.
-    pub(crate) fn create(manager: &mut PackageManager, id: Id, job: Job) -> NonNull<Self> {
-        let task = Task {
+    pub(crate) fn create(id: Id, job: Job) -> HiveBox<Self> {
+        HiveBox::new(Task {
             job,
             log: Log::init(),
             id,
             status: Status::Waiting,
-            threadpool_task: thread_pool::Task {
-                node: Default::default(),
-                callback: Task::callback,
-            },
+            threadpool_task: thread_pool::Task::default(),
             err: None,
             git_finalize: None,
             next: bun_threading::Link::new(),
-        };
-        manager.preallocated_resolve_tasks.get_init(task)
+        })
     }
 
-    pub(crate) fn tarball(&self) -> &ExtractTarball {
-        match &self.job {
-            Job::Extract { tarball, .. } => tarball,
-            _ => unreachable!("not an extract task"),
-        }
+    /// The finished extract task of a `TarballStream`.
+    pub(crate) fn create_extracted(
+        tarball: ExtractTarball,
+        network: HiveBox<NetworkTask>,
+        log: Log,
+        result: crate::Result<ExtractData>,
+    ) -> HiveBox<Self> {
+        let id = network.task_id;
+        let err = result.as_ref().err().copied();
+        let job = Job::Extract {
+            tarball,
+            source: TarballSource::Network(network),
+            data: result.ok(),
+        };
+        let mut task = Self::create(id, job);
+        task.log = log;
+        task.err = err;
+        task.status = match err {
+            None => Status::Success,
+            Some(_) => Status::Fail,
+        };
+        task
     }
 
     pub(crate) fn request_git_clone(&self) -> &GitCloneRequest {
@@ -164,21 +177,11 @@ impl Task {
     }
 }
 
-impl Task {
-    pub(crate) unsafe fn callback(task: *mut thread_pool::Task) {
+impl OwnedTaskIn<HiveBox<Self>> for Task {
+    fn run(mut task: HiveBox<Self>) {
         Output::Source::configure_thread();
 
-        // SAFETY: `task` points to the `threadpool_task` field of a `Task`
-        // (this is the only place this `thread_pool::Task` callback is registered).
-        let this_raw: *mut Task = unsafe { bun_core::from_field_ptr!(Task, threadpool_task, task) };
-        // The terminal `resolve_tasks.push` hands the task to the main thread
-        // (which may recycle it while this fn still runs `Output::flush()`),
-        // so the pushed pointer is derived from the raw receiver, not from the
-        // `&mut` below, and nothing touches `this` after the push.
-        // SAFETY: derived from `task`, which is not null.
-        let task = unsafe { NonNull::new_unchecked(this_raw) };
-        // SAFETY: exclusive access — task runs on exactly one worker thread
-        let this: &mut Task = unsafe { &mut *this_raw };
+        let this = &mut *task;
 
         // Body of the switch; arms exit via `break 'body;` so the
         // trailing block (patch + push + wake) and `Output::flush()` run
@@ -191,6 +194,7 @@ impl Task {
                     temp_dir,
                     manifest,
                 } => {
+                    let network = &mut **network;
                     // Take ownership so the
                     // multi-MB manifest buffer drops on every exit of this arm
                     // instead of staying live on the NetworkTask until recycle.
@@ -268,10 +272,7 @@ impl Task {
                     source: TarballSource::Network(network),
                     data,
                 } => {
-                    // Streaming extraction never reaches this callback: the
-                    // HTTP thread drives `TarballStream.drain_task`, which
-                    // fills in `data`/`this.status` and pushes to
-                    // `resolve_tasks` directly from `TarballStream.finish()`.
+                    // Streaming extraction never gets here: see `Task::create_extracted`.
                     // This path is the buffered fallback — feature flag off,
                     // non-2xx status, or the whole body arrived in a single
                     // chunk before streaming could commit.
@@ -377,7 +378,7 @@ pub enum Status {
 pub(crate) enum Job {
     PackageManifest {
         name: StringOrTinyString,
-        network: &'static mut NetworkTask,
+        network: HiveBox<NetworkTask>,
         /// `None` if the manifest cache is off or cannot be written.
         temp_dir: Option<&'static TemporaryDirectory>,
         manifest: Option<npm::PackageManifest>,
@@ -403,7 +404,7 @@ pub(crate) enum Job {
 }
 
 pub(crate) enum TarballSource {
-    Network(&'static mut NetworkTask),
+    Network(HiveBox<NetworkTask>),
     Local {
         /// Resolved by `enqueue_local_tarball` on the main thread; the worker must not read the lockfile.
         path: StringOrTinyString,

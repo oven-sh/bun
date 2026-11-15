@@ -14806,7 +14806,13 @@ describe("manifest conditional requests", () => {
   }
 
   /** `served` is read on every request, so a test can change what the registry serves between installs. */
-  function startRegistry(served: { etag?: string; lastModified?: string; versions?: string[]; cacheControl?: string }) {
+  function startRegistry(served: {
+    etag?: string;
+    lastModified?: string;
+    versions?: string[];
+    cacheControl?: string;
+    ignoresValidators?: boolean;
+  }) {
     const requests: ManifestRequest[] = [];
     const tarballRequests: string[] = [];
     const server = Bun.serve({
@@ -14839,7 +14845,7 @@ describe("manifest conditional requests", () => {
             entry.ifModifiedSince === served.lastModified);
         const headers: Record<string, string> = {};
         if (served.cacheControl !== undefined) headers["Cache-Control"] = served.cacheControl;
-        if (notModified) {
+        if (notModified && !served.ignoresValidators) {
           entry.status = 304;
           return new Response(null, { status: 304, headers });
         }
@@ -14982,6 +14988,28 @@ describe("manifest conditional requests", () => {
     ]);
     expect(tarballRequests).toStrictEqual(["1.0.0"]);
   });
+
+  test.each([
+    ["with an etag", etag],
+    ["without an etag", undefined],
+  ])(
+    "BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304 reads an unchanged Last-Modified as a 304 %s",
+    async (_name, servedEtag) => {
+      const served = { etag: servedEtag, lastModified, versions: ["1.0.0"], ignoresValidators: true };
+      const { server, requests } = startRegistry(served);
+      using _ = server;
+      await setup(server.port);
+      env = { ...env, BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304: "1" };
+
+      await install("1.0.0");
+      served.versions.push("1.0.1");
+      await install("1.0.0", "--force");
+      expect(requests.map(request => [request.ifNoneMatch, request.ifModifiedSince, request.status])).toStrictEqual([
+        [null, null, 200],
+        servedEtag ? [servedEtag, null, 200] : [null, lastModified, 200],
+      ]);
+    },
+  );
 
   test("no validators means every --force install refetches unconditionally", async () => {
     const { server, requests } = startRegistry({});

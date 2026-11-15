@@ -1,6 +1,13 @@
 //! Port of highway_png.cpp. `a` is left of the byte `x`, `b` is above it, and `c` is above `a`.
 
+use bun_simd::{Isa, opaque};
+use core::hint::{black_box, select_unpredictable};
+
 type Rgba = [u8; 4];
+
+const BLOCK: usize = 16;
+/// From a block that is not flat to the next look. A look at each block is hard to predict.
+const BUSY: usize = 4 * BLOCK;
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
@@ -159,46 +166,66 @@ pub(crate) mod simd {
         }
     }
 
-    /// From `a` to the result, both less 128, in few steps. Each pixel waits for the one before it.
-    fn paeth(x: U8, b: U8, c: U8) -> impl Fn(U8) -> U8 {
+    /// The nearest is `a` outside of `start..=start + len`. Inside it is `low` before `middle`, then `high`.
+    fn paeth_limits(b: U8, c: U8) -> [U8; 5] {
         let (up, down) = (b.saturating_sub(c), c.saturating_sub(b));
         let (low, high, half) = (b.simd_min(c), b.simd_max(c), (up | down) >> 1);
-        // `a` is the nearest unless it is between `b` and `3c - 2b`.
+        // Between `b` and `3c - 2b`
         let start = low.saturating_sub(up).saturating_sub(up.saturating_sub(1));
         let end = high
             .saturating_add(down)
             .saturating_add(down.saturating_sub(1));
-        // There, it is `low` before `(3c - b) / 2`.
+        // `(3c - b) / 2`
         let above_c = c.saturating_add(half);
         let middle = down
             .simd_eq(0)
             .select(c.saturating_sub(half), above_c.saturating_add(1));
         let high = above_c.simd_eq(255).select(low, high);
-
-        let [start, middle, end] = [start, middle, end].map(|v| (v ^ 0x80).bitcast::<I8>());
-        let (with_low, with_high) = ((x ^ 0x80) + low, (x ^ 0x80) + high);
-        move |a| {
-            let (with_a, a) = (x + a, a.bitcast::<I8>());
-            let if_low = start.simd_gt(a).cast().select(with_a, with_low);
-            let if_high = a.simd_gt(end).cast().select(with_a, with_high);
-            middle.simd_gt(a).cast().select(if_low, if_high)
-        }
+        [start, end - start, middle, low, high]
     }
 
-    /// `a` and `c` are the blocks before. Returns the last block.
+    /// `a` and `c` are the blocks before. Returns the last block. Each pixel waits for the one before it.
     fn paeth_blocks<const BPP: usize>(row: &mut [u8], above: &[u8], a: U8, mut c: U8) -> U8 {
+        // Less 128, for signed comparisons.
         let mut a = a ^ 0x80;
         for (block, b) in row.as_chunks_mut().0.iter_mut().zip(above.as_chunks().0) {
-            let (before, b) = (a, U8::load(b));
-            let step = paeth(U8::load(block), b, b.shift_in::<BPP>(c));
+            let (before, x, b) = (a, U8::load(block), U8::load(b));
+            let [start, len, middle, low, high] = paeth_limits(b, b.shift_in::<BPP>(c));
+            let [len, middle] = [len, middle].map(|v| (v ^ 0x80).bitcast::<I8>());
+            let [with_low, with_high] = [low, high].map(|v| ((x ^ 0x80) + v).opaque());
             // Each turn gets one more pixel right.
-            for _ in 0..16 / BPP {
-                a = step(a.shift_in::<BPP>(before));
+            for _ in 0..BLOCK / BPP {
+                a = a.shift_in::<BPP>(before);
+                let is_low = middle.simd_gt(a.bitcast::<I8>()).cast();
+                let is_outside = (a - start).bitcast::<I8>().simd_gt(len).cast();
+                a = is_outside.select(x + a, is_low.select(with_low, with_high));
             }
             (a ^ 0x80).store(block);
             c = b;
         }
         a ^ 0x80
+    }
+
+    /// The same for pixels of one byte, with the steps in general registers.
+    fn paeth_bytes(row: &mut [u8], above: &[u8], a: U8, mut c: U8) -> U8 {
+        let mut a = u64::from(a[BLOCK - 1]);
+        for (block, b) in row.as_chunks_mut().0.iter_mut().zip(above.as_chunks().0) {
+            let (x, b) = (U8::load(block), U8::load(b));
+            let [start, len, middle, low, high] = paeth_limits(b, b.shift_in::<1>(c));
+            let all = [start, len, middle, x, x + low, x + high].map(U8::to_array);
+            // Loads are cheaper than moves out of a vector.
+            let all = black_box(&all);
+            for i in 0..BLOCK {
+                let [start, len, middle, x, with_low, with_high] =
+                    all.each_ref().map(|it| opaque(it[i].into()));
+                let inside = select_unpredictable(a < middle, with_low, with_high);
+                let with_a = opaque((a + x) & 0xFF);
+                a = select_unpredictable(a.wrapping_sub(start) > len, with_a, inside);
+                block[i] = a as u8;
+            }
+            c = b;
+        }
+        U8::splat(a as u8)
     }
 
     /// Has less to do for few pixels. `a`, `c` and the result start with a pixel.
@@ -223,29 +250,48 @@ pub(crate) mod simd {
         U8::saturating_narrow(a, a)
     }
 
-    fn unfilter_paeth<const BPP: usize>(mut row: &mut [u8], mut above: &[u8]) {
-        let (mut a, mut c) = (U8::zero(), U8::zero());
+    fn unfilter_paeth<const BPP: usize>(row: &mut [u8], above: &[u8]) {
+        let (mut a, mut c, mut done) = (U8::zero(), U8::zero(), 0);
         let last_pixel = |v: U8| v.shift_in::<BPP>(v);
-        while BPP.is_power_of_two()
+        let (above, in_blocks) = (&above[..row.len()], row.len() / BLOCK * BLOCK);
+        let are_flat_from = |at: usize| {
+            let [b, c] = [at, at - BPP].map(|at| above[at..].as_chunks().0);
+            (b.iter().zip(c)).map(|(b, c)| U8::load(b).simd_eq(U8::load(c)).all())
+        };
+        if BPP.is_power_of_two()
             && let (Some(block), Some(b)) = (row.first_chunk_mut(), above.first_chunk())
+            && last_pixel(U8::load(b)).simd_eq(U8::load(b)).all()
         {
-            let (b, mut len) = (U8::load(b), 16);
-            if b.simd_eq(b.shift_in::<BPP>(c)).all() {
-                (a, c) = (sub_block::<BPP>(a, U8::load(block)), b);
-                a.store(block);
-            } else {
-                // A check of each block is hard to predict.
-                len = row.len().min(64) & !15;
-                let (row, above) = (&mut row[..len], &above[..len]);
-                a = match BPP {
-                    8 => paeth_pixels::<BPP>(row, above, last_pixel(a), last_pixel(c)),
-                    _ => paeth_blocks::<BPP>(row, above, a, c),
-                };
-                c = U8::from_slice(&above[len - 16..]);
-            }
-            (row, above) = (&mut row[len..], &above[len..]);
+            // The first pixel adds `b`, as if that were to its left.
+            (c, done) = (U8::load(b), BLOCK);
+            a = sub_block::<BPP>(c, U8::load(block));
+            a.store(block);
         }
-        paeth_pixels::<BPP>(row, above, last_pixel(a), last_pixel(c));
+        while BPP.is_power_of_two() && done < in_blocks {
+            let (start, next) = (done, if done == 0 { in_blocks.min(BUSY) } else { done });
+            let looks = are_flat_from(next).step_by(BUSY / BLOCK);
+            done = in_blocks.min(next + looks.take_while(|is_flat| !is_flat).count() * BUSY);
+            let (to, from) = (&mut row[start..done], &above[start..done]);
+            a = match BPP {
+                1 if !isa::Isa::HAS_SINGLE_CYCLE_OPS => paeth_bytes(to, from, a, c),
+                8 => paeth_pixels::<BPP>(to, from, last_pixel(a), last_pixel(c)),
+                _ => paeth_blocks::<BPP>(to, from, a, c),
+            };
+            // Where `b` is `c`, the filter is Sub.
+            let blocks = row[done..].as_chunks_mut().0.iter_mut();
+            for (block, _) in blocks.zip(are_flat_from(done)).take_while(|it| it.1) {
+                a = sub_block::<BPP>(a, U8::load(block));
+                a.store(block);
+                done += BLOCK;
+            }
+            c = U8::from_slice(&above[done - BLOCK..]);
+        }
+        paeth_pixels::<BPP>(
+            &mut row[done..],
+            &above[done..],
+            last_pixel(a),
+            last_pixel(c),
+        );
     }
 
     #[inline(always)]

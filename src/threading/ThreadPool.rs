@@ -1316,11 +1316,11 @@ impl Thread {
                 Ok(w) => w,
                 Err(_) => {
                     // `shutdown()` raced `wake_for_idle_events()`: the bundler
-                    // pushes per-worker `deinit_task`s into `idle_queue`, wakes
+                    // pushes per-worker `drop_task`s into `idle_queue`, wakes
                     // us, then immediately drops the (CLI-owned) pool — and
                     // `wait()` observes `Shutdown` before it gets to
                     // `drain_idle_events`. Run them once on the way out so the
-                    // worker thread tears down its own `Worker`/`WorkerData`
+                    // worker thread tears down its own `Worker`
                     // (whose `ThreadLocalArena` is mimalloc thread-local and
                     // must be freed here, not from the bundler thread).
                     self_.drain_idle_events();

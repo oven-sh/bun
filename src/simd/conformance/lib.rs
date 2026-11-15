@@ -1,5 +1,6 @@
 //! `bun test --run-simd-tests`, in debug and canary builds, for `test/internal/simd.test.ts`.
 //! `BUN_SIMD_TARGET` picks the target.
+#![feature(optimize_attribute, stmt_expr_attributes)]
 #![cfg_attr(target_arch = "aarch64", feature(aarch64_unstable_target_feature))]
 
 mod bench;
@@ -40,6 +41,7 @@ mod simd {
 struct Random(u64);
 
 impl Random {
+    #[inline(never)]
     fn next(&mut self) -> u64 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
@@ -47,6 +49,7 @@ impl Random {
         self.0
     }
 
+    #[inline(never)]
     fn below(&mut self, n: usize) -> usize {
         (self.next() % n.max(1) as u64) as usize
     }
@@ -56,6 +59,7 @@ impl Random {
     }
 
     /// Any bytes if `alphabet` is empty.
+    #[inline(never)]
     fn bytes(&mut self, len: usize, alphabet: &[u8]) -> Vec<u8> {
         let byte = |_| match alphabet {
             [] => self.next() as u8,
@@ -107,10 +111,12 @@ fn run(arguments: &[&[u8]]) -> Option<bool> {
     ));
     match (*command, rest) {
         (b"check", [seed, rounds]) => return Some(check::run(number(seed)?, number(rounds)?)),
-        (b"bench", [js, json, map]) => {
+        (b"bench", [js, json, map, only @ ..]) if only.len() < 2 => {
+            bench::ONLY.set(only.concat()).ok()?;
             bench::against_highway(&read(js)?, &read(json)?, &read(map)?)
         }
         (b"edges", []) => bench::at_the_end_of_a_page(),
+        (b"pauses", []) => bench::after_a_pause(),
         (b"clock", []) => bench::of_scalar_code_between_searches(),
         _ => return None,
     }

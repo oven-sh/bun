@@ -134,7 +134,8 @@ pub(super) fn ensure_route_is_bundled(
                                     }
                                     crate::server::GetOrStartLoadResult::Ready(ready) => {
                                         dev.plugin_state = PluginState::Loaded;
-                                        dev.plugins = ready.map(::core::ptr::NonNull::from);
+                                        dev.plugins =
+                                            ready.map(|ready| Plugins::Borrowed(ready.into()));
                                     }
                                 }
                             }

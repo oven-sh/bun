@@ -31,6 +31,8 @@ mod partial;
 pub mod portable;
 mod sink;
 mod source;
+#[cfg(all(target_arch = "aarch64", not(target_vendor = "apple")))]
+pub mod sve2;
 mod swizzle;
 mod vector;
 #[cfg(target_arch = "x86_64")]
@@ -49,7 +51,7 @@ pub use dispatch::limit_to;
 pub use isa::Isa;
 pub use mask::Mask;
 pub use matches::Matches;
-pub use partial::Partial;
+pub use partial::{Padded, Partial};
 #[cfg(any(feature = "test_support", not(target_arch = "x86_64")))]
 pub use portable::{portable32, portable64};
 pub use sink::{SharedWriter, Sink};

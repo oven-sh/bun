@@ -147,6 +147,18 @@ fn each_xcr0_bit() {
 }
 
 #[test]
+fn xcr0_adds_nothing() {
+    for xcr0 in [0, 0x07, !0] {
+        let got = cpu(xcr0, |asked, answer| {
+            if LEAVES.contains(&asked) {
+                *answer = [0; 4];
+            }
+        });
+        assert_eq!(got.names().next(), None, "{xcr0:x}");
+    }
+}
+
+#[test]
 fn max_leaf() {
     for last in 0..=0x24 {
         let got = cpu(!0, |asked, answer| {
@@ -185,7 +197,8 @@ fn max_extended_leaf() {
 
 #[test]
 fn avx10_versions() {
-    for (version, gone) in [(0, &["avx10.1"][..]), (1, &["avx10.2"]), (2, &[]), (3, &[])] {
+    let first = [(0, &["avx10.1"][..]), (1, &["avx10.2"])];
+    for (version, gone) in first.into_iter().chain((2..256).map(|it| (it, &[][..]))) {
         let got = cpu(!0, |asked, answer| {
             if asked == (0x24, 0) {
                 answer[EBX] = 0x7_0000 | version;
@@ -209,6 +222,19 @@ fn bits_to_ignore_on_intel() {
         names(intel(0)),
         all_but(&["sse4a", "tbm", "avx", "bmi1", "bmi2"])
     );
+}
+
+#[test]
+fn named_twice() {
+    let named = |list| names(x86_64::Features::named(list));
+    assert_eq!(named(&["sse3", "sse2"]), ["sse", "sse2", "sse3"]);
+    assert_eq!(named(&["popcnt", "popcnt"]), ["popcnt"]);
+}
+
+#[test]
+#[should_panic = "index out of bounds"]
+fn unknown_name() {
+    x86_64::Features::named(&["avx3"]);
 }
 
 #[test]
@@ -334,6 +360,7 @@ fn exynos_9810() {
     let on = |chip: &[u8]| names(aarch64::on_android(!0, !0, chip));
     assert_eq!(on(b"exynos9810\0\0"), ["neon", "crc", "aes", "sha2"]);
     assert_eq!(on(b"\0\0"), names(aarch64::from_hwcap(!0, !0)));
+    assert_eq!(on(b"exynos981\0"), names(aarch64::from_hwcap(!0, !0)));
 }
 
 #[test]

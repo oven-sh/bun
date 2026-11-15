@@ -234,6 +234,8 @@ complete -c bun -n "__fish_seen_subcommand_from compile" -l "explain" -d "List t
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "aot-huge-heap" -d "Remove the 32 GB heap limit per thread"
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "aot-allow-code-from-disk" -d "Let import() and require() load code from disk at run time"
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "aot-harden" -r -d "Make a bug in the compiler harder to turn into a memory bug"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "aot-order" -r -F -d "Lay the executable out by order files that runs of it wrote"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "aot-record-order" -d "Build an executable that writes an order file when it runs"
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "obfuscate" -d "Strip function names and source locations from the executable and write them to a source map"
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "compile-inspector" -d "Let a debugger attach to the executable"
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "compile-in-place" -d "Keep modules at their paths on disk. The executable only runs on the machine that built it"

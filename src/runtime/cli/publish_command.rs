@@ -1177,17 +1177,16 @@ impl PublishCommand {
 
     /// The first README `readdir` returns, as `npm publish` picks it.
     pub(crate) fn find_workspace_readme(abs_workspace_path: &[u8]) -> Option<ReadmeInfo> {
-        let workspace_dir = bun_sys::open_dir_absolute(abs_workspace_path).ok()?;
-        let _close = bun_sys::CloseOnDrop::new(workspace_dir);
+        let workspace_dir = bun_sys::Dir::open(abs_workspace_path).ok()?;
 
-        let mut iter = DirIterator::iterate(workspace_dir);
+        let mut iter = DirIterator::iterate(workspace_dir.fd());
         while let Some(entry) = pack::next_dir_entry(&mut iter, b"") {
             let name = entry.name.slice_u8();
             // Symlinks are not packed, so a symlinked README is not the readme either.
             if entry.kind == bun_sys::EntryKind::File && is_readme_filename(name) {
                 return Some(ReadmeInfo {
                     filename: name.to_vec(),
-                    contents: bun_sys::File::read_from(workspace_dir, name).ok()?,
+                    contents: bun_sys::File::read_from(&workspace_dir, name).ok()?,
                 });
             }
         }
@@ -1354,7 +1353,7 @@ impl PublishCommand {
             bun_sys::O::DIRECTORY,
             0,
         ) {
-            Ok(fd) => fd,
+            Ok(fd) => bun_sys::Dir::from_fd(fd),
             Err(e) => {
                 Output::err(
                     e,
@@ -1365,12 +1364,11 @@ impl PublishCommand {
             }
         };
 
-        let mut dirs: Vec<(Fd, Box<[u8]>)> = vec![(bin_dir, normalized_bin_dir.as_bytes().into())];
+        let mut dirs: Vec<(bun_sys::Dir, Box<[u8]>)> =
+            vec![(bin_dir, normalized_bin_dir.as_bytes().into())];
 
         while let Some((dir, dir_subpath)) = dirs.pop() {
-            let _close = bun_sys::CloseOnDrop::new(dir);
-
-            let mut iter = DirIterator::iterate(dir);
+            let mut iter = DirIterator::iterate(dir.fd());
             while let Some(entry) = pack::next_dir_entry(&mut iter, &dir_subpath) {
                 let name = entry.name.as_zstr();
                 let mut join: Vec<u8> = Vec::new();
@@ -1394,10 +1392,10 @@ impl PublishCommand {
                 ));
 
                 if entry.kind == bun_sys::EntryKind::Directory {
-                    let Ok(subdir) = bun_sys::openat(dir, name, bun_sys::O::DIRECTORY, 0) else {
+                    let Ok(subdir) = bun_sys::openat(&dir, name, bun_sys::O::DIRECTORY, 0) else {
                         continue;
                     };
-                    dirs.push((subdir, subpath.into()));
+                    dirs.push((bun_sys::Dir::from_fd(subdir), subpath.into()));
                 }
             }
         }

@@ -1659,43 +1659,28 @@ pub(crate) fn pack(
         apply_publish_config(ctx.manager, &json.root, package_name)?;
     }
 
-    let mut this_transpiler: core::mem::MaybeUninit<bun_bundler::Transpiler<'static>> =
-        core::mem::MaybeUninit::uninit();
-
-    let (this_transpiler, _) = match RunCommand::configure_env_for_run(
+    if let Err(err) = RunCommand::configure_env_for_run(
         &mut *ctx.command_ctx,
-        &mut this_transpiler,
+        &mut None,
         Some(std::ptr::from_mut(ctx.manager.env_mut())),
         ConfigureEnvOptions {
             log_errors: ctx.manager.options.log_level != LogLevel::Silent,
             store_root_fd: false,
         },
     ) {
-        Ok(configured) => configured,
-        Err(err) => {
-            if matches!(err, crate::Error::Alloc(_)) {
-                return Err(PackError::OutOfMemory);
-            }
-            Output::err_generic(
-                "failed to run pack scripts due to error: {}\n",
-                format_args!("{}", err.name()),
-            );
-            Global::crash();
+        if matches!(err, crate::Error::Alloc(_)) {
+            return Err(PackError::OutOfMemory);
         }
-    };
+        Output::err_generic(
+            "failed to run pack scripts due to error: {}\n",
+            format_args!("{}", err.name()),
+        );
+        Global::crash();
+    }
 
     let abs_workspace_path: &[u8] = path::string_paths::without_trailing_slash_windows_path(
         strings::without_suffix_comptime(abs_package_json_path.as_bytes(), b"package.json"),
     );
-    /// `MaybeUninit` does not drop its contents.
-    struct DeinitTranspiler(*mut bun_bundler::Transpiler<'static>);
-    impl Drop for DeinitTranspiler {
-        fn drop(&mut self) {
-            // SAFETY: points at the initialized `this_transpiler` stack slot, which outlives the guard.
-            unsafe { (*self.0).deinit() };
-        }
-    }
-    let _deinit_transpiler = DeinitTranspiler(this_transpiler);
     let script_env = &mut ctx.manager.env_mut().map;
     script_env.put(b"npm_command", b"pack")?;
     // `configure_env_for_run` described the workspace root's package.json, not the one packed.
@@ -1940,7 +1925,7 @@ pub(crate) fn pack(
 
         while let Some(item) = pack_queue.remove_or_null() {
             let path = item.path.as_bytes();
-            let fd: Fd = bun_sys::openat(
+            let file = bun_sys::openat(
                 Fd::from_std_dir(&root_dir),
                 &item.path,
                 bun_sys::O::RDONLY,
@@ -1952,11 +1937,11 @@ pub(crate) fn pack(
                     bun_sys::ErrorCase::CloseOnFail,
                 )
             })
+            .map(CloseOnDrop::new)
             .unwrap_or_else(|err| fail_file(err, "open", path));
-            let _close_fd = CloseOnDrop::new(fd);
 
-            let stat =
-                bun_sys::sys_uv::fstat(fd).unwrap_or_else(|err| fail_file(err, "stat", path));
+            let stat = bun_sys::sys_uv::fstat(file.fd())
+                .unwrap_or_else(|err| fail_file(err, "stat", path));
 
             pack_list.push(PackListEntry {
                 subpath: ZBox::from_bytes(path),
@@ -1965,7 +1950,7 @@ pub(crate) fn pack(
 
             add_archive_entry(
                 &mut ctx,
-                fd,
+                file.fd(),
                 &stat,
                 &item.path,
                 &mut read_buf,

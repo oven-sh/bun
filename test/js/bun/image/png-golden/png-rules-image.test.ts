@@ -470,8 +470,8 @@ describe("the image", () => {
   const busy = 4 * block;
   test("the blocks are as long as the tests below take them to be", async () => {
     const source = await Bun.file(join(import.meta.dir, "../../../../../src/simd/kernels/png.rs")).text();
-    expect(source).toContain(`let (b, mut len) = (U8::load(b), ${block});`);
-    expect(source).toContain(`len = row.len().min(${busy}) & !${block - 1};`);
+    expect(source).toContain(`const BLOCK: usize = ${block};`);
+    expect(source).toContain(`const BUSY: usize = ${busy / block} * BLOCK;`);
   });
   test.each([
     // From the start of the row, or of a block that is not one pixel over and over, so much goes by until the next

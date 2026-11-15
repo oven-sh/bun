@@ -12,6 +12,7 @@ impl<const BYTES: usize> crate::Isa for Portable<BYTES> {
     const HAS_MASK_REGISTERS: bool = BYTES == 64;
     const HAS_UNSIGNED_COMPARE: bool = BYTES != 32;
     const HAS_INTERLEAVED_MEMORY: bool = BYTES == 16;
+    const HAS_SINGLE_CYCLE_OPS: bool = BYTES != 16;
 }
 
 type Lanes<T, const N: usize, const BYTES: usize> = crate::Vector<T, N, Portable<BYTES>>;

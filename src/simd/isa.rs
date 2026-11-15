@@ -1,13 +1,19 @@
-use crate::{Int, Mask, Vector};
+use crate::{Int, Mask, Vector, opaque};
 use core::simd::prelude::{Simd, SimdInt, SimdOrd};
 
 /// An instruction set. The methods are ops that LLVM lowers better from another spelling on some.
 pub trait Isa: Copy {
-    /// Comparisons write to them, and loads and stores use them to skip lanes.
+    /// Comparisons write to them.
     const HAS_MASK_REGISTERS: bool = false;
+    /// The size up to which loads and stores can skip lanes.
+    const MASKED_BYTES: usize = if Self::HAS_MASK_REGISTERS { 64 } else { 0 };
+    /// It takes hundreds of cycles to skip lanes in an unmapped page.
+    const IS_SLOW_TO_SKIP_PAGE: bool = true;
     const HAS_UNSIGNED_COMPARE: bool = true;
     /// `load_interleaved4` and `store_interleaved4` take one instruction.
     const HAS_INTERLEAVED_MEMORY: bool = false;
+    /// The result of a simple op is there as soon as in a general register.
+    const HAS_SINGLE_CYCLE_OPS: bool = true;
 
     /// The cheapest move to a general register: the bits, and the number of bits per lane.
     #[doc(hidden)]
@@ -24,9 +30,29 @@ pub trait Isa: Copy {
 
     #[doc(hidden)]
     #[inline(always)]
-    fn count_from<T: Int<N>, const N: usize>(mask: Mask<T, N, Self>, lane: usize) -> usize {
+    fn count_before<T: Int<N>, const N: usize>(mask: Mask<T, N, Self>, lane: usize) -> usize {
         let (bits, bits_per_lane) = Self::movemask(mask);
-        (bits >> (lane * bits_per_lane)).count_ones() as usize / bits_per_lane
+        let before = bits & !u64::MAX.unbounded_shl((lane * bits_per_lane) as u32);
+        before.count_ones() as usize / bits_per_lane
+    }
+
+    /// For masks with the index of their first lane: two halves without gaps, within 64 bytes.
+    #[doc(hidden)]
+    #[inline(always)]
+    fn first_set_of<T: Int<N>, const N: usize, const K: usize>(
+        masks: [(Mask<T, N, Self>, usize); K],
+    ) -> Option<usize> {
+        let (bits, bits_per_lane) = movemask_of(masks);
+        (bits != 0).then_some(bits.trailing_zeros() as usize / bits_per_lane)
+    }
+
+    #[doc(hidden)]
+    #[inline(always)]
+    fn last_set_of<T: Int<N>, const N: usize, const K: usize>(
+        masks: [(Mask<T, N, Self>, usize); K],
+    ) -> Option<usize> {
+        let (bits, bits_per_lane) = movemask_of(masks);
+        (bits != 0).then_some((63 ^ bits.leading_zeros()) as usize / bits_per_lane)
     }
 
     /// For masks of 16 lanes.
@@ -58,6 +84,18 @@ pub trait Isa: Copy {
                 .cast(),
         )
     }
+}
+
+#[inline(always)]
+pub(crate) fn movemask_of<T: Int<N>, const N: usize, I: Isa, const K: usize>(
+    masks: [(Mask<T, N, I>, usize); K],
+) -> (u64, usize) {
+    let (mut all, bits_per_lane) = I::movemask(masks[0].0);
+    for (mask, start) in &masks[1..] {
+        // LLVM would put them together in a vector.
+        all |= opaque(I::movemask(*mask).0) << (start * bits_per_lane);
+    }
+    (if K == 1 { opaque(all) } else { all }, bits_per_lane)
 }
 
 /// The types in `isa`, for vectors of `$bytes` bytes.

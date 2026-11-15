@@ -60,26 +60,54 @@ mod simd {
         T: Int<N> + From<u8>,
         S: Source<Lane = T>,
     {
-        let (mut room, zero, one) = (Room::new(T::from(1)), T::from(0), T::from(1));
+        let (padding, other, suspect) = (T::from(0), T::from(1), T::from(2));
+        let mut room = Room::new(padding);
         let room = room.all();
-        let test = |v: Vector<T, N>| v.simd_eq(one);
+        let test = |v: Vector<T, N>| v.simd_eq(padding);
         for range in ranges::<T>(N, alignments) {
             let len = range.len();
-            room[range.clone()].fill(zero);
             for first in (0..len).map(Some).chain([None]) {
+                room[range.clone()].fill(other);
+                for at in range.clone().step_by(5 * N) {
+                    room[at] = suspect;
+                }
                 let last = first.map(|first| first + (len - first) / 2);
-                let mut set = |lane| {
-                    for at in first.into_iter().chain(last) {
-                        room[range.start + at] = lane;
-                    }
-                };
-                set(one);
+                for at in first.into_iter().chain(last) {
+                    room[range.start + at] = padding;
+                }
                 let slice = black_box(view(&mut room[range.clone()]));
                 assert_eq!(Vector::position(slice, test), first);
+                assert_eq!(
+                    Vector::position_refined(slice, |v| [v.simd_ne(other), test(v)]),
+                    first
+                );
                 assert_eq!(Vector::rposition(slice, test), last);
-                room[range.clone()].fill(zero);
             }
-            room[range].fill(one);
+            room[range].fill(padding);
+        }
+    }
+
+    /// They are in the same vector, or in the same lane of different ones.
+    fn two_matches<T, S, const N: usize>(alignments: usize, view: fn(&mut [T]) -> &[S])
+    where
+        T: Int<N> + From<u8>,
+        S: Source<Lane = T>,
+    {
+        let (mut room, zero, one) = (Room::new(T::from(0)), T::from(0), T::from(1));
+        let room = room.all();
+        let test = |v: Vector<T, N>| v.simd_eq(one);
+        for range in ranges::<T>(N, alignments).filter(|it| it.len() == 13 * N - 1) {
+            let slice = &mut room[range];
+            for apart in [0, 1, N, 2 * N, 3 * N] {
+                for first in 0..slice.len() - apart {
+                    (slice[first], slice[first + apart]) = (one, one);
+                    let found = Vector::position(black_box(view(slice)), test);
+                    assert_eq!(found, Some(first));
+                    let found = Vector::rposition(black_box(view(slice)), test);
+                    assert_eq!(found, Some(first + apart));
+                    (slice[first], slice[first + apart]) = (zero, zero);
+                }
+            }
         }
     }
 
@@ -115,9 +143,6 @@ mod simd {
                         assert_eq!(found, want.get(stop_at).copied());
                         assert_eq!(seen, want[..want.len().min(stop_at.saturating_add(1))]);
                     };
-                    check(&in_a, &|f| {
-                        Vector::find_map(a, test, |it| some(it).find(|&at| f(at)))
-                    });
                     check(&in_both, &|f| {
                         Vector::zip_find_map(a, longer, both, |it| some(it).find(|&at| f(at)))
                     });
@@ -146,18 +171,30 @@ mod simd {
             for at in range.clone() {
                 let slice = black_box(view(&mut room[range.clone()]));
                 assert_eq!(Vector::count(slice, test), range.end - at);
-                let both = Vector::count_each(slice, |v| [test(v), !test(v)]);
-                assert_eq!(both, [range.end - at, at - range.start]);
+                assert_eq!(Vector::count(slice, |v| !test(v)), at - range.start);
                 room[at] = zero;
             }
             room[range].fill(one);
         }
         let (len, long) = (600 * N + 5, &mut vec![one; 600 * N + 5]);
         assert_eq!(Vector::count(view(long), test), len);
-        assert_eq!(
-            Vector::count_each(view(long), |v| [!test(v), test(v)]),
-            [0, len]
-        );
+        assert_eq!(Vector::count(view(long), |v| !test(v)), 0);
+    }
+
+    fn sums(alignments: usize) {
+        let (mut bytes, mut words) = (Room::new(7), Room::new(0x0707));
+        let (bytes, words) = (bytes.all(), words.all());
+        for range in ranges::<u8>(U8::LEN, alignments) {
+            let slice = black_box(&bytes[range]);
+            assert_eq!(U8::sum_of_bytes::<_, 7>(slice, |v| v), 7 * slice.len());
+        }
+        for range in ranges::<u16>(U16::LEN, alignments) {
+            let slice = black_box(&words[range]);
+            let sum = U16::sum_of_bytes::<_, 7>(slice, |v| v.bitcast());
+            assert_eq!(sum, 14 * slice.len());
+        }
+        let long = &vec![63; 600 * U8::LEN + 5];
+        assert_eq!(U8::sum_of_bytes::<_, 63>(long, |v| v), 63 * long.len());
     }
 
     /// `run(from, to)` has to add 1.
@@ -242,16 +279,22 @@ mod simd {
         searches::<u8, _, { U8::LEN }>(alignments, shared);
         searches::<u8, _, 16>(alignments, plain);
         searches::<u8, _, 16>(alignments, shared);
+        searches::<u8, _, 32>(alignments, plain);
+        searches::<u16, _, 16>(alignments, plain);
         searches::<u16, _, { U16::LEN }>(alignments, plain);
         searches::<u32, _, { isa::U32::LEN }>(alignments, plain);
         searches::<u64, _, { isa::U64::LEN }>(alignments, plain);
         shared_pairs(alignments);
+        two_matches::<u8, _, { U8::LEN }>(alignments, plain);
+        two_matches::<u8, _, { U8::LEN }>(alignments, shared);
+        two_matches::<u16, _, { U16::LEN }>(alignments, plain);
         matches::<u8, { U8::LEN }>(alignments);
         matches::<u16, { U16::LEN }>(alignments);
         matches::<u64, { isa::U64::LEN }>(alignments);
         counts::<u8, _, { U8::LEN }>(alignments, plain);
         counts::<u8, _, { U8::LEN }>(alignments, shared);
         counts::<u16, _, { U16::LEN }>(alignments, plain);
+        sums(alignments);
     }
 
     #[export]
@@ -298,12 +341,80 @@ mod simd {
         });
     }
 
+    fn padded<T, S, const N: usize>(view: fn(&mut [T]) -> &[S])
+    where
+        T: Int<N> + From<u8> + PartialEq + Debug,
+        S: Source<Lane = T>,
+    {
+        let mut room = Room::new(T::from(0));
+        let room = room.all();
+        for (i, lane) in room.iter_mut().enumerate() {
+            *lane = T::from(1 + (i % 251) as u8);
+        }
+        for range in ranges::<T>(N, N).filter(|it| it.len() < N) {
+            let (mut want, len) = ([T::from(0); N], range.len());
+            want[..len].copy_from_slice(&room[range.clone()]);
+            let Some(padded) = Vector::<T, N>::load_padded(black_box(view(&mut room[range])))
+            else {
+                assert_eq!(len, 0);
+                continue;
+            };
+            assert_eq!(padded.lanes.to_array(), want);
+            let is_padding = padded.lanes.simd_eq(T::from(0));
+            let all = is_padding | !is_padding;
+            assert_eq!(
+                [is_padding, all].map(|it| padded.first_set(it)),
+                [None, Some(0)]
+            );
+            assert_eq!(
+                [is_padding, all].map(|it| padded.last_set(it)),
+                [None, Some(len - 1)]
+            );
+            assert_eq!([is_padding, all].map(|it| padded.count(it)), [0, len]);
+            assert_eq!(
+                [is_padding, all].map(|it| padded.to_bitmask(it)),
+                [0, (1 << len) - 1]
+            );
+        }
+    }
+
+    #[export]
+    pub fn groups_stay_together() {
+        for (size, count) in [2, 4, 8]
+            .into_iter()
+            .flat_map(|it| (0..40).map(move |n| (it, n)))
+        {
+            let reverse = |v: U8| v.lookup(U8::iota() & 15 ^ (size - 1));
+            let len = usize::from(size) * count;
+            let from: Vec<u8> = (0..len).map(|i| i as u8).collect();
+            let want: Vec<u8> = from.iter().map(|i| i ^ (size - 1)).collect();
+            let [mut a, mut b, mut c] = [vec![0; len], from.clone(), from.clone()];
+            U8::map(&from, a[..].as_mut().into(), reverse);
+            U8::map_in_place(&mut b, reverse);
+            let both = shared(&mut c);
+            U8::map_to_shared(both, both, reverse);
+            assert_eq!([&a, &b, &c], [&want; 3]);
+        }
+    }
+
     #[export]
     pub fn short_slices() {
+        assert!(U8::load_partial::<u8>(&[]).is_none());
+        padded::<u8, _, { U8::LEN }>(plain);
+        padded::<u8, _, { U8::LEN }>(shared);
+        padded::<u8, _, 16>(plain);
+        padded::<u16, _, { U16::LEN }>(plain);
+        padded::<u32, _, { isa::U32::LEN }>(plain);
+        padded::<u64, _, { isa::U64::LEN }>(plain);
         let (mut from, mut to) = (Room::new(0), Room::new(0));
         let (from, to) = (from.all(), to.all());
         for (i, from) in from.iter_mut().enumerate() {
             *from = 1 + (i % 251) as u8;
+        }
+        for range in ranges::<u8>(64, 64).filter(|it| it.len() < 64) {
+            let mut want = [0; 64];
+            want[..range.len()].copy_from_slice(&from[range.clone()]);
+            assert_eq!(U8::pad_block(black_box(&from[range])), want);
         }
         for range in ranges::<u8>(U8::LEN, U8::LEN).filter(|it| it.len() < U8::LEN) {
             let (slice, len) = (black_box(&from[range.clone()]), range.len());
@@ -311,25 +422,60 @@ mod simd {
                 assert_eq!(len, 0);
                 continue;
             };
-            for (i, &byte) in slice.iter().enumerate() {
-                assert_eq!(partial.to_bitmask(partial.lanes.simd_eq(byte)), 1 << i);
-            }
             let at = |index: u8| slice.get(usize::from(index)).copied().unwrap_or(0);
             assert_eq!(
                 partial.indices().to_array().map(at),
                 partial.lanes.to_array()
             );
-            assert_eq!(partial.to_bitmask(partial.lanes.simd_eq(0)), 0);
-            assert_eq!(
-                partial.to_bitmask(partial.lanes.simd_lt(255)),
-                (1 << len) - 1
-            );
+            to[range.clone()].copy_from_slice(slice);
+            let of_shared = U8::load_partial(shared(&mut to[range.clone()])).unwrap();
+            assert_eq!(of_shared.lanes.to_array(), partial.lanes.to_array());
             if len < U16::LEN {
                 let wide: Vec<u16> = slice.iter().map(|&byte| 0x700 | u16::from(byte)).collect();
                 let lanes = U16::load_partial(black_box(&wide)).unwrap().lanes;
                 let to = to[range].as_mut().into();
                 assert_eq!(U8::narrow(lanes, lanes).store_partial(to), slice);
             }
+            if len < 16 {
+                let wide: Vec<u16> = slice.iter().map(|&byte| byte.into()).collect();
+                let lanes = Vector::<u16, 16>::load_partial(black_box(&wide))
+                    .unwrap()
+                    .lanes;
+                let mut both_ways = (vec![0; len], vec![0; len]);
+                lanes
+                    .cast::<u8>()
+                    .store_partial(both_ways.0[..].as_mut().into());
+                let lanes = Vector::<u8, 16>::load_partial(slice).unwrap().lanes;
+                lanes
+                    .cast::<u16>()
+                    .store_partial(both_ways.1[..].as_mut().into());
+                assert_eq!(both_ways, (slice.to_vec(), wide));
+            }
+        }
+    }
+
+    /// As if another thread wrote between two reads.
+    #[export]
+    pub fn matches_that_go_once_they_are_seen() {
+        let bytes = &mut [0; 13 * U8::LEN];
+        let (slice, last) = (shared(bytes), 13 * U8::LEN - 1);
+        for (goes, stays) in (0..=last).flat_map(|at| [(at, last / 3), (at, last - last / 3)]) {
+            let test = |v: U8| {
+                if v.simd_eq(1).any() {
+                    slice[goes].store(0, Relaxed);
+                }
+                v.simd_ne(0)
+            };
+            slice[goes].store(1, Relaxed);
+            slice[stays].store(2, Relaxed);
+            let first = U8::position(slice, test);
+            assert!([Some(goes.min(stays)), Some(stays)].contains(&first));
+            slice[goes].store(1, Relaxed);
+            slice[stays].store(2, Relaxed);
+            let last = U8::rposition(slice, test);
+            assert!([Some(goes.max(stays)), Some(stays)].contains(&last));
+            slice[goes].store(0, Relaxed);
+            slice[stays].store(0, Relaxed);
         }
     }
 
@@ -363,6 +509,11 @@ fn maps() {
 }
 
 #[test]
+fn groups_stay_together() {
+    on_each_target(simd::groups_stay_together);
+}
+
+#[test]
 fn short_slices() {
     on_each_target(simd::short_slices);
 }
@@ -392,6 +543,11 @@ fn more_alignments() {
         simd::all_searches(16);
         simd::all_maps(16);
     });
+}
+
+#[test]
+fn matches_that_go_once_they_are_seen() {
+    on_each_target(simd::matches_that_go_once_they_are_seen);
 }
 
 /// One match comes and goes, and one stays.

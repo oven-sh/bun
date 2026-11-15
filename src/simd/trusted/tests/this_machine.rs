@@ -22,6 +22,27 @@ fn target_is_supported_if_its_features_are() {
 }
 
 #[test]
+fn features_in_the_build() {
+    let is_in_build = |name| Features::IN_BUILD.contains(Features::named(&[name]));
+    cfg_select! {
+        target_arch = "x86_64" => {
+            assert!(["fxsr", "sse", "sse2"].into_iter().all(is_in_build));
+            assert_eq!(
+                is_in_build("cmpxchg16b"),
+                cfg!(target_feature = "cmpxchg16b")
+            );
+            assert_eq!(is_in_build("avx512bw"), cfg!(target_feature = "avx512bw"));
+        }
+        _ => {
+            assert!(is_in_build("neon"));
+            assert_eq!(is_in_build("crc"), cfg!(target_feature = "crc"));
+            assert_eq!(is_in_build("sve2"), cfg!(target_feature = "sve2"));
+        }
+    }
+    assert!(detected().contains(Features::IN_BUILD));
+}
+
+#[test]
 fn gate_opens_if_the_features_are_detected() {
     cfg_select! {
         target_arch = "x86_64" => {

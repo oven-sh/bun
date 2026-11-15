@@ -148,8 +148,6 @@ pub mod pdeathsig {
 // Public surface — flat re-exports so `bun_spawn` can `pub use bun_spawn_sys::*`.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
-pub use spawn_process::PidFdType;
 #[cfg(unix)]
 pub use spawn_process::spawn_process_posix;
 #[cfg(windows)]

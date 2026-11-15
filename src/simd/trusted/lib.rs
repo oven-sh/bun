@@ -60,5 +60,9 @@ pub fn detected() -> Features {
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[inline(always)]
 pub fn is_supported(features: Features) -> bool {
-    Features::IN_BUILD.contains(features) || detected().contains(features)
+    #[inline(never)]
+    fn is_detected(features: Features) -> bool {
+        detected().contains(features)
+    }
+    Features::IN_BUILD.contains(features) || is_detected(features)
 }

@@ -1097,6 +1097,7 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
             Err(error) => exit_with(identity_error_sentence(error)),
         };
         let _ = IDENTITY.set(identity);
+        bun_crash_handler::keep_own_segments();
         use_image_on_this_thread(program);
         Bun__AOT__takePagesForTablesOfFirstThread();
         #[cfg(not(bun_hardened))]
@@ -1118,6 +1119,8 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         if is_verbose {
             settings_for_debugging::print_image_summary(program.image.len());
         }
+        #[cfg(not(bun_locked_environment))]
+        settings_for_debugging::record_order();
         bun_analytics::features::aot.fetch_add(1, Ordering::Relaxed);
     });
 }
@@ -1129,6 +1132,8 @@ mod settings_for_debugging {
 
     unsafe extern "C" {
         safe fn Bun__AOT__setVerbose(is_verbose: bool);
+        fn Bun__AOT__startOrderRecording(path: *const core::ffi::c_char) -> super::Bytes;
+        safe fn Bun__AOT__recordsOrder() -> bool;
     }
 
     pub(super) fn image_summary(
@@ -1145,11 +1150,43 @@ mod settings_for_debugging {
         bun_core::Output::flush();
     }
 
+    pub(super) fn record_order() {
+        if !Bun__AOT__recordsOrder() {
+            return;
+        }
+        let Some(path) = bun_core::env_var::BUN_AOT_ORDER_OUT.get_not_empty() else {
+            return;
+        };
+        let pid = std::process::id().to_string();
+        let path = bun_core::strings::replace_owned(path, b"%p", pid.as_bytes());
+        let Ok(path) = std::ffi::CString::new(path) else {
+            return;
+        };
+        // SAFETY: `path` ends with a NUL and outlives the call. The sentence is a literal.
+        let failure = unsafe { Bun__AOT__startOrderRecording(path.as_ptr()) };
+        if failure.len != 0 {
+            // SAFETY: as above.
+            let sentence = unsafe { core::slice::from_raw_parts(failure.ptr, failure.len) };
+            bun_core::Output::err_generic(
+                "BUN_AOT_ORDER_OUT: nothing is recorded: {}",
+                (bstr::BStr::new(sentence),),
+            );
+            bun_core::Output::flush();
+        }
+    }
+
     pub(super) fn set_verbose() -> bool {
         let is_verbose = bun_core::env_var::BUN_AOT_VERBOSE.get().unwrap_or(false);
         Bun__AOT__setVerbose(is_verbose);
         is_verbose
     }
+}
+
+pub(crate) fn finish_order_recording() {
+    unsafe extern "C" {
+        safe fn Bun__AOT__finishOrderRecording();
+    }
+    Bun__AOT__finishOrderRecording();
 }
 
 fn identity_error_sentence(error: IdentityError) -> &'static str {

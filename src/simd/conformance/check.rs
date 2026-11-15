@@ -19,6 +19,7 @@ struct Round<'a> {
 struct Failures(Vec<&'static str>);
 
 impl Failures {
+    #[optimize(size)]
     fn unless(&mut self, is_ok: bool, kernel: &'static str) {
         if !is_ok {
             self.0.push(kernel);
@@ -30,6 +31,7 @@ impl Failures {
 struct Same<'a, T>(&'a [T], &'a [T], &'a mut Failures);
 
 impl<T> Pairs<T> for Same<'_, T> {
+    #[optimize(size)]
     fn pair<R: PartialEq>(&mut self, highway: impl Fn(&[T]) -> R, rust: impl Fn(&[T]) -> R) {
         let is_same = highway(self.0) == rust(self.1);
         self.2.unless(is_same, pairs::name_of(&rust));
@@ -68,6 +70,7 @@ const EDGES: &[u16] = &[
 ];
 
 impl Round<'_> {
+    #[optimize(size)]
     fn some_byte(&mut self) -> u8 {
         match self.text {
             [_, ..] if self.random.below(2) == 0 => self.random.one_of(self.text),
@@ -75,6 +78,7 @@ impl Round<'_> {
         }
     }
 
+    #[optimize(size)]
     fn mostly_ascii(&mut self) -> Vec<u16> {
         let one_in = self.random.one_of(&[3, 30, 300]);
         let unit = |&byte: &u8| match self.random.below(one_in) {
@@ -85,6 +89,7 @@ impl Round<'_> {
         self.text.iter().map(unit).collect()
     }
 
+    #[optimize(size)]
     fn searches(&mut self) {
         let (text, byte, wide) = (self.text, self.some_byte(), &self.mostly_ascii()[..]);
         let (len, count) = (self.random.below(text.len() + 1), 2 + self.random.below(15));
@@ -153,6 +158,7 @@ impl Round<'_> {
         }
     }
 
+    #[optimize(size)]
     fn memmem(&mut self) {
         let len = self.random.below(40.min(self.text.len() + 1));
         let at = self.random.below(self.text.len() - len + 1);
@@ -208,6 +214,7 @@ impl Round<'_> {
         }
     }
 
+    #[optimize(size)]
     fn scanner_run_stops(&mut self) {
         let [a, b, c, d, ..] = &mut *self.rooms;
         let zeros = vec![[0; 8]; self.text.len().div_ceil(64)];
@@ -224,6 +231,7 @@ impl Round<'_> {
         }
     }
 
+    #[optimize(size)]
     fn hashes(&mut self) {
         let (text, any) = (self.text, self.random.next());
         let (seed, fenced) = (
@@ -255,6 +263,7 @@ impl Round<'_> {
             .unless(want == in_parts.digest(), "XxHash64State");
     }
 
+    #[optimize(size)]
     fn odd_blocks(&mut self) {
         let mut text = vec![b' '; 20 * self.text.len()];
         for &byte in self.text.iter().take(20) {
@@ -269,6 +278,7 @@ impl Round<'_> {
     }
 
     /// `highway` returns how much it has written.
+    #[optimize(size)]
     fn from_to<T: Copy, U: Copy + Default + PartialEq>(
         &mut self,
         name: &'static str,
@@ -286,6 +296,7 @@ impl Round<'_> {
     }
 
     /// The same for output of which the rest has to stay as it is.
+    #[optimize(size)]
     fn prefix<T: Copy>(
         &mut self,
         name: &'static str,
@@ -305,6 +316,7 @@ impl Round<'_> {
             .unless(is_same && len == got_len && want == got, name);
     }
 
+    #[optimize(size)]
     fn in_place<const N: usize>(
         &mut self,
         name: &'static str,
@@ -321,6 +333,7 @@ impl Round<'_> {
             .unless(pairs.all(|(a, b)| a.abs_diff(*b) <= tolerance), name);
     }
 
+    #[optimize(size)]
     fn conversions(&mut self) {
         let (text, len, mask) = (self.text, self.text.len(), [1, self.some_byte(), 3, 4]);
         let any: Vec<u16> = (0..len).map(|_| self.random.next() as u16).collect();
@@ -435,6 +448,7 @@ impl Round<'_> {
         );
     }
 
+    #[optimize(size)]
     fn words(&mut self) {
         let groups = self.text.len() / 4;
         let words = self.random.words_of_all_sizes(groups);
@@ -456,6 +470,7 @@ impl Round<'_> {
         self.failures.unless(want == got, "unpack_words");
     }
 
+    #[optimize(size)]
     fn json(&mut self) {
         let len = self.text.len() & self.random.one_of(&[!0, !63]);
         let text = self.random.bytes(len, JSON);
@@ -478,6 +493,7 @@ impl Round<'_> {
         self.failures.unless(is_same, "json_structural_index_chunk");
     }
 
+    #[optimize(size)]
     fn xml(&mut self) {
         let (text, wide) = (self.text, &self.mostly_ascii()[..]);
         let (room, is_open) = (text.len() + 64, self.random.next() & 1);
@@ -511,6 +527,7 @@ impl Round<'_> {
             .unless(is_same, "xml_structural_index16_chunk");
     }
 
+    #[optimize(size)]
     fn moves(&mut self) {
         let (pixels, width) = (self.text.as_chunks().0, 1 + self.random.below(40));
         let color = [(); 4].map(|()| self.some_byte());
@@ -532,6 +549,7 @@ impl Round<'_> {
         }
     }
 
+    #[optimize(size)]
     fn png(&mut self) {
         let (row, len) = (self.text, self.text.len());
         let above = match self.random.below(2) {
@@ -566,6 +584,7 @@ impl Round<'_> {
             .unless(sums == got_sums && want == got, "png_filter_rgba");
     }
 
+    #[optimize(size)]
     fn some_mappings(&mut self) -> Vec<u8> {
         let (random, mut text) = (&mut *self.random, Vec::new());
         let (is_plain, has_sources) = (random.below(3) == 0, random.below(4) == 0);
@@ -604,6 +623,7 @@ impl Round<'_> {
         text
     }
 
+    #[optimize(size)]
     fn mappings(&mut self) {
         let text = self.some_mappings();
         let cap = match self.random.below(4) {
@@ -658,6 +678,7 @@ impl Round<'_> {
             .unless(is_complete && resumes && is_same, "parse_mappings");
     }
 
+    #[optimize(size)]
     fn resize(&mut self) {
         let [src_w, src_h, dst_w, dst_h] = [(); 4].map(|()| 1 + self.random.below(60));
         let src = self.random.bytes(4 * src_w * src_h, b"");
@@ -669,7 +690,11 @@ impl Round<'_> {
             highway::Resizer::default().resize(filter, src, src_w, &mut want, dst_w);
             let got = rust::Resizer::default().resize(filter, fenced, src_w, into, dst_w);
             // As in `modulate`, a weight may be rounded the other way.
-            let tolerance = if cfg!(target_arch = "x86_64") { 0 } else { 2 };
+            let tolerance = match filter {
+                _ if cfg!(target_arch = "x86_64") => 0,
+                Filter::Mitchell | Filter::CatmullRom | Filter::Mks2013 | Filter::Mks2021 => 2,
+                _ => 0,
+            };
             let mut pairs = want.as_flattened().iter().zip(got.as_flattened());
             let is_same = pairs.all(|(a, b)| a.abs_diff(*b) <= tolerance);
             self.failures
@@ -678,6 +703,7 @@ impl Round<'_> {
     }
 }
 
+#[optimize(size)]
 pub(crate) fn run(seed: u64, rounds: u64) -> bool {
     let random = &mut Random(0x9E37_79B9_7F4A_7C15u64.wrapping_mul(2 * seed + 1));
     let (rooms, mut failures) = (&mut [(); 6].map(|()| Room::new()), 0);

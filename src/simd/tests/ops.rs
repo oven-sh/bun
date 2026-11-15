@@ -96,6 +96,10 @@ mod simd {
                 "{name}"
             );
             assert_eq!(got.count(), u64::count_ones(bits) as usize, "{name}");
+            for lane in 0..=N {
+                let before = want[..lane].iter().filter(|&&it| it).count();
+                assert_eq!(got.count_before(lane), before, "{name}");
+            }
             assert_eq!(got.to_vector().to_array(), vector, "{name}");
             assert_eq!(got.select(x, y).to_array(), selected, "{name}");
         };
@@ -136,6 +140,7 @@ mod simd {
         let slid = |by| from_fn(|i: usize| i.checked_sub(by).map_or(zero, |i| a[i]));
         assert_eq!(x.shift_elements_right::<1>(zero).to_array(), slid(1));
         assert_eq!(x.shift_elements_right::<2>(zero).to_array(), slid(2));
+        assert_eq!(x.shift_elements_right::<65>(b[0]).to_array(), [b[0]; N]);
         let after_last = from_fn(|i| if i == 0 { b[N - 1] } else { a[i - 1] });
         assert_eq!(x.shift_in::<1>(y).to_array(), after_last);
         assert_eq!(x.reverse().to_array(), from_fn(|i| a[N - 1 - i]));
@@ -344,6 +349,11 @@ mod simd {
     }
 
     #[export]
+    pub fn no_bit_indices(room: &mut [u32]) {
+        isa::bit_indices(0).push_to(&mut Out::from(room).into_writer(), 0);
+    }
+
+    #[export]
     pub fn pairs_of_bytes() {
         width::full::pairs_of_bytes();
         width::x128::pairs_of_bytes();
@@ -405,6 +415,12 @@ fn all_inputs() {
 #[test]
 fn random_inputs() {
     on_each_target(|| simd::random_inputs(300));
+}
+
+#[test]
+#[should_panic = "remaining() >= 64"]
+fn bit_indices_without_room() {
+    simd::no_bit_indices(&mut [0; 63]);
 }
 
 #[test]

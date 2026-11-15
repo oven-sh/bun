@@ -1,6 +1,6 @@
 //! Which copy runs, and which items the macros accept.
 #![forbid(unsafe_code)]
-use bun_simd::{Target, limit_to};
+use bun_simd::{Isa, Target, limit_to};
 
 struct Kernel(u8);
 struct AtomicFn(u8);
@@ -35,6 +35,29 @@ mod simd {
     #[export(baseline)]
     pub fn baseline() -> &'static str {
         name()
+    }
+
+    #[cfg(false)]
+    #[export]
+    pub fn left_out() {}
+
+    #[expect(unused_variables)]
+    #[export]
+    pub fn with_an_attribute_for_the_copies(unused: u8) {}
+
+    #[export(up_to = avx2, up_to = neon)]
+    pub fn up_to_both() -> &'static str {
+        name()
+    }
+
+    #[export]
+    pub fn properties() -> ([usize; 2], [bool; 3]) {
+        let has = [
+            isa::Isa::HAS_MASK_REGISTERS,
+            isa::Isa::HAS_UNSIGNED_COMPARE,
+            isa::Isa::HAS_INTERLEAVED_MEMORY,
+        ];
+        ([U8::LEN, isa::Isa::MASKED_BYTES], has)
     }
 
     struct Table<const N: usize>(isa::Vector<u8, N>);
@@ -103,16 +126,21 @@ fn best_copy_within_the_limit_runs() {
             simd::by_default(),
             simd::long_running(),
             simd::up_to_avx2(),
+            simd::up_to_both(),
             simd::baseline(),
         ];
         let want = match limit {
-            Portable64 | Portable32 => [limit.name(); 4],
+            Portable64 | Portable32 => [limit.name(); 5],
             _ => [
                 match limit {
-                    Avx512Skx => best(&[Avx512Skx, Avx2, Sse4, Neon, Portable], limit),
-                    _ => best(&[Avx512Icl, Avx2, Sse4, Neon, Portable], limit),
+                    Avx512Skx => best(&[Avx512Skx, Avx2, Sse4, Sve2, Neon, Portable], limit),
+                    _ => best(&[Avx512Icl, Avx2, Sse4, Sve2, Neon, Portable], limit),
                 },
-                best(&[Avx512Icl, Avx512Skx, Avx2, Sse4, Neon, Portable], limit),
+                best(
+                    &[Avx512Icl, Avx512Skx, Avx2, Sse4, Sve2, Neon, Portable],
+                    limit,
+                ),
+                best(&[Avx2, Sse4, Sve2, Neon, Portable], limit),
                 best(&[Avx2, Sse4, Neon, Portable], limit),
                 best(&[Sse4, Neon, Portable], limit),
             ],
@@ -120,5 +148,30 @@ fn best_copy_within_the_limit_runs() {
         assert_eq!(got, want, "{limit:?}");
         assert_eq!(simd::all_kinds_of_items(0, |byte| byte * 2), Some(18));
         assert_eq!(simd::names_of_the_macro(Kernel(1), AtomicFn(2)), 3);
+        simd::with_an_attribute_for_the_copies(0);
+    }
+}
+
+#[test]
+fn best_copy_runs_without_a_limit() {
+    use Target::*;
+    let got = std::thread::spawn(simd::long_running).join().unwrap();
+    let all = [Avx512Icl, Avx512Skx, Avx2, Sse4, Sve2, Neon, Portable];
+    assert_eq!(got, best(&all, Avx512Icl));
+}
+
+#[test]
+fn portable_copies_take_the_paths_of_the_others() {
+    use Target::*;
+    for target in Target::ALL.into_iter().filter(|it| it.is_supported()) {
+        limit_to(target);
+        let want = match target {
+            Avx512Icl | Avx512Skx | Portable64 => ([64, 64], [true, true, false]),
+            Avx2 | Portable32 => ([32, 0], [false, false, false]),
+            Sse4 => ([16, 0], [false, false, false]),
+            Sve2 => ([16, 16], [false, true, true]),
+            Neon | Portable => ([16, 0], [false, true, true]),
+        };
+        assert_eq!(simd::properties(), want, "{target:?}");
     }
 }

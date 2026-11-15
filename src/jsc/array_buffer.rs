@@ -30,7 +30,7 @@ pub struct ArrayBuffer {
     /// True for resizable ArrayBuffer or growable SharedArrayBuffer — borrowing
     /// a slice from one is unsafe (it can shrink/reallocate underneath you).
     pub resizable: bool,
-    /// Set by [`JSValue::as_pinned_arraybuffer`] when an ArrayBuffer was actually pinned (as opposed to a bufferless view merely held); [`ArrayBuffer::unpin`] is a no-op otherwise.
+    /// Set by [`JSValue::as_pinned_arraybuffer`] when an ArrayBuffer was actually pinned (as opposed to a bufferless view merely held).
     pub pinned: bool,
 }
 
@@ -56,9 +56,8 @@ impl Default for ArrayBuffer {
 // without a `&T as *const T as *mut T` provenance laundering cast. This matches
 // the pattern used by `JSGlobalObject`'s own extern block in `JSGlobalObject.rs`.
 unsafe extern "C" {
-    // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); remaining args are by-value scalars.
-    safe fn ArrayBuffer__fromSharedMemfd(
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn ArrayBuffer__fromSharedMemfd(
         fd: i64,
         global: &JSGlobalObject,
         byte_offset: usize,
@@ -122,13 +121,27 @@ unsafe extern "C" {
         len: usize,
     ) -> JSValue;
     fn JSC__ArrayBuffer__asBunArrayBuffer(self_: &JSCArrayBuffer, out: *mut ArrayBuffer);
-    // safe: `JSCArrayBuffer` is an `opaque_ffi!` ZST handle (`!Freeze` via
+    // safe: `JSCArrayBuffer` is a `sealed_handle!` ZST handle (`!Freeze` via
     // `UnsafeCell`); `&` is ABI-identical to a non-null `*mut` and the C++
     // `RefCounted<ArrayBuffer>` count mutation is interior to the opaque cell.
     safe fn JSC__ArrayBuffer__ref(self_: &JSCArrayBuffer);
-    safe fn JSC__ArrayBuffer__deref(self_: &JSCArrayBuffer);
-    // safe: by-value `JSValue`; no-op for non-buffer values.
-    safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
+    fn JSC__ArrayBuffer__deref(self_: *mut JSCArrayBuffer);
+    /// 0 = nothing to pin, 1 = pinned an ArrayBuffer (unpin later), 2 = held a bufferless view (nothing to unpin).
+    safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> u8;
+    fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
+    /// 0 = detached/null, 1 = FastTypedArray (GC-movable), 2 = pinned an ArrayBuffer, 3 = held a bufferless OversizeTypedArray.
+    safe fn JSC__JSValue__borrowBytesForOffThread(
+        v: JSValue,
+        out_ptr: &mut *const u8,
+        out_len: &mut usize,
+    ) -> i32;
+    fn Bun__JSArray__collectBufferSpans(
+        global: &JSGlobalObject,
+        value: JSValue,
+        pin_buffers: bool,
+        ctx: *mut c_void,
+        append: unsafe extern "C" fn(*mut c_void, JSValue, *mut u8, usize, bool),
+    ) -> i32;
     // safe: by-value `JSValue`; false for non-buffer values.
     safe fn JSC__JSValue__isNonSharedWasmMemory(v: JSValue) -> bool;
     safe fn JSC__JSValue__canBeFreedWhilePinned(v: JSValue) -> bool;
@@ -151,22 +164,24 @@ fn create_uint8_array_for_copy(
 }
 
 impl JSValue {
-    /// Releases a pin on this value's backing `JSC::ArrayBuffer`. Only for a value whose pin actually pinned a buffer; prefer [`ArrayBuffer::unpin`], which knows.
-    pub fn unpin_array_buffer(self) {
-        JSC__JSValue__unpinArrayBuffer(self);
+    /// `as_array_buffer`, after a pin that prevents detach but not collection (`pinStorage` in bindings.cpp).
+    fn as_pinned_arraybuffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
+        let kind = JSC__JSValue__pinArrayBuffer(self);
+        if kind == 0 {
+            return None;
+        }
+        let mut buffer = self.as_array_buffer(global);
+        match &mut buffer {
+            Some(buffer) => buffer.pinned = kind == 1,
+            None => drop(ArrayBufferPin::adopt_if(kind == 1, self)),
+        }
+        buffer
     }
 }
 
 impl ArrayBuffer {
     pub fn is_detached(&self) -> bool {
         self.ptr.is_null()
-    }
-
-    /// Releases the pin taken by [`JSValue::as_pinned_arraybuffer`], if it took one.
-    pub fn unpin(&self) {
-        if self.pinned {
-            self.value.unpin_array_buffer();
-        }
     }
 
     /// Limits the view to at most `len` bytes at `offset`.
@@ -251,22 +266,29 @@ impl ArrayBuffer {
 }
 
 impl ArrayBuffer {
-    /// `Ok(JSValue::ZERO)` means the C++ side declined (length above the
-    /// ArrayBuffer limit, `mmap` failed, or Windows) and the caller falls back
-    /// to copying; the typed-array allocation can also throw, so empty alone
-    /// does not mean "declined".
+    /// A copy-on-write clone of `part` of `bytes`, or `None` if the caller has to copy.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[inline]
     pub fn to_array_buffer_from_shared_memfd(
-        fd: i64,
         global: &JSGlobalObject,
-        byte_offset: usize,
-        byte_length: usize,
-        total_size: usize,
+        bytes: &crate::webcore_types::store::Bytes,
+        part: &[u8],
         ty: JSType,
-    ) -> JsResult<JSValue> {
-        crate::call_check_slow(global, || {
-            ArrayBuffer__fromSharedMemfd(fd, global, byte_offset, byte_length, total_size, ty)
-        })
+    ) -> JsResult<Option<JSValue>> {
+        let whole = bytes.slice();
+        let Some(memfd) = bytes.memfd() else {
+            return Ok(None);
+        };
+        if !bun_core::is_slice_in_buffer(part, whole) {
+            return Ok(None);
+        }
+        let offset = part.as_ptr().addr() - whole.as_ptr().addr();
+        // SAFETY: `whole` maps `memfd` from its start, and `part` is within it.
+        let clone = crate::call_check_slow(global, || unsafe {
+            let fd = memfd.native() as i64;
+            ArrayBuffer__fromSharedMemfd(fd, global, offset, part.len(), whole.len(), ty)
+        })?;
+        Ok((!clone.is_empty()).then_some(clone))
     }
 
     pub const EMPTY: ArrayBuffer = ArrayBuffer {
@@ -769,6 +791,18 @@ impl PinnedArrayBuffer {
         unsafe { core::slice::from_raw_parts(ptr, byte_len) }
     }
 
+    /// The pin alone, for a holder that keeps the bytes itself.
+    ///
+    /// # Safety
+    /// The caller roots the value until the pin is dropped or defused.
+    pub unsafe fn into_pin(mut self) -> ArrayBufferPin {
+        self.take_pin()
+    }
+
+    fn take_pin(&mut self) -> ArrayBufferPin {
+        ArrayBufferPin::adopt_if(core::mem::take(&mut self.buffer.pinned), self.buffer.value)
+    }
+
     /// VM-shutdown finalizer only: the heap sweep already deleted what `Drop`
     /// would unpin and unprotect, so release nothing.
     pub fn defuse(&mut self) {
@@ -788,7 +822,7 @@ impl core::ops::Deref for PinnedArrayBuffer {
 
 impl Drop for PinnedArrayBuffer {
     fn drop(&mut self) {
-        self.buffer.unpin();
+        drop(self.take_pin());
         if self.rooted {
             self.buffer.value.unprotect();
         }
@@ -797,6 +831,129 @@ impl Drop for PinnedArrayBuffer {
 
 // SAFETY: a pin and GC protection on a heap cell; constructed and dropped on the JS thread.
 unsafe impl crate::job::JsAffine for PinnedArrayBuffer {}
+
+/// A pin on the backing store of a value that the holder roots, or no pin. Unpins on drop.
+pub struct ArrayBufferPin(JSValue);
+
+impl ArrayBufferPin {
+    pub const NONE: Self = Self(JSValue::ZERO);
+
+    fn adopt_if(pinned: bool, value: JSValue) -> Self {
+        if pinned { Self(value) } else { Self::NONE }
+    }
+
+    /// As [`PinnedArrayBuffer::defuse`].
+    pub fn defuse(&mut self) {
+        self.0 = JSValue::ZERO;
+    }
+}
+
+impl Drop for ArrayBufferPin {
+    fn drop(&mut self) {
+        if !self.0.is_empty() {
+            // SAFETY: this module only makes one for a pin that it took, on a value that the holder roots.
+            unsafe { JSC__JSValue__unpinArrayBuffer(self.0) };
+        }
+    }
+}
+
+// SAFETY: a pin on a heap cell; gone with the heap.
+unsafe impl crate::job::JsAffine for ArrayBufferPin {}
+
+/// The bytes of a buffer for a job on another thread.
+pub enum OffThreadBytes {
+    /// Of a small typed array, whose storage the collector can move.
+    Copied(Vec<u8>),
+    /// In place while the holder keeps the pin and the root, unless [`ArrayBuffer::can_be_freed_while_pinned`].
+    Borrowed(bun_ptr::RawSlice<u8>, ArrayBufferPin),
+}
+
+impl OffThreadBytes {
+    /// `None` if `value` is detached or empty. Does not make an ArrayBuffer for a view that has none.
+    ///
+    /// # Safety
+    /// The caller roots `value` until the pin is dropped, and reads `Borrowed` bytes only while they are in place.
+    pub unsafe fn from_js(value: JSValue) -> Option<Self> {
+        let mut ptr: *const u8 = ptr::null();
+        let mut len: usize = 0;
+        let kind = JSC__JSValue__borrowBytesForOffThread(value, &mut ptr, &mut len);
+        let pin = ArrayBufferPin::adopt_if(kind == 2, value);
+        if kind == 0 || len == 0 {
+            return None;
+        }
+        // SAFETY: JSC reports the view's own range, and no JS runs during this call.
+        let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
+        Some(match kind {
+            1 => Self::Copied(bytes.to_vec()),
+            _ => Self::Borrowed(bun_ptr::RawSlice::new(bytes), pin),
+        })
+    }
+}
+
+/// The pins and roots of an array of ArrayBufferViews, or nothing. Released on drop.
+pub struct ArrayBufferViewPins {
+    views: Vec<JSValue>,
+    _array: Option<ProtectedJSValue>,
+}
+
+impl ArrayBufferViewPins {
+    /// `each` gets an element, its bytes (never null) and whether it is a pinned view of a `WebAssembly.Memory`.
+    pub fn collect<F: FnMut(JSValue, *mut [u8], bool)>(
+        global: &JSGlobalObject,
+        array: JSValue,
+        pin: bool,
+        each: F,
+    ) -> JsResult<Self> {
+        unsafe extern "C" fn append<F: FnMut(JSValue, *mut [u8], bool)>(
+            ctx: *mut c_void,
+            view: JSValue,
+            data: *mut u8,
+            byte_len: usize,
+            is_wasm_memory: bool,
+        ) {
+            // SAFETY: `ctx` is the local below.
+            let (views, pin, each) =
+                unsafe { bun_ptr::callback_ctx::<(Vec<JSValue>, bool, F)>(ctx) };
+            if *pin {
+                views.push(view);
+            }
+            let data = ptr::NonNull::new(data).unwrap_or(ptr::NonNull::dangling());
+            let bytes = ptr::slice_from_raw_parts_mut(data.as_ptr(), byte_len);
+            each(view, bytes, is_wasm_memory);
+        }
+        let mut ctx = (Vec::new(), pin, each);
+        crate::validation_scope!(scope, global);
+        // SAFETY: `ctx` is what `append::<F>` expects, and outlives the synchronous call.
+        let status = unsafe {
+            Bun__JSArray__collectBufferSpans(global, array, pin, (&raw mut ctx).cast(), append::<F>)
+        };
+        scope.assert_exception_presence_matches(status == -1);
+        // Made on failure too, so that `Drop` unpins the elements collected before the error.
+        let this = Self {
+            views: ctx.0,
+            _array: pin.then(|| array.protected()),
+        };
+        // An element that a getter returned is not reachable from `array`.
+        for view in &this.views {
+            view.protect();
+        }
+        match status {
+            0 => Ok(this),
+            -1 => Err(crate::JsError::Thrown),
+            2 => Err(global.throw_out_of_memory()),
+            _ => Err(global.throw_invalid_arguments(format_args!("Expected ArrayBufferView[]"))),
+        }
+    }
+}
+
+impl Drop for ArrayBufferViewPins {
+    fn drop(&mut self) {
+        for view in &self.views {
+            drop(ArrayBufferPin(*view));
+            view.unprotect();
+        }
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // BinaryType
@@ -1140,7 +1297,7 @@ pub unsafe fn make_typed_array_with_bytes_no_copy(
 // JSCArrayBuffer (opaque, corresponds to JSC::ArrayBuffer)
 // ──────────────────────────────────────────────────────────────────────────
 
-bun_opaque::opaque_ffi! {
+bun_opaque::sealed_handle! {
     /// Corresponds to `JSC::ArrayBuffer`.
     pub struct JSCArrayBuffer;
 }
@@ -1149,12 +1306,12 @@ bun_opaque::opaque_ffi! {
 // `RefCounted<ArrayBuffer>` count; the pointee remains alive while count > 0.
 unsafe impl bun_ptr::ExternalSharedDescriptor for JSCArrayBuffer {
     unsafe fn ext_ref(this: *mut Self) {
-        // `opaque_ref` is the centralised ZST-handle non-null deref proof;
-        // trait contract guarantees `this` is a valid `JSC::ArrayBuffer*`.
-        JSC__ArrayBuffer__ref(JSCArrayBuffer::opaque_ref(this))
+        // SAFETY: the caller's contract.
+        JSC__ArrayBuffer__ref(unsafe { &*this })
     }
     unsafe fn ext_deref(this: *mut Self) {
-        JSC__ArrayBuffer__deref(JSCArrayBuffer::opaque_ref(this))
+        // SAFETY: the caller owns the ref that this releases.
+        unsafe { JSC__ArrayBuffer__deref(this) }
     }
 }
 

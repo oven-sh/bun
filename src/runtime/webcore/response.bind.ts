@@ -53,7 +53,7 @@ export const Request = b.class({
     method: getter,
     mode: getter,
     redirect: getter,
-    referrer: getter,
+    referrer: { ...getter, ...js },
     referrerPolicy: getter,
     signal: { getter: b.any.returning("AbortSignal"), capability: "js", cache: true },
     text: body.text,

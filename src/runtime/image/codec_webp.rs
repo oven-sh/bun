@@ -88,7 +88,7 @@ struct WebPChunkIterator {
     private_: *mut c_void,
 }
 
-bun_opaque::opaque_ffi! {
+bun_opaque::sealed_handle! {
     pub(crate) struct WebPDemuxer;
     pub(crate) struct WebPMux;
 }
@@ -101,7 +101,7 @@ unsafe extern "C" {
         allow_partial: c_int,
         state: *mut c_int,
         version: c_int,
-    ) -> *mut WebPDemuxer;
+    ) -> Option<OwnedWebPDemuxer>;
     fn WebPDemuxDelete(dmux: *mut WebPDemuxer);
     safe fn WebPDemuxGetI(dmux: &WebPDemuxer, feature: c_int) -> u32;
     safe fn WebPDemuxGetChunk(
@@ -130,7 +130,12 @@ impl Drop for WebPChunkIterator {
     }
 }
 
-struct Demux<'a>(NonNull<WebPDemuxer>, PhantomData<&'a [u8]>);
+// SAFETY: only `WebPDemuxInternal` makes one.
+bun_opaque::owned_handle! {
+    struct OwnedWebPDemuxer(WebPDemuxer) => unsafe WebPDemuxDelete;
+}
+
+struct Demux<'a>(OwnedWebPDemuxer, PhantomData<&'a [u8]>);
 
 impl<'a> Demux<'a> {
     fn new(bytes: &'a [u8]) -> Option<Self> {
@@ -147,11 +152,11 @@ impl<'a> Demux<'a> {
                 WEBP_DEMUX_ABI_VERSION,
             )
         };
-        Some(Self(NonNull::new(dmux)?, PhantomData))
+        Some(Self(dmux?, PhantomData))
     }
 
     fn icc_profile(&self) -> Option<&'a [u8]> {
-        let dmux = WebPDemuxer::opaque_ref(self.0.as_ptr());
+        let dmux = &self.0;
         if WebPDemuxGetI(dmux, WEBP_FF_FORMAT_FLAGS) & ICCP_FLAG == 0 {
             return None;
         }
@@ -170,13 +175,6 @@ impl<'a> Demux<'a> {
         }
         // SAFETY: the chunk is a view into the bytes `new` borrowed.
         Some(unsafe { core::slice::from_raw_parts(iter.chunk.bytes, iter.chunk.size) })
-    }
-}
-
-impl Drop for Demux<'_> {
-    fn drop(&mut self) {
-        // SAFETY: from `WebPDemuxInternal`, deleted once.
-        unsafe { WebPDemuxDelete(self.0.as_ptr()) }
     }
 }
 

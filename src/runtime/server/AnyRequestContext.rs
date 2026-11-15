@@ -210,7 +210,7 @@ impl AnyRequestContext {
         dispatch!(self, false, |_T, ctx| ctx.set_timeout(seconds))
     }
 
-    pub(crate) fn set_cookies(self, cookie_map: Option<*mut CookieMap>) {
+    pub(crate) fn set_cookies(self, cookie_map: Option<&CookieMap>) {
         dispatch!(self, (), |_T, ctx| ctx.set_cookies(cookie_map))
     }
 

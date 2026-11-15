@@ -138,7 +138,7 @@ pub enum OutputFormat {
 // allowing for interop with other APIs taking `*mut c_void` pointers.
 bun_opaque::opaque_ffi! { pub struct Symbol; }
 
-bun_opaque::opaque_ffi! {
+bun_opaque::sealed_handle! {
     /// Opaque TinyCC compilation state, owned by [`OwnedState`].
     pub struct State;
 }
@@ -154,26 +154,16 @@ pub struct Config<'a, ErrCtx> {
     pub err: ConfigErr<ErrCtx>,
 }
 
-/// Owns a compilation context and the code it relocated.
-pub struct OwnedState(NonNull<State>);
-
-impl core::ops::Deref for OwnedState {
-    type Target = State;
-    fn deref(&self) -> &State {
-        State::opaque_ref(self.0.as_ptr())
-    }
+// SAFETY: only `init` makes one, from `tcc_new`.
+bun_opaque::owned_handle! {
+    /// Owns a compilation context and the code it relocated.
+    pub struct OwnedState(State) => unsafe tcc_delete;
 }
 
 impl core::ops::DerefMut for OwnedState {
     fn deref_mut(&mut self) -> &mut State {
-        State::opaque_mut(self.0.as_ptr())
-    }
-}
-
-impl Drop for OwnedState {
-    fn drop(&mut self) {
-        // SAFETY: a `tcc_new` handle, deleted once.
-        unsafe { tcc_delete(self.0.as_ptr()) }
+        // SAFETY: the state that `self` owns.
+        unsafe { self.0.as_mut() }
     }
 }
 

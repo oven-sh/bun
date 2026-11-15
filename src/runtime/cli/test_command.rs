@@ -2637,6 +2637,20 @@ impl TestCommand {
 
     #[optimize(size)]
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
+        let filter_regex = ctx.test_options.test_filter_pattern.as_deref().map(|text| {
+            jsc::OwnedRegularExpression::new(
+                &bun_core::StringView::from_bytes(text),
+                jsc::regular_expression::Flags::None,
+            )
+            .unwrap_or_else(|_| {
+                pretty_errorln!(
+                    "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
+                    bun_fmt::QuotedFormatter { text },
+                );
+                Global::exit(1);
+            })
+        });
+
         Output::IS_GITHUB_ACTION.store(
             Output::is_github_action(),
             core::sync::atomic::Ordering::Relaxed,
@@ -2738,12 +2752,7 @@ impl TestCommand {
                 environment: ctx.test_options.environment,
                 coverage_skips_test_files: ctx.test_options.coverage.skip_test_files,
                 reports_to_junit: ctx.test_options.reporters.junit,
-                // `test_filter_regex` is an erased `*mut RegularExpression` (see
-                // options_types::context).
-                filter_regex: ctx
-                    .test_options
-                    .test_filter_regex()
-                    .map(|p| jsc::RegularExpression::opaque_ref(p.as_ptr().cast())),
+                filter_regex,
                 snapshots: RefCell::new(Snapshots::init(ctx.test_options.update_snapshots)),
                 bun_test_root: bun_test::BunTestRoot::init(),
                 current_file: jest::CurrentFile::default(),

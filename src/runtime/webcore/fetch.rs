@@ -52,7 +52,7 @@ use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _, URLJsc as _};
+use bun_jsc::{HTTPHeaderName, HeadersInit, StringJsc as _, SysErrorJsc as _, URLJsc as _};
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
 // brings the trait impl into scope for `JSValue::get_optional_enum::<FetchRedirect>`.
 use crate::node;
@@ -61,7 +61,6 @@ use crate::node::types::{Encoding, PathOrFileDescriptor};
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::body::{Action as BodyValueLockedAction, InternalBlob, Value as BodyValue};
 use crate::webcore::headers_ref::any_blob_content_type_opt;
-use crate::webcore::response::HeadersRef;
 use crate::webcore::s3::client as s3;
 use crate::webcore::{
     AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response,
@@ -1069,37 +1068,23 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // headers: Headers | undefined;
     headers = 'extract_headers: {
-        // Holds the +1 from `create_from_js` until this block exits.
-        let mut created_headers: Option<HeadersRef> = None;
+        let headers_init: Option<HeadersInit>;
 
-        let fetch_headers: Option<*mut FetchHeaders> = 'brk: {
+        let fetch_headers: Option<&FetchHeaders> = 'brk: {
             if let Some(options) = options_object {
                 if let Some(headers_value) =
                     options.fast_get(global_this, jsc::BuiltinName::Headers)?
                 {
                     if !headers_value.is_undefined() {
-                        if let Some(headers__) = FetchHeaders::cast(headers_value) {
-                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                            if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
-                                break 'brk None;
-                            }
-                            break 'brk Some(headers__.as_ptr());
-                        }
-
-                        if let Some(headers__) = HeadersRef::create_from_js(ctx, headers_value)? {
-                            break 'brk Some(created_headers.insert(headers__).as_ptr());
-                        }
-
-                        break 'brk None;
+                        headers_init = HeadersInit::from_js(ctx, headers_value)?
+                            .filter(|h| !matches!(h, HeadersInit::Object(o) if o.is_empty()));
+                        break 'brk headers_init.as_deref();
                     }
                 }
             }
 
             if let Some(req) = request_ref!() {
-                if let Some(head) = req.get_fetch_headers_unless_empty() {
-                    break 'brk Some(head.as_ptr());
-                }
-                break 'brk None;
+                break 'brk req.get_fetch_headers_unless_empty();
             }
 
             if let Some(options) = request_init_object {
@@ -1107,19 +1092,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     options.fast_get(global_this, jsc::BuiltinName::Headers)?
                 {
                     if !headers_value.is_undefined() {
-                        if let Some(headers__) = FetchHeaders::cast(headers_value) {
-                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                            if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
-                                break 'brk None;
-                            }
-                            break 'brk Some(headers__.as_ptr());
-                        }
-
-                        if let Some(headers__) = HeadersRef::create_from_js(ctx, headers_value)? {
-                            break 'brk Some(created_headers.insert(headers__).as_ptr());
-                        }
-
-                        break 'brk None;
+                        headers_init = HeadersInit::from_js(ctx, headers_value)?
+                            .filter(|h| !matches!(h, HeadersInit::Object(o) if o.is_empty()));
+                        break 'brk headers_init.as_deref();
                     }
                 }
             }
@@ -1127,11 +1102,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             break 'extract_headers headers;
         };
 
-        let result = if let Some(headers_) = fetch_headers {
-            // `headers_` points to a live FetchHeaders (either JS-owned or
-            // refcounted via `created_headers` above). `FetchHeaders` is
-            // an opaque ZST FFI handle (S008) — safe `*mut → &mut` deref.
-            let headers_ref = bun_opaque::opaque_deref_mut(headers_);
+        let result = if let Some(headers_ref) = fetch_headers {
             if url.is_s3() {
                 if let Some(range_) = headers_ref.fast_get(HTTPHeaderName::Range) {
                     range = Some(range_.to_owned_slice_z());

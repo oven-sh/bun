@@ -4507,7 +4507,7 @@ pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
     pread_buf(fd, BorrowedBuf::from(buf).unfilled(), off)
 }
 
-pub(crate) fn pread_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>, off: i64) -> Maybe<usize> {
+pub fn pread_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>, off: i64) -> Maybe<usize> {
     // SAFETY: as in `read_buf`.
     unsafe { pread_uninit(fd, cursor.as_mut(), off).inspect(|&n| _ = cursor.advance(n)) }
 }

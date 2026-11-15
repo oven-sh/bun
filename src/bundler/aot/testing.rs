@@ -4,7 +4,6 @@ use super::options::{OptionsInput, options_from_bundler};
 use super::services::{BundlerServices, NamesWanted};
 use crate::Transpiler;
 use crate::bundle_v2::BundleV2;
-use bun_alloc::Arena;
 use bun_aot::engine::ExecutableIdentity;
 use bun_aot::{Options, SourceProvider};
 use bun_ast::Log;
@@ -51,7 +50,7 @@ pub fn with_front_end_inputs<R>(
     // A build fills the loader it is handed, so each has its own, as in `Bun.build`.
     let mut environment = Loader::init();
     let event_loop = bun_event_loop::AnyEventLoop::default();
-    let arena = Arena::new();
+    let arena = bun_ast::AstArena::new();
     let transform_options = crate::options::TransformOptions {
         absolute_working_dir: Some(Box::from(inputs.working_directory)),
         target: Some(api::Target::Bun),

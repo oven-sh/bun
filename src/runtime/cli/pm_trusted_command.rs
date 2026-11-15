@@ -1,6 +1,6 @@
 use core::sync::atomic::Ordering;
 
-use bun_alloc::Arena as Bump;
+use bun_ast::AstArena;
 use bun_collections::{ArrayHashMap, ArrayIdentityContext, StringArrayHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output, Progress};
@@ -592,7 +592,7 @@ impl TrustCommand {
             package_json_contents.as_slice(),
         );
 
-        let bump = Bump::new();
+        let bump = AstArena::new();
         let mut package_json: bun_ast::Expr =
             match bun_parsers::json::parse_utf8(&package_json_source, ctx.log(), &bump) {
                 Ok(v) => v,
@@ -641,6 +641,7 @@ impl TrustCommand {
         }
 
         PackageJSONEditor::edit_trusted_dependencies(
+            &bump,
             &mut package_json,
             package_names_to_add.keys_mut(),
         )?;

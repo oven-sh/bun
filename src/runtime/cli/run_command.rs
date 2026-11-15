@@ -620,9 +620,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     ) -> crate::Result<(&'t mut Transpiler<'static>, &'static bun_resolver::DirInfo)> {
         let args = ctx.args.clone();
         let env_is_none = env.is_none();
-        // Process-lifetime arena singleton for the runner's transpiler;
-        // threads an `&'static Arena` per PORTING.md §AST crates.
-        let arena: &'static bun_alloc::Arena = cli_arena();
+        let arena: &'static bun_ast::AstArena = cli_arena();
         let this_transpiler =
             this_transpiler.insert(Transpiler::init(arena, ctx.log(), args, env)?);
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;

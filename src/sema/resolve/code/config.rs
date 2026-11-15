@@ -438,8 +438,7 @@ impl<'h> Resolver<'h> {
 
     fn read_config(&self, path: &[u8]) -> Option<ParsedConfig> {
         let text = self.host.read(path)?;
-        let arena = self.session.arena();
-        let json = self.code_host().parse_runtime_tsconfig(arena, &text)?;
+        let json = self.code_host().parse_runtime_tsconfig(&text)?;
         Some(ParsedConfig::parse(path, &json))
     }
 

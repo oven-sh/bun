@@ -40,6 +40,7 @@ pub(crate) fn generate_code_for_lazy_export(
         part.stmts = bun_ast::StoreSlice::EMPTY;
     }
 
+    let arena = this.graph.ast_arena();
     let all_sources = this.parse_graph().input_files.items_source();
     let all_css_asts = &this.parse_graph().css_asts;
     let maybe_css_ast: Option<&BundlerStyleSheet> = all_css_asts[source_index as usize].as_deref();
@@ -95,7 +96,6 @@ pub(crate) fn generate_code_for_lazy_export(
                 all_sources,
             };
             let mut visitor = ComposesVisitor::new(&graph);
-            let arena = this.arena();
 
             for entry in css_ast.local_scope.values() {
                 let ref_ = entry.ref_;

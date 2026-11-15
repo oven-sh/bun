@@ -4,7 +4,6 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 
-use bun_alloc::Arena;
 use bun_ast::ASTMemoryAllocator;
 use bun_ast::Loader;
 use bun_ast::{ImportRecord, ImportRecordFlags};
@@ -598,20 +597,8 @@ impl TranspilerJob {
     }
 
     fn run(&mut self, ticket: &crate::Ticket) {
-        // Stack-local per call, bulk-freed on return. An earlier version hoisted
-        // this to a per-worker-thread leaked `Box<MimallocArena>` (and a second
-        // one inside a leaked `ASTMemoryAllocator`) and only `reset()` it at
-        // the *start* of the next call. On a 64-core box ~40 thread-pool
-        // workers each parse one or two modules then go idle, leaving ~80
-        // undestroyed `mi_heap_t`s holding ~7 MB requested / ~10–11 MB
-        // committed of dead AST between calls — the +12 % RSS regression seen
-        // on `server/elysia`. The hoist existed only to manufacture a
-        // `&'static Arena` for `Transpiler::set_arena`; the `Transpiler<'_>` copy below accepts `&arena`, so the hoist
-        // bought nothing and cost RSS. `MimallocArena::Drop` =
-        // `mi_heap_destroy`, so the per-call heap-churn is identical to a
-        // start-of-call `reset()` but the worker holds **zero** retained pages
-        // between calls.
-        let arena = Arena::new();
+        // Per call, so that an idle worker holds no dead AST.
+        let arena = bun_ast::AstArena::new();
 
         // `defer this.dispatchToMainThread()` — fires on every return path.
         let mut job = scopeguard::guard(self, |this| this.dispatch_to_main_thread(ticket));

@@ -8,7 +8,7 @@ use crate::api::bun::process::sync::{
 };
 use crate::cli::command;
 use crate::cli::run_command::RunCommand;
-use bun_alloc::Arena;
+use bun_ast::AstArena;
 use bun_ast::ExprData;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var};
@@ -224,7 +224,7 @@ impl PmVersionCommand {
             package_json_path.as_bytes(),
             &*package_json_contents,
         );
-        let json_bump = Arena::new();
+        let json_bump = AstArena::new();
         let json_result = match JSON::parse_package_json_utf8_with_opts(
             JSON::JSONOptions {
                 json_warn_duplicate_keys: false,
@@ -439,7 +439,7 @@ impl PmVersionCommand {
             package_json_path.as_bytes(),
             &*package_json_contents,
         );
-        let json_bump = Arena::new();
+        let json_bump = AstArena::new();
         let json =
             JSON::parse_package_json_utf8(&package_json_source, ctx.log(), &json_bump).ok()?;
 

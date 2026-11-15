@@ -12,17 +12,15 @@ use crate::bun_json::Expr;
 // LAYERING: `Indentation` lives in `bun_ast::js_printer` (T2, MOVE_DOWN from
 // `bun_js_printer::PrintJsonOptions` see no mismatch.
 use bun_ast::Indentation;
-use bun_ast::{Log, Source};
+use bun_ast::{AstArena, Log, Source};
 use bun_js_printer as js_printer;
 use bun_paths::is_absolute;
 
 use crate::bun_json as json;
-use crate::initialize_store;
 use std::borrow::Cow;
 
 pub struct MapEntry {
-    /// The nodes are allocated in the process heap and never freed, because a mimalloc heap per
-    /// entry would cost 30 KB.
+    /// Allocated in `WorkspacePackageJSONCache::arena`, or in `save_arena` after [`Self::save`].
     pub root: Expr,
     pub source: Source<'static>,
     pub indentation: Indentation,
@@ -33,6 +31,7 @@ pub struct MapEntry {
     _path_storage: bun_core::ZBox,
     /// Superseded `source.contents` buffers: slices of an earlier `root` point into them.
     stale_contents: Vec<Cow<'static, [u8]>>,
+    save_arena: AstArena,
 }
 
 impl MapEntry {
@@ -65,9 +64,7 @@ impl MapEntry {
             contents: Cow::Owned(self.print(root)?),
             ..Default::default()
         };
-        let heap = bun_alloc::Arena::borrowing_default();
-        let parsed = parse_package_json(&printed, log, &heap, false)?;
-        let root = json::clone_out_of_store(&parsed.root, &printed, log, &heap)?;
+        let root = parse_package_json(&printed, log, &mut self.save_arena, false)?.root;
         // Moving the `Vec` keeps its buffer, which `root` points into.
         let old = core::mem::replace(&mut self.source.contents, printed.contents);
         self.stale_contents.push(old);
@@ -81,9 +78,13 @@ pub type Map = StringHashMap<MapEntry>;
 fn parse_package_json(
     source: &Source,
     log: &Log,
-    bump: &bun_alloc::Arena,
+    bump: &mut AstArena,
     guess_indentation: bool,
 ) -> Result<json::JsonResult, crate::Error> {
+    // Auto-install uses the cache from whichever thread is resolving.
+    bump.unlock_thread();
+    // The lists of the tree outlive the `AstAlloc` state of the caller.
+    let _detached = bun_alloc::ast_alloc::DetachAstHeap::new();
     Ok(json::parse_package_json_utf8_with_opts(
         json::JSONOptions {
             json_warn_duplicate_keys: false,
@@ -96,19 +97,9 @@ fn parse_package_json(
     )?)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct GetJSONOptions {
-    pub init_reset_store: bool,
     pub guess_indentation: bool,
-}
-
-impl Default for GetJSONOptions {
-    fn default() -> Self {
-        Self {
-            init_reset_store: true,
-            guess_indentation: false,
-        }
-    }
 }
 
 pub enum GetResult<'a> {
@@ -127,9 +118,18 @@ impl<'a> GetResult<'a> {
     }
 }
 
-#[derive(Default)]
 pub struct WorkspacePackageJSONCache {
     pub map: Map,
+    arena: AstArena,
+}
+
+impl Default for WorkspacePackageJSONCache {
+    fn default() -> Self {
+        Self {
+            map: Map::default(),
+            arena: AstArena::borrowing_default(),
+        }
+    }
 }
 
 impl WorkspacePackageJSONCache {
@@ -216,27 +216,16 @@ impl WorkspacePackageJSONCache {
             },
         };
 
-        if opts.init_reset_store {
-            initialize_store();
-        }
-
-        let heap = bun_alloc::Arena::borrowing_default();
-        let parsed = match parse_package_json(&source, log, &heap, opts.guess_indentation) {
+        let parsed = match parse_package_json(&source, log, &mut self.arena, opts.guess_indentation)
+        {
             Ok(p) => p,
             Err(err) => {
                 return GetResult::ParseErr(err);
             }
         };
 
-        let root = match json::clone_out_of_store(&parsed.root, &source, log, &heap) {
-            Ok(root) => root,
-            Err(err) => {
-                return GetResult::ParseErr(err.into());
-            }
-        };
-
         let value = MapEntry {
-            root,
+            root: parsed.root,
             // SAFETY: `source.path` borrows `key`, which the entry keeps beside it.
             // The heap address is stable across the move into the map.
             source: unsafe { source.into_static() },
@@ -244,6 +233,7 @@ impl WorkspacePackageJSONCache {
             indentation_guessed: opts.guess_indentation,
             _path_storage: key,
             stale_contents: Vec::new(),
+            save_arena: AstArena::borrowing_default(),
         };
 
         bun_core::handle_oom(self.map.put(path, value));

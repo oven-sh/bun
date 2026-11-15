@@ -471,8 +471,8 @@ impl Host for Virtual {
     ) -> bun_sema::hir::File<'s> {
         self.disk.parse(arena, path, text, atoms, options)
     }
-    fn parse_package_json(&self, arena: &bun_sema::session::Arena, text: &[u8]) -> Option<Json> {
-        self.disk.parse_package_json(arena, text)
+    fn parse_package_json(&self, text: &[u8]) -> Option<Json> {
+        self.disk.parse_package_json(text)
     }
     // Runs on one pool thread, like `bun check --threads 1`. That thread has the same stack size as
     // in production and knows its stack limit.

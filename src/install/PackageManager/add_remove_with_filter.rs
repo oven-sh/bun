@@ -233,7 +233,6 @@ pub(crate) fn fetch_entry<'a>(
         log,
         &target.package_json_path,
         GetJSONOptions {
-            init_reset_store: false,
             guess_indentation: true,
         },
     ) {

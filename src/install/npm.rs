@@ -25,7 +25,7 @@ use crate::package_manager::THREAD_POOL;
 use crate::package_manager::directories::TemporaryDirectory;
 use crate::{
     Aligner, ExternalSlice, ExternalStringList, ExternalStringMap, PackageManager, PackageNameHash,
-    VersionSlice, initialize_mini_store as initialize_store,
+    VersionSlice,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -125,7 +125,8 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     let log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string("???", response_buf.list.as_slice());
-    let parsed = match JSON::ParsedJson::parse_json(&source, &log) {
+    let arena = bun_ast::AstArena::new();
+    let parsed = match JSON::ParsedJson::parse_json(&source, &log, &arena) {
         Ok(j) => j,
         Err(bun_parsers::Error::Alloc(bun_alloc::AllocError)) => {
             return Err(WhoamiError::OutOfMemory);
@@ -139,7 +140,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
             Global::crash();
         }
     };
-    let json = parsed.root;
+    let json = parsed.root();
 
     let username_expr = json.get(b"username");
     let Some(username) = username_expr
@@ -162,7 +163,8 @@ pub fn response_error<const OTP_RESPONSE: bool>(
     let message: Option<Vec<u8>> = 'message: {
         let log = bun_ast::Log::init();
         let source = bun_ast::Source::init_path_string("???", response_body.list.as_slice());
-        let parsed = match JSON::ParsedJson::parse_json(&source, &log) {
+        let arena = bun_ast::AstArena::new();
+        let parsed = match JSON::ParsedJson::parse_json(&source, &log, &arena) {
             Ok(j) => j,
             Err(bun_parsers::Error::Alloc(bun_alloc::AllocError)) => {
                 return Err(AllocError);
@@ -170,7 +172,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
             Err(_) => break 'message None,
         };
 
-        let error_expr = parsed.root.get(b"error");
+        let error_expr = parsed.root().get(b"error");
         let Some(error) = error_expr.as_ref().and_then(|e| e.as_utf8_string_literal()) else {
             break 'message None;
         };
@@ -2412,12 +2414,8 @@ impl PackageManifest {
         is_extended_manifest: bool,
     ) -> Result<Option<PackageManifest>, Error> {
         let source = bun_ast::Source::init_path_string(expected_name, json_buffer);
-        initialize_store();
-        // `initialize_mini_store` deliberately keeps the allocator pushed
-        // across calls (the AstAlloc state stays installed for the re-arm) and
-        // bulk-frees via `reset_retain_with_limit` on the next call — see
-        // `initialize_mini_store` in lib.rs for why.
-        let parsed = match JSON::ParsedJson::parse_npm_manifest(&source, log) {
+        let arena = bun_ast::AstArena::new();
+        let parsed = match JSON::ParsedJson::parse_npm_manifest(&source, log, &arena) {
             Ok(j) => j,
             Err(_) => {
                 // It knows a source by its address, and `json_buffer` is about to be freed.
@@ -2425,10 +2423,10 @@ impl PackageManifest {
                 return Ok(None);
             }
         };
-        let json = parsed.root;
+        let json = parsed.root();
 
         if let Some(error_q) = json.as_property(b"error") {
-            if let Some(err) = error_q.expr.as_utf8_string_literal() {
+            if let Some(err) = error_q.value.as_utf8_string_literal() {
                 log.add_error_fmt(
                     Some(&source),
                     bun_ast::Loc::EMPTY,
@@ -2456,7 +2454,7 @@ impl PackageManifest {
 
         if PackageManager::verbose_install() {
             if let Some(name_q) = json.as_property(b"name") {
-                let Some(received_name) = name_q.expr.as_utf8_string_literal() else {
+                let Some(received_name) = name_q.value.as_utf8_string_literal() else {
                     return Ok(None);
                 };
                 // If this manifest is coming from the default registry, make sure it's the expected one. If it's not
@@ -2477,7 +2475,7 @@ impl PackageManifest {
         string_builder.count(expected_name);
 
         if let Some(name_q) = json.as_property(b"modified") {
-            let Some(field) = name_q.expr.as_utf8_string_literal() else {
+            let Some(field) = name_q.value.as_utf8_string_literal() else {
                 return Ok(None);
             };
             string_builder.count(field);
@@ -2493,11 +2491,11 @@ impl PackageManifest {
             let Some(versions_expr) = json.get(b"versions") else {
                 break 'get_versions;
             };
-            let JSON::ExprData::EObjectJSON(versions_obj) = &versions_expr.data else {
+            let Some(versions_obj) = versions_expr.as_e_object_json() else {
                 break 'get_versions;
             };
 
-            let versions = versions_obj.get().properties();
+            let versions = versions_obj.properties();
             // A package that deprecates many versions repeats the same sentence, so it's stored
             // once per run of equal messages.
             let mut prev_deprecated: &[u8] = b"";
@@ -2650,8 +2648,8 @@ impl PackageManifest {
 
         let mut dist_tags_count: usize = 0;
         if let Some(dist) = json.get(b"dist-tags") {
-            if let JSON::ExprData::EObjectJSON(obj) = &dist.data {
-                for tag in obj.get().properties() {
+            if let Some(obj) = dist.as_e_object_json() {
+                for tag in obj.properties() {
                     string_builder.count(tag.key.slice());
                     extern_string_count += 2;
 
@@ -2740,11 +2738,11 @@ impl PackageManifest {
             let Some(versions_expr) = json.get(b"versions") else {
                 break 'get_versions2;
             };
-            let JSON::ExprData::EObjectJSON(versions_obj) = &versions_expr.data else {
+            let Some(versions_obj) = versions_expr.as_e_object_json() else {
                 break 'get_versions2;
             };
 
-            let versions = versions_obj.get().properties();
+            let versions = versions_obj.properties();
 
             // versions change more often than names
             // so names go last because we are better able to dedupe at the end
@@ -2759,14 +2757,9 @@ impl PackageManifest {
 
             // Index the root `time` object once so the per-version publish-time
             // lookup below is O(1) instead of a linear scan of ~V entries.
-            let time_obj = json.get(b"time").and_then(|e| match e.data {
-                JSON::ExprData::EObjectJSON(obj) => Some(obj),
-                _ => None,
-            });
-            let time_props: &[JSON::E::PropertyJSON] = time_obj
-                .as_ref()
-                .map(|o| o.get().properties())
-                .unwrap_or(&[]);
+            let time_obj = json.get(b"time").and_then(|e| e.as_e_object_json());
+            let time_props: &[JSON::E::PropertyJSON] =
+                time_obj.map(|o| o.properties()).unwrap_or(&[]);
             let mut time_index: HashMap<u64, u32, IdentityContext<u64>> = HashMap::default();
             if !time_props.is_empty() {
                 time_index.ensure_total_capacity(time_props.len())?;
@@ -3292,8 +3285,8 @@ impl PackageManifest {
         let mut extern_strings_cursor = extern_strings_consumed;
 
         if let Some(dist) = json.get(b"dist-tags") {
-            if let JSON::ExprData::EObjectJSON(obj) = &dist.data {
-                let tags = obj.get().properties();
+            if let Some(obj) = dist.as_e_object_json() {
+                let tags = obj.properties();
                 let extern_strings_slice_start = extern_strings_cursor;
                 let mut dist_tag_i: usize = 0;
 
@@ -3343,7 +3336,7 @@ impl PackageManifest {
         }
 
         if let Some(name_q) = json.as_property(b"modified") {
-            let Some(field) = name_q.expr.as_utf8_string_literal() else {
+            let Some(field) = name_q.value.as_utf8_string_literal() else {
                 return Ok(None);
             };
             result.pkg.modified = string_builder.append::<SemverString>(field);

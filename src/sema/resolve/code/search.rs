@@ -422,7 +422,7 @@ impl CodeOptions {
     fn find_file<H: Host + ?Sized>(
         &self,
         host: &H,
-        parse_manifest: fn(&H, &Arena, &[u8]) -> Option<Json>,
+        parse_manifest: fn(&H, &[u8]) -> Option<Json>,
         search: &FileSearch<'_>,
     ) -> FoundCode {
         let plain = PlainSearch {
@@ -459,7 +459,7 @@ struct PackageWalk<'a> {
 
 struct PlainSearch<'a, H: Host + ?Sized> {
     host: &'a H,
-    parse_manifest: fn(&H, &Arena, &[u8]) -> Option<Json>,
+    parse_manifest: fn(&H, &[u8]) -> Option<Json>,
     orders: &'a ExtensionOrders,
     kind: CodeImportKind,
     prefers_module_field: bool,
@@ -547,8 +547,7 @@ impl<H: Host + ?Sized> PlainSearch<'_, H> {
         if !self.host.is_file(&path) {
             return None;
         }
-        let arena = self.arena.get_or_init(Arena::new);
-        let manifest = (self.parse_manifest)(self.host, arena, &self.host.read(&path)?)?;
+        let manifest = (self.parse_manifest)(self.host, &self.host.read(&path)?)?;
         manifest.as_object().is_some().then_some(manifest)
     }
 

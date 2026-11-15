@@ -7,7 +7,7 @@ use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, String as SemverString};
 use bun_sys::{self, Fd, File, O};
 
-use crate::bun_json::Expr;
+use crate::bun_json::{Expr, JsonView};
 use crate::dependency::{self};
 use crate::install::{Features, Lockfile, PackageID};
 use crate::lockfile::Package as LockfilePackage;
@@ -114,14 +114,14 @@ impl ResolverContext for NewResolver<'_> {
         matches!(self.tag, ResolutionTag::Folder | ResolutionTag::Symlink)
     }
 
-    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: &Expr) {
+    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: JsonView<'_>) {
         builder.count(self.folder_path);
     }
 
     fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
-        _json: &Expr,
+        _json: JsonView<'_>,
     ) -> crate::Result<ResolutionType<u64>> {
         let appended = builder.append::<SemverString>(self.folder_path);
         Ok(ResolutionType::<u64>::init(match self.tag {
@@ -264,7 +264,7 @@ fn read_package_json_from_disk(
                 &mut *manager_ptr,
                 log,
                 &*source,
-                root,
+                JsonView::from(&root),
                 resolver,
                 features,
             )?;
@@ -358,7 +358,7 @@ pub(crate) fn listed_dependencies(
         manager,
         &log,
         &source,
-        json,
+        JsonView::from(&json),
         &mut OnlyDependencies,
         Features::FOLDER,
     );

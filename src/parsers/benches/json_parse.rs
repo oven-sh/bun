@@ -1,7 +1,7 @@
 //! Throughput benchmark for the JSON parser on the `bench/json-corpus/fetch.sh` corpus.
 //! Run via `scripts/bench-json-rust.sh [criterion args]`.
-use bun_alloc::Arena as Bump;
 use bun_ast as js_ast;
+use bun_ast::AstArena;
 use bun_parsers::json;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
@@ -29,7 +29,6 @@ fn bench_json(c: &mut Criterion) {
         })
         .collect();
     files.sort();
-    bun_ast::initialize_store();
 
     let mut group = c.benchmark_group("json_parse");
     for path in &files {
@@ -53,9 +52,8 @@ fn bench_json(c: &mut Criterion) {
             })
         });
         group.bench_function(BenchmarkId::new("parse_nowarn", &name), |b| {
-            let mut bump = Bump::new();
+            let mut bump = AstArena::new();
             b.iter(|| {
-                let _store_scope = js_ast::StoreResetGuard::new();
                 let log = js_ast::Log::init();
                 bump.reset();
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
@@ -70,17 +68,17 @@ fn bench_json(c: &mut Criterion) {
         });
         group.bench_function(BenchmarkId::new("parse_rows", &name), |b| {
             b.iter(|| {
-                let _store_scope = js_ast::StoreResetGuard::new();
                 let log = js_ast::Log::init();
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
-                let e = json::ParsedJson::parse_npm_manifest(&source, &log).expect("parse failed");
+                let bump = AstArena::new();
+                let e = json::ParsedJson::parse_npm_manifest(&source, &log, &bump)
+                    .expect("parse failed");
                 std::hint::black_box(&e);
             })
         });
         group.bench_function(BenchmarkId::new("parse_nowarn_warm", &name), |b| {
-            let mut bump = Bump::new();
+            let mut bump = AstArena::new();
             b.iter(|| {
-                let _store_scope = js_ast::StoreResetGuard::new();
                 let log = js_ast::Log::init();
                 bump.reset_retain_with_limit(64 << 20);
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
@@ -94,9 +92,8 @@ fn bench_json(c: &mut Criterion) {
             })
         });
         group.bench_function(BenchmarkId::new("parse_utf8", &name), |b| {
-            let mut bump = Bump::new();
+            let mut bump = AstArena::new();
             b.iter(|| {
-                let _store_scope = js_ast::StoreResetGuard::new();
                 let log = js_ast::Log::init();
                 bump.reset();
                 let source = js_ast::Source::init_path_string("fixture.json", &contents[..]);
@@ -109,9 +106,8 @@ fn bench_json(c: &mut Criterion) {
     group.bench_function("per_parse_overhead/empty_object", |b| {
         let two = b"{}".to_vec();
         b.iter(|| {
-            let _store_scope = js_ast::StoreResetGuard::new();
             let log = js_ast::Log::init();
-            let bump = Bump::new();
+            let bump = AstArena::new();
             let source = js_ast::Source::init_path_string("fixture.json", &two[..]);
             let e = json::parse_utf8(&source, &log, &bump).expect("parse failed");
             std::hint::black_box(&e);

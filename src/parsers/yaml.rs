@@ -39,7 +39,7 @@ impl YAML {
     pub fn parse(
         source: &bun_ast::Source,
         log: &bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        bump: &ast::AstArena,
         cyclic_aliases: CyclicAliases,
     ) -> Result<Expr, YamlParseError> {
         bun_core::analytics::Features::yaml_parse_inc();
@@ -66,7 +66,8 @@ impl YAML {
                 for doc in &stream.docs {
                     items.push(doc.root);
                 }
-                Ok(Expr::init(
+                Ok(Expr::allocate(
+                    bump,
                     E::Array {
                         items,
                         ..Default::default()
@@ -117,7 +118,7 @@ impl YAML {
         text: &[u8],
         read: impl FnOnce(&[Expr], &[SourceToken]) -> T,
     ) -> Result<T, (ParseError, usize)> {
-        let bump = bun_alloc::Arena::new();
+        let bump = ast::AstArena::new();
         let mut allocator = ast::ASTMemoryAllocator::borrowing(&bump);
         let _scope = allocator.enter();
         let mut parser: Parser<Utf8> = Parser::init(&bump, text, CyclicAliases::Reject);
@@ -1610,7 +1611,7 @@ pub enum NodeTag {
 }
 
 impl NodeTag {
-    pub(crate) fn resolve_null(self, loc: bun_ast::Loc) -> Expr {
+    pub(crate) fn resolve_null(self, bump: &ast::AstArena, loc: bun_ast::Loc) -> Expr {
         match self {
             NodeTag::None
             | NodeTag::Bool
@@ -1621,7 +1622,7 @@ impl NodeTag {
             | NodeTag::Unknown(_) => Expr::init(E::Null {}, loc),
 
             // non-specific tags become seq, map, or str
-            NodeTag::NonSpecific | NodeTag::Str => Expr::init(E::String::default(), loc),
+            NodeTag::NonSpecific | NodeTag::Str => Expr::allocate(bump, E::String::default(), loc),
         }
     }
 }
@@ -1635,7 +1636,7 @@ pub enum NodeScalar<Enc: Encoding> {
 }
 
 impl<Enc: Encoding> NodeScalar<Enc> {
-    pub(crate) fn to_expr(&self, pos: Pos, input: &[Enc::Unit], bump: &bun_alloc::Arena) -> Expr {
+    pub(crate) fn to_expr(&self, pos: Pos, input: &[Enc::Unit], bump: &ast::AstArena) -> Expr {
         match self {
             NodeScalar::Null => Expr::init(E::Null {}, pos.loc()),
             NodeScalar::Boolean(value) => Expr::init(E::Boolean { value: *value }, pos.loc()),
@@ -1657,7 +1658,7 @@ impl<Enc: Encoding> NodeScalar<Enc> {
                     EncodingKind::Utf16 => E::String::init_utf16(Enc::as_u16_slice(s)),
                     _ => E::String::init(Enc::key_bytes(s)),
                 };
-                Expr::init(estring, pos.loc())
+                Expr::allocate(bump, estring, pos.loc())
             }
         }
     }
@@ -2174,7 +2175,7 @@ pub struct Parser<'i, Enc: Encoding> {
     /// allocator (and `Drop`); the arena is threaded for the few places that
     /// must hand a borrowed slice into the long-lived `Expr` tree (see
     /// `NodeScalar::to_expr`).
-    pub(crate) bump: &'i bun_alloc::Arena,
+    pub(crate) bump: &'i ast::AstArena,
 
     pub(crate) context: ContextStack,
     pub(crate) block_indents: IndentStack,
@@ -2216,7 +2217,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     pub(crate) const MAX_ALIAS_EXPANSION: usize = 16 * 1024 * 1024;
 
     pub(crate) fn init(
-        bump: &'i bun_alloc::Arena,
+        bump: &'i ast::AstArena,
         input: &'i [Enc::Unit],
         cyclic_aliases: CyclicAliases,
     ) -> Self {
@@ -2632,7 +2633,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     };
                     let mut props = MappingProps::init();
                     self.append_entry(&mut props, key, value)?;
-                    Expr::init(
+                    Expr::allocate(
+                        self.bump,
                         E::Object {
                             properties: props.move_list(),
                             ..Default::default()
@@ -3319,12 +3321,12 @@ fn collection_id(node: &Expr) -> Option<usize> {
 trait CollectionData: Sized {
     /// Allocates an empty node, returning it with the slot to move the parsed
     /// entries into.
-    fn alloc_empty(loc: Loc) -> (Expr, ast::StoreRef<Self>);
+    fn alloc_empty(bump: &ast::AstArena, loc: Loc) -> (Expr, ast::StoreRef<Self>);
 }
 
 impl CollectionData for E::Array {
-    fn alloc_empty(loc: Loc) -> (Expr, ast::StoreRef<Self>) {
-        let slot = ast::expr::Store::append(E::Array::default());
+    fn alloc_empty(bump: &ast::AstArena, loc: Loc) -> (Expr, ast::StoreRef<Self>) {
+        let slot = bump.alloc_node(E::Array::default());
         (
             Expr {
                 loc,
@@ -3336,8 +3338,8 @@ impl CollectionData for E::Array {
 }
 
 impl CollectionData for E::Object {
-    fn alloc_empty(loc: Loc) -> (Expr, ast::StoreRef<Self>) {
-        let slot = ast::expr::Store::append(E::Object::default());
+    fn alloc_empty(bump: &ast::AstArena, loc: Loc) -> (Expr, ast::StoreRef<Self>) {
+        let slot = bump.alloc_node(E::Object::default());
         (
             Expr {
                 loc,
@@ -3399,7 +3401,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loc: Loc,
         body: impl FnOnce(&mut Self) -> Result<T, ParseError>,
     ) -> Result<Expr, ParseError> {
-        let (node, mut slot) = T::alloc_empty(loc);
+        let (node, mut slot) = T::alloc_empty(self.bump, loc);
 
         let Some(anchor) = anchor else {
             *slot = body(self)?;
@@ -3842,7 +3844,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }) => *t,
             _ => NodeTag::None,
         };
-        let e_node = resolved_tag.resolve_null(loc);
+        let e_node = resolved_tag.resolve_null(self.bump, loc);
         if let Some(anchor) = anchor {
             self.bind_anchor(anchor, e_node)?;
         }
@@ -4260,7 +4262,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     } else {
                         NodeTag::None
                     };
-                    let first_key = key_tag.resolve_null(self.token.start.loc());
+                    let first_key = key_tag.resolve_null(self.bump, self.token.start.loc());
 
                     let anchors = node_props.take_implicit_key_anchors(colon_line)?;
                     if let Some(key_anchor) = anchors.key_anchor {
@@ -4416,7 +4418,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
 
         let resolved = match &node.data {
-            ast::ExprData::ENull(_) => tag.resolve_null(node.loc),
+            ast::ExprData::ENull(_) => tag.resolve_null(self.bump, node.loc),
             _ => node,
         };
 

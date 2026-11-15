@@ -97,9 +97,7 @@ pub(crate) fn parse<R>(body: &[u8], read: impl FnOnce(Node<'_>) -> R) -> Option<
     if body.is_empty() || body.len() > i32::MAX as usize {
         return None;
     }
-    let arena = bun_alloc::Arena::default();
-    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-    let _ast_scope = ast_memory_allocator.enter();
+    let arena = bun_ast::AstArena::new();
     let log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string(b"response.xml", body);
     let options = xml::Options {

@@ -332,7 +332,7 @@ fn bind_scanned_modules(
         texts.markers_stored_from_outside().into_iter().collect();
     let names_without_code = mocked.names_without_code.clone();
     let (mut tables, imports_from_commonjs) =
-        resolve_begun_exports(input.files, &scans, &modules, begun, &texts);
+        resolve_begun_exports(input.files, &scans, &modules, begun, &texts, &mocked);
     sites.settle(input.files, &modules, &tables);
     steps.end("bind: resolve exports");
     let find_marker = |module: ModuleRef| match modules.interop(module).kind {

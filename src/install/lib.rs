@@ -35,14 +35,8 @@ pub(crate) mod bun_fs {
     pub(crate) use bun_resolver::fs::*;
 }
 
-/// `bun_progress` → re-export of the real `bun_core::Progress` (snapshot of
-/// pre-0.13 `std.Progress`). The earlier value-type counter shim was dropped
-/// once `ProgressStrings.rs`, `hoisted_install.rs`, `runTasks.rs` etc. started
-/// touching the full surface (`supports_ansi_escape_codes`, public `root`,
-/// `unprotected_*` atomics, `&mut Node` from `start()`); keeping a parallel
-/// type here just bifurcated `Node` identity across the crate.
 pub(crate) mod bun_progress {
-    pub(crate) use bun_core::Progress::{Node, Progress};
+    pub(crate) use bun_core::Progress::{NodeId, Progress};
 }
 
 /// `bun_bunfig` → config-loading entrypoint. The real `bun_bunfig` crate now

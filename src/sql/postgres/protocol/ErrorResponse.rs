@@ -8,13 +8,11 @@ pub struct ErrorResponse {
 }
 
 impl ErrorResponse {
-    pub fn decode_internal<Container: super::new_reader::ReaderContext>(
-        mut reader: NewReader<Container>,
-    ) -> Result<Self, AnyPostgresError> {
+    pub fn decode_internal(reader: &NewReader<'_>) -> Result<Self, AnyPostgresError> {
         let remaining_bytes = reader.body_length()?;
         if remaining_bytes > 0 {
             return Ok(Self {
-                messages: FieldMessage::decode_list::<Container>(reader, remaining_bytes)?,
+                messages: FieldMessage::decode_list(reader, remaining_bytes)?,
             });
         }
         Ok(Self::default())

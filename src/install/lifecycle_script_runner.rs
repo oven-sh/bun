@@ -378,14 +378,11 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub(crate) process: Option<ProcessHandle>,
     pub(crate) stdout: OutputReader,
     pub(crate) stderr: OutputReader,
-    /// Stored as `BackRef` (not `&'a`) so
-    /// callbacks may mutate manager state (`active_lifecycle_scripts`,
-    /// `progress`, `scripts_node`) through the long-lived backref without
-    /// asserting unique-borrow over the whole `PackageManager`.
-    pub(crate) manager: bun_ptr::BackRef<PackageManager, bun_ptr::Mut>,
+    /// `BackRef`, not `&'a`: the install loop holds `&mut PackageManager` while scripts run.
+    pub(crate) manager: bun_ptr::BackRef<PackageManager>,
     /// Owned by this
     /// struct so the `K=V\0` buffers stay alive across every async
-    /// `spawn_next_script` for the script chain; freed by `Drop`.
+    /// `spawn_next_script` for the script chain; freed with it.
     pub(crate) envp: bun_dotenv::NullDelimitedEnvMap,
     pub(crate) shell_bin: Option<&'a ZStr>,
 
@@ -480,9 +477,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         &ALIVE_COUNT
     }
 }
-
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
 
 pub type OutputReader = BufferedReader;
 
@@ -591,21 +585,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         let (log_level, foreground) = (self.manager().options.log_level, self.foreground);
         if foreground && log_level != crate::LogLevel::Silent {
             Output::command(Output::CommandArgv::Single(combined_script.as_bytes()));
-        } else if let Some(scripts_node) = self.manager().scripts_node_mut() {
-            let manager = self.manager.as_ptr();
-            // SAFETY: the manager outlives `self`, and only the main thread reports progress.
-            unsafe {
-                (*manager).set_node_name::<true>(
-                    scripts_node,
-                    &self.package_name,
-                    ProgressStrings::SCRIPT_EMOJI.as_bytes(),
-                );
-                // .monotonic is okay because because this value is only used by hoisted installs, which
-                // only use this type on the main thread.
-                if (*manager).finished_installing.load(Ordering::Relaxed) {
-                    scripts_node.activate();
-                    (*manager).progress.refresh();
-                }
+        } else if let Some(scripts_node) = self.manager().scripts_node {
+            let manager = self.manager();
+            let emoji = ProgressStrings::SCRIPT_EMOJI.as_bytes();
+            manager.set_node_name(scripts_node, &self.package_name, emoji);
+            // .monotonic is okay: only hoisted installs use this, and only on the main thread.
+            if manager.finished_installing.load(Ordering::Relaxed) {
+                manager.progress.activate(scripts_node);
+                manager.progress.refresh();
             }
         }
 
@@ -623,18 +610,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             } else if log_level.is_verbose() || foreground {
                 bun_spawn::Stdio::Inherit
             } else {
-                #[cfg(unix)]
-                {
-                    bun_spawn::Stdio::Buffer
-                }
-                #[cfg(not(unix))]
-                {
-                    // `spawn_process_windows` moves it into `spawned.{stdout,stderr}`, its one owner.
-                    bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                        bun_core::ffi::zeroed::<uv::Pipe>(),
-                    ))
-                        as bun_spawn::windows::UvPipePtr)
-                }
+                bun_spawn::Stdio::Buffer
             }
         };
         let spawn_options = SpawnOptions {
@@ -682,27 +658,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             core::ptr::null(),
         ]);
         // SAFETY: both arrays are null-terminated, and their strings NUL-terminated and live.
-        match unsafe { bun_spawn::spawn_process(&spawn_options, argv.as_ptr(), envp.as_ptr()) } {
-            Ok(Ok(spawned)) => Ok(spawned),
-            res => {
-                #[cfg(windows)]
-                {
-                    // On error we still own the `uv::Pipe`s: `WindowsStdio` has no `Drop`.
-                    let mut spawn_options = spawn_options;
-                    spawn_options.stdout.deinit();
-                    spawn_options.stderr.deinit();
-                }
-                res??;
-                unreachable!();
-            }
-        }
+        Ok(unsafe { bun_spawn::spawn_process(&spawn_options, argv.as_ptr(), envp.as_ptr()) }??)
     }
 
     /// Leaves `self` to the process and the readers until [`Self::maybe_finished`].
-    fn watch(self: Box<Self>, spawned: SpawnProcessResult) {
-        #[cfg(windows)]
-        let mut spawned = spawned;
-
+    fn watch(self: Box<Self>, mut spawned: SpawnProcessResult) {
         debug_assert!(self.process.is_none(), "forgot to call `reset_polls`");
         let this = bun_core::heap::into_raw(self);
         // SAFETY: `this` is live until the process has reported, which only the last statement can
@@ -716,7 +676,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
             #[cfg(unix)]
             {
-                if let Some(stdout) = spawned.stdout {
+                if let Some(stdout) = spawned.stdout.take().map(bun_sys::File::into_raw) {
                     if !spawned.memfds[1] {
                         let _ = bun_sys::set_nonblocking(stdout);
                         (*this).remaining_fds += 1;
@@ -732,7 +692,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         (*this).stdout.start_memfd(stdout);
                     }
                 }
-                if let Some(stderr) = spawned.stderr {
+                if let Some(stderr) = spawned.stderr.take().map(bun_sys::File::into_raw) {
                     if !spawned.memfds[2] {
                         let _ = bun_sys::set_nonblocking(stderr);
                         (*this).remaining_fds += 1;
@@ -751,14 +711,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
             #[cfg(windows)]
             {
-                // `spawn_process_windows` has already `heap::take`n the raw pipe
-                // pointers out of `Stdio::Buffer` into `spawned.{stdout,stderr}`
-                // as `WindowsStdioResult::Buffer(Box<uv::Pipe>)`. Take that Box
-                // out *here* (sole owner) and stash it in `source` BEFORE
-                // `start_with_current_pipe` (which reads `source.?.pipe`) and
-                // BEFORE `spawned` drops — otherwise the `Box<uv::Pipe>` is freed
-                // while libuv still has the handle queued (UAF) and the later
-                // `close_impl`→`on_pipe_close`→`heap::take` double-frees.
                 if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stdout.take() {
                     (*this).stdout.set_source(bun_io::Source::Pipe(pipe));
                     (*this).remaining_fds += 1;
@@ -820,7 +772,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 return;
             }
 
-            Output::disable_buffering();
+            let _unbuffered = Output::disable_buffering_scope();
             Output::flush();
 
             if stdout_len > 0 {
@@ -839,8 +791,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 stderr.clear();
                 stderr.shrink_to_fit();
             }
-
-            Output::enable_buffering();
         }
     }
 
@@ -883,18 +833,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
 
                 if !self.foreground
-                    && let Some(scripts_node) = self.manager().scripts_node_mut()
+                    && let Some(scripts_node) = self.manager().scripts_node
                 {
+                    let progress = &self.manager().progress;
                     // .monotonic is okay because because this value is only used by hoisted
                     // installs, which only use this type on the main thread.
                     if self.manager().finished_installing.load(Ordering::Relaxed) {
-                        scripts_node.complete_one();
+                        progress.complete_one(scripts_node);
                     } else {
-                        // .monotonic because this is what `completeOne` does. This is the same
-                        // as `completeOne` but doesn't update the parent.
-                        scripts_node
-                            .unprotected_completed_items
-                            .fetch_add(1, Ordering::Relaxed);
+                        // As `complete_one`, but it is not shown yet.
+                        let node = progress.node(scripts_node);
+                        node.completed_items.update(|items| items + 1);
                     }
                 }
 
@@ -908,7 +857,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                             .swap(Step::Binaries as u32, Ordering::Release);
                         debug_assert!(previous_step == Step::RunPreinstall as u32);
                         installer.start_task(entry_id);
-                        self.decrement_pending_script_tasks();
                         return;
                     }
                 }
@@ -947,7 +895,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
                 // the last script finished
                 self.forget_unfinished_scripts();
-                self.decrement_pending_script_tasks();
             }
             Status::Signaled(signal) => {
                 self.print_output();
@@ -995,9 +942,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         debug_assert!(self.remaining_fds == 0);
 
         self.process = None;
-
-        self.stdout.deinit();
-        self.stderr.deinit();
         self.stdout = OutputReader::init::<Self>();
         self.stderr = OutputReader::init::<Self>();
     }
@@ -1034,7 +978,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
     fn discard_failed_optional_package(&mut self) {
         self.forget_unfinished_scripts();
-        self.decrement_pending_script_tasks();
         let deleted = match self.ctx.take() {
             Some(InstallCtx::Hoisted { tree_id, .. }) => {
                 crate::package_installer::remove_placed_package(
@@ -1071,7 +1014,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     ) {
         let package_name = list.package_name.clone();
         let lss = Box::new(LifecycleScriptSubprocess {
-            manager: bun_ptr::BackRef::new_mut(manager),
+            manager: bun_ptr::BackRef::new(manager),
             envp,
             shell_bin,
             package_name,
@@ -1111,8 +1054,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             .pending_lifecycle_script_tasks
             .fetch_add(1, Ordering::Relaxed);
     }
+}
 
-    fn decrement_pending_script_tasks(&self) {
+impl Drop for LifecycleScriptSubprocess<'_> {
+    fn drop(&mut self) {
         // .monotonic is okay because this is just used for progress (see
         // `increment_pending_script_tasks`).
         let _ = self
@@ -1148,14 +1093,8 @@ bun_io::impl_buffered_reader_parent! {
         Self::print_reader_error((*this).current_script_index, &(*this).package_name, &err);
         Self::on_reader_done(this)
     };
-    loop_           = |this| (*(*this).manager.as_ptr()).event_loop.native_loop();
+    loop_           = |this| (*this).manager.get().event_loop.native_loop();
     event_loop = |this| bun_event_loop::EventLoopHandle::from_any(
-        &(*(*this).manager.as_ptr()).event_loop,
+        &(*this).manager.get().event_loop,
     ).as_event_loop_ctx();
-}
-
-impl Drop for LifecycleScriptSubprocess<'_> {
-    fn drop(&mut self) {
-        self.reset_polls();
-    }
 }

@@ -19,11 +19,9 @@ use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{ProcessHandle, Rusage, SpawnEnv, SpawnOptions, Status};
 use bun_sys::Fd;
-#[cfg(windows)]
-use bun_sys::windows::libuv as uv;
 use bun_threading::thread_pool as ThreadPool;
 
-use crate::cache_publish::StagedEntry;
+use crate::cache_publish::UnfinishedEntry;
 use crate::install::{ExtractData, ExtractDataJson};
 use crate::package_manager_task::{self as Task, Job};
 use crate::repository::{GitEnv, Repository, RepositoryExt as _, is_safe_resolved_tag};
@@ -52,7 +50,6 @@ impl PackageManager {
             let Some(task) = self.git_tasks.pop_front() else {
                 break;
             };
-            self.running_git_tasks.fetch_add(1, Ordering::Relaxed);
             GitSubprocess::start(self, task);
         }
     }
@@ -131,9 +128,7 @@ impl Finalize {
                 finish_checkout(request, log, staging, &tree).map(|read| *data = Some(read))
             }
             (Finalize::Failed { staging, err }, _) => {
-                if let Some(staging) = staging {
-                    staging.discard();
-                }
+                drop(staging);
                 Err(err)
             }
             _ => unreachable!("the finalize step is for another kind of task"),
@@ -155,13 +150,7 @@ fn finish_checkout(
 ) -> Result<ExtractData, Error> {
     let (name, resolved) = (req.name.slice(), req.resolved.slice());
 
-    let dir = match bun_sys::Dir::borrow(&staging.cache_dir).open_at(&staging.tmp_name) {
-        Ok(dir) => dir,
-        Err(err) => {
-            staging.discard();
-            return Err(err.into());
-        }
-    };
+    let dir = bun_sys::Dir::borrow(&staging.entry.parent()).open_at(staging.entry.name())?;
     let _ = dir.delete_tree(b".git");
     // `.bun-tag` is the cache-hit marker; a checked-in one is replaced.
     let _ = dir.delete_tree(b".bun-tag");
@@ -188,7 +177,6 @@ fn finish_checkout(
     // Windows cannot rename a directory with an open handle inside it.
     drop(dir);
     if let Err((what, err)) = prepared {
-        staging.discard();
         log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
@@ -504,9 +492,8 @@ fn checkout_folder_name(resolved: &[u8]) -> Vec<u8> {
 
 /// A cache folder, built under a temporary name and renamed once complete.
 pub(crate) struct CacheStaging {
-    cache_dir: Fd,
-    tmp_name: Vec<u8>,
-    /// `<cache dir>/<tmp_name>`
+    entry: UnfinishedEntry,
+    /// `<cache dir>/<name of the entry>`
     tmp_path: Vec<u8>,
 }
 
@@ -515,26 +502,20 @@ impl CacheStaging {
         let mut tmp_name_buf = [0u8; 64];
         let tmp_name =
             Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())
-                .map_err(|_| Error::Sys(bun_errno::SystemErrno::ENOSPC))?
-                .to_vec();
+                .map_err(|_| Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
         let tmp_path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
             cache_dir_path,
-            &[&tmp_name],
+            &[tmp_name],
         )
         .to_vec();
         Ok(Self {
-            cache_dir,
-            tmp_name,
+            entry: UnfinishedEntry::new(cache_dir, tmp_name),
             tmp_path,
         })
     }
 
     fn create(&self) -> bun_sys::Maybe<()> {
-        bun_sys::Dir::borrow(&self.cache_dir).make_path(&self.tmp_name)
-    }
-
-    fn discard(&self) {
-        let _ = bun_sys::Dir::borrow(&self.cache_dir).delete_tree(&self.tmp_name);
+        bun_sys::Dir::borrow(&self.entry.parent()).make_path(self.entry.name())
     }
 
     /// Opens `folder_name`, which is either the staging folder renamed into place, or a folder that
@@ -546,12 +527,10 @@ impl CacheStaging {
         folder_name: &[u8],
         is_complete: &dyn Fn(&bun_sys::Dir) -> bool,
     ) -> Result<bun_sys::Dir, Error> {
-        StagedEntry::new(self.cache_dir, &bun_core::ZBox::from_bytes(&self.tmp_name))
-            .publish_and_open(
-                self.cache_dir,
-                &bun_core::ZBox::from_bytes(folder_name),
-                is_complete,
-            )
+        let cache_dir = self.entry.parent();
+        let folder_name = bun_core::ZBox::from_bytes(folder_name);
+        self.entry
+            .finish(|staged| staged.publish_and_open(cache_dir, &folder_name, is_complete))
             .map_err(|err| {
                 log.add_error_fmt(
                     None,
@@ -716,12 +695,10 @@ fn has_no_links(dir: &bun_sys::Dir) -> bool {
             };
             let name = entry.name.slice_u8();
             let kind = match entry.kind {
-                EntryKind::Unknown => {
-                    match bun_sys::lstatat(fd, &bun_core::ZBox::from_bytes(name)) {
-                        Ok(stat) => bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode),
-                        Err(_) => return false,
-                    }
-                }
+                EntryKind::Unknown => match bun_sys::lstatat(fd, entry.name.as_zstr()) {
+                    Ok(stat) => bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode),
+                    Err(_) => return false,
+                },
                 known => known,
             };
             match kind {
@@ -789,8 +766,6 @@ pub(crate) struct GitSubprocess {
     urls: JsCell<Vec<Vec<u8>>>,
     /// Every URL tried so far, each with git's stderr. Printed only after the last URL has failed.
     clone_output: JsCell<Vec<u8>>,
-    /// Moves into the task's `Finalize`; `Drop` discards it otherwise.
-    staging: JsCell<Option<CacheStaging>>,
     read_error: JsCell<Option<bun_sys::Error>>,
 
     process: JsCell<Option<ProcessHandle>>,
@@ -798,6 +773,16 @@ pub(crate) struct GitSubprocess {
     stdout: JsCell<BufferedReader>,
     stderr: JsCell<BufferedReader>,
     remaining_fds: Cell<i8>,
+    /// Moves into the task's `Finalize`.
+    staging: JsCell<Option<CacheStaging>>,
+}
+
+impl Drop for GitSubprocess {
+    fn drop(&mut self) {
+        self.manager()
+            .running_git_tasks
+            .fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 impl GitSubprocess {
@@ -811,6 +796,7 @@ impl GitSubprocess {
             Job::GitCheckout { request, .. } => &request.name,
             _ => unreachable!("not a git task"),
         };
+        manager.running_git_tasks.fetch_add(1, Ordering::Relaxed);
         let runner = RefPtr::new(GitSubprocess {
             ref_count: Cell::new(1),
             owner: Cell::new(None),
@@ -1204,21 +1190,10 @@ impl GitSubprocess {
         this.exit_status.set(None);
         this.remaining_fds.set(0);
 
-        // Windows: the `uv::Pipe` allocations are ours until the spawn succeeds.
         let spawn_options = SpawnOptions {
             stdin: bun_spawn::Stdio::Ignore,
-            #[cfg(unix)]
             stdout: bun_spawn::Stdio::Buffer,
-            #[cfg(unix)]
             stderr: bun_spawn::Stdio::Buffer,
-            #[cfg(windows)]
-            stdout: bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                bun_core::ffi::zeroed::<uv::Pipe>(),
-            )) as bun_spawn::windows::UvPipePtr),
-            #[cfg(windows)]
-            stderr: bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                bun_core::ffi::zeroed::<uv::Pipe>(),
-            )) as bun_spawn::windows::UvPipePtr),
             #[cfg(windows)]
             windows: bun_spawn::WindowsOptions {
                 loop_: this.event_loop,
@@ -1230,36 +1205,23 @@ impl GitSubprocess {
             linux_pdeathsig: Some(bun_sys::SignalCode::SIGKILL.0),
             ..Default::default()
         };
-        #[cfg(windows)]
-        let mut spawn_options = spawn_options;
 
-        let spawned =
-            match bun_spawn::spawn_process_cstr(&spawn_options, &argv, SpawnEnv::Strings(&envp)) {
-                Ok(Ok(spawned)) => spawned,
-                res => {
-                    #[cfg(windows)]
-                    {
-                        spawn_options.stdout.deinit();
-                        spawn_options.stderr.deinit();
-                    }
-                    res??;
-                    unreachable!();
-                }
-            };
+        let mut spawned =
+            bun_spawn::spawn_process_cstr(&spawn_options, &argv, SpawnEnv::Strings(&envp))??;
         // `envp` borrows from `git_env`. The exit handler, which may run below, replaces `git_env`
         // after `Step::Config`.
         drop(envp);
-        #[cfg(windows)]
-        let mut spawned = spawned;
 
         // A reader that fails to start reports through `on_reader_error`, which only
         // touches `remaining_fds` / `read_error`, never the reader cell being borrowed.
         #[cfg(unix)]
-        for (reader, fd, is_memfd) in [
-            (&this.stdout, spawned.stdout, spawned.memfds[1]),
-            (&this.stderr, spawned.stderr, spawned.memfds[2]),
+        for (reader, file, is_memfd) in [
+            (&this.stdout, spawned.stdout.take(), spawned.memfds[1]),
+            (&this.stderr, spawned.stderr.take(), spawned.memfds[2]),
         ] {
-            let Some(fd) = fd else { continue };
+            let Some(fd) = file.map(bun_sys::File::into_raw) else {
+                continue;
+            };
             reader.with_mut(|r| r.set_parent(this_ptr));
             if is_memfd {
                 reader.with_mut(|r| r.start_memfd(fd));
@@ -1282,7 +1244,6 @@ impl GitSubprocess {
             (&this.stdout, spawned.stdout.take()),
             (&this.stderr, spawned.stderr.take()),
         ] {
-            // Take sole ownership of each pipe before `spawned` drops.
             let bun_spawn::SpawnedStdio::Buffer(pipe) = pipe else {
                 continue;
             };
@@ -1315,8 +1276,6 @@ impl GitSubprocess {
     fn reset_polls(&self) {
         debug_assert!(self.remaining_fds.get() == 0);
         self.process.set(None);
-        self.stdout.with_mut(|r| r.deinit());
-        self.stderr.with_mut(|r| r.deinit());
         self.stdout.set(BufferedReader::init::<Self>());
         self.stderr.set(BufferedReader::init::<Self>());
     }
@@ -1438,10 +1397,7 @@ impl GitSubprocess {
                 if !this.urls.get().is_empty() {
                     // Try the next URL form (ssh after https), even after "not found": hosts also
                     // say that about a private repository that the login cannot access.
-                    this.staging
-                        .take()
-                        .expect("clone has a staging folder")
-                        .discard();
+                    this.staging.set(None);
                     this.reset_polls();
                     if let Err(err) = Self::spawn_clone(this, replaces) {
                         Self::fail(this, err);
@@ -1543,11 +1499,7 @@ impl GitSubprocess {
     /// Drops the owning ref: the process handle and readers are torn down on
     /// this (the event loop's) thread, and the git slot is free again.
     fn release(this: ThisPtr<Self>) {
-        let owner = this.owner.take().expect("git runner finished twice");
-        this.manager()
-            .running_git_tasks
-            .fetch_sub(1, Ordering::Relaxed);
-        drop(owner);
+        drop(this.owner.take().expect("git runner finished twice"));
     }
 
     /// Hands a clone or checkout task to the thread pool for `finalize`.
@@ -1587,17 +1539,6 @@ impl GitSubprocess {
         manager.resolve_tasks.push(task_ptr);
         // SAFETY: the manager outlives every task; see `wake_raw`.
         unsafe { PackageManager::wake_raw(manager.as_ptr()) };
-    }
-}
-
-impl Drop for GitSubprocess {
-    fn drop(&mut self) {
-        self.process.set(None);
-        self.stdout.with_mut(|r| r.deinit());
-        self.stderr.with_mut(|r| r.deinit());
-        if let Some(staging) = self.staging.take() {
-            staging.discard();
-        }
     }
 }
 

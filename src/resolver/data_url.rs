@@ -165,7 +165,7 @@ impl<'a> DataURL<'a> {
     }
 
     pub fn decode_mime_type(&self) -> bun_http_types::MimeType::MimeType {
-        bun_http_types::MimeType::MimeType::init(self.mime_type, false, None)
+        bun_http_types::MimeType::MimeType::init(self.mime_type)
     }
 
     /// Decodes the data from the data URL. Always returns an owned slice.

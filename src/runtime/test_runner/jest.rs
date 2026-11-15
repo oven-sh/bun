@@ -195,12 +195,9 @@ impl<'a> TestRunner<'a> {
         let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return;
         };
-        if active_file.timer.state.get() != TimerState::ACTIVE
-            || active_file.timer.next.get() == bun_core::Timespec::EPOCH
-        {
-            return;
+        if active_file.timer.next.get() != bun_core::Timespec::EPOCH {
+            active_file.timer.disarm();
         }
-        crate::jsc_hooks::timer_all().remove(&active_file.timer);
     }
 
 

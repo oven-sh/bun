@@ -13,7 +13,7 @@ bun_core::declare_scope!(h2_client, hidden);
 
 // `stream_mut` is the shared `*mut Stream` → `&mut Stream` upgrade centralised
 // in `client_session` (same INVARIANT: heap-allocated entries owned by
-// `session.streams`, freed only via `drop_stream`/`on_close`, disjoint from
+// `session.streams`, disjoint from
 // `&mut ClientSession`). Re-used here so the raw deref lives in one place.
 
 /// Dispatch every complete frame in `buf` and return the number of bytes
@@ -182,8 +182,8 @@ fn dispatch_frame(
                         let delta =
                             i64::from(uvalue) - i64::from(session.remote_initial_window_size);
                         session.remote_initial_window_size = uvalue;
-                        for &s_ptr in session.streams.values() {
-                            let s = stream_mut(s_ptr);
+                        for s in session.streams.values() {
+                            let s = stream_mut(s.as_ptr());
                             let next = i64::from(s.send_window) + delta;
                             if next > i64::from(wire::MAX_WINDOW_SIZE) {
                                 session.fatal_error = Some(crate::Error::HTTP2FlowControlError);
@@ -230,8 +230,8 @@ fn dispatch_frame(
                 }
                 session.conn_send_window = i32::try_from(next).expect("int cast");
                 session.stream_progressed = true;
-            } else if let Some(&stream_ptr) = session.streams.get(&(stream_id & 0x7fff_ffff)) {
-                let stream = stream_mut(stream_ptr);
+            } else if let Some(stream) = session.streams.get(&(stream_id & 0x7fff_ffff)) {
+                let stream = stream_mut(stream.as_ptr());
                 // §6.9/§6.9.1: zero increment / overflow on a stream are
                 // stream-level errors; RST_STREAM and fail just that one.
                 if inc == 0 {
@@ -297,7 +297,7 @@ fn dispatch_frame(
         FT_HEADERS => {
             session.continuation_count = 0;
             let mut fragment = payload;
-            let maybe_stream = session.streams.get(&stream_id).copied();
+            let maybe_stream = session.streams.get(&stream_id).map(|s| s.as_ptr());
             if maybe_stream.is_none() {
                 // RFC 9113 §5.1/§5.1.1: HEADERS on a stream we never
                 // opened (idle: id >= next_stream_id, or even: server-
@@ -390,9 +390,9 @@ fn dispatch_frame(
                 session.fatal_error = Some(crate::Error::HTTP2EnhanceYourCalm);
                 return;
             }
-            if let Some(&stream_ptr) = session.streams.get(&session.expecting_continuation) {
+            if let Some(stream) = session.streams.get(&session.expecting_continuation) {
                 // SAFETY: stream pointer valid for session lifetime.
-                let stream = stream_mut(stream_ptr);
+                let stream = stream_mut(stream.as_ptr());
                 if stream.header_block.len() + payload.len() > LOCAL_MAX_HEADER_LIST_SIZE as usize {
                     session.fatal_error = Some(crate::Error::HTTP2HeaderListTooLarge);
                     return;
@@ -421,8 +421,8 @@ fn dispatch_frame(
         }
         FT_DATA => {
             session.conn_unacked_bytes = session.conn_unacked_bytes.saturating_add(length);
-            let stream_ptr = match session.streams.get(&stream_id).copied() {
-                Some(p) => p,
+            let stream_ptr = match session.streams.get(&stream_id) {
+                Some(s) => s.as_ptr(),
                 None => {
                     // §6.1/§5.1: DATA on stream 0, an idle stream, or a
                     // server-initiated stream is a connection PROTOCOL_ERROR.
@@ -486,8 +486,8 @@ fn dispatch_frame(
                 session.fatal_error = Some(crate::Error::HTTP2ProtocolError);
                 return;
             }
-            let stream_ptr = match session.streams.get(&stream_id).copied() {
-                Some(p) => p,
+            let stream_ptr = match session.streams.get(&stream_id) {
+                Some(s) => s.as_ptr(),
                 None => return,
             };
             // SAFETY: stream pointer valid for session lifetime.
@@ -533,9 +533,9 @@ fn dispatch_frame(
             let code: u32 = wire::u32_from_bytes(&payload[4..8]);
             let graceful = code == wire::ErrorCode::NO_ERROR.0;
             let last_id = session.goaway_last_stream_id;
-            for &s_ptr in session.streams.values() {
+            for s in session.streams.values() {
                 // SAFETY: stream pointer valid for session lifetime.
-                let s = stream_mut(s_ptr);
+                let s = stream_mut(s.as_ptr());
                 if s.id > last_id {
                     s.fatal_error = Some(if graceful {
                         crate::Error::HTTP2RefusedStream

@@ -3,8 +3,6 @@
 //! *NOTE* This type is reference counted via `Rc`; see the `Drop` impl note.
 
 use core::cell::UnsafeCell;
-#[cfg(not(windows))]
-use core::ffi::c_void;
 
 use bun_sys::{self as sys, Fd};
 
@@ -434,12 +432,8 @@ impl Drop for IOReader {
             }
             #[cfg(not(windows))]
             {
-                // We cleared CLOSE_HANDLE in init(), so reader Drop will not
-                // return the FilePoll to its pool. Do it explicitly (without
-                // closing the fd — we own that and close it ourselves below).
-                if matches!(r.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                    r.handle.close_impl(None, None::<fn(*mut c_void)>, false);
-                }
+                // The poll goes before its fd.
+                r.handle = bun_io::pipes::PollOrFd::Closed;
                 let _ = sys::close(s.fd);
             }
         }

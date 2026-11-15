@@ -15,7 +15,6 @@
 
 use core::alloc::Allocator;
 use core::fmt;
-use core::mem::ManuallyDrop;
 
 use bun_alloc::AllocError;
 use bun_core::strings;
@@ -35,11 +34,6 @@ pub trait VecExt<T>: Sized {
         T: Copy;
     /// Moves the elements of `v` into a fresh `A` allocation and frees `v`'s arena buffer.
     fn from_bump_vec(v: bun_alloc::ArenaVec<'_, T>) -> Self;
-    /// Wrap a borrowed slice as a `Vec<T>` that **must not be dropped or
-    /// grown**.  Same hazard as the original — callers wrap in `ManuallyDrop`.
-    /// Kept only for the `StreamResult::Temporary*` pattern; new code should
-    /// take `&[T]` instead.
-    unsafe fn from_borrowed_slice_dangerous(items: &[T]) -> ManuallyDrop<Self>;
 
     // ── accessors ─────────────────────────────────────────────────────────
     fn slice(&self) -> &[T];
@@ -107,9 +101,6 @@ pub trait VecExt<T>: Sized {
     fn move_to_list(&mut self) -> Vec<T>;
     fn move_to_list_managed(&mut self) -> Vec<T>;
     fn to_owned_slice(&mut self) -> Box<[T]>;
-    /// Non-owning header alias.  For `Vec` this is `from_raw_parts` into a
-    /// `ManuallyDrop` — same UB-if-dropped contract as before.
-    fn shallow_copy(&self) -> ManuallyDrop<Self>;
 
     fn memory_cost(&self) -> usize;
     fn deep_clone_with<F>(&self, clone_one: F) -> Self
@@ -204,19 +195,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         // Buffer freed via `<&MimallocArena as Allocator>::deallocate` → `mi_free`.
         drop(src);
         out
-    }
-    #[inline]
-    unsafe fn from_borrowed_slice_dangerous(items: &[T]) -> ManuallyDrop<Self> {
-        // SAFETY: caller must never drop or grow the returned `Vec` — its
-        // buffer is borrowed.  Same contract as the original.
-        ManuallyDrop::new(unsafe {
-            Vec::from_raw_parts_in(
-                items.as_ptr().cast_mut(),
-                items.len(),
-                items.len(),
-                A::default(),
-            )
-        })
     }
 
     #[inline]
@@ -359,18 +337,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     fn to_owned_slice(&mut self) -> Box<[T]> {
         self.move_to_list().into_boxed_slice()
     }
-    #[inline]
-    fn shallow_copy(&self) -> ManuallyDrop<Self> {
-        // SAFETY: caller must not drop/grow the alias; original stays the owner.
-        ManuallyDrop::new(unsafe {
-            Vec::from_raw_parts_in(
-                self.as_ptr().cast_mut(),
-                self.len(),
-                self.capacity(),
-                A::default(),
-            )
-        })
-    }
 
     #[inline]
     fn memory_cost(&self) -> usize {
@@ -406,18 +372,10 @@ pub trait ByteVecExt {
     fn write_latin1(&mut self, str: &[u8]) -> Result<u32, AllocError>;
     fn write_utf16(&mut self, str: &[u16]) -> Result<u32, AllocError>;
 
-    /// libuv `uv_alloc_cb`-style: ensure **at least** `suggested` bytes of
-    /// spare capacity past `len()`, typed `&mut [u8]` so the result can be
-    /// used directly as a `uv_buf_t` / `read(2)` target without a per-site
-    /// cast.
-    ///
-    /// # Safety
-    /// The returned bytes are **uninitialised**. Caller must only treat the
-    /// prefix actually written by the FFI/syscall as initialised (typically by
-    /// committing with [`uv_commit`]); the bytes must not be read before then.
-    unsafe fn uv_alloc_spare_u8(&mut self, suggested: usize) -> &mut [u8];
+    /// `suggested` bytes of spare capacity for libuv to read to.
+    fn uv_alloc_spare(&mut self, suggested: usize) -> *mut [u8];
     /// Commit `nread` bytes that the FFI/syscall just wrote into the slice
-    /// returned by [`uv_alloc_spare_u8`]: bumps `len` by `nread`. Debug-asserts `len + nread <= capacity`.
+    /// returned by [`uv_alloc_spare`]: bumps `len` by `nread`. Debug-asserts `len + nread <= capacity`.
     ///
     /// # Safety
     /// The `nread` bytes at `[len, len + nread)` must have been initialised by
@@ -454,10 +412,9 @@ impl ByteVecExt for Vec<u8> {
         Ok((self.len() - initial) as u32)
     }
     #[inline]
-    unsafe fn uv_alloc_spare_u8(&mut self, suggested: usize) -> &mut [u8] {
-        // SAFETY: caller contract on `uv_alloc_spare_u8` — the returned uninit
-        // bytes are only read after the FFI-written prefix is committed.
-        unsafe { bun_core::vec::reserve_spare_bytes(self, suggested) }
+    fn uv_alloc_spare(&mut self, suggested: usize) -> *mut [u8] {
+        self.reserve(suggested);
+        &raw mut self.spare_capacity_mut()[..suggested] as *mut [u8]
     }
     #[inline]
     unsafe fn uv_commit(&mut self, nread: usize) {

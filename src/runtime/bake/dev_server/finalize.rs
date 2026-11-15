@@ -66,16 +66,19 @@ impl<'a> HotUpdateContext<'a> {
     }
 }
 
-fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr_event: bool) {
-    let script_requests = match &mut dev.current_bundle {
+fn finalize_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool) {
+    // Held to the end: a stopped server frees `dev` with its last request.
+    let (script_requests, _pending_request) = match &mut dev.current_bundle {
         Some(current_bundle) => {
             drain_current_bundle_requests(current_bundle);
-            ::core::mem::take(&mut current_bundle.script_requests)
+            (
+                ::core::mem::take(&mut current_bundle.script_requests),
+                current_bundle.pending_request.take(),
+            )
         }
-        None => Vec::new(),
+        None => (Vec::new(), None),
     };
-    bv2.deinit_without_freeing_arena();
-    // Drops `CurrentBundle.heap` (the arena `bv2.graph.heap` borrows).
+    // Drops the bundle, then the arena it borrows.
     dev.current_bundle = None;
     dev.log.clear_and_free();
 
@@ -130,11 +133,6 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr
         };
         dev.release_testing_batch(batch);
     }
-
-    // Unref the ref added in `start_async_bundle`
-    if let Some(server) = dev.server.as_mut() {
-        server.on_static_request_complete();
-    }
 }
 
 pub(super) fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
@@ -154,19 +152,20 @@ pub(super) fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) 
 pub(super) fn finalize_bundle(
     dev: &mut DevServer,
     bv2: &mut BundleV2,
-    result: &mut bundler::bundle_v2::DevServerOutput,
+    result: bundler::bundle_v2::DevServerOutput,
 ) -> JsResult<()> {
     debug_assert!(dev.magic == Magic::Valid);
     let mut had_sent_hmr_event = false;
     let finalized = finalize_bundle_inner(dev, bv2, result, &mut had_sent_hmr_event);
-    finalize_bundle_cleanup(dev, bv2, had_sent_hmr_event);
+    finalize_bundle_cleanup(dev, had_sent_hmr_event);
     finalized
 }
 
+/// Drops `result` before `finalize_bundle_cleanup` frees what it borrows.
 fn finalize_bundle_inner(
     dev: &mut DevServer,
     bv2: &mut BundleV2,
-    result: &mut bundler::bundle_v2::DevServerOutput,
+    result: bundler::bundle_v2::DevServerOutput,
     had_sent_hmr_event: &mut bool,
 ) -> JsResult<()> {
     // Note: holding `&mut CurrentBundle` for the rest of the fn locks `*dev`
@@ -188,14 +187,14 @@ fn finalize_bundle_inner(
 
     let lock = dev.graph_safety_lock.guard();
 
-    // `[js] | [css; n_css] | [html; ..]`. Dropped before `finalize_bundle_cleanup` frees what they borrow.
-    let mut chunks = ::core::mem::take(&mut result.chunks);
+    // `[js] | [css; n_css] | [html; ..]`
+    let mut chunks = result.chunks;
     let n_css = result.css_file_list.count();
     let input_file_sources = bv2.graph.input_files.items_source();
     let input_file_loaders = bv2.graph.input_files.items_loader();
     let import_records = bv2.graph.ast.items_import_records();
     let targets = bv2.graph.ast.items_target();
-    let scbs = bv2.graph.server_component_boundaries.slice();
+    let scbs = &bv2.graph.server_component_boundaries;
 
     let mut scb_bitset = DynamicBitSet::init_empty(input_file_sources.len())?;
     for ((source_index, ssr_index), ref_index) in scbs
@@ -232,7 +231,7 @@ fn finalize_bundle_inner(
         gts: &mut gts_storage,
     };
 
-    let quoted_source_contents = bv2.linker.graph.files.items_quoted_source_contents();
+    let quoted_source_contents = result.linker_graph.files.items_quoted_source_contents();
     // Pass 1, update the graph's nodes, resolving every bundler source
     // index into its `IncrementalGraph(...).FileIndex`
     let js_chunk = &chunks[0];
@@ -379,8 +378,8 @@ fn finalize_bundle_inner(
 
         let code = output.code(
             None,
-            &bv2.graph,
-            &bv2.linker.graph,
+            bv2,
+            &result.linker_graph,
             b"THIS_SHOULD_NEVER_BE_EMITTED_IN_DEV_MODE",
             chunk,
             &chunks,
@@ -442,7 +441,7 @@ fn finalize_bundle_inner(
             code: compile_result_code,
             script_injection_offset: compile_result_offset,
             ..
-        } = chunk.compile_results_for_chunk.get_mut(0)
+        } = &mut chunk.compile_results_for_chunk[0]
         else {
             unreachable!()
         };
@@ -1013,10 +1012,10 @@ fn finalize_bundle_inner(
             let rb = dev.route_bundle_ptr(req.route_bundle_index);
             rb.server_state = route_bundle::State::PossibleBundlingFailures;
 
-            let Some((resp, ctx)) = req.take_response_for_error_page() else {
+            let handler = req.take_handler();
+            let Some(resp) = handler.detach_response_for_error_page() else {
                 continue;
             };
-            scopeguard::defer! { ctx.deref() };
 
             dev.send_serialized_failures(
                 resp,
@@ -1044,9 +1043,8 @@ fn finalize_bundle_inner(
                     .env_loader()
                     .has_set_no_clear_terminal_on_reload(false);
             if clear_terminal {
-                Output::disable_buffering();
+                let _unbuffered = Output::disable_buffering_scope();
                 Output::reset_terminal_all();
-                Output::enable_buffering();
             }
 
             dev.print_memory_line();
@@ -1157,8 +1155,8 @@ fn finalize_bundle_inner(
         {
             let failures = trace_route_failures(dev, req.route_bundle_index)?.failures;
             if !failures.is_empty() {
-                if let Some((resp, ctx)) = req.take_response_for_error_page() {
-                    scopeguard::defer! { ctx.deref() };
+                let handler = req.take_handler();
+                if let Some(resp) = handler.detach_response_for_error_page() {
                     dev.send_serialized_failures(resp, &failures, None)?;
                 }
                 continue;
@@ -1170,23 +1168,11 @@ fn finalize_bundle_inner(
 
         match req.take_handler() {
             Handler::Aborted => continue,
-            Handler::ServerHandler(saved) => {
-                let response = saved.response;
-                let ctx = saved.ctx;
-                // Note: `js_request: StrongOptional` releases on Drop, but
-                // `ctx: AnyRequestContext` is `Copy` — explicitly balance the
-                // `ctx.ref_()` from `defer_request` here so the request
-                // context's `on_request_complete` (and thus the server's
-                // `pending_requests--`) eventually fires. Without this the
-                // bake-harness graceful-exit deinit check ("Failed to trigger
-                // deinit") never sees DevServer Drop.
-                scopeguard::defer! { ctx.deref() };
-                dev.on_framework_request_with_bundle(
-                    req.route_bundle_index,
-                    SavedRequestUnion::Saved(saved),
-                    response,
-                )?
-            }
+            Handler::ServerHandler(saved) => dev.on_framework_request_with_bundle(
+                req.route_bundle_index,
+                SavedRequestUnion::Saved(&saved),
+                saved.response,
+            )?,
             Handler::BundledHtmlPage(ram) => {
                 dev.on_html_request_with_bundle(req.route_bundle_index, ram.response, ram.method)
             }

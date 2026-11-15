@@ -334,15 +334,9 @@ fn enqueue_download(
         dependency_id,
         &package,
     )? {
-        // reshaped for borrowck — `task: &mut NetworkTask` borrows
-        // `*this` (pool slot); reborrow as raw so `this.network_tarball_batch`
-        // is reachable.
-        let task: *mut NetworkTask = task;
-        // SAFETY: `task` is the unique handle to a freshly-vended pool slot.
-        unsafe { (*task).schedule(&mut this.network_tarball_batch) };
-        if this.network_tarball_batch.len > 0 {
-            let _ = run_tasks::schedule_tasks(this);
-        }
+        let request = task.take_request();
+        this.network_tarball_batch.push(request);
+        let _ = run_tasks::schedule_tasks(this);
     }
     Ok(())
 }
@@ -774,7 +768,7 @@ fn wait_for_tasks(this: &mut PackageManager) -> crate::Result<()> {
         if this.pending_task_count() > 0 {
             let log_level = this.options.log_level;
             if let Err(err) =
-                run_tasks::run_tasks::<VoidRunTasksCallbacks>(this, &mut (), false, log_level)
+                run_tasks::run_tasks(this, run_tasks::Caller::BlockedImport, false, log_level)
             {
                 break Err(err);
             }
@@ -802,12 +796,6 @@ fn wait_for_tasks(this: &mut PackageManager) -> crate::Result<()> {
     }
 
     result
-}
-
-/// `Ctx = ()`, no callbacks.
-struct VoidRunTasksCallbacks;
-impl run_tasks::RunTasksCallbacks for VoidRunTasksCallbacks {
-    type Ctx = ();
 }
 
 pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {
@@ -2713,7 +2701,7 @@ fn reject_local_tarball_of_remote_package(
     dependency: &Dependency,
 ) {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
-    let packages = this.lockfile.packages.slice();
+    let packages = &this.lockfile.packages;
     let name = bun_fmt::escape_control_chars(dependency.name.slice(buf));
     let literal = bun_fmt::escape_control_chars(dependency.version.literal.slice(buf));
     let declarer_name =
@@ -2755,7 +2743,7 @@ fn reject_link_path_of_remote_package(
 ) {
     const REASON: &str = dependency::LINK_PATH_RULE;
     let buf = this.lockfile.buffers.string_bytes.as_slice();
-    let packages = this.lockfile.packages.slice();
+    let packages = &this.lockfile.packages;
     let name = bun_fmt::escape_control_chars(dependency.name.slice(buf));
     let literal = bun_fmt::escape_control_chars(version.literal.slice(buf));
     match this.lockfile.get_parent_pkg_of_dependency(dependency_id) {

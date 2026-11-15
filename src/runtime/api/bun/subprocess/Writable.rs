@@ -2,8 +2,6 @@ use core::ptr::NonNull;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, event_loop::EventLoop};
 use bun_ptr::RefPtr;
-#[cfg(not(windows))]
-use bun_sys::FdExt;
 use bun_sys::{self, Fd};
 
 use crate::api::bun_spawn::stdio::Stdio;
@@ -20,7 +18,9 @@ pub(crate) enum Writable<'a> {
     Fd(Fd),
     Buffer(RefPtr<StaticPipeWriter<'a>>),
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    Memfd(Fd),
+    Memfd {
+        _file: bun_sys::File,
+    },
     Inherit,
     Ignore,
 }
@@ -130,8 +130,6 @@ impl<'a> Writable<'a> {
         result: StdioResult,
         promise_for_stream: &mut JSValue,
     ) -> JsResult<Writable<'a>> {
-        super::assert_stdio_result!(result);
-
         let global = event_loop.global_ref();
 
         // `FileSink::create` / `StaticPipeWriter::create` take
@@ -139,22 +137,14 @@ impl<'a> Writable<'a> {
         // the vtable-backed handle once and reuse for all arms (both platforms).
         // `event_loop` is a `&jsc::EventLoop` for the live per-thread loop;
         // erasing to `*mut ()` and back is the `EventLoopHandle::init` contract.
-        let evtloop = bun_event_loop::EventLoopHandle::init(
-            std::ptr::from_ref::<EventLoop>(event_loop)
-                .cast_mut()
-                .cast::<()>(),
-        );
+        let evtloop = bun_event_loop::EventLoopHandle::init(event_loop.as_erased_ptr());
 
         #[cfg(windows)]
         {
             match stdio {
                 Stdio::Pipe | Stdio::ReadableStream(_) => {
                     if let StdioResult::Buffer(buffer) = result {
-                        // Ownership of the `Box<uv::Pipe>` transfers to the
-                        // FileSink's writer (the sink takes over the heap
-                        // pointer).
-                        let uv_pipe: *mut _ = bun_core::heap::into_raw(buffer);
-                        let pipe_ref = FileSink::create_with_pipe(evtloop, uv_pipe);
+                        let pipe_ref = FileSink::create_with_pipe(evtloop, buffer);
 
                         match pipe_ref.writer.with_mut(|w| w.start_with_current_pipe()) {
                             bun_sys::Result::Ok(()) => {}
@@ -198,7 +188,7 @@ impl<'a> Writable<'a> {
                         evtloop,
                         subprocess as *mut Subprocess<'a>,
                         result,
-                        super::source_from_blob(blob),
+                        blob,
                     )));
                 }
                 Stdio::Fd(fd) => {
@@ -224,7 +214,7 @@ impl<'a> Writable<'a> {
         #[cfg(unix)]
         {
             if matches!(stdio, Stdio::Pipe) {
-                let _ = bun_sys::set_nonblocking(result.unwrap());
+                let _ = bun_sys::set_nonblocking(result.as_ref().unwrap().fd());
             }
         }
 
@@ -232,14 +222,14 @@ impl<'a> Writable<'a> {
         match stdio {
             Stdio::Dup2(_) => panic!("TODO dup2 stdio"),
             Stdio::Pipe | Stdio::ReadableStream(_) => {
-                let fd = result.unwrap();
-                let pipe_ref = FileSink::create(evtloop, fd);
+                let file = result.unwrap();
+                let pipe_ref = FileSink::create(evtloop, file.fd());
 
-                match pipe_ref.writer.with_mut(|w| w.start(fd, true)) {
-                    bun_sys::Result::Ok(()) => {}
+                match pipe_ref.writer.with_mut(|w| w.start(file.fd(), true)) {
+                    // The writer closes it from now on.
+                    bun_sys::Result::Ok(()) => _ = file.into_raw(),
                     bun_sys::Result::Err(err) => {
-                        // The writer did not take `fd`; nothing else closes it.
-                        fd.close();
+                        drop(file);
                         if let Stdio::ReadableStream(rs) = stdio {
                             rs.cancel(global)?;
                         }
@@ -283,23 +273,14 @@ impl<'a> Writable<'a> {
                     evtloop,
                     std::ptr::from_mut::<Subprocess<'a>>(subprocess),
                     result,
-                    super::source_from_blob(blob),
+                    blob,
                 )))
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            Stdio::Memfd(_) => {
-                // Transfer ownership: `Stdio`'s Drop would close the memfd, so
-                // take it out via ManuallyDrop (same pattern as the Blob arm)
-                // to keep the caller's `stdio[0]` drop from double-closing the
-                // fd that Writable now owns.
-                let owned = core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
-                let Stdio::Memfd(fd) = &*owned else {
-                    unreachable!()
-                };
-                debug_assert!(*fd != Fd::INVALID);
-                Ok(Writable::Memfd(*fd))
-            }
-            Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
+            Stdio::Memfd(_) => Ok(Writable::Memfd {
+                _file: stdio.take_memfd().unwrap(),
+            }),
+            Stdio::Fd(fd) => Ok(Writable::Fd(*fd)),
             Stdio::Inherit => Ok(Writable::Inherit),
             Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
             Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
@@ -317,8 +298,8 @@ impl<'a> Writable<'a> {
                 fd.to_js(global_this)
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            Writable::Memfd(fd) => {
-                subprocess.stdin.set(Writable::Memfd(fd));
+            memfd @ Writable::Memfd { .. } => {
+                subprocess.stdin.set(memfd);
                 JSValue::UNDEFINED
             }
             Writable::Ignore => JSValue::UNDEFINED,
@@ -400,9 +381,7 @@ impl<'a> Writable<'a> {
                 Self::buffer_writer_mut(&buffer).update_ref(false);
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            Writable::Memfd(fd) => {
-                fd.close();
-            }
+            Writable::Memfd { .. } => {}
             Writable::Ignore => {}
             Writable::Fd(fd) => {
                 subprocess.stdin.set(Writable::Fd(fd));
@@ -419,8 +398,7 @@ impl<'a> Writable<'a> {
                 let _ = pipe.end(None);
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            Writable::Memfd(fd) => {
-                fd.close();
+            Writable::Memfd { .. } => {
                 *self = Writable::Ignore;
             }
             Writable::Fd(_) => {

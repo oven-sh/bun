@@ -32,6 +32,9 @@ unsafe extern "Rust" {
     /// recovers the parent struct via `container_of` keyed on `tag`; `t` must
     /// be the `event_loop_timer` field of that container (tag invariant).
     fn __bun_js_timer_epoch(tag: Tag, t: *const EventLoopTimer) -> Option<u32>;
+
+    /// Defined in `bun_runtime::jsc_hooks`.
+    safe fn __bun_remove_timer(timer: &EventLoopTimer);
 }
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -60,6 +63,35 @@ impl bun_io::heap::HeapNode for EventLoopTimer {
     }
 }
 
+/// An [`EventLoopTimer`] that leaves the heap when it drops.
+#[repr(transparent)]
+pub struct OwnedTimer(EventLoopTimer);
+
+impl OwnedTimer {
+    pub fn init_paused(tag: Tag) -> Self {
+        Self(EventLoopTimer::init_paused(tag))
+    }
+
+    /// The pointer to link, with the provenance of `this`.
+    pub const fn node(this: *const Self) -> *const EventLoopTimer {
+        this.cast()
+    }
+}
+
+impl core::ops::Deref for OwnedTimer {
+    type Target = EventLoopTimer;
+
+    fn deref(&self) -> &EventLoopTimer {
+        &self.0
+    }
+}
+
+impl Drop for OwnedTimer {
+    fn drop(&mut self) {
+        self.disarm();
+    }
+}
+
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum InHeap {
     None,
@@ -76,6 +108,13 @@ impl EventLoopTimer {
             heap: IntrusiveField::default(),
             in_heap: Cell::new(InHeap::None),
             is_due_when_idle: Cell::new(false),
+        }
+    }
+
+    /// Unlinks an armed timer from the heap of this thread's VM. A `WTFTimer` is in another.
+    pub fn disarm(&self) {
+        if self.state.get() == State::ACTIVE {
+            __bun_remove_timer(self);
         }
     }
 

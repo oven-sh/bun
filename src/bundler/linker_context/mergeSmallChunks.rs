@@ -29,7 +29,7 @@ pub(crate) fn part_has_no_side_effects(part: &bun_ast::Part) -> bool {
         })
 }
 
-impl LinkerContext<'_> {
+impl LinkerContext<'_, '_> {
     /// None of the file's live parts run anything at the top level:
     /// declarations only, `"sideEffects": false`, or a lazily initialized
     /// `__esm` / `__commonJS` wrapper. An entry point never qualifies (its

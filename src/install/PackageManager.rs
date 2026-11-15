@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use crate::Error;
 use crate::bun_fs as fs;
 use crate::bun_fs::FileSystem;
-use crate::bun_progress::{Node as ProgressNode, Progress};
+use crate::bun_progress::{NodeId as ProgressNodeId, Progress};
 use crate::bun_schema::api as Api;
 use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
 use bun_collections::{
@@ -475,10 +475,10 @@ pub struct PackageManager {
     // `DotEnv.Loader` (leaked allocation; outlives the manager). `BackRef`
     // encapsulates the liveness invariant so `env()` is a safe accessor.
     pub env: Option<bun_ptr::BackRef<dot_env::Loader, bun_ptr::Mut>>,
+    /// Install thread only.
     pub progress: Progress,
-    pub(crate) downloads_node: Option<*mut ProgressNode>, // BORROW_FIELD — points into self.progress
-    pub scripts_node: Option<NonNull<ProgressNode>>, // points to a caller stack-local Progress node; only valid while that caller frame is live
-    pub(crate) progress_name_buf: [u8; 768],
+    pub(crate) downloads_node: Option<ProgressNodeId>,
+    pub scripts_node: Option<ProgressNodeId>,
 
     pub(crate) track_installed_bin: TrackInstalledBin,
 
@@ -520,8 +520,11 @@ pub struct PackageManager {
 
     pub(crate) network_dedupe_map: crate::network_task::DedupeMap,
     pub(crate) async_network_task_queue: AsyncNetworkTaskQueue,
-    pub(crate) network_tarball_batch: thread_pool::Batch,
-    pub(crate) network_resolve_batch: thread_pool::Batch,
+    // The HTTP thread takes the requests of both batches in their boxes.
+    #[expect(clippy::vec_box)]
+    pub(crate) network_tarball_batch: Vec<Box<http::AsyncHTTP<'static>>>,
+    #[expect(clippy::vec_box)]
+    pub(crate) network_resolve_batch: Vec<Box<http::AsyncHTTP<'static>>>,
     pub(crate) network_task_fifo: NetworkQueue,
     pub(crate) retry_queue: crate::retry_timer::RetryQueue,
     pub(crate) patch_apply_batch: thread_pool::Batch,
@@ -901,41 +904,6 @@ impl PackageManager {
         unsafe { &mut *p }
     }
 
-    /// Reborrow the active progress download node (`self.progress.root`-rooted).
-    /// Panics if no download node is active — callers gate on
-    /// `options.log_level.show_progress()`, which is the same condition that
-    /// populates `downloads_node`. Lifetime is decoupled from `&self` for the
-    /// same reason as [`log_mut`]: `Progress` is a stable allocation on the
-    /// leaked-singleton manager and callers interleave node updates with
-    /// disjoint `&mut self.X` field writes.
-    #[inline]
-    pub(crate) fn downloads_node_mut<'a>(&self) -> &'a mut ProgressNode {
-        let p = self.downloads_node.expect("downloads_node active");
-        // SAFETY: `downloads_node` points into `self.progress` (BORROW_FIELD);
-        // `Progress` is pinned for the manager's lifetime (leaked singleton)
-        // and the node is set before any caller reaches this path.
-        unsafe { &mut *p }
-    }
-
-    /// Reborrow the active scripts progress node, if any.
-    ///
-    /// Unlike [`downloads_node_mut`], this returns `Option` — `scripts_node` is
-    /// `None` until the install pass (hoisted/isolated) populates it with a
-    /// pointer to a stack-local `ProgressNode` that outlives the pass. Lifetime
-    /// is decoupled from `&self` for the same reason as [`downloads_node_mut`]:
-    /// callers interleave node updates with disjoint `&mut self.X` writes, and
-    /// the pointee lives on the *caller's* stack, not inside the manager.
-    /// Single-threaded by construction (main install loop only — see
-    /// `lifecycle_script_runner` "monotonic is okay" comments).
-    #[inline]
-    pub(crate) fn scripts_node_mut<'a>(&self) -> Option<&'a mut ProgressNode> {
-        let mut p = self.scripts_node?;
-        // SAFETY: `scripts_node` is `Some(NonNull)` pointing at a caller
-        // stack-local `ProgressNode` that outlives the install pass; access is
-        // single-threaded (main install loop only).
-        Some(unsafe { p.as_mut() })
-    }
-
     /// The global singleton accessor. Associated-fn spelling that forwards to
     /// the free [`get`] so callers can write `PackageManager::get()`.
     ///
@@ -1155,7 +1123,7 @@ impl PackageManager {
         headers: http::headers::EntryList,
         headers_buf: &'a [u8],
         body: &'a [u8],
-    ) -> http::AsyncHTTP<'a> {
+    ) -> Box<http::AsyncHTTP<'a>> {
         let http_proxy = self.http_proxy(&url);
         let mut req = http::AsyncHTTP::init_sync(
             method,
@@ -1235,8 +1203,7 @@ impl PackageManager {
 
     /// Reborrow the process-global env loader.
     ///
-    /// Lifetime is decoupled from `&self` for the same reason as [`log_mut`] /
-    /// [`downloads_node_mut`]: the loader is a singleton-leaked allocation
+    /// Lifetime is decoupled from `&self` as in [`log_mut`]: the loader is a leaked allocation
     /// outside the manager (set once in `init()`), and callers interleave env
     /// mutation with disjoint `&mut self.X` field writes.
     #[inline]
@@ -1244,7 +1211,7 @@ impl PackageManager {
         // SAFETY: `env` is set during `init()` and never None afterward; the
         // pointee is a process-lifetime singleton (leaked `DotEnv.Loader`)
         // that lives outside `self`, so the unbounded `'a` is sound under the
-        // same single-threaded contract as `log_mut`/`scripts_node_mut`.
+        // same single-threaded contract as `log_mut`.
         // `BackRef` guarantees liveness; exclusivity is the caller's contract.
         unsafe { &mut *self.env.expect("env initialised").as_ptr() }
     }
@@ -1606,7 +1573,6 @@ fn allocate_package_manager(
         wr!(progress, Progress::default());
         wr!(downloads_node, None);
         wr!(scripts_node, None);
-        wr!(progress_name_buf, [0; 768]);
         wr!(track_installed_bin, TrackInstalledBin::None);
         wr!(to_update, false);
         wr!(update_requests, Box::default());
@@ -1627,8 +1593,8 @@ fn allocate_package_manager(
         wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
-        wr!(network_tarball_batch, thread_pool::Batch::default());
-        wr!(network_resolve_batch, thread_pool::Batch::default());
+        wr!(network_tarball_batch, Vec::new());
+        wr!(network_resolve_batch, Vec::new());
         wr!(patch_apply_batch, thread_pool::Batch::default());
         wr!(patch_calc_hash_batch, thread_pool::Batch::default());
         wr!(patch_task_queue, PatchTaskQueue::default());
@@ -3043,7 +3009,7 @@ fn init_with_runtime_once(
     if Output::enable_ansi_colors_stderr() {
         manager.progress = Progress::default();
         manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        let _ = manager.progress.start(b"", 0);
+        manager.progress.start(b"", 0);
     } else {
         manager.options.log_level = package_manager_options::LogLevel::DefaultNoProgress;
     }

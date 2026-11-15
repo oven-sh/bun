@@ -1004,10 +1004,8 @@ impl<'a> Repl<'a> {
             stdin_buf_end: 0,
             vm: None,
             global: None,
-            // `adopt(UNDEFINED)`: no protect taken; drop's unprotect() is a
-            // C++-side no-op for non-cell values.
-            last_result: ProtectedJSValue::adopt(JSValue::UNDEFINED),
-            last_error: ProtectedJSValue::adopt(JSValue::UNDEFINED),
+            last_result: JSValue::UNDEFINED.protected(),
+            last_error: JSValue::UNDEFINED.protected(),
             #[cfg(windows)]
             original_windows_mode: None,
             #[cfg(unix)]

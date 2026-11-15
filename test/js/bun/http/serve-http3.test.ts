@@ -248,6 +248,39 @@ test.skipIf(!canUnshare)("port 0 finds the port that is free for TCP and UDP", a
   expect({ stdout, exitCode }, stderr).toEqual({ stdout: "40042\n", exitCode: 0 });
 });
 
+test("the TCP port is released if the UDP port is taken", async () => {
+  using dir = tempDir("serve-http3-udp-taken", {
+    "server.mjs": `
+      const hostname = "127.0.0.1";
+      const fetch = () => new Response("ok");
+      for (;;) {
+        const { port } = await Bun.udpSocket({ hostname, port: 0 });
+        try {
+          Bun.serve({ hostname, port, tls: ${JSON.stringify(tls)}, http3: true, fetch });
+        } catch (error) {
+          if (error.code === "EADDRINUSE") continue;
+          console.log(error.message.replace(port, "N"));
+        }
+        const server = Bun.serve({ hostname, port, fetch });
+        console.log(await (await globalThis.fetch(server.url)).text());
+        process.exit(0);
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }, stderr).toEqual({
+    stdout: "Failed to listen on UDP port N for HTTP/3\nok\n",
+    exitCode: 0,
+  });
+});
+
 describe("Bun.serve HTTP/3", () => {
   test("basic GET", async () => {
     await withServer(async port => {

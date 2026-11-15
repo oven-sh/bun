@@ -550,16 +550,11 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         }
         let perm = (entry.perm() & 0o777) as bun_sys::Mode;
         let size = usize::try_from(entry.size().max(0)).expect("int cast");
-        let path = bun_archive::display_path(entry)?;
-        // npm tarballs root everything under one folder (usually `package/`). What is beside it is not installed.
-        let Some((_, rel)) = strings::split_once_char(&path, b'/') else {
-            continue;
-        };
-        let rel = strings::trim_leading_char(rel, b'/');
-        let mut normalized = vec![0; rel.len() + 1];
-        let rel = bun_archive::normalize_npm_entry_path(rel, &mut normalized);
+        let mut normalized = vec![0; entry.path().len() + 1];
+        let rel =
+            bun_archive::normalize_npm_entry_path(entry, &mut normalized)?.unwrap_or_default();
         bun_paths::resolve_path::platform_to_posix_in_place(rel);
-        if matches!(&*rel, b"" | b".") {
+        if rel.is_empty() {
             continue;
         }
         let rel = rel.to_vec();
@@ -1023,19 +1018,19 @@ fn registry_get(
     }
 
     let mut response_buf = MutableString::init(64 * 1024)?;
-    let display_url = url.href.to_vec();
-    let mut req = pm.registry_request(
+    let display_url = url.href;
+    let req = pm.registry_request(
         http::Method::GET,
         url,
         headers.entries,
         headers.content.written_slice(),
         b"",
     );
-    let res = match pm.send_with_retries(&mut req, &mut response_buf) {
+    let res = match pm.send_with_retries(req, &mut response_buf) {
         Ok(r) => r,
         Err(err) => {
             Status::clear();
-            let url = bun_core::fmt::redacted_npm_url(&display_url);
+            let url = bun_core::fmt::redacted_npm_url(display_url);
             Output::err(
                 err,
                 "GET {} failed",
@@ -1046,7 +1041,7 @@ fn registry_get(
     };
     if res.status_code() >= 400 {
         Status::clear();
-        npm::response_error::<false>(&req, &res, for_error, &mut response_buf)?;
+        npm::response_error::<false>(display_url, &res, for_error, &mut response_buf)?;
     }
     Ok(response_buf)
 }

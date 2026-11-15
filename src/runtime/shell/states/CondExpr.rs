@@ -3,7 +3,10 @@
 use crate::node::fs::stat_embedded_shell_operand;
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv};
+use crate::shell::dispatch_tasks::ShellCondExprStatTask;
+use crate::shell::interpreter::{
+    Interpreter, Node, NodeId, PoolTask, ShellExecEnv, ShellTask, ShellWork,
+};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::states::expansion::Expansion;
@@ -186,12 +189,12 @@ impl CondExpr {
 
     /// Main-thread re-entry for the
     /// off-thread `stat`/`lstat` posted by a unary file-test operator.
-    pub(crate) fn on_stat_task_done(
+    fn on_stat_task_done(
         interp: &Interpreter,
         this: NodeId,
         stat: &bun_sys::Result<bun_sys::Stat>,
         path: &[u8],
-    ) {
+    ) -> Yield {
         // Evaluate `op` against the stat result.
         debug_assert!(matches!(
             interp.as_condexpr(this).state,
@@ -220,7 +223,7 @@ impl CondExpr {
             }
         };
         let parent = interp.as_condexpr(this).base.parent;
-        interp.child_done(parent, this, exit).run(interp);
+        interp.child_done(parent, this, exit)
     }
 
     pub(crate) fn child_done(
@@ -257,32 +260,17 @@ impl CondExpr {
         Yield::Next(this)
     }
 
-    /// Heap-allocate a `ShellCondExprStatTask`
-    /// and hand it to the work pool; `run_from_thread_pool` performs the
-    /// `statat`, then the main thread resumes via
-    /// `ShellCondExprStatTask::run_from_main_thread` → `on_stat_task_done`.
     /// `path` is NUL-terminated by the caller.
     fn do_stat(interp: &Interpreter, this: NodeId, cwd_fd: bun_sys::Fd, path: Vec<u8>) -> Yield {
-        use crate::shell::dispatch_tasks::{CondExprStatInner, ShellCondExprStatTask};
-        use crate::shell::interpreter::ShellTask;
         debug_assert!(path.last() == Some(&0));
-        let mut task = ShellTask::new(interp.event_loop);
-        task.interp = interp.as_ctx_ptr();
-        let stat_task = bun_core::heap::alloc(ShellCondExprStatTask {
-            task: CondExprStatInner {
-                task,
-                cond: this,
-                // Placeholder — always overwritten by `run_from_thread_pool`
-                // before the main thread reads it.
-                stat: Err(Default::default()),
-                path,
-                cwd_fd,
-            },
-        });
-        // SAFETY: `stat_task` is a fresh heap allocation embedding `ShellTask`
-        // at `TASK_OFFSET`; consumed (heap::take) in
-        // `ShellCondExprStatTask::run_from_main_thread`.
-        unsafe { ShellTask::schedule::<ShellCondExprStatTask>(stat_task) };
+        let task = ShellCondExprStatTask {
+            cond: this,
+            // Overwritten by `run_from_thread_pool`.
+            stat: Err(Default::default()),
+            path,
+            cwd_fd,
+        };
+        PoolTask::schedule(interp, task);
         Yield::suspended()
     }
 
@@ -330,45 +318,16 @@ impl CondExpr {
     }
 }
 
-// `runtime::dispatch::run_task`'s `task_tag::ShellCondExprStatTask` arm casts
-// the enqueued pointer back to `ShellCondExprStatTask`; both sides MUST agree.
-impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellCondExprStatTask {
+impl ShellWork for ShellCondExprStatTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellCondExprStatTask;
-    /// A stat the pool finished whose result will not be applied: drop the
-    /// keep-alive and the box.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box `do_stat` scheduled.
-        unsafe {
-            (*this).task.task.unref_unrun();
-            drop(bun_core::heap::take(this));
-        }
-    }
-    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
-        bun_event_loop::ContextId::NONE
-    }
-}
 
-impl crate::shell::interpreter::ShellTaskCtx
-    for crate::shell::dispatch_tasks::ShellCondExprStatTask
-{
-    // The `ShellTask` is embedded one level down (`.task.task`); the dispatch
-    // arm (`shell_dispatch!(nested ...)`) walks the same two hops.
-    const TASK_OFFSET: usize =
-        core::mem::offset_of!(crate::shell::dispatch_tasks::ShellCondExprStatTask, task)
-            + core::mem::offset_of!(crate::shell::dispatch_tasks::CondExprStatInner, task);
-
-    fn run_from_thread_pool(this: &mut Self) {
-        let inner = &mut this.task;
-        debug_assert!(inner.path.last() == Some(&0));
-        let z = bun_core::ZStr::from_buf(&inner.path, inner.path.len() - 1);
-        inner.stat = crate::shell::interpreter::shell_statat(inner.cwd_fd, z);
+    fn run_from_thread_pool(&mut self, _: &ShellTask) {
+        debug_assert!(self.path.last() == Some(&0));
+        let z = bun_core::ZStr::from_buf(&self.path, self.path.len() - 1);
+        self.stat = crate::shell::interpreter::shell_statat(self.cwd_fd, z);
     }
 
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        // Delegates to the inherent fn in `dispatch_tasks.rs` (which consumes
-        // the heap allocation). The dispatch arm calls the inherent fn
-        // directly; this trait method exists to satisfy `ShellTaskCtx`.
-        crate::shell::dispatch_tasks::ShellCondExprStatTask::run_from_main_thread(this, interp);
+    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+        CondExpr::on_stat_task_done(interp, self.cond, &self.stat, &self.path)
     }
 }

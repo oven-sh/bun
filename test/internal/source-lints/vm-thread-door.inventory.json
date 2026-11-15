@@ -1,12 +1,4 @@
 {
-  "src/event_loop/AnyEventLoop.rs": {
-    "unsafe impl Send": [
-      "JsPoster"
-    ],
-    "unsafe impl Sync": [
-      "JsPoster"
-    ]
-  },
   "src/jsc/CppTask.rs": {
     "WorkPool::schedule*": 1,
     "owned_task!": [
@@ -104,9 +96,6 @@
   "src/runtime/cli/publish_command.rs": {
     "thread spawn": 1
   },
-  "src/runtime/cli/run_command.rs": {
-    "HTTPThread::schedule": 1
-  },
   "src/runtime/cli/run_compiled.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
@@ -193,6 +182,11 @@
   },
   "src/runtime/shell/builtin/rm.rs": {
     "WorkPool::schedule*": 2
+  },
+  "src/runtime/shell/dispatch_tasks.rs": {
+    "unsafe impl Send": [
+      "ShellGlobTask"
+    ]
   },
   "src/runtime/shell/interpreter.rs": {
     "WorkPool::schedule*": 1

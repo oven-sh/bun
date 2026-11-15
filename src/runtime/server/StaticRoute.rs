@@ -164,9 +164,6 @@ impl StaticRoute {
         global_this: &JSGlobalObject,
         argument: JSValue,
     ) -> JsResult<Option<RefPtr<StaticRoute>>> {
-        // `as_class_ref` is the safe shared-borrow downcast (one audited
-        // unsafe in `JSValue`); every `Response` accessor used below takes
-        // `&self` (interior mutability for `body`), so no `&mut` is needed.
         if let Some(response) = argument.as_class_ref::<Response>() {
             if !HTTPStatusText::is_sendable(response.status_code()) {
                 return Err(global_this.throw_invalid_arguments(format_args!(

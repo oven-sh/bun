@@ -2121,8 +2121,7 @@ impl BlobExt for Blob {
                             match item.js_type_loose() {
                                 jsc::JSType::String => {}
                                 t if t.is_array_buffer_like() => {}
-                                jsc::JSType::DOMWrapper
-                                    if item.as_class_ref::<Blob>().is_some() => {}
+                                jsc::JSType::DOMWrapper if item.is::<Blob>() => {}
                                 _ => {
                                     parts_can_run_js = true;
                                     break;
@@ -2825,12 +2824,8 @@ impl URLSearchParamsConverter {
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob>> {
-    let this = Blob::from_js(value)?;
-    // SAFETY: `from_js` returns a live heap pointer when Some.
-    Some(
-        NonNull::new(Blob__dupe(unsafe { &*this }))
-            .expect("Blob__dupe returns a fresh heap allocation"),
-    )
+    let this = Blob::from_js(&value)?;
+    Some(NonNull::new(Blob__dupe(&this)).expect("Blob__dupe returns a fresh heap allocation"))
 }
 
 #[unsafe(no_mangle)]
@@ -3625,9 +3620,6 @@ pub(crate) fn write_file_internal(
             }
         };
 
-        // `as_class_ref` is the safe shared-borrow downcast (one audited unsafe
-        // in `JSValue`); `body` / `get_body_readable_stream` both
-        // take `&self` (interior mutability for the body cell).
         if let Some(response) = data.as_class_ref::<Response>() {
             match body_dispatch(response.body(), &|| response.get_body_readable_stream())? {
                 core::ops::ControlFlow::Break(v) => return Ok(v),

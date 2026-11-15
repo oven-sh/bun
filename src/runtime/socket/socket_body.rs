@@ -385,9 +385,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         debug_assert!(
             Some(ptr.cast::<c_void>())
                 == if SSL {
-                    js_TLSSocket::from_js(value).map(|p| p.as_ptr().cast())
+                    js_TLSSocket::from_js(&value).map(|p| p.as_ptr().cast())
                 } else {
-                    js_TCPSocket::from_js(value).map(|p| p.as_ptr().cast())
+                    js_TCPSocket::from_js(&value).map(|p| p.as_ptr().cast())
                 },
             "JS{{TCP,TLS}}Socket.toJS: C ABI round-trip mismatch",
         );
@@ -698,7 +698,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             None
         } else {
             context
-                .to_js()
                 .as_class_ref::<crate::api::bun_secure_context::SecureContext>()
                 .map(|sc| sc.ctx.clone())
                 .inspect(|ctx| enable_alpn_select(ctx))

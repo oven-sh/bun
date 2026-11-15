@@ -90,7 +90,7 @@ use crate::{JSGlobalObject, JSValue, StrongCell};
 /// - You want to allow natural garbage collection
 ///
 /// Common pattern: Start strong, downgrade to weak when idle, upgrade to strong when active.
-/// See ServerWebSocket, UDPSocket, MySQLConnection, and ValkeyClient for examples.
+/// See ServerWebSocket, UDPSocket, JSMySQLConnection, and JSValkeyClient for examples.
 ///
 /// `JsRef` is `!Send + !Sync` (transitively via `JSValue` and `StrongCell`): the
 /// `StrongRootBlock` slot backing `StrongCell` hangs off the per-VM JSVMClientData

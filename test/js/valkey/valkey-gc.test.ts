@@ -43,7 +43,7 @@ test.concurrent("RedisClient survives a failed custom-TLS context without freein
   expect(exitCode).toBe(0);
 });
 
-// The socket's close event (ValkeyClient::on_close) rejects the commands the
+// The socket's close event (JSValkeyClient::on_close) rejects the commands the
 // connection still owes replies for, then settles connect()/onclose or arms the
 // retry. Rejecting a promise fails once the VM's termination is pending, which
 // is the state a terminated worker's teardown closes its sockets in, and

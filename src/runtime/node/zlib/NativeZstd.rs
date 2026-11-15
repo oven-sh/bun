@@ -2,91 +2,39 @@ pub(crate) use _impl::NativeZstd;
 
 mod _impl {
     use core::cell::Cell;
-    use core::ffi::{c_int, c_uint, c_void};
-    use core::ptr;
+    use core::ffi::{c_int, c_uint};
 
+    use bun_core::vec::BorrowedCursor;
     use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-    use bun_jsc::{self as jsc, JSGlobalObject, JsCell, JsResult, StrongOptional, WorkPoolTask};
-    use bun_ptr::RefPtr;
+    use bun_jsc::{self as jsc, JsResult};
     use bun_zstd::{OwnedCCtx, OwnedDCtx, c};
 
-    use crate::node::node_zlib_binding::{CompressionStreamImpl as _, CountedKeepAlive, Error};
+    use crate::node::node_zlib_binding::{
+        CompressionContext, CompressionStreamImpl as _, Error, Stream,
+    };
     use crate::node::util::validators;
     // #[repr(u8)] enum shared by all native-zlib stream types.
     use bun_zlib::NodeMode;
 
-    /// Placeholder WorkPoolTask callback — overwritten by CompressionStreamImpl::write
-    /// before the task is ever scheduled.
-    /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
-    /// struct-init site; the body never dereferences the pointer.
-    fn unset_task_callback(_: *mut WorkPoolTask) {
-        unreachable!("WorkPoolTask scheduled before write set its callback");
-    }
-
-    // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-    // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
-    #[derive(bun_ptr::CellRefCounted)]
     pub(crate) struct NativeZstd {
-        // Intrusive single-thread refcount.
-        pub(crate) ref_count: Cell<u32>,
-        // The global outlives this payload;
-        // `BackRef` centralises the single unsafe deref so the trait impl is safe.
-        pub global_this: bun_ptr::BackRef<JSGlobalObject>,
-        /// How the pool thread delivers a finished write to the VM.
-        pub ticket: Cell<Option<bun_jsc::Ticket>>,
-        pub stream: JsCell<Context>,
-        pub poll_ref: CountedKeepAlive,
-        pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
-        pub write_in_progress: Cell<bool>,
-        /// bit 0: the pending input's ArrayBuffer is pinned; bit 1: the pending output's. A held bufferless view sets neither.
-        pub pinned_buffers: Cell<u8>,
-        /// Copy of the pending `write()`'s input, if a pin can't keep the input mapped.
-        pub input_copy: JsCell<crate::node::node_zlib_binding::InputCopy>,
-        pub pending_close: Cell<bool>,
-        pub closed: Cell<bool>,
-        pub task: JsCell<WorkPoolTask>,
-        /// External-allocation footprint reported to the GC, fixed at
-        /// construction. `mode` never changes after this (only `close()` sets
-        /// it to `NONE`, on the JS thread), so the external state size is
-        /// constant for the life of the instance. Cached here as a plain
-        /// immutable field because `estimated_size` runs on the concurrent GC
-        /// marking thread, where reading `self.stream` through the `JsCell`
-        /// would alias the `&mut` held by an in-progress `with_mut` drive loop.
-        pub(crate) estimated_external_size: usize,
+        stream: Cell<Option<Box<Stream<Context>>>>,
+        pending_close: Cell<bool>,
+        closed: Cell<bool>,
+        /// Fixed at construction: `estimated_size` runs on a GC marking thread, which cannot read `stream`.
+        estimated_external_size: usize,
     }
 
     // `CompressionStreamImpl` (node_zlib_binding.rs) has write, writeSync, reset, close and onerror.
 
     impl NativeZstd {
-        pub(crate) fn constructor(cx: &mut JsScope<'_>, mode: u8) -> *mut Self {
+        pub(crate) fn constructor(mode: u8) -> Self {
             let mode = NodeMode::from_int(mode);
-            let stream = Context {
-                mode,
-                ..Default::default()
-            };
-            RefPtr::new(Self {
-                ref_count: Cell::new(1),
-                // JSC_BORROW — the JSGlobalObject outlives this payload (the C++
-                // wrapper is owned by that global's heap).
-                global_this: bun_ptr::BackRef::new(cx.global()),
-                ticket: Cell::new(None),
-                stream: JsCell::new(stream),
-                poll_ref: CountedKeepAlive::default(),
-                this_value: JsCell::new(StrongOptional::empty()),
-                write_in_progress: Cell::new(false),
-                pinned_buffers: Cell::new(0),
-                input_copy: JsCell::new(Default::default()),
+            Self {
+                stream: Cell::new(Some(Stream::new(Context::new(mode)))),
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),
-                // WorkPoolTask { callback: undefined } — callback is overwritten by
-                // CompressionStreamImpl::write before scheduling; placeholder here.
-                task: JsCell::new(WorkPoolTask {
-                    node: Default::default(),
-                    callback: unset_task_callback,
-                }),
                 estimated_external_size: Self::external_size_for(mode),
-            })
-            .into_raw()
+            }
         }
 
         /// Per-mode external-allocation footprint, fixed at construction.
@@ -116,8 +64,6 @@ mod _impl {
         ) -> JsResult<bool> {
             let global = cx.global();
             let this_value = this_value.to_js();
-            // Racing an in-flight async write would alias `&mut Context`
-            // across threads; a closed `Context` cannot be re-initialized.
             self.throw_unless_idle(global)?;
 
             let init_params_array_value = init_params_array.to_js();
@@ -171,10 +117,10 @@ mod _impl {
             }
 
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
-            // outlives the `stream.init` call below (E0716 otherwise).
+            // outlives the `Context::init` call below (E0716 otherwise).
             let dictionary_buf;
             let dictionary = if dictionary.is_undefined() {
-                None
+                &[]
             } else {
                 let dictionary_value = dictionary.to_js();
                 dictionary_buf = match dictionary_value.as_array_buffer(global) {
@@ -187,14 +133,15 @@ mod _impl {
                         ));
                     }
                 };
-                Some(dictionary_buf.byte_slice())
+                dictionary_buf.byte_slice()
             };
 
-            let err = self
-                .stream
-                .with_mut(|s| s.init(pledged_src_size, dictionary));
-            if err.is_error() {
-                self.emit_error(global, this_value, err);
+            let result = self
+                .borrow_idle_stream(global)?
+                .context
+                .init(pledged_src_size, dictionary);
+            if let Err(err) = result {
+                self.emit_error(global, this_value, &err);
                 return Ok(false);
             }
 
@@ -212,24 +159,21 @@ mod _impl {
                     init_params_array_value,
                 ));
             }
+            let mut stream = self.borrow_idle_stream(global)?;
             for (i, x) in params_.as_u32().iter().map(|x| x.get()).enumerate() {
                 if x == u32::MAX {
                     continue;
                 }
-                let err_ = self
-                    .stream
-                    .with_mut(|s| s.set_params(c_uint::try_from(i).expect("int cast"), x));
-                if err_.is_error() {
-                    self.stream.with_mut(|s| s.close());
-                    // The Context is torn down (`mode` is `NONE`); reject any
-                    // further operation the way `close()` does.
-                    self.closed.set(true);
-                    // SAFETY: is_error() ⇔ msg is non-null; it points at a NUL-terminated C string.
-                    let msg = unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes();
+                if !stream
+                    .context
+                    .set_params(c_uint::try_from(i).expect("int cast"), x)
+                {
+                    drop(stream);
+                    self.close();
                     return Err(global
                         .err(
                             jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
-                            format_args!("{}", bstr::BStr::new(msg)),
+                            format_args!("Setting parameter failed"),
                         )
                         .throw());
                 }
@@ -249,253 +193,144 @@ mod _impl {
     }
 
     pub(crate) struct Context {
-        pub(crate) mode: NodeMode,
+        mode: NodeMode,
         state: Option<State>,
-        pub flush: c_int,
-        pub(crate) input: c::ZSTD_inBuffer,
-        pub(crate) output: c::ZSTD_outBuffer,
-        pub(crate) pledged_src_size: u64,
-        pub(crate) remaining: u64,
-    }
-
-    impl Default for Context {
-        fn default() -> Self {
-            Self {
-                mode: NodeMode::NONE,
-                state: None,
-                flush: c::ZSTD_e_continue as c_int,
-                input: c::ZSTD_inBuffer {
-                    src: ptr::null(),
-                    size: 0,
-                    pos: 0,
-                },
-                output: c::ZSTD_outBuffer {
-                    dst: ptr::null_mut(),
-                    size: 0,
-                    pos: 0,
-                },
-                pledged_src_size: u64::MAX,
-                remaining: 0,
-            }
-        }
+        flush: c_int,
+        avail_in: usize,
+        avail_out: usize,
+        pledged_src_size: u64,
+        error: Option<bun_zstd::ErrorCode>,
     }
 
     impl Context {
-        /// zstd copies the dictionary into the context, so `dictionary` does not
-        /// need to outlive this call (unlike brotli's attach APIs).
-        fn load_dictionary(
-            dictionary: Option<&[u8]>,
-            load: impl FnOnce(*const c_void, usize) -> usize,
-        ) -> Error {
-            let Some(dict) = dictionary.filter(|d| !d.is_empty()) else {
-                return Error::OK;
-            };
-            let result = load(dict.as_ptr().cast(), dict.len());
-            if c::ZSTD_isError(result) > 0 {
-                return Error::init(
-                    c"Failed to load zstd dictionary".as_ptr(),
-                    -1,
-                    c"ERR_ZLIB_DICTIONARY_LOAD_FAILED".as_ptr(),
-                );
+        const DICTIONARY_LOAD_FAILED: Error = Error::init(
+            c"Failed to load zstd dictionary",
+            -1,
+            c"ERR_ZLIB_DICTIONARY_LOAD_FAILED",
+        );
+        const CREATE_FAILED: Error = Error::init(
+            c"Could not initialize zstd instance",
+            -1,
+            c"ERR_ZLIB_INITIALIZATION_FAILED",
+        );
+
+        fn new(mode: NodeMode) -> Self {
+            Self {
+                mode,
+                state: None,
+                flush: c::ZSTD_e_continue as c_int,
+                avail_in: 0,
+                avail_out: 0,
+                pledged_src_size: u64::MAX,
+                error: None,
             }
-            Error::OK
         }
 
-        pub(crate) fn init(&mut self, pledged_src_size: u64, dictionary: Option<&[u8]>) -> Error {
+        fn init(&mut self, pledged_src_size: u64, dictionary: &[u8]) -> Result<(), Error> {
             // Mirrors node's `state_.reset(ZSTD_createCCtx())`: free the previous
             // context first. `init` is JS-reachable twice on one handle.
             self.state = None;
-            match self.mode {
+            self.state = Some(match self.mode {
                 NodeMode::ZSTD_COMPRESS => {
                     self.pledged_src_size = pledged_src_size;
-                    let Some(state) = OwnedCCtx::new() else {
-                        return Error::init(
-                            c"Could not initialize zstd instance".as_ptr(),
-                            -1,
-                            c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
-                        );
-                    };
+                    let mut state = OwnedCCtx::new().ok_or(Self::CREATE_FAILED)?;
                     // Node loads the dictionary before setting the pledged size.
-                    // SAFETY: FFI — state is a valid CCtx allocated above.
-                    let err = Self::load_dictionary(dictionary, |d, n| unsafe {
-                        c::ZSTD_CCtx_loadDictionary(state.as_ptr(), d, n)
-                    });
-                    if err.is_error() {
-                        return err;
+                    if !dictionary.is_empty() && state.load_dictionary(dictionary).is_err() {
+                        return Err(Self::DICTIONARY_LOAD_FAILED);
                     }
-                    // SAFETY: FFI — state is a valid CCtx allocated above.
-                    let result = unsafe {
-                        c::ZSTD_CCtx_setPledgedSrcSize(state.as_ptr(), pledged_src_size as _)
-                    };
-                    if c::ZSTD_isError(result) > 0 {
-                        return Error::init(
-                            c"Could not set pledged src size".as_ptr(),
+                    if state.set_pledged_src_size(pledged_src_size).is_err() {
+                        return Err(Error::init(
+                            c"Could not set pledged src size",
                             -1,
-                            c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
-                        );
+                            c"ERR_ZLIB_INITIALIZATION_FAILED",
+                        ));
                     }
-                    self.state = Some(State::Compress(state));
-                    Error::OK
+                    State::Compress(state)
                 }
                 NodeMode::ZSTD_DECOMPRESS => {
-                    let Some(state) = OwnedDCtx::new() else {
-                        return Error::init(
-                            c"Could not initialize zstd instance".as_ptr(),
-                            -1,
-                            c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
-                        );
-                    };
-                    // SAFETY: FFI — state is a valid DCtx allocated above.
-                    let err = Self::load_dictionary(dictionary, |d, n| unsafe {
-                        c::ZSTD_DCtx_loadDictionary(state.as_ptr(), d, n)
-                    });
-                    if err.is_error() {
-                        return err;
+                    let mut state = OwnedDCtx::new().ok_or(Self::CREATE_FAILED)?;
+                    if !dictionary.is_empty() && state.load_dictionary(dictionary).is_err() {
+                        return Err(Self::DICTIONARY_LOAD_FAILED);
                     }
-                    self.state = Some(State::Decompress(state));
-                    Error::OK
+                    State::Decompress(state)
                 }
                 _ => unreachable!(),
-            }
+            });
+            Ok(())
         }
 
-        pub(crate) fn set_params(&mut self, key: c_uint, value: u32) -> Error {
-            let result = match &self.state {
-                // SAFETY: FFI — `cctx` is live.
-                Some(State::Compress(cctx)) => unsafe {
-                    c::ZSTD_CCtx_setParameter(cctx.as_ptr(), key, value as c_int)
-                },
-                // SAFETY: FFI — `dctx` is live.
-                Some(State::Decompress(dctx)) => unsafe {
-                    c::ZSTD_DCtx_setParameter(dctx.as_ptr(), key, value as c_int)
-                },
+        fn set_params(&mut self, key: c_uint, value: u32) -> bool {
+            match &mut self.state {
+                Some(State::Compress(cctx)) => cctx.set_parameter(key, value as c_int),
+                Some(State::Decompress(dctx)) => dctx.set_parameter(key, value as c_int),
                 None => unreachable!(),
-            };
-            if c::ZSTD_isError(result) > 0 {
-                return Error::init(
-                    c"Setting parameter failed".as_ptr(),
-                    -1,
-                    c"ERR_ZSTD_PARAM_SET_FAILED".as_ptr(),
-                );
             }
-            Error::OK
-        }
-
-        pub(crate) fn reset(&mut self) -> Error {
-            // Matches node's `ZstdContext::ResetStream()`, which calls `Init()`
-            // with its default (empty) dictionary — a reset drops the dictionary.
-            // `init` frees the previous context itself.
-            self.init(self.pledged_src_size, None)
-        }
-
-        pub(crate) fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
-            self.input.src = in_.map_or(ptr::null(), |p| p.as_ptr().cast());
-            self.input.size = in_.map_or(0, |p| p.len());
-            self.input.pos = 0;
-            match out {
-                Some(p) => {
-                    self.output.size = p.len();
-                    self.output.dst = p.as_mut_ptr().cast();
-                }
-                None => {
-                    self.output.size = 0;
-                    self.output.dst = ptr::null_mut();
-                }
-            }
-            self.output.pos = 0;
-        }
-
-        pub(crate) fn flush_value_is_valid(flush: u32) -> bool {
-            flush <= 2
-        }
-
-        pub(crate) fn set_flush(&mut self, flush: c_int) {
-            self.flush = flush;
+            .is_ok()
         }
 
         const ZSTD_MAGICNUMBER: [u8; 4] = 0xFD2FB528u32.to_le_bytes();
         const ZSTD_MAGIC_SKIPPABLE: [u8; 4] = 0x184D2A50u32.to_le_bytes();
 
         /// True when the unconsumed input begins a zstd/skippable frame magic (or a prefix of one).
-        fn next_input_is_frame(&self) -> bool {
-            let n = (self.input.size - self.input.pos).min(4);
+        fn next_input_is_frame(input: &[u8]) -> bool {
+            let n = input.len().min(4);
             if n == 0 {
                 return false;
             }
-            let mut head = [0u8; 4];
-            // SAFETY: input.src[pos..pos+n] lies within the slice installed by set_buffers.
-            unsafe {
-                ptr::copy_nonoverlapping(
-                    self.input.src.cast::<u8>().add(self.input.pos),
-                    head.as_mut_ptr(),
-                    n,
-                );
-            }
-            head[..n] == Self::ZSTD_MAGICNUMBER[..n]
-                || (head[0] & 0xF0 == Self::ZSTD_MAGIC_SKIPPABLE[0]
-                    && head[1..n] == Self::ZSTD_MAGIC_SKIPPABLE[1..n])
+            input[..n] == Self::ZSTD_MAGICNUMBER[..n]
+                || (input[0] & 0xF0 == Self::ZSTD_MAGIC_SKIPPABLE[0]
+                    && input[1..n] == Self::ZSTD_MAGIC_SKIPPABLE[1..n])
+        }
+    }
+
+    impl CompressionContext for Context {
+        fn reset(&mut self) -> Result<(), Error> {
+            // Matches node's `ZstdContext::ResetStream()`, which calls `Init()`
+            // with its default (empty) dictionary — a reset drops the dictionary.
+            // `init` frees the previous context itself.
+            self.init(self.pledged_src_size, &[])
         }
 
-        pub(crate) fn do_work(&mut self) {
-            self.remaining = match &self.state {
+        fn flush_value_is_valid(flush: u32) -> bool {
+            flush <= 2
+        }
+
+        fn set_flush(&mut self, flush: c_int) {
+            self.flush = flush;
+        }
+
+        fn do_work(&mut self, mut input: &[u8], mut out: BorrowedCursor<'_, u8>) {
+            match &mut self.state {
                 // Driven before `init()`.
-                None => return,
-                // SAFETY: input/output point to caller-kept-alive buffers (set_buffers).
-                Some(State::Compress(cctx)) => unsafe {
-                    c::ZSTD_compressStream2(
-                        cctx.as_ptr(),
-                        &raw mut self.output,
-                        &raw mut self.input,
-                        // cast c_int → ZSTD_EndDirective (c_uint)
-                        self.flush as c_uint,
-                    )
-                },
-                Some(State::Decompress(dctx)) => {
-                    // SAFETY: as above.
-                    let mut ret = unsafe {
-                        c::ZSTD_decompressStream(
-                            dctx.as_ptr(),
-                            &raw mut self.output,
-                            &raw mut self.input,
-                        )
-                    };
-                    // ret == 0 is frame-complete; mirrors NativeZlib::do_work_inflate's GUNZIP loop.
-                    while ret == 0
-                        && self.output.pos < self.output.size
-                        && self.next_input_is_frame()
-                    {
-                        // SAFETY: as above.
-                        ret = unsafe {
-                            c::ZSTD_decompressStream(
-                                dctx.as_ptr(),
-                                &raw mut self.output,
-                                &raw mut self.input,
-                            )
-                        };
-                    }
-                    ret
+                None => self.error = None,
+                Some(State::Compress(cctx)) => {
+                    let (consumed, result) = cctx.step(input, out.reborrow(), self.flush as c_uint);
+                    input = &input[consumed..];
+                    self.error = result.err();
                 }
-            } as u64;
+                Some(State::Decompress(dctx)) => loop {
+                    let (consumed, result) = dctx.step(input, out.reborrow());
+                    input = &input[consumed..];
+                    // 0 is frame-complete; mirrors the GUNZIP loop in NativeZlib.
+                    if result != Ok(0) || out.capacity() == 0 || !Self::next_input_is_frame(input) {
+                        self.error = result.err();
+                        break;
+                    }
+                },
+            }
+            self.avail_in = input.len();
+            self.avail_out = out.capacity();
         }
 
-        pub(crate) fn write_result(&self) -> [u32; 2] {
-            [
-                self.output.size - self.output.pos,
-                self.input.size - self.input.pos,
-            ]
-            .map(|n| u32::try_from(n).expect("int cast"))
-        }
-
-        pub(crate) fn get_error_info(&mut self) -> Error {
-            // Compute result, then clear `remaining`, then return.
-            let err = c::ZSTD_getErrorCode(self.remaining as usize);
-            let result = if err == 0 {
-                Error::OK
-            } else {
-                Error {
-                    err: err as c_int,
-                    msg: c::ZSTD_getErrorString(err),
-                    code: match err {
+        fn write_result(&self) -> Result<[u32; 2], Error> {
+            match self.error {
+                None => Ok(
+                    [self.avail_out, self.avail_in].map(|n| u32::try_from(n).expect("int cast"))
+                ),
+                Some(err) => Err(Error {
+                    err: err.0 as c_int,
+                    msg: err.message(),
+                    code: match err.0 {
                         c::ZSTD_error_no_error => c"ZSTD_error_no_error",
                         c::ZSTD_error_GENERIC => c"ZSTD_error_GENERIC",
                         c::ZSTD_error_prefix_unknown => c"ZSTD_error_prefix_unknown",
@@ -543,17 +378,9 @@ mod _impl {
                             c"ZSTD_error_noForwardProgress_inputEmpty"
                         }
                         _ => c"ZSTD_error_GENERIC",
-                    }
-                    .as_ptr(),
-                }
-            };
-            self.remaining = 0;
-            result
-        }
-
-        pub(crate) fn close(&mut self) {
-            self.state = None;
-            self.mode = NodeMode::NONE;
+                    },
+                }),
+            }
         }
     }
 

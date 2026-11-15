@@ -165,7 +165,7 @@ const ROWS: Row[] = [
   },
   // ── thread pool: storage inside a JS-owned object ────────────────────────
   {
-    // The zlib stream's native part is the pool task; input/output are JS buffers.
+    // The input and the output are JS buffers.
     name: "zlib.gzip",
     worker: `require("node:zlib").gzip(Buffer.alloc(1 << 20, 3), () => {});`,
     ticket: "node_zlib_binding.rs",

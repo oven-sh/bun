@@ -87,8 +87,7 @@ pub(crate) struct ExecutableSettings<'r> {
     pub(crate) target: &'r CompileTarget,
     pub(crate) executable_path: Option<&'r [u8]>,
     pub(crate) root_dir: Fd,
-    /// The transpiler holds the same pointer and reads through it while the build runs.
-    /// Whoever needs the loader makes a reference for that use alone.
+    /// The transpiler reads through the same pointer while the build runs, so each use makes its own reference.
     pub(crate) env: *mut bun_dotenv::Loader,
     pub(crate) windows: &'r WindowsOptions,
     pub(crate) exec_argv: &'r [u8],

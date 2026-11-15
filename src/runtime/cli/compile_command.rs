@@ -107,9 +107,8 @@ pub(crate) struct CompileRequest<'r, 'a> {
     pub(crate) entry_points: &'r [&'r [u8]],
     pub(crate) bundler: Option<BundlerInputs<'a>>,
     pub(crate) executable: ExecutableSettings<'r>,
-    /// The transpiler holds the same pointer, and its resolver and bundler write through it while
-    /// the build runs. Whoever writes here makes a reference for that write alone.
-    pub(crate) log: *const bun_ast::Log,
+    /// That of the transpiler.
+    pub(crate) log: &'r bun_ast::Log,
 }
 
 pub(crate) struct CompileOutcome {

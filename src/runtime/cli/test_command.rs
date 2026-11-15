@@ -2817,7 +2817,7 @@ impl TestCommand {
             transform_options: ctx.args.clone(),
             argv: core::mem::take(&mut ctx.passthrough).leak(),
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
-            log: core::ptr::NonNull::new(ctx.log.cast_mut()),
+            log: ctx.log.map(core::ptr::NonNull::from),
             env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
             smol: ctx.runtime_options.smol,
             is_main_thread: true,
@@ -3223,7 +3223,7 @@ impl TestCommand {
         let has_type_errors = ctx.runtime_options.check && {
             use crate::cli::check_command::{EntryPoint, check_before, watching};
             let paths = test_files.iter().map(|path| EntryPoint::file(path));
-            !check_before(&paths.collect::<Vec<_>>(), watching(vm))
+            !check_before(&ctx.args, &paths.collect::<Vec<_>>(), watching(vm))
         };
         if has_type_errors {
             // No test is run.

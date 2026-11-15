@@ -870,24 +870,17 @@ impl PathLikeExt for PathLike<'_> {
                         &mut buf[4..],
                     )
                     .len();
-                    buf[4 + n] = 0;
-                    // SAFETY: buf[4+n] == 0 written above.
-                    return ZStr::from_buf(&buf[..], 4 + n);
+                    return ZStr::nul_terminate(buf, 4 + n);
                 }
-                // reshaped for borrowck — capture the length so
-                // the `Ok` borrow ends at the match, then re-derive.
-                let resolved_len = match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(buf, sliced) {
-                    Ok(res) => Some(res.len()),
+                match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(
+                    buf, sliced,
+                ) {
+                    Ok(res) => return res,
                     // The cwd root + path don't fit `buf` (UNC cwds can push
                     // a near-MAX_PATH_BYTES path over); fall through to the
                     // plain copy / too-long handling below.
-                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => None,
+                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => {}
                     Err(e) => panic!("Error while resolving path: {e:?}"),
-                };
-                if let Some(len) = resolved_len {
-                    // SAFETY: `resolve_cwd_with_external_buf_z` wrote the NUL
-                    // at `buf[len]`.
-                    return ZStr::from_buf(&buf[..], len);
                 }
             }
         }
@@ -898,15 +891,11 @@ impl PathLikeExt for PathLike<'_> {
                 sliced.len(),
                 buf.len()
             );
-            buf[0] = 0;
-            // SAFETY: buf[0] == 0 written above.
-            return ZStr::from_buf(&buf[..], 0);
+            return ZStr::nul_terminate(buf, 0);
         }
 
         buf[..sliced.len()].copy_from_slice(sliced);
-        buf[sliced.len()] = 0;
-        // SAFETY: buf[sliced.len()] == 0 written above.
-        ZStr::from_buf(&buf[..], sliced.len())
+        ZStr::nul_terminate(buf, sliced.len())
     }
 
     #[cfg(windows)]

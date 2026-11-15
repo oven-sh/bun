@@ -1,5 +1,6 @@
 use core::cell::Cell;
 use core::ffi::c_void;
+use std::sync::Arc;
 
 use bun_ast::{AstVec, E, Expr, ExprData, ExprNodeList, G, ToJSError};
 use bun_ast::{Log, Range, Source};
@@ -134,12 +135,11 @@ fn call_macro(
             ctx.macro_load_states.set(hash, MacroLoadState::Disabled);
             let is_new_vm = !VirtualMachine::is_loaded();
             let vm = if is_new_vm {
-                // SAFETY: the contract of `MacroContext::new`. `env` is the build's loader: it
-                // outlives the build and nothing writes to it while parse tasks run.
+                // SAFETY: the contract of `MacroContext::new`.
                 let (options, env) = unsafe {
                     (
                         &*(*transpiler).options.transform_options,
-                        (*transpiler).env.as_ref(),
+                        (*transpiler).env(),
                     )
                 };
                 init_macro_vm(log, env, options)?
@@ -248,7 +248,7 @@ fn __bun_macro_context_call(
 
 fn init_macro_vm(
     log: &Log,
-    env: Option<&DotEnvLoader>,
+    env: &Arc<DotEnvLoader>,
     transform_options: &TransformOptions,
 ) -> crate::Result<&'static VirtualMachine> {
     let mut transform_options = transform_options.clone();
@@ -260,17 +260,10 @@ fn init_macro_vm(
     // JSC needs to be initialized if building from CLI
     jsc::initialize(jsc::InitializeOptions::default());
 
-    // `env` is shared by every parse thread, and this VM's transpiler loads `.env` files
-    // into its loader, so give the VM its own copy.
-    let owned_env_loader = match env {
-        Some(env) => Some(Box::new(env.clone_loaded()?)),
-        None => None,
-    };
-
     let vm = VirtualMachine::init(VirtualMachineInitOptions {
         transform_options,
         owned_log: Log::init(),
-        owned_env_loader,
+        env_loader: Some(Arc::clone(env)),
         is_main_thread: false,
         ..Default::default()
     })?;

@@ -454,11 +454,11 @@ pub mod registry {
         pub(crate) fn from_api(
             name: &[u8],
             registry: api::NpmRegistry,
-            env: Option<&mut DotEnv>,
+            env: Option<&DotEnv>,
         ) -> crate::Result<Scope> {
             match env {
                 Some(env) => Self::build(name, registry, env, true),
-                None => Self::build(name, registry, &mut DotEnv::init(), false),
+                None => Self::build(name, registry, &DotEnv::init(), false),
             }
             .map_err(|(credential, _)| {
                 if name.is_empty() {
@@ -477,7 +477,7 @@ pub mod registry {
         fn build(
             name: &[u8],
             mut registry: api::NpmRegistry,
-            env: &mut DotEnv,
+            env: &DotEnv,
             // `false` for a `.npmrc` line, where `$` before no variable's name is a literal.
             unset_variable_is_no_credential: bool,
         ) -> Result<Scope, UnsafeCredential> {
@@ -635,7 +635,7 @@ pub mod registry {
     impl UrlAuth {
         pub(crate) fn from_api(
             api: &api::NpmUrlAuth,
-            env: &mut DotEnv,
+            env: &DotEnv,
         ) -> crate::Result<Option<UrlAuth>> {
             let credentials = Scope::build(b"", api.credentials.clone(), env, false).map_err(
                 |(_, npmrc_option)| {

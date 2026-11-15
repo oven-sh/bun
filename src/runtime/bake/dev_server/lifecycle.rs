@@ -1,5 +1,7 @@
 //! Creating and destroying the dev server, and loading the framework's server runtime.
 
+use std::sync::Arc;
+
 use super::*;
 
 /// DevServer is stored on the heap, storing its allocator.
@@ -185,6 +187,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         match framework.init_transpiler(
             arena,
             log,
+            Arc::clone(global.bun_vm().env_loader()),
             bake::Mode::Development,
             bake::Graph::Server,
             &mut *addr_of_mut!((*p).server_transpiler).cast::<MaybeUninit<Transpiler<'static>>>(),
@@ -196,6 +199,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         match framework.init_transpiler(
             arena,
             log,
+            Arc::clone(global.bun_vm().env_loader()),
             bake::Mode::Development,
             bake::Graph::Client,
             &mut *addr_of_mut!((*p).client_transpiler).cast::<MaybeUninit<Transpiler<'static>>>(),
@@ -208,6 +212,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             match framework.init_transpiler(
                 arena,
                 log,
+                Arc::clone(global.bun_vm().env_loader()),
                 bake::Mode::Development,
                 bake::Graph::Ssr,
                 &mut *addr_of_mut!((*p).ssr_transpiler),

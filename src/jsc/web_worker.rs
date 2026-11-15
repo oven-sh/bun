@@ -49,12 +49,12 @@ use core::cell::{Cell, OnceCell};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use bun_core::{EncodedSlice, String as BunString, Timespec, TimespecMockMode, WTFStringImpl};
 use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_io::KeepAlive;
-use bun_ptr::AliasableBox;
 
 use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
 use crate::{self as jsc, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, LogJsc};
@@ -132,8 +132,6 @@ pub struct WebWorker {
     /// `shutdown()`.
     vm: Cell<*mut VirtualMachine>,
     status: Cell<Status>,
-    /// Cloned env for the worker VM, which points to it.
-    worker_env_loader: JsCell<Option<AliasableBox<bun_dotenv::Loader>>>,
     /// `process.exit(code)` ran; later error paths must not overwrite its code.
     exit_called: AtomicBool,
     /// The parent asked this thread to stop (`worker.terminate()` or an exiting
@@ -147,7 +145,6 @@ pub struct WebWorker {
 struct WorkerVmInit {
     transform_options: bun_options_types::schema::api::TransformOptions,
     env_loader: bun_dotenv::Loader,
-    proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
 }
 
 /// What the worker thread is handed: its refcounted `WebWorker` (a ref of the
@@ -166,8 +163,8 @@ struct OwnedByThread {
 // SAFETY: whoever holds it last takes the box. Of what is in the box,
 // `WebWorker` is shared across threads by design (atomics,
 // `Guarded`, thread-confined cells — see the struct doc) and holds no
-// parent-VM state; `init` is an owned copy — byte buffers, scalars and
-// `Arc<RefCountedEnvValue>`s, no JSC or atom strings; the parent VM
+// parent-VM state; `init` is an owned copy — byte buffers and
+// scalars, no JSC or atom strings; the parent VM
 // itself is kept by `_parent_ticket`; `table_pages` is unused address
 // space that only the new thread touches.
 unsafe impl Send for OwnedByThread {}
@@ -479,27 +476,14 @@ impl WebWorker {
                 transform_options.allow_ffi_cc = Some(parent_allows_ffi_cc && flags.allow_ffi_cc);
             }
         }
-        // The worker's `process.env` starts as a copy of the parent's now (as in
-        // Node). Proxy-env values may be RefCountedEnvValue bytes owned by the
-        // parent's proxy_env_storage: snapshot slots + map under its lock so
-        // every slice copied is backed by a ref the snapshot holds.
-        let mut proxy_env_slots = jsc::rare_data::ProxyEnvSlots::default();
-        let mut env_loader = {
-            let parent_slots = parent.proxy_env_storage.lock();
-            proxy_env_slots.clone_from(&parent_slots);
-            match parent.env_loader().clone_for_worker() {
-                Ok(loader) => loader,
-                Err(_) => {
-                    *error_message = BunString::static_("Out of memory");
-                    return core::ptr::null_mut();
-                }
-            }
+        // The worker's `process.env` starts as a copy of the parent's now (as in Node).
+        let Ok(env_loader) = parent.env_loader().try_clone() else {
+            *error_message = BunString::static_("Out of memory");
+            return core::ptr::null_mut();
         };
-        proxy_env_slots.sync_into(&mut env_loader.map);
         let init = WorkerVmInit {
             transform_options,
             env_loader,
-            proxy_env_slots,
         };
 
         // The construction ref: handed to C++ on success, dropped on failure.
@@ -540,7 +524,6 @@ impl WebWorker {
             room_timer: EventLoopTimer::init_paused(TimerTag::WorkerWaitsForRoom),
             room_timer_rounds: Cell::new(0),
             status: Cell::new(Status::Start),
-            worker_env_loader: JsCell::new(None),
             exit_called: AtomicBool::new(false),
             terminated_by_parent: AtomicBool::new(false),
         });
@@ -929,12 +912,7 @@ impl WebWorker {
         let WorkerVmInit {
             transform_options,
             env_loader,
-            proxy_env_slots,
         } = init;
-
-        let env_loader = AliasableBox::new(env_loader);
-        let loader_ptr = env_loader.as_non_null();
-        self.worker_env_loader.set(Some(env_loader));
 
         // Checkpoint before the expensive part: initWorker builds a full JSC
         // VM. If a parent's request_termination() fired while we were cloning the env
@@ -952,12 +930,11 @@ impl WebWorker {
             self,
             virtual_machine::Options {
                 args: transform_options,
-                env_loader: Some(loader_ptr),
+                env_loader: Some(Arc::new(env_loader)),
                 graph: crate::virtual_machine::standalone_module_graph(),
                 ..Default::default()
             },
         )?;
-        *vm.proxy_env_storage.lock() = proxy_env_slots;
         VirtualMachine::set_is_main_thread_vm(false);
         vm.on_unhandled_rejection.set(on_unhandled_rejection);
 
@@ -977,13 +954,15 @@ impl WebWorker {
         // SAFETY: no script has run: nothing else borrows the transpiler.
         unsafe {
             let b = vm.transpiler.get_mut();
-            b.resolver.env_loader = NonNull::new(b.env);
+            b.resolver.care_about_node_path = true;
             b.options.env.behavior =
                 bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
 
             if let Some(graph) = crate::virtual_machine::standalone_module_graph() {
                 (hooks.apply_standalone_runtime_flags)(b, graph);
             }
+            // The copy has what the parent loaded, without what the parent deleted.
+            b.options.env.disable_default_env_files = true;
         }
 
         // Second checkpoint: initWorker just spent the bulk of startup time;
@@ -1258,7 +1237,6 @@ impl WebWorker {
             "[{}] shutdown: VirtualMachine destroyed",
             self.execution_context_id
         );
-        self.worker_env_loader.set(None);
         // This thread's C++ thread_local destructors are not guaranteed to run
         // before the process exits, so free the HPACK scratch buffer that any
         // http2 session on this thread allocated.

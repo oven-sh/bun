@@ -373,7 +373,7 @@ impl PublishCommand {
     /// Fails if provenance was requested. Publishing without the statement would look like success.
     pub(crate) fn refuse_provenance(manager: &PackageManager, package_json: &Expr) {
         let options = &manager.options;
-        if let Some(asked_by) = options.provenance_asked_by(package_json, manager.env_mut()) {
+        if let Some(asked_by) = options.provenance_asked_by(package_json, manager.env()) {
             Output::err_generic(
                 "{} is not supported yet: bun publish cannot generate provenance statements",
                 (asked_by,),
@@ -602,7 +602,7 @@ impl PublishCommand {
     /// The ` + name@version` line, then the `publish` and `postpublish` scripts of the package.
     fn finish_directory_publish(
         ctx: Command::Context<'_>,
-        manager: &PackageManager,
+        manager: &mut PackageManager,
         context: &Context,
         abs_package_json_path: &ZStr,
     ) -> Result<(), Error> {
@@ -619,6 +619,7 @@ impl PublishCommand {
         let abs_workspace_path = path::string_paths::without_trailing_slash_windows_path(
             strings::without_suffix_comptime(abs_package_json_path.as_bytes(), b"package.json"),
         );
+        let silent = manager.options.log_level == LogLevel::Silent;
         let script_env = manager.env_mut();
         // `pack()` left the last three describing the package it packed last.
         let variables: [(&[u8], &[u8]); 4] = [
@@ -646,7 +647,7 @@ impl PublishCommand {
                 name,
                 abs_workspace_path,
                 script_env,
-                manager.options.log_level == LogLevel::Silent,
+                silent,
             ) {
                 if matches!(e, crate::Error::MissingShell) {
                     Output::err_generic(

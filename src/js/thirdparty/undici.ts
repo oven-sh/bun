@@ -264,7 +264,6 @@ class Dispatcher extends EventEmitter {
 type DispatcherCallback = (err: Error | null, data: null) => void;
 
 // https://github.com/nodejs/undici/blob/v8.12.4/lib/dispatcher/dispatcher-base.js
-// No dispatcher of the shim holds a connection, so close() and destroy() settle at once.
 class DispatcherBase extends Dispatcher {
   close(callback?: DispatcherCallback) {
     if (callback === undefined) return Promise.resolve(null);

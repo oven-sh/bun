@@ -72,6 +72,7 @@ impl<'a, T: Copy> Out<'a, T> {
                 break 'fill;
             };
             let chunks = from[..len - 1].as_chunks().0;
+            #[cfg_attr(target_arch = "aarch64", rustc_unroll(4))]
             for (from, to) in chunks.iter().zip(all[..len - 1].as_chunks_mut().0) {
                 let Some(values) = f(filled, from) else {
                     break 'fill;

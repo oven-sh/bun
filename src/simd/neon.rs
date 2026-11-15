@@ -38,6 +38,17 @@ impl crate::Isa for Neon {
         mask.0.any()
     }
 
+    /// There is no `popcnt` for general registers.
+    #[inline(always)]
+    fn count_from<T: Int<N>, const N: usize>(mask: Mask<T, N>, lane: usize) -> usize {
+        const STEP: &[u8; 32] = &core::array::from_fn(const |i| i as u8 / 16);
+        if size_of::<[T; N]>() != 16 {
+            return (mask.to_bitmask() >> lane).count_ones() as usize;
+        }
+        let ones = u8x16::from_slice(&STEP[16 - lane % N * size_of::<T>()..]);
+        usize::from((mask.to_vector().first_bytes() & ones).reduce_sum()) / size_of::<T>()
+    }
+
     #[inline(always)]
     fn bitmask_of_four<const N: usize>(masks: [Mask<u8, N>; 4]) -> u64
     where
@@ -84,13 +95,12 @@ impl I16 {
 }
 
 impl I32 {
-    #[inline(always)]
+    #[inline]
+    #[target_feature(enable = "neon")]
     pub fn pairwise_dot(a: I16, b: I16) -> Self {
-        let products = a.0.cast::<i32>() * b.0.cast();
-        let (even, odd) = products
-            .extract::<0, 4>()
-            .deinterleave(products.extract::<4, 4>());
-        Self::new(even + odd)
+        let (a, b) = (a.0.into(), b.0.into());
+        let low = vmull_s16(vget_low_s16(a), vget_low_s16(b));
+        Self::new(vpaddq_s32(low, vmull_high_s16(a, b)))
     }
 }
 

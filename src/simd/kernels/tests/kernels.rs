@@ -1,7 +1,7 @@
 //! Every kernel on every target, against a plain loop or the portable target.
 #![forbid(unsafe_code)]
 use bun_simd::{Out, Target, limit_to};
-use bun_simd_kernels as kernels;
+use bun_simd_kernels::{self as kernels, Filter};
 use core::fmt::Debug;
 use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
@@ -34,6 +34,11 @@ fn texts(alphabet: &[u8]) -> impl Iterator<Item = Vec<u8>> {
 
 const MIXED: &[u8] = b"abAZ\"\\\n {},0F</&\xff";
 
+/// Miri gets one in `n`.
+fn sample<T>(all: impl IntoIterator<Item = T>, n: usize) -> impl Iterator<Item = T> {
+    all.into_iter().step_by(if cfg!(miri) { n } else { 1 })
+}
+
 fn check<T: PartialEq + Debug>(want: T, kernel: impl Fn() -> T) {
     for target in targets() {
         assert_eq!(kernel(), want, "{target:?}");
@@ -60,63 +65,299 @@ fn filled<T: Copy>(len: usize, kernel: impl for<'a> FnOnce(Out<'a, T>) -> &'a mu
     out
 }
 
+/// Some have the low byte of a character that they are not.
+fn widened(bytes: &[u8]) -> Vec<u16> {
+    let unit = |(i, &byte): (usize, &u8)| u16::from(byte) | u16::from(i % 5 == 4) << (8 + i % 8);
+    bytes.iter().enumerate().map(unit).collect()
+}
+
+fn texts_to_search() -> impl Iterator<Item = Vec<u8>> {
+    let rare =
+        b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaF/<.;*$`#\x1B\x9B\x91'";
+    let bytes = sample(0..=255, 256).map(|byte| vec![b'a', byte]);
+    texts(MIXED).chain(texts(rare)).chain(bytes)
+}
+
 #[test]
 fn searches() {
-    for t in texts(MIXED).chain(texts(
-        b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaF/<",
-    )) {
-        let first = |test: fn(u8) -> bool| t.iter().position(|&b| test(b));
-        let last = |byte: u8| t.iter().rposition(|&b| b == byte);
-        let (t, shared, half) = (&t[..], shared(&t), t.len() / 2);
-        let count = t.iter().filter(|b| b"a".contains(b)).count();
-        check(first(|b| b == b'F'), || kernels::index_of_char(t, b'F'));
-        check(first(|b| b == b'F'), || {
-            kernels::index_of_char_shared(&shared, b'F')
-        });
-        check(first(|b| b == b'F').filter(|&at| at < half), || {
-            kernels::index_of_char_within(t, half, b'F')
-        });
-        check(last(b'F'), || kernels::last_index_of_char(t, b'F'));
-        check(last(b'F'), || {
-            kernels::last_index_of_char_shared(&shared, b'F')
-        });
-        check(last(b'/'), || kernels::last_index_of_slash(t));
-        check(count, || kernels::count_char(t, b'a'));
-        check(count, || kernels::count_char_shared(&shared, b'a'));
-        check(first(|b| b"F0".contains(&b)), || {
-            kernels::index_of_either(t, *b"F0")
-        });
-        check(first(|b| b"F0\xff".contains(&b)), || {
-            kernels::index_of_any_char(t, b"F0\xff")
+    type First = fn(&[u8]) -> Option<usize>;
+    #[rustfmt::skip]
+    let firsts: [(First, fn(u8) -> bool); 17] = [
+        (|t| kernels::index_of_char(t, b'F'), |b| b == b'F'),
+        (|t| kernels::index_of_char_shared(&shared(t), b'F'), |b| b == b'F'),
+        (|t| kernels::index_of_not_char(t, b'a'), |b| b != b'a'),
+        (|t| kernels::index_of_any_char(t, b"F0"), |b| b"F0".contains(&b)),
+        (|t| kernels::index_of_any_char(t, b"F0\xff"), |b| b"F0\xff".contains(&b)),
+        (|t| kernels::index_of_any_char(t, b"F0,<"), |b| b"F0,<".contains(&b)),
+        (|t| kernels::index_of_any_char(t, b"F\x91,\xff"), |b| b"F\x91,\xff".contains(&b)),
+        (|t| kernels::index_of_interesting_character_in_string_literal(t, b'"'),
+            |b| b"\"\\".contains(&b) || !(0x20..=0x7E).contains(&b)),
+        (|t| kernels::index_of_needs_escape_for_javascript_string(t, b'\''),
+            |b| b"'\\".contains(&b) || !(0x20..=0x7E).contains(&b)),
+        (|t| kernels::index_of_needs_escape_for_javascript_string(t, b'`'),
+            |b| b"`$\\".contains(&b) || !(0x20..=0x7E).contains(&b)),
+        (kernels::index_of_interesting_character_in_multiline_comment,
+            |b| b"*\r\n".contains(&b) || b > 0x7F),
+        (kernels::index_of_newline_or_non_ascii, |b| !(0x20..=0x7F).contains(&b)),
+        (kernels::index_of_space_or_newline_or_non_ascii, |b| !(0x21..=0x7F).contains(&b)),
+        (kernels::index_of_newline_or_non_ascii_or_hash_or_at,
+            |b| b"#@".contains(&b) || !(0x20..=0x7F).contains(&b)),
+        (kernels::first_non_ascii8, |b| b > 0x7F),
+        (kernels::index_of_first_ascii_upper, |b| b.is_ascii_uppercase()),
+        (kernels::index_of_html_escape_char8, |b| b"<>&'\"".contains(&b)),
+    ];
+    #[rustfmt::skip]
+    let lasts: [(First, &[u8]); 7] = [
+        (|t| kernels::last_index_of_char(t, b'F'), b"F"),
+        (|t| kernels::last_index_of_char_shared(&shared(t), b'F'), b"F"),
+        (|t| kernels::last_index_of_any_char(t, b"F0"), b"F0"),
+        (|t| kernels::last_index_of_any_char(t, b"F0<"), b"F0<"),
+        (|t| kernels::last_index_of_any_char(t, b"F\x91,\xff"), b"F\x91,\xff"),
+        (kernels::last_index_of_slash, b"/"),
+        (kernels::last_index_of_slash_or_dot, b"/."),
+    ];
+    #[rustfmt::skip]
+    let counts: [(fn(&[u8]) -> usize, &[u8]); 4] = [
+        (|t| kernels::count_char(t, b'a'), b"a"),
+        (|t| kernels::count_char_shared(&shared(t), b'a'), b"a"),
+        (kernels::count_slashes, b"/"),
+        (kernels::count_mapping_delims, b",;"),
+    ];
+    for t in texts_to_search() {
+        for (kernel, test) in firsts {
+            check(t.iter().position(|&b| test(b)), || kernel(&t));
+        }
+        for (kernel, set) in lasts {
+            check(t.iter().rposition(|b| set.contains(b)), || kernel(&t));
+        }
+        for (kernel, set) in counts {
+            check(t.iter().filter(|b| set.contains(b)).count(), || kernel(&t));
+        }
+        let half = t.len() / 2;
+        check(t[..half].iter().position(|b| b"F".contains(b)), || {
+            kernels::index_of_char_within(&t, half, b'F')
         });
         check(
-            first(|b| b"\"\\".contains(&b) || !(0x20..=0x7E).contains(&b)),
-            || kernels::index_of_interesting_character_in_string_literal(t, b'"'),
+            t.iter()
+                .any(|b| !(0x20..=0x7F).contains(b) || b"\"".contains(b)),
+            || kernels::contains_newline_or_non_ascii_or_quote(&t),
         );
-        check(first(|b| !(0x20..=0x7F).contains(&b)), || {
-            kernels::index_of_newline_or_non_ascii(t)
-        });
-        let wide: Vec<u16> = t.iter().map(|&b| b.into()).collect();
-        let html = first(|b| b"<>&'\"".contains(&b));
-        check(html, || kernels::index_of_html_escape_char8(t));
-        check(html, || kernels::index_of_html_escape_char16(&wide));
-        check(first(|b| b > 0x7F), || kernels::first_non_ascii16(&wide));
     }
 }
 
 #[test]
-fn memmem() {
-    for t in texts(b"ab").chain(texts(b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab")) {
-        let from_end = [0, 1, 2, 5, 16, 17, 40].map(|len| &t[t.len().saturating_sub(len)..]);
-        let others: [&[u8]; 3] = [
-            b"bb",
-            b"aaaaabbaaaaa",
-            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac",
-        ];
-        for needle in from_end.into_iter().chain(others) {
-            let want = (0..=t.len()).find(|&at| t[at..].starts_with(needle));
-            check(want, || kernels::memmem(&t, needle));
+#[cfg_attr(miri, ignore = "reads only a slice")]
+fn searches_in_both_encodings() {
+    let is_escape = |unit: &u16| [0x1B, 0x90, 0x98, 0x9B, 0x9C, 0x9D, 0x9E, 0x9F].contains(unit);
+    let extra = |&unit: &u16| match u8::try_from(unit) {
+        Ok(b'<' | b'>') => 3,
+        Ok(b'&') => 4,
+        Ok(b'"' | b'\'') => 5,
+        _ => 0,
+    };
+    for t in texts_to_search() {
+        let latin1: Vec<u16> = t.iter().map(|&b| b.into()).collect();
+        check(latin1.iter().position(is_escape), || {
+            kernels::index_of_escape_char8(&t)
+        });
+        check(latin1.iter().map(extra).sum(), || {
+            kernels::html_escape_extra_len8(&t)
+        });
+        for wide in [latin1, widened(&t)] {
+            check(wide.iter().position(is_escape), || {
+                kernels::index_of_escape_char16(&wide)
+            });
+            check(wide.iter().map(extra).sum(), || {
+                kernels::html_escape_extra_len16(&wide)
+            });
+            check(wide.iter().position(|unit| extra(unit) != 0), || {
+                kernels::index_of_html_escape_char16(&wide)
+            });
+            check(wide.iter().position(|&unit| unit > 0x7F), || {
+                kernels::first_non_ascii16(&wide)
+            });
+            check(
+                wide.iter().position(|unit| (0x41..=0x5A).contains(unit)),
+                || kernels::index_of_first_ascii_upper16(&wide),
+            );
+            check(
+                wide.iter()
+                    .filter(|unit| (0x20..=0x7E).contains(*unit))
+                    .count(),
+                || kernels::count_printable_ascii16(&wide),
+            );
         }
+    }
+}
+
+type Search<T> = fn(&[T], &[T]) -> Option<usize>;
+
+fn check_memmem<T: Copy + PartialEq>(widen: fn(u8) -> T, forward: Search<T>, back: Search<T>) {
+    let check_both = |text: &[u8], needle: &[u8]| {
+        let [text, needle] =
+            [text, needle].map(|it| it.iter().map(|&b| widen(b)).collect::<Vec<_>>());
+        let places = || (0..=text.len()).filter(|&at| text[at..].starts_with(&needle));
+        check(places().next(), || forward(&text, &needle));
+        check(places().next_back(), || back(&text, &needle));
+    };
+    for t in texts(b"ab").chain(texts(b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab")) {
+        for len in sample([0, 1, 2, 3, 5, 9, 16, 17, 32, 33, 40], 4).map(|len| t.len().min(len)) {
+            check_both(&t, &t[..len]);
+            check_both(&t, &t[t.len() - len..]);
+        }
+        check_both(&t, b"bb");
+        check_both(&t, b"aaaaabbaaaaa");
+        check_both(&t, b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac");
+    }
+    // The rarest units match all the time, so it goes on with another algorithm.
+    for period in sample([&b"ab"[..], b"abb", b"abcabd"], 3) {
+        let (text, mut needle) = (period.repeat(200), period.repeat(10));
+        needle[5 * period.len()] = b'b';
+        check_both(&text, &needle);
+        check_both(&[&text[..], &needle, &text].concat(), &needle);
+        check_both(
+            &[&text[..], &needle, &needle, &text].concat(),
+            &needle.repeat(2),
+        );
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "reads only a slice")]
+fn memmem() {
+    check_memmem(|b| b, kernels::memmem, kernels::memrmem);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "reads only a slice")]
+fn memmem16() {
+    check_memmem(|b| u16::from(b) << 7, kernels::memmem16, kernels::memrmem16);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "reads only a slice")]
+fn paths() {
+    for t in texts(b"//..ab").chain(texts(b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.\xE9")) {
+        let is_untidy = |&at: &usize| {
+            let part = t[at + 1..]
+                .iter()
+                .take_while(|b| !b"/".contains(b))
+                .copied();
+            let is_dots = [&b""[..], b".", b".."].contains(&&part.collect::<Vec<u8>>()[..]);
+            t[at] == b'/' && at + 1 < t.len() && is_dots
+        };
+        check((0..t.len()).find(is_untidy), || {
+            kernels::index_of_untidy_slash(&t)
+        });
+        check(
+            (0..t.len()).find(|at| is_untidy(at) || t[*at] > 0x7F),
+            || kernels::index_of_untidy_slash_or_non_ascii(&t),
+        );
+        for len in [t.len(), t.len() / 2, t.len() / 7] {
+            check(len, || kernels::common_prefix_length(&t, &t[..len]));
+            check(len, || {
+                kernels::common_prefix_length(&[&t[..len], b"x", &t].concat(), &t)
+            });
+        }
+    }
+}
+
+fn is_visible(byte: u8) -> bool {
+    !matches!(byte, ..0x20 | 0x7F..0xA0 | 0xAD)
+}
+
+fn width_without_escapes(mut text: &[u8]) -> usize {
+    let mut width = 0;
+    while let [first, rest @ ..] = text {
+        let (ends, body): (fn(u8) -> bool, _) = match text {
+            [0x1B, b'[', body @ ..] | [0x9B, body @ ..] => (|b| (0x40..=0x7E).contains(&b), body),
+            [0x1B, b']', body @ ..] | [0x9D, body @ ..] => (|b| b == 7, body),
+            [0x1B, b'P' | b'X' | b'^' | b'_', body @ ..] => (|_| false, body),
+            [0x90 | 0x98 | 0x9E | 0x9F, body @ ..] => (|_| false, body),
+            [0x1B, 0x20..=0x2F, body @ ..] => (|_| true, body),
+            [0x1B, 0x30..=0x7E, ..] => (|_| true, rest),
+            _ => {
+                (width, text) = (width + usize::from(is_visible(*first)), rest);
+                continue;
+            }
+        };
+        let end = body
+            .iter()
+            .position(|&b| ends(b) || [0x18, 0x1A, 0x1B, 0x9C].contains(&b));
+        text = match end.map(|end| &body[end..]) {
+            Some(next @ [0x1B, ..]) | Some([_, next @ ..]) => next,
+            _ => &[],
+        };
+    }
+    width
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "reads only a slice")]
+fn widths() {
+    let dense = b"\x1B\x1B\x1B[[]]\\0;m a\x07\x18\x1A\x9B\x9C\x9D\x90\x91P_(\x7F\xAD\xE9";
+    let sparse =
+        b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00000000000000000000000000000000;;\x1B\x1B[]P\x07\x9B";
+    let all_bytes = (0..=255).collect();
+    for t in texts(dense).chain(texts(sparse)).chain([all_bytes]) {
+        check(t.iter().filter(|&&b| is_visible(b)).count(), || {
+            kernels::visible_latin1_width(&t)
+        });
+        check(width_without_escapes(&t), || {
+            kernels::visible_latin1_width_exclude_ansi(&t)
+        });
+    }
+    // Each kind starts at each place before the end of a block, and goes on for more than one.
+    for start in [
+        &b"\x1B["[..],
+        b"\x1B]",
+        b"\x1BP",
+        b"\x1B(",
+        b"\x1B",
+        b"\x9B",
+        b"\x9D",
+        b"\x90",
+    ] {
+        for (before, len) in sample((60..66).flat_map(|it| [(it, 0), (it, 150)]), 7) {
+            let t = [
+                &vec![b'a'; before],
+                start,
+                &vec![b'0'; len],
+                b"m\x07z\x1B\\yy",
+            ]
+            .concat();
+            check(width_without_escapes(&t), || {
+                kernels::visible_latin1_width_exclude_ansi(&t)
+            });
+        }
+    }
+
+    let width = |unit: u16| match unit {
+        0xA9 | 0xAD | 0xAE => 0,
+        0x20..=0x7E | 0xA0..=0x2FF | 0x370..=0x482 | 0x48A..=0x52F => 1,
+        0x3041..=0x3096 | 0x309B..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF => 2,
+        0xAC00..=0xD7A3 | 0xFF01..=0xFF60 => 2,
+        _ => 0,
+    };
+    let all_units: Vec<u16> = sample(0..=u16::MAX, 3001).collect();
+    let mut rest = &all_units[..];
+    while !rest.is_empty() {
+        let len = rest.iter().take_while(|&&unit| width(unit) != 0).count();
+        let want = (len, rest[..len].iter().map(|&unit| width(unit)).sum());
+        check(want, || kernels::visible_utf16_width(rest));
+        check(want, || kernels::visible_utf16_width(&rest[..len]));
+        rest = &rest[rest.len().min(len + 1)..];
+    }
+    for t in texts(b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbb\n") {
+        let wide: Vec<u16> = t
+            .iter()
+            .map(|&b| u16::from(b) + u16::from(b == b'b') * 0x4E00)
+            .collect();
+        let len = wide.iter().take_while(|&&unit| width(unit) != 0).count();
+        check(
+            (len, wide[..len].iter().map(|&unit| width(unit)).sum()),
+            || kernels::visible_utf16_width(&wide),
+        );
     }
 }
 
@@ -150,6 +391,35 @@ fn lines_and_runs() {
             planes
         });
     }
+}
+
+#[test]
+fn odd_blocks() {
+    let odd = (0..=255)
+        .map(|byte| (byte, 70))
+        .chain([63, 64, 4095, 4096, 4200].map(|at| (1, at)));
+    for (byte, at) in sample(odd, 256) {
+        let (mut t, mut want) = (vec![b'a'; at + 1], vec![0; at / 4096 + 1]);
+        let is_plain = (0x20..=0x7E).contains(&byte) && byte != b'\\' || b"\t\n\r".contains(&byte);
+        (t[at], want[at / 4096]) = (byte, u64::from(!is_plain) << (at / 64 % 64));
+        check(want, || {
+            filled(at / 4096 + 1, |out| kernels::odd_blocks(&t, out))
+        });
+    }
+}
+
+fn check_bswap<const N: usize>(t: &[u8], kernel: fn(&mut [[u8; N]])) {
+    let mut swapped = t.to_vec();
+    swapped
+        .as_chunks_mut::<N>()
+        .0
+        .iter_mut()
+        .for_each(|word| word.reverse());
+    check(swapped, || {
+        let mut out = t.to_vec();
+        kernel(out.as_chunks_mut().0);
+        out
+    });
 }
 
 #[test]
@@ -191,6 +461,31 @@ fn conversions() {
             check(t[..valid].to_vec(), || {
                 filled(len, |out| kernels::decode_hex(hex.as_chunks().0, out))
             });
+            check(t[..valid].to_vec(), || {
+                filled(len, |out| {
+                    kernels::decode_hex16(widened(&hex).as_chunks().0, out)
+                })
+            });
+        }
+        check(t.to_ascii_lowercase(), || {
+            filled(len, |out| kernels::lower_ascii(&t, out))
+        });
+        let ascii: Vec<u8> = t.iter().map(|b| b & 0x7F).collect();
+        for prefix in [len, len / 2, len / 9] {
+            let from = [&ascii[..prefix], b"\x80", &ascii[prefix..]].concat();
+            check(
+                (
+                    prefix,
+                    [&ascii[..prefix], &vec![0xFF; len - prefix]].concat(),
+                ),
+                || {
+                    let mut out = vec![0xFF; len];
+                    (
+                        kernels::copy_ascii_prefix(&from, out[..].as_mut().into()).len(),
+                        out,
+                    )
+                },
+            );
         }
 
         let wide: Vec<u16> = (0..len)
@@ -202,22 +497,29 @@ fn conversions() {
             filled(len, |out| kernels::lower_ascii16(&wide, out))
         });
 
-        let mut swapped = t.clone();
-        swapped
-            .as_chunks_mut::<4>()
-            .0
-            .iter_mut()
-            .for_each(|word| word.reverse());
-        check(swapped.clone(), || {
-            let mut out = t.clone();
-            kernels::bswap32(out.as_chunks_mut().0);
-            out
-        });
-        check(swapped, || {
-            let out = shared(&t);
+        check_bswap(&t, kernels::bswap16);
+        check_bswap(&t, kernels::bswap32);
+        check_bswap(&t, kernels::bswap64);
+        check_bswap::<4>(&t, |words| {
+            let out = shared(&[words.as_flattened(), b"xyz"].concat());
             kernels::bswap32_shared(&out);
-            plain(out)
+            let out = plain(out);
+            assert!(out.ends_with(b"xyz"));
+            words.copy_from_slice(out.as_chunks().0);
         });
+    }
+}
+
+#[test]
+fn hex_digits() {
+    for byte in sample(0..=255, 97) {
+        let mut hex = [*b"00"; 70];
+        hex[33][1] = byte;
+        let want = match char::from(byte).to_digit(16) {
+            Some(digit) => [&[0; 33][..], &[digit as u8], &[0; 36]].concat(),
+            None => vec![0; 33],
+        };
+        check(want, || filled(70, |out| kernels::decode_hex(&hex, out)));
     }
 }
 
@@ -289,16 +591,101 @@ fn json_without_room() {
     });
 }
 
+/// `odd(i)` tells whether the encoding makes it structural.
+fn xml_structure(units: &[u16], odd: impl Fn(usize) -> bool) -> Vec<u32> {
+    let mut is_in_tag = false;
+    let is_structural = |&i: &usize| {
+        let byte = u8::try_from(units[i]).unwrap_or(b'a');
+        is_in_tag = byte == b'<' || is_in_tag && byte != b'>';
+        let is_control = byte < 0x20 && !b"\t\n".contains(&byte);
+        is_control || b"<>&".contains(&byte) || is_in_tag && b"\t\n=\"'".contains(&byte) || odd(i)
+    };
+    (0..units.len())
+        .filter(is_structural)
+        .map(|i| i as u32)
+        .collect()
+}
+
+/// In two calls, with a whole block in the first.
+fn xml_index<T>(
+    text: &[T],
+    kernel: for<'a> fn(&[T], usize, Out<'a, u32>, &mut [u64; 3]) -> &'a mut [u32],
+) -> Vec<u32> {
+    let ((first, second), state) = (text.split_at(text.len().min(64)), &mut [0; 3]);
+    let first = filled(first.len() + 64, |out| kernel(first, 0, out, state));
+    [
+        first,
+        filled(second.len() + 64, |out| kernel(second, 64, out, state)),
+    ]
+    .concat()
+}
+
 #[test]
-fn xxh3() {
-    for t in texts(MIXED).filter(|t| t.len() > 240) {
-        check_against_portable(|| kernels::xxhash3_64_long(&t));
+fn xml() {
+    for t in texts(b"<<>>=\"'&ab \t\n\r\x01\xEF\xEF\xBF\xBF\xBE") {
+        let latin1: Vec<u16> = t.iter().map(|&b| b.into()).collect();
+        let ends_no_char = |i| matches!(t[..=i], [.., 0xEF, 0xBF, 0xBE | 0xBF]);
+        check(xml_structure(&latin1, ends_no_char), || {
+            xml_index(&t, kernels::xml_structural_index_chunk)
+        });
+
+        let unit = |(&byte, &other): (&u8, &u8)| match (byte, other) {
+            (0xEF, _) => 0xD800 | u16::from(other) << 2,
+            (0xBF, _) => 0xDC00 | u16::from(other) << 2,
+            (0xBE, b'<') => 0xFFFE,
+            (0xBE, b'>') => 0xFFFF,
+            (0xBE, _) => 0x100 | u16::from(other),
+            _ => byte.into(),
+        };
+        let mut wide: Vec<u16> = t.iter().zip(t.iter().rev()).map(unit).collect();
+        wide.push(b'a'.into());
+        let is_odd = |i: usize| match wide[i] {
+            0xD800..0xDC00 => !(0xDC00..0xE000).contains(&wide[i + 1]),
+            0xDC00..0xE000 => !matches!(wide[..i], [.., 0xD800..0xDC00]),
+            unit => unit >= 0xFFFE,
+        };
+        check(xml_structure(&wide, is_odd), || {
+            xml_index(&wide, kernels::xml_structural_index16_chunk)
+        });
     }
-    check(None, || kernels::xxhash3_64_long(&[0; 240]));
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "reads only a slice")]
+fn xxhash() {
     let counting: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
-    check(Some(0x2533_9063_DB86_1586), || {
-        kernels::xxhash3_64_long(&counting)
-    });
+    for (len, seed, xxh32, xxh64, xxh3) in [
+        (0, 0, 0x02cc5d05, 0xef46db3751d8e999, 0x2d06800538d394c2),
+        (0, 7, 0xd7adaff8, 0x95f0626f6f0a4409, 0x913ae0873e9b7eb8),
+        (1, 7, 0x59a1de0e, 0xd90df86c76f52e13, 0x2c45aa60ff5dc0e5),
+        (3, 7, 0x9c580eec, 0x5ab1230478ca6310, 0x3868dcb498f6507c),
+        (4, 7, 0x9db73bfa, 0x6ae497162d0610d7, 0x312ac60c453a7ed6),
+        (8, 7, 0x30944c03, 0x3072f8c5cba43e9a, 0xdb86d781f5b8bd4a),
+        (9, 7, 0x9c82bd6f, 0x7058c3b0fbd3bd85, 0xfb95f5a370f00403),
+        (16, 7, 0xb9a86583, 0x506df9181e2573e0, 0xee0b9003ece2cff1),
+        (17, 7, 0x17efb85e, 0xbec504d5da0140b0, 0xce3f6da0a1ce63a2),
+        (33, 7, 0xa46e00d1, 0x0c43e57754c778d9, 0x0c5256d396622d02),
+        (65, 7, 0x06cab0ac, 0x68dc3663487eb225, 0x575815c22d2bb16a),
+        (97, 7, 0xb7231e01, 0x6766b2c4c97287db, 0x63393587fd4b6522),
+        (128, 7, 0x44e52114, 0xeef67f772a4c8815, 0x0de8157dd7737803),
+        (129, 7, 0xb0cb9f75, 0x67ae19d54e1a6c21, 0x7445cdd6c2d37b03),
+        (240, 7, 0x0789eddd, 0xa54b1e5d2178d521, 0x7c241a22d405c084),
+        (241, 7, 0x50c41e2f, 0xafa3a124a71ae685, 0xd8f2ad256b03a316),
+        (2048, 0, 0x64a8e425, 0xa69e05a7eff57800, 0x25339063db861586),
+        (2048, 7, 0x97aaf2a5, 0xb59eb111a307393c, 0x8d1c0283d793714b),
+    ] {
+        assert_eq!(kernels::xxhash32(seed, &counting[..len]), xxh32);
+        assert_eq!(kernels::xxhash64(seed.into(), &counting[..len]), xxh64);
+        check(xxh3, || kernels::xxhash3_64(seed.into(), &counting[..len]));
+    }
+    for t in texts(MIXED) {
+        check_against_portable(|| [0, 7].map(|seed| kernels::xxhash3_64(seed, &t)));
+        for size in [1, 31, 32, 33, 100] {
+            let mut state = kernels::XxHash64State::new(7);
+            t.chunks(size).for_each(|part| state.update(part));
+            assert_eq!(state.digest(), kernels::xxhash64(7, &t));
+        }
+    }
 }
 
 /// What the filter subtracts from a byte with these to the left, above, and above to the left.
@@ -327,8 +714,7 @@ fn png() {
                 };
                 (0..row.len() / size * size).map(byte).collect()
             };
-            let sizes: &[_] = if cfg!(miri) { &[4] } else { &[1, 2, 4, 6, 8] };
-            for &size in sizes {
+            for size in sample([4, 1, 2, 6, 8], 5) {
                 for filter_type in 0..5 {
                     let filtered = filtered(filter_type, size);
                     check(row[..filtered.len()].to_vec(), || {
@@ -347,6 +733,40 @@ fn png() {
                 (kernels::png_filter_rgba(row, above, into), rows)
             });
         }
+    }
+}
+
+/// The second pixel has all values to the left, above, and above to the left.
+fn check_paeth<const SIZE: usize>() {
+    for (b, c) in (0..=255).flat_map(|b| (0..=255).map(move |c| (b, c))) {
+        let above = [&[c; SIZE][..], &[b; 16]].concat();
+        for a in (0..=255).step_by(SIZE) {
+            let left: [u8; SIZE] = core::array::from_fn(|i| a + i as u8);
+            let mut row = [&left.map(|a| a.wrapping_sub(c))[..], &[0; 16]].concat();
+            kernels::png_unfilter(4, SIZE, &mut row[..16], &above);
+            assert_eq!(
+                row[SIZE..][..SIZE],
+                left.map(|a| png_prediction(4, [a, b, c]))
+            );
+        }
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "slow")]
+fn paeth_predictions() {
+    check_paeth::<4>();
+    check_paeth::<8>();
+}
+
+#[test]
+fn png_of_other_kinds() {
+    for (filter_type, size) in [(0, 4), (5, 4), (1, 3), (2, 3), (3, 3), (4, 3), (2, 0)] {
+        check([1; 40], || {
+            let mut row = [1; 40];
+            kernels::png_unfilter(filter_type, size, &mut row, &[2; 40]);
+            row
+        });
     }
 }
 
@@ -460,16 +880,79 @@ fn images() {
         {
             check_against_portable(|| {
                 filled(19 * 3, |out| {
-                    kernels::Resizer::default().lanczos3(&pixels[..7 * height], 7, out, 19)
+                    kernels::Resizer::default().resize(
+                        Filter::Lanczos3,
+                        &pixels[..7 * height],
+                        7,
+                        out,
+                        19,
+                    )
                 })
             });
         }
     }
-    check(vec![[77; 4]; 13 * 5], || {
-        filled(13 * 5, |out| {
-            kernels::Resizer::default().lanczos3(&[[77; 4]; 21 * 9], 21, out, 13)
-        })
-    });
+    for filter in sample(Filter::ALL, 9) {
+        check(vec![[77; 4]; 13 * 5], || {
+            filled(13 * 5, |out| {
+                kernels::Resizer::default().resize(filter, &[[77; 4]; 21 * 9], 21, out, 13)
+            })
+        });
+    }
+}
+
+#[test]
+fn moved_pixels() {
+    let sizes = [1, 2, 3, 4, 5, 15, 16, 17, 64, 65, 70, 135];
+    let all = sizes.iter().flat_map(|&w| sizes.map(|h| (w, h)));
+    for (w, h) in sample(all.chain([(41, 9001), (5, 70_000)]), 51) {
+        // What follows the last whole row does not count.
+        let src: Vec<_> = (0..(w * h + w / 2) as u32).map(u32::to_le_bytes).collect();
+        let image = |width: usize, from: &dyn Fn(usize, usize) -> [usize; 2]| -> Vec<_> {
+            let places = (0..w * h).map(|i| from(i % width, i / width));
+            places.map(|[x, y]| src[y * w + x]).collect()
+        };
+        check(image(h, &|x, y| [y, h - 1 - x]), || {
+            filled(w * h, |out| kernels::rotate_90(&src, w, out))
+        });
+        check(image(w, &|x, y| [w - 1 - x, h - 1 - y]), || {
+            filled(w * h, |out| kernels::rotate_180(&src[..w * h], out))
+        });
+        check(image(h, &|x, y| [w - 1 - y, x]), || {
+            filled(w * h, |out| kernels::rotate_270(&src, w, out))
+        });
+        check(image(w, &|x, y| [w - 1 - x, y]), || {
+            filled(w * h, |out| kernels::flip_horizontally(&src, w, out))
+        });
+        check(image(w, &|x, y| [x, h - 1 - y]), || {
+            filled(w * h, |out| kernels::flip_vertically(&src, w, out))
+        });
+    }
+}
+
+#[test]
+#[should_panic]
+fn moved_pixels_without_room() {
+    kernels::rotate_180(&[[0; 4]; 6], [[0; 4]; 3][..].as_mut().into());
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "reads only a slice")]
+fn palettes() {
+    for t in texts(b"\0\x01\x7F\xFF").filter(|t| t.len() <= 1100) {
+        let palette = &t.as_chunks().0[..256.min(t.len() / 4)];
+        for color in [[0; 4], [255; 4], [1, 200, 3, 128]] {
+            let distance = |&i: &usize| -> i32 {
+                let [a, b]: [[u8; 4]; 2] = [palette[i], color];
+                (0..4)
+                    .map(|k| (i32::from(a[k]) - i32::from(b[k])).pow(2))
+                    .sum()
+            };
+            check(
+                (0..palette.len()).min_by_key(distance).unwrap_or(0) as u8,
+                || kernels::nearest_in_palette(palette, color),
+            );
+        }
+    }
 }
 
 #[test]

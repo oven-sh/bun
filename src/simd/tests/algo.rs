@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 mod common;
 
-use bun_simd::{Int, Source};
+use bun_simd::{Int, Matches, Source};
 use common::on_each_target;
 use std::fmt::Debug;
 use std::hint::black_box;
@@ -32,6 +32,14 @@ fn ranges<T>(n: usize, alignments: usize) -> impl Iterator<Item = Range<usize>> 
     let aligned = move |from| (from..from + n).step_by(n.div_ceil(alignments));
     let starts = aligned(1).chain(aligned(near));
     starts.flat_map(move |start| (start..start + 13 * n).map(move |end| start..end))
+}
+
+/// Whether to stop at this index.
+type Visit<'a> = &'a mut dyn FnMut(usize) -> bool;
+
+fn some(matches: Matches) -> Matches {
+    assert_ne!(matches.count(), 0);
+    matches
 }
 
 fn plain<T>(slice: &mut [T]) -> &[T] {
@@ -80,19 +88,81 @@ mod simd {
         }
     }
 
-    fn counts<S: Source<Lane = u8>>(alignments: usize, view: fn(&mut [u8]) -> &[S]) {
-        let mut room = Room::new(1);
-        let room = room.all();
-        for range in ranges::<u8>(U8::LEN, alignments) {
-            for at in range.clone() {
-                let count = U8::count(black_box(view(&mut room[range.clone()])), |v| v.simd_eq(1));
-                assert_eq!(count, range.end - at);
-                room[at] = 0;
+    /// Each index comes once and in its turn.
+    fn matches<T: Int<N> + From<u8> + PartialEq, const N: usize>(alignments: usize) {
+        let (zero, one, mut random) = (T::from(0), T::from(1), 1u32);
+        let (mut a, mut b) = (Room::new(one), Room::new(one));
+        let (a, b) = (a.all(), &mut b.all()[3..]);
+        let (test, both) = (
+            |v: Vector<T, N>| v.simd_eq(one),
+            |a: Vector<T, N>, b: Vector<T, N>| (a & b).simd_eq(one),
+        );
+        for range in ranges::<T>(N, alignments) {
+            for one_in in [1, 3, 5 * N as u32] {
+                for at in range.clone() {
+                    random = random.wrapping_mul(1664525).wrapping_add(1013904223);
+                    a[at] = T::from(u8::from((random >> 8) % one_in == 0));
+                    b[at] = if random >> 29 == 0 { zero } else { one };
+                }
+                let (a, longer) = black_box((&a[range.clone()], &b[range.start..]));
+                let b = &longer[..a.len()];
+                let in_a: Vec<_> = (0..a.len()).filter(|&i| a[i] == one).collect();
+                let in_both: Vec<_> = in_a.iter().copied().filter(|&i| b[i] == one).collect();
+                let in_both_from_end: Vec<_> = in_both.iter().copied().rev().collect();
+                assert_eq!(Vector::rposition_near(a, test), in_a.last().copied());
+                for stop_at in [0, in_both.len() / 2, usize::MAX] {
+                    let check = |want: &[usize], run: &dyn Fn(Visit<'_>) -> Option<usize>| {
+                        let mut seen = vec![];
+                        let found = run(&mut |at| {
+                            seen.push(at);
+                            seen.len() > stop_at
+                        });
+                        assert_eq!(found, want.get(stop_at).copied());
+                        assert_eq!(seen, want[..want.len().min(stop_at.saturating_add(1))]);
+                    };
+                    check(&in_a, &|f| {
+                        Vector::find_map(a, test, |it| some(it).find(|&at| f(at)))
+                    });
+                    check(&in_both, &|f| {
+                        Vector::zip_find_map(a, longer, both, |it| some(it).find(|&at| f(at)))
+                    });
+                    check(&in_both, &|f| {
+                        Vector::zip_find_map_near(longer, a, both, |it| some(it).find(|&at| f(at)))
+                    });
+                    check(&in_both_from_end, &|f| {
+                        Vector::zip_rfind_map(a, longer, both, |it| some(it).rfind(|&at| f(at)))
+                    });
+                }
             }
-            room[range].fill(1);
+            a[range.clone()].fill(one);
+            b[range].fill(one);
         }
-        let long = &mut vec![1; 600 * U8::LEN + 5];
-        assert_eq!(U8::count(view(long), |v| v.simd_eq(1)), long.len());
+    }
+
+    fn counts<T, S, const N: usize>(alignments: usize, view: fn(&mut [T]) -> &[S])
+    where
+        T: Int<N> + From<u8>,
+        S: Source<Lane = T>,
+    {
+        let (zero, one) = (T::from(0), T::from(1));
+        let (mut room, test) = (Room::new(one), |v: Vector<T, N>| v.simd_eq(one));
+        let room = room.all();
+        for range in ranges::<T>(N, alignments) {
+            for at in range.clone() {
+                let slice = black_box(view(&mut room[range.clone()]));
+                assert_eq!(Vector::count(slice, test), range.end - at);
+                let both = Vector::count_each(slice, |v| [test(v), !test(v)]);
+                assert_eq!(both, [range.end - at, at - range.start]);
+                room[at] = zero;
+            }
+            room[range].fill(one);
+        }
+        let (len, long) = (600 * N + 5, &mut vec![one; 600 * N + 5]);
+        assert_eq!(Vector::count(view(long), test), len);
+        assert_eq!(
+            Vector::count_each(view(long), |v| [!test(v), test(v)]),
+            [0, len]
+        );
     }
 
     /// `run(from, to)` has to add 1.
@@ -142,8 +212,12 @@ mod simd {
         searches::<u16, _, { U16::LEN }>(alignments, plain);
         searches::<u32, _, { isa::U32::LEN }>(alignments, plain);
         searches::<u64, _, { isa::U64::LEN }>(alignments, plain);
-        counts(alignments, plain);
-        counts(alignments, shared);
+        matches::<u8, { U8::LEN }>(alignments);
+        matches::<u16, { U16::LEN }>(alignments);
+        matches::<u64, { isa::U64::LEN }>(alignments);
+        counts::<u8, _, { U8::LEN }>(alignments, plain);
+        counts::<u8, _, { U8::LEN }>(alignments, shared);
+        counts::<u16, _, { U16::LEN }>(alignments, plain);
     }
 
     #[export]

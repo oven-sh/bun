@@ -62,7 +62,7 @@ impl Isa for Avx2 {
 }
 
 impl Isa for Avx512Skx {
-    const HAS_MASKED_MEMORY: bool = true;
+    const HAS_MASK_REGISTERS: bool = true;
 
     /// There is no shuffle of bytes across blocks of 16.
     #[inline(always)]
@@ -87,7 +87,7 @@ impl Isa for Avx512Skx {
 }
 
 impl Isa for Avx512Icl {
-    const HAS_MASKED_MEMORY: bool = true;
+    const HAS_MASK_REGISTERS: bool = true;
 }
 
 /// Has the 128-bit ops.
@@ -176,6 +176,14 @@ impl Vector<i16, 16, Avx2> {
     }
 }
 
+impl Vector<i32, 8, Avx2> {
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    pub fn pairwise_dot(a: Vector<i16, 16, Avx2>, b: Vector<i16, 16, Avx2>) -> Self {
+        Self::new(_mm256_madd_epi16(a.0.into(), b.0.into()))
+    }
+}
+
 impl Vector<u64, 4, Avx2> {
     #[inline]
     #[target_feature(enable = "avx2")]
@@ -221,6 +229,14 @@ impl<I: Zmm> Vector<i16, 32, I> {
     #[target_feature(enable = "avx512bw")]
     pub fn saturating_pairwise_dot(a: Vector<u8, 64, I>, b: Vector<i8, 64, I>) -> Self {
         Self::new(_mm512_maddubs_epi16(a.0.into(), b.0.into()))
+    }
+}
+
+impl<I: Zmm> Vector<i32, 16, I> {
+    #[inline]
+    #[target_feature(enable = "avx512bw")]
+    pub fn pairwise_dot(a: Vector<i16, 32, I>, b: Vector<i16, 32, I>) -> Self {
+        Self::new(_mm512_madd_epi16(a.0.into(), b.0.into()))
     }
 }
 

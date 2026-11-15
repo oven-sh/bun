@@ -340,6 +340,11 @@ pub(crate) mod simd {
         }
     }
 
+    #[export]
+    pub fn count_mapping_delims(bytes: &[u8]) -> usize {
+        U8::count(bytes, |v| v.simd_eq(b',') | v.simd_eq(b';'))
+    }
+
     /// Also returns where the scalar decoder has to resume. Leaves room for up to 15 rows unused.
     #[export(up_to = avx2)]
     pub fn parse_mappings<'a>(

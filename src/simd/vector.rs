@@ -1,6 +1,7 @@
 //! The ops that need no intrinsic. LLVM picks the instructions of the function they are inlined into.
 use crate::swizzle::{Repeat, ShiftRight, SwapPairs};
 use crate::{Isa, Mask};
+use bun_simd_trusted::opaque16;
 use core::array;
 use core::marker::PhantomData;
 use core::ops::{
@@ -112,6 +113,15 @@ impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I> {
         V::from_bytes(self.0.to_le_bytes())
     }
 
+    /// Keeps LLVM from merging the ops before it with those after it.
+    #[inline(always)]
+    pub fn opaque(self) -> Self
+    where
+        Simd<T, N>: ToBytes<Bytes = u8x16>,
+    {
+        Self::new(Simd::from_ne_bytes(opaque16(self.0.to_ne_bytes())))
+    }
+
     /// The even lanes of both vectors, and the odd lanes of both.
     #[inline(always)]
     pub fn deinterleave(self, other: Self) -> (Self, Self) {
@@ -122,10 +132,18 @@ impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I> {
     /// Moves lane `i` to `i + OFFSET`.
     #[inline(always)]
     pub fn shift_elements_right<const OFFSET: usize>(self, padding: T) -> Self {
-        Self::new(ShiftRight::<OFFSET>::concat_swizzle(
-            Simd::splat(padding),
-            self.0,
-        ))
+        self.shift_in::<OFFSET>(Self::splat(padding))
+    }
+
+    /// The same, after the last `OFFSET` lanes of `before`.
+    #[inline(always)]
+    pub fn shift_in<const OFFSET: usize>(self, before: Self) -> Self {
+        Self::new(ShiftRight::<OFFSET>::concat_swizzle(before.0, self.0))
+    }
+
+    #[inline(always)]
+    pub fn reverse(self) -> Self {
+        Self::new(self.0.reverse())
     }
 
     #[inline(always)]
@@ -300,6 +318,11 @@ impl<const N: usize, I: Isa> Vector<i32, N, I> {
     #[inline(always)]
     pub fn cast<U: Lane>(self) -> Vector<U, N, I> {
         Vector::new(self.0.cast())
+    }
+
+    #[inline(always)]
+    pub fn reduce_min(self) -> i32 {
+        self.0.reduce_min()
     }
 
     #[inline(always)]

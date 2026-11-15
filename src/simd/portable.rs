@@ -9,7 +9,7 @@ use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 pub struct Portable<const BYTES: usize>;
 
 impl<const BYTES: usize> crate::Isa for Portable<BYTES> {
-    const HAS_MASKED_MEMORY: bool = BYTES == 64;
+    const HAS_MASK_REGISTERS: bool = BYTES == 64;
     const HAS_UNSIGNED_COMPARE: bool = BYTES != 32;
     const HAS_INTERLEAVED_MEMORY: bool = BYTES == 16;
 }
@@ -59,13 +59,17 @@ impl<const N: usize, const B: usize> Lanes<i16, N, B> {
     }
 }
 
-impl<const B: usize> Lanes<i32, 4, B> {
+impl<const N: usize, const B: usize> Lanes<i32, N, B> {
     /// `a[2i] * b[2i] + a[2i + 1] * b[2i + 1]`
     #[inline]
-    pub fn pairwise_dot(a: Lanes<i16, 8, B>, b: Lanes<i16, 8, B>) -> Self {
+    pub fn pairwise_dot<const M: usize>(a: Lanes<i16, M, B>, b: Lanes<i16, M, B>) -> Self
+    where
+        Simd<i16, M>: ToBytes<Bytes = <Simd<i32, N> as ToBytes>::Bytes>,
+        Simd<i32, N>: ToBytes,
+    {
         let products = a.0.cast::<i32>() * b.0.cast();
         let (even, odd) = products.deinterleave(products);
-        Self::new((even + odd).extract::<0, 4>())
+        Self::new((even + odd).extract::<0, N>())
     }
 }
 

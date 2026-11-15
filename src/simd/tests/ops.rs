@@ -95,6 +95,7 @@ mod simd {
                 [any, !any, all],
                 "{name}"
             );
+            assert_eq!(got.count(), u64::count_ones(bits) as usize, "{name}");
             assert_eq!(got.to_vector().to_array(), vector, "{name}");
             assert_eq!(got.select(x, y).to_array(), selected, "{name}");
         };
@@ -135,6 +136,9 @@ mod simd {
         let slid = |by| from_fn(|i: usize| i.checked_sub(by).map_or(zero, |i| a[i]));
         assert_eq!(x.shift_elements_right::<1>(zero).to_array(), slid(1));
         assert_eq!(x.shift_elements_right::<2>(zero).to_array(), slid(2));
+        let after_last = from_fn(|i| if i == 0 { b[N - 1] } else { a[i - 1] });
+        assert_eq!(x.shift_in::<1>(y).to_array(), after_last);
+        assert_eq!(x.reverse().to_array(), from_fn(|i| a[N - 1 - i]));
         assert_eq!(x.swap_pairs().to_array(), from_fn(|i| a[i ^ 1]));
         assert_eq!(Vector::splat(a[0]).to_array(), [a[0]; N]);
         assert_eq!(Vector::<T, N>::zero().to_array(), [zero; N]);
@@ -250,6 +254,9 @@ mod simd {
             let (a, b) = (random.lanes::<i16, _>(), random.lanes::<i16, _>());
             let (x, y) = (I16::load(&a), I16::load(&b));
             assert_eq!((x * y).to_array(), from_fn(|i| a[i].wrapping_mul(b[i])));
+            let product = |i: usize| i32::from(a[i]) * i32::from(b[i]);
+            let dots = from_fn(|i| product(2 * i).wrapping_add(product(2 * i + 1)));
+            assert_eq!(I32::pairwise_dot(x, y).to_array(), dots);
 
             let (a, [p, q]) = (random.lanes::<u16, _>(), random.lanes::<u16, 2>());
             let range = p.min(q)..=p.max(q);
@@ -259,6 +266,7 @@ mod simd {
             let a = random.lanes();
             let clamped = a.map(|a: i32| a.clamp(0, 255) as u8);
             assert_eq!(I32::load(&a).saturating_cast_u8().to_array(), clamped);
+            assert_eq!(Some(I32::load(&a).reduce_min()), a.into_iter().min());
 
             let (a, b) = (a.map(|a| a >> 12), random.lanes().map(|b: i32| b >> 20));
             let (x, y): (F32, F32) = (I32::load(&a).cast(), I32::load(&b).cast());
@@ -288,6 +296,10 @@ mod simd {
             let bits = |test: fn(u8) -> bool| (0..64).map(|i| u64::from(test(block[i])) << i).sum();
             let got = U8::bitmasks(&block, |v| [v.simd_gt(100), (v & 3).simd_eq(0)]);
             assert_eq!(got, [bits(|b| b > 100), bits(|b| b & 3 == 0)]);
+            let pairs = block.map(|byte| [byte, 0]);
+            let first = |pairs: &[[u8; 2]; N]| U8::from_array(pairs.map(|[first, _]| first));
+            let got = U8::bitmasks_of_chunks(&pairs, |pairs| [first(pairs).simd_gt(100)]);
+            assert_eq!(got, [bits(|b| b > 100)]);
         }
     }
 
@@ -304,17 +316,6 @@ mod simd {
         assert_eq!(back, quads);
         let pairs = Vector::to_interleaved2([planes[0], planes[3]]);
         assert_eq!(pairs, quads.map(|[a, .., d]| [a, d]));
-    }
-
-    fn pairwise_dot(random: &mut Random) {
-        use isa::x128::{I16, I32};
-        let (a, b) = (random.lanes::<i16, 8>(), random.lanes::<i16, 8>());
-        let product = |i: usize| i32::from(a[i]) * i32::from(b[i]);
-        let dots = from_fn(|i| product(2 * i).wrapping_add(product(2 * i + 1)));
-        assert_eq!(
-            I32::pairwise_dot(I16::load(&a), I16::load(&b)).to_array(),
-            dots
-        );
     }
 
     fn bit_indices(random: &mut Random) {
@@ -360,8 +361,10 @@ mod simd {
         for _ in 0..rounds {
             width::full::random_inputs(random);
             width::x128::random_inputs(random);
-            pairwise_dot(random);
             bit_indices(random);
+            let (word, lanes) = (random.next(), from_fn(|_| random.next() as i16));
+            assert_eq!(bun_simd::opaque(word), word);
+            assert_eq!(isa::x128::I16::load(&lanes).opaque().to_array(), lanes);
             any_lanes::<u8, 8>(random);
             any_lanes::<u8, 64>(random);
             any_lanes::<i32, 16>(random);

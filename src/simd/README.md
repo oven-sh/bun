@@ -54,7 +54,8 @@ An op has the name that `core::simd` gives it, where there is one.
 | ---------------------- | -------------------------------------------------------------------------------------- |
 | `vector.rs`, `mask.rs` | The ops that are the same code on every target                                         |
 | `portable.rs`          | The definition of the other ops. `x86.rs` and `neon.rs` implement them with intrinsics |
-| `algo.rs`              | `position`, `rposition`, `count`, `map` and others, for slices of any length           |
+| `algo.rs`              | `position`, `rposition`, `find_map`, `count`, `map` and others, for any length         |
+| `matches.rs`           | The indices that `find_map` has found                                                  |
 | `bit_indices.rs`       | From a bitmask to a list of positions                                                  |
 | `trusted/output.rs`    | `Out` and `Writer`, for output to memory that may be uninitialized                     |
 | `partial.rs`           | Loads and stores for a slice that is shorter than a vector                             |
@@ -86,6 +87,8 @@ fn main() {
 ```
 
 Call ops in `for` loops and in the closures that you pass to `algo.rs`. LLVM may not inline a closure that goes through an adapter of `core`, such as `array::map`.
+
+How LLVM unrolls a loop depends on the CPU that the build is tuned for. `#[rustc_unroll(never)]` and `#[rustc_unroll(4)]` settle it. If each turn of a loop waits for the one before, `opaque` keeps LLVM from reordering the sum or from moving it to vectors.
 
 ## Targets
 
@@ -119,6 +122,7 @@ What you have to trust:
 
 - **Detection.** A feature counts only if the CPU reports it and the system saves its registers. The same has to hold for every feature that it implies. `trusted/os.rs` makes the queries. The decoders are pure functions of the answers.
 - **`if_supported!` and `AtomicFn`**, which stores the chosen pointer.
+- **`opaque`**, which is `asm!` without an instruction.
 - **`Out` and `Writer`.** They write only initialized values, and count them. Miri runs their tests.
 - **Access to shared memory.** A `SharedArrayBuffer` can change while a kernel reads it, so it is a `&[AtomicU8]` and never a `&[u8]`. Rust has no vector access that may race. `trusted/shared.rs` has one `asm!` instruction for each width, which stands for a relaxed access to each byte. This relies on the CPU not to tear a byte. The loops do not depend on two reads giving the same value.
 

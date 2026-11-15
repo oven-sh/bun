@@ -28,7 +28,7 @@ impl<T: Int<N>, const N: usize, I: Isa> Partial<T, N, I> {
     /// The first index into the slice for which `mask` is set.
     #[inline(always)]
     pub fn first_set(self, mask: Mask<T, N, I>) -> Option<usize> {
-        if I::HAS_MASKED_MEMORY {
+        if I::HAS_MASK_REGISTERS {
             let lane = mask.to_bitmask().trailing_zeros() as usize;
             return (lane < self.len).then_some(lane);
         }
@@ -38,7 +38,7 @@ impl<T: Int<N>, const N: usize, I: Isa> Partial<T, N, I> {
     /// The last index into the slice for which `mask` is set.
     #[inline(always)]
     pub fn last_set(self, mask: Mask<T, N, I>) -> Option<usize> {
-        if I::HAS_MASKED_MEMORY {
+        if I::HAS_MASK_REGISTERS {
             let lane = 63usize.wrapping_sub(self.to_bitmask(mask).leading_zeros() as usize);
             return (lane < self.len).then_some(lane);
         }
@@ -49,7 +49,7 @@ impl<T: Int<N>, const N: usize, I: Isa> Partial<T, N, I> {
     #[inline(always)]
     pub fn to_bitmask(self, mask: Mask<T, N, I>) -> u64 {
         let bits = mask.to_bitmask();
-        if I::HAS_MASKED_MEMORY {
+        if I::HAS_MASK_REGISTERS {
             return bits & ((1 << self.len) - 1);
         }
         let half = (1 << self.half) - 1;
@@ -61,10 +61,10 @@ impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I> {
     const IS_MASKED: bool = {
         let has_other_way = matches!(size_of::<Self>(), 16 | 32);
         assert!(
-            I::HAS_MASKED_MEMORY || has_other_way,
+            I::HAS_MASK_REGISTERS || has_other_way,
             "needs 16 or 32 bytes"
         );
-        I::HAS_MASKED_MEMORY
+        I::HAS_MASK_REGISTERS
     };
 
     /// The inverse of `load_partial` for a slice of the same length.

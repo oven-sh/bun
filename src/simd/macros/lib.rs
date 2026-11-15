@@ -240,6 +240,10 @@ pub fn foreach_target(_: TokenStream, item: TokenStream) -> TokenStream {
             if target != Target::Portable {
                 copy.extend(parse("#![allow(dead_code)]"));
             }
+            // The other copies need `|v| f(v)`: a function with features is no `impl Fn`.
+            if target.arch().is_none() {
+                copy.extend(parse("#![allow(clippy::redundant_closure)]"));
+            }
             copy.extend(parse(&format!(
                 "#[allow(unused_imports)] use {{super::super::*, ::bun_simd::{name} as isa}};"
             )));

@@ -3,8 +3,8 @@ use core::simd::prelude::{Simd, SimdInt, SimdOrd};
 
 /// An instruction set. The methods are ops that LLVM lowers better from another spelling on some.
 pub trait Isa: Copy {
-    /// Loads and stores can skip lanes.
-    const HAS_MASKED_MEMORY: bool = false;
+    /// Comparisons write to them, and loads and stores use them to skip lanes.
+    const HAS_MASK_REGISTERS: bool = false;
     const HAS_UNSIGNED_COMPARE: bool = true;
     /// `load_interleaved4` and `store_interleaved4` take one instruction.
     const HAS_INTERLEAVED_MEMORY: bool = false;
@@ -20,6 +20,13 @@ pub trait Isa: Copy {
     #[inline(always)]
     fn any<T: Int<N>, const N: usize>(mask: Mask<T, N, Self>) -> bool {
         Self::movemask(mask).0 != 0
+    }
+
+    #[doc(hidden)]
+    #[inline(always)]
+    fn count_from<T: Int<N>, const N: usize>(mask: Mask<T, N, Self>, lane: usize) -> usize {
+        let (bits, bits_per_lane) = Self::movemask(mask);
+        (bits >> (lane * bits_per_lane)).count_ones() as usize / bits_per_lane
     }
 
     /// For masks of 16 lanes.

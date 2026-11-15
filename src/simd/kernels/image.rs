@@ -1,5 +1,5 @@
-//! Ports of image_resize.cpp.
-use bun_simd::{Int, Isa, Out};
+//! Ports of image_resize.cpp. They panic if a width is zero or if `dst` has no room for the result.
+use bun_simd::{Int, Isa, Out, Writer};
 use core::slice::ChunksExact;
 
 type Pixel = [u8; 4];
@@ -99,6 +99,153 @@ pub(crate) mod simd {
         dst.finish()
     }
 
+    #[inline(always)]
+    fn push_reversed(dst: &mut Writer<'_, Pixel>, src: &[Pixel]) {
+        assert!(dst.remaining() >= src.len());
+        let (rest, chunks) = src.as_rchunks::<{ U32::LEN }>();
+        dst.extend_with(chunks.iter().rev(), |chunk| {
+            let pixels: U32 = U8::from_slice(chunk.as_flattened()).bitcast();
+            let bytes = pixels.reverse().bitcast::<U8>().to_array();
+            bytes.as_chunks().0.as_array::<{ U32::LEN }>().copied()
+        });
+        dst.extend_with(rest.iter().rev(), |&pixel| Some([pixel]));
+    }
+
+    #[export(baseline)]
+    pub fn rotate_180<'a>(src: &[Pixel], dst: Out<'a, Pixel>) -> &'a mut [Pixel] {
+        let mut dst = dst.into_writer();
+        push_reversed(&mut dst, src);
+        dst.finish()
+    }
+
+    #[export(baseline)]
+    pub fn flip_horizontally<'a>(
+        src: &[Pixel],
+        width: usize,
+        dst: Out<'a, Pixel>,
+    ) -> &'a mut [Pixel] {
+        let mut dst = dst.into_writer();
+        for row in src.chunks_exact(width) {
+            push_reversed(&mut dst, row);
+        }
+        dst.finish()
+    }
+
+    #[inline(always)]
+    fn transposed(rows: [&[Pixel; 4]; 4]) -> [[Pixel; 4]; 4] {
+        let load = |i: usize| x128::U8::from_slice(rows[i].as_flattened()).bitcast::<x128::U32>();
+        let ((ac, ac_next), (bd, bd_next)) =
+            (load(0).interleave(load(2)), load(1).interleave(load(3)));
+        let ((a, b), (c, d)) = (ac.interleave(bd), ac_next.interleave(bd_next));
+        [a, b, c, d].map(|v| v.to_array().map(u32::to_le_bytes))
+    }
+
+    /// Makes a band of rows at a time, so that it reads whole cache lines of `src`.
+    #[inline(always)]
+    fn rotate<'a, const IS_CLOCKWISE: bool>(
+        src: &[Pixel],
+        width: usize,
+        dst: Out<'a, Pixel>,
+    ) -> &'a mut [Pixel] {
+        let (height, mut dst) = (src.len() / width, dst.into_writer());
+        assert!(dst.remaining() >= width * height);
+        let row = |y: usize| &src[width * if IS_CLOCKWISE { height - 1 - y } else { y }..][..width];
+        // An odd number of cache lines, so that the columns do not evict each other.
+        let stride = (height.div_ceil(16) | 1) * 16;
+        let band = ((1 << 18) / stride).min(64) & !3;
+        if band == 0 || width < 4 {
+            for x in 0..width {
+                let x = if IS_CLOCKWISE { x } else { width - 1 - x };
+                dst.extend_with(0..height, |y| Some([row(y)[x]]));
+            }
+            return dst.finish();
+        }
+        let mut columns = vec![[0; 4]; band.min(width) * stride];
+        for done in (0..width).step_by(band) {
+            let count = band.min(width - done);
+            let left = if IS_CLOCKWISE {
+                done
+            } else {
+                width - done - count
+            };
+            let pixels = |y: usize| &row(y)[left..][..count];
+            for y in (0..height / 4 * 4).step_by(4) {
+                let [a, b, c, d] = [0, 1, 2, 3].map(|i| pixels(y + i).as_chunks().0);
+                for (x, columns) in columns
+                    .chunks_exact_mut(4 * stride)
+                    .take(count / 4)
+                    .enumerate()
+                {
+                    let tile = transposed([&a[x], &b[x], &c[x], &d[x]]);
+                    for (i, pixels) in tile.iter().enumerate() {
+                        columns[i * stride + y..][..4].copy_from_slice(pixels);
+                    }
+                }
+            }
+            for y in 0..height {
+                let from = if y < height / 4 * 4 { count / 4 * 4 } else { 0 };
+                for (x, &pixel) in pixels(y).iter().enumerate().skip(from) {
+                    columns[x * stride + y] = pixel;
+                }
+            }
+            for x in 0..count {
+                let x = if IS_CLOCKWISE { x } else { count - 1 - x };
+                dst.extend_from_slice(&columns[x * stride..][..height]);
+            }
+        }
+        dst.finish()
+    }
+
+    /// Clockwise.
+    #[export(baseline)]
+    pub fn rotate_90<'a>(src: &[Pixel], width: usize, dst: Out<'a, Pixel>) -> &'a mut [Pixel] {
+        rotate::<true>(src, width, dst)
+    }
+
+    #[export(baseline)]
+    pub fn rotate_270<'a>(src: &[Pixel], width: usize, dst: Out<'a, Pixel>) -> &'a mut [Pixel] {
+        rotate::<false>(src, width, dst)
+    }
+
+    /// The index of the first color at the least distance.
+    #[export]
+    pub fn nearest_in_palette(palette: &[Pixel], color: Pixel) -> u8 {
+        let palette = &palette[..palette.len().min(256)];
+        let distance = |&i: &usize| -> u32 {
+            let square = |k: usize| u32::from(palette[i][k].abs_diff(color[k])).pow(2);
+            (0..4).map(square).sum()
+        };
+        width::full::nearest_in_palette(palette, color)
+            .or_else(|| width::x128::nearest_in_palette(palette, color))
+            .unwrap_or_else(|| (0..palette.len()).min_by_key(distance).unwrap_or(0) as u8)
+    }
+
+    #[bun_simd::foreach_width]
+    mod width {
+        use isa::{I16, I32, U8, U16, U32};
+
+        /// `None` unless the palette fills a vector.
+        #[inline(always)]
+        pub fn nearest_in_palette(palette: &[Pixel], color: Pixel) -> Option<u8> {
+            let last = palette.split_last_chunk()?.1;
+            let color: U8 = U32::splat(u32::from_le_bytes(color)).bitcast();
+            let distance_and_index = |colors: &[Pixel; I32::LEN], index: I32| {
+                let diff: U16 = U8::from_slice(colors.as_flattened())
+                    .abs_diff(color)
+                    .bitcast();
+                let (even, odd): (I16, I16) = ((diff & 0xFF).bitcast(), (diff >> 8).bitcast());
+                (I32::pairwise_dot(even, even) + I32::pairwise_dot(odd, odd)) << 8 | index
+            };
+            let mut index = I32::iota();
+            let mut best = distance_and_index(last, index + (palette.len() - I32::LEN) as i32);
+            for colors in palette[..palette.len() - 1].as_chunks().0 {
+                best = best.simd_min(distance_and_index(colors, index));
+                index += I32::LEN as i32;
+            }
+            Some(best.reduce_min() as u8)
+        }
+    }
+
     #[export]
     pub fn cmyk_to_rgba(mut pixels: &mut [Pixel]) {
         if isa::Isa::HAS_INTERLEAVED_MEMORY {
@@ -152,6 +299,14 @@ pub(crate) mod simd {
     }
 }
 
+pub fn flip_vertically<'a>(src: &[Pixel], width: usize, dst: Out<'a, Pixel>) -> &'a mut [Pixel] {
+    let mut dst = dst.into_writer();
+    for row in src.chunks_exact(width).rev() {
+        dst.extend_from_slice(row);
+    }
+    dst.finish()
+}
+
 fn sinc(x: f64) -> f64 {
     if x.abs() < 1e-8 {
         return 1.0;
@@ -160,10 +315,94 @@ fn sinc(x: f64) -> f64 {
     px.sin() / px
 }
 
-fn build_weights(src_len: i32, spans: &mut [Span], weights: &mut [i16], stride: usize) {
+/// Of Mitchell and Netravali.
+fn cubic(b: f64, c: f64, x: f64) -> f64 {
+    let xx = x * x;
+    if x < 1.0 {
+        ((12.0 - 9.0 * b - 6.0 * c) * xx * x + (-18.0 + 12.0 * b + 6.0 * c) * xx + (6.0 - 2.0 * b))
+            / 6.0
+    } else {
+        ((-b - 6.0 * c) * xx * x
+            + (6.0 * b + 30.0 * c) * xx
+            + (-12.0 * b - 48.0 * c) * x
+            + (8.0 * b + 24.0 * c))
+            / 6.0
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Filter {
+    Box,
+    Bilinear,
+    Lanczos3,
+    Mitchell,
+    Nearest,
+    CatmullRom,
+    Lanczos2,
+    /// Magic Kernel Sharp
+    Mks2013,
+    Mks2021,
+}
+
+impl Filter {
+    pub const ALL: [Self; 9] = {
+        use Filter::*;
+        [
+            Box, Bilinear, Lanczos3, Mitchell, Nearest, CatmullRom, Lanczos2, Mks2013, Mks2021,
+        ]
+    };
+
+    fn radius(self) -> f64 {
+        match self {
+            Self::Box | Self::Nearest => 0.5,
+            Self::Bilinear => 1.0,
+            Self::Mitchell | Self::CatmullRom | Self::Lanczos2 => 2.0,
+            Self::Mks2013 => 2.5,
+            Self::Lanczos3 => 3.0,
+            Self::Mks2021 => 4.5,
+        }
+    }
+
+    fn weight_at(self, offset: f64) -> f64 {
+        let x = offset.abs();
+        match self {
+            Self::Box | Self::Nearest => f64::from(offset > -0.5 && offset <= 0.5),
+            _ if x >= self.radius() => 0.0,
+            Self::Bilinear => 1.0 - x,
+            Self::Mitchell => cubic(1.0 / 3.0, 1.0 / 3.0, x),
+            Self::CatmullRom => cubic(0.0, 0.5, x),
+            Self::Lanczos2 | Self::Lanczos3 => sinc(x) * sinc(x / self.radius()),
+            Self::Mks2013 => match x {
+                1.5.. => -(x - 2.5) * (x - 2.5) / 8.0,
+                0.5.. => (4.0 * x * x - 11.0 * x + 7.0) / 4.0,
+                _ => 17.0 / 16.0 - 7.0 * x * x / 4.0,
+            },
+            Self::Mks2021 => match x {
+                3.5.. => -(4.0 * x * x - 36.0 * x + 81.0) / 1152.0,
+                2.5.. => (4.0 * x * x - 27.0 * x + 45.0) / 144.0,
+                1.5.. => -(24.0 * x * x - 113.0 * x + 130.0) / 144.0,
+                0.5.. => (140.0 * x * x - 379.0 * x + 239.0) / 144.0,
+                _ => 577.0 / 576.0 - 239.0 * x * x / 144.0,
+            },
+        }
+    }
+}
+
+fn build_weights(
+    filter: Filter,
+    src_len: i32,
+    spans: &mut [Span],
+    weights: &mut [i16],
+    stride: usize,
+) {
     let scale = spans.len() as f64 / f64::from(src_len);
-    let fscale = scale.min(1.0);
-    let support = (3.0 / fscale).min(127.0);
+    // All but one cover what a pixel of a smaller image stands for.
+    let fscale = if filter == Filter::Nearest {
+        1.0
+    } else {
+        scale.min(1.0)
+    };
+    let support = (filter.radius() / fscale).min(127.0);
     for (i, (span, w)) in spans
         .iter_mut()
         .zip(weights.chunks_exact_mut(stride))
@@ -176,12 +415,7 @@ fn build_weights(src_len: i32, spans: &mut [Span], weights: &mut [i16], stride: 
         let mut fw = [0.0; MAX_TAPS];
         let mut sum = 0.0;
         for (k, f) in fw[..n].iter_mut().enumerate() {
-            let x = ((f64::from(start + k as i32) - center) * fscale).abs();
-            *f = if x < 3.0 {
-                sinc(x) * sinc(x / 3.0)
-            } else {
-                0.0
-            };
+            *f = filter.weight_at((f64::from(start + k as i32) - center) * fscale);
             sum += *f;
         }
         let inv = if sum != 0.0 { 1.0 / sum } else { 0.0 };
@@ -217,12 +451,13 @@ impl Axis {
             .zip(self.weights.chunks_exact(self.stride))
     }
 
-    fn set(&mut self, src_len: usize, dst_len: usize) {
-        let support = 3.0 / (dst_len as f64 / src_len as f64).min(1.0);
+    fn set(&mut self, filter: Filter, src_len: usize, dst_len: usize) {
+        let support = filter.radius() / (dst_len as f64 / src_len as f64).min(1.0);
         self.stride = (support.ceil() as usize * 2 + 2).min(MAX_TAPS);
         self.spans.resize(dst_len, Span::default());
         self.weights.resize(dst_len * self.stride, 0);
         build_weights(
+            filter,
             src_len as i32,
             &mut self.spans,
             &mut self.weights,
@@ -241,8 +476,9 @@ pub struct Resizer {
 
 impl Resizer {
     /// Neither image is empty.
-    pub fn lanczos3<'a>(
+    pub fn resize<'a>(
         &mut self,
+        filter: Filter,
         src: &[Pixel],
         src_w: usize,
         dst: Out<'a, Pixel>,
@@ -250,8 +486,8 @@ impl Resizer {
     ) -> &'a mut [Pixel] {
         let Self { x, y, between } = self;
         let src_h = src.len() / src_w;
-        x.set(src_w, dst_w);
-        y.set(src_h, dst.len() / dst_w);
+        x.set(filter, src_w, dst_w);
+        y.set(filter, src_h, dst.len() / dst_w);
         between.clear();
         bun_simd::extend_vec(between, dst_w * src_h, |out| {
             simd::horizontal(src, src_w, x, out)

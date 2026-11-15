@@ -1,8 +1,9 @@
 //! Gives both the same random input. The slices for Rust are next to inaccessible pages.
+use crate::pairs::{self, Pairs};
 use crate::room::Room;
 use crate::{Random, columns, highway, write_line};
 use bun_simd::Out;
-use bun_simd_kernels::{self as rust, ColumnsFilled, MappingsState};
+use bun_simd_kernels::{self as rust, ColumnsFilled, Filter, MappingsState};
 use core::sync::atomic::AtomicU8;
 
 struct Round<'a> {
@@ -25,6 +26,16 @@ impl Failures {
     }
 }
 
+/// The text for Highway, and its copy for Rust.
+struct Same<'a, T>(&'a [T], &'a [T], &'a mut Failures);
+
+impl<T> Pairs<T> for Same<'_, T> {
+    fn pair<R: PartialEq>(&mut self, highway: impl Fn(&[T]) -> R, rust: impl Fn(&[T]) -> R) {
+        let is_same = highway(self.0) == rust(self.1);
+        self.2.unless(is_same, pairs::name_of(&rust));
+    }
+}
+
 fn all<T, U>(kernel: impl Fn(&[T], &mut [U])) -> impl Fn(&[T], &mut [U]) -> usize {
     move |from, to| {
         kernel(from, to);
@@ -35,7 +46,7 @@ fn all<T, U>(kernel: impl Fn(&[T], &mut [U])) -> impl Fn(&[T], &mut [U]) -> usiz
 const HEX: &[u8] = b"0123456789abcdefABCDEF";
 const JSON: &[u8] = b"{}[]:,\"\"\\ \n\tabc123\x01\xff";
 const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-const ALPHABETS: [&[u8]; 7] = [
+const ALPHABETS: [&[u8]; 12] = [
     b"",
     b"ab",
     b"abcdefghijklmnop \"'\\\n",
@@ -43,6 +54,17 @@ const ALPHABETS: [&[u8]; 7] = [
     b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ@[`{0123456789 abcdefghijklm<>&'\"/",
     HEX,
     JSON,
+    b"////....ab",
+    b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa//.\xE9*#@$` ,;\r",
+    b"\x1B\x1B\x1B[[]]\\0;m a\x07\x18\x1A\x9B\x9C\x9D\x90P_(\x7F\xAD",
+    b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0000000000000000000000000000000000;;\x1B\x1B[]\x07m\x12\x92",
+    b"<<>>=\"'&ab \t\n\r\x01\xEF\xEF\xBF\xBF\xBE",
+];
+/// Where a class of characters starts or ends.
+const EDGES: &[u16] = &[
+    0x1B, 0x20, 0x7E, 0x90, 0x98, 0x9B, 0x9F, 0xA0, 0xA9, 0xAD, 0xAE, 0x2FF, 0x370, 0x482, 0x48A,
+    0x52F, 0x3041, 0x3096, 0x309B, 0x30FF, 0x3400, 0x4DBF, 0x4E00, 0x9FFF, 0xAC00, 0xD7A3, 0xD800,
+    0xDBFF, 0xDC00, 0xDFFF, 0xFF01, 0xFF60, 0xFFFE,
 ];
 
 impl Round<'_> {
@@ -54,26 +76,56 @@ impl Round<'_> {
     }
 
     fn mostly_ascii(&mut self) -> Vec<u16> {
-        let unit = |&byte: &u8| match self.random.below(200) {
+        let one_in = self.random.one_of(&[3, 30, 300]);
+        let unit = |&byte: &u8| match self.random.below(one_in) {
             0 => u16::from(byte) | 0x80 << self.random.below(9),
+            1 => self.random.one_of(EDGES) - 1 + self.random.below(3) as u16,
             _ => u16::from(byte & 0x7F),
         };
         self.text.iter().map(unit).collect()
     }
 
     fn searches(&mut self) {
-        let (text, byte, wide) = (self.text, self.some_byte(), self.mostly_ascii());
+        let (text, byte, wide) = (self.text, self.some_byte(), &self.mostly_ascii()[..]);
         let (len, count) = (self.random.below(text.len() + 1), 2 + self.random.below(15));
-        let chars = self.random.bytes(count, b"");
-        let [a, b, c, d, ..] = &mut *self.rooms;
-        let (fenced, fenced_chars) = (a.copy_of(text, self.offset), b.copy_of(&chars, self.offset));
-        let fenced_wide = c.copy_of(&wide, self.offset);
+        let chars = &(0..count).map(|_| self.some_byte()).collect::<Vec<_>>()[..];
+        let mut other = text[..len].to_vec();
+        if let Some(byte) = other.get_mut(self.random.below(text.len())) {
+            *byte ^= 1;
+        }
+        let printable: &Vec<_> = &text
+            .iter()
+            .map(|&byte| byte - u8::from(byte == 0x7F))
+            .collect();
+        let [a, b, c, d, e, f] = &mut *self.rooms;
+        let (fenced, fenced_chars) = (a.copy_of(text, self.offset), b.copy_of(chars, self.offset));
+        let (fenced_wide, fenced_other) =
+            (c.copy_of(wide, self.offset), e.copy_of(&other, self.offset));
+        let fenced_printable = f.copy_of(printable, self.offset);
         let shared = &*AtomicU8::from_mut_slice(d.copy_of(text, self.offset));
-        let (first, last) = (
-            highway::index_of_char(text, byte),
-            highway::last_index_of_char(text, byte),
+
+        let failures = &mut self.failures;
+        pairs::of_units(&mut Same(wide, fenced_wide, failures));
+        Same(printable, fenced_printable, failures).pair(
+            highway::index_of_newline_or_non_ascii_or_hash_or_at,
+            rust::index_of_newline_or_non_ascii_or_hash_or_at,
         );
+        let mut same = Same(text, fenced, failures);
+        pairs::of_bytes(&mut same);
+        same.pair(highway::line_starts, rust::line_starts);
+        if !text.is_empty() {
+            same.pair(
+                highway::index_of_newline_or_non_ascii,
+                rust::index_of_newline_or_non_ascii,
+            );
+        }
+        let first = highway::index_of_char(text, byte);
+        let last = highway::last_index_of_char(text, byte);
         let count = highway::count_char(text, byte);
+        let needs_escape = |quote| {
+            highway::index_of_needs_escape_for_javascript_string(text, quote)
+                == rust::index_of_needs_escape_for_javascript_string(fenced, quote)
+        };
         #[rustfmt::skip]
         let results = [
             ("index_of_char", first == rust::index_of_char(fenced, byte)),
@@ -84,26 +136,17 @@ impl Round<'_> {
             ("last_index_of_char_shared", last == rust::last_index_of_char_shared(shared, byte)),
             ("count_char", count == rust::count_char(fenced, byte)),
             ("count_char_shared", count == rust::count_char_shared(shared, byte)),
-            ("index_of_either", highway::index_of_either(text, [byte, b'b'])
-                == rust::index_of_either(fenced, [byte, b'b'])),
-            ("index_of_any_char", highway::index_of_any_char(text, &chars)
+            ("index_of_not_char", highway::index_of_not_char(text, byte)
+                == rust::index_of_not_char(fenced, byte)),
+            ("index_of_any_char", highway::index_of_any_char(text, chars)
                 == rust::index_of_any_char(fenced, fenced_chars)),
+            ("last_index_of_any_char", highway::last_index_of_any_char(text, chars)
+                == rust::last_index_of_any_char(fenced, fenced_chars)),
             ("string_literal", highway::index_of_interesting_character_in_string_literal(text, b'"')
                 == rust::index_of_interesting_character_in_string_literal(fenced, b'"')),
-            ("index_of_newline_or_non_ascii", text.is_empty()
-                || highway::index_of_newline_or_non_ascii(text)
-                    == rust::index_of_newline_or_non_ascii(fenced)),
-            ("index_of_html_escape_char8", highway::index_of_html_escape_char8(text)
-                == rust::index_of_html_escape_char8(fenced)),
-            ("index_of_html_escape_char16", highway::index_of_html_escape_char16(&wide)
-                == rust::index_of_html_escape_char16(fenced_wide)),
-            ("first_non_ascii16", highway::first_non_ascii16(&wide)
-                == rust::first_non_ascii16(fenced_wide)),
-            ("last_index_of_slash", highway::last_index_of_slash(text)
-                == rust::last_index_of_slash(fenced)),
-            ("line_starts", highway::line_starts(text) == rust::line_starts(fenced)),
-            ("xxhash3_64_long", text.len() <= 240
-                || highway::xxhash3_64_long(text) == rust::xxhash3_64_long(fenced)),
+            ("needs_escape", needs_escape(b'\'') && needs_escape(b'`')),
+            ("common_prefix_length", highway::common_prefix_length(text, &other)
+                == rust::common_prefix_length(fenced, fenced_other)),
         ];
         for (kernel, is_same) in results {
             self.failures.unless(is_same, kernel);
@@ -117,16 +160,32 @@ impl Round<'_> {
         if self.random.below(3) == 0 {
             needle.reverse();
         }
-        let (mut uniform, mut almost) = (vec![b'a'; 3000], vec![b'a'; 3 + self.random.below(13)]);
-        almost[1] = b'b';
+        let period = self.random.one_of::<&[u8]>(&[b"a", b"ab", b"aab"]);
+        let mut uniform = period.repeat(3000 / period.len());
+        let mut almost = uniform[..period.len() * (3 + self.random.below(5)) + 1].to_vec();
+        let changed = 1 + self.random.below(almost.len() - 2);
+        almost[changed] ^= 3;
         if self.random.below(2) == 0 {
             uniform[self.random.below(2900)..][..almost.len()].copy_from_slice(&almost);
         }
         let [a, b, ..] = &mut *self.rooms;
         for (text, needle) in [(self.text, &needle), (&uniform, &almost)] {
-            let got = rust::memmem(a.copy_of(text, self.offset), b.copy_of(needle, self.offset));
-            self.failures
-                .unless(highway::memmem(text, needle) == got, "memmem");
+            let (x, y) = (a.copy_of(text, self.offset), b.copy_of(needle, self.offset));
+            let is_same = highway::memmem(text, needle) == rust::memmem(x, y);
+            self.failures.unless(is_same, "memmem");
+            let is_same = highway::memrmem(text, needle) == rust::memrmem(x, y);
+            self.failures.unless(is_same, "memrmem");
+
+            let wide = |byte: &u8| u16::from(byte >> 1) | u16::from(byte & 1) << 8;
+            let [text, needle] = [text, needle].map(|it| it.iter().map(wide).collect::<Vec<_>>());
+            let (x, y) = (
+                a.copy_of(&text, self.offset),
+                b.copy_of(&needle, self.offset),
+            );
+            let is_same = highway::memmem16(&text, &needle) == rust::memmem16(x, y);
+            self.failures.unless(is_same, "memmem16");
+            let is_same = highway::memrmem16(&text, &needle) == rust::memrmem16(x, y);
+            self.failures.unless(is_same, "memrmem16");
         }
     }
 
@@ -146,6 +205,42 @@ impl Round<'_> {
         }
     }
 
+    fn hashes(&mut self) {
+        let (text, any) = (self.text, self.random.next());
+        let (seed, fenced) = (
+            self.random.one_of(&[0, any]),
+            self.rooms[0].copy_of(text, self.offset),
+        );
+        let is_same = highway::xxhash3_64(seed, text) == rust::xxhash3_64(seed, fenced);
+        self.failures.unless(is_same, "xxhash3_64");
+        let is_same = highway::xxhash32(seed as u32, text) == rust::xxhash32(seed as u32, fenced);
+        self.failures.unless(is_same, "xxhash32");
+        let (want, mut in_parts) = (
+            highway::xxhash64(seed, text),
+            rust::XxHash64State::new(seed),
+        );
+        self.failures
+            .unless(want == rust::xxhash64(seed, fenced), "xxhash64");
+        for part in fenced.chunks(1 + self.random.below(100)) {
+            in_parts.update(part);
+        }
+        self.failures
+            .unless(want == in_parts.digest(), "XxHash64State");
+    }
+
+    fn odd_blocks(&mut self) {
+        let mut text = vec![b' '; 20 * self.text.len()];
+        for &byte in self.text.iter().take(20) {
+            text[self.random.below(20 * self.text.len())] = byte;
+        }
+        text.truncate(1 << 17);
+        let ([a, b, ..], mut want) = (&mut *self.rooms, vec![]);
+        highway::odd_blocks(&text, &mut want);
+        let into = b.uninit(want.len(), self.offset).into();
+        let got = rust::odd_blocks(a.copy_of(&text, self.offset), into);
+        self.failures.unless(want == got, "odd_blocks");
+    }
+
     /// `highway` returns how much it has written.
     fn from_to<T: Copy, U: Copy + Default + PartialEq>(
         &mut self,
@@ -163,12 +258,12 @@ impl Round<'_> {
         self.failures.unless(want[..written] == *got, name);
     }
 
-    fn in_place(
+    fn in_place<const N: usize>(
         &mut self,
         name: &'static str,
         tolerance: u8,
-        highway: &dyn Fn(&mut [[u8; 4]]),
-        rust: &dyn Fn(&mut [[u8; 4]]),
+        highway: &dyn Fn(&mut [[u8; N]]),
+        rust: &dyn Fn(&mut [[u8; N]]),
     ) {
         let mut want = self.text.as_chunks().0.to_vec();
         let got = self.rooms[0].copy_of(&want, self.offset);
@@ -196,6 +291,19 @@ impl Round<'_> {
             all(highway::lower_ascii16),
             |from, to| rust::lower_ascii16(from, to),
         );
+        self.from_to(
+            "lower_ascii",
+            (text, len),
+            all(highway::lower_ascii),
+            |from, to| rust::lower_ascii(from, to),
+        );
+        let ([a, b, ..], mut want) = (&mut *self.rooms, vec![0xFF; len]);
+        let got = b.copy_of(&want, self.offset);
+        let copied = highway::copy_ascii_prefix(text, &mut want).len();
+        let got_copied = rust::copy_ascii_prefix(a.copy_of(text, self.offset), got.into()).len();
+        let is_same = (copied, &want[..]) == (got_copied, got);
+        self.failures.unless(is_same, "copy_ascii_prefix");
+
         let hex = all(highway::encode_hex_lower);
         self.from_to("encode_hex_lower", (text, len), &hex, |from, to| {
             rust::encode_hex_lower(from, to)
@@ -225,6 +333,21 @@ impl Round<'_> {
             |from, to| rust::decode_hex(from, to),
         );
 
+        let digits: Vec<_> = digits
+            .iter()
+            .zip(&any)
+            .map(|(&low, unit)| unit << 8 | u16::from(low))
+            .collect();
+        let decode = |from: &[_], to: &mut [_]| highway::decode_hex16(from, to).len();
+        self.from_to(
+            "decode_hex16",
+            (digits.as_chunks().0, len / 2),
+            decode,
+            |from, to| rust::decode_hex16(from, to),
+        );
+
+        self.in_place("bswap16", 0, &highway::bswap16, &rust::bswap16);
+        self.in_place("bswap64", 0, &highway::bswap64, &rust::bswap64);
         self.in_place("bswap32", 0, &highway::bswap32, &rust::bswap32);
         self.in_place("bswap32_shared", 0, &highway::bswap32, &|words| {
             rust::bswap32_shared(shared(words.as_flattened_mut()))
@@ -286,6 +409,60 @@ impl Round<'_> {
         let words = if len.is_multiple_of(64) { 3 } else { 2 };
         let is_same = (want, &dirty[..], &state[..words]) == (got, got_dirty, &got_state[..words]);
         self.failures.unless(is_same, "json_structural_index_chunk");
+    }
+
+    fn xml(&mut self) {
+        let (text, wide) = (self.text, &self.mostly_ascii()[..]);
+        let (room, is_open) = (text.len() + 64, self.random.next() & 1);
+        let (mut index, [ef, bf]) = (
+            Box::new_uninit_slice(room),
+            [(); 2].map(|()| self.random.next()),
+        );
+        let [a, b, ..] = &mut *self.rooms;
+
+        let [mut state, mut got_state] = [[is_open, ef, bf]; 2];
+        let want = highway::xml_structural_index_chunk(text, 64, &mut index, &mut state);
+        let (fenced, into) = (
+            a.copy_of(text, self.offset),
+            b.uninit(room, self.offset).into(),
+        );
+        let got = rust::xml_structural_index_chunk(fenced, 64, into, &mut got_state);
+        let is_same = (want, state) == (got, got_state);
+        self.failures.unless(is_same, "xml_structural_index_chunk");
+
+        // A lead surrogate that the chunk before left open takes the place of one in this chunk.
+        let [mut state, mut got_state] = [[is_open, ef & 1, 0]; 2];
+        let wide = wide.get(1..).unwrap_or_default();
+        let want = highway::xml_structural_index16_chunk(wide, 64, &mut index, &mut state);
+        let (fenced, into) = (
+            a.copy_of(wide, self.offset),
+            b.uninit(room, self.offset).into(),
+        );
+        let got = rust::xml_structural_index16_chunk(fenced, 64, into, &mut got_state);
+        let is_same = (want, state) == (got, got_state);
+        self.failures
+            .unless(is_same, "xml_structural_index16_chunk");
+    }
+
+    fn moves(&mut self) {
+        let (pixels, width) = (self.text.as_chunks().0, 1 + self.random.below(40));
+        let color = [(); 4].map(|()| self.some_byte());
+        let palette = &pixels[..pixels.len().min(256)];
+        let got = rust::nearest_in_palette(self.rooms[0].copy_of(palette, self.offset), color);
+        let is_same = highway::nearest_in_palette(palette, color) == got;
+        self.failures.unless(is_same, "nearest_in_palette");
+
+        let image = (
+            &pixels[..pixels.len() / width * width],
+            pixels.len() / width * width,
+        );
+        if image.1 == 0 {
+            return;
+        }
+        for (name, highway, rust) in pairs::MOVES {
+            let want = all(|from, to| highway(from, width, to));
+            self.from_to(name, image, want, |from, to| rust(from, width, to));
+        }
     }
 
     fn png(&mut self) {
@@ -419,11 +596,18 @@ impl Round<'_> {
         let src = self.random.bytes(4 * src_w * src_h, b"");
         let (src, mut want) = (src.as_chunks().0, vec![[0; 4]; dst_w * dst_h]);
         let [a, b, ..] = &mut *self.rooms;
-        let into = b.uninit(want.len(), self.offset).into();
-        highway::Resizer::default().lanczos3(src, src_w, &mut want, dst_w);
-        let got =
-            rust::Resizer::default().lanczos3(a.copy_of(src, self.offset), src_w, into, dst_w);
-        self.failures.unless(want == got, "lanczos3");
+        let fenced = a.copy_of(src, self.offset);
+        for filter in Filter::ALL {
+            let into = b.uninit(want.len(), self.offset).into();
+            highway::Resizer::default().resize(filter, src, src_w, &mut want, dst_w);
+            let got = rust::Resizer::default().resize(filter, fenced, src_w, into, dst_w);
+            // As in `modulate`, a weight may be rounded the other way.
+            let tolerance = if cfg!(target_arch = "x86_64") { 0 } else { 2 };
+            let mut pairs = want.as_flattened().iter().zip(got.as_flattened());
+            let is_same = pairs.all(|(a, b)| a.abs_diff(*b) <= tolerance);
+            self.failures
+                .unless(is_same && want.len() == got.len(), "resize");
+        }
     }
 }
 
@@ -446,9 +630,13 @@ pub(crate) fn run(seed: u64, rounds: u64) -> bool {
         round.searches();
         round.memmem();
         round.scanner_run_stops();
+        round.odd_blocks();
+        round.hashes();
         round.conversions();
         round.words();
         round.json();
+        round.xml();
+        round.moves();
         round.png();
         round.mappings();
         if number % 20 == 0 {

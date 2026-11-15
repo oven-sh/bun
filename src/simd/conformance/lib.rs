@@ -4,6 +4,7 @@
 mod bench;
 mod check;
 mod highway;
+mod pairs;
 mod probe;
 mod room;
 

@@ -1,6 +1,6 @@
 //! A kernel is written once and compiled once per target, and the best copy is picked at run time.
 #![no_std]
-#![feature(portable_simd, likely_unlikely, trait_alias)]
+#![feature(portable_simd, likely_unlikely, loop_hints, trait_alias)]
 #![feature(const_array, const_closures, const_trait_impl)]
 #![forbid(unsafe_code)]
 // For `#[inline(always)]` in the copies.
@@ -22,6 +22,7 @@ pub mod dispatch;
 mod interleave;
 mod isa;
 mod mask;
+mod matches;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 mod native;
 #[cfg(target_arch = "aarch64")]
@@ -41,10 +42,11 @@ pub use bun_simd_macros::{foreach_target, foreach_width};
 pub use bun_simd_trusted::AtomicFn;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub use bun_simd_trusted::{Features, detected, if_supported};
-pub use bun_simd_trusted::{Out, Target, Writer, extend_vec};
+pub use bun_simd_trusted::{Out, Target, Writer, extend_vec, opaque};
 pub use dispatch::limit_to;
 pub use isa::Isa;
 pub use mask::Mask;
+pub use matches::Matches;
 pub use partial::Partial;
 #[cfg(any(feature = "test_support", not(target_arch = "x86_64")))]
 pub use portable::{portable32, portable64};

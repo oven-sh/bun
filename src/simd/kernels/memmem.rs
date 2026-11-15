@@ -1,233 +1,202 @@
 //! Port of highway_strings.cpp: a text in a text.
+use bun_simd::{Int, Matches};
 use core::hint::cold_path;
+
+pub(crate) trait Unit: Copy + Ord + Into<u32> {}
+impl Unit for u8 {}
+impl Unit for u16 {}
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
-    use isa::U8;
+    use isa::{U8, U16, Vector};
 
-    /// `a` and `b` are the two places in the needle to look for.
+    /// Gives `verify` the places at which the units `a` and `b` of the needle match.
     #[inline(always)]
-    fn memmem_by(haystack: &[u8], needle: &[u8], a: usize, b: usize) -> Option<usize> {
-        let end = haystack.len().checked_sub(needle.len())? + 1;
-        let (at_a, at_b) = (
-            haystack.get(a..)?.get(..end)?,
-            haystack.get(b..)?.get(..end)?,
-        );
-        let (va, vb) = (U8::splat(*needle.get(a)?), U8::splat(*needle.get(b)?));
-        let both = |a: U8, b: U8| a.simd_eq(va) & b.simd_eq(vb);
-        let mut budget = haystack.len() * 2 + needle.len() * 32;
-
-        let (Some((_, last_a)), Some((_, last_b))) =
-            (at_a.split_last_chunk(), at_b.split_last_chunk())
-        else {
-            let (short_a, short_b) = (U8::load_partial(at_a)?, U8::load_partial(at_b)?);
-            let bits = short_a.to_bitmask(both(short_a.lanes, short_b.lanes));
-            return if bits == 0 {
-                None
-            } else {
-                candidates(bits, 0, haystack, needle, &mut budget)?
-            };
-        };
-        let (mut from_a, mut from_b) = (at_a, at_b);
-        if let (Some(first_a), Some(first_b)) = (
-            at_a.first_chunk::<{ 4 * U8::LEN }>(),
-            at_b.first_chunk::<{ 4 * U8::LEN }>(),
-        ) {
-            let bits = both(U8::from_slice(first_a), U8::from_slice(first_b)).to_bitmask();
-            if bits != 0
-                && let Some(result) = candidates(bits, 0, haystack, needle, &mut budget)
-            {
-                return result;
-            }
-            let from = U8::LEN - at_a.as_ptr().addr() % U8::LEN;
-            (from_a, from_b) = (&at_a[from..], &at_b[from..]);
-        }
-        let ((pairs_a, rest_a), (pairs_b, rest_b)) = (
-            from_a.as_chunks::<{ 2 * U8::LEN }>(),
-            from_b.as_chunks::<{ 2 * U8::LEN }>(),
-        );
-        for (pair_a, pair_b) in pairs_a.iter().zip(pairs_b) {
-            let both =
-                |at: usize| both(U8::from_slice(&pair_a[at..]), U8::from_slice(&pair_b[at..]));
-            let (low, high) = (both(0), both(U8::LEN));
-            if (low | high).any() {
-                cold_path();
-                let at = pair_a.as_ptr().addr() - at_a.as_ptr().addr();
-                for (both, at) in [(low, at), (high, at + U8::LEN)] {
-                    if let Some(result) =
-                        candidates(both.to_bitmask(), at, haystack, needle, &mut budget)
-                    {
-                        return result;
-                    }
-                }
-            }
-        }
-        for (ca, cb) in rest_a.as_chunks().0.iter().zip(rest_b.as_chunks().0) {
-            let both = both(U8::load(ca), U8::load(cb));
-            if both.any() {
-                cold_path();
-                let at = ca.as_ptr().addr() - at_a.as_ptr().addr();
-                if let Some(result) =
-                    candidates(both.to_bitmask(), at, haystack, needle, &mut budget)
-                {
-                    return result;
-                }
-            }
-        }
-        let left = rest_a.len() % U8::LEN;
-        let bits =
-            both(U8::load(last_a), U8::load(last_b)).to_bitmask() >> (U8::LEN - 1 - left) >> 1;
-        if bits == 0 {
-            None
-        } else {
-            candidates(bits, end - left, haystack, needle, &mut budget)?
+    fn search<T: Int<N>, const N: usize, const FORWARD: bool, R>(
+        haystack: &[T],
+        needle: &[T],
+        [a, b]: [usize; 2],
+        verify: impl FnMut(Matches) -> Option<R>,
+    ) -> Option<R> {
+        let starts = haystack.len().checked_sub(needle.len())? + 1;
+        let (at_a, at_b) = (&haystack[a..][..starts], &haystack[b..][..starts]);
+        let (a, b) = (Vector::splat(needle[a]), Vector::splat(needle[b]));
+        let test = |x: Vector<T, N>, y: Vector<T, N>| x.simd_eq(a) & y.simd_eq(b);
+        match FORWARD {
+            true => Vector::zip_find_map(at_a, at_b, test, verify),
+            false => Vector::zip_rfind_map(at_a, at_b, test, verify),
         }
     }
 
     #[inline(never)]
-    fn memmem_long(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-        let [a, b] = rarest_bytes(needle);
-        memmem_by(haystack, needle, a, b)
+    fn find_long<T: Unit + Int<N>, const N: usize, const FORWARD: bool>(
+        haystack: &[T],
+        needle: &[T],
+    ) -> Option<usize> {
+        let mut budget = 2 * haystack.len() + 32 * needle.len();
+        let places = match haystack.len() / 16 < needle.len() {
+            true => [0, needle.len() - 1],
+            false => rarest_two(needle),
+        };
+        search::<T, N, FORWARD, _>(haystack, needle, places, |matches| {
+            verify_long::<T, FORWARD>(matches, haystack, needle, &mut budget)
+        })?
+    }
+
+    #[inline(always)]
+    fn find<T: Unit + Int<N>, const N: usize, const FORWARD: bool>(
+        haystack: &[T],
+        needle: &[T],
+    ) -> Option<usize> {
+        match needle.len() {
+            0 => Some(if FORWARD { 0 } else { haystack.len() }),
+            17.. => find_long::<T, N, FORWARD>(haystack, needle),
+            len => search::<T, N, FORWARD, _>(
+                haystack,
+                needle,
+                [0, len - 1],
+                #[inline(always)]
+                |mut matches| {
+                    let is_at = |&at: &usize| are_equal(&haystack[at..][..len], needle);
+                    match FORWARD {
+                        true => matches.find(is_at),
+                        false => matches.rfind(is_at),
+                    }
+                },
+            ),
+        }
     }
 
     #[export]
     pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-        match needle.len() {
-            0 => Some(0),
-            17.. => memmem_long(haystack, needle),
-            len => memmem_by(haystack, needle, 0, len - 1),
-        }
+        find::<_, { U8::LEN }, true>(haystack, needle)
+    }
+
+    #[export]
+    pub fn memrmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        find::<_, { U8::LEN }, false>(haystack, needle)
+    }
+
+    #[export]
+    pub fn memmem16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
+        find::<_, { U16::LEN }, true>(haystack, needle)
+    }
+
+    #[export]
+    pub fn memrmem16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
+        find::<_, { U16::LEN }, false>(haystack, needle)
     }
 }
 
+/// The places of the two units whose low bytes are rarest in `needle`.
 #[inline(never)]
-fn rarest_bytes(needle: &[u8]) -> [usize; 2] {
-    let mut histogram = [0u32; 256];
-    for &b in needle {
-        histogram[usize::from(b)] += 1;
+fn rarest_two<T: Unit>(needle: &[T]) -> [usize; 2] {
+    let (mut counts, low_byte) = ([0usize; 256], |unit: T| unit.into() as usize & 0xFF);
+    for &unit in needle {
+        counts[low_byte(unit)] += 1;
     }
-    let count = |i: usize| histogram[usize::from(needle[i])];
-    let mut p0 = 0;
-    for i in 1..needle.len() {
-        if count(i) < count(p0) {
-            p0 = i;
-        }
-    }
-    let mut p1 = if p0 == needle.len() - 1 {
-        0
-    } else {
-        needle.len() - 1
-    };
-    for i in 0..needle.len() {
-        if i != p0 && (count(i) < count(p1) || (count(i) == count(p1) && i > p1)) {
-            p1 = i;
-        }
-    }
-    [p0.min(p1), p0.max(p1)]
+    let count = |&i: &usize| counts[low_byte(needle[i])];
+    let first = (0..needle.len()).min_by_key(count).unwrap_or(0);
+    let others = (0..needle.len()).rev().filter(|&i| i != first);
+    [first, others.min_by_key(count).unwrap_or(0)]
 }
 
 #[inline(always)]
-fn ends_eq<const N: usize>(a: &[u8], b: &[u8]) -> bool {
-    a.first_chunk::<N>() == b.first_chunk::<N>() && a.last_chunk::<N>() == b.last_chunk::<N>()
+fn ends_are_equal<T: Unit, const N: usize>(a: &[T], b: &[T]) -> bool {
+    a.first_chunk::<N>() == b.first_chunk() && a.last_chunk::<N>() == b.last_chunk()
 }
 
+/// For slices of the same length, up to 32.
 #[inline(always)]
-fn verify(candidate: &[u8], needle: &[u8]) -> bool {
-    match needle.len() {
-        32.. => candidate == needle,
-        16.. => ends_eq::<16>(candidate, needle),
-        8.. => ends_eq::<8>(candidate, needle),
-        4.. => ends_eq::<4>(candidate, needle),
-        2.. => ends_eq::<2>(candidate, needle),
-        _ => candidate == needle,
+fn are_equal<T: Unit>(a: &[T], b: &[T]) -> bool {
+    match a.len() {
+        17.. => ends_are_equal::<T, 16>(a, b),
+        8.. => ends_are_equal::<T, 8>(a, b),
+        4.. => ends_are_equal::<T, 4>(a, b),
+        2.. => ends_are_equal::<T, 2>(a, b),
+        _ => a.first() == b.first(),
     }
 }
 
-/// The result, once it is known.
+/// The result, once it is known. `budget` keeps the time linear.
 #[inline(never)]
-fn candidates(
-    mut bits: u64,
-    at: usize,
-    haystack: &[u8],
-    needle: &[u8],
+fn verify_long<T: Unit, const FORWARD: bool>(
+    mut matches: Matches,
+    haystack: &[T],
+    needle: &[T],
     budget: &mut usize,
 ) -> Option<Option<usize>> {
-    while bits != 0 {
-        let pos = at + bits.trailing_zeros() as usize;
-        if verify(haystack.get(pos..)?.get(..needle.len())?, needle) {
-            return Some(Some(pos));
+    loop {
+        let at = if FORWARD {
+            matches.next()
+        } else {
+            matches.next_back()
+        }?;
+        let candidate = &haystack[at..][..needle.len()];
+        // For less, `memcmp` may load with a mask.
+        if needle.len() > 32 && candidate == needle
+            || needle.len() <= 32 && are_equal(candidate, needle)
+        {
+            return Some(Some(at));
         }
         if *budget <= needle.len() {
             cold_path();
-            return Some(two_way(haystack, needle, pos + 1));
+            return Some(if FORWARD {
+                two_way::<T, true>(&haystack[at..], needle).map(|found| at + found)
+            } else {
+                two_way::<T, false>(&haystack[..at + needle.len()], needle).map(|found| at - found)
+            });
         }
         *budget -= needle.len();
-        bits &= bits - 1;
     }
-    None
 }
 
-fn maximal_suffix(needle: &[u8], order: bool) -> (usize, usize) {
-    let (mut ms, mut j, mut k, mut p) = (usize::MAX, 0usize, 1usize, 1usize);
-    while j + k < needle.len() {
-        let (a, b) = (needle[j + k], needle[ms.wrapping_add(k)]);
-        if a == b {
-            if k == p {
-                j += p;
-                k = 1;
-            } else {
-                k += 1;
-            }
-        } else if (a > b) == order {
-            j += k;
-            k = 1;
-            p = j.wrapping_sub(ms);
+#[inline(always)]
+fn nth<T: Unit, const FORWARD: bool>(units: &[T], n: usize) -> T {
+    units[if FORWARD { n } else { units.len() - 1 - n }]
+}
+
+/// Where the greatest suffix in the given order starts, and its period.
+fn maximal_suffix<T: Unit, const FORWARD: bool>(needle: &[T], is_ascending: bool) -> [usize; 2] {
+    let (mut start, mut candidate, mut offset, mut period) = (0, 1, 0, 1);
+    while candidate + offset < needle.len() {
+        let [a, b] = [candidate, start].map(|from| nth::<T, FORWARD>(needle, from + offset));
+        if a == b && offset + 1 < period {
+            offset += 1;
+        } else if a == b {
+            (candidate, offset) = (candidate + period, 0);
+        } else if (a < b) == is_ascending {
+            (candidate, offset) = (candidate + offset + 1, 0);
+            period = candidate - start;
         } else {
-            ms = j;
-            j += 1;
-            k = 1;
-            p = 1;
+            (start, candidate, offset, period) = (candidate, candidate + 1, 0, 1);
         }
     }
-    (ms, p)
+    [start, period]
 }
 
+/// The algorithm of Crochemore and Perrin. Returns the distance from where the search starts.
 #[inline(never)]
-fn two_way(haystack: &[u8], needle: &[u8], start: usize) -> Option<usize> {
-    let m = needle.len();
-    let ((ms0, p0), (ms1, p1)) = (maximal_suffix(needle, true), maximal_suffix(needle, false));
-    let (ms, mut p) = if ms0.wrapping_add(1) > ms1.wrapping_add(1) {
-        (ms0, p0)
-    } else {
-        (ms1, p1)
-    };
-    let left = ms.wrapping_add(1);
-    let mem0 = if needle[..left] == needle[p..p + left] {
-        m - p
-    } else {
-        p = left.max(m - left) + 1;
-        0
-    };
-    let (mut pos, mut mem) = (start, 0);
-    while let Some(window) = haystack.get(pos..pos + m) {
-        let mut k = left.max(mem);
-        while k < m && needle[k] == window[k] {
-            k += 1;
+fn two_way<T: Unit, const FORWARD: bool>(haystack: &[T], needle: &[T]) -> Option<usize> {
+    let (len, nth) = (needle.len(), nth::<T, FORWARD>);
+    let [ascending, descending] = [true, false].map(|it| maximal_suffix::<T, FORWARD>(needle, it));
+    let [split, period] = ascending.max(descending);
+    let (shift, known_after_shift) =
+        match (0..split).all(|i| nth(needle, i) == nth(needle, period + i)) {
+            true => (period, len - period),
+            false => (split.max(len - split) + 1, 0),
+        };
+    let (mut at, mut known) = (0, 0);
+    while let Some(left) = haystack.len().checked_sub(at + len) {
+        let window = &haystack[if FORWARD { at } else { left }..][..len];
+        let differs = |&i: &usize| nth(needle, i) != nth(window, i);
+        if let Some(i) = (split.max(known)..len).find(differs) {
+            (at, known) = (at + i - split + 1, 0);
+        } else if (known..split).rev().any(|i| differs(&i)) {
+            (at, known) = (at + shift, known_after_shift);
+        } else {
+            return Some(at);
         }
-        if k < m {
-            pos += k.wrapping_sub(ms);
-            mem = 0;
-            continue;
-        }
-        k = left;
-        while k > mem && needle[k - 1] == window[k - 1] {
-            k -= 1;
-        }
-        if k <= mem {
-            return Some(pos);
-        }
-        pos += p;
-        mem = mem0;
     }
     None
 }

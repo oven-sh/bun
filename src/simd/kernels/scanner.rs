@@ -1,0 +1,127 @@
+//! Ports of highway_strings.cpp: one pass over a source file, for the lexers.
+use bun_simd::{Out, blocks};
+
+struct Nibbles {
+    upper: [u8; 16],
+    lower: [u8; 16],
+}
+impl Nibbles {
+    const fn new(classes: &[(u32, u32, u32)]) -> Self {
+        let mut n = Nibbles {
+            upper: [0; 16],
+            lower: [0; 16],
+        };
+        let mut c = 0;
+        while c < classes.len() {
+            let (bit, rows, columns) = classes[c];
+            let mut i = 0;
+            while i < 16 {
+                if (rows >> i) & 1 != 0 {
+                    n.upper[i] |= 1 << bit;
+                }
+                if (columns >> i) & 1 != 0 {
+                    n.lower[i] |= 1 << bit;
+                }
+                i += 1;
+            }
+            c += 1;
+        }
+        n
+    }
+}
+const NAME_OR_BLANK: Nibbles = Nibbles::new(&[
+    (0, 1 << 0, 1 << 9),
+    (1, 1 << 2, 1 << 0),
+    (2, 1 << 2, 1 << 4),
+    (3, 1 << 3, 0x03FF),
+    (4, (1 << 4) | (1 << 6), 0xFFFE),
+    (5, (1 << 5) | (1 << 7), 0x07FF),
+    (6, 1 << 5, 1 << 15),
+]);
+const STRING_STOP: Nibbles = Nibbles::new(&[
+    (0, 0xFF03, 0xFFFF),
+    (1, 1 << 2, (1 << 2) | (1 << 4) | (1 << 7)),
+    (2, 1 << 5, 1 << 12),
+    (3, 1 << 6, 1 << 0),
+]);
+
+#[bun_simd::foreach_target]
+pub(crate) mod simd {
+    use isa::{I8, U8};
+
+    /// The offset after each newline. Panics unless there is room for 64 more than there are.
+    #[export]
+    pub fn line_starts<'a>(text: &[u8], out: Out<'a, u32>) -> &'a mut [u32] {
+        let (mut out, mut had_newlines) = (out.into_writer(), 0u8);
+        for (i, block) in blocks(text, &mut [0; 64]).enumerate() {
+            let [newlines] = U8::bitmasks(block, |v| [v.simd_eq(b'\n')]);
+            // A branch on this block alone is hard to predict.
+            had_newlines = had_newlines << 2 | u8::from(newlines != 0);
+            if had_newlines != 0 {
+                isa::bit_indices(newlines).push_to(&mut out, 64 * i as u32 + 1);
+            }
+        }
+        out.finish()
+    }
+
+    fn class(v: U8, of: &Nibbles) -> U8 {
+        U8::repeat_16(of.upper).lookup(v >> 4) & U8::repeat_16(of.lower).lookup(v & 0x0F)
+    }
+
+    #[inline(always)]
+    fn stops_of_block(block: &[u8; 64]) -> [[u8; 8]; 3] {
+        let [name, neither, plain] = U8::bitmasks(block, |v| {
+            let name_or_blank = class(v, &NAME_OR_BLANK);
+            [
+                name_or_blank.bitcast::<I8>().simd_gt(3).cast(),
+                name_or_blank.simd_eq(0),
+                class(v, &STRING_STOP).simd_eq(0),
+            ]
+        });
+        [!name, name | neither, !plain].map(u64::to_le_bytes)
+    }
+
+    /// Panics unless each plane has a bit for each byte.
+    #[export]
+    pub fn scanner_run_stops(text: &[u8], planes: [&mut [[u8; 8]]; 3]) {
+        let (whole, rest) = text.as_chunks();
+        let [names, blanks, strings] =
+            planes.map(|plane| plane[..text.len().div_ceil(64)].split_at_mut(whole.len()));
+        let planes = names.0.iter_mut().zip(blanks.0).zip(strings.0);
+        for (block, ((a, b), c)) in whole.iter().zip(planes) {
+            [*a, *b, *c] = stops_of_block(block);
+        }
+        if let ([a], [b], [c]) = (names.1, blanks.1, strings.1)
+            && let Some(block) = blocks(rest, &mut [0; 64]).next()
+        {
+            [*a, *b, *c] = stops_of_block(block);
+        }
+    }
+
+    /// Not printable ASCII or white space, or a backslash.
+    fn has_odd_byte(block: &[u8; 64]) -> bool {
+        let mut is_plain = U8::splat(0xFF);
+        for chunk in block.as_chunks().0 {
+            let v = U8::load(chunk);
+            let is_blank = U8::repeat_16(*b"\x80\0\0\0\0\0\0\0\0\t\n\0\0\r\0\0")
+                .lookup(v & 0x8F)
+                .simd_eq(v);
+            is_plain &= (v.in_range(0x20..=0x7E) & v.simd_ne(b'\\') | is_blank).to_vector();
+        }
+        is_plain.simd_eq(0).any()
+    }
+
+    /// A bit for each block of 64 bytes.
+    #[export]
+    pub fn odd_blocks<'a>(text: &[u8], out: Out<'a, u64>) -> &'a mut [u64] {
+        let mut out = out.into_writer();
+        out.extend_with(text.chunks(64 * 64), |chunk| {
+            let mut marks = 0;
+            for (i, block) in blocks(chunk, &mut [b' '; 64]).enumerate() {
+                marks |= u64::from(has_odd_byte(block)) << i;
+            }
+            Some([marks])
+        });
+        out.finish()
+    }
+}

@@ -48,6 +48,19 @@ impl<T: Int<N>, const N: usize, I: Isa> Mask<T, N, I> {
         (bits != 0).then(|| (63 - bits.leading_zeros() as usize) / bits_per_lane)
     }
 
+    /// The number of lanes that are set.
+    #[inline(always)]
+    pub fn count(self) -> usize {
+        self.count_from(0)
+    }
+
+    /// The number of lanes that are set, from `lane` on.
+    #[inline(always)]
+    pub(crate) fn count_from(self, lane: usize) -> usize {
+        debug_assert!(lane < N);
+        I::count_from(self, lane)
+    }
+
     /// One bit per lane.
     #[inline(always)]
     pub fn to_bitmask(self) -> u64 {

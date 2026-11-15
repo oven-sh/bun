@@ -30,7 +30,7 @@ pub(crate) const DEFAULT_LIBRARY_OUTDIR: &[u8] = b"dist";
 
 pub(super) struct Configuration {
     pub(super) transpiler: &'static mut Transpiler<'static>,
-    pub(super) arena: &'static bun_alloc::Arena,
+    pub(super) arena: &'static bun_ast::AstArena,
     pub(super) outfile: Box<[u8]>,
     pub(super) was_renamed_from_index: bool,
 }
@@ -227,7 +227,7 @@ pub(super) fn configure(ctx: Context<'_>) -> Result<Configuration, crate::Error>
     let reads_no_configuration = (ctx.bundler_options.aot.as_ref())
         .is_some_and(|aot| aot.missing_tsconfig_override.is_some());
 
-    let arena: &'static bun_alloc::Arena = crate::cli::cli_arena();
+    let arena: &'static bun_ast::AstArena = crate::cli::cli_arena();
     let this_transpiler: &'static mut Transpiler<'static> =
         arena.alloc(Transpiler::init(arena, ctx.log(), ctx.args.clone(), None)?);
     if reads_no_configuration {

@@ -1,5 +1,7 @@
 //! "api" in this context means "the Bun APIs", as in "the exposed JS APIs"
 
+use bun_ptr::CellExt as _;
+
 // ─── server / socket / ffi ───────────────────────────────────────────────────
 pub(crate) use crate::server;
 pub(crate) use crate::server::AnyRequestContext;
@@ -147,25 +149,8 @@ fn with_text_format_source<R>(
     global: &bun_jsc::JSGlobalObject,
     bytes: &[u8],
     path: &'static [u8],
-    f: impl FnOnce(&bun_alloc::Arena, &mut bun_ast::Log, &bun_ast::Source) -> bun_jsc::JsResult<R>,
+    f: impl FnOnce(&bun_ast::AstArena, &mut bun_ast::Log, &bun_ast::Source) -> bun_jsc::JsResult<R>,
 ) -> bun_jsc::JsResult<R> {
-    use core::cell::Cell;
-    // A private mi_heap costs microseconds to create, more than parsing a small document.
-    struct Recycle<'a>(Option<bun_alloc::Arena>, &'a Cell<Option<bun_alloc::Arena>>);
-    impl Drop for Recycle<'_> {
-        fn drop(&mut self) {
-            if let Some(mut arena) = self.0.take() {
-                arena.reset_retain_with_limit(2 * 1024 * 1024);
-                self.1.set(Some(arena));
-            }
-        }
-    }
-    let slot = &global.bun_vm().text_format_arena;
-    let recycle = Recycle(Some(slot.take().unwrap_or_default()), slot);
-    let arena = recycle.0.as_ref().expect("set above");
-    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
-    let _ast_scope = ast_memory_allocator.enter();
-
     // Every parser reached from here records source positions as an `i32`
     // (`ast::Loc` via `usize2loc` for JSONC/TOML, JSON5's token locs, YAML's
     // `Pos`), so an input those offsets cannot represent panics inside the
@@ -184,7 +169,17 @@ fn with_text_format_source<R>(
     let mut log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string(path, bytes);
 
-    f(arena, &mut log, &source)
+    // Reused because `mi_heap_new` costs more than parsing a small document. A nested call gets a new arena.
+    let slot = &global.bun_vm().text_format_arena;
+    slot.with_taken(|arena| {
+        let result = {
+            let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
+            let _ast_scope = ast_memory_allocator.enter();
+            f(arena, &mut log, &source)
+        };
+        arena.reset_retain_with_limit(2 * 1024 * 1024);
+        result
+    })
 }
 
 // ─── shared Expr → JS conversion for the text-format parsers ─────────────────

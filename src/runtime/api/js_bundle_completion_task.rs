@@ -5,7 +5,7 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use bun_alloc::Arena;
+use bun_ast::AstArena;
 use bun_bundler::aot::PluginSetup;
 use bun_bundler::bundle_v2::{BuildResult, BundleV2, dispatch};
 use bun_bundler::options::{self, OutputFile, OutputKind, Side};
@@ -1133,13 +1133,13 @@ impl JSBundleCompletionTask {
     }
 
     fn run(mut self: Box<Self>, ticket: jsc::Ticket, generation: bun_core::Generation) {
-        let heap = Arena::new();
+        let ast_arena = AstArena::new();
         let mut ast_memory_store = bun_ast::ASTMemoryAllocator::default();
         // Declared here so that it drops after `ticket.post`.
         let mut transpiler = None;
         let _ast_scope = ast_memory_store.enter();
 
-        self.result = self.build(&mut transpiler, &heap, &ticket, generation);
+        self.result = self.build(&mut transpiler, &ast_arena, &ticket, generation);
 
         // It knows a source by its address, and the log outlives the sources.
         self.log.line_column_tracker.set(None);
@@ -1200,14 +1200,14 @@ impl JSBundleCompletionTask {
     fn build<'a>(
         &'a mut self,
         transpiler: &'a mut Option<Transpiler<'a>>,
-        heap: &'a Arena,
+        ast_arena: &'a AstArena,
         ticket: &'a jsc::Ticket,
         generation: bun_core::Generation,
     ) -> bun_bundler::Result<BuildResult> {
         let log = &self.log;
         let opts = Self::transform_options(&self.config);
         let env = Some(&raw mut self.env);
-        let transpiler = transpiler.insert(Transpiler::init(heap, log, opts, env)?);
+        let transpiler = transpiler.insert(Transpiler::init(ast_arena, log, opts, env)?);
         let config = Self::configure_bundler(&mut self.config, &mut self.declarations, transpiler)?;
         transpiler.resolver.generation = generation;
 
@@ -1229,7 +1229,7 @@ impl JSBundleCompletionTask {
         {
             let bundler = BundlerInputs {
                 transpiler,
-                arena: heap,
+                arena: ast_arena,
                 event_loop,
                 worker_pool,
                 plugins: plugins.map(|plugins| PluginSetup {
@@ -1244,7 +1244,14 @@ impl JSBundleCompletionTask {
             return compile_ahead_of_time::finish_compilation(config, compiled, log);
         }
 
-        let mut bv2 = BundleV2::init(transpiler, None, heap, event_loop, worker_pool, heap);
+        let mut bv2 = BundleV2::init(
+            transpiler,
+            None,
+            ast_arena,
+            event_loop,
+            worker_pool,
+            ast_arena,
+        );
         bv2.plugins = plugins;
         bv2.plugin_context = self.context;
         bv2.completion = Some(completion);

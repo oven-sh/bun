@@ -108,7 +108,7 @@ pub mod Macro {
     unsafe extern "Rust" {
         safe fn __bun_macro_context_call(
             ctx: MacroContext<'_>,
-            arena: &bun_alloc::Arena,
+            arena: &bun_ast::AstArena,
             import_record_path: &[u8],
             source_dir: &[u8],
             log: &bun_ast::Log,
@@ -154,7 +154,7 @@ pub mod Macro {
         #[inline]
         pub(crate) fn call(
             self,
-            arena: &'a bun_alloc::Arena,
+            arena: &'a bun_ast::AstArena,
             import_record_path: &[u8],
             source_dir: &[u8],
             log: &bun_ast::Log,

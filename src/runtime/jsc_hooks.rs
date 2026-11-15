@@ -1828,14 +1828,14 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             // Reuse the per-VM arena when free; allocate a
             // fresh boxed one otherwise. `give_back_arena` is cleared on the
             // ParseError path, which leaves it for the caller to inspect.
-            let arena: Box<bun_alloc::Arena> = jsc_vm
+            let arena: Box<bun_ast::AstArena> = jsc_vm
                 .module_loader
                 .transpile_source_code_arena
                 .take()
-                .unwrap_or_else(|| Box::new(bun_alloc::Arena::new()));
+                .unwrap_or_default();
             // Stable heap address (Box interior); survives the move into
             // `arena_guard` and into the VM slot on give-back.
-            let arena_ptr: *const bun_alloc::Arena = &raw const *arena;
+            let arena_ptr: *const bun_ast::AstArena = &raw const *arena;
             // Captured before `arena` moves into `arena_guard` (the Box
             // interior is address-stable across the move).
             let arena_heap: *mut bun_alloc::mimalloc::Heap = arena.heap_ptr();

@@ -1,6 +1,5 @@
 use crate::bundled_ast::Flags as AstFlags;
 use crate::mal_prelude::*;
-use bun_alloc::Arena as Bump; // bumpalo::Bump re-export (AST crate: arenas are load-bearing)
 use bun_alloc::ArenaVecExt as _;
 use bun_collections::{BoundedArray, VecExt};
 
@@ -14,7 +13,7 @@ use crate::options::Format as OutputFormat;
 use crate::{Chunk, Index, LinkerContext, Part, PartRange, WrapKind};
 
 use bun_ast::StoreRef;
-use bun_ast::{B, Binding, E, Expr, G, Ref, S, Stmt};
+use bun_ast::{AstArena, B, Binding, E, Expr, G, Ref, S, Stmt};
 use bun_js_parser::lexer as js_lexer;
 
 use super::convert_stmts_for_chunk::convert_stmts_for_chunk;
@@ -31,8 +30,8 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
     to_esm_ref: Ref,
     runtime_require_ref: Option<Ref>,
     stmts: &mut StmtList,
-    arena: &Bump,
-    temp_arena: &Bump,
+    arena: &AstArena,
+    temp_arena: &AstArena,
     module_info: Option<&mut ModuleInfo>,
 ) -> js_printer::PrintResult {
     let source_index = part_range.source_index.get() as usize;
@@ -579,7 +578,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
 
                 struct ExportHoist<'a> {
                     decls: Vec<G::Decl>,
-                    arena: &'a Bump,
+                    arena: &'a AstArena,
                     symbols: &'a bun_ast::symbol::Map,
                 }
 
@@ -894,7 +893,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
     )
 }
 
-fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
+fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &AstArena) {
     if stmts.is_empty() {
         return;
     }

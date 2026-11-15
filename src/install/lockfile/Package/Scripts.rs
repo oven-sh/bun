@@ -5,13 +5,13 @@ use bun_core::fmt::{PathSep, escape_control_chars};
 use bun_core::strings;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::Scripts as LockfileScripts;
-use bun_install::{Resolution, ResolutionTag, initialize_store};
+use bun_install::{Resolution, ResolutionTag};
 use bun_paths::resolve_path::{join_abs_string_buf_z_checked, platform};
 use bun_paths::{self, SEP_STR};
 use bun_semver::String as SemverString;
 use bun_sys::{self, Fd};
 
-use crate::bun_json::{self, Expr};
+use crate::bun_json::{self, JsonView};
 // The only concrete builder instantiation in install is the lockfile's,
 // so we take `crate::lockfile_real::StringBuilder` directly (matches Meta.rs).
 use crate::lockfile_real::{Lockfile as RealLockfile, StringBuilder as LockfileStringBuilder};
@@ -273,11 +273,11 @@ impl Scripts {
     // Generic over `bun_semver::StringBuilder`
     // so both `lockfile_real::StringBuilder` and `bun_semver::semver_string::Builder`
     // are accepted (both impl the trait).
-    pub(crate) fn parse_count<B: bun_semver::StringBuilder>(builder: &mut B, json: Expr) {
+    pub(crate) fn parse_count<B: bun_semver::StringBuilder>(builder: &mut B, json: JsonView<'_>) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
-            if scripts_prop.expr.is_object() {
+            if scripts_prop.value.is_object() {
                 for script_name in LockfileScripts::NAMES {
-                    if let Some(script) = scripts_prop.expr.get(script_name.as_bytes()) {
+                    if let Some(script) = scripts_prop.value.get(script_name.as_bytes()) {
                         // The JSON parser
                         // produces UTF-8 `EString`s, so the alloc-free literal accessor
                         // is sufficient here.
@@ -293,13 +293,13 @@ impl Scripts {
     pub(crate) fn parse_alloc<B: bun_semver::StringBuilder>(
         &mut self,
         builder: &mut B,
-        json: Expr,
+        json: JsonView<'_>,
     ) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
-            if scripts_prop.expr.is_object() {
+            if scripts_prop.value.is_object() {
                 let dsts = self.hooks_mut();
                 for (dst, script_name) in dsts.into_iter().zip(LockfileScripts::NAMES) {
-                    if let Some(script) = scripts_prop.expr.get(script_name.as_bytes()) {
+                    if let Some(script) = scripts_prop.value.get(script_name.as_bytes()) {
                         if let Some(input) = script.as_utf8_string_literal() {
                             *dst = builder.append::<SemverString>(input);
                         }
@@ -350,21 +350,16 @@ impl Scripts {
         if folder_path.len() + "/package.json".len() >= bun_paths::MAX_PATH_BYTES {
             return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
         }
-        let json_buf;
-        let parsed;
-        let json: Expr = {
-            // `defer save.restore()` — `save()` returns an RAII guard that
-            // restores the path length on Drop and derefs to the path.
-            let mut save = folder_path.save();
-            let _ = save.append(b"package.json");
+        // Restores the length of the path on drop.
+        let mut save = folder_path.save();
+        let _ = save.append(b"package.json");
 
-            json_buf = bun_sys::File::read_from(Fd::cwd(), save.slice_z())?;
-            let json_src = bun_ast::Source::init_path_string(save.slice(), json_buf.as_slice());
+        let json_buf = bun_sys::File::read_from(Fd::cwd(), save.slice_z())?;
+        let json_src = bun_ast::Source::init_path_string(save.slice(), json_buf.as_slice());
 
-            initialize_store();
-            parsed = bun_json::ParsedJson::parse_package_json(&json_src, log)?;
-            parsed.root
-        };
+        let arena = bun_ast::AstArena::new();
+        let parsed = bun_json::ParsedJson::parse_package_json(&json_src, log, &arena)?;
+        let json = parsed.root();
 
         Scripts::parse_count(string_builder, json);
         string_builder.allocate()?;
@@ -401,7 +396,7 @@ impl Scripts {
 }
 
 /// The `gypfile` property of a package.json. Only a literal `false` opts out.
-pub(crate) fn gypfile_from_json(json: Expr) -> bool {
+pub(crate) fn gypfile_from_json(json: JsonView<'_>) -> bool {
     json.get(b"gypfile").and_then(|value| value.as_bool()) != Some(false)
 }
 
@@ -417,9 +412,9 @@ fn read_gypfile(package_dir: &[u8], buf: &mut [u8]) -> bool {
     };
     let json_src = bun_ast::Source::init_path_string(path.as_bytes(), json_buf.as_slice());
     let log = bun_ast::Log::init();
-    initialize_store();
-    bun_json::ParsedJson::parse_package_json(&json_src, &log)
-        .map_or(true, |parsed| gypfile_from_json(parsed.root))
+    let arena = bun_ast::AstArena::new();
+    bun_json::ParsedJson::parse_package_json(&json_src, &log, &arena)
+        .map_or(true, |parsed| gypfile_from_json(parsed.root()))
 }
 
 // ─── Scripts.List ────────────────────────────────────────────────────────────

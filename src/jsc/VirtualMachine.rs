@@ -363,7 +363,7 @@ pub struct VirtualMachine {
 
     pub module_loader: ModuleLoader::ModuleLoader,
     /// Kept between calls of `Bun.TOML.parse` and its siblings.
-    pub text_format_arena: Cell<Option<bun_alloc::Arena>>,
+    pub text_format_arena: Cell<bun_ast::AstArena>,
 
     pub(crate) gc_controller: crate::GarbageCollectionController,
     /// The `WebWorker` whose thread this VM runs on (`None` on the main thread).
@@ -431,6 +431,8 @@ pub struct VirtualMachine {
     pub test_isolation_generation: Cell<u32>,
     pub test_isolation_state: TestIsolationState,
 
+    /// `transpiler` borrows it, so it is dropped later.
+    _transpiler_arena: bun_ptr::AliasableBox<bun_ast::AstArena>,
     /// `!Unpin`: fields being dropped still reach the VM through [`get`](Self::get).
     _pin: core::marker::PhantomPinned,
 }
@@ -3013,15 +3015,16 @@ impl VirtualMachine {
         }
 
         // Saves a `mi_heap_new`/`mi_heap_destroy` pair.
-        static MAIN_HEAP: bun_core::Once<bun_alloc::Arena> = bun_core::Once::new();
-        let heap = MAIN_HEAP.get_or_init(bun_alloc::Arena::borrowing_default);
+        let transpiler_arena = bun_ptr::AliasableBox::new(bun_ast::AstArena::borrowing_default());
+        // SAFETY: the VM drops `transpiler_arena` after `transpiler`.
+        let arena = unsafe { bun_ptr::detach_lifetime_ref(&*transpiler_arena) };
 
         let mut args = core::mem::take(&mut opts.transform_options);
         let preserve_symlinks = args.preserve_symlinks.unwrap_or(false);
         args.write = Some(false);
         args.target = Some(bun_options_types::schema::api::Target::Bun);
         let env_loader = opts.env_loader.map(NonNull::as_ptr);
-        let transpiler = Transpiler::init(heap, log, args, env_loader).inspect_err(|_| {
+        let transpiler = Transpiler::init(arena, log, args, env_loader).inspect_err(|_| {
             bun_ast::expr::data::Store::deinit();
             bun_ast::stmt::data::Store::deinit();
         })?;
@@ -3128,7 +3131,7 @@ impl VirtualMachine {
             timers_ran_after_error: Cell::new(false),
             aggressive_garbage_collection: Default::default(),
             module_loader: Default::default(),
-            text_format_arena: Cell::new(None),
+            text_format_arena: Cell::default(),
             gc_controller: Default::default(),
             worker: Cell::new(None),
             child_workers: JsCell::default(),
@@ -3156,6 +3159,7 @@ impl VirtualMachine {
             test_isolation_enabled: Cell::new(false),
             test_isolation_generation: Cell::new(0),
             test_isolation_state: Default::default(),
+            _transpiler_arena: transpiler_arena,
             _pin: core::marker::PhantomPinned,
         };
         // SAFETY: a fresh allocation for a `VirtualMachine`, which lasts as `get` says.

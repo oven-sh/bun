@@ -11,10 +11,10 @@ use crate::generated_bindgen::transpiler::{
 };
 use crate::node::types::Buffer;
 use crate::node::{Encoding, StringOrBuffer, ThreadIsolated};
-use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
+use bun_alloc::ArenaVec;
 use bun_ast::Expr;
 use bun_ast::Loader;
-use bun_ast::{ImportRecord, ImportRecordFlags};
+use bun_ast::{AstArena, ImportRecord, ImportRecordFlags};
 use bun_bundler::options::{self, PackagesOption, SourceMapOption};
 use bun_bundler::transpiler::{MacroJSCtx, MacroLoadStates, ParseOptions, ParseResult};
 use bun_bundler::{self as Transpiler};
@@ -47,7 +47,7 @@ pub(crate) struct JSTranspiler {
     pub(crate) scan_pass_result: Cell<ScanPassResult<'static>>,
     pub(crate) buffer_writer: Cell<Option<JSPrinter::BufferWriter>>,
     /// Bulk-frees the config strings.
-    _arena: bun_ptr::AliasableBox<Arena>,
+    _arena: bun_ptr::AliasableBox<AstArena>,
     log_level: bun_ast::Level,
     pub(crate) ref_count: bun_ptr::RefCount,
 }
@@ -157,7 +157,7 @@ impl Config {
         &mut self,
         global: &JSGlobalObject,
         object: Option<&TranspilerOptions<'_>>,
-        arena: &Arena,
+        arena: &AstArena,
         log: &bun_ast::Log,
     ) -> JsResult<()> {
         let Some(object) = object else {
@@ -275,16 +275,10 @@ impl Config {
                 self.tsconfig_buf = out.to_owned_slice().into();
 
                 // TODO: JSC -> Ast conversion
-                let parsed = VirtualMachine::get().transpiler.with_mut(|t| {
-                    TSConfigJSON::parse(
-                        log,
-                        &bun_ast::Source::init_path_string(
-                            b"tsconfig.json",
-                            &self.tsconfig_buf[..],
-                        ),
-                        &mut t.resolver.caches.json,
-                    )
-                });
+                let parsed = TSConfigJSON::parse(
+                    log,
+                    &bun_ast::Source::init_path_string(b"tsconfig.json", &self.tsconfig_buf[..]),
+                );
                 if let Ok(Some(parsed_tsconfig)) = parsed {
                     self.tsconfig = Some(parsed_tsconfig);
                 }
@@ -324,14 +318,11 @@ impl Config {
                 self.macros_buf = out.to_owned_slice().into();
                 let source =
                     bun_ast::Source::init_path_string(b"macros.json", &self.macros_buf[..]);
-                let parsed = VirtualMachine::get().transpiler.with_mut(|t| {
-                    t.resolver.caches.json.parse_json(
-                        log,
-                        &source,
-                        bun_resolver::tsconfig_json::JsonMode::Json,
-                    )
-                });
-                let Ok(Some(json)) = parsed else {
+                let json_arena = AstArena::new();
+                let temp_log = bun_ast::Log::init();
+                let parsed = bun_parsers::json::parse_utf8(&source, &temp_log, &json_arena);
+                temp_log.append_to(log);
+                let Ok(json) = parsed else {
                     break 'macros;
                 };
                 self.macro_map = PackageJSON::parse_macros_json(json, log, &source);
@@ -683,7 +674,7 @@ impl TransformTask {
         let tsconfig: Option<&TSConfigJSON> =
             self.tsconfig.map(|p| &*unsafe { p.under_ticket(vm) });
 
-        let arena = Arena::new();
+        let arena = AstArena::new();
 
         let mut transpiler: core::mem::ManuallyDrop<Transpiler::Transpiler<'_>> =
             self.transpiler.take().expect("a job runs once");
@@ -816,7 +807,7 @@ impl TransformTask {
 fn export_replacement_value(
     value: JSValue,
     global: &JSGlobalObject,
-    arena: &Arena,
+    arena: &AstArena,
 ) -> JsResult<Option<bun_ast::Expr>> {
     if value.is_boolean() {
         return Ok(Some(Expr {
@@ -856,7 +847,6 @@ fn export_replacement_value(
         // `E::EString::init` erases the borrow to `'static` per the AST
         // crate's `Str` convention (see ast/E.rs).
         let data = arena.alloc_slice_copy(utf8.slice());
-        // The result outlives every parse, so don't allocate it in the thread-local store.
         return Ok(Some(Expr::allocate(
             arena,
             bun_ast::E::EString::init(data),
@@ -873,7 +863,7 @@ impl JSTranspiler {
         config_arg: Option<&TranspilerOptions<'_>>,
     ) -> JsResult<*mut JSTranspiler> {
         let global = cx.global();
-        let arena = bun_ptr::AliasableBox::new(Arena::new());
+        let arena = bun_ptr::AliasableBox::new(AstArena::new());
         // SAFETY: `'static` for `Transpiler<'static>`. `config` and `transpiler` drop before
         // `arena`, here and as fields of the `JSTranspiler` that all three move into.
         let arena_ref = unsafe { bun_ptr::detach_lifetime_ref(&*arena) };
@@ -970,7 +960,7 @@ impl JSTranspiler {
     fn get_parse_result<'p>(
         &'p self,
         global: &JSGlobalObject,
-        arena: &'p Arena,
+        arena: &'p AstArena,
         code: &'p [u8],
         loader: Option<Loader>,
         macro_js_ctx: MacroJSCtx,
@@ -988,7 +978,7 @@ impl JSTranspiler {
         // (whose AST may hold slices into the source). A stack-local `Vec` would drop at
         // the end of this fn and leave dangling references.
         let processed_code: &'p [u8] = if config.repl_mode && is_likely_object_literal(code) {
-            let mut buf = ArenaVec::<u8>::with_capacity_in(code.len() + 2, arena);
+            let mut buf = ArenaVec::<u8>::with_capacity_in(code.len() + 2, arena.heap());
             buf.push(b'(');
             buf.extend_from_slice(code);
             buf.push(b')');
@@ -1067,7 +1057,7 @@ impl JSTranspiler {
 
         let loader: Option<Loader> = loader_from_js(global, loader_arg.to_js())?;
 
-        let arena = Arena::new();
+        let arena = AstArena::new();
         let mut log = bun_ast::Log::init();
 
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
@@ -1139,7 +1129,7 @@ impl JSTranspiler {
     ) -> JsResult<JSValue> {
         jsc::mark_binding();
 
-        let arena = Arena::new();
+        let arena = AstArena::new();
         let global = cx.global();
         let code_holder = code_from_js(global, code_arg)?;
         let code = code_holder.slice();
@@ -1307,7 +1297,7 @@ impl JSTranspiler {
             )));
         }
 
-        let arena = Arena::new();
+        let arena = AstArena::new();
         let log = bun_ast::Log::init();
 
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);

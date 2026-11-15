@@ -1,7 +1,7 @@
 //! yarn 2+ ("berry") `yarn.lock` migration. A pin bun cannot keep fails it, with the reason logged.
 
 use bun_alloc::AllocError;
-use bun_ast::{E, Expr, ExprData};
+use bun_ast::{AstArena, E, Expr, ExprData};
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
 use bun_semver as semver;
@@ -53,7 +53,7 @@ fn shown(text: &[u8]) -> impl core::fmt::Display + '_ {
 
 /// Yarn reads every scalar as a string, but Bun's parser gives plain scalars a type (`2.10` becomes
 /// the number 2.1). This returns the original text.
-pub(crate) fn scalar_text(source: &[u8], expr: &Expr) -> Option<&'static [u8]> {
+pub(crate) fn scalar_text<'s>(source: &'s [u8], expr: &Expr) -> Option<&'s [u8]> {
     if let Some(s) = as_str(expr) {
         return Some(s);
     }
@@ -70,16 +70,16 @@ pub(crate) fn scalar_text(source: &[u8], expr: &Expr) -> Option<&'static [u8]> {
         && text
             .iter()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.' | b'~'));
-    plain.then(|| bun_ast::data_store_dupe_str(text))
+    plain.then_some(text)
 }
 
 /// Returns a key that appears twice in a mapping. Yarn keeps the last value, and `Expr::get`
 /// returns the first.
-fn duplicate_key(
-    source: &[u8],
+fn duplicate_key<'s>(
+    source: &'s [u8],
     expr: &Expr,
     depth: u8,
-) -> Result<Option<&'static [u8]>, AllocError> {
+) -> Result<Option<&'s [u8]>, AllocError> {
     let mut seen: StringArrayHashMap<()> = StringArrayHashMap::new();
     for (key, value) in props(expr) {
         if let Some(key) = scalar_text(source, key)
@@ -320,9 +320,11 @@ fn read_yarnrc(log: &bun_ast::Log, manager: &PackageManager) -> Result<YarnRc, E
             *range = Box::from(strip_npm_protocol(range));
         }
     }
-    for (key, rule) in props(&extensions_object(&out.extensions)) {
+    let arena = AstArena::new();
+    for (key, rule) in props(&extensions_object(&arena, &out.extensions)) {
         let key = as_str(key).unwrap_or(b"");
-        if let Some(problem) = package_extensions::rule_problem(key, rule) {
+        if let Some(problem) = package_extensions::rule_problem(key, bun_ast::JsonView::from(rule))
+        {
             bail!(
                 log,
                 "packageExtensions \"{}\" in .yarnrc.yml: {}",
@@ -350,7 +352,7 @@ fn read_yarnrc_file(
         Err(_) => bail!(log, "could not read {}", shown(&path)),
     };
     let source = bun_ast::Source::init_path_string(path.as_slice(), data.as_slice());
-    let arena = bun_alloc::Arena::new();
+    let arena = AstArena::new();
     // The parser's messages point into `path` and `data`, which `log` outlives.
     let parse_log = bun_ast::Log::init();
     let Ok(root) = bun_parsers::yaml::YAML::parse(
@@ -600,7 +602,6 @@ pub(crate) fn migrate_yarn_berry_lockfile(
     data: &[u8],
 ) -> Result<LoadResult, Error> {
     this.init_empty();
-    crate::initialize_store();
     bun_core::analytics::Features::yarn_migration_inc(1);
 
     let silent = manager.options.log_level.is_silent();
@@ -611,10 +612,8 @@ pub(crate) fn migrate_yarn_berry_lockfile(
             "yarn.lock has a \"<<\" merge key, which yarn and bun read differently"
         );
     }
-    // The nodes are allocated in `arena`, because later package.json reads reset the thread-local
-    // `Store`.
     let source = bun_ast::Source::init_path_string(b"yarn.lock", data);
-    let arena = bun_alloc::Arena::new();
+    let arena = AstArena::new();
     let mut allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
     let parsed = {
         let _scope = allocator.enter();
@@ -864,7 +863,11 @@ pub(crate) fn migrate_yarn_berry_lockfile(
         pkg.meta.id = 0;
         pkg.resolution = Resolution::init_root();
         if let Some(bin) = root_manifest.get(b"bin") {
-            pkg.bin = Bin::parse_append(&bin, &mut sbuf!(this), &mut this.buffers.extern_strings)?;
+            pkg.bin = Bin::parse_append(
+                bun_ast::JsonView::from(&bin),
+                &mut sbuf!(this),
+                &mut this.buffers.extern_strings,
+            )?;
         }
         let hash = pkg.name_hash;
         this.packages.append(pkg)?;
@@ -999,7 +1002,11 @@ pub(crate) fn migrate_yarn_berry_lockfile(
         let added =
             append_entry_dependencies(this, log, &mut pkg, data, name, &entry_expr, &extended)?;
         if let Some(bin) = entry_expr.get(b"bin") {
-            pkg.bin = Bin::parse_append(&bin, &mut sbuf!(this), &mut this.buffers.extern_strings)?;
+            pkg.bin = Bin::parse_append(
+                bun_ast::JsonView::from(&bin),
+                &mut sbuf!(this),
+                &mut this.buffers.extern_strings,
+            )?;
         }
         if let Some(cond) = get_str(&entry_expr, b"conditions") {
             (pkg.meta.os, pkg.meta.arch, pkg.meta.libc) = parse_conditions(cond);
@@ -1460,11 +1467,7 @@ pub(crate) fn migrate_yarn_berry_lockfile(
     }
     // This comes after the `patch:` values are rewritten, so that the next install doesn't see them
     // as changed.
-    let keep_store = GetJsonOptions {
-        init_reset_store: false,
-        ..Default::default()
-    };
-    if let Ok(root_json) = package_json(manager, log, root_json_path.slice(), keep_store) {
+    if let Ok(root_json) = package_json(manager, log, root_json_path.slice(), Default::default()) {
         let (source, json) = (root_json.source.clone(), root_json.root);
         crate::migration::parse_root_overrides(this, manager, log, &source, json, &workspace_map)?;
     }
@@ -1685,7 +1688,7 @@ fn resolution_target_entry(
 }
 
 /// Returns the names under `dependenciesMeta` or `peerDependenciesMeta` that have `optional: true`.
-pub(crate) fn optional_names(source: &[u8], entry: &Expr, meta_key: &[u8]) -> Vec<&'static [u8]> {
+pub(crate) fn optional_names<'s>(source: &'s [u8], entry: &Expr, meta_key: &[u8]) -> Vec<&'s [u8]> {
     props(&entry.get(meta_key).unwrap_or_default())
         .filter(|(_, v)| v.get(b"optional").and_then(|e| e.as_bool()) == Some(true))
         .filter_map(|(k, _)| scalar_text(source, k))
@@ -1903,7 +1906,7 @@ fn append_manifest_dependencies(
     ] {
         for (k, v) in props(&manifest.get(group).unwrap_or_default()) {
             let Some(name) = as_str(k) else { continue };
-            let mut spec = as_str(v).unwrap_or(b"");
+            let spec = as_str(v).unwrap_or(b"");
             if being_added(name, spec) {
                 continue;
             }
@@ -1936,12 +1939,17 @@ fn append_manifest_dependencies(
                 }
             }
             // package.json is rewritten to match after migration.
-            if let Some(new_spec) = yarn_only_range_for_bun(name, spec) {
-                add_rewrite(rewrites, name, spec, &new_spec);
-                // Interned, because the dependency's literal points at it.
-                spec = bun_ast::data_store_dupe_str(&new_spec);
+            let new_spec = yarn_only_range_for_bun(name, spec);
+            if let Some(new_spec) = &new_spec {
+                add_rewrite(rewrites, name, spec, new_spec);
             }
-            append_dependency(this, log, name, spec, behavior)?;
+            append_dependency(
+                this,
+                log,
+                name,
+                new_spec.as_deref().unwrap_or(spec),
+                behavior,
+            )?;
             if let Some(existing) = replaces {
                 let dep = this.buffers.dependencies.pop().expect("just appended");
                 this.buffers.dependencies[existing] = dep;
@@ -2055,32 +2063,36 @@ fn append_dependency(
     Ok(())
 }
 
-/// Interned into the store that backs the cached package.json tree.
 #[inline(never)]
-fn string_expr(s: &[u8]) -> Expr {
-    Expr::init(
-        E::EString::init(bun_ast::data_store_dupe_str(s)),
+fn string_expr(bump: &AstArena, s: &[u8]) -> Expr {
+    Expr::allocate(
+        bump,
+        E::EString::init(bump.alloc_slice_copy(s)),
         bun_ast::Loc::EMPTY,
     )
 }
 
-fn object_expr<'a>(entries: impl IntoIterator<Item = (&'a [u8], Expr)>) -> Expr {
-    object_expr_from(&mut entries.into_iter())
+fn object_expr<'a>(bump: &AstArena, entries: impl IntoIterator<Item = (&'a [u8], Expr)>) -> Expr {
+    object_expr_from(bump, &mut entries.into_iter())
 }
 
-fn object_expr_from<'a>(entries: &mut dyn Iterator<Item = (&'a [u8], Expr)>) -> Expr {
+fn object_expr_from<'a>(
+    bump: &AstArena,
+    entries: &mut dyn Iterator<Item = (&'a [u8], Expr)>,
+) -> Expr {
     let mut properties = bun_alloc::AstAlloc::vec();
     for (key, value) in entries {
         VecExt::append(
             &mut properties,
             bun_ast::G::Property {
-                key: Some(string_expr(key)),
+                key: Some(string_expr(bump, key)),
                 value: Some(value),
                 ..Default::default()
             },
         );
     }
-    Expr::init(
+    Expr::allocate(
+        bump,
         E::Object {
             properties,
             ..Default::default()
@@ -2089,36 +2101,48 @@ fn object_expr_from<'a>(entries: &mut dyn Iterator<Item = (&'a [u8], Expr)>) -> 
     )
 }
 
-fn sorted_object(map: &StringArrayHashMap<Box<[u8]>>) -> Expr {
+fn sorted_object(bump: &AstArena, map: &StringArrayHashMap<Box<[u8]>>) -> Expr {
     let mut pairs: Vec<(&[u8], &[u8])> = map.iter().map(|(k, v)| (&**k, &**v)).collect();
     pairs.sort_unstable();
-    object_expr(pairs.into_iter().map(|(k, v)| (k, string_expr(v))))
+    object_expr(
+        bump,
+        pairs.into_iter().map(|(k, v)| (k, string_expr(bump, v))),
+    )
 }
 
 /// `packageExtensions`, in the shape .yarnrc.yml has them.
-fn extensions_object(extensions: &[PackageExtension]) -> Expr {
-    object_expr(extensions.iter().map(|extension| {
-        let mut fields: Vec<(&[u8], Expr)> = Vec::new();
-        for (group, ranges) in [
-            (b"dependencies".as_slice(), &extension.dependencies),
-            (b"peerDependencies".as_slice(), &extension.peer_dependencies),
-        ] {
-            if !ranges.is_empty() {
-                let ranges = ranges
-                    .iter()
-                    .map(|(name, range)| (&**name, string_expr(range)));
-                fields.push((group, object_expr(ranges)));
+fn extensions_object(bump: &AstArena, extensions: &[PackageExtension]) -> Expr {
+    object_expr(
+        bump,
+        extensions.iter().map(|extension| {
+            let mut fields: Vec<(&[u8], Expr)> = Vec::new();
+            for (group, ranges) in [
+                (b"dependencies".as_slice(), &extension.dependencies),
+                (b"peerDependencies".as_slice(), &extension.peer_dependencies),
+            ] {
+                if !ranges.is_empty() {
+                    let ranges = ranges
+                        .iter()
+                        .map(|(name, range)| (&**name, string_expr(bump, range)));
+                    fields.push((group, object_expr(bump, ranges)));
+                }
             }
-        }
-        if !extension.optional_peers.is_empty() {
-            let meta = object_expr(extension.optional_peers.iter().map(|name| {
-                let optional = Expr::init(E::Boolean { value: true }, bun_ast::Loc::EMPTY);
-                (&**name, object_expr([(b"optional".as_slice(), optional)]))
-            }));
-            fields.push((b"peerDependenciesMeta".as_slice(), meta));
-        }
-        (&*extension.key, object_expr(fields))
-    }))
+            if !extension.optional_peers.is_empty() {
+                let meta = object_expr(
+                    bump,
+                    extension.optional_peers.iter().map(|name| {
+                        let optional = Expr::init(E::Boolean { value: true }, bun_ast::Loc::EMPTY);
+                        (
+                            &**name,
+                            object_expr(bump, [(b"optional".as_slice(), optional)]),
+                        )
+                    }),
+                );
+                fields.push((b"peerDependenciesMeta".as_slice(), meta));
+            }
+            (&*extension.key, object_expr(bump, fields))
+        }),
+    )
 }
 
 /// Leaves existing keys alone. Edits the cached tree and returns what changed.
@@ -2139,7 +2163,6 @@ fn edit_package_json(
     }
     let options = GetJsonOptions {
         guess_indentation: true,
-        init_reset_store: false,
     };
     let Ok(entry) = package_json(manager, log, abs_path, options) else {
         return Ok(None);
@@ -2148,7 +2171,7 @@ fn edit_package_json(
     if !json.is_object() {
         return Ok(None);
     }
-    let bump = bun_alloc::Arena::new();
+    let bump = AstArena::new();
     let mut changed: Vec<&'static str> = Vec::new();
 
     let mut any = false;
@@ -2180,7 +2203,7 @@ fn edit_package_json(
             if let Some((_, _, new_spec)) =
                 (rewrites.iter()).find(|(of, from, _)| &**of == name && &**from == value)
             {
-                prop.value = Some(string_expr(new_spec));
+                prop.value = Some(string_expr(&bump, new_spec));
                 any = true;
             }
         }
@@ -2192,13 +2215,13 @@ fn edit_package_json(
     if !patched.is_empty() {
         // Keep what the user already declared for Bun, and add Yarn's entries to it.
         let existing = json.get(b"patchedDependencies");
-        let mut patches = existing.unwrap_or_else(|| object_expr([]));
+        let mut patches = existing.unwrap_or_else(|| object_expr(&bump, []));
         if patches.is_object() {
             let obj = e_object_mut(&mut patches);
             let mut any = false;
             for (key, path) in patched {
                 if obj.get(key).is_none() {
-                    obj.put(&bump, bun_ast::data_store_dupe_str(key), string_expr(path))?;
+                    obj.put(&bump, key, string_expr(&bump, path))?;
                     any = true;
                 }
             }
@@ -2232,6 +2255,7 @@ fn edit_package_json(
             let mut workspaces = match json.get(b"workspaces") {
                 Some(existing) if existing.is_object() => existing,
                 existing => object_expr(
+                    &bump,
                     existing
                         .filter(|e| e.is_array())
                         .map(|packages| (b"packages".as_slice(), packages)),
@@ -2239,14 +2263,14 @@ fn edit_package_json(
             };
             let ws_obj = e_object_mut(&mut workspaces);
             if let (true, Some(default)) = (want_default, default) {
-                ws_obj.put(&bump, b"catalog", sorted_object(default))?;
+                ws_obj.put(&bump, b"catalog", sorted_object(&bump, default))?;
             }
             if want_named {
                 let groups = named.into_iter().map(|group| {
                     let ranges = catalogs.get(group).expect("listed above");
-                    (group, sorted_object(ranges))
+                    (group, sorted_object(&bump, ranges))
                 });
-                ws_obj.put(&bump, b"catalogs", object_expr(groups))?;
+                ws_obj.put(&bump, b"catalogs", object_expr(&bump, groups))?;
             }
             e_object_mut(&mut json).put(&bump, b"workspaces", workspaces)?;
             changed.push("copied .yarnrc.yml catalogs to workspaces");
@@ -2254,14 +2278,18 @@ fn edit_package_json(
     }
 
     if !extensions.is_empty() && json.get(b"packageExtensions").is_none() {
-        e_object_mut(&mut json).put(&bump, b"packageExtensions", extensions_object(extensions))?;
+        e_object_mut(&mut json).put(
+            &bump,
+            b"packageExtensions",
+            extensions_object(&bump, extensions),
+        )?;
         changed.push("copied .yarnrc.yml packageExtensions to packageExtensions");
     }
 
     if changed.is_empty() {
         return Ok(None);
     }
-    // The spliced-in nodes live in `bump` and the AST store: the cache entry must own its tree.
+    // The spliced-in nodes live in `bump`: the cache entry must own its tree.
     save_entry(entry, json, log);
     Ok(Some(changed))
 }

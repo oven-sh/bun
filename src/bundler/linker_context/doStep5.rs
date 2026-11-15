@@ -1,7 +1,6 @@
 use crate::mal_prelude::*;
 use core::mem::MaybeUninit;
 
-use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
 use bun_ast::Loc;
 use bun_collections::{HashMap, VecExt};
@@ -10,8 +9,8 @@ use bun_core::strings;
 use crate::bundled_ast::{Flags as AstFlags, NamedImports};
 use bun_ast::symbol::Use as SymbolUse;
 use bun_ast::{
-    Binding, DeclaredSymbol, DeclaredSymbolList, Dependency, E, Expr, G, Part, PartSymbolUseMap,
-    Ref, S, Stmt,
+    AstArena, Binding, DeclaredSymbol, DeclaredSymbolList, Dependency, E, Expr, G, Part,
+    PartSymbolUseMap, Ref, S, Stmt,
 };
 
 use crate::options::Format;
@@ -42,7 +41,7 @@ impl LinkerContext<'_, '_> {
         let worker = ThreadPool::Worker::get(c.bundle);
 
         // we must use this arena here
-        let arena: &Bump = worker.arena();
+        let arena: &AstArena = worker.arena();
 
         let (ast, meta) = (c.graph.ast.split_raw(), c.graph.meta.split_raw());
         // SAFETY: `id < meta.len() == ast.len()`, and these rows are this call's alone. These five
@@ -326,7 +325,7 @@ impl LinkerContext<'_, '_> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn create_exports_for_file(
         &self,
-        arena: &Bump,
+        arena: &AstArena,
         id: u32,
         resolved_exports: &ResolvedExports,
         imports_to_bind: &[RefImportData],

@@ -491,8 +491,7 @@ impl<'a> Resolver<'a> {
     /// Per-worker constructor — replaces the bundler's prior bitwise
     /// copy-from-`from` for the resolver
     /// portion. Every `Copy` / raw-pointer field is copied from `from`; the
-    /// `watcher` is cloned, and the per-worker `caches` (which drop the
-    /// `Json` cache's `MimallocArena`) and `debug_logs`/`timer` are freshly
+    /// `watcher` is cloned, and the per-worker `caches` and `debug_logs`/`timer` are freshly
     /// constructed so nothing the parent owns is aliased into the worker.
     ///
     /// `opts` and `log` are supplied by the caller (the worker projects a
@@ -4188,7 +4187,7 @@ impl<'a> Resolver<'a> {
 
         let unread_log = bun_ast::Log::init();
         let log = self.log().unwrap_or(&unread_log);
-        let mut result = match TSConfigJSON::parse(log, &source, &mut self.caches.json)? {
+        let mut result = match TSConfigJSON::parse(log, &source)? {
             Some(r) => r,
             None => return Ok(None),
         };

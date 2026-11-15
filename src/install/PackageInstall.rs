@@ -18,7 +18,7 @@ use crate::package_installer::NodeModulesFolder;
 use crate::package_manager::{INBOX, THREAD_POOL};
 use crate::{
     BuntagHashBuf, DependencyID, Integrity, Lockfile, Npm, PackageID, PackageManager, Resolution,
-    TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution,
+    TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make, resolution,
 };
 
 bun_output::declare_scope!(install, hidden);
@@ -1302,8 +1302,6 @@ impl<'a> PackageInstall<'a> {
         }
 
         let log = bun_ast::Log::init();
-
-        initialize_store();
 
         let mut package_json_checker = bun_json::PackageJSONVersionChecker::init(source, &log);
         if package_json_checker.parse().is_err() || package_json_checker.has_errors() {

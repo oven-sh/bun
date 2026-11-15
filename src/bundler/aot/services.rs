@@ -9,7 +9,7 @@ use bun_aot::load::source_provider::{
     PathsOfProgram, RefusedText, Resolution, ResolveRequest, SourceFile,
 };
 use bun_aot::{SourceProvider, WithoutServices};
-use bun_ast::{ASTMemoryAllocator, Loader, Log, Msg, SideEffects};
+use bun_ast::{ASTMemoryAllocator, AstArena, Loader, Log, Msg, SideEffects};
 use bun_core::ZBox;
 use bun_js_parser::{Define, ExpandedImportMetaGlob};
 use bun_paths::resolve_path::posix_to_platform_in_place;
@@ -65,8 +65,8 @@ impl BuildContext {
     }
 }
 
-pub(crate) fn with_ast_scope<R>(work: impl FnOnce(&Arena) -> R) -> R {
-    let arena = Arena::new();
+pub(crate) fn with_ast_scope<R>(work: impl FnOnce(&AstArena) -> R) -> R {
+    let arena = AstArena::new();
     let mut store = ASTMemoryAllocator::borrowing(&arena);
     let _scope = store.enter();
     work(&arena)
@@ -184,7 +184,7 @@ pub(crate) fn with_test_context<R>(
     OUTPUT.call_once(bun_core::output::stdio::init);
     let log = Log::init();
     let event_loop = bun_event_loop::AnyEventLoop::default();
-    let arena = Arena::new();
+    let arena = AstArena::new();
     let transform_options = crate::options::TransformOptions {
         absolute_working_dir: Some(Box::from(&b"/project"[..])),
         target: Some(bun_options_types::schema::api::Target::Bun),

@@ -1,5 +1,6 @@
 use crate::collections::FxHashMap as HashMap;
 use crate::collections::FxHashSet as HashSet;
+use crate::collections::IdBitSet;
 
 use crate::diagnostics::CompilerDiagnostic;
 use crate::diagnostics::CompilerError;
@@ -121,6 +122,9 @@ pub struct Environment {
     // identifiers on first use, then updated with each generated name.
     // Matches Babel's generateUid behavior of checking hasBinding/hasReference.
     uid_known_names: Option<HashSet<StoreStr>>,
+
+    /// Not in upstream: the MethodCall properties that phase 3 named, not those of facebook/react#34072.
+    pub(crate) explicit_receiver_calls: IdBitSet<IdentifierId>,
 }
 
 /// An outlined function entry, stored on Environment during compilation.
@@ -218,6 +222,7 @@ impl Environment {
             default_mutating_hook: None,
             outlined_functions: AstAlloc::vec(),
             uid_known_names: None,
+            explicit_receiver_calls: IdBitSet::new(),
             config,
         }
     }

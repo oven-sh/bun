@@ -149,6 +149,11 @@ pub trait Host {
         self.new_generated(name)
     }
 
+    /// Whether no scope from the body of the function outward binds `name`. The lookup records no use.
+    fn is_unbound_global(&mut self, _name: &'static [u8]) -> bool {
+        false
+    }
+
     fn record_usage(&mut self, ref_: Ref);
     fn add_import_record(&mut self, path: &[u8], kind: ImportKind) -> (u32, Ref);
 }

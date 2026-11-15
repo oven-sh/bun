@@ -177,6 +177,18 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         p.find_symbol(bun_ast::Loc::EMPTY, name).expect("oom").r#ref
     }
 
+    fn is_unbound_global(&mut self, name: &'static [u8]) -> bool {
+        let p = &mut *self.p;
+        let Ok(found) = p.find_symbol_with_record_usage::<false>(bun_ast::Loc::EMPTY, name) else {
+            return false;
+        };
+        // No symbol has the name yet, or only the one of a global.
+        !found.is_inside_with_scope
+            && (found.r#ref.is_empty()
+                || p.symbols[found.r#ref.inner_index() as usize].kind
+                    == js_ast::symbol::Kind::Unbound)
+    }
+
     fn record_usage(&mut self, ref_: js_ast::Ref) {
         self.p.record_usage(ref_);
     }

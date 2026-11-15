@@ -963,7 +963,7 @@ impl QuicEndpoint {
             on_drain,
             on_close,
             on_recv_error,
-            this.bind_config.host.as_ptr().cast(),
+            bun_core::ZStr::from_slice_with_nul(&this.bind_config.host),
             this.bind_config.port,
             0,
             Some(&mut err),

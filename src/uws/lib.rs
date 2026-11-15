@@ -141,14 +141,8 @@ mod c {
 }
 
 pub fn get_default_ciphers() -> &'static ZStr {
-    // SAFETY: us_get_default_ciphers returns a static NUL-terminated string;
-    // bun_core::ffi::cstr computes the length, ZStr::from_raw rebuilds the
-    // length-carrying slice (excluding the NUL).
-    unsafe {
-        let p = c::us_get_default_ciphers();
-        let len = bun_core::ffi::cstr(p).to_bytes().len();
-        ZStr::from_raw(p.cast::<u8>(), len)
-    }
+    // SAFETY: us_get_default_ciphers returns a static NUL-terminated string.
+    unsafe { ZStr::from_c_ptr(c::us_get_default_ciphers()) }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -349,7 +349,7 @@ macro_rules! ensure_node_prefix {
         } else {
             ::core::concat!("node:", $path, "\0").as_bytes()
         };
-        ZStr::from_static(__B)
+        ZStr::from_slice_with_nul(__B)
     }};
 }
 

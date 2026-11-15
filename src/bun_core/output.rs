@@ -1173,7 +1173,7 @@ impl ScopedLogger {
         let mut env_key = vec![0u8; key_len + 1]; // +1 NUL
         env_key[..prefix.len()].copy_from_slice(prefix);
         env_key[prefix.len()..key_len].copy_from_slice(tag);
-        let key = crate::ZStr::from_buf(&env_key, key_len);
+        let key = crate::ZStr::from_slice_with_nul(&env_key);
 
         if let Some(val) = crate::getenv_z_any_case(key) {
             self.really_disable.store(val == b"0", Ordering::Relaxed);

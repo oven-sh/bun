@@ -512,10 +512,8 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 load_path_buf[..source_filename.len()].copy_from_slice(source_filename);
                 load_path_buf[source_filename.len()..source_filename.len() + 4]
                     .copy_from_slice(b".map");
-                load_path_buf[source_filename.len() + 4] = 0;
-                // SAFETY: byte at `len` was just set to NUL; buffer outlives `load_path`.
                 let load_path =
-                    bun_core::ZStr::from_buf(&load_path_buf[..], source_filename.len() + 4);
+                    bun_core::ZStr::nul_terminate(&mut load_path_buf, source_filename.len() + 4);
 
                 // `bun_sys::File::read_from` returns an owned `Vec<u8>`,
                 // freed on scope exit by `Vec`'s Drop.

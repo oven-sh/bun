@@ -20,9 +20,9 @@ use crate::webcore::body::Value as BodyValue;
 use crate::webcore::headers_ref::any_blob_content_type;
 use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct StaticRoute {
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     /// The ref that in-flight responses (whose uws userdata is this route)
     /// collectively hold: taken by the first, released with the last in
     /// `on_response_complete`.
@@ -63,7 +63,7 @@ impl StaticRoute {
         status_code: u16,
     ) -> StaticRoute {
         StaticRoute {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             pending_ref: Cell::new(None),
             pending_responses: Cell::new(0),
             cached_blob_size: blob.size(),
@@ -144,7 +144,7 @@ impl StaticRoute {
         self.blob = AnyBlob::Blob(blob);
 
         RefPtr::new(StaticRoute {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             pending_ref: Cell::new(None),
             pending_responses: Cell::new(0),
             blob: AnyBlob::Blob(duped),
@@ -208,10 +208,6 @@ impl StaticRoute {
                         let blob = body_value.use_();
                         blob.global_this
                             .set(std::ptr::from_ref::<JSGlobalObject>(global_this));
-                        debug_assert!(
-                            !blob.is_heap_allocated(),
-                            "expected blob not to be heap-allocated",
-                        );
                         *body_value = BodyValue::Blob(blob.dupe());
 
                         break 'brk AnyBlob::Blob(blob);

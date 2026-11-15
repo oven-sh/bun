@@ -31,9 +31,9 @@ bun_core::declare_scope!(FileSink, visible);
 // ───────────────────────────────────────────────────────────────────────────
 
 // Shared borrows only. A method may release every ref but the one its caller borrows from.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct FileSink {
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     pub(crate) writer: StreamingWriter,
     /// Held while a write is in flight.
     #[cfg(windows)]
@@ -81,11 +81,6 @@ pub(crate) struct FileSink {
     /// It is a test file's: closed once the file's realm is retired, unless something is still unwritten.
     closes_with_test_file: Cell<bool>,
 }
-
-// `bun.ptr.RefCount(FileSink, "ref_count", deinit, .{})` — intrusive single-thread
-// refcount derived via #[derive(CellRefCounted)] above. `*FileSink` crosses FFI
-// (JSSink wrapper, `@fieldParentPtr`, `b.promisePtr`), so this stays intrusive
-// rather than `Rc<T>`.
 
 /// Count of live native FileSink instances. Incremented at allocation,
 /// decremented in `deinit`. Exposed to tests via `bun:internal-for-testing`
@@ -1322,7 +1317,7 @@ impl FileSink {
     fn new(event_loop_handle: EventLoopHandle, fd: Fd) -> FileSink {
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
         FileSink {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             writer: StreamingWriter::default(),
             #[cfg(windows)]
             inflight_write_ref: Cell::new(None),
@@ -1382,7 +1377,7 @@ impl bun_event_loop::Taskable for FileSink {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FlushPendingFileSinkTask;
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: the ref that was queued with the task.
-        drop(unsafe { RefPtr::from_raw(this) });
+        unsafe { RefPtr::decrement_strong_count(this) };
     }
     /// Flushes what the sink has buffered.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {

@@ -422,7 +422,7 @@ impl DevServer {
             && let Some(current_bundle) = &mut self.current_bundle
         {
             let deferred = bun_ptr::RefPtr::new(DeferredScriptRequest {
-                ref_count: ::core::cell::Cell::new(1),
+                ref_count: bun_ptr::RefCount::init(),
                 route_bundle_index: bundle_index,
                 generation,
                 response: ::core::cell::Cell::new(Some(ResponseAndMethod {

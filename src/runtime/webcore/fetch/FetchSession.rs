@@ -160,7 +160,7 @@ pub(crate) fn parse_proxy(global: &JSGlobalObject, proxy_arg: JSValue) -> JsResu
 
 static NEXT_POOL_ID: AtomicU64 = AtomicU64::new(1);
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct FetchSession {
     pool: http::PoolOptions,
     keep_alive: bool,
@@ -174,7 +174,7 @@ pub(crate) struct FetchSession {
     /// socket in this session's pool, and collecting the session closes the pool.
     this_value: JsCell<JsRef>,
     /// The wrapper and each `SessionHold` hold a ref.
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     /// Armed in the context whose script made the session: the connections its pool keeps
     /// alive are that context's, and close with it. (The session itself stays usable.)
     abort_handle: bun_jsc::AbortHandle,
@@ -266,7 +266,7 @@ impl FetchSession {
             unix: Box::default(),
             used: Cell::new(false),
             this_value: JsCell::new(JsRef::empty()),
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FetchSession>(),
         });
         // SAFETY: a heap allocation at its final address; its `Drop` (with the last ref, or when

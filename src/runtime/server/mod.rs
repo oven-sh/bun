@@ -210,7 +210,7 @@ bun_jsc::impl_abort_handle_owner!(
 #[ref_count(destroy = Self::schedule_deinit)]
 pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// The JS wrapper holds one ref, `open_ref` another.
-    ref_count: bun_ptr::RefCount<Self>,
+    ref_count: bun_ptr::RefCount,
     /// Held until the server is drained: uWS and in-flight requests hold raw pointers to it.
     open_ref: JsCell<Option<bun_ptr::RefPtr<Self>>>,
     app: JsCell<Option<uws_sys::app::OwnedApp<SSL>>>,
@@ -437,9 +437,8 @@ impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
         req: &mut uws_sys::Request,
         resp: *mut uws_sys::NewAppResponse<SSL>,
     ) -> SavedRequest {
-        let ctx = AnyRequestContext::init(&raw const *self.ctx);
         // Before `to_async`, which releases the context of a request that is already aborted.
-        let ctx = any_request_context::AnyRequestContextRef::new(ctx);
+        let ctx = any_request_context::AnyRequestContextRef::new(self.ctx.ref_guard());
         // By saving a request, all information from `req` must be
         // copied since the provided uws.Request will be re-used for
         // future requests (stack allocated).
@@ -871,17 +870,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         let ctx_slot = self.request_pool.claim();
         let ctx = ctx_slot.addr().as_ptr();
-        // SAFETY: `claim` hands out an uninitialized slot.
-        let ctx_uninit = unsafe { &mut *ctx.cast::<core::mem::MaybeUninit<_>>() };
-        ServerRequestContext::<SSL, DEBUG>::create(
-            ctx_uninit,
-            self,
-            std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
-            any_response_from::<SSL>(resp),
-            method,
-        );
-        // SAFETY: fully initialized by `create()`.
-        let ctx_ref = request_context::Dispatch::new(unsafe { ctx_slot.assume_init().as_ref() });
+        // SAFETY: just claimed, and fully initialized by `create()`.
+        let ctx_ref = request_context::Dispatch::new(unsafe {
+            ServerRequestContext::<SSL, DEBUG>::create(
+                ctx,
+                self,
+                std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
+                any_response_from::<SSL>(resp),
+                method,
+            );
+            ctx_slot.assume_init().as_ref()
+        });
 
         self.vm()
             .jsc_vm()
@@ -1821,17 +1820,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// The last ref is gone: the JS wrapper is collected and the server is drained.
-    fn schedule_deinit(this: *mut Self) {
+    fn schedule_deinit(server: bun_ptr::AliasableBox<Self>) {
         httplog!("scheduleDeinit");
-        // SAFETY: `this` stays allocated until it is freed below, or by the task.
-        let server = unsafe { &*this };
 
         if server.vm().is_shutting_down() {
-            // No more ticks. `TERMINATED` means `app.close()` already ran, so destroying it can't orphan a keep-alive socket.
-            if server.flags.get().contains(ServerFlags::TERMINATED) && !server.deinit_running.get()
+            // No more ticks. Leak it if `app.close()` has not run (`TERMINATED`) or `deinit_running` is set; otherwise it drops here.
+            if !server.flags.get().contains(ServerFlags::TERMINATED) || server.deinit_running.get()
             {
-                // SAFETY: the box from `init`, and the last ref is gone.
-                unsafe { bun_core::heap::destroy(this) };
+                server.into_raw();
             }
             return;
         }
@@ -1849,8 +1845,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .enqueue_task(bun_event_loop::Task::init(app.cast::<AppCloseTask<SSL>>()));
         }
 
-        server.vm().enqueue_task(bun_event_loop::Task::init(
-            this.cast::<ServerDeinitTask<SSL, DEBUG>>(),
+        let vm = server.vm;
+        vm.enqueue_task(bun_event_loop::Task::init(
+            server.into_raw().cast::<ServerDeinitTask<SSL, DEBUG>>(),
         ));
     }
 
@@ -3265,7 +3262,10 @@ pub(crate) trait ServerLike {
     /// Erased to `*mut c_void` so the trait stays object-safe and doesn't need
     /// to name `RequestContext<Self, ..>` (which would re-introduce the
     /// generic-parameter cycle this trait exists to break).
-    fn release_request_context(&self, ctx: *mut c_void, is_mux: bool);
+    ///
+    /// # Safety
+    /// `ctx` is an initialized slot of that pool, and the caller is its only owner.
+    unsafe fn release_request_context(&self, ctx: *mut c_void, is_mux: bool);
 }
 
 impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
@@ -3310,9 +3310,8 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
     fn terminated(&self) -> bool {
         self.flags.get().contains(ServerFlags::TERMINATED)
     }
-    fn release_request_context(&self, ctx: *mut c_void, is_mux: bool) {
-        // SAFETY: ctx was allocated from this exact pool by `prepare_js_request_context`;
-        // it is `RequestContext<Self, SSL, DEBUG, is_mux>` by construction.
+    unsafe fn release_request_context(&self, ctx: *mut c_void, is_mux: bool) {
+        // SAFETY: fn contract.
         unsafe {
             if is_mux {
                 (*self.mux_request_pool.get()).put(

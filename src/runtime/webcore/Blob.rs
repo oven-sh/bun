@@ -55,18 +55,14 @@ pub(crate) mod write_file;
 /// Defined here (rather than in `bun_jsc`) because `Store` is a `bun_runtime`
 /// type and the `bun_jsc` copy is a forward-dep placeholder.
 ///
-/// Body wraps its only privileged op (`Store::deref`) locally; a safe
-/// `extern "C" fn` coerces to the `JSTypedArrayBytesDeallocator` pointer
-/// expected by `to_js_with_context`.
-pub(crate) extern "C" fn blob_store_array_buffer_deallocator(
+/// # Safety
+/// `ctx` is from `RefPtr<Store>::into_raw`. This releases that ref.
+pub(crate) unsafe extern "C" fn blob_store_array_buffer_deallocator(
     _bytes: *mut c_void,
     ctx: *mut c_void,
 ) {
-    if let Some(store) = NonNull::new(ctx.cast::<Store>()) {
-        // SAFETY: `ctx` is a `*mut Store` previously yielded by `RefPtr<Store>::into_raw`
-        // (one outstanding strong ref). `Store::deref` consumes that ref.
-        unsafe { Store::deref(store) };
-    }
+    // SAFETY: fn contract.
+    unsafe { RefPtr::decrement_strong_count(ctx.cast::<Store>()) };
 }
 
 /// WHATWG File API §3.1: a Blob/File `type` is only used when every character
@@ -2448,7 +2444,7 @@ impl BlobExt for Blob {
                                     ),
                                     charset: Cell::new(blob.charset.get()),
                                     is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
-                                    ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
+                                    ref_count: bun_ptr::RefCount::init(),
                                     global_this: Cell::new(blob.global_this.get()),
                                     last_modified: Cell::new(blob.last_modified.get()),
                                     name: blob.name.clone(),

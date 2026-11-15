@@ -1,6 +1,7 @@
 //! Entropy-coded pixels: literals, copies of earlier pixels and colors from the cache.
 
 use core::hint::{cold_path, select_unpredictable};
+use core::ops::Range;
 
 use super::Rgba;
 use super::bit_reader::BitReader;
@@ -153,6 +154,10 @@ impl Cache for ColorCache {
 
     #[inline(always)]
     fn remember_last<P: Pixel>(&mut self, pixels: &[P], count: usize) {
+        if count < COPY_STEP {
+            let last = pixels.get(pixels.len() - count..).unwrap_or_default();
+            return last.iter().for_each(|it| self.remember(it.to_rgba()));
+        }
         // A few more in front of them change nothing. The first is only there to compare with.
         let count = count.next_multiple_of(COPY_STEP) + 1;
         let Some([first, rest @ ..]) = pixels.get(pixels.len().wrapping_sub(count)..) else {
@@ -197,22 +202,13 @@ fn read_pixels<P: Pixel>(
         while at < goal {
             let (group, tables, count) = groups.at(x, y, width)?;
             let (start, end) = (at, goal.min(at + count));
-            while at < end {
-                let run = pixels.get_mut(at..end).ok_or(Error::Internal)?;
-                let (count, prefix) = read_singles(group, tables, reader, run, cache);
-                at += count;
-                if at == end {
-                    break;
-                }
-                let count = read_prefixed(prefix, reader);
-                let prefix = group.distance.read_byte(tables, reader) as usize;
-                reader.ensure(18 + ROOT_BITS);
-                let distance = distance(read_prefixed(prefix, reader), width);
-                if distance > at || count > len - at {
-                    return Err(Error::InvalidLosslessBitstream);
-                }
-                copy(&mut pixels, at, distance, count, cache).ok_or(Error::Internal)?;
-                at += count;
+            if group.shortcut == Shortcut::Constant {
+                let run = pixels.get_mut(start..end).ok_or(Error::Internal)?;
+                run.fill(P::from_rgba(group.constant));
+                cache.remember(group.constant);
+                at = end;
+            } else {
+                at = read_run(group, tables, reader, &mut pixels, width, start..end, cache)?;
             }
             x += at - start;
             while x >= width {
@@ -228,24 +224,22 @@ fn read_pixels<P: Pixel>(
     Ok(pixels)
 }
 
-/// Fills `run` up to the first copy. Returns how far it got and, unless that is the end, the prefix of the copy's
-/// length. The reader has `ROOT_BITS` at the start of a pixel.
+/// Reads the pixels of `run`, or more if a copy does not stop at its end. Returns where it got to. The reader has
+/// `ROOT_BITS` at the start of a pixel.
 // Out of line, so that the loop has the registers to itself.
 #[inline(never)]
-fn read_singles<P: Pixel>(
+fn read_run<P: Pixel>(
     group: &Group,
     tables: &[Entry],
     shared_reader: &mut BitReader,
-    run: &mut [P],
+    pixels: &mut [P],
+    width: usize,
+    run: Range<usize>,
     cache: &mut impl Cache,
-) -> (usize, usize) {
-    if group.shortcut == Shortcut::Constant {
-        run.fill(P::from_rgba(group.constant));
-        cache.remember(group.constant);
-        return (run.len(), 0);
-    }
+) -> Result<usize> {
+    let mut at = run.start;
     let reader = &mut { *shared_reader };
-    for (count, place) in run.iter_mut().enumerate() {
+    while at < run.end {
         // From before the refill, which the first lookup then does not have to wait for.
         let bits = reader.peek();
         reader.refill();
@@ -270,18 +264,25 @@ fn read_singles<P: Pixel>(
             }
             symbol
         };
-        *place = P::from_rgba(if symbol < LITERAL_CODES {
+        let pixel = if symbol < LITERAL_CODES {
             cache.remember(pixel.to_le_bytes());
             pixel.to_le_bytes()
         } else if let Some(key) = symbol.checked_sub(LITERAL_CODES + LENGTH_CODES) {
             cache.recall(key)
         } else {
-            *shared_reader = *reader;
-            return (count, symbol - LITERAL_CODES);
-        });
+            let count = read_prefixed(symbol - LITERAL_CODES, reader);
+            let prefix = group.distance.read_byte(tables, reader) as usize;
+            reader.ensure(18 + ROOT_BITS);
+            let distance = distance(read_prefixed(prefix, reader), width);
+            copy(pixels, at, distance, count, cache).ok_or(Error::InvalidLosslessBitstream)?;
+            at += count;
+            continue;
+        };
+        *pixels.get_mut(at).ok_or(Error::Internal)? = P::from_rgba(pixel);
+        at += 1;
     }
     *shared_reader = *reader;
-    (run.len(), 0)
+    Ok(at)
 }
 
 /// What a distance code stands for.
@@ -305,7 +306,7 @@ fn read_prefixed(symbol: usize, reader: &mut BitReader) -> usize {
 }
 
 /// `count` pixels from `distance` back to `at`, which may repeat what it has just written. Up to `COPY_STEP` more
-/// are changed.
+/// are changed: `pixels` end that far behind the image, or have room for any copy.
 #[inline(always)]
 fn copy<P: Pixel>(
     pixels: &mut [P],
@@ -314,23 +315,28 @@ fn copy<P: Pixel>(
     count: usize,
     cache: &mut impl Cache,
 ) -> Option<()> {
+    if distance > at || count + COPY_STEP > pixels.len() - at {
+        return None;
+    }
     if distance == 1 {
         let room = count.next_multiple_of(COPY_STEP);
         let (first, rest) = pixels.get_mut(at - 1..at + room)?.split_first_mut()?;
         rest.as_chunks_mut().0.fill([*first; COPY_STEP]);
         return Some(());
     }
-    if distance >= COPY_STEP && count <= 4 * COPY_STEP {
-        let mut rest = pixels.get_mut(at - distance..)?;
-        let mut left = count;
+    if count <= 4 * COPY_STEP {
+        let (mut to, mut back) = (at, distance);
         loop {
-            let step = *rest.first_chunk::<COPY_STEP>()?;
-            *rest.get_mut(distance..)?.first_chunk_mut()? = step;
-            if left <= COPY_STEP {
+            let step = *pixels.get(to - back..)?.first_chunk::<COPY_STEP>()?;
+            *pixels.get_mut(to..)?.first_chunk_mut()? = step;
+            to += back.min(COPY_STEP);
+            if to >= at + count {
                 break;
             }
-            left -= COPY_STEP;
-            rest = rest.get_mut(COPY_STEP..)?;
+            // What was there is there twice now.
+            if back < COPY_STEP {
+                back *= 2;
+            }
         }
     } else {
         repeat(pixels.get_mut(at - distance..at + count)?, distance)?;
@@ -341,7 +347,7 @@ fn copy<P: Pixel>(
 }
 
 /// Fills `pixels` with repetitions of the first `period`.
-#[inline(always)]
+#[inline(never)]
 fn repeat<P: Pixel>(pixels: &mut [P], period: usize) -> Option<()> {
     let mut done = period;
     while done < pixels.len() {

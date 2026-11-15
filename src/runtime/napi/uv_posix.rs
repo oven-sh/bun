@@ -16,7 +16,7 @@
 //!   eventfd. The task walks the loop's handles on the JS thread like `uv__async_io`.
 //! - `auto_tick` (jsc_hooks.rs) runs idle and prepare handles before it polls and
 //!   check handles after. It doesn't block while an idle handle is started.
-//! - A timer is an [`EventLoopTimer`] in the VM's timer heap. It's too big for the
+//! - A timer is an [`OwnedTimer`] in the VM's timer heap. It's too big for the
 //!   handle, so it's heap-allocated in a [`UvTimerNode`].
 //! - `uv_queue_work` schedules a [`Job`] that runs `work_cb` on the thread pool and
 //!   `after_work_cb` when it completes.
@@ -40,7 +40,7 @@ use bun_jsc::{
 use bun_ptr::{AliasableBox, CellExt, VecCellExt};
 
 use crate::jsc_hooks::{RuntimeState, runtime_state, timer_all, try_runtime_state};
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimerTag, OwnedTimer, TimerRef};
 
 bun_output::declare_scope!(uv, hidden);
 
@@ -854,7 +854,7 @@ type UvTimer = UvHandle<TimerFields>;
 #[repr(C)]
 pub(crate) struct TimerFields {
     timer_cb: Cell<Option<UvTimerCb>>,
-    /// `Some` from init to close. An [`EventLoopTimer`] is too big for the handle.
+    /// `Some` from init to close. An [`OwnedTimer`] is too big for the handle.
     node: Cell<Option<AliasableBox<UvTimerNode>>>,
     repeat_ms: Cell<u64>,
 }
@@ -865,9 +865,11 @@ const _: () = assert!(core::mem::size_of::<UvTimer>() <= UV_TIMER_T_SIZE);
 /// Links a `uv_timer_t` into the timer heap. `dispatch.rs` recovers it from
 /// `event_loop_timer` when the timer fires.
 pub(crate) struct UvTimerNode {
-    pub(crate) event_loop_timer: EventLoopTimer,
+    event_loop_timer: OwnedTimer<{ EventLoopTimerTag::UvTimer }>,
     timer: NonNull<UvTimer>,
 }
+
+bun_event_loop::impl_timer_owner!(UvTimerNode; event_loop_timer: OwnedTimer<UvTimer>);
 
 impl UvTimerNode {
     /// Called after the heap pops the timer. Like libuv's `uv__run_timers`, it stops
@@ -878,14 +880,7 @@ impl UvTimerNode {
     /// `this` is a started timer's node, and this is the thread that armed it.
     pub(crate) unsafe fn on_fire(this: *mut UvTimerNode, vm: &VirtualMachine) -> JsResult<()> {
         // SAFETY: fn contract. A started timer is initialized and not closed.
-        let timer = unsafe {
-            // `FIRED` tells `update`/`remove` that the node isn't in the heap.
-            (*this)
-                .event_loop_timer
-                .state
-                .set(EventLoopTimerState::FIRED);
-            HandleRef::new((*this).timer)
-        };
+        let timer = unsafe { HandleRef::new((*this).timer) };
         timer.ref_state.set_active(false);
         let repeat_ms = timer.body.repeat_ms.get();
         if repeat_ms != 0 {
@@ -917,14 +912,12 @@ impl HandleRef<'_, TimerFields> {
                 TimespecMockMode::ForceRealTime,
                 i64::try_from(timeout_ms).unwrap_or(i64::MAX),
             );
-            timer_all().update(&raw const node.event_loop_timer, &due);
+            timer_all().update(TimerRef::from_pin(node.as_pin_ref()), &due);
             self.ref_state.set_active(true);
         });
     }
 
-    /// Implements `uv_timer_stop`. Checks the node's state before removing it from the
-    /// heap because a fired node is already out, and VM teardown unlinks timers
-    /// without telling their owners.
+    /// Implements `uv_timer_stop`.
     fn stop(&self) {
         if !self.ref_state.active.get() {
             return;
@@ -957,7 +950,7 @@ pub(crate) unsafe extern "C" fn uv_timer_init(loop_: *mut UvLoop, handle: *mut U
     let body = TimerFields {
         timer_cb: Cell::new(None),
         node: Cell::new(Some(AliasableBox::new(UvTimerNode {
-            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::UvTimer),
+            event_loop_timer: OwnedTimer::init_paused(),
             timer: handle,
         }))),
         repeat_ms: Cell::new(0),
@@ -1048,7 +1041,7 @@ pub(crate) extern "C" fn uv_timer_get_due_in(handle: HandleRef<'_>) -> u64 {
     let Some(due) = timer
         .body
         .node
-        .with_taken(|node| node.as_ref().map(|node| node.event_loop_timer.next.get()))
+        .with_taken(|node| node.as_ref().map(|node| node.event_loop_timer.next()))
     else {
         return 0;
     };

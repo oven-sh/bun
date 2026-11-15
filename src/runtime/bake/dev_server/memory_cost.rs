@@ -27,7 +27,7 @@ pub(crate) struct MemoryCost {
 /// being added, removed, and changed (as the developer edits source files). It
 /// is exponentially easy to mess up memory management.
 pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
-    let mut other_bytes: usize = size_of::<DevServer>();
+    let mut other_bytes: usize = size_of::<DevServer>() + size_of::<DevServerTimers>();
     let mut incremental_graph_client: usize = 0;
     let mut incremental_graph_server: usize = 0;
     let mut js_code: usize = 0;
@@ -88,7 +88,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             active_websocket_connections: _,
             emit_incremental_visualizer_events: _,
             emit_memory_visualizer_events: _,
-            memory_visualizer_timer: _,
+            timers: _,
             assume_perfect_incremental_bundling: _,
             broadcast_console_log_from_browser_to_server: _,
         } = dev;
@@ -107,7 +107,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .generation
     //   .graph_safety_lock
     //   .magic
-    //   .memory_visualizer_timer
     //   .plugin_state
     //   .server_register_update_callback
     //   .server_fetch_function_callback
@@ -307,16 +306,10 @@ impl DevServer {
 }
 
 impl DevServer {
-    pub(crate) fn emit_memory_visualizer_message_timer(timer: *mut EventLoopTimer) {
-        // SAFETY: `timer` points to the `memory_visualizer_timer` field of a DevServer.
-        let dev: &mut DevServer = unsafe { &mut *DevServer::from_timer_ptr(timer) };
-        debug_assert!(dev.magic == Magic::Valid);
-        dev.memory_visualizer_timer
-            .state
-            .set(EventLoopTimerState::FIRED);
-        dev.emit_memory_visualizer_message();
-        let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1000);
-        crate::jsc_hooks::timer_all().update(timer, &next);
+    pub(crate) fn emit_memory_visualizer_message_timer(&mut self) {
+        debug_assert!(self.magic == Magic::Valid);
+        self.emit_memory_visualizer_message();
+        self.timers.as_pin_ref().arm_memory_visualizer_timer();
     }
 
     pub(crate) fn emit_memory_visualizer_message(&mut self) {

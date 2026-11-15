@@ -60,7 +60,7 @@ pub struct ScriptExecutionContext {
     /// one and the ActiveDOMObjects (workers, WebSockets) the graph's script made.
     dom_context: Cell<*mut core::ffi::c_void>,
     /// The timers script of a graph's context set that have not been freed
-    /// (`TimerObjectInternals` / `AbortSignal` `Timeout`), so stopping it
+    /// (`TimerObject` / `AbortSignal` `Timeout`), so stopping it
     /// cancels exactly those. A VM's own contexts walk the timer heap.
     timers: JsCell<bun_collections::ArrayHashMap<*mut core::ffi::c_void, ContextTimer>>,
 }
@@ -68,8 +68,10 @@ pub struct ScriptExecutionContext {
 /// What a pointer in a graph context's timer set points at.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum ContextTimer {
-    /// `bun_runtime::timer::TimerObjectInternals` (setTimeout / setInterval / setImmediate).
-    Object,
+    /// `bun_runtime::timer::TimeoutObject` (setTimeout / setInterval).
+    TimeoutObject,
+    /// `bun_runtime::timer::ImmediateObject` (setImmediate).
+    ImmediateObject,
     /// [`crate::abort_signal::Timeout`] (`AbortSignal.timeout`).
     AbortSignal,
 }
@@ -175,7 +177,10 @@ impl ScriptExecutionContext {
     }
 
     /// A timer script of this (graph's) context set exists from here.
-    pub fn track_timer(&self, timer: *mut core::ffi::c_void, kind: ContextTimer) {
+    ///
+    /// # Safety
+    /// `timer` points at what `kind` names until it is passed to [`untrack_timer`](Self::untrack_timer).
+    pub unsafe fn track_timer(&self, timer: *mut core::ffi::c_void, kind: ContextTimer) {
         self.timers
             .with_mut(|timers| bun_core::handle_oom(timers.put(timer, kind)));
         if self.is_stopped() {

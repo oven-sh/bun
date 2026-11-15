@@ -1196,9 +1196,7 @@ fn spawn_maybe_sync(
         abort_handle: bun_jsc::AbortHandle::for_owner::<SubprocessT<'static>>(),
         context: cx.context().id(),
         event_loop_timer_refd: Cell::new(false),
-        event_loop_timer: crate::timer::EventLoopTimer::init_paused(
-            crate::timer::EventLoopTimerTag::SubprocessTimeout,
-        ),
+        event_loop_timer: crate::timer::RefCountedTimer::init_paused(),
         exited_due_to_maxbuf: Cell::new(None),
     });
     let subprocess_ptr = subprocess_ref.as_ptr();
@@ -1350,6 +1348,7 @@ fn spawn_maybe_sync(
         }
     }
 
+    let timer_ref = (!is_sync && timeout.is_some()).then(|| subprocess_ref.clone());
     let (out, _sync_wrapper) = if is_sync {
         (JSValue::ZERO, Some(SyncWrapper(subprocess_ref)))
     } else {
@@ -1417,16 +1416,10 @@ fn spawn_maybe_sync(
     if !is_sync {
         // This must go before other things happen so that the exit handler is
         // registered before onProcessExit can potentially be called.
-        if let Some(timeout_val) = timeout {
+        if let Some((timeout_val, timer_ref)) = timeout.zip(timer_ref) {
             let ts = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, i64::from(timeout_val));
-            subprocess.event_loop_timer.next.set(ts);
-            // `Timer::All` lives in `bun_runtime`; reach it via the
-            // `RuntimeHooks` dispatch (`VirtualMachineRef::timer_insert`) which
-            // forwards to `crate::timer::All::insert`.
-            // SAFETY: the timer node is
-            // owned by the boxed `Subprocess` and stays at a stable address
-            // until `Subprocess::finalize` removes it from the heap.
-            unsafe { jsc_vm.timer_insert(&raw const subprocess.event_loop_timer) };
+            crate::jsc_hooks::timer_all()
+                .update(crate::timer::TimerRef::from_ref_ptr(timer_ref), &ts);
             subprocess.set_event_loop_timer_refd(true);
         }
 

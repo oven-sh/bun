@@ -280,17 +280,18 @@ describe("maxBuffer is a limit for each of stdout and stderr", () => {
 
   // The descendant has the pipes. It writes when the call has reaped the child (`kill -0` fails then). That is
   // before or after the call reads the pipes for the exit, and only a write after it needs the close at the end of a
-  // loop turn. So there are several calls. stdout is the descendant's pid, padded. The descendant then stays, as
-  // `sleep`, under that pid.
+  // loop turn. So there are several calls. stdout is a line with the descendant's pid, then 1200 zero bytes. `dd`
+  // writes them with one write(2). The `printf` of a shell can make two (busybox on musl: 1028, then 172), and the
+  // call can return between them. The descendant then stays, as `sleep`, under that pid.
   test.concurrent.skipIf(isWindows)("Bun.spawnSync returns when a descendant goes over after the child", async () => {
     const calls = 20;
     const { results, exitCode } = await inOwnProcess(
-      `(while kill -0 $$ 2>/dev/null; do :; done; printf '%-1200s' "$(exec sh -c 'echo $PPID')"; exec sleep 10) &`,
-      `(() => { let descendantAlive = false; try { process.kill(parseInt(result.stdout.toString(), 10), "SIGKILL"); descendantAlive = true; } catch {} return { exitedDueToMaxBuffer: result.exitedDueToMaxBuffer, exitCode: result.exitCode, stdout: result.stdout.length, descendantAlive }; })()`,
+      `(while kill -0 $$ 2>/dev/null; do :; done; sh -c 'echo $PPID'; dd if=/dev/zero bs=1200 count=1 2>/dev/null; exec sleep 10) &`,
+      `(() => { let descendantAlive = false; try { process.kill(parseInt(result.stdout.toString(), 10), "SIGKILL"); descendantAlive = true; } catch {} return { exitedDueToMaxBuffer: result.exitedDueToMaxBuffer, exitCode: result.exitCode, zeros: result.stdout.filter(byte => byte === 0).length, descendantAlive }; })()`,
       calls,
     );
     expect({ results, exitCode }).toEqual({
-      results: Array(calls).fill({ exitedDueToMaxBuffer: true, exitCode: 0, stdout: 1200, descendantAlive: true }),
+      results: Array(calls).fill({ exitedDueToMaxBuffer: true, exitCode: 0, zeros: 1200, descendantAlive: true }),
       exitCode: 0,
     });
   });

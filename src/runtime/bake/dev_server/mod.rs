@@ -404,9 +404,6 @@ pub(crate) struct CurrentBundle {
     /// Owns the arena that `bv2.graph.heap` borrows (`'static` self-ref via the
     /// boxed allocation's stable address; same erasure as `bv2` above).
     pub(crate) _ast_arena: Box<bun_ast::AstArena>,
-    /// Backs the small `AstVec`s built during bundle setup
-    /// (`start_async_bundle`'s AST scope); dropped with the bundle.
-    pub(crate) _ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
     /// Information BundleV2 needs to finalize the bundle
     pub(crate) start_data: bundler::bundle_v2::DevServerInput,
     /// Started when the bundle was queued

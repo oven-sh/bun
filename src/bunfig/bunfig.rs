@@ -8,7 +8,6 @@
 
 #![allow(clippy::collapsible_if)]
 
-use bun_collections::VecExt;
 use core::sync::atomic::Ordering;
 
 use bun_alloc::Arena as Bump;

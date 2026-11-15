@@ -66,45 +66,30 @@ pub mod entry_point {
 }
 
 pub mod js_meta {
-    use bun_alloc::{AstAlloc, AstVec};
-    use bun_ast::{Dependency, Ref};
-    use bun_collections::array_hash_map::StringContext;
-    use bun_collections::{ArrayHashMap, AutoContext, StringArrayHashMap};
+    use bun_ast::{
+        AstArena, AstArrayHashMap, AstStringArrayHashMap, AstVec, Dependency, Ref, StoreStr,
+    };
 
     use crate::{ImportTracker, Index, WrapKind};
 
+    #[derive(Default)]
     pub struct ImportData {
         pub(crate) re_exports: AstVec<Dependency>,
         pub(crate) data: ImportTracker,
     }
-    impl Default for ImportData {
-        fn default() -> Self {
-            Self {
-                re_exports: AstAlloc::vec(),
-                data: ImportTracker::default(),
-            }
-        }
-    }
     pub(crate) type ImportToBind = ImportData;
 
+    #[derive(Default)]
     pub struct ExportData {
         pub(crate) potentially_ambiguous_export_star_refs: AstVec<ImportData>,
         pub(crate) data: ImportTracker,
     }
-    impl Default for ExportData {
-        fn default() -> Self {
-            Self {
-                potentially_ambiguous_export_star_refs: AstAlloc::vec(),
-                data: ImportTracker::default(),
-            }
-        }
-    }
     pub(crate) type ResolvedExport = ExportData;
 
-    pub type RefImportData = ArrayHashMap<Ref, ImportData, AutoContext, AstAlloc>;
-    pub type ResolvedExports = StringArrayHashMap<ExportData, StringContext, AstAlloc>;
-    pub type ProbablyTypescriptType = ArrayHashMap<Ref, (), AutoContext, AstAlloc>;
-    pub type SortedAndFilteredExportAliases = AstVec<Box<[u8], AstAlloc>>;
+    pub type RefImportData = AstArrayHashMap<Ref, ImportData>;
+    pub type ResolvedExports = AstStringArrayHashMap<ExportData>;
+    pub type ProbablyTypescriptType = AstArrayHashMap<Ref, ()>;
+    pub type SortedAndFilteredExportAliases = AstVec<StoreStr>;
     pub type CjsExportCopies = AstVec<Ref>;
     /// Union, per file, of the export names its importers can observe: named
     /// static imports, tracked `import()` / `require()` reads. `None` until an
@@ -114,31 +99,30 @@ pub mod js_meta {
     pub enum DynamicImportReferencedAliases {
         #[default]
         None,
-        Partial(ArrayHashMap<&'static [u8], (), AutoContext, AstAlloc>),
+        Partial(AstArrayHashMap<&'static [u8], ()>),
         All,
     }
     impl DynamicImportReferencedAliases {
         pub fn merge_all(&mut self) {
             *self = Self::All;
         }
-        pub fn insert(&mut self, alias: &'static [u8]) {
+        pub fn insert(&mut self, arena: &AstArena, alias: &'static [u8]) {
             match self {
                 Self::All => {}
                 Self::None => {
-                    let mut set =
-                        ArrayHashMap::<&'static [u8], (), AutoContext, AstAlloc>::default();
-                    bun_core::handle_oom(set.put(alias, ()));
+                    let mut set = AstArrayHashMap::default();
+                    set.put(arena, alias, ());
                     *self = Self::Partial(set);
                 }
-                Self::Partial(set) => bun_core::handle_oom(set.put(alias, ())),
+                Self::Partial(set) => set.put(arena, alias, ()),
             }
         }
-        pub fn merge_partial(&mut self, aliases: &[bun_ast::StoreStr]) {
+        pub fn merge_partial(&mut self, arena: &AstArena, aliases: &[StoreStr]) {
             if aliases.is_empty() && matches!(self, Self::None) {
                 *self = Self::Partial(Default::default());
             }
             for a in aliases {
-                self.insert(a.slice());
+                self.insert(arena, a.slice());
             }
         }
     }
@@ -179,9 +163,9 @@ pub mod js_meta {
                 imports_to_bind: RefImportData::default(),
                 resolved_exports: ResolvedExports::default(),
                 resolved_export_star: ExportData::default(),
-                sorted_and_filtered_export_aliases: AstAlloc::vec(),
+                sorted_and_filtered_export_aliases: AstVec::new(),
                 top_level_symbol_to_parts_overlay: TopLevelSymbolToParts::default(),
-                cjs_export_copies: AstAlloc::vec(),
+                cjs_export_copies: AstVec::new(),
                 wrapper_part_index: Index::default(),
                 dynamic_import_referenced_aliases: DynamicImportReferencedAliases::default(),
                 lifted_setter_param: Ref::NONE,
@@ -340,6 +324,7 @@ fn runtime_function(named_exports: &[bundled_ast::NamedExports], name: &[u8]) ->
 }
 
 pub(crate) fn generate_new_symbol(
+    arena: &AstArena,
     symbols: &mut symbol::Map,
     module_scopes: &mut [bun_ast::Scope],
     source_index: u32,
@@ -364,7 +349,9 @@ pub(crate) fn generate_new_symbol(
         ..Default::default()
     });
 
-    module_scopes[source_index as usize].generated.push(ref_);
+    module_scopes[source_index as usize]
+        .generated
+        .push(arena, ref_);
     ref_
 }
 
@@ -384,6 +371,7 @@ pub(crate) fn top_level_symbol_to_parts<'a>(
 }
 
 pub(crate) fn add_part_to_file(
+    arena: &AstArena,
     parts: &mut [part::List<'_>],
     top_level_symbol_to_parts_overlay: &mut [TopLevelSymbolToParts],
     top_level_symbols_to_parts: &[bundled_ast::TopLevelSymbolToParts],
@@ -414,14 +402,13 @@ pub(crate) fn add_part_to_file(
     DeclaredSymbol::for_each_top_level_symbol(declared_symbols, &mut ctx, |ctx, ref_| {
         let id = ctx.id;
         let part_id = ctx.part_id;
-        let slot = ctx.overlay[id as usize].entry(ref_).or_insert_with(|| {
-            if let Some(original_parts) = ctx.ast_tlsp[id as usize].get(&ref_) {
-                original_parts.clone()
-            } else {
-                bun_alloc::AstAlloc::vec()
-            }
-        });
-        slot.push(part_id);
+        let slot = ctx.overlay[id as usize].get_or_put(arena, ref_);
+        if !slot.found_existing
+            && let Some(original_parts) = ctx.ast_tlsp[id as usize].get(&ref_)
+        {
+            slot.value_ptr.extend_from_slice(arena, original_parts);
+        }
+        slot.value_ptr.push(arena, part_id);
     });
 
     Ok(part_id)
@@ -429,6 +416,7 @@ pub(crate) fn add_part_to_file(
 
 /// The columns that say which part declares and which part uses a symbol.
 pub(crate) struct SymbolUseColumns<'s, 'a> {
+    pub(crate) arena: &'a AstArena,
     pub(crate) parts: &'s mut [part::List<'a>],
     pub(crate) ast_flags: &'s mut [bundled_ast::Flags],
     pub(crate) exports_ref: &'s [Ref],
@@ -490,7 +478,7 @@ impl SymbolUseColumns<'_, '_> {
         {
             let part: &mut Part =
                 &mut self.parts[source_index as usize].as_mut_slice()[part_index as usize];
-            let uses_entry = part.symbol_uses.get_or_put(ref_)?;
+            let uses_entry = part.symbol_uses.get_or_put(self.arena, ref_);
             if !uses_entry.found_existing {
                 *uses_entry.value_ptr = symbol::Use::unscoped(use_count);
             } else {
@@ -512,6 +500,7 @@ impl SymbolUseColumns<'_, '_> {
         // Track that this specific symbol was imported
         if source_index_to_import_from.get() != source_index {
             self.imports_to_bind[source_index as usize].put(
+                self.arena,
                 ref_,
                 js_meta::ImportToBind {
                     data: ImportTracker {
@@ -521,7 +510,7 @@ impl SymbolUseColumns<'_, '_> {
                     },
                     ..Default::default()
                 },
-            )?;
+            );
         }
 
         // Pull in all parts that declare this symbol
@@ -533,10 +522,13 @@ impl SymbolUseColumns<'_, '_> {
         );
         let dependencies =
             &mut self.parts[source_index as usize].as_mut_slice()[part_index as usize].dependencies;
-        dependencies.extend(part_ids.iter().map(move |&part_id| Dependency {
-            source_index: source_index_to_import_from,
-            part_index: part_id,
-        }));
+        dependencies.extend(
+            self.arena,
+            part_ids.iter().map(move |&part_id| Dependency {
+                source_index: source_index_to_import_from,
+                part_index: part_id,
+            }),
+        );
         Ok(())
     }
 }
@@ -582,6 +574,7 @@ impl<'a> LinkerGraph<'a> {
         original_name: &[u8],
     ) -> Ref {
         generate_new_symbol(
+            self.ast_arena.as_mut(),
             &mut self.symbols,
             self.ast.items_module_scope_mut(),
             source_index,
@@ -594,6 +587,7 @@ impl<'a> LinkerGraph<'a> {
         let ast = self.ast.split_mut();
         let meta = self.meta.split_mut();
         SymbolUseColumns {
+            arena: self.ast_arena.as_mut(),
             parts: ast.parts,
             ast_flags: ast.flags,
             exports_ref: ast.exports_ref,
@@ -628,6 +622,7 @@ impl<'a> LinkerGraph<'a> {
     ) -> Result<u32, bun_alloc::AllocError> {
         let ast = self.ast.split_mut();
         add_part_to_file(
+            self.ast_arena.as_mut(),
             ast.parts,
             self.meta.items_top_level_symbol_to_parts_overlay_mut(),
             ast.top_level_symbols_to_parts,
@@ -672,6 +667,7 @@ impl<'a> LinkerGraph<'a> {
         dynamic_import_entry_points: &[index::Int],
         entry_point_original_names: &IndexStringMap,
     ) -> Result<(), crate::Error> {
+        let ast_arena = self.ast_arena();
         self.files.set_capacity(sources.len())?;
         for _ in sources {
             self.files.append_assume_capacity(File::default());
@@ -840,13 +836,12 @@ impl<'a> LinkerGraph<'a> {
                 count += ts_enums.count();
             }
             if count > 0 {
-                self.ts_enums.ensure_total_capacity(count)?;
+                self.ts_enums.ensure_total_capacity(ast_arena, count);
                 for ts_enums in self.ast.items_ts_enums().iter() {
                     debug_assert_eq!(ts_enums.keys().len(), ts_enums.values().len());
                     for (key, value) in ts_enums.keys().iter().zip(ts_enums.values().iter()) {
-                        // Note: the per-file maps are not mutated after
-                        // this point so aliasing is not required.
-                        self.ts_enums.put_assume_capacity(*key, value.clone());
+                        // Shared: the per-file maps are not mutated after this point.
+                        self.ts_enums.put(ast_arena, *key, *value);
                     }
                 }
             }
@@ -861,12 +856,11 @@ impl<'a> LinkerGraph<'a> {
             .enumerate()
         {
             let mut resolved = ResolvedExports::default();
-            resolved
-                .ensure_total_capacity(src.count())
-                .expect("unreachable");
+            resolved.ensure_total_capacity(ast_arena, src.count());
             debug_assert_eq!(src.keys().len(), src.values().len());
             for (key, value) in src.keys().iter().zip(src.values().iter()) {
-                resolved.put_assume_capacity(
+                resolved.put(
+                    ast_arena,
                     key,
                     js_meta::ResolvedExport {
                         data: ImportTracker {
@@ -892,11 +886,7 @@ impl<'a> LinkerGraph<'a> {
     /// (lazy, mimalloc-internal) cross-heap migration on first realloc.
     ///
     /// `Vec<T, &Arena>` stores its allocator, so swap it here.
-    /// `part.dependencies` and `symbols` need no transfer:
-    /// `DependencyList` is `Vec<_, AstAlloc>` (linker-side grows just route
-    /// through whichever thread's `AstAlloc` state is active — `AstAlloc` is a
-    /// ZST, so there is nothing to retag) and new symbols feed through
-    /// `self.symbols: symbol::Map` (global).
+    /// `part.dependencies` (an `AstVec`) and `self.symbols` (global heap) need no transfer.
     pub(crate) fn take_ast_ownership(&mut self) {
         let heap = self.bump;
         for v in self.ast.items_import_records_mut() {
@@ -992,6 +982,22 @@ impl<'a> LinkerGraph<'a> {
     }
 }
 
+/// Not `Copy`: the bytes are freed with the worker that quoted them, so they are only lent through `&self`.
+pub struct QuotedSourceContents(bun_ast::StoreStr);
+
+impl QuotedSourceContents {
+    pub(crate) fn new(in_worker_arena: &[u8]) -> Self {
+        Self(bun_ast::StoreStr::new(in_worker_arena))
+    }
+}
+
+impl core::ops::Deref for QuotedSourceContents {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 pub struct File {
     pub entry_bits: AutoBitSet,
 
@@ -1009,8 +1015,8 @@ pub struct File {
     /// a Source.Index to its output path inb reakOutputIntoPieces
     pub entry_point_chunk_index: u32,
 
-    pub line_offset_table: bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc>,
-    pub quoted_source_contents: Option<bun_alloc::AstVec<u8>>,
+    pub line_offset_table: bun_sourcemap::line_offset_table::AstList,
+    pub quoted_source_contents: Option<QuotedSourceContents>,
 }
 
 impl Default for File {
@@ -1019,7 +1025,7 @@ impl Default for File {
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             entry_point_kind: EntryPoint::Kind::None,
             entry_point_chunk_index: 0,
-            line_offset_table: bun_sourcemap::line_offset_table::List::new_in(bun_alloc::AstAlloc),
+            line_offset_table: Default::default(),
             quoted_source_contents: None,
         }
     }
@@ -1032,7 +1038,7 @@ bun_collections::multi_array_columns! {
         entry_bits: AutoBitSet,
         entry_point_kind: EntryPoint::Kind,
         entry_point_chunk_index: u32,
-        line_offset_table: bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc>,
-        quoted_source_contents: Option<bun_alloc::AstVec<u8>>,
+        line_offset_table: bun_sourcemap::line_offset_table::AstList,
+        quoted_source_contents: Option<QuotedSourceContents>,
     }
 }

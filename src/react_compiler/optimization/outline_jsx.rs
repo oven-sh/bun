@@ -13,7 +13,7 @@ use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 use crate::collections::IndexMap;
 use crate::hir::environment::Environment;
 use crate::hir::{
-    AstAlloc, BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, HIR, HirFunction,
+    BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, HIR, HirAlloc, HirFunction,
     IdentifierId, IdentifierName, Instruction, InstructionId, InstructionKind, InstructionValue,
     JsxAttribute, JsxTag, LValuePattern, NonLocalBinding, NonLocalKind, ObjectPattern,
     ObjectProperty, ObjectPropertyKey, ObjectPropertyOrSpread, ObjectPropertyType, ParamPattern,
@@ -186,7 +186,7 @@ fn outline_jsx_impl(
         if !rewrite_instr.is_empty() {
             let block = func.body.blocks.get_mut(block_id).unwrap();
             let old_instr_ids = block.instructions.clone();
-            let mut new_instr_ids = AstAlloc::vec();
+            let mut new_instr_ids = HirAlloc::vec();
             for &iid in &old_instr_ids {
                 let eval_order = func.instructions[iid.0 as usize].id;
                 if let Some(replacement_instrs) = rewrite_instr.get(&eval_order) {
@@ -283,7 +283,7 @@ fn collect_props(
         }
         // TS: env.programContext.addNewReference(newName)
         // We don't have programContext in Rust, but this is needed for unique name tracking
-        let stored = StoreStr::new(bun_ast::data_store_dupe_str(&buf));
+        let stored = HirAlloc::dupe_str(&buf);
         seen.insert(stored);
         stored
     };
@@ -344,7 +344,7 @@ fn emit_outlined_jsx(
     outlined_props: &[OutlinedJsxAttribute],
     outlined_tag: StoreStr,
 ) -> Option<Vec<Instruction>> {
-    let props = AstAlloc::vec_from_iter(outlined_props.iter().map(|p| JsxAttribute::Attribute {
+    let props = HirAlloc::vec_from_iter(outlined_props.iter().map(|p| JsxAttribute::Attribute {
         name: p.new_name,
         place: p.place.clone(),
     }));
@@ -430,8 +430,8 @@ fn emit_outlined_fn(
     instructions.extend(updated_jsx_instrs);
 
     // Build instruction table and instruction IDs
-    let mut instr_table = AstAlloc::vec();
-    let mut instr_ids = AstAlloc::vec();
+    let mut instr_table = HirAlloc::vec();
+    let mut instr_ids = HirAlloc::vec();
     for instr in instructions {
         let idx = instr_table.len();
         instr_table.push(instr);
@@ -462,7 +462,7 @@ fn emit_outlined_fn(
             loc: None,
             effects: None,
         },
-        phis: AstAlloc::vec(),
+        phis: HirAlloc::vec(),
     };
 
     let mut blocks = IndexMap::new();
@@ -475,7 +475,7 @@ fn emit_outlined_fn(
         params: hir_vec![ParamPattern::Place(props_obj)],
         return_type_annotation: None,
         returns: returns_place,
-        context: AstAlloc::vec(),
+        context: HirAlloc::vec(),
         body: HIR {
             entry: BlockId(0),
             blocks,
@@ -483,8 +483,8 @@ fn emit_outlined_fn(
         instructions: instr_table,
         generator: false,
         is_async: false,
-        directives: AstAlloc::vec(),
-        aliasing_effects: Some(AstAlloc::vec()),
+        directives: HirAlloc::vec(),
+        aliasing_effects: Some(HirAlloc::vec()),
         loc: None,
     };
 
@@ -528,7 +528,7 @@ fn emit_updated_jsx(
             closing_loc,
         } = &instr.value
         {
-            let mut new_props = AstAlloc::vec();
+            let mut new_props = HirAlloc::vec();
             for prop in props {
                 // TS: invariant(prop.kind === 'JsxAttribute', ...)
                 // Spread attributes would have caused collectProps to return null earlier
@@ -552,7 +552,7 @@ fn emit_updated_jsx(
             }
 
             let new_children = children.as_ref().map(|kids| {
-                AstAlloc::vec_from_iter(kids.iter().map(|child| {
+                HirAlloc::vec_from_iter(kids.iter().map(|child| {
                     if jsx_ids.contains(&child.identifier) {
                         child.clone()
                     } else {
@@ -624,7 +624,7 @@ fn emit_destructure_props(
     props_obj: &Place,
     old_to_new_props: &IndexMap<IdentifierId, OutlinedJsxAttribute>,
 ) -> Instruction {
-    let mut properties = AstAlloc::vec();
+    let mut properties = HirAlloc::vec();
     for prop in old_to_new_props.values() {
         properties.push(ObjectPropertyOrSpread::Property(ObjectProperty {
             key: ObjectPropertyKey::String {

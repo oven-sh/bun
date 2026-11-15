@@ -3,7 +3,7 @@
 //! Migration shim from the deleted `BabyList<T>` (see
 //! `docs/BABYLIST_REPLACEMENT.md`): every former `BabyList<T>` site is now a
 //! plain `Vec<T>`, and these traits supply the legacy method names (`.slice()`,
-//! `.append()`, `.init_capacity()`, …) so call sites needed only a type-level
+//! `.append_slice()`, `.init_capacity()`, …) so call sites needed only a type-level
 //! rewrite. `Vec` aborts on OOM, so these methods are infallible and return
 //! `T` / `()` directly (the original `Result<_, AllocError>` shim has been
 //! removed — `?`/`handle_oom` at call sites is no longer needed).
@@ -13,7 +13,6 @@
 //! methods whose return types differ. Call sites that relied on the old
 //! variants are patched at the call site to `.first_mut()` / `.to_vec()` etc.
 
-use core::alloc::Allocator;
 use core::fmt;
 
 use bun_alloc::AllocError;
@@ -29,16 +28,9 @@ pub fn recycle_vec<T, U>(mut list: Vec<T>) -> Vec<U> {
 pub trait VecExt<T>: Sized {
     // ── constructors ──────────────────────────────────────────────────────
     fn init_capacity(n: usize) -> Self;
-    fn init_one(value: T) -> Self;
     fn from_slice(items: &[T]) -> Self
     where
         T: Clone;
-    /// Copies `items` into a fresh `A` allocation.
-    fn from_arena_slice(items: &[T]) -> Self
-    where
-        T: Copy;
-    /// Moves the elements of `v` into a fresh `A` allocation and frees `v`'s arena buffer.
-    fn from_bump_vec(v: bun_alloc::ArenaVec<'_, T>) -> Self;
 
     // ── accessors ─────────────────────────────────────────────────────────
     fn slice(&self) -> &[T];
@@ -51,7 +43,6 @@ pub trait VecExt<T>: Sized {
     fn len_u32(&self) -> u32;
 
     // ── mutation ──────────────────────────────────────────────────────────
-    fn append(&mut self, value: T);
     fn append_assume_capacity(&mut self, value: T);
     fn append_slice(&mut self, vals: &[T])
     where
@@ -81,74 +72,19 @@ pub trait VecExt<T>: Sized {
     fn deep_clone_with<F>(&self, clone_one: F) -> Self
     where
         F: FnMut(&T) -> T;
-    fn try_deep_clone_with<F, E>(&self, clone_one: F) -> Result<Self, E>
-    where
-        F: FnMut(&T) -> Result<T, E>,
-        E: From<AllocError>;
 }
 
-// Generic over `A` so the impl serves both `Vec<T>` (Global) and
-// `Vec<T, AstAlloc>` (AST-arena lists — `ExprNodeList`/`DeclList`/
-// `PropertyList`). `A: Default` lets every constructor produce the right
-// allocator without a value in hand; both `Global` and `AstAlloc` are ZSTs
-// with `Default`, so `A::default()` is free.
-impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
+impl<T> VecExt<T> for Vec<T> {
     #[inline]
     fn init_capacity(n: usize) -> Self {
-        Vec::with_capacity_in(n, A::default())
-    }
-    #[inline]
-    fn init_one(value: T) -> Self {
-        let mut v = Vec::with_capacity_in(1, A::default());
-        v.push(value);
-        v
+        Vec::with_capacity(n)
     }
     #[inline]
     fn from_slice(items: &[T]) -> Self
     where
         T: Clone,
     {
-        let mut v = Vec::with_capacity_in(items.len(), A::default());
-        v.extend_from_slice(items);
-        v
-    }
-    #[inline]
-    fn from_arena_slice(items: &[T]) -> Self
-    where
-        T: Copy,
-    {
-        let mut v = Vec::with_capacity_in(items.len(), A::default());
-        v.extend_from_slice(items);
-        v
-    }
-    #[inline]
-    fn from_bump_vec(mut src: bun_alloc::ArenaVec<'_, T>) -> Self {
-        let len = src.len();
-        let mut out = Vec::with_capacity_in(len, A::default());
-        // SAFETY:
-        // - `src` is the unique owner of `len` initialized `T` at
-        //   `src.as_ptr()`.
-        // - `out` has `cap >= len` uninit slots at `out.as_mut_ptr()`.
-        // - Source/dest are distinct allocations (arena heap vs `A` heap),
-        //   so they cannot overlap.
-        // After the copy, `out` is the sole logical owner of every `T`; its
-        // `Drop` will run their destructors exactly once. `src.set_len(0)`
-        // marks the source logically empty so its `Drop` skips element
-        // destructors but still frees the buffer back to the `MimallocArena`
-        // (real `mi_free`, not a bump no-op) — without this the scratch buffer
-        // leaks until arena reset, and the parser's per-node
-        // `BumpVec → AstVec` pattern (decls/properties/args/items) turns that
-        // into O(nodes) dead arena bytes (≈+11% transpile RSS on a 5.7 MB
-        // input). Freeing here makes the scratch slot O(1): mimalloc recycles
-        // the same size-class block on the next iteration.
-        unsafe {
-            core::ptr::copy_nonoverlapping(src.as_ptr(), out.as_mut_ptr(), len);
-            out.set_len(len);
-            src.set_len(0);
-        }
-        // Buffer freed via `<&MimallocArena as Allocator>::deallocate` → `mi_free`.
-        drop(src);
-        out
+        items.to_vec()
     }
 
     #[inline]
@@ -176,10 +112,6 @@ impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
         self.len() as u32
     }
 
-    #[inline]
-    fn append(&mut self, value: T) {
-        self.push(value);
-    }
     #[inline]
     fn append_assume_capacity(&mut self, value: T) {
         debug_assert!(self.len() < self.capacity());
@@ -218,7 +150,7 @@ impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
     }
     #[inline]
     fn clear_and_free(&mut self) {
-        *self = Vec::new_in(A::default());
+        *self = Vec::new();
     }
     #[inline]
     fn drain_front(&mut self, n: usize)
@@ -245,22 +177,11 @@ impl<T, A: Allocator + Default> VecExt<T> for Vec<T, A> {
     where
         F: FnMut(&T) -> T,
     {
-        let mut v = Vec::with_capacity_in(self.len(), A::default());
+        let mut v = Vec::with_capacity(self.len());
         for item in self.iter() {
             v.push(clone_one(item));
         }
         v
-    }
-    fn try_deep_clone_with<F, E>(&self, mut clone_one: F) -> Result<Self, E>
-    where
-        F: FnMut(&T) -> Result<T, E>,
-        E: From<AllocError>,
-    {
-        let mut v = Vec::with_capacity_in(self.len(), A::default());
-        for item in self.iter() {
-            v.push(clone_one(item)?);
-        }
-        Ok(v)
     }
 }
 

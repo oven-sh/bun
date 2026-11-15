@@ -1,5 +1,4 @@
 use bun_ast::{E, Expr};
-use bun_collections::VecExt as _;
 use bun_collections::index_sort;
 use bun_core::strings;
 use bun_semver::{PinnedVersion, Version};

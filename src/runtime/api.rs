@@ -141,7 +141,7 @@ pub(crate) use crate::api::js_bundler::BuildArtifact;
 
 // ─── shared scaffold for Bun.{TOML,JSONC,JSON5,YAML,XML}.parse ───────────────
 //
-// All five repeat: Arena + ASTMemoryAllocator scope + Log + Source::init_path_string. They diverge on the parse-error
+// All five repeat: Arena + Log + Source::init_path_string. They diverge on the parse-error
 // class and the Expr→JS tail, so this helper owns ONLY the scaffold and hands `(&arena, &mut log, &source)` to a
 // per-format closure that does the format-specific parse, error match (StackOverflow / OOM / SyntaxError vs
 // log.to_js), and tail conversion.
@@ -172,11 +172,7 @@ fn with_text_format_source<R>(
     // Reused because `mi_heap_new` costs more than parsing a small document. A nested call gets a new arena.
     let slot = &global.bun_vm().text_format_arena;
     slot.with_taken(|arena| {
-        let result = {
-            let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
-            let _ast_scope = ast_memory_allocator.enter();
-            f(arena, &mut log, &source)
-        };
+        let result = f(arena, &mut log, &source);
         arena.reset_retain_with_limit(2 * 1024 * 1024);
         result
     })

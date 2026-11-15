@@ -17,11 +17,6 @@ impl Framework {
         bundler_view: &Arc<bun_bundler::bake_types::Framework>,
         bundler_options: &BuildConfigSubset,
     ) -> crate::Result<bun_bundler::Transpiler<'a>> {
-        // `ASTMemoryAllocator::enter` returns an RAII `Scope` whose `Drop`
-        // runs `exit()` at end-of-fn.
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
-        let _ast_scope = ast_memory_allocator.enter();
-
         let mut out = bun_bundler::Transpiler::init(
             arena,
             log,

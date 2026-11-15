@@ -1,8 +1,8 @@
 //! yarn 2+ ("berry") `yarn.lock` migration. A pin bun cannot keep fails it, with the reason logged.
 
 use bun_alloc::AllocError;
-use bun_ast::{AstArena, E, Expr, ExprData};
-use bun_collections::{StringArrayHashMap, VecExt};
+use bun_ast::{AstArena, AstVec, E, Expr, ExprData};
+use bun_collections::StringArrayHashMap;
 use bun_core::strings;
 use bun_semver as semver;
 use bun_semver::String;
@@ -614,16 +614,12 @@ pub(crate) fn migrate_yarn_berry_lockfile(
     }
     let source = bun_ast::Source::init_path_string(b"yarn.lock", data);
     let arena = AstArena::new();
-    let mut allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-    let parsed = {
-        let _scope = allocator.enter();
-        bun_parsers::yaml::YAML::parse(
-            &source,
-            log,
-            &arena,
-            bun_parsers::yaml::CyclicAliases::Reject,
-        )
-    };
+    let parsed = bun_parsers::yaml::YAML::parse(
+        &source,
+        log,
+        &arena,
+        bun_parsers::yaml::CyclicAliases::Reject,
+    );
     let Ok(root) = parsed else {
         bail!(log, "yarn.lock is not valid YAML");
     };
@@ -2080,10 +2076,10 @@ fn object_expr_from<'a>(
     bump: &AstArena,
     entries: &mut dyn Iterator<Item = (&'a [u8], Expr)>,
 ) -> Expr {
-    let mut properties = bun_alloc::AstAlloc::vec();
+    let mut properties = AstVec::new();
     for (key, value) in entries {
-        VecExt::append(
-            &mut properties,
+        properties.push(
+            bump,
             bun_ast::G::Property {
                 key: Some(string_expr(bump, key)),
                 value: Some(value),

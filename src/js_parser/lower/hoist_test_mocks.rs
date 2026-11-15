@@ -4,8 +4,7 @@
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
-use bun_ast::{self as js_ast, B, E, Expr, G, ImportKind, Ref, S, Stmt};
-use bun_collections::VecExt;
+use bun_ast::{self as js_ast, AstBox, B, E, Expr, G, ImportKind, Ref, S, Stmt};
 
 use crate::p::P;
 use crate::parser::{Jest, RefMap};
@@ -38,6 +37,7 @@ pub(crate) enum MockHoistOrder {
 
 /// Rewrites a lowered import's callee to `(0, ns.fn)`, so the call doesn't pass `ns` as `this`.
 pub(crate) fn drop_namespace_of_lowered_callee(
+    arena: &js_ast::AstArena,
     symbols: &[js_ast::Symbol],
     callee: &mut Expr,
 ) -> bool {
@@ -54,7 +54,7 @@ pub(crate) fn drop_namespace_of_lowered_callee(
             data: crate::prefill::data::ZERO,
             loc: callee.loc,
         }
-        .join_with_comma(*callee);
+        .join_with_comma(arena, *callee);
     }
     is_lowered
 }
@@ -312,13 +312,15 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
             );
         }
         for (ref_, alias) in bindings() {
-            self.symbols[ref_.inner_index() as usize].namespace_alias =
-                Some(bun_alloc::ast_box(G::NamespaceAlias {
+            self.symbols[ref_.inner_index() as usize].namespace_alias = Some(AstBox::new_in(
+                G::NamespaceAlias {
                     namespace_ref: import.namespace_ref,
                     alias,
                     import_record_index: import.import_record_index,
                     was_originally_property_access: false,
-                }));
+                },
+                self.ast_arena,
+            ));
         }
         MockHoistOrder::LoweredImport
     }
@@ -388,10 +390,13 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
         self.s(
             S::Local {
                 kind: S::Kind::KConst,
-                decls: G::DeclList::init_one(G::Decl {
-                    binding,
-                    value: Some(value),
-                }),
+                decls: G::DeclList::from_slice_in(
+                    &[G::Decl {
+                        binding,
+                        value: Some(value),
+                    }],
+                    self.ast_arena,
+                ),
                 ..Default::default()
             },
             loc,
@@ -466,10 +471,13 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
         Some(self.s(
             S::Local {
                 kind: S::Kind::KConst,
-                decls: G::DeclList::init_one(G::Decl {
-                    binding,
-                    value: Some(value),
-                }),
+                decls: G::DeclList::from_slice_in(
+                    &[G::Decl {
+                        binding,
+                        value: Some(value),
+                    }],
+                    self.ast_arena,
+                ),
                 ..Default::default()
             },
             loc,

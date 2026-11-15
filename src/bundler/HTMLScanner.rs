@@ -3,7 +3,7 @@ use std::borrow::Cow;
 
 use crate::Error;
 use crate::bun_fs as fs;
-use bun_alloc::AstAlloc;
+use bun_alloc::Arena;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Log, Range, Source};
 use bun_paths::fs::Path as FsPath;
@@ -50,16 +50,17 @@ use lol_html::html_content::Element;
 
 bun_core::declare_scope!(HTMLScanner, hidden);
 
-pub(crate) struct HTMLScanner<'a> {
-    // arena field dropped — global mimalloc (see PORTING.md §Allocators).
-    pub import_records: Vec<ImportRecord<'static>>,
+pub(crate) struct HTMLScanner<'a, 'bump> {
+    arena: &'bump Arena,
+    pub import_records: Vec<ImportRecord<'bump>>,
     pub log: &'a Log,
     pub source: &'a Source<'a>,
 }
 
-impl<'a> HTMLScanner<'a> {
-    pub(crate) fn init(log: &'a Log, source: &'a Source<'a>) -> HTMLScanner<'a> {
+impl<'a, 'bump> HTMLScanner<'a, 'bump> {
+    pub(crate) fn init(arena: &'bump Arena, log: &'a Log, source: &'a Source<'a>) -> Self {
         HTMLScanner {
+            arena,
             import_records: Vec::new(),
             log,
             source,
@@ -67,7 +68,7 @@ impl<'a> HTMLScanner<'a> {
     }
 }
 
-impl<'a> HTMLScanner<'a> {
+impl HTMLScanner<'_, '_> {
     fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
@@ -105,10 +106,8 @@ impl<'a> HTMLScanner<'a> {
             input_path
         };
 
-        let owned: &'static [u8] =
-            Box::leak(AstAlloc::vec_from_slice(path_to_use).into_boxed_slice());
         let record = ImportRecord {
-            path: FsPath::init(owned),
+            path: FsPath::init(self.arena.alloc_slice_copy(path_to_use)),
             kind,
             range: Range::NONE,
             tag: ImportRecordTag::default(),
@@ -151,16 +150,17 @@ impl<'a> HTMLScanner<'a> {
 }
 
 /// The import records of the HTML file `source`: one per `<script src>`, `<link href>` and other tag the bundler follows.
-pub fn scan_import_records(
+pub fn scan_import_records<'bump>(
+    arena: &'bump Arena,
     log: &Log,
     source: &Source,
-) -> Result<Vec<ImportRecord<'static>>, Error> {
-    let mut scanner = HTMLScanner::init(log, source);
+) -> Result<Vec<ImportRecord<'bump>>, Error> {
+    let mut scanner = HTMLScanner::init(arena, log, source);
     scanner.scan(&source.contents)?;
     Ok(scanner.import_records)
 }
 
-type Processor<'a> = HTMLProcessor<HTMLScanner<'a>, false>;
+type Processor<'a, 'bump> = HTMLProcessor<HTMLScanner<'a, 'bump>, false>;
 
 // ───────────────────────────────────────────────────────────────────────────
 // HTMLProcessor — generic over visitor `T` and `VISIT_DOCUMENT_TAGS`
@@ -192,7 +192,7 @@ pub(crate) trait HTMLProcessorHandler {
     }
 }
 
-impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
+impl HTMLProcessorHandler for HTMLScanner<'_, '_> {
     fn on_tag(
         &mut self,
         element: &mut Element<'_, '_>,

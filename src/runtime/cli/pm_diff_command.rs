@@ -7,7 +7,6 @@ use bstr::BStr;
 use bun_alloc::Arena as Bump;
 use bun_archive::tar;
 use bun_ast::AstArena;
-use bun_collections::VecExt as _;
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
 use bun_core::strings;

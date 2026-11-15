@@ -12,12 +12,11 @@
 //!   attributes in order. The lowering turns it back into a `JsxExpression`.
 
 use crate::compile::Flavor;
-use bun_alloc::{Arena, AstAlloc, AstVec};
 use bun_ast::base::RefTag;
 use bun_ast::{
-    ArrayBinding, B, Binding, Case, Catch, E, Expr as JsExpr, Finally, G, Loc, LocRef, OpCode,
-    OptionalChain, Range, Ref, S, Stmt as JsStmt, StoreSlice, StoreStr, Symbol as JsSymbol,
-    SymbolKind, flags,
+    ArrayBinding, AstArena, AstVec, B, Binding, Case, Catch, E, Expr as JsExpr, Finally, G, Loc,
+    LocRef, OpCode, OptionalChain, Range, Ref, S, Stmt as JsStmt, StoreSlice, StoreStr,
+    Symbol as JsSymbol, SymbolKind, flags,
 };
 use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::ast::{
@@ -155,7 +154,7 @@ enum Named {
 
 pub(crate) struct Converter<'a, 'x> {
     file: &'a File<'a>,
-    arena: &'x Arena,
+    arena: &'x AstArena,
     flavor: Flavor,
     /// The range of the function being compiled.
     root: Span,
@@ -176,10 +175,10 @@ pub(crate) struct Converter<'a, 'x> {
     stack: bun_core::StackCheck,
 }
 
-/// `func` must have a body. The caller must have entered an AST allocator scope that outlives the result.
+/// `func` must have a body.
 pub(crate) fn convert<'a>(
     file: &'a File<'a>,
-    arena: &Arena,
+    arena: &AstArena,
     func: Func<'a>,
     flavor: Flavor,
 ) -> Converts<Converted> {
@@ -237,10 +236,6 @@ pub(crate) fn convert<'a>(
         recorded: converter.recorded,
         clock_reads: converter.clock_reads,
     })
-}
-
-fn leak<T>(list: AstVec<T>) -> StoreSlice<T> {
-    StoreSlice::new_mut(list.leak())
 }
 
 impl<'a> Converter<'a, '_> {
@@ -393,14 +388,14 @@ impl<'a> Converter<'a, '_> {
             return Err(ConvertError::ThisParameter);
         }
         let params = func.params();
-        let mut args: AstVec<G::Arg> = AstAlloc::vec_with_capacity(params.len());
+        let mut args: AstVec<G::Arg> = AstVec::with_capacity_in(params.len(), self.arena);
         let mut has_rest = false;
-        let mut first: AstVec<JsStmt> = AstAlloc::vec();
+        let mut first: AstVec<JsStmt> = AstVec::new();
         for param in params {
             has_rest = param.is_rest();
-            args.push(self.arg(param, &mut first)?);
+            args.push(self.arena, self.arg(param, &mut first)?);
         }
-        Ok((leak(args), has_rest, first))
+        Ok((args.into_store_slice(), has_rest, first))
     }
 
     fn arg(&mut self, param: Param<'a>, first: &mut AstVec<JsStmt>) -> Converts<G::Arg> {
@@ -436,19 +431,25 @@ impl<'a> Converter<'a, '_> {
     ) -> Binding {
         let loc = binding.loc;
         let r#ref = self.new_symbol(b"t", kind, false);
-        let mut decls: G::DeclList = AstAlloc::vec_with_capacity(1);
-        decls.push(G::Decl {
-            binding,
-            value: Some(JsExpr::init_identifier(r#ref, loc)),
-        });
-        first.push(JsStmt::alloc(
-            S::Local {
-                kind: S::Kind::KLet,
-                decls,
-                ..S::Local::default()
-            },
-            loc,
-        ));
+        let decls = G::DeclList::from_slice_in(
+            &[G::Decl {
+                binding,
+                value: Some(JsExpr::init_identifier(r#ref, loc)),
+            }],
+            self.arena,
+        );
+        first.push(
+            self.arena,
+            JsStmt::allocate(
+                self.arena,
+                S::Local {
+                    kind: S::Kind::KLet,
+                    decls,
+                    ..S::Local::default()
+                },
+                loc,
+            ),
+        );
         Binding::alloc(self.arena, B::Identifier { r#ref }, loc)
     }
 
@@ -462,13 +463,16 @@ impl<'a> Converter<'a, '_> {
     ) -> Converts<(G::FnBody, bool)> {
         let is_expression = first.is_empty() && matches!(func.body(), FnBody::Expr(_));
         let stmts = match func.body() {
-            FnBody::None => leak(first),
+            FnBody::None => first.into_store_slice(),
             FnBody::Block(statements) => self.stmts_after(first, statements)?,
             FnBody::Expr(value) => {
                 let mut stmts = first;
                 let value = self.expr(value)?;
-                stmts.push(JsStmt::alloc(S::Return { value: Some(value) }, value.loc));
-                leak(stmts)
+                stmts.push(
+                    self.arena,
+                    JsStmt::allocate(self.arena, S::Return { value: Some(value) }, value.loc),
+                );
+                stmts.into_store_slice()
             }
         };
         Ok((G::FnBody { loc, stmts }, is_expression))
@@ -540,8 +544,9 @@ impl<'a> Converter<'a, '_> {
     fn function_expr(&mut self, func: Func<'a>, span: Span) -> Converts<JsExpr> {
         let loc = self.loc(span);
         Ok(match func.is_arrow() {
-            true => JsExpr::init(self.arrow(func)?, loc),
-            false => JsExpr::init(
+            true => JsExpr::allocate(self.arena, self.arrow(func)?, loc),
+            false => JsExpr::allocate(
+                self.arena,
                 E::Function {
                     func: self.function(func)?,
                 },
@@ -610,7 +615,7 @@ impl<'a> Converter<'a, '_> {
                 }
                 PatKind::Array(elements) => {
                     let mut items: AstVec<ArrayBinding> =
-                        AstAlloc::vec_with_capacity(elements.len());
+                        AstVec::with_capacity_in(elements.len(), self.arena);
                     let mut has_spread = false;
                     for element in elements {
                         has_spread = element.is_rest();
@@ -627,13 +632,16 @@ impl<'a> Converter<'a, '_> {
                                 (Binding { loc, data }, None)
                             }
                         };
-                        items.push(ArrayBinding {
-                            binding,
-                            default_value,
-                        });
+                        items.push(
+                            this.arena,
+                            ArrayBinding {
+                                binding,
+                                default_value,
+                            },
+                        );
                     }
                     let array = B::Array {
-                        items: leak(items),
+                        items: items.into_store_slice(),
                         has_spread,
                         is_single_line: false,
                     };
@@ -641,7 +649,7 @@ impl<'a> Converter<'a, '_> {
                 }
                 PatKind::Object(props) => {
                     let mut properties: AstVec<B::Property> =
-                        AstAlloc::vec_with_capacity(props.len());
+                        AstVec::with_capacity_in(props.len(), self.arena);
                     for prop in props {
                         let (key, mut flags) = match prop.key() {
                             Some(key) => this.key(key, None)?,
@@ -652,15 +660,18 @@ impl<'a> Converter<'a, '_> {
                         }
                         let value = this.binding(prop.value())?;
                         let default_value = this.default(&value, prop.value(), prop.default())?;
-                        properties.push(B::Property {
-                            flags,
-                            key,
-                            value,
-                            default_value,
-                        });
+                        properties.push(
+                            this.arena,
+                            B::Property {
+                                flags,
+                                key,
+                                value,
+                                default_value,
+                            },
+                        );
                     }
                     let object = B::Object {
-                        properties: leak(properties),
+                        properties: properties.into_store_slice(),
                         is_single_line: false,
                         close_brace_loc: Loc::EMPTY,
                     };
@@ -673,7 +684,11 @@ impl<'a> Converter<'a, '_> {
     // ───────────────────────────── keys and properties ─────────────────────────────
 
     fn string(&mut self, value: &[u8], span: Span) -> Converts<JsExpr> {
-        Ok(JsExpr::init(E::EString::init(value), self.loc(span)))
+        Ok(JsExpr::allocate(
+            self.arena,
+            E::EString::init(value),
+            self.loc(span),
+        ))
     }
 
     /// `at` overrides the span of a key that isn't computed.
@@ -763,9 +778,9 @@ impl<'a> Converter<'a, '_> {
     }
 
     fn properties(&mut self, props: List<'a, Prop<'a>>) -> Converts<G::PropertyList> {
-        let mut properties: G::PropertyList = AstAlloc::vec_with_capacity(props.len());
+        let mut properties: G::PropertyList = AstVec::with_capacity_in(props.len(), self.arena);
         for prop in props {
-            properties.push(self.property(prop)?);
+            properties.push(self.arena, self.property(prop)?);
         }
         Ok(properties)
     }
@@ -781,16 +796,16 @@ impl<'a> Converter<'a, '_> {
             });
             let extends = class.extends().map(|it| this.expr(it)).transpose()?;
             let mut properties: AstVec<G::Property> =
-                AstAlloc::vec_with_capacity(class.members().len());
+                AstVec::with_capacity_in(class.members().len(), self.arena);
             for member in class.members() {
                 if let Some(property) = this.member(member)? {
-                    properties.push(property);
+                    properties.push(self.arena, property);
                 }
             }
             Ok(G::Class {
                 class_name,
                 extends,
-                properties: leak(properties),
+                properties: properties.into_store_slice(),
                 ..G::Class::default()
             })
         })
@@ -806,14 +821,14 @@ impl<'a> Converter<'a, '_> {
                 return Ok(None);
             };
             let loc = self.loc(member.span());
-            let mut stmts: AstVec<JsStmt> = AstAlloc::vec_with_capacity(statements.len());
+            let mut stmts: AstVec<JsStmt> = AstVec::with_capacity_in(statements.len(), self.arena);
             for statement in statements {
-                stmts.push(self.stmt(statement)?);
+                stmts.push(self.arena, self.stmt(statement)?);
             }
-            let block = self.arena.alloc(G::ClassStaticBlock { stmts, loc });
+            let block = self.arena.alloc_node(G::ClassStaticBlock { stmts, loc });
             return Ok(Some(G::Property {
                 kind: G::PropertyKind::ClassStaticBlock,
-                class_static_block: Some(bun_ast::StoreRef::from_bump(block)),
+                class_static_block: Some(block),
                 ..G::Property::default()
             }));
         }
@@ -853,9 +868,9 @@ impl<'a> Converter<'a, '_> {
     // ───────────────────────────── expressions ─────────────────────────────
 
     fn exprs(&mut self, list: List<'a, Expr<'a>>) -> Converts<bun_ast::ExprNodeList> {
-        let mut converted: bun_ast::ExprNodeList = AstAlloc::vec_with_capacity(list.len());
+        let mut converted: bun_ast::ExprNodeList = AstVec::with_capacity_in(list.len(), self.arena);
         for expr in list {
-            converted.push(self.expr(expr)?);
+            converted.push(self.arena, self.expr(expr)?);
         }
         Ok(converted)
     }
@@ -911,12 +926,15 @@ impl<'a> Converter<'a, '_> {
             ExprKind::True => JsExpr::init(E::Boolean { value: true }, loc),
             ExprKind::False => JsExpr::init(E::Boolean { value: false }, loc),
             ExprKind::Number(value) => JsExpr::init(E::Number::new(value), loc),
-            ExprKind::String(value) => JsExpr::init(E::EString::init(value.bytes()), loc),
+            ExprKind::String(value) => {
+                JsExpr::allocate(self.arena, E::EString::init(value.bytes()), loc)
+            }
             // oxc's lowering supports them. The compiler treats all primitives alike, so a number will do.
             ExprKind::BigInt(_) if self.flavor == Flavor::Oxlint => {
                 JsExpr::init(E::Number::new(0.0), loc)
             }
-            ExprKind::BigInt(value) => JsExpr::init(
+            ExprKind::BigInt(value) => JsExpr::allocate(
+                self.arena,
                 E::BigInt {
                     value: StoreStr::new(value.bytes()),
                 },
@@ -925,7 +943,8 @@ impl<'a> Converter<'a, '_> {
             ExprKind::Regex(regex) => {
                 let text = expr.text();
                 let flags_offset = text.len().checked_sub(regex.flags().len());
-                JsExpr::init(
+                JsExpr::allocate(
+                    self.arena,
                     E::RegExp {
                         value: StoreStr::new(text),
                         flags_offset: flags_offset
@@ -935,7 +954,9 @@ impl<'a> Converter<'a, '_> {
                     loc,
                 )
             }
-            ExprKind::Template(template) => JsExpr::init(self.template(template, None)?, loc),
+            ExprKind::Template(template) => {
+                JsExpr::allocate(self.arena, self.template(template, None)?, loc)
+            }
             ExprKind::TaggedTemplate(call) => {
                 let tag = self.expr(call.callee())?;
                 match call.template().map(Expr::kind) {
@@ -943,7 +964,8 @@ impl<'a> Converter<'a, '_> {
                     Some(ExprKind::Template(template))
                         if self.flavor == Flavor::Oxlint && !template.exprs().is_empty() =>
                     {
-                        JsExpr::init(
+                        JsExpr::allocate(
+                            self.arena,
                             E::Call {
                                 target: tag,
                                 args: self.exprs(template.exprs())?,
@@ -953,28 +975,31 @@ impl<'a> Converter<'a, '_> {
                         )
                     }
                     Some(ExprKind::Template(template)) => {
-                        JsExpr::init(self.template(template, Some(tag))?, loc)
+                        JsExpr::allocate(self.arena, self.template(template, Some(tag))?, loc)
                     }
                     _ => JsExpr::init(E::Missing {}, loc),
                 }
             }
-            ExprKind::Array(items) => JsExpr::init(
+            ExprKind::Array(items) => JsExpr::allocate(
+                self.arena,
                 E::Array {
                     items: self.exprs(items)?,
                     ..E::Array::default()
                 },
                 loc,
             ),
-            ExprKind::Object(props) => JsExpr::init(
+            ExprKind::Object(props) => JsExpr::allocate(
+                self.arena,
                 E::Object {
                     properties: self.properties(props)?,
                     ..E::Object::default()
                 },
                 loc,
             ),
-            ExprKind::Class(class) => JsExpr::init(self.class(class)?, loc),
+            ExprKind::Class(class) => JsExpr::allocate(self.arena, self.class(class)?, loc),
             ExprKind::Dot { obj, name, chain } => self.dot(obj, name, chain, loc)?,
-            ExprKind::Index { obj, index, chain } => JsExpr::init(
+            ExprKind::Index { obj, index, chain } => JsExpr::allocate(
+                self.arena,
                 E::Index {
                     target: self.expr(obj)?,
                     index: self.expr(index)?,
@@ -994,15 +1019,17 @@ impl<'a> Converter<'a, '_> {
                     name_loc: target.loc,
                     ..E::Dot::default()
                 };
-                JsExpr::init(
+                JsExpr::allocate(
+                    self.arena,
                     E::Call {
-                        target: JsExpr::init(now, target.loc),
+                        target: JsExpr::allocate(self.arena, now, target.loc),
                         ..E::Call::default()
                     },
                     loc,
                 )
             }
-            ExprKind::Call(call) => JsExpr::init(
+            ExprKind::Call(call) => JsExpr::allocate(
+                self.arena,
                 E::Call {
                     target: self.expr(call.callee())?,
                     args: self.exprs(call.args())?,
@@ -1011,7 +1038,8 @@ impl<'a> Converter<'a, '_> {
                 },
                 loc,
             ),
-            ExprKind::New(call) => JsExpr::init(
+            ExprKind::New(call) => JsExpr::allocate(
+                self.arena,
                 E::New {
                     target: self.expr(call.callee())?,
                     args: self.exprs(call.args())?,
@@ -1031,7 +1059,8 @@ impl<'a> Converter<'a, '_> {
                     }
                     _ => E::UnaryFlags::empty(),
                 };
-                JsExpr::init(
+                JsExpr::allocate(
+                    self.arena,
                     E::Unary {
                         op: unary_op(op),
                         value,
@@ -1040,7 +1069,8 @@ impl<'a> Converter<'a, '_> {
                     loc,
                 )
             }
-            ExprKind::Binary { op, left, right } => JsExpr::init(
+            ExprKind::Binary { op, left, right } => JsExpr::allocate(
+                self.arena,
                 E::Binary {
                     left: self.expr(left)?,
                     right: self.expr(right)?,
@@ -1056,9 +1086,10 @@ impl<'a> Converter<'a, '_> {
                     self.recorded.truncate(recorded);
                 }
                 let op = assign_op(op);
-                JsExpr::init(E::Binary { left, right, op }, loc)
+                JsExpr::allocate(self.arena, E::Binary { left, right, op }, loc)
             }
-            ExprKind::Cond { test, yes, no } => JsExpr::init(
+            ExprKind::Cond { test, yes, no } => JsExpr::allocate(
+                self.arena,
                 E::If {
                     test: self.expr(test)?,
                     yes: self.expr(yes)?,
@@ -1066,19 +1097,22 @@ impl<'a> Converter<'a, '_> {
                 },
                 loc,
             ),
-            ExprKind::Spread(value) => JsExpr::init(
+            ExprKind::Spread(value) => JsExpr::allocate(
+                self.arena,
                 E::Spread {
                     value: self.expr(value)?,
                 },
                 loc,
             ),
-            ExprKind::Await(value) => JsExpr::init(
+            ExprKind::Await(value) => JsExpr::allocate(
+                self.arena,
                 E::Await {
                     value: self.expr(value)?,
                 },
                 loc,
             ),
-            ExprKind::Yield { value, star } => JsExpr::init(
+            ExprKind::Yield { value, star } => JsExpr::allocate(
+                self.arena,
                 E::Yield {
                     value: value.map(|it| self.expr(it)).transpose()?,
                     is_star: star,
@@ -1090,7 +1124,8 @@ impl<'a> Converter<'a, '_> {
                 let keyword = Span::new(span.start, span.start + "import".len() as u32);
                 self.recorded.push(Recorded::DynamicImport(keyword));
                 let missing = JsExpr::init(E::Missing {}, loc);
-                JsExpr::init(
+                JsExpr::allocate(
+                    self.arena,
                     E::Import {
                         expr: args.get(0).map_or(Ok(missing), |it| self.expr(it))?,
                         options: args.get(1).map_or(Ok(missing), |it| self.expr(it))?,
@@ -1118,7 +1153,8 @@ impl<'a> Converter<'a, '_> {
         let optional_chain = Self::chain(chain);
         if name.bytes().starts_with(b"#") {
             let ref_ = self.ref_of_name(Named::Private, name.name());
-            return Ok(JsExpr::init(
+            return Ok(JsExpr::allocate(
+                self.arena,
                 E::Index {
                     target,
                     index: JsExpr::init(E::PrivateIdentifier { ref_ }, name_loc),
@@ -1128,7 +1164,8 @@ impl<'a> Converter<'a, '_> {
                 loc,
             ));
         }
-        Ok(JsExpr::init(
+        Ok(JsExpr::allocate(
+            self.arena,
             E::Dot {
                 target,
                 name: StoreStr::new(name.bytes()),
@@ -1153,17 +1190,20 @@ impl<'a> Converter<'a, '_> {
             _ => E::TemplateContents::Raw(StoreStr::new(template.raw(i))),
         };
         let mut parts: AstVec<E::TemplatePart> =
-            AstAlloc::vec_with_capacity(template.exprs().len());
+            AstVec::with_capacity_in(template.exprs().len(), self.arena);
         for (i, value) in template.exprs().iter().enumerate() {
-            parts.push(E::TemplatePart {
-                value: self.expr(value)?,
-                tail_loc: self.loc(template.quasi_span(i + 1)),
-                tail: contents(i + 1),
-            });
+            parts.push(
+                self.arena,
+                E::TemplatePart {
+                    value: self.expr(value)?,
+                    tail_loc: self.loc(template.quasi_span(i + 1)),
+                    tail: contents(i + 1),
+                },
+            );
         }
         Ok(E::Template {
             tag,
-            parts: leak(parts),
+            parts: parts.into_store_slice(),
             head: contents(0),
         })
     }
@@ -1203,44 +1243,54 @@ impl<'a> Converter<'a, '_> {
             }
         }
         let children = jsx.children();
-        let mut args: bun_ast::ExprNodeList = AstAlloc::vec_with_capacity(children.len() + 2);
-        args.push(match jsx.tag() {
-            Some(tag) => self.jsx_tag(tag)?,
-            None => JsExpr::init_identifier(self.fragment, self.loc(jsx.opening_span())),
-        });
+        let mut args: bun_ast::ExprNodeList =
+            AstVec::with_capacity_in(children.len() + 2, self.arena);
+        args.push(
+            self.arena,
+            match jsx.tag() {
+                Some(tag) => self.jsx_tag(tag)?,
+                None => JsExpr::init_identifier(self.fragment, self.loc(jsx.opening_span())),
+            },
+        );
         let attrs = jsx.attrs();
         let props_loc = self.loc(jsx.opening_span());
-        args.push(match attrs.is_empty() {
-            true => JsExpr::init(E::Null {}, props_loc),
-            false => {
-                let mut properties: G::PropertyList = AstAlloc::vec_with_capacity(attrs.len());
-                for attr in attrs {
-                    let mut property = self.property(attr)?;
-                    if property.kind != G::PropertyKind::Spread && property.value.is_none() {
-                        let loc = self.loc(attr.span());
-                        property.value = Some(JsExpr::init(E::Boolean { value: true }, loc));
+        args.push(
+            self.arena,
+            match attrs.is_empty() {
+                true => JsExpr::init(E::Null {}, props_loc),
+                false => {
+                    let mut properties: G::PropertyList =
+                        AstVec::with_capacity_in(attrs.len(), self.arena);
+                    for attr in attrs {
+                        let mut property = self.property(attr)?;
+                        if property.kind != G::PropertyKind::Spread && property.value.is_none() {
+                            let loc = self.loc(attr.span());
+                            property.value = Some(JsExpr::init(E::Boolean { value: true }, loc));
+                        }
+                        properties.push(self.arena, property);
                     }
-                    properties.push(property);
+                    JsExpr::allocate(
+                        self.arena,
+                        E::Object {
+                            properties,
+                            ..E::Object::default()
+                        },
+                        props_loc,
+                    )
                 }
-                JsExpr::init(
-                    E::Object {
-                        properties,
-                        ..E::Object::default()
-                    },
-                    props_loc,
-                )
-            }
-        });
+            },
+        );
         for child in children {
             if !child.is_missing() {
-                args.push(self.expr(child)?);
+                args.push(self.arena, self.expr(child)?);
             }
         }
         let close_paren_loc = match jsx.closing_span() {
             Some(span) => self.loc(span),
             None => Loc::EMPTY,
         };
-        Ok(JsExpr::init(
+        Ok(JsExpr::allocate(
+            self.arena,
             E::Call {
                 target: JsExpr::init_identifier(self.create_element, Loc::EMPTY),
                 args,
@@ -1255,7 +1305,7 @@ impl<'a> Converter<'a, '_> {
     // ───────────────────────────── statements ─────────────────────────────
 
     fn stmts(&mut self, list: List<'a, Stmt<'a>>) -> Converts<StoreSlice<JsStmt>> {
-        self.stmts_after(AstAlloc::vec(), list)
+        self.stmts_after(AstVec::new(), list)
     }
 
     fn stmts_after(
@@ -1264,11 +1314,11 @@ impl<'a> Converter<'a, '_> {
         list: List<'a, Stmt<'a>>,
     ) -> Converts<StoreSlice<JsStmt>> {
         let mut converted = first;
-        converted.reserve(list.len());
+        converted.reserve(self.arena, list.len());
         for stmt in list {
-            converted.push(self.stmt(stmt)?);
+            converted.push(self.arena, self.stmt(stmt)?);
         }
-        Ok(leak(converted))
+        Ok(converted.into_store_slice())
     }
 
     /// The statements of `stmt`, which is a block.
@@ -1293,14 +1343,18 @@ impl<'a> Converter<'a, '_> {
             Some(VarKind::Const) => S::Kind::KConst,
             Some(VarKind::Using | VarKind::AwaitUsing) => return Err(ConvertError::Using),
         };
-        let mut converted: G::DeclList = AstAlloc::vec_with_capacity(decls.len());
+        let mut converted: G::DeclList = AstVec::with_capacity_in(decls.len(), self.arena);
         for decl in decls {
-            converted.push(G::Decl {
-                binding: self.binding(decl.pat())?,
-                value: decl.init().map(|it| self.expr(it)).transpose()?,
-            });
+            converted.push(
+                self.arena,
+                G::Decl {
+                    binding: self.binding(decl.pat())?,
+                    value: decl.init().map(|it| self.expr(it)).transpose()?,
+                },
+            );
         }
-        Ok(JsStmt::alloc(
+        Ok(JsStmt::allocate(
+            self.arena,
             S::Local {
                 kind,
                 decls: converted,
@@ -1318,12 +1372,13 @@ impl<'a> Converter<'a, '_> {
         let loc = self.loc(stmt.span());
         if let Some(value) = stmt.directive() {
             let value = StoreStr::new(value);
-            return Ok(JsStmt::alloc(S::Directive { value }, loc));
+            return Ok(JsStmt::allocate(self.arena, S::Directive { value }, loc));
         }
         Ok(match stmt.kind() {
-            StmtKind::Empty => JsStmt::alloc(S::Empty {}, loc),
-            StmtKind::Debugger => JsStmt::alloc(S::Debugger {}, loc),
-            StmtKind::Expr(value) => JsStmt::alloc(
+            StmtKind::Empty => JsStmt::allocate(self.arena, S::Empty {}, loc),
+            StmtKind::Debugger => JsStmt::allocate(self.arena, S::Debugger {}, loc),
+            StmtKind::Expr(value) => JsStmt::allocate(
+                self.arena,
                 S::SExpr {
                     value: self.expr(value)?,
                     ..S::SExpr::default()
@@ -1331,7 +1386,8 @@ impl<'a> Converter<'a, '_> {
                 loc,
             ),
             StmtKind::Var(decls) => self.local(decls, loc)?,
-            StmtKind::Fn(func) if func.has_body() => JsStmt::alloc(
+            StmtKind::Fn(func) if func.has_body() => JsStmt::allocate(
+                self.arena,
                 S::Function {
                     func: self.function(func)?,
                 },
@@ -1339,9 +1395,10 @@ impl<'a> Converter<'a, '_> {
             ),
             // Type-only declarations.
             StmtKind::Fn(_) | StmtKind::Interface(_) | StmtKind::TypeAlias(_) => {
-                JsStmt::alloc(S::TypeScript::default(), loc)
+                JsStmt::allocate(self.arena, S::TypeScript::default(), loc)
             }
-            StmtKind::Class(class) => JsStmt::alloc(
+            StmtKind::Class(class) => JsStmt::allocate(
+                self.arena,
                 S::Class {
                     class: self.class(class)?,
                     is_export: false,
@@ -1349,7 +1406,8 @@ impl<'a> Converter<'a, '_> {
                 loc,
             ),
             // The compiler doesn't look at enums or namespaces.
-            StmtKind::Enum(it) => JsStmt::alloc(
+            StmtKind::Enum(it) => JsStmt::allocate(
+                self.arena,
                 S::Enum {
                     name: LocRef {
                         loc: self.loc(it.name().span()),
@@ -1361,7 +1419,8 @@ impl<'a> Converter<'a, '_> {
                 },
                 loc,
             ),
-            StmtKind::Module(it) => JsStmt::alloc(
+            StmtKind::Module(it) => JsStmt::allocate(
+                self.arena,
                 S::Namespace {
                     name: LocRef {
                         loc: self.loc(it.name_span()),
@@ -1373,13 +1432,15 @@ impl<'a> Converter<'a, '_> {
                 },
                 loc,
             ),
-            StmtKind::Return(value) => JsStmt::alloc(
+            StmtKind::Return(value) => JsStmt::allocate(
+                self.arena,
                 S::Return {
                     value: value.map(|it| self.expr(it)).transpose()?,
                 },
                 loc,
             ),
-            StmtKind::If { test, yes, no } => JsStmt::alloc(
+            StmtKind::If { test, yes, no } => JsStmt::allocate(
+                self.arena,
                 S::If {
                     test: self.expr(test)?,
                     yes: self.stmt(yes)?,
@@ -1393,7 +1454,8 @@ impl<'a> Converter<'a, '_> {
                 test,
                 update,
                 body,
-            } => JsStmt::alloc(
+            } => JsStmt::allocate(
+                self.arena,
                 S::For {
                     init: init.map(|it| self.stmt(it)).transpose()?,
                     test: match (test, self.flavor) {
@@ -1409,7 +1471,8 @@ impl<'a> Converter<'a, '_> {
                 },
                 loc,
             ),
-            StmtKind::ForIn { left, expr, body } => JsStmt::alloc(
+            StmtKind::ForIn { left, expr, body } => JsStmt::allocate(
+                self.arena,
                 S::ForIn {
                     init: self.stmt(left)?,
                     value: self.expr(expr)?,
@@ -1422,7 +1485,8 @@ impl<'a> Converter<'a, '_> {
                 expr,
                 body,
                 is_await,
-            } => JsStmt::alloc(
+            } => JsStmt::allocate(
+                self.arena,
                 S::ForOf {
                     is_await,
                     init: self.stmt(left)?,
@@ -1431,28 +1495,32 @@ impl<'a> Converter<'a, '_> {
                 },
                 loc,
             ),
-            StmtKind::While { test, body } => JsStmt::alloc(
+            StmtKind::While { test, body } => JsStmt::allocate(
+                self.arena,
                 S::While {
                     test: self.expr(test)?,
                     body: self.stmt(body)?,
                 },
                 loc,
             ),
-            StmtKind::DoWhile { body, test } => JsStmt::alloc(
+            StmtKind::DoWhile { body, test } => JsStmt::allocate(
+                self.arena,
                 S::DoWhile {
                     body: self.stmt(body)?,
                     test: self.expr(test)?,
                 },
                 loc,
             ),
-            StmtKind::Block(statements) => JsStmt::alloc(
+            StmtKind::Block(statements) => JsStmt::allocate(
+                self.arena,
                 S::Block {
                     stmts: self.stmts(statements)?,
                     ..S::Block::default()
                 },
                 loc,
             ),
-            StmtKind::With { object, body } => JsStmt::alloc(
+            StmtKind::With { object, body } => JsStmt::allocate(
+                self.arena,
                 S::With {
                     value: self.expr(object)?,
                     body: self.stmt(body)?,
@@ -1462,19 +1530,23 @@ impl<'a> Converter<'a, '_> {
             ),
             StmtKind::Switch { expr, cases } => {
                 let test = self.expr(expr)?;
-                let mut converted: AstVec<Case> = AstAlloc::vec_with_capacity(cases.len());
+                let mut converted: AstVec<Case> = AstVec::with_capacity_in(cases.len(), self.arena);
                 for case in cases {
-                    converted.push(Case {
-                        loc: self.loc(case.span()),
-                        value: case.test().map(|it| self.expr(it)).transpose()?,
-                        body: self.stmts(case.body())?,
-                    });
+                    converted.push(
+                        self.arena,
+                        Case {
+                            loc: self.loc(case.span()),
+                            value: case.test().map(|it| self.expr(it)).transpose()?,
+                            body: self.stmts(case.body())?,
+                        },
+                    );
                 }
-                JsStmt::alloc(
+                JsStmt::allocate(
+                    self.arena,
                     S::Switch {
                         test,
                         body_loc: loc,
-                        cases: leak(converted),
+                        cases: converted.into_store_slice(),
                     },
                     loc,
                 )
@@ -1492,7 +1564,7 @@ impl<'a> Converter<'a, '_> {
                         let loc =
                             self.loc(stmt.catch_clause_span().unwrap_or_else(|| handler.span()));
                         let mut binding = param.map(|it| self.binding(it.pat())).transpose()?;
-                        let mut first: AstVec<JsStmt> = AstAlloc::vec();
+                        let mut first: AstVec<JsStmt> = AstVec::new();
                         // Upstream's compiler fails on a `catch` parameter that a nested function
                         // refers to. oxc's doesn't.
                         if self.flavor == Flavor::Oxlint
@@ -1508,7 +1580,7 @@ impl<'a> Converter<'a, '_> {
                             body_loc: self.loc(handler.span()),
                             body: match handler.as_block() {
                                 Some(statements) => self.stmts_after(first, statements)?,
-                                None => leak(first),
+                                None => first.into_store_slice(),
                             },
                         })
                     }
@@ -1525,7 +1597,8 @@ impl<'a> Converter<'a, '_> {
                     }
                     None => None,
                 };
-                JsStmt::alloc(
+                JsStmt::allocate(
+                    self.arena,
                     S::Try {
                         body_loc,
                         body,
@@ -1535,19 +1608,22 @@ impl<'a> Converter<'a, '_> {
                     loc,
                 )
             }
-            StmtKind::Throw(value) => JsStmt::alloc(
+            StmtKind::Throw(value) => JsStmt::allocate(
+                self.arena,
                 S::Throw {
                     value: self.expr(value)?,
                 },
                 loc,
             ),
-            StmtKind::Break(_) => JsStmt::alloc(
+            StmtKind::Break(_) => JsStmt::allocate(
+                self.arena,
                 S::Break {
                     label: self.label(stmt),
                 },
                 loc,
             ),
-            StmtKind::Continue(_) => JsStmt::alloc(
+            StmtKind::Continue(_) => JsStmt::allocate(
+                self.arena,
                 S::Continue {
                     label: self.label(stmt),
                 },
@@ -1561,7 +1637,8 @@ impl<'a> Converter<'a, '_> {
                         ref_: self.ref_of_name(Named::Label, label),
                     },
                 };
-                JsStmt::alloc(
+                JsStmt::allocate(
+                    self.arena,
                     S::Label {
                         name,
                         stmt: self.stmt(body)?,
@@ -1576,7 +1653,9 @@ impl<'a> Converter<'a, '_> {
             | StmtKind::ExportStar { .. }
             | StmtKind::ExportDefault(_)
             | StmtKind::ExportAssign(_)
-            | StmtKind::ExportAsNamespace(_) => JsStmt::alloc(S::ExportClause::default(), loc),
+            | StmtKind::ExportAsNamespace(_) => {
+                JsStmt::allocate(self.arena, S::ExportClause::default(), loc)
+            }
         })
     }
 }

@@ -11,7 +11,6 @@ use crate::Error as AnyError;
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
 use bun_ast::ImportRecord;
 use bun_ast::{AstArena, Loc, Location, Log, Msg, Source};
-use bun_collections::VecExt;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, declare_scope, scoped_log};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
@@ -615,7 +614,7 @@ pub mod parse_worker {
         stylesheet: &mut Option<Box<bun_css::BundlerStyleSheet<'static>>>,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
         *stylesheet = Some(Box::new(bun_css::BundlerStyleSheet::empty()));
-        let root = Expr::init(E::Object::default(), Loc { start: 0 });
+        let root = Expr::allocate(bump, E::Object::default(), Loc { start: 0 });
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; `options`
         // is disjoint from any other field the caller may hold a pointer to.
         let define = unsafe { &mut (*transpiler).options.define };
@@ -632,7 +631,7 @@ pub mod parse_worker {
         bump: &'static AstArena,
         source: &'static Source<'static>,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
-        let root = Expr::init(RootType::default(), Loc::EMPTY);
+        let root = Expr::allocate(bump, RootType::default(), Loc::EMPTY);
         // SAFETY: see `get_empty_css_ast` — disjoint field of a live `*mut Transpiler`.
         let define = unsafe { &mut (*transpiler).options.define };
         Ok(JSAst::init(
@@ -679,21 +678,23 @@ pub mod parse_worker {
 
     /// `require("<unique key>")`. Unlike `import.meta.require`, the call target
     /// prints per output format, so `--bytecode` (CommonJS) can compile it.
-    fn require_embedded_asset(unique_key: &[u8]) -> Expr {
-        let import_path = Expr::init(
+    fn require_embedded_asset(bump: &AstArena, unique_key: &[u8]) -> Expr {
+        let import_path = Expr::allocate(
+            bump,
             E::String {
                 data: unique_key.into(),
                 ..Default::default()
             },
             Loc { start: 0 },
         );
-        Expr::init(
+        Expr::allocate(
+            bump,
             E::Call {
                 target: Expr {
                     data: ast::ExprData::ERequireCallTarget,
                     loc: Loc { start: 0 },
                 },
-                args: bun_ast::ExprNodeList::from_arena_slice(&[import_path]),
+                args: bun_ast::ExprNodeList::from_slice_in(&[import_path], bump),
                 ..Default::default()
             },
             Loc { start: 0 },
@@ -936,14 +937,18 @@ pub mod parse_worker {
                 // module becomes `export default require("<bunfs path>")`.
                 // Browser chunks cannot reach the embedded graph.
                 let root = if topts.compile_mode.is_executable() && topts.target.is_bun() {
-                    require_embedded_asset(register_embedded_asset(
+                    require_embedded_asset(
                         bump,
-                        source,
-                        unique_key_prefix,
-                        unique_key_for_additional_file,
-                    ))
+                        register_embedded_asset(
+                            bump,
+                            source,
+                            unique_key_prefix,
+                            unique_key_for_additional_file,
+                        ),
+                    )
                 } else {
-                    Expr::init(
+                    Expr::allocate(
+                        bump,
                         E::String {
                             data: source.contents().into(),
                             ..Default::default()
@@ -985,7 +990,8 @@ pub mod parse_worker {
                     }
                 };
                 let html: &[u8] = bump.alloc_slice_copy(&html);
-                let root = Expr::init(
+                let root = Expr::allocate(
+                    bump,
                     E::String {
                         data: html.into(),
                         ..Default::default()
@@ -1040,7 +1046,8 @@ pub mod parse_worker {
                 //
                 // import.meta.require(unique_key).db
                 //
-                let import_path = Expr::init(
+                let import_path = Expr::allocate(
+                    bump,
                     E::String {
                         data: path_to_use.into(),
                         ..Default::default()
@@ -1049,7 +1056,8 @@ pub mod parse_worker {
                 );
 
                 let import_meta = Expr::init(E::ImportMeta {}, Loc { start: 0 });
-                let require_property = Expr::init(
+                let require_property = Expr::allocate(
+                    bump,
                     E::Dot {
                         target: import_meta,
                         name_loc: Loc::EMPTY,
@@ -1059,14 +1067,16 @@ pub mod parse_worker {
                     Loc { start: 0 },
                 );
                 let object_property = G::Property {
-                    key: Some(Expr::init(
+                    key: Some(Expr::allocate(
+                        bump,
                         E::String {
                             data: b"type".into(),
                             ..Default::default()
                         },
                         Loc { start: 0 },
                     )),
-                    value: Some(Expr::init(
+                    value: Some(Expr::allocate(
+                        bump,
                         E::String {
                             data: b"sqlite".into(),
                             ..Default::default()
@@ -1075,24 +1085,27 @@ pub mod parse_worker {
                     )),
                     ..Default::default()
                 };
-                let object = Expr::init(
+                let object = Expr::allocate(
+                    bump,
                     E::Object {
-                        properties: G::PropertyList::init_one(object_property),
+                        properties: G::PropertyList::from_slice_in(&[object_property], bump),
                         is_single_line: true,
                         ..Default::default()
                     },
                     Loc { start: 0 },
                 );
-                let require_call = Expr::init(
+                let require_call = Expr::allocate(
+                    bump,
                     E::Call {
                         target: require_property,
-                        args: bun_ast::ExprNodeList::from_arena_slice(&[import_path, object]),
+                        args: bun_ast::ExprNodeList::from_slice_in(&[import_path, object], bump),
                         ..Default::default()
                     },
                     Loc { start: 0 },
                 );
 
-                let root = Expr::init(
+                let root = Expr::allocate(
+                    bump,
                     E::Dot {
                         target: require_call,
                         name_loc: Loc::EMPTY,
@@ -1131,12 +1144,15 @@ pub mod parse_worker {
                 //
                 // require(unique_key)
                 //
-                let root = require_embedded_asset(register_embedded_asset(
+                let root = require_embedded_asset(
                     bump,
-                    source,
-                    unique_key_prefix,
-                    unique_key_for_additional_file,
-                ));
+                    register_embedded_asset(
+                        bump,
+                        source,
+                        unique_key_prefix,
+                        unique_key_for_additional_file,
+                    ),
+                );
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
@@ -1151,7 +1167,7 @@ pub mod parse_worker {
                 ));
             }
             Loader::Html => {
-                let import_records = scan_import_records(log, source)?;
+                let import_records = scan_import_records(bump, log, source)?;
 
                 // Reuse existing code for creating the AST
                 // because it handles the various Ref and other structs we
@@ -1185,16 +1201,11 @@ pub mod parse_worker {
                 // does not exist at parse time).
                 ast.parts.as_mut_slice()[1] = Part {
                     stmts: ast::StoreSlice::EMPTY,
-                    import_record_indices: {
-                        // Generate a single part that depends on all the import records.
-                        // This is to ensure that we generate a JavaScript bundle containing all the user's code.
-                        let mut import_record_indices = ast::PartImportRecordIndices::init_capacity(
-                            import_records_len as usize,
-                        );
-                        import_record_indices
-                            .extend(0..u32::try_from(import_records_len).expect("int cast"));
-                        import_record_indices
-                    },
+                    // One part depends on all the import records, so that the bundle has all the user's code.
+                    import_record_indices: ast::PartImportRecordIndices::from_iter_in(
+                        0..u32::try_from(import_records_len).expect("int cast"),
+                        bump,
+                    ),
                     ..Default::default()
                 };
 
@@ -1264,7 +1275,7 @@ pub mod parse_worker {
                     let _ = has_any_css_locals.fetch_add(1, Ordering::Relaxed);
                 }
                 // If this is a css module, the final exports object wil be set in `generateCodeForLazyExport`.
-                let root = Expr::init(E::Object::default(), Loc { start: 0 });
+                let root = Expr::allocate(bump, E::Object::default(), Loc { start: 0 });
                 // `StylesheetExtra.symbols` is
                 // `Vec<bun_ast::Symbol>`; `new_lazy_export_ast_impl` takes
                 // `Vec<bun_ast::Symbol>`. Convert field-by-field so CSS-module local refs
@@ -1327,7 +1338,8 @@ pub mod parse_worker {
                     .expect("unreachable");
                     buf.into_bump_str().as_bytes()
                 };
-                let root = Expr::init(
+                let root = Expr::allocate(
+                    bump,
                     E::String {
                         data: unique_key.into(),
                         ..Default::default()
@@ -2058,18 +2070,14 @@ pub mod parse_worker {
             .unwrap_or(Loader::File);
 
         let mut contents_came_from_plugin: bool = false;
-        let result = get_code_for_parse_task(
+        get_code_for_parse_task(
             task,
             log,
             bump,
             &mut file_path,
             &mut loader,
             &mut contents_came_from_plugin,
-        );
-        if result.is_err() {
-            transpiler.reset_store();
-        }
-        result
+        )
     }
 
     // ───────────────────────────────────────────────────────────────────────────
@@ -2452,14 +2460,7 @@ pub mod parse_worker {
             } else {
                 get_empty_ast::<E::Object>(log, transpiler, opts, bump, source)
             };
-        let mut ast = match ast_result {
-            Ok(a) => a,
-            Err(e) => {
-                // SAFETY: `transpiler` is live; no other borrow of it is held here.
-                unsafe { (*transpiler).reset_store() };
-                return Err(e);
-            }
-        };
+        let mut ast = ast_result?;
 
         ast.target = target;
         ast.module_type = task.module_type;

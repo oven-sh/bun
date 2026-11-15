@@ -2,7 +2,10 @@
 //! collection. This type implies there is always a valid value held.
 //! For a strong that may be empty (to reuse allocation), use `Optional`.
 
+use core::cell::Cell;
 use core::ptr::NonNull;
+
+use bun_ptr::CellExt as _;
 
 use crate::{JSGlobalObject, JSValue};
 
@@ -129,6 +132,34 @@ impl Drop for Optional {
         let Some(r) = self.handle.take() else { return };
         // SAFETY: `r` came from `Impl::init` and is consumed exactly once here.
         unsafe { Impl::destroy(r) };
+    }
+}
+
+/// An optional `Strong` that is set and cleared through `&self`.
+#[derive(Default)]
+pub struct StrongCell(Cell<Option<Strong>>);
+
+impl From<Option<Strong>> for StrongCell {
+    fn from(value: Option<Strong>) -> StrongCell {
+        StrongCell(Cell::new(value))
+    }
+}
+
+impl StrongCell {
+    pub fn get(&self) -> Option<JSValue> {
+        self.0.with_taken(|value| value.as_ref().map(Strong::get))
+    }
+
+    pub fn is_some(&self) -> bool {
+        self.0.with_taken(|value| value.is_some())
+    }
+
+    pub fn set(&self, value: Strong) {
+        self.0.set(Some(value));
+    }
+
+    pub fn clear(&self) {
+        self.0.set(None);
     }
 }
 

@@ -5,126 +5,82 @@
 //! `ClientSession`.
 //!
 //! Lifetime: holds one ref on `session` from `register` until
-//! `onDNSResolved` runs. The `quic.PendingConnect` C handle is consumed by
-//! exactly one of `resolved()` or `cancel()`.
+//! `on_dns_resolved` runs.
 
+use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_ptr::RefPtr;
 use bun_threading::Guarded;
-use bun_uws as uws;
 use bun_uws::quic;
 
 use super::ClientSession;
 use super::client_context::ClientContext;
-use super::client_session::session_mut;
+use super::client_session::{quic_socket_mut, session_mut};
 
 pub struct PendingConnect {
     session: RefPtr<ClientSession>,
-    // FFI: C handle owned until exactly one of resolved()/cancel() consumes it.
-    pc: *mut quic::PendingConnect,
-    // BACKREF: the uws event loop (lives as long as the HTTP thread).
-    loop_ptr: *mut uws::Loop,
+    pc: quic::OwnedPendingConnect,
+}
+
+// SAFETY: a DNS thread only moves it into `RESOLVED`. The HTTP thread uses and drops it.
+unsafe impl Send for PendingConnect {}
+
+unsafe extern "Rust" {
+    /// Defined in `bun_runtime::dns_jsc::internal`, which this crate cannot depend on.
+    safe fn __bun_dns_register_quic(pc: PendingConnect);
 }
 
 impl PendingConnect {
-    /// Mutable access to the owned `quic::PendingConnect` C handle.
-    ///
-    /// INVARIANT: `pc` is set once in [`register`] to a live
-    /// `us_quic_pending_connect_t` and is consumed by exactly one of
-    /// `resolved()` / `cancel()` in [`on_dns_resolved`]. The handle is a
-    /// separate FFI heap allocation disjoint from `self`. HTTP-thread-only at
-    /// every caller. Centralises the raw `(*this.pc)` upgrade repeated at
-    /// each consume site.
-    #[inline]
-    fn pc_mut<'a>(&self) -> &'a mut quic::PendingConnect {
-        // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.pc }
-    }
-
-    pub(crate) fn register(
-        session: *mut ClientSession,
-        pc: *mut quic::PendingConnect,
-        l: *mut uws::Loop,
-    ) {
-        let self_ = Box::new(PendingConnect {
+    pub(crate) fn register(session: *mut ClientSession, pc: quic::OwnedPendingConnect) {
+        __bun_dns_register_quic(PendingConnect {
             // SAFETY: caller passes a live intrusive-refcounted ClientSession.
             session: unsafe { RefPtr::init_ref(session) },
             pc,
-            loop_ptr: l,
         });
-        // Route the addrinfo read through the existing [`pc_mut`] accessor
-        // (centralised raw upgrade) instead of an open-coded `(*pc)` deref.
-        let addrinfo = self_.pc_mut().addrinfo();
-        let self_ = bun_core::heap::into_raw(self_);
-        // SAFETY: `self_` is the Box we just leaked above and is consumed by
-        // `on_dns_resolved` (via the global cache's notify path).
-        unsafe { bun_dns::internal::register_quic(addrinfo, self_.cast()) };
     }
 
-    pub(crate) fn r#loop(&self) -> *mut uws::Loop {
-        self.loop_ptr
+    pub fn addrinfo(&self) -> *mut c_void {
+        self.pc.addrinfo()
     }
 
-    /// SAFETY: `this` must be the pointer produced by `heap::alloc` in `register`
-    /// and must not be used after this call (it is freed here).
-    pub unsafe fn on_dns_resolved(this: *mut PendingConnect) {
-        // SAFETY: `this` was heap-allocated in `register`; reclaim it so the Box
-        // (and its `session` ref) drops at end of scope.
-        let this = unsafe { bun_core::heap::take(this) };
-        let session = this.session.as_ptr();
+    pub fn on_dns_resolved(self) {
+        let session = self.session.as_ptr();
 
-        // session is kept alive by the ref `this` holds for the duration of this
+        // session is kept alive by the ref `self` holds for the duration of this
         // fn — `session_mut` centralises the backref upgrade.
         let s = session_mut(session);
         if s.closed || s.pending.is_empty() {
             // Every waiter was aborted while DNS was in flight; don't open a
-            // connection nobody will use. `pc_mut` upgrades the owned C
-            // handle; `cancel()` consumes it.
-            this.pc_mut().cancel();
+            // connection nobody will use.
+            drop(self.pc);
             if !s.closed {
                 Self::fail_session(session, crate::Error::Aborted);
             }
             return;
         }
-        // `pc_mut` upgrades the owned C handle; `resolved()` consumes it and
-        // returns the connected quic socket or None on DNS failure.
-        let Some(qs) = this.pc_mut().resolved() else {
+        let Some(qs) = self.pc.resolved() else {
             Self::fail_session(session, crate::Error::DNSResolutionFailed);
             return;
         };
-        s.qsocket = Some(NonNull::from(&mut *qs));
+        s.qsocket = Some(qs);
         // qs.ext() returns the per-socket user storage slot for ClientSession.
-        *qs.ext::<ClientSession>() = NonNull::new(session);
+        *quic_socket_mut(qs.as_ptr()).ext::<ClientSession>() = NonNull::new(session);
     }
 
     /// DNS worker may call from off the HTTP thread; mirror
     /// us_internal_dns_callback_threadsafe: push onto a mutex-protected list and
     /// wake the loop. `drain_resolved` runs from `HTTPThread.drainEvents` on the
     /// next loop iteration after the wakeup.
-    ///
-    /// SAFETY: `this` must be the pointer produced by `heap::alloc` in `register`.
-    pub unsafe fn on_dns_resolved_threadsafe(this: *mut PendingConnect) {
-        // `this` is a live heap-allocated PendingConnect (caller contract);
-        // wrap it in a `ParentRef` (pointee outlives holder) so the shared
-        // `loop_ptr` read goes through the safe `Deref` impl instead of an
-        // open-coded `(*this)`. Read *before* publishing — once pushed, the
-        // HTTP thread may free `this` at any time via `drain_resolved`.
-        let loop_ptr = bun_ptr::ParentRef::from(
-            NonNull::new(this).expect("on_dns_resolved_threadsafe: non-null"),
-        )
-        .r#loop();
-        RESOLVED.lock().push(Resolved(this));
-        // SAFETY: `loop_ptr` is a live uws::Loop for as long as the HTTP thread runs.
-        unsafe { (*loop_ptr).wakeup() };
+    pub fn on_dns_resolved_threadsafe(self) {
+        RESOLVED.lock().push(self);
+        crate::HTTPThread::wakeup();
     }
 
     pub(crate) fn drain_resolved() {
         let batch = core::mem::take(&mut *RESOLVED.lock());
-        for Resolved(head) in batch {
-            // SAFETY: every entry was heap-allocated in `register()` and is
-            // consumed exactly once here.
-            unsafe { PendingConnect::on_dns_resolved(head) };
+        for pc in batch {
+            pc.on_dns_resolved();
         }
     }
 
@@ -151,18 +107,6 @@ impl PendingConnect {
     }
 }
 
-/// Heap-allocated `PendingConnect` handed from DNS worker → HTTP thread.
-/// `*mut T` is `!Send` by default; this wrapper asserts the actual contract:
-/// the pointee is touched by exactly one thread at a time (producer pushes,
-/// consumer pops + frees), serialized by `RESOLVED`'s mutex.
-#[repr(transparent)]
-struct Resolved(*mut PendingConnect);
-// SAFETY: `Resolved` only ever crosses threads while held inside `RESOLVED`'s
-// mutex; the pointee is heap-allocated in `register()` and freed on the HTTP
-// thread in `on_dns_resolved()`. No thread touches it without the lock or
-// after handoff.
-unsafe impl Send for Resolved {}
-
 /// Queue of `PendingConnect`s whose DNS resolved off the HTTP thread, drained
 /// on the next `HTTPThread::drain_events`. Conceptually a field of
 /// [`HTTPThread`](crate::HTTPThread) (there is exactly one), but kept as a
@@ -171,4 +115,4 @@ unsafe impl Send for Resolved {}
 /// DNS worker would alias that exclusive borrow under Stacked Borrows. A
 /// dedicated `Sync` static sidesteps that without weakening the singleton
 /// accessor's `&mut` contract.
-static RESOLVED: Guarded<Vec<Resolved>> = Guarded::new(Vec::new());
+static RESOLVED: Guarded<Vec<PendingConnect>> = Guarded::new(Vec::new());

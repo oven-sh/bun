@@ -6,12 +6,11 @@ use std::rc::{Rc, Weak};
 
 use bun_core::{Output, Timespec};
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsClass as _, JsResult, Strong};
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsClass as _, JsResult, Strong, StrongCell};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
-use bun_ptr::RefPtr;
+use bun_ptr::{CellExt as _, RefPtr};
 use bun_sema::util::SmallLocalVec;
-use super::cells::{CellExt as _, StrongCell};
 use super::jest::{File, Jest};
 use crate::jsc_hooks::timer_all;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, OwnedTimer};
@@ -1676,14 +1675,11 @@ impl RunTestsTask {
     }
 }
 
-impl bun_event_loop::Taskable for RunTestsTask {
+impl bun_event_loop::BoxedTask for RunTestsTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::RunTestsTask;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — boxed in `run_next_tick`.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

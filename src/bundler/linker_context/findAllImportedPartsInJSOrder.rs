@@ -241,7 +241,7 @@ impl WalkPlan {
         if code_splitting {
             // A file is in the chunk that has its entry bits as key, also when it prints nothing there.
             let file_entry_bits = c.graph.files.items_entry_bits();
-            let css = c.graph.ast.items_css();
+            let css = &c.parse_graph().css_asts;
             let mut chunk_of_key: StringHashMap<u32> = StringHashMap::default();
             for (chunk_index, chunk) in chunks.iter().enumerate() {
                 if matches!(chunk.content, chunk::Content::Javascript(_)) {
@@ -414,7 +414,7 @@ impl LoadTimeReads {
     fn new(c: &LinkerContext) -> LoadTimeReads {
         let all_parts = c.graph.ast.items_parts();
         let flags = c.graph.meta.items_flags();
-        let css = c.graph.ast.items_css();
+        let css = &c.parse_graph().css_asts;
         let mut first_part_id: Vec<u32> = Vec::with_capacity(all_parts.len());
         let mut file_of_part: Vec<IndexInt> = Vec::new();
         for (file, parts) in all_parts.iter().enumerate() {
@@ -610,7 +610,7 @@ fn for_each_edge(
     mut each: impl FnMut(u32, Edge),
 ) {
     let records = c.graph.ast.items_import_records()[source_index as usize].as_slice();
-    let css = c.graph.ast.items_css();
+    let css = &c.parse_graph().css_asts;
     if css[source_index as usize].is_some()
         || c.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html
     {
@@ -842,7 +842,7 @@ impl EntryWalk {
         let files_live = &c.graph.files_live;
         let entry_bits = c.graph.files.items_entry_bits();
         let flags = c.graph.meta.items_flags();
-        let css = c.graph.ast.items_css();
+        let css = &c.parse_graph().css_asts;
         let loads = |source_index: IndexInt, loader: u32| {
             files_live.is_set(source_index as usize)
                 && entry_bits[source_index as usize].is_set(loader as usize)
@@ -1135,7 +1135,7 @@ fn reached_chunks_in_order(
 
     let entry_bits = chunk.entry_bits();
     let file_entry_bits = c.graph.files.items_entry_bits();
-    let css = c.graph.ast.items_css();
+    let css = &c.parse_graph().css_asts;
     let parts = c.graph.ast.items_parts();
     let import_records = c.graph.ast.items_import_records();
 

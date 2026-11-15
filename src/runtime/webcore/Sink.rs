@@ -15,9 +15,10 @@ use crate::webcore::streams::{
 };
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload, JsScope, JsWrapper};
 use bun_jsc::{
-    ErrorCode, JSGlobalObject, JSValue, JsClass, JsError, JsResult, JsThread, SysErrorJsc as _,
+    ErrorCode, JSGlobalObject, JSValue, JsCell, JsClass, JsError, JsResult, JsThread,
+    SysErrorJsc as _,
 };
-use bun_ptr::{BackRef, RawSlice};
+use bun_ptr::{AliasableBox, BackRef, RawSlice};
 use bun_removable_features::removable_body_behind_value;
 use bun_sys::{self as sys, Error as SysError};
 
@@ -28,8 +29,7 @@ pub(crate) use crate::webcore::array_buffer_sink::ArrayBufferSink;
 /// `write_utf16`, `write_latin1`, `end`, `flush_from_js`, `start`).
 /// Invoke inside the `impl JsSinkType for T` block; `Self::name` resolves to
 /// the inherent method ahead of the trait item being defined, so the forward
-/// does not recurse. Items whose bodies differ per sink (`finalize`,
-/// `end_from_js`, `source`) stay hand-written.
+/// does not recurse. `end_from_js` differs per sink and stays hand-written.
 #[macro_export]
 macro_rules! impl_js_sink_forwarders {
     // `start` also wants the context of the script that starts the sink.
@@ -90,14 +90,6 @@ pub(crate) trait JsSinkType: Sized + 'static {
     const NAME: &'static str;
 
     fn memory_cost(&self) -> usize;
-    /// The JS object that holds `this` is giving up its claim on the sink. Raw
-    /// pointer, not `&mut self`: for `ArrayBufferSink`, `FileSink` and
-    /// `FetchRequestBodySink` that releases the allocation, and freeing under a
-    /// live reference argument is UB.
-    ///
-    /// # Safety
-    /// `this` is the object's live sink and must not be used after the call.
-    unsafe fn finalize(this: *mut Self);
     fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_utf16(&mut self, text: &[u16]) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
@@ -119,6 +111,13 @@ pub(crate) trait JsSinkType: Sized + 'static {
     }
 }
 
+/// A sink that script holds through a [`JSSink`].
+pub(crate) trait WrappedSink: JsSinkType {
+    /// Keeps the sink alive. Dropped by `close()`, or inside a GC sweep.
+    type Wrapped;
+    fn as_non_null(wrapped: &Self::Wrapped) -> NonNull<Self>;
+}
+
 /// A sink that a stream writes to through a [`ReadableSinkController`].
 pub(crate) trait ControlledSink: JsSinkType {
     fn to_any_sink(this: NonNull<Self>) -> AnyControlledSink;
@@ -135,15 +134,11 @@ pub(crate) trait ControlledSink: JsSinkType {
     fn controller_detached(&self) {}
 
     /// A controller died still attached to `this`, right after
-    /// [`controller_detached`](Self::controller_detached). The default gives up
-    /// the claim like any other cell; a sink whose controller holds no claim overrides it.
+    /// [`controller_detached`](Self::controller_detached).
     ///
     /// # Safety
-    /// As [`finalize`](JsSinkType::finalize).
-    unsafe fn controller_finalize(this: *mut Self) {
-        // SAFETY: the caller's contract is the same one.
-        unsafe { Self::finalize(this) }
-    }
+    /// `this` is live unless `controller_detached` released its last ref, and is not used after the call, which may free it.
+    unsafe fn controller_finalize(this: *mut Self);
 
     /// The source failed, so the bytes written so far are a truncated body:
     /// `controller.close(error)` with a truthy argument, or the pump's close
@@ -297,26 +292,29 @@ fn sink_memory_cost<T: JsSinkType>(sink: NonNull<T>) -> usize {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// What the JS object of an `ArrayBufferSink`, a `FileSink` or a `NetworkSink` holds.
-pub(crate) struct JSSink<T: JsSinkType> {
-    /// `None` once `close()` gave up the object's claim on the sink.
-    sink: Cell<Option<NonNull<T>>>,
+pub(crate) struct JSSink<T: WrappedSink> {
+    /// `None` after `close()`.
+    sink: JsCell<Option<T::Wrapped>>,
     ref_count: Cell<i32>,
     /// Notified that its stdin is gone when the object closes or is collected.
     subprocess: Cell<Option<NonNull<Subprocess<'static>>>>,
 }
 
-impl<T: JsSinkType> JSSink<T> {
-    fn new(sink: NonNull<T>, subprocess: Option<NonNull<Subprocess<'static>>>) -> Self {
+impl<T: WrappedSink> JSSink<T> {
+    fn new(sink: T::Wrapped, subprocess: Option<NonNull<Subprocess<'static>>>) -> Self {
         Self {
-            sink: Cell::new(Some(sink)),
+            sink: JsCell::new(Some(sink)),
             ref_count: Cell::new(1),
             subprocess: Cell::new(subprocess),
         }
     }
 
+    fn sink(&self) -> Option<NonNull<T>> {
+        self.sink.get().as_ref().map(T::as_non_null)
+    }
+
     fn sink_or_throw(&self, global: &JSGlobalObject) -> JsResult<NonNull<T>> {
-        self.sink
-            .get()
+        self.sink()
             .ok_or_else(|| throw_already_closed(global, T::NAME))
     }
 
@@ -330,7 +328,7 @@ impl<T: JsSinkType> JSSink<T> {
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
-        self.sink.get().map_or(0, sink_memory_cost)
+        self.sink().map_or(0, sink_memory_cost)
     }
 
     pub(crate) fn close(&self, cx: &mut JsScope<'_>) -> JsResult<()> {
@@ -338,12 +336,10 @@ impl<T: JsSinkType> JSSink<T> {
             return Ok(());
         };
         // SAFETY: the object's live sink.
-        let result = pending_exception_or(cx.global(), unsafe { &mut *sink.as_ptr() }.end(None));
-        // The sink is taken, so `Drop` will not do these: the subprocess first, so that it clears
-        // its weak back-pointer, then `finalize`. They happen even if the close threw.
+        let ended = unsafe { T::as_non_null(&sink).as_mut() }.end(None);
+        let result = pending_exception_or(cx.global(), ended);
+        // Before `sink` drops: the subprocess clears `weak_file_sink_stdin_ptr`.
         self.notify_subprocess();
-        // SAFETY: `end` does not free the sink, and nothing uses it after this.
-        unsafe { T::finalize(sink.as_ptr()) };
         result
     }
 
@@ -381,7 +377,7 @@ impl<T: JsSinkType> JSSink<T> {
     }
 
     pub(crate) fn r#ref(&self) {
-        let Some(sink) = self.sink.get() else { return };
+        let Some(sink) = self.sink() else { return };
         self.ref_count.set(self.ref_count.get() + 1);
         if self.ref_count.get() == 1 {
             // SAFETY: the object's live sink.
@@ -390,7 +386,7 @@ impl<T: JsSinkType> JSSink<T> {
     }
 
     pub(crate) fn unref(&self) {
-        let Some(sink) = self.sink.get() else { return };
+        let Some(sink) = self.sink() else { return };
         self.ref_count.set((self.ref_count.get() - 1).max(0));
         if self.ref_count.get() == 0 {
             // SAFETY: the object's live sink.
@@ -399,7 +395,7 @@ impl<T: JsSinkType> JSSink<T> {
     }
 
     pub(crate) fn get_fd(&self) -> SinkFd {
-        match self.sink.get() {
+        match self.sink() {
             None => SinkFd::Closed,
             // SAFETY: the object's live sink.
             Some(sink) => unsafe { sink.as_ref() }
@@ -409,14 +405,13 @@ impl<T: JsSinkType> JSSink<T> {
     }
 }
 
-impl<T: JsSinkType> JSSink<T>
+impl<T: WrappedSink> JSSink<T>
 where
     Self: JsClass,
 {
-    /// A new JS object, which takes over one claim on `sink`.
     pub(crate) fn create_object(
         global: &JSGlobalObject,
-        sink: NonNull<T>,
+        sink: T::Wrapped,
         subprocess: Option<NonNull<Subprocess<'static>>>,
     ) -> JSValue {
         Self::new(sink, subprocess).to_js(global)
@@ -424,7 +419,7 @@ where
 
     /// The sink of `value`, unless that is not such an object or it is closed.
     pub(crate) fn sink_from_js(value: JSValue) -> Option<NonNull<T>> {
-        value.as_class_ref::<Self>()?.sink.get()
+        value.as_class_ref::<Self>()?.sink()
     }
 
     /// The `Subprocess` is going away, or its stdin already has.
@@ -437,7 +432,7 @@ where
 
 impl JSSink<ArrayBufferSink> {
     pub(crate) fn constructor() -> Self {
-        Self::new(bun_core::heap::alloc_nn(ArrayBufferSink::default()), None)
+        Self::new(AliasableBox::new(ArrayBufferSink::default()), None)
     }
 
     pub(crate) fn call<'a>(heap: &JsHeap<'a>) -> JsWrapper<'a, Self> {
@@ -473,13 +468,9 @@ impl JSSink<NetworkSink> {
     }
 }
 
-impl<T: JsSinkType> Drop for JSSink<T> {
+impl<T: WrappedSink> Drop for JSSink<T> {
     fn drop(&mut self) {
         self.notify_subprocess();
-        if let Some(sink) = self.sink.take() {
-            // SAFETY: the object's live sink, which nothing uses after this.
-            unsafe { T::finalize(sink.as_ptr()) };
-        }
     }
 }
 

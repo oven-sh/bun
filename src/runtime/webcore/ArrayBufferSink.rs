@@ -116,16 +116,18 @@ impl ArrayBufferSink {
     }
 }
 
+impl crate::webcore::sink::WrappedSink for ArrayBufferSink {
+    type Wrapped = bun_ptr::AliasableBox<Self>;
+    fn as_non_null(wrapped: &Self::Wrapped) -> core::ptr::NonNull<Self> {
+        wrapped.as_non_null()
+    }
+}
+
 impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     const NAME: &'static str = "ArrayBufferSink";
 
     crate::impl_js_sink_forwarders!();
 
-    unsafe fn finalize(this: *mut Self) {
-        // SAFETY: trait contract — `this` is the wrapper's live sink, which
-        // `JSSink::constructor` allocated for it alone; nothing uses it afterwards.
-        unsafe { bun_core::heap::destroy(this) };
-    }
     fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         match Self::end_from_js(self, cx) {
             // Not `to_js`: its `mi_is_in_heap_region` probe would skip the

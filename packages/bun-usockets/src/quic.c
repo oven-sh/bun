@@ -1604,12 +1604,12 @@ int us_quic_socket_context_connect(
     struct addrinfo_request *ai_req = NULL;
     int cached = Bun__addrinfo_get(ctx->loop, host, (uint16_t) port, &ai_req) == 0;
     if (cached) {
-        struct addrinfo_result *res = Bun__addrinfo_getRequestResult(ai_req);
-        if (res->error || !res->entries) {
+        struct addrinfo_result res = Bun__addrinfo_getRequestResult(ai_req);
+        if (res.error || !res.entries) {
             Bun__addrinfo_freeRequest(ai_req, 1);
             return -1;
         }
-        *out_qs = us_quic_connect_result(ctx, res, port, sni, reject_unauthorized);
+        *out_qs = us_quic_connect_result(ctx, &res, port, sni, reject_unauthorized);
         Bun__addrinfo_freeRequest(ai_req, *out_qs == NULL);
         return *out_qs ? 1 : -1;
     }
@@ -1642,9 +1642,9 @@ us_quic_socket_t *us_quic_pending_connect_resolved(
     struct us_quic_pending_connect_s *pc)
 {
     us_quic_socket_t *qs = NULL;
-    struct addrinfo_result *res = Bun__addrinfo_getRequestResult(pc->ai_req);
-    if (!res->error && res->entries) {
-        qs = us_quic_connect_result(pc->ctx, res, pc->port, pc->sni,
+    struct addrinfo_result res = Bun__addrinfo_getRequestResult(pc->ai_req);
+    if (!res.error && res.entries) {
+        qs = us_quic_connect_result(pc->ctx, &res, pc->port, pc->sni,
             pc->reject_unauthorized);
     }
     Bun__addrinfo_freeRequest(pc->ai_req, qs == NULL);

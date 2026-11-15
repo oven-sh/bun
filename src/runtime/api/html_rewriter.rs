@@ -1835,10 +1835,6 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     fn memory_cost(&self) -> usize {
         self.pending_input.get().capacity() + self.output_buffer.get().capacity()
     }
-    // Unlike other sinks, the controller does not own the pipe: its ref is
-    // released by `controller_detached` below, and the free happens wherever
-    // the last ref drops.
-    unsafe fn finalize(_this: *mut Self) {}
     fn write_bytes(&mut self, data: &StreamResult) -> Writable {
         RewriterPipe::write(self, data)
     }
@@ -1920,6 +1916,9 @@ impl crate::webcore::sink::ControlledSink for RewriterPipe {
     fn controller_detached(&self) {
         self.pump_ref.set(None);
     }
+
+    /// `controller_detached` released the controller's ref: `_this` may already be freed.
+    unsafe fn controller_finalize(_this: *mut Self) {}
 
     unsafe fn close_with_error(
         this: *mut Self,

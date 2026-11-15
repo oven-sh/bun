@@ -30,7 +30,6 @@ pub(crate) fn post_process_html_chunk(
 
     j.ensure_newline_at_end();
 
-    // SAFETY: `worker.arena` is set by `Worker::create` and outlives the worker step.
     let alloc = worker.arena();
     // SAFETY: every borrowed node in `j` points into `chunk.compile_results_for_chunk`
     // (filled in place before post-processing, never reassigned afterwards);

@@ -249,7 +249,7 @@ impl Task {
                         // scope is borrowed from manager.options which is not
                         // touched by get_package_metadata (only the cache-dir fields are).
                         scope.get(),
-                        metadata.response,
+                        metadata,
                         body.slice(),
                         &mut this.log,
                         name.slice(),
@@ -446,7 +446,6 @@ pub(crate) struct GitCommitRequest {
     /// The clone task whose bare repository is searched.
     pub(crate) clone_id: Id,
     pub(crate) name: StringOrTinyString,
-    pub(crate) url: StringOrTinyString,
     pub(crate) committish: StringOrTinyString,
 }
 

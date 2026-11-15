@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import path, { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -2091,5 +2091,40 @@ describe("bundler", () => {
       receivers: Array(6).fill("ERR_INVALID_THIS"),
     });
     expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(!isASAN || isWindows).concurrent.each([
+    ["whose onLoad throws", `import "./thrown.tsx";`, "thrown"],
+    [
+      "beside an import that does not resolve",
+      `import "./fine.tsx"; import "./missing";`,
+      `Could not resolve: "./missing"`,
+    ],
+  ])("plugin/frees the JSX options of a file %s", async (_, entry, message) => {
+    using dir = tempDir("plugin-frees-jsx-options", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: "Some.factory" } }),
+      "entry.tsx": entry,
+      "fine.tsx": "",
+      "thrown.tsx": "",
+      "build.mjs": /* js */ `
+        const setup = build => build.onLoad({ filter: /thrown/ }, () => { throw new Error("thrown"); });
+        const result = await Bun.build({ entrypoints: ["./entry.tsx"], throw: false, plugins: [{ name: "p", setup }] });
+        console.log(result.logs.map(log => log.message).join());
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../leaksan.supp")}`,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: message + "\n", stderr: "", exitCode: 0 });
   });
 });

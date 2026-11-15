@@ -9,8 +9,7 @@ use bun_core::{StackCheck, handle_oom};
 use crate::Graph::Graph;
 use crate::bun_css::css_parser::BundlerCssRule;
 use crate::bun_css::{ImportConditions, LayerName};
-use crate::bundled_ast::CssAstRef;
-use crate::chunk::{CssImportCondition, CssImportOrder, CssImportOrderKind, Layers};
+use crate::chunk::{CssAstRef, CssImportCondition, CssImportOrder, CssImportOrderKind, Layers};
 use crate::linker_context_mod::debug;
 use crate::{Index, LinkerContext};
 use bun_ast::Index as AstIndex;
@@ -51,8 +50,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
 
     struct Visitor<'v, 'a> {
         arena: &'a Arena,
-        // `BundledAst.css` SoA column.
-        css_asts: &'v [crate::bundled_ast::CssCol<'a>],
         all_import_records: &'v [bun_ast::import_record::List<'a>],
         parse_graph: &'v Graph<'a>,
 
@@ -184,7 +181,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             }
 
             // An asset, such as "./icon.svg", is not a style sheet.
-            let Some(repr) = self.css_asts[source_index.get() as usize] else {
+            let sheet = self.parse_graph.css_asts[source_index.get() as usize].as_deref();
+            let Some(repr) = sheet.map(CssAstRef::new) else {
                 self.push_layers_of_unloaded_import(wrapping_conditions);
                 return;
             };
@@ -268,7 +266,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         }
     }
 
-    let css_asts_slice: &[crate::bundled_ast::CssCol] = this.graph.ast.items_css();
+    let css_asts = &this.parse_graph().css_asts;
     let all_import_records_slice = this.graph.ast.items_import_records();
     let arena = this.graph.arena();
 
@@ -276,7 +274,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         arena,
         parse_graph: this.parse_graph(),
         visited: Vec::<Index>::init_capacity(16),
-        css_asts: css_asts_slice,
         all_import_records: all_import_records_slice,
         has_external_import: false,
         order: Vec::new(),
@@ -299,8 +296,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     let has_external_import = visitor.has_external_import;
     let mut order = visitor.order;
     let mut wip_order = Vec::<CssImportOrder>::init_capacity(order.len() as usize);
-
-    let css_asts: &[crate::bundled_ast::CssCol] = css_asts_slice;
 
     debug_css_order(this, &order, CssOrderDebugStep::BeforeHoisting);
 
@@ -373,7 +368,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             // This import is redundant, but it might have @layer rules.
                             // So we should keep the @layer rules so that the cascade ordering of layers
                             // is preserved
-                            let sheet = css_asts[idx.get() as usize].unwrap();
+                            let sheet = css_asts[idx.get() as usize].as_deref();
+                            let sheet = CssAstRef::new(sheet.unwrap());
                             entry.kind = CssImportOrderKind::Layers(Layers::PostImport(sheet));
                             continue 'next_backward;
                         }

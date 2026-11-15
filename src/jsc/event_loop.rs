@@ -351,7 +351,7 @@ impl EventLoop {
     /// Balance an [`enter`](Self::enter) without the checkpoint [`exit`](Self::exit)
     /// runs at the outermost level. See [`Self::enter_scope_without_checkpoint`].
     #[inline]
-    pub fn exit_without_checkpoint(&self) {
+    fn exit_without_checkpoint(&self) {
         let count = self.entered_event_loop_count.get() - 1;
         bun_core::scoped_log!(EventLoop, "exit_without_checkpoint() = {}", count);
         self.entered_event_loop_count.set(count);
@@ -544,13 +544,12 @@ impl EventLoop {
         let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
             return;
         };
-        self.enter();
+        let _entered = self.enter_scope();
         if let Err(err) = callback.call(global_object, this_value, arguments) {
             // A top-level call: reported (or, for the VM's termination, taken) here; the caller reads
             // the gate, not a pending exception, to know the VM has stopped.
             let _ = crate::task::report_error_or_terminate(global_object, err);
         }
-        self.exit();
     }
 
     /// `context`: as for [`run_callback`](Self::run_callback).
@@ -565,16 +564,14 @@ impl EventLoop {
         let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
             return JSValue::ZERO;
         };
-        self.enter();
-        let result = match callback.call(global_object, this_value, arguments) {
+        let _entered = self.enter_scope();
+        match callback.call(global_object, this_value, arguments) {
             Ok(v) => v,
             Err(err) => {
                 let _ = crate::task::report_error_or_terminate(global_object, err);
                 JSValue::ZERO
             }
-        };
-        self.exit();
-        result
+        }
     }
 
     /// `None`: a task's fold or the checkpoint after it met the VM's termination and landed it; the
@@ -1338,9 +1335,10 @@ impl EventLoop {
             // An exception is already pending and `callback` never ran, so don't pretend it returned undefined.
             return Err(crate::JsError::Thrown);
         };
-        self.enter();
-        let result = callback.call(global_object, this_value, arguments);
-        self.exit_without_checkpoint();
+        let result = {
+            let _entered = self.enter_scope_without_checkpoint();
+            callback.call(global_object, this_value, arguments)
+        };
         after_call();
         let result = result?;
         result.ensure_still_alive();

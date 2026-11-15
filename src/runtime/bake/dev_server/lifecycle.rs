@@ -772,7 +772,7 @@ impl DevServer {
         self.server = Some(AnyServer::from(server));
         // The server has its routes now; the scan of the pages ran before it had them.
         self.report_pages_hidden_by_server_routes();
-        let app = server.app.get().unwrap();
+        let app = server.app().unwrap();
         let dev = std::ptr::from_mut::<Self>(self).cast::<c_void>();
 
         // Each `dev_route_tramp::<SSL, ID>` is a distinct C function with its handler baked in.

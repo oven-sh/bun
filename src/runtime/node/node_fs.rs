@@ -2243,10 +2243,8 @@ mod _async_tasks {
         /// enqueued once the count reaches zero, so subtasks still running on the
         /// thread pool never dereference a freed parent.
         pub(crate) subtask_count: AtomicUsize,
-        /// BACKREF — `Some` iff `IS_SHELL`. The shell `ShellCpTask` owns and
-        /// outlives this task; `ParentRef` gives a safe `&ShellCpTask` projection
-        /// for `cp_on_copy` and round-trips the `*mut` for `cp_on_finish`.
-        pub(crate) shelltask: Option<bun_ptr::ParentRef<ShellCpTask, bun_ptr::Mut>>,
+        /// `Some` iff `IS_SHELL`, until the copy is reported to it.
+        pub(crate) shelltask: Option<Box<ShellCpTask>>,
     }
 
     bun_threading::intrusive_work_task!([const IS_SHELL: bool] NewAsyncCpTask<IS_SHELL>, task);
@@ -2371,7 +2369,11 @@ mod _async_tasks {
         /// its promise handle, protected arguments and keep-alive.
         unsafe fn release_unrun(this: *mut Self) {
             // SAFETY: fn contract — posted by `on_subtask_done` with the count at zero.
-            unsafe { bun_core::heap::take(this) }.destroy()
+            let this = unsafe { bun_core::heap::take(this) };
+            if let Some(shelltask) = &this.shelltask {
+                shelltask.task.unref_unrun();
+            }
+            this.destroy()
         }
         unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
             // SAFETY: fn contract.
@@ -2414,10 +2416,8 @@ mod _async_tasks {
             if !IS_SHELL {
                 return;
             }
-            // When IS_SHELL, `shelltask` is `Some` (ParentRef invariant: owner
-            // outlives this task). Shared borrow only — concurrent subtasks may
-            // call this in parallel; `cp_on_copy` serialises via its internal mutex.
             self.shelltask
+                .as_ref()
                 .expect("IS_SHELL ⇒ shelltask")
                 .cp_on_copy(src.as_ref(), dest.as_ref());
         }
@@ -2451,14 +2451,13 @@ mod _async_tasks {
         /// already captured on its own thread.
         pub(crate) fn create_for_shell(
             cp_args: ThreadIsolated<args::Cp<'static>>,
-            evtloop: EventLoopHandle,
             poster: bun_jsc::ConcurrentPoster,
-            shelltask: bun_ptr::ParentRef<ShellCpTask, bun_ptr::Mut>,
+            shelltask: Box<ShellCpTask>,
         ) {
             Self::schedule_new(
                 JSPromiseStrong::default(),
                 cp_args,
-                evtloop,
+                shelltask.task.event_loop,
                 poster,
                 AsyncTaskTracker { id: 0 },
                 // As `ShellCpTask`, which is waiting for this.
@@ -2474,7 +2473,7 @@ mod _async_tasks {
             poster: bun_jsc::ConcurrentPoster,
             tracker: AsyncTaskTracker,
             context: bun_event_loop::ContextId,
-            shelltask: Option<bun_ptr::ParentRef<ShellCpTask, bun_ptr::Mut>>,
+            shelltask: Option<Box<ShellCpTask>>,
         ) {
             let task = Box::new(Self {
                 promise,
@@ -2587,16 +2586,13 @@ mod _async_tasks {
                 note_opened_for_write(&path, true);
             }
             if IS_SHELL {
-                // SAFETY: shelltask is set by create_for_shell and outlives this task
                 // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap
                 // `Ok(())` placeholder.
                 let result = core::mem::replace(self.result.get_mut(), Ok(()));
                 let src = core::mem::take(&mut self.args.src);
                 let dest = core::mem::take(&mut self.args.dest);
-                let shelltask = self.shelltask.expect("IS_SHELL ⇒ shelltask").as_mut_ptr();
-                // SAFETY: shelltask is non-null in the IS_SHELL specialization and
-                // outlives this task; `cp_on_finish` enqueues it concurrently.
-                unsafe { ShellCpTask::cp_on_finish(shelltask, src, dest, result) };
+                let shelltask = self.shelltask.take().expect("IS_SHELL ⇒ shelltask");
+                shelltask.cp_on_finish(src, dest, result);
                 self.destroy();
                 return Ok(());
             }

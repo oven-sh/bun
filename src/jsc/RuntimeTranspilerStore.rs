@@ -246,8 +246,6 @@ impl RuntimeTranspilerStore {
             }
             // SAFETY: a live job popped from the intrusive queue; see fn doc.
             unsafe {
-                (*job).promise.deinit();
-                (*job).module_loader.deinit();
                 (*job).reset_for_pool();
                 self.store.put(job);
             }
@@ -552,8 +550,6 @@ impl TranspilerJob {
             }
         };
 
-        self.promise.deinit();
-        self.module_loader.deinit();
         self.reset_for_pool();
 
         // SAFETY: `self` came from this store and is not used again.

@@ -407,7 +407,6 @@ impl IPCInstance {
     pub(crate) fn handle_ipc_message(message: &DecodedIPCMessage, handle: JSValue) -> JsResult<()> {
         let vm = bun_jsc::virtual_machine::VirtualMachine::get();
         let global_this = vm.global();
-        let event_loop = vm.event_loop();
 
         match *message {
             DecodedIPCMessage::Version(v) => {
@@ -415,9 +414,8 @@ impl IPCInstance {
             }
             DecodedIPCMessage::Data(data) => {
                 bun_core::scoped_log!(IPC, "Received IPC message from parent");
-                event_loop.enter();
+                let _entered = vm.enter_event_loop_scope();
                 Process__emitMessageEvent(global_this, data, handle);
-                event_loop.exit();
             }
             DecodedIPCMessage::Internal(data) => {
                 bun_core::scoped_log!(IPC, "Received IPC internal message from parent");
@@ -436,11 +434,11 @@ impl IPCInstance {
     pub(crate) fn handle_ipc_close() {
         bun_core::scoped_log!(IPC, "IPCInstance#handleIPCClose");
         let vm = bun_jsc::virtual_machine::VirtualMachine::get();
-        let event_loop = vm.event_loop();
         crate::jsc_hooks::ipc_child_singleton_deinit();
-        event_loop.enter();
-        Process__emitDisconnectEvent(vm.global());
-        event_loop.exit();
+        {
+            let _entered = vm.enter_event_loop_scope();
+            Process__emitDisconnectEvent(vm.global());
+        }
         // Group is embedded in RareData and shared with subprocess IPC; nothing
         // to free here.
         vm.channel_ref.disable();

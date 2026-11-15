@@ -2707,7 +2707,7 @@ fn reject_local_tarball_of_remote_package(
     dependency: &Dependency,
 ) {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
-    let packages = this.lockfile.packages.slice();
+    let packages = &this.lockfile.packages;
     let name = bun_fmt::escape_control_chars(dependency.name.slice(buf));
     let literal = bun_fmt::escape_control_chars(dependency.version.literal.slice(buf));
     let declarer_name =
@@ -2749,7 +2749,7 @@ fn reject_link_path_of_remote_package(
 ) {
     const REASON: &str = dependency::LINK_PATH_RULE;
     let buf = this.lockfile.buffers.string_bytes.as_slice();
-    let packages = this.lockfile.packages.slice();
+    let packages = &this.lockfile.packages;
     let name = bun_fmt::escape_control_chars(dependency.name.slice(buf));
     let literal = bun_fmt::escape_control_chars(version.literal.slice(buf));
     match this.lockfile.get_parent_pkg_of_dependency(dependency_id) {

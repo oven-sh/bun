@@ -9,10 +9,20 @@ use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_semver::String as SemverString;
 
+use super::{Command, PackageJSONEditor};
 use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
+use crate::PackageManager;
 use crate::Subcommand;
 use crate::dependency::{DependencyExt as _, Tag as DependencyVersionTag};
+use crate::hoisted_install::install_hoisted_packages;
+use crate::isolated_install::install_isolated_packages;
 use crate::lockfile::{self, Lockfile, reachable};
+use crate::lockfile_real::package::Diff;
+use crate::lockfile_real::package::PackageColumns as _;
+use crate::lockfile_real::{Printer, printer as LockfilePrinter};
+use crate::package_install::Summary as PackageInstallSummary;
+use crate::package_manager::Options::Enable;
+use crate::package_manager::{Options, WorkspaceFilter};
 use crate::resolution::Tag as ResolutionTag;
 use crate::resolvers::folder_resolver::FolderResolution;
 use crate::update_transitive::{
@@ -24,18 +34,6 @@ use crate::{
     Dependency, DependencyID, Features, PackageID, PackageNameHash, PatchTask, Resolution,
     TaskCallbackContext, invalid_package_id,
 };
-// Bring the typed `items_<field>()` column accessors into scope for
-// `MultiArrayList<Package>` / `Slice<Package>`.
-use super::{Command, PackageJSONEditor};
-use crate::PackageManager;
-use crate::hoisted_install::install_hoisted_packages;
-use crate::isolated_install::install_isolated_packages;
-use crate::lockfile_real::package::Diff;
-use crate::lockfile_real::package::PackageColumns as _;
-use crate::lockfile_real::{Printer, printer as LockfilePrinter};
-use crate::package_install::Summary as PackageInstallSummary;
-use crate::package_manager::Options::Enable;
-use crate::package_manager::{Options, WorkspaceFilter};
 use bun_install_types::NodeLinker::NodeLinker;
 
 // Free-function "methods" on `PackageManager` hosted in sibling modules
@@ -1466,7 +1464,7 @@ fn warn_unsupported_platform(
 
     let lockfile: &Lockfile = &manager.lockfile;
     let options = &manager.options;
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -1959,7 +1957,7 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
     // borrow keeps the disjoint columns alive without raw pointers.
     let lockfile: &Lockfile = &manager.lockfile;
     let updating_packages = &mut manager.updating_packages;
-    let packages = lockfile.packages.slice();
+    let packages = &lockfile.packages;
     let resolutions = packages.items_resolution();
     // Bare `-r`/`--filter` edits the targets' package.json files only after resolve (`package_json_write_back`), so their rows are registered here instead.
     let register_rows =

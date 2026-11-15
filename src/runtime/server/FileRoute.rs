@@ -61,7 +61,7 @@ fn headers_from(
 /// The headers of a route's `Response`, and the server's Alt-Svc.
 pub(crate) fn write_route_headers(headers: &Headers, server: Option<AnyServer>, resp: AnyResponse) {
     use bun_http_types::ETag::HeaderEntryColumns;
-    let entries = headers.entries.slice();
+    let entries = &headers.entries;
     let names: &[StringPointer] = entries.items_name();
     let values: &[StringPointer] = entries.items_value();
     let buf = headers.buf.as_slice();

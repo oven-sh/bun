@@ -1273,9 +1273,8 @@ fn write_proxy_auth_and_headers(
 
     // Write custom proxy headers
     if let Some(hdrs) = proxy_headers {
-        let slice = hdrs.entries.slice();
-        let names = slice.items_name();
-        let values = slice.items_value();
+        let names = hdrs.entries.items_name();
+        let values = hdrs.entries.items_value();
         for (idx, name_ptr) in names.iter().enumerate() {
             writer.extend_from_slice(hdrs.as_str(*name_ptr));
             writer.extend_from_slice(b": ");
@@ -2445,9 +2444,8 @@ impl<'a> HTTPClient<'a> {
 
         let mut user_provided_auth = false;
         if let Some(hdrs) = &self.proxy_headers {
-            let slice = hdrs.entries.slice();
-            let names = slice.items_name();
-            let values = slice.items_value();
+            let names = hdrs.entries.items_name();
+            let values = hdrs.entries.items_value();
             for (idx, name_ptr) in names.iter().enumerate() {
                 let name = hdrs.as_str(*name_ptr);
                 let value = hdrs.as_str(values[idx]);
@@ -2555,7 +2553,7 @@ impl<'a> HTTPClient<'a> {
         'a: 'h,
     {
         let mut header_count: usize = 0;
-        let header_entries = self.header_entries.slice();
+        let header_entries = &self.header_entries;
         let header_names = header_entries.items_name();
         let header_values = header_entries.items_value();
 
@@ -3059,12 +3057,11 @@ impl<'a> HTTPClient<'a> {
     }
 
     fn estimated_request_header_byte_length(&self) -> usize {
-        let sliced = self.header_entries.slice();
         let mut count: usize = 0;
-        for head in sliced.items_name() {
+        for head in self.header_entries.items_name() {
             count += head.length as usize;
         }
-        for value in sliced.items_value() {
+        for value in self.header_entries.items_value() {
             count += value.length as usize;
         }
         count

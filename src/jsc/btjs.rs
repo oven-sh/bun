@@ -77,10 +77,7 @@ mod tty {
         }
         #[cfg(not(windows))]
         {
-            // SAFETY: getenv only reads; name is a valid NUL-terminated C string.
-            let val = unsafe { libc::getenv(name.as_ptr()) };
-            // SAFETY: getenv returns either NULL or a valid NUL-terminated C string.
-            !val.is_null() && unsafe { *val } != 0
+            bun_core::getenv_z(bun_core::ZStr::from_cstr(name)).is_some_and(|val| !val.is_empty())
         }
     }
 

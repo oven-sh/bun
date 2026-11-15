@@ -77,17 +77,20 @@ type QueryRecordWithAttributeFn = unsafe extern "C" fn(
 /// libinfo's getaddrinfo call: only QueryRecord sends `kDNSServiceAttrAllowFailover` to the daemon (`DNSServiceGetAddrInfoEx` drops it).
 fn query_record_allowing_failover()
 -> Option<(QueryRecordWithAttributeFn, *const DNSServiceAttribute)> {
-    let f = bun_sys::dlsym_with_handle!(
-        QueryRecordWithAttributeFn,
-        "DNSServiceQueryRecordWithAttribute",
-        Some(libc::RTLD_DEFAULT)
-    )?;
-    let attr = bun_sys::dlsym_with_handle!(
-        *const DNSServiceAttribute,
-        "kDNSServiceAttrAllowFailover",
-        Some(libc::RTLD_DEFAULT)
-    )?;
-    Some((f, attr))
+    // SAFETY: the types are those that <dns_sd.h> declares for the two symbols.
+    unsafe {
+        let f = bun_sys::dlsym_with_handle!(
+            QueryRecordWithAttributeFn,
+            "DNSServiceQueryRecordWithAttribute",
+            Some(libc::RTLD_DEFAULT)
+        )?;
+        let attr = bun_sys::dlsym_with_handle!(
+            *const DNSServiceAttribute,
+            "kDNSServiceAttrAllowFailover",
+            Some(libc::RTLD_DEFAULT)
+        )?;
+        Some((f, attr))
+    }
 }
 
 #[repr(C)]

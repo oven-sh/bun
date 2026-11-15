@@ -1,74 +1,78 @@
+use core::cell::{Cell, RefCell};
+use std::rc::Rc;
+
 use bun_collections::StringHashMap;
 use bun_core::UnwrapOrOom as _;
-use bun_ptr::{RefCounted, RefPtr};
 
 /// By query text. A text has one statement for each set of parameter types it ran with.
-pub(crate) struct StatementCache<S: RefCounted> {
+pub(crate) struct StatementCache<S> {
     /// Each with the `clock` of its last use.
-    statements: StringHashMap<Vec<(RefPtr<S>, u64)>>,
-    len: usize,
-    clock: u64,
+    statements: RefCell<StringHashMap<Vec<(Rc<S>, u64)>>>,
+    len: Cell<usize>,
+    clock: Cell<u64>,
 }
 
-impl<S: RefCounted> Default for StatementCache<S> {
+impl<S> Default for StatementCache<S> {
     fn default() -> Self {
         Self {
-            statements: StringHashMap::default(),
-            len: 0,
-            clock: 0,
+            statements: RefCell::default(),
+            len: Cell::new(0),
+            clock: Cell::new(0),
         }
     }
 }
 
-impl<S: RefCounted> StatementCache<S> {
-    pub(crate) fn find(&mut self, query: &[u8], accepts: impl Fn(&S) -> bool) -> Option<RefPtr<S>> {
-        let (statement, last_used) = self
-            .statements
+impl<S> StatementCache<S> {
+    pub(crate) fn find(&self, query: &[u8], accepts: impl Fn(&S) -> bool) -> Option<Rc<S>> {
+        let mut statements = self.statements.borrow_mut();
+        let (statement, last_used) = statements
             .get_mut(query)?
             .iter_mut()
-            .find(|(statement, _)| accepts(statement))?;
-        self.clock += 1;
-        *last_used = self.clock;
-        Some(statement.clone())
+            .find(|(variant, _)| accepts(variant))?;
+        self.clock.update(|clock| clock + 1);
+        *last_used = self.clock.get();
+        Some(Rc::clone(statement))
     }
 
-    pub(crate) fn add(&mut self, query: &[u8], statement: RefPtr<S>) {
-        self.len += 1;
-        self.clock += 1;
+    pub(crate) fn add(&self, query: &[u8], statement: Rc<S>) {
+        self.len.update(|len| len + 1);
+        self.clock.update(|clock| clock + 1);
         self.statements
+            .borrow_mut()
             .get_or_put(query)
             .unwrap_or_oom()
             .value_ptr
-            .push((statement, self.clock));
+            .push((statement, self.clock.get()));
     }
 
-    pub(crate) fn remove(&mut self, statement: &S) -> Option<RefPtr<S>> {
+    pub(crate) fn remove(&self, statement: &S) -> Option<Rc<S>> {
         let mut removed = None;
-        self.statements.retain(|_, variants| {
+        self.statements.borrow_mut().retain(|_, variants| {
             if let Some(i) = variants
                 .iter()
-                .position(|(variant, _)| core::ptr::eq(variant.as_ptr(), statement))
+                .position(|(variant, _)| core::ptr::eq(Rc::as_ptr(variant), statement))
             {
                 removed = Some(variants.remove(i).0);
             }
             !variants.is_empty()
         });
-        self.len -= usize::from(removed.is_some());
+        self.len.update(|len| len - usize::from(removed.is_some()));
         removed
     }
 
     /// With more than `max`: takes out the statement used longest ago that no request holds.
-    pub(crate) fn evict(&mut self, max: usize) -> Option<RefPtr<S>> {
-        if self.len <= max {
+    pub(crate) fn evict(&self, max: usize) -> Option<Rc<S>> {
+        if self.len.get() <= max {
             return None;
         }
-        let (oldest, _) = self
+        let oldest = self
             .statements
+            .borrow()
             .values()
             .flatten()
-            .filter(|(statement, _)| RefPtr::has_one_ref(statement))
-            .min_by_key(|(_, last_used)| *last_used)?;
-        let oldest = oldest.clone();
+            .filter(|(statement, _)| Rc::strong_count(statement) == 1)
+            .min_by_key(|(_, last_used)| *last_used)
+            .map(|(oldest, _)| Rc::clone(oldest))?;
         self.remove(&oldest)
     }
 }

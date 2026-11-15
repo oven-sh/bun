@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ffi::{CStr, c_char};
 
 use crate::jsc::{
@@ -5,7 +6,7 @@ use crate::jsc::{
     StrongOptional, bun_string_jsc,
 };
 use bun_collections::BoundedArray;
-use bun_jsc::Weak;
+use bun_ptr::{CellExt as _, VecCellExt as _};
 use bun_sql::shared::ColumnIdentifier;
 
 #[derive(Default)]
@@ -13,8 +14,6 @@ pub struct CachedStructure {
     pub(crate) structure: StrongOptional, // Strong.Optional = .empty
     /// only populated if more than jsc.JSC__JSObject__maxInlineCapacity fields otherwise the structure will contain all fields inlined
     pub(crate) fields: Option<Box<[ExternColumnIdentifier]>>,
-    /// `result.statement`, kept alive only by the results that hold it.
-    description: Weak<()>,
 }
 
 impl CachedStructure {
@@ -24,18 +23,6 @@ impl CachedStructure {
 
     pub(crate) fn js_value(&self) -> Option<JSValue> {
         self.structure.get()
-    }
-
-    pub(crate) fn description(&self) -> Option<JSValue> {
-        self.description.get()
-    }
-
-    pub(crate) fn set_description(&mut self, global_object: &JSGlobalObject, description: JSValue) {
-        self.description = Weak::create_passive(description, global_object);
-    }
-
-    pub(crate) fn clear_description(&mut self) {
-        self.description = Weak::default();
     }
 
     pub(crate) fn set(
@@ -51,7 +38,7 @@ impl CachedStructure {
     }
 
     /// Populate this `CachedStructure` from a column-identifier sequence —
-    /// the shared body of `{Postgres,MySQL}SQLStatement::structure()`.
+    /// the shared body of `build_structure()` of Postgres and MySQL.
     ///
     /// Builds an `ExternColumnIdentifier` array on the stack when the
     /// non-duplicate count fits in `JSObject::max_inline_capacity()` (then
@@ -103,24 +90,24 @@ impl CachedStructure {
 
 /// What `result.statement` is made of, for the results of a query whose statement no other query
 /// runs: nothing would share the object, so it is made when somebody reads it.
-pub(crate) struct Undescribed<T>(Vec<Option<T>>);
+pub(crate) struct Undescribed<T>(Cell<Vec<Option<T>>>);
 
 impl<T> Default for Undescribed<T> {
     fn default() -> Self {
-        Self(Vec::new())
+        Self(Cell::default())
     }
 }
 
 impl<T> Undescribed<T> {
     /// Returns the number that gets `result` back from `take`.
-    pub(crate) fn push(&mut self, result: T) -> JSValue {
+    pub(crate) fn push(&self, result: T) -> JSValue {
         self.0.push(Some(result));
         JSValue::js_number_from_uint64(self.0.len() as u64 - 1)
     }
 
-    pub(crate) fn take(&mut self, number: JSValue) -> Option<T> {
+    pub(crate) fn take(&self, number: JSValue) -> Option<T> {
         let index = usize::try_from(number.to_int32()).ok()?;
-        self.0.get_mut(index)?.take()
+        self.0.with_taken(|results| results.get_mut(index)?.take())
     }
 }
 
@@ -181,7 +168,7 @@ pub(crate) fn column_name_to_js(
     }
 }
 
-/// Runs user code that can close the connection: hold no reference into it or its statements.
+/// Runs user code that can close the connection.
 pub(crate) fn transform_name(
     global_object: &JSGlobalObject,
     transform: JSValue,

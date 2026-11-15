@@ -64,13 +64,9 @@ use enum_map::{Enum, EnumMap};
 
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum HostedGitInfoError {
-    #[error("OutOfMemory")]
-    OutOfMemory,
     #[error("InvalidURL")]
     InvalidURL,
 }
-
-bun_core::oom_from_alloc!(HostedGitInfoError);
 
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ParseUrlError {
@@ -156,12 +152,10 @@ impl HostedGitInfo {
         sb: &mut StringBuilder,
         input: &[u8],
     ) -> Result<Range<usize>, HostedGitInfoError> {
-        let start = sb.len;
-        let writable = sb.writable();
-        let decoded_len = PercentEncoding::decode_into(writable, input)
-            .map_err(|_| HostedGitInfoError::InvalidURL)? as usize;
-        sb.len += decoded_len;
-        Ok(start..start + decoded_len)
+        let start = sb.len();
+        sb.append_with(|mut cursor| PercentEncoding::decode(&mut cursor, input))
+            .map_err(|_| HostedGitInfoError::InvalidURL)?;
+        Ok(start..sb.len())
     }
 
     fn copy_from(
@@ -181,7 +175,7 @@ impl HostedGitInfo {
             sb.count(c);
         }
 
-        sb.allocate().map_err(|_| HostedGitInfoError::OutOfMemory)?;
+        let mut sb = sb.allocate();
 
         // Decode user, project, committish while copying
         let user_part = match user {
@@ -194,7 +188,7 @@ impl HostedGitInfo {
             None => None,
         };
 
-        let owned_buffer = sb.move_to_slice();
+        let owned_buffer = sb.into_boxed_slice();
 
         Ok(Self {
             committish: committish_part,
@@ -1022,7 +1016,7 @@ pub(crate) mod formatters {
                 sb.count(c);
             }
 
-            sb.allocate()?;
+            let mut sb = sb.allocate();
 
             let user_slice = match user {
                 Some(u) => Some(HostedGitInfo::decode_and_append(&mut sb, u)?),
@@ -1038,7 +1032,7 @@ pub(crate) mod formatters {
                 user: user_slice,
                 project: project_slice,
                 committish: committish_slice,
-                _owned_buffer: Some(sb.move_to_slice()),
+                _owned_buffer: Some(sb.into_boxed_slice()),
             })
         }
 
@@ -1182,7 +1176,7 @@ pub(crate) mod formatters {
                 sb.count(committish);
             }
 
-            sb.allocate()?;
+            let mut sb = sb.allocate();
 
             let user_slice = HostedGitInfo::decode_and_append(&mut sb, user_part)?;
             let project_slice = HostedGitInfo::decode_and_append(&mut sb, project)?;
@@ -1199,7 +1193,7 @@ pub(crate) mod formatters {
                 user: Some(user_slice),
                 project: project_slice,
                 committish: committish_slice,
-                _owned_buffer: Some(sb.move_to_slice()),
+                _owned_buffer: Some(sb.into_boxed_slice()),
             }))
         }
 

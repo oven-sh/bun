@@ -122,11 +122,11 @@ impl EncodedPattern {
                             bstr::BStr::new(path)
                         ));
                     }
-                    params.params.resize(param_num + 1).unwrap();
-                    params.params.slice()[param_num] = MatchedParamEntry {
+                    params.params.truncate(param_num);
+                    params.params.append_assume_capacity(MatchedParamEntry {
                         key: bun_ptr::RawSlice::new(name),
                         value: bun_ptr::RawSlice::new(&path[i..end]),
-                    };
+                    });
                     param_num += 1;
                     i = if end == path.len() { end } else { end + 1 };
                 }
@@ -142,13 +142,13 @@ impl EncodedPattern {
                                 if param_num >= MatchedParams::MAX_COUNT {
                                     return false;
                                 }
-                                params.params.resize(param_num + 1).unwrap();
-                                params.params.slice()[param_num] = MatchedParamEntry {
+                                params.params.truncate(param_num);
+                                params.params.append_assume_capacity(MatchedParamEntry {
                                     key: bun_ptr::RawSlice::new(name),
                                     value: bun_ptr::RawSlice::new(
                                         &path[segment_start..segment_end],
                                     ),
-                                };
+                                });
                                 param_num += 1;
                             }
                             segment_start = if segment_end == path.len() {

@@ -1,66 +1,78 @@
 use core::fmt;
-use core::ptr::NonNull;
-use core::slice;
 
-use crate::string::{StringPointer, ZStr};
+use crate::io::Write as _;
+use crate::string::StringPointer;
+use crate::vec::BorrowedCursor;
 
 /// Two-phase string builder: callers first `count()` every slice they will
 /// append, then `allocate()` once, then `append()` each slice. Returned slices
 /// point into the single backing buffer.
 ///
-// Note: the `append*` methods return `&[u8]` borrowing `self.ptr` while also
+// Note: the `append*` methods return `&[u8]` borrowing the buffer while also
 // taking `&mut self`, so callers cannot hold two returned slices at once.
 // Callers that need to interleave appends
 // use `StringPointer` offsets or the unsafe `append_raw` escape hatch below.
-#[derive(Default)]
-pub struct StringBuilder {
-    pub len: usize,
-    pub cap: usize,
-    pub ptr: Option<NonNull<u8>>,
+pub struct StringBuilder<State = Allocated>(State);
+
+/// The state before `allocate()`.
+pub struct Counting(usize);
+
+/// The state after `allocate()`. Never reallocated: appending past the capacity panics.
+pub struct Allocated(Vec<u8>);
+
+impl Default for StringBuilder<Counting> {
+    fn default() -> Self {
+        Self(Counting(0))
+    }
 }
 
-impl StringBuilder {
+impl StringBuilder<Counting> {
     pub fn count_z(&mut self, slice: &[u8]) {
-        self.cap += slice.len() + 1;
+        self.count_len(slice.len() + 1);
     }
 
     pub fn count(&mut self, slice: &[u8]) {
-        self.cap += slice.len();
+        self.count_len(slice.len());
     }
 
-    pub fn allocate(&mut self) -> Result<(), bun_alloc::AllocError> {
-        let buf = Box::<[u8]>::new_uninit_slice(self.cap);
-        self.ptr = NonNull::new(crate::heap::into_raw(buf).cast::<u8>());
-        self.len = 0;
-        Ok(())
+    pub fn count_len(&mut self, len: usize) {
+        self.0.0 += len;
     }
 
-    pub fn append_z(&mut self, slice: &[u8]) -> &ZStr {
-        debug_assert!(self.len < self.cap); // didn't count everything
-        debug_assert!(self.ptr.is_some()); // must call allocate first
+    pub fn fmt_count(&mut self, args: fmt::Arguments<'_>) {
+        self.count_len(bun_alloc::fmt_count(args));
+    }
 
-        let start = self.len;
-        let dst = self.writable();
-        dst[..slice.len()].copy_from_slice(slice);
-        self.len += slice.len() + 1;
+    pub fn allocate(self) -> StringBuilder {
+        StringBuilder(Allocated(Vec::with_capacity(self.0.0)))
+    }
+}
 
-        debug_assert!(self.len <= self.cap);
+impl StringBuilder {
+    /// The number of bytes counted.
+    pub fn capacity(&self) -> usize {
+        self.0.0.capacity()
+    }
 
-        ZStr::nul_terminate(&mut self.allocated_slice()[start..], slice.len())
+    /// The number of bytes appended so far.
+    pub fn len(&self) -> usize {
+        self.0.0.len()
+    }
+
+    /// Appends what `write` writes to a cursor over the unused capacity.
+    pub fn append_with<R>(&mut self, write: impl FnOnce(BorrowedCursor<'_, u8>) -> R) -> R {
+        crate::vec::append_with(&mut self.0.0, usize::MAX, write)
     }
 
     pub fn append(&mut self, slice: &[u8]) -> &[u8] {
-        debug_assert!(self.len <= self.cap); // didn't count everything
-        debug_assert!(self.ptr.is_some()); // must call allocate first
+        let start = self.len();
+        self.append_with(|mut cursor| cursor.append(slice));
+        &self.written_slice()[start..]
+    }
 
-        let start = self.len;
-        let dst = self.writable();
-        dst[..slice.len()].copy_from_slice(slice);
-        self.len += slice.len();
-
-        debug_assert!(self.len <= self.cap);
-
-        &self.allocated_slice()[start..start + slice.len()]
+    pub fn append_zeros(&mut self, count: usize) {
+        assert!(count <= self.capacity() - self.len()); // didn't count everything
+        self.0.0.resize(self.len() + count, 0);
     }
 
     /// Copy `slice` into the reserved buffer and return a borrow of the copied
@@ -68,191 +80,74 @@ impl StringBuilder {
     /// stash both slices (e.g. `picohttp::Header::clone`).
     ///
     /// # Safety
-    /// The returned slice aliases `self.ptr` and is only valid until the
-    /// builder is dropped or `move_to_slice()` is called. Caller must keep the
-    /// builder (or the moved-out buffer) alive while the slice is in use.
+    /// The returned slice aliases the buffer. Caller must keep the builder (or the
+    /// moved-out buffer) alive, and those bytes unchanged, while the slice is in use.
     pub unsafe fn append_raw<'a>(&mut self, slice: &[u8]) -> &'a [u8] {
-        debug_assert!(self.len + slice.len() <= self.cap); // didn't count everything
-        debug_assert!(self.ptr.is_some()); // must call allocate first
-
-        // Reuse the safe `writable()` accessor for the bounds-checked copy
-        // instead of open-coding `ptr.add(len)` + `copy_nonoverlapping` here.
-        let dst = &mut self.writable()[..slice.len()];
-        dst.copy_from_slice(slice);
-        let base = dst.as_ptr();
-        self.len += slice.len();
-
-        debug_assert!(self.len <= self.cap);
-
-        // SAFETY: `base..base+slice.len()` was just initialized above and lives
-        // for as long as `self.ptr` (heap allocation never moves). The unbound
-        // `'a` lifetime is the documented caller contract of `append_raw`.
-        unsafe { core::slice::from_raw_parts(base, slice.len()) }
+        let start = self.len();
+        self.append_with(|mut cursor| cursor.append(slice));
+        // SAFETY: `append_with` initialized these bytes, and the buffer is never reallocated. The
+        // unbound `'a` lifetime is the documented caller contract of `append_raw`.
+        unsafe { core::slice::from_raw_parts(self.0.0.as_ptr().add(start), slice.len()) }
     }
 
     pub fn add_concat(&mut self, slices: &[&[u8]]) -> StringPointer {
-        let start = self.len;
-        let alloc = self.allocated_slice();
-        let mut remain = &mut alloc[start..];
-        let mut len: usize = 0;
+        let start = self.len();
         for slice in slices {
-            remain[..slice.len()].copy_from_slice(slice);
-            remain = &mut remain[slice.len()..];
-            len += slice.len();
+            self.append(slice);
         }
-        self.add(len)
+        self.pointer_since(start)
     }
 
-    pub(crate) fn add(&mut self, len: usize) -> StringPointer {
-        debug_assert!(self.len <= self.cap); // didn't count everything
-        debug_assert!(self.ptr.is_some()); // must call allocate first
-
-        let start = self.len;
-        self.len += len;
-
-        debug_assert!(self.len <= self.cap);
-
+    fn pointer_since(&self, start: usize) -> StringPointer {
         StringPointer {
             offset: start as u32,
-            length: len as u32,
+            length: (self.len() - start) as u32,
         }
     }
 
     pub fn append_count(&mut self, slice: &[u8]) -> StringPointer {
-        debug_assert!(self.len <= self.cap); // didn't count everything
-        debug_assert!(self.ptr.is_some()); // must call allocate first
-
-        let start = self.len;
-        let dst = self.writable();
-        dst[..slice.len()].copy_from_slice(slice);
-        self.len += slice.len();
-
-        debug_assert!(self.len <= self.cap);
-
-        StringPointer {
-            offset: start as u32,
-            length: slice.len() as u32,
-        }
+        let start = self.len();
+        self.append(slice);
+        self.pointer_since(start)
     }
 
     pub fn append_count_z(&mut self, slice: &[u8]) -> StringPointer {
-        debug_assert!(self.len <= self.cap); // didn't count everything
-        debug_assert!(self.ptr.is_some()); // must call allocate first
-
-        let start = self.len;
-        let dst = self.writable();
-        dst[..slice.len()].copy_from_slice(slice);
-        dst[slice.len()] = 0;
-        self.len += slice.len();
-        self.len += 1;
-
-        debug_assert!(self.len <= self.cap);
-
-        StringPointer {
-            offset: start as u32,
-            length: slice.len() as u32,
-        }
+        let pointer = self.append_count(slice);
+        self.append(b"\0");
+        pointer
     }
 
     pub fn fmt(&mut self, args: fmt::Arguments<'_>) -> &[u8] {
-        debug_assert!(self.len <= self.cap); // didn't count everything
-        debug_assert!(self.ptr.is_some()); // must call allocate first
-
-        let start = self.len;
-        let written = crate::fmt::buf_print_len(self.writable(), args).expect("unreachable");
-        self.len += written;
-
-        debug_assert!(self.len <= self.cap);
-
-        &self.allocated_slice()[start..start + written]
+        let start = self.len();
+        self.append_with(|mut cursor| cursor.write_fmt(args))
+            .expect("unreachable");
+        &self.written_slice()[start..]
     }
 
     pub fn fmt_append_count_z(&mut self, args: fmt::Arguments<'_>) -> StringPointer {
-        debug_assert!(self.len <= self.cap); // didn't count everything
-        debug_assert!(self.ptr.is_some()); // must call allocate first
-
-        let off = self.len;
-        let written = crate::fmt::buf_print_z(self.writable(), args)
-            .expect("unreachable")
-            .len();
-        self.len += written;
-        self.len += 1;
-
-        debug_assert!(self.len <= self.cap);
-
-        StringPointer {
-            offset: off as u32,
-            length: written as u32,
-        }
+        let start = self.len();
+        self.fmt(args);
+        let pointer = self.pointer_since(start);
+        self.append(b"\0");
+        pointer
     }
 
-    pub fn fmt_count(&mut self, args: fmt::Arguments<'_>) {
-        self.cap += bun_alloc::fmt_count(args);
-    }
-
-    pub fn allocated_slice(&mut self) -> &mut [u8] {
-        let Some(ptr) = self.ptr else { return &mut [] };
-        // SAFETY: ptr was allocated with self.cap bytes.
-        unsafe { slice::from_raw_parts_mut(ptr.as_ptr(), self.cap) }
-    }
-
-    /// Immutable view of the bytes appended so far (`ptr[0..len]`). Safe wrapper
-    /// for the recurring `unsafe { ffi::slice(self.ptr.unwrap().as_ptr(), self.len) }`
-    /// pattern at call sites.
+    /// The bytes appended so far.
     #[inline]
     pub fn written_slice(&self) -> &[u8] {
-        let Some(ptr) = self.ptr else { return &[] };
-        // SAFETY: `ptr` came from `Box::<[u8]>::new_uninit_slice(self.cap)` in
-        // `allocate()`; `self.len <= self.cap` is upheld by
-        // every `append*` (debug-asserted there), and bytes `[0, len)` were
-        // initialized by those appends. The borrow is tied to `&self`.
-        unsafe { slice::from_raw_parts(ptr.as_ptr(), self.len) }
+        &self.0.0
     }
 
-    pub fn writable(&mut self) -> &mut [u8] {
-        let Some(ptr) = self.ptr else { return &mut [] };
-        debug_assert!(self.len <= self.cap);
-        // SAFETY: ptr was allocated with self.cap bytes; len <= cap.
-        unsafe { slice::from_raw_parts_mut(ptr.as_ptr().add(self.len), self.cap - self.len) }
+    /// The bytes appended so far, without copying.
+    pub fn into_vec(self) -> Vec<u8> {
+        self.0.0
     }
 
-    /// Transfer ownership of the underlying memory to a slice.
-    ///
-    /// After calling this, you are responsible for freeing the underlying memory.
-    /// This StringBuilder should not be used after calling this function.
-    pub fn move_to_slice(&mut self) -> Box<[u8]> {
-        // Reconstruct the Box (allocated in allocate) and hand
-        // it back.
-        //
-        // `take()` first: `*self = Self::default()` drops the old value, and
-        // `Drop` frees the buffer when `ptr` is still `Some` — leaving it set
-        // here would free the allocation we're about to hand back.
-        let Some(ptr) = self.ptr.take() else {
-            *self = Self::default();
-            return Box::default();
-        };
-        let cap = self.cap;
-        *self = Self::default();
-        // SAFETY: ptr came from Box::<[u8]>::new_uninit_slice(cap) leaked above.
-        // Caller contract: every counted byte must have been appended — if not
-        // fully written, the returned Box exposes uninit bytes (UB to read).
-        unsafe { crate::heap::take(std::ptr::slice_from_raw_parts_mut(ptr.as_ptr(), cap)) }
-    }
-}
-
-impl Drop for StringBuilder {
-    fn drop(&mut self) {
-        let Some(ptr) = self.ptr else { return };
-        if self.cap == 0 {
-            return;
-        }
-        // SAFETY: ptr came from Box::<[MaybeUninit<u8>]>::new_uninit_slice(self.cap)
-        // leaked in allocate; reconstruct to free via global allocator.
-        unsafe {
-            crate::heap::destroy::<[core::mem::MaybeUninit<u8>]>(
-                std::ptr::slice_from_raw_parts_mut(ptr.as_ptr().cast(), self.cap),
-            );
-        }
+    /// Takes the buffer without copying. The unused capacity is filled with zeros.
+    pub fn into_boxed_slice(self) -> Box<[u8]> {
+        let mut buf = self.into_vec();
+        buf.resize(buf.capacity(), 0);
+        buf.into_boxed_slice()
     }
 }
 
@@ -260,20 +155,32 @@ impl Drop for StringBuilder {
 mod tests {
     use super::*;
 
-    fn assert_views_are_empty(builder: &mut StringBuilder) {
-        assert!(builder.ptr.is_some());
-        assert!(builder.writable().is_empty());
-        assert!(builder.allocated_slice().is_empty());
-        assert!(builder.append(b"").is_empty());
-        assert!(builder.written_slice().is_empty());
-        assert!(builder.move_to_slice().is_empty());
-    }
-
     #[test]
     fn views_are_empty_after_allocate_with_nothing_counted() {
         let mut builder = StringBuilder::default();
         builder.count(b"");
-        builder.allocate().unwrap();
-        assert_views_are_empty(&mut builder);
+        let mut builder = builder.allocate();
+        assert!(builder.append(b"").is_empty());
+        assert!(builder.written_slice().is_empty());
+        assert!(builder.into_boxed_slice().is_empty());
+    }
+
+    #[test]
+    fn into_boxed_slice_does_not_reallocate_and_zeroes_unused_capacity() {
+        let mut builder = StringBuilder::default();
+        builder.count(b"abcd");
+        let mut builder = builder.allocate();
+        let address = builder.append(b"ab").as_ptr();
+        let boxed = builder.into_boxed_slice();
+        assert_eq!((boxed.as_ptr(), &*boxed), (address, &b"ab\0\0"[..]));
+    }
+
+    #[test]
+    #[should_panic]
+    fn append_panics_past_the_capacity() {
+        let mut builder = StringBuilder::default();
+        builder.count(b"a");
+        let mut builder = builder.allocate();
+        builder.append(b"ab");
     }
 }

@@ -63,7 +63,7 @@ fn bind_existing(
     success_fn(this, dependency_id, package_id);
     Ok(Some(ResolvedPackageResult {
         // Read this after `success_fn`, which can change the packages array.
-        package: *this.lockfile.packages.get(package_id as usize),
+        package: this.lockfile.packages.get(package_id as usize),
         is_first_time: false,
         task: None,
     }))
@@ -321,7 +321,7 @@ fn enqueue_download(
     }
 
     let is_required = this.is_package_required(dependency_id, package_id);
-    let package = *this.lockfile.packages.get(package_id as usize);
+    let package = this.lockfile.packages.get(package_id as usize);
     if let Some(task) = run_tasks::generate_network_task_for_tarball(
         this,
         task_id,
@@ -2032,7 +2032,7 @@ pub(crate) fn bind_row(
                             // An exact version in an expired manifest needs no request.
                             let exact = (version.try_npm())
                                 .filter(|npm| npm.version.is_exact())
-                                .map(|npm| npm.version.head.head.range.left.version);
+                                .map(|npm| npm.version.first_comparator().version);
                             if let Some(exact) = exact
                                 && (!needs_extended_manifest
                                     || manifest.pkg.has_extended_manifest()
@@ -3497,7 +3497,7 @@ fn get_or_put_resolved_package(
         Some(Settled::Package(id)) => return bind_existing(this, dependency_id, id, success_fn),
         Some(Settled::Resolved) => {
             return Ok(Some(ResolvedPackageResult {
-                package: *this.lockfile.packages.get(resolution as usize),
+                package: this.lockfile.packages.get(resolution as usize),
                 ..Default::default()
             }));
         }
@@ -3884,7 +3884,7 @@ fn resolved_folder_package(
     };
     success_fn(this, dependency_id, package_id);
     Ok(Some(ResolvedPackageResult {
-        package: *this.lockfile.packages.get(package_id as usize),
+        package: this.lockfile.packages.get(package_id as usize),
         is_first_time,
         task: None,
     }))

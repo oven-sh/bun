@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 #![warn(unused_must_use)]
+#![feature(core_io_borrowed_buf)]
 
 pub mod error;
 pub use error::{Error, Result};

@@ -79,7 +79,7 @@ impl List {
         let gop = self.map.get_or_put_adapted(
             &source_index,
             &Adapter {
-                source_indices: self.list.items::<"source_index", IndexInt>(),
+                source_indices: self.list.items_source_index(),
             },
         )?;
         debug_assert!(!gop.found_existing);
@@ -90,7 +90,7 @@ impl List {
         self.map.get_index_adapted(
             &real_source_index,
             &Adapter {
-                source_indices: self.list.items::<"source_index", IndexInt>(),
+                source_indices: self.list.items_source_index(),
             },
         )
     }
@@ -99,15 +99,15 @@ impl List {
         let i = self.map.get_index_adapted(
             &real_source_index,
             &Adapter {
-                source_indices: self.list.items::<"source_index", IndexInt>(),
+                source_indices: self.list.items_source_index(),
             },
         )?;
-        Some(self.list.items::<"reference_source_index", IndexInt>()[i])
+        Some(self.list.items_reference_source_index()[i])
     }
 
     pub fn bit_set(&self, input_file_count: usize) -> Result<DynamicBitSet, bun_alloc::AllocError> {
         let mut scb_bitset = DynamicBitSet::init_empty(input_file_count)?;
-        for &source_index in self.list.items::<"source_index", IndexInt>() {
+        for &source_index in self.list.items_source_index() {
             scb_bitset.set(source_index as usize);
         }
         Ok(scb_bitset)

@@ -1341,7 +1341,7 @@ pub(crate) mod strings_impl {
     // collections::Vec<u8> can call it without depending on bun_string.
     // Allocator params dropped per PORTING.md §Allocators.
     // ──────────────────────────────────────────────────────────────────────
-    use crate::vec::BorrowedBuf;
+    use crate::vec::{BorrowedBuf, BorrowedCursor};
     use bun_simdutf_sys::simdutf::{self, WithUtf8Len};
 
     #[inline]
@@ -1657,6 +1657,33 @@ pub(crate) mod strings_impl {
             read += adv as usize;
         }
         EncodeIntoResult { read, written }
+    }
+
+    /// Unpaired surrogates become U+FFFD. Panics if `out` is too small.
+    pub fn write_utf16_as_utf8(utf16: &[u16], mut out: BorrowedCursor<'_, u8>) {
+        let input = WithUtf8Len::utf16_worst_case(utf16, out.capacity())
+            .unwrap_or_else(|| WithUtf8Len::utf16(utf16));
+        let result = simdutf::convert::utf16::to::utf8::with_errors::le(input, out.reborrow());
+        if result.is_successful() {
+            return;
+        }
+        let mut rest = utf16;
+        let mut buf = [0u8; 4];
+        while !rest.is_empty() {
+            let (cp, adv) = decode_utf16_with_fffd(rest);
+            rest = &rest[adv as usize..];
+            let n = encode_wtf8_rune(&mut buf, cp);
+            out.append(&buf[..n]);
+        }
+    }
+
+    /// Panics if `out` is too small.
+    pub fn write_latin1_as_utf8(latin1: &[u8], out: BorrowedCursor<'_, u8>) {
+        let mut input = WithUtf8Len::latin1_worst_case(latin1);
+        if input.utf8_len() > out.capacity() {
+            input = WithUtf8Len::latin1(latin1);
+        }
+        simdutf::convert::latin1::to::utf8(input, out);
     }
 
     /// Port of `copyLatin1IntoUTF8` — encode Latin-1 into a fixed-size UTF-8 buffer.

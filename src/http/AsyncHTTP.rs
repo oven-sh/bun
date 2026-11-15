@@ -746,7 +746,6 @@ impl<'a> AsyncHTTP<'a> {
         client.redirect = Vec::new();
         client.prev_redirect = Vec::new();
         // Cloned from `request_headers` in `init`, and it only shrinks.
-        assert!(client.header_entries.capacity() >= self.request_headers.len());
         client.header_entries.clear_retaining_capacity();
         (client.header_entries).append_list_assume_capacity(&self.request_headers);
         client.flags = original.flags;

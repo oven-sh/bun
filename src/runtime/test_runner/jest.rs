@@ -159,7 +159,7 @@ impl TestRunner {
         if let Some(on_stack) = active_file.execution.on_stack.get().and_then(|on_stack| on_stack.entry) {
             return active_file.step(on_stack).timespec.get();
         }
-        if active_file.phase == bun_test::Phase::Execution {
+        if active_file.phase.get() == bun_test::Phase::Execution {
             if let Some(group) = active_file.execution.active_group() {
                 let mut latest: Option<bun_core::Timespec> = None;
                 for seq in group.sequences(&active_file.execution) {
@@ -603,12 +603,7 @@ pub(crate) mod on_unhandled_rejection {
         global_object: &JSGlobalObject,
         rejection: JSValue,
     ) {
-        if let Some(buntest_strong) = bun_test::clone_active_strong() {
-            // `buntest_strong` released by Rc drop.
-            // SAFETY: single-threaded JS VM; `buntest_strong` is the only handle
-            // dereferenced for this scope. Const→mut projection is centralized in `buntest_as_mut`
-            // pending the BunTestPtr interior-mut reshape (see bun_test.rs).
-            let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+        if let Some(buntest) = &bun_test::clone_active_strong() {
             if buntest.unclaimed.is_ended_error(rejection) {
                 return;
             }
@@ -626,18 +621,18 @@ pub(crate) mod on_unhandled_rejection {
                     }
                 }
             }
-            buntest.is_reporting_uncaught = true;
+            let was_reporting_uncaught = buntest.is_reporting_uncaught.replace(true);
             buntest.on_uncaught_exception(
                 global_object,
                 Some(rejection),
                 true,
                 &current_state_data,
             );
-            buntest.is_reporting_uncaught = false;
+            buntest.is_reporting_uncaught.set(was_reporting_uncaught);
             buntest.add_result(current_state_data);
             // The JS that reported the error may still be on the stack, so don't start the next test under it.
             bun_test::BunTest::run_next_tick(
-                &std::rc::Rc::downgrade(&buntest_strong),
+                &std::rc::Rc::downgrade(buntest),
                 global_object,
                 current_state_data,
             );

@@ -119,7 +119,7 @@ impl TestContext {
     fn with_running<R>(&self, this_value: JSValue, f: impl FnOnce(&BunTest, &ExecutionSequence) -> R) -> Option<R> {
         let buntest = self.buntest.upgrade()?;
         let sequence = self.sequence(&buntest)?;
-        (buntest.phase == Phase::Execution && sequence.context.get() == Some(this_value)).then(|| f(&buntest, sequence))
+        (buntest.phase.get() == Phase::Execution && sequence.context.get() == Some(this_value)).then(|| f(&buntest, sequence))
     }
 
     fn throw_finished(global: &JSGlobalObject, name: &str) -> jsc::JsError {

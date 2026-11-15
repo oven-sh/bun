@@ -25,8 +25,8 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, ArrayBuffer, ArrayBufferPin, EncodedSliceJsc as _, JSGlobalObject, JSPromise,
-    JSValue, JsCell, JsClass as _, JsRef, JsResult, OffThreadBytes, StringJsc as _, Strong,
-    StrongCell, SysErrorJsc as _,
+    JSValue, JsClass as _, JsRef, JsResult, OffThreadBytes, StringJsc as _, Strong, StrongCell,
+    SysErrorJsc as _,
 };
 use bun_sys as sys;
 
@@ -53,8 +53,8 @@ fn format_name(f: codecs::Format) -> &'static str {
 use crate::generated_bindgen::image::js_Image as js;
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `max_pixels`
-// / `auto_orient` are read-only after construction so stay bare.
+// interior mutability via `Cell`. `max_pixels` / `auto_orient` are read-only
+// after construction so stay bare.
 pub(crate) struct Image {
     /// Empty while `unread_blob` is `Some`.
     source: OnceCell<Source>,
@@ -77,7 +77,7 @@ pub(crate) struct Image {
     /// Strong→wrapper→sourceJS-slot chain is what keeps the borrowed ArrayBuffer
     /// alive across the WorkPool roundtrip; switching to weak when idle lets GC
     /// collect the wrapper.
-    this_ref: JsCell<JsRef>,
+    this_ref: JsRef,
     pending_tasks: Cell<u32>,
 }
 
@@ -92,7 +92,7 @@ impl Default for Image {
             auto_orient: true,
             last_width: Cell::new(-1),
             last_height: Cell::new(-1),
-            this_ref: JsCell::new(JsRef::empty()),
+            this_ref: JsRef::empty(),
             pending_tasks: Cell::new(0),
         }
     }
@@ -276,7 +276,7 @@ impl Image {
     fn set_source_from_js(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         match source_from_js(global, value)? {
             Some(source) => self.set_source(source),
-            None => self.unread_blob.set(Strong::create(value, global)),
+            None => self.unread_blob.set(global, value),
         }
         Ok(())
     }
@@ -1242,7 +1242,7 @@ impl BlobReadChain {
                 let image = self.image.image(&cx);
                 // Concurrent terminals each start a `BlobReadChain`, so `source` may already be set.
                 image.set_source(Source::Owned(bytes));
-                let this_value = image.this_ref.get().get();
+                let this_value = image.this_ref.get();
                 // `source` is set; this re-entry takes the regular path. If `schedule()` threw,
                 // `deliver` was already dropped there and the pending exception is the rejection.
                 let inner = image.schedule(&cx, this_value, kind, deliver);
@@ -1293,9 +1293,7 @@ unsafe impl bun_jsc::job::JsAffine for PendingTask {}
 impl PendingTask {
     fn new(image: &Image, this_value: JSValue, global: &JSGlobalObject) -> Self {
         if image.pending_tasks.get() == 0 {
-            image
-                .this_ref
-                .with_mut(|r| r.set_strong(this_value, global));
+            image.this_ref.set_strong(this_value, global);
         }
         image.pending_tasks.set(image.pending_tasks.get() + 1);
         // SAFETY: see the JsAffine note.
@@ -1303,7 +1301,7 @@ impl PendingTask {
     }
     fn image<'s>(&'s self, _cx: &jsc::JsThread<'_>) -> &'s Image {
         // SAFETY: JS thread (token); wrapper alive (Strong while pending > 0);
-        // shared deref — mutation goes through `Cell`/`JsCell` (R-2).
+        // shared deref — mutation goes through `Cell` (R-2).
         unsafe { &*self.0.as_ptr() }
     }
 }
@@ -1314,7 +1312,7 @@ impl Drop for PendingTask {
         let image = unsafe { &*self.0.as_ptr() };
         image.pending_tasks.set(image.pending_tasks.get() - 1);
         if image.pending_tasks.get() == 0 {
-            image.this_ref.with_mut(|r| r.downgrade());
+            image.this_ref.downgrade();
         }
     }
 }

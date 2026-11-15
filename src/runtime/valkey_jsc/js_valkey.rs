@@ -41,11 +41,7 @@ pub(crate) use crate::generated_bindgen::valkey::js_RedisClient as js;
 impl SubscriptionCtx {
     pub(crate) fn init(valkey_parent: &JSValkeyClient) -> JsResult<Self> {
         let callback_map = JSMap::create(&valkey_parent.global_object);
-        let parent_this = valkey_parent
-            .this_value
-            .get()
-            .try_get()
-            .expect("unreachable");
+        let parent_this = valkey_parent.this_value.try_get().expect("unreachable");
 
         js::subscription_callback_map_set_cached(
             parent_this,
@@ -71,7 +67,7 @@ impl SubscriptionCtx {
 impl JSValkeyClient {
     /// `None` while the wrapper is dead but unswept: `finalize()` has not run, socket callbacks still do.
     fn try_subscription_callback_map(&self) -> Option<&mut JSMap> {
-        let parent_this = self.this_value.get().try_get()?;
+        let parent_this = self.this_value.try_get()?;
         let value_js = js::subscription_callback_map_get_cached(parent_this).unwrap();
         // `JSMap` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
         // `from_js` returns a non-null heap cell when the slot was set by
@@ -282,7 +278,7 @@ impl JSValkeyClient {
 pub(crate) struct JSValkeyClient {
     pub(crate) client: JsCell<valkey::ValkeyClient>,
     pub(crate) global_object: GlobalRef,
-    pub this_value: JsCell<JsRef>,
+    pub this_value: JsRef,
     pub poll_ref: JsKeepAlive,
 
     pub(crate) _subscription_ctx: JsCell<SubscriptionCtx>,
@@ -433,7 +429,7 @@ impl JSValkeyClient {
         let this_value = structure.create(&cx.heap, new_client);
 
         // Initially, we only need to hold a weak reference to the JS object.
-        this.this_value.set(JsRef::init_weak(this_value.to_js()));
+        this.this_value.set_weak(this_value.to_js());
 
         // Need to associate the subscription context, after the JS ref has been populated.
         this._subscription_ctx.set(SubscriptionCtx::init(&this)?);
@@ -698,7 +694,7 @@ impl JSValkeyClient {
                 auto_flusher: Default::default(),
             }),
             global_object: GlobalRef::from(cx.global()),
-            this_value: JsCell::new(JsRef::empty()),
+            this_value: JsRef::empty(),
             poll_ref: JsKeepAlive::default(),
             _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
@@ -790,7 +786,7 @@ impl JSValkeyClient {
                 auto_flusher: Default::default(),
             }),
             global_object: GlobalRef::from(cx.global()),
-            this_value: JsCell::new(JsRef::empty()),
+            this_value: JsRef::empty(),
             poll_ref: JsKeepAlive::default(),
             _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
@@ -1141,7 +1137,7 @@ impl JSValkeyClient {
     pub(crate) fn on_valkey_connect(&self, value: &mut protocol::RESPValue) -> JsResult<()> {
         debug_assert!(self.client.get().status == valkey::Status::Connected);
         // we should always have a strong reference to the object here
-        debug_assert!(self.this_value.get().is_strong());
+        debug_assert!(self.this_value.is_strong());
         // Now counting idle time, not connect time.
         self.reset_connection_timeout();
 
@@ -1152,7 +1148,7 @@ impl JSValkeyClient {
         let global_object = self.global_object;
         let _exit = self.vm().enter_event_loop_scope();
 
-        if let Some(this_value) = self.this_value.get().try_get() {
+        if let Some(this_value) = self.this_value.try_get() {
             let hello_value = match protocol_jsc::resp_value_to_js(value, &global_object) {
                 Ok(v) => v,
                 // The HELLO reply did not convert: that is this connect's failure (a stop just
@@ -1228,7 +1224,7 @@ impl JSValkeyClient {
 
     pub(crate) fn on_valkey_subscribe(&self, value: &mut protocol::RESPValue) {
         debug_assert!(self.is_subscriber());
-        debug_assert!(self.this_value.get().is_strong());
+        debug_assert!(self.this_value.is_strong());
 
         let _guard = self.ref_guard();
 
@@ -1239,7 +1235,7 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn on_valkey_unsubscribe(&self) -> JsResult<()> {
-        debug_assert!(self.this_value.get().is_strong());
+        debug_assert!(self.this_value.is_strong());
 
         self.client_mut().on_writable();
         self.update_poll_ref();
@@ -1308,7 +1304,7 @@ impl JSValkeyClient {
         // arms no timer of its own, so left armed this one would fire into it.
         self.timer.disarm();
 
-        let Some(this_jsvalue) = self.this_value.get().try_get() else {
+        let Some(this_jsvalue) = self.this_value.try_get() else {
             return Ok(());
         };
         this_jsvalue.ensure_still_alive();
@@ -1364,7 +1360,7 @@ impl JSValkeyClient {
     pub(crate) fn finalize(&self) {
         self.timer.disarm();
         self.reconnect_timer.disarm();
-        self.this_value.with_mut(|t| t.finalize());
+        self.this_value.finalize();
         self.client_mut().flags.finalized = true;
         self.close_socket_next_tick();
         // `_subscription_ctx` is three inline bools (no allocation, no GC
@@ -1552,7 +1548,7 @@ impl JSValkeyClient {
             self.poll_ref.unref(bun_io::js_vm_ctx());
         }
 
-        if self.this_value.get().is_empty() {
+        if self.this_value.is_empty() {
             return;
         }
 
@@ -1571,18 +1567,18 @@ impl JSValkeyClient {
                 // It is 100% safe to drop the strong reference there and let
                 // the object be GC'd, but we're not doing that now.
                 debug!("upgrading this_value since we are connected/connecting");
-                self.this_value.with_mut(|t| t.upgrade(&self.global_object));
+                self.this_value.upgrade(&self.global_object);
             }
             valkey::Status::NeverConnected | valkey::Status::Disconnected => {
                 // If we're disconnected, we need to check if we have any pending activity.
                 if has_activity {
                     debug!("upgrading this_value since there is pending activity");
                     // If we have pending activity, we need to keep the object alive.
-                    self.this_value.with_mut(|t| t.upgrade(&self.global_object));
+                    self.this_value.upgrade(&self.global_object);
                 } else {
                     debug!("downgrading this_value since there is no pending activity");
                     // If we don't have any pending activity, we can drop the strong reference.
-                    self.this_value.with_mut(|t| t.downgrade());
+                    self.this_value.downgrade();
                 }
             }
         }

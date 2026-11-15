@@ -90,7 +90,7 @@ pub(crate) struct NodeHTTPResponse {
     /// Held until `mark_request_as_done`.
     pending_ref: JsCell<Option<PendingRequest<RefPtr<Self>>>>,
     /// What the handler returned, with the ref of the dispatch that waits for it.
-    pub(crate) promise: JsCell<Option<(StrongOptional, RefPtr<Self>)>>,
+    pub(crate) promise: Cell<Option<(StrongOptional, RefPtr<Self>)>>,
     pub(crate) server: AnyServer,
 
     /// node:http: the raw trailer section that followed THIS request's chunked
@@ -2701,7 +2701,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         poll_ref: jsc::Ref::default(),
         body_read_ref: jsc::Ref::default(),
         pending_ref: JsCell::new(None),
-        promise: JsCell::new(None),
+        promise: Cell::new(None),
         request_trailers: JsCell::new(Vec::new()),
         armed_this_value: Cell::new(JSValue::ZERO),
         raw_request_headers: JsCell::new(Vec::new()),

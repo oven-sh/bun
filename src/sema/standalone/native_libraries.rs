@@ -176,10 +176,7 @@ unsafe fn sha256_context<'a>(ctx: *mut EVP_MD_CTX) -> &'a mut SHA256_CTX {
     // SAFETY: the contract of this function: `ctx` is an initialized context that lives for `'a`.
     // `md_data` has the size and alignment of a `SHA256_CTX`, and any bytes are a valid one.
     unsafe {
-        assert!(
-            (*ctx).digest == EVP_sha256(),
-            "EVP_DigestInit_ex has not run"
-        );
+        assert!((*ctx).digest == EVP_sha256(), "EVP_DigestInit has not run");
         &mut *(&raw mut (*ctx).md_data).cast::<SHA256_CTX>()
     }
 }
@@ -204,11 +201,7 @@ unsafe extern "C" fn EVP_MD_CTX_cleanup(ctx: *mut EVP_MD_CTX) -> c_int {
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
-unsafe extern "C" fn EVP_DigestInit_ex(
-    ctx: *mut EVP_MD_CTX,
-    type_: *const EVP_MD,
-    _engine: *mut ENGINE,
-) -> c_int {
+unsafe extern "C" fn EVP_DigestInit(ctx: *mut EVP_MD_CTX, type_: *const EVP_MD) -> c_int {
     assert!(type_ == EVP_sha256(), "only SHA-256 has a stand-in");
     // SAFETY: the caller passes room for a context, which need not be initialized.
     unsafe {
@@ -257,13 +250,13 @@ unsafe extern "C" fn EVP_Digest(
     md_out: *mut u8,
     md_out_size: *mut c_uint,
     type_: *const EVP_MD,
-    impl_: *mut ENGINE,
+    _impl: *mut ENGINE,
 ) -> c_int {
     let mut context = zeroed::<EVP_MD_CTX>();
     let ctx = &raw mut context;
     // SAFETY: `ctx` is a context, and the caller's pointers are what the three functions require.
     unsafe {
-        EVP_DigestInit_ex(ctx, type_, impl_);
+        EVP_DigestInit(ctx, type_);
         EVP_DigestUpdate(ctx, data, len);
         EVP_DigestFinal_ex(ctx, md_out, md_out_size)
     }
@@ -507,7 +500,7 @@ mod tests {
         let mut digest = [0; 32];
         // SAFETY: `ctx` is a context, every part is a slice, and `digest` has room for 32 bytes.
         unsafe {
-            assert_eq!(EVP_DigestInit_ex(ctx, EVP_sha256(), null_mut()), 1);
+            assert_eq!(EVP_DigestInit(ctx, EVP_sha256()), 1);
             for part in parts {
                 assert_eq!(EVP_DigestUpdate(ctx, part.as_ptr().cast(), part.len()), 1);
             }

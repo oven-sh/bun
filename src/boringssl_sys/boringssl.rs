@@ -260,9 +260,8 @@ pub struct OwnedEvpMdCtx(EVP_MD_CTX);
 impl OwnedEvpMdCtx {
     pub fn new(md: &'static EVP_MD) -> Self {
         let mut ctx = Self(bun_core::ffi::zeroed());
-        // SAFETY: all-zero is what `EVP_MD_CTX_init` writes, and the context keeps `md`, a static.
-        // The state is inline, so this cannot fail. The `ENGINE` is nullable.
-        unsafe { EVP_DigestInit_ex(&raw mut ctx.0, md, null_mut()) };
+        // SAFETY: the context keeps `md`, a static. The state is inline, so this cannot fail.
+        unsafe { EVP_DigestInit(&raw mut ctx.0, md) };
         ctx
     }
 
@@ -283,7 +282,7 @@ impl OwnedEvpMdCtx {
         // SAFETY: the context is initialized, and `out` is as long as the digest. Then as in `new`.
         unsafe {
             EVP_DigestFinal_ex(&raw mut self.0, out.as_mut_ptr(), null_mut());
-            EVP_DigestInit_ex(&raw mut self.0, md, null_mut());
+            EVP_DigestInit(&raw mut self.0, md);
         }
         out
     }
@@ -1491,7 +1490,7 @@ unsafe extern "C" {
     fn EVP_MD_CTX_cleanup(ctx: *mut EVP_MD_CTX) -> c_int;
     fn EVP_MD_CTX_copy_ex(out: *mut EVP_MD_CTX, in_: *const EVP_MD_CTX) -> c_int;
     safe fn EVP_MD_size(md: &EVP_MD) -> usize;
-    fn EVP_DigestInit_ex(ctx: *mut EVP_MD_CTX, type_: *const EVP_MD, engine: *mut ENGINE) -> c_int;
+    fn EVP_DigestInit(ctx: *mut EVP_MD_CTX, type_: *const EVP_MD) -> c_int;
     fn EVP_DigestUpdate(ctx: *mut EVP_MD_CTX, data: *const c_void, len: usize) -> c_int;
     fn EVP_DigestFinal_ex(ctx: *mut EVP_MD_CTX, md_out: *mut u8, out_size: *mut c_uint) -> c_int;
     fn EVP_get_digestbyname(name: *const c_char) -> Option<&'static EVP_MD>;

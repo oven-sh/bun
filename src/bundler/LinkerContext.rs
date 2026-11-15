@@ -1601,7 +1601,7 @@ impl SourceMapData<'_> {
         // `Worker::get` (the caller) brackets this in `ast_memory_store.push()/
         // pop()`, so the active `AstAlloc` state is this worker's and the
         // `AstAlloc` route lands the SoA slab + every `columns_for_non_ascii`
-        // payload there for bulk-free on `pool.deinit()`.
+        // payload there for bulk-free when the pool drops.
         unsafe {
             *line_offset_table = LineOffsetTable::generate_in::<bun_alloc::AstAlloc>(
                 &source.contents,

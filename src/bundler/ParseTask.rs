@@ -1500,7 +1500,7 @@ pub mod parse_worker {
                 }
 
                 // Always read into the worker arena: it is pinned for the
-                // entire bundle pass (freed only via `pool.deinit()` inside
+                // entire bundle pass (freed only with the pool, which follows
                 // `BundleV2::drop`, after `process_files_to_copy`
                 // has already deep-copied every additional-file body into its
                 // `OutputFile`). This avoids churning the global allocator with
@@ -2774,8 +2774,6 @@ pub mod parse_worker {
                 }
 
                 if crate::ThreadPool::uses_io_pool() {
-                    // SAFETY: `pool` is a `NonNull<ThreadPool>` BACKREF live for the
-                    // bundle pass.
                     ctx.graph.pool().schedule_inside_thread_pool(this);
                     return;
                 }

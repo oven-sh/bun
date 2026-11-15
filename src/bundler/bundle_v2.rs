@@ -76,16 +76,17 @@ pub struct BundleV2<'a> {
     /// Owns the storage backing `client_transpiler` when it was lazily created
     /// by `initialize_client_transpiler` (browser-target request from a
     /// server-side build). Stays `None` when `client_transpiler` is borrowed
-    /// from `BakeOptions` (DevServer owns that one). Dropped in
+    /// from `BakeOptions` (DevServer owns that one). Dropped after
     /// `BundleV2::drop` so the deep-cloned `BundleOptions` /
     /// `Resolver` global-heap fields are released — `arena.alloc` would leak
     /// them since bumpalo never runs `Drop`.
     pub(crate) owned_client_transpiler: Option<Box<Transpiler<'a>>>,
     /// See `bake.Framework.ServerComponents.separate_ssr_graph`.
     pub(crate) ssr_transpiler: *mut Transpiler<'a>,
+    /// Before what tasks borrow: dropping it joins the threads of a pool it owns.
+    pub graph: Graph<'a>,
     /// When Bun Bake is used, the resolved framework is passed here.
     pub(crate) framework: Option<bake::Framework>,
-    pub graph: Graph<'a>,
     // `LinkerContext<'a>` borrows the same arena lifetime as `transpiler`.
     pub linker: LinkerContext<'a>,
     // The hot reloader (`jsc::hot_reloader::NewHotReloader<BundleV2, …>`) owns the
@@ -3163,7 +3164,6 @@ pub mod bv2_impl {
                 thread_pool,
                 heap,
             );
-            // `Graph::pool` wraps the `BackRef` deref; `start()` takes `&self`.
             this.graph.pool().start();
             this
         }
@@ -3198,13 +3198,7 @@ pub mod bv2_impl {
                 owned_client_transpiler: None,
                 ssr_transpiler: ssr_alias,
                 framework: None,
-                graph: Graph {
-                    pool: bun_ptr::BackRef::dangling(), // set below
-                    heap,
-                    kit_referenced_server_data: false,
-                    kit_referenced_client_data: false,
-                    ..Graph::new(heap)
-                },
+                graph: Graph::new(heap, ThreadPool::init(thread_pool)),
                 linker: LinkerContext {
                     r#loop: event_loop,
                     ..LinkerContext::new(heap)
@@ -3383,8 +3377,6 @@ pub mod bv2_impl {
 
             this.linker.dev_server = this.dev_server;
 
-            let tp = ThreadPool::init(&*this, thread_pool);
-            this.graph.pool = bun_ptr::BackRef::new_mut(this.arena().alloc(tp));
             // The watcher keeps a raw `*mut BundleV2`: `generate_from_cli` leaks the box.
             if cli_watch_flag {
                 // CYCLEBREAK GENUINE: hot_reloader is T6; runtime constructs the
@@ -5317,7 +5309,7 @@ pub mod bv2_impl {
             // creating `Worker`s and reading `graph`.
             self.linker.source_maps.line_offset_wait_group.wait();
             self.linker.source_maps.quoted_contents_wait_group.wait();
-            // The last IO callback may still be using the worker pool that `pool.deinit()` frees.
+            // The last IO callback may still be using the worker pool that `graph` frees.
             self.graph.pool().wait_for_io_tasks();
 
             // We do this before the rest to make it harder for any dangling pointers to data to be used in there.
@@ -5382,20 +5374,6 @@ pub mod bv2_impl {
                     d.deinit();
                 }
             }
-
-            // Drop the lazily-created client transpiler (if any) before tearing
-            // down workers — the slot
-            // is invalidated ahead of `pool.workers_assignments` so no worker can
-            // observe a half-torn-down transpiler. Clear the `client_transpiler`
-            // alias first so it never dangles past the Box drop; in the
-            // `BakeOptions`-borrowed path `owned_client_transpiler` is `None` and
-            // the DevServer-owned pointer is left untouched.
-            if self.owned_client_transpiler.is_some() {
-                self.client_transpiler = None;
-                self.owned_client_transpiler = None;
-            }
-
-            self.graph.pool_mut().deinit();
         }
     }
 

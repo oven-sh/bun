@@ -1,5 +1,6 @@
 //! `JSFrameworkRouter`: a JS class for testing the router.
 
+use bun_paths::resolve_path::SpillBuf;
 use bun_paths::strings;
 
 use bun_alloc::{AllocError, Arena};
@@ -47,13 +48,16 @@ impl JSFrameworkRouter {
             global,
         )?;
 
-        let abs_root: Box<[u8]> = strings::without_trailing_slash(paths::resolve_path::join_abs::<
-            paths::platform::Auto,
-        >(
-            bun_resolver::fs::FileSystem::get().top_level_dir(),
-            root.slice(),
-        ))
-        .into();
+        let abs_root: Box<[u8]> = SpillBuf::with_scratch(|buf| {
+            strings::without_trailing_slash(paths::resolve_path::join_abs_string_spill::<
+                paths::platform::Auto,
+            >(
+                bun_resolver::fs::FileSystem::get().top_level_dir(),
+                buf,
+                &[root.slice()],
+            ))
+            .into()
+        });
 
         let types: Box<[Type]> = Box::new([Type {
             abs_root: abs_root.clone(),

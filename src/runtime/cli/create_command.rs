@@ -11,6 +11,7 @@ use bun_dotenv as DotEnv;
 use bun_http as HTTP;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
+use bun_paths::resolve_path::SpillBuf;
 use bun_paths::{OSPathSlice, PathBuffer};
 use bun_resolver::fs;
 use bun_sys::FdDirExt as _;
@@ -323,12 +324,14 @@ impl CreateCommand {
             positionals[1]
         };
 
-        let destination =
-            filesystem
-                .dirname_store
-                .append_slice(bun_paths::resolve_path::join_abs::<
-                    bun_paths::platform::Loose,
-                >(filesystem.top_level_dir(), dirname))?;
+        let mut path_buf = SpillBuf::default();
+        let destination = filesystem.dirname_store.append_slice(
+            bun_paths::resolve_path::join_abs_string_spill::<bun_paths::platform::Loose>(
+                filesystem.top_level_dir(),
+                &mut path_buf,
+                &[dirname],
+            ),
+        )?;
 
         let mut progress = Progress::default();
         progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
@@ -547,7 +550,8 @@ impl CreateCommand {
                 progress.root().set_name(b"Copying files");
                 progress.refresh();
 
-                let abs_template_path = crate::cli::cli_dupe(filesystem.abs(&[template]));
+                let abs_template_path =
+                    crate::cli::cli_dupe(filesystem.abs_spill(&[template], &mut path_buf));
                 let template_dir = match bun_sys::Dir::open(abs_template_path) {
                     Ok(d) => d,
                     Err(err) => {
@@ -1129,8 +1133,11 @@ impl CreateCommand {
             );
         }
 
-        let rel_destination =
-            bun_paths::resolve_path::relative(filesystem.top_level_dir(), destination);
+        let rel_destination = bun_paths::resolve_path::relative_spill(
+            &mut path_buf,
+            filesystem.top_level_dir(),
+            destination,
+        );
         if rel_destination.is_empty() {
             bun_core::pretty!(
                 "\n<d>#<r><b> To get started, run:<r>\n\n  <b><cyan>{}<r>\n\n",

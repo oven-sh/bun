@@ -7,6 +7,7 @@ use bun_alloc::Arena;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Log, Range, Source};
 use bun_paths::fs::Path as FsPath;
+use bun_paths::resolve_path::SpillBuf;
 use bun_paths::{platform, resolve_path};
 use bun_sys as sys;
 
@@ -69,12 +70,18 @@ impl<'a, 'bump> HTMLScanner<'a, 'bump> {
 }
 
 impl HTMLScanner<'_, '_> {
-    fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
+    fn create_import_record(
+        &mut self,
+        buf: &mut SpillBuf<'_>,
+        input_path: &[u8],
+        kind: ImportKind,
+    ) -> Result<(), Error> {
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
         let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
-            resolve_path::join_abs_string::<platform::Auto>(
+            resolve_path::join_abs_string_spill::<platform::Auto>(
                 fs::FileSystem::get().top_level_dir(),
+                buf,
                 &[&input_path[1..]],
             )
         }
@@ -94,8 +101,11 @@ impl HTMLScanner<'_, '_> {
                 if dirname.is_empty() {
                     break 'blk input_path;
                 }
-                let resolved =
-                    resolve_path::join_abs_string_z::<platform::Auto>(dirname, &[input_path]);
+                let resolved = resolve_path::join_abs_string_z_spill::<platform::Auto>(
+                    dirname,
+                    buf,
+                    &[input_path],
+                );
                 if sys::exists_z(resolved) {
                     resolved.as_bytes()
                 } else {
@@ -141,7 +151,7 @@ impl HTMLScanner<'_, '_> {
         kind: ImportKind,
     ) {
         let _ = url_attribute;
-        let _ = self.create_import_record(path, kind);
+        let _ = SpillBuf::with_scratch(|buf| self.create_import_record(buf, path, kind));
     }
 
     pub(crate) fn scan(&mut self, input: &[u8]) -> Result<(), Error> {

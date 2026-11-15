@@ -255,7 +255,7 @@ describe.concurrent("long import path overflow", () => {
 
   it("relative path full of `..` segments (exercises normalization fallback)", async () => {
     using dir = makeDir();
-    // Concat length >> PATH_MAX but normalizes down; JoinScratch heap fallback
+    // Concat length >> PATH_MAX but normalizes down; heap fallback
     await run(String(dir), `\`./\${"x/../".repeat(${len})}${long}.js\``);
   });
 

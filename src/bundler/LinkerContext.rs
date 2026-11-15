@@ -7,6 +7,7 @@ use bun_ast::{AstArena, AstBox, AstVec, Data, Loc, Log, Range, Source};
 use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt, index_sort};
 use bun_core::{self as bun, FeatureFlags, Output};
 use bun_core::{MutableString, string_joiner::StringJoiner, strings};
+use bun_paths::resolve_path::SpillBuf;
 use bun_sourcemap::{self as SourceMap, DebugIDFormatter, SourceMapPieces, SourceMapState};
 // Note: alias the *module* (not the `ThreadPool` struct) so
 // `ThreadPoolLib::Task` / `ThreadPoolLib::Batch` resolve as nested items.
@@ -727,13 +728,10 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
     /// The relative path from the chunk directory to a file source, as written
     /// into the source map's `sources` array. `sources` entries are URLs, so the
     /// host separator is normalized to `/` (the invariant `Path::pretty` holds).
-    fn source_map_relative_path(
-        chunk_abs_dir: &[u8],
-        source_abs_path: &[u8],
-    ) -> Result<Box<[u8]>, AllocError> {
-        let mut rel = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, source_abs_path)?;
+    fn source_map_relative_path(chunk_abs_dir: &[u8], source_abs_path: &[u8]) -> Vec<u8> {
+        let mut rel = bun_paths::resolve_path::relative_vec(chunk_abs_dir, source_abs_path);
         bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut rel);
-        Ok(rel)
+        rel
     }
 
     pub(crate) fn generate_source_map_for_chunk(
@@ -775,7 +773,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 // (drops at scope exit).
                 let rel_path_storage;
                 let pretty: &[u8] = if path.is_file() {
-                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
+                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text);
                     &rel_path_storage
                 } else {
                     path.pretty
@@ -802,7 +800,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
 
                 let rel_path_storage;
                 let pretty: &[u8] = if path.is_file() {
-                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
+                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text);
                     &rel_path_storage
                 } else {
                     path.pretty
@@ -1920,10 +1918,13 @@ impl<'a> LinkerContext<'_, 'a> {
                                 let path = &self.graph.additional_output_files
                                     [*output_file_id as usize]
                                     .dest_path;
-                                hash.write(bun_paths::resolve_path::relative_platform::<
-                                    bun_paths::resolve_path::platform::Posix,
-                                    false,
-                                >(from_chunk_dir, path));
+                                SpillBuf::with_scratch(|buf| {
+                                    hash.write(bun_paths::resolve_path::relative_platform_spill::<
+                                        bun_paths::resolve_path::platform::Posix,
+                                    >(
+                                        buf, from_chunk_dir, path
+                                    ));
+                                });
                             }
                         }
                         crate::chunk::QueryKind::Chunk | crate::chunk::QueryKind::ChunkId => {

@@ -8,7 +8,7 @@ use crate::generated_bindgen::socket_body::{
     AnySocket, BunSocket, SocketHandle, js_TCPSocket, js_TLSSocket,
 };
 use bun_core::EncodedSlice;
-use bun_io::KeepAlive;
+use bun_io::JsKeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
@@ -362,7 +362,7 @@ pub(crate) struct NewSocket<const SSL: bool> {
     /// wrapper cannot be garbage-collected out from under in-flight callbacks, and
     /// downgraded to weak once the socket is closed/inactive so GC can reclaim it.
     pub this_value: JsCell<JsRef>,
-    pub poll_ref: KeepAlive,
+    pub poll_ref: JsKeepAlive,
     pub(crate) ref_pollref_on_connect: Cell<bool>,
     /// What `timeout(seconds)` last asked for, or the 120 s of an accepted socket. uSockets keeps only when it's due.
     pub(crate) timeout_seconds: Cell<c_uint>,
@@ -397,7 +397,6 @@ impl<const SSL: bool> Drop for NewSocket<SSL> {
     fn drop(&mut self) {
         self.mark_inactive();
         self.detach_native_callback();
-        self.poll_ref.unref(js_loop_ctx());
     }
 }
 
@@ -578,7 +577,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             ref_count: bun_ptr::RefCount::init(),
             handlers: JsCell::new(handlers),
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: KeepAlive::init(),
+            poll_ref: JsKeepAlive::default(),
             ref_pollref_on_connect: Cell::new(true),
             timeout_seconds: Cell::new(0),
             connection: JsCell::new(None),

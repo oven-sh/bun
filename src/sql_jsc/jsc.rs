@@ -2,7 +2,7 @@
 //!
 //! All core handle types (`JSValue`, `JSGlobalObject`, `JsError`,
 //! `JsResult`, `JSObject`, `JSType`, [`VirtualMachine`],
-//! [`EventLoop`], [`KeepAlive`], …) are **re-exported from `bun_jsc` /
+//! [`EventLoop`], …) are **re-exported from `bun_jsc` /
 //! `bun_io`**. SQL-specific helpers that `bun_jsc` doesn't expose at
 //! this tier are provided as extension traits ([`JSGlobalObjectSqlExt`],
 //! [`VirtualMachineSqlExt`]).
@@ -167,7 +167,6 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
     }
 }
 
-pub use bun_io::KeepAlive;
 pub use bun_jsc::event_loop::EventLoop;
 pub use bun_jsc::virtual_machine::VirtualMachine;
 

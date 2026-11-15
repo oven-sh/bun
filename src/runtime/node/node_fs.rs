@@ -8,11 +8,10 @@ use core::ffi::c_void;
 use core::ffi::{c_char, c_int, c_uint};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use crate::api::bun::process::event_loop_handle_to_ctx;
 use crate::webcore;
 use bun_core::{String as BunString, Utf8WithString, ZStr};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
-use bun_io::KeepAlive;
+use bun_io::JsKeepAlive;
 use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -1322,7 +1321,7 @@ mod _async_tasks {
         pub(crate) global_object: bun_ptr::BackRef<JSGlobalObject>,
         pub(crate) req: uv::fs_t,
         pub(crate) result: Maybe<R>,
-        pub(crate) r#ref: KeepAlive,
+        _keep_alive: JsKeepAlive,
         pub(crate) tracker: AsyncTaskTracker,
         /// The context of the script that called.
         pub(crate) context: bun_jsc::ContextId,
@@ -1360,18 +1359,15 @@ mod _async_tasks {
                 result: Err(sys::Error::default()),
                 global_object: bun_ptr::BackRef::new(cx.global()),
                 req: bun_core::ffi::zeroed(),
-                r#ref: KeepAlive::default(),
+                _keep_alive: JsKeepAlive::active(),
                 tracker: AsyncTaskTracker::init(vm),
                 context: cx.context().id(),
             });
             // Transfer ownership to libuv: the box outlives the async request and is
-            // reclaimed in `destroy()` (from `run_from_js_thread`). `heap::release`
+            // reclaimed in `run_from_js_thread`. `heap::release`
             // names that hand-off — it is `Box::leak` under the hood; the reclaim
-            // happens in `destroy()`, not in this scope.
+            // happens there, not in this scope.
             let task: &mut Self = bun_core::heap::release(task);
-            // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
-            // event loop is the only one that owns AsyncFSTask/UVFSRequest.
-            task.r#ref.ref_(bun_io::js_vm_ctx());
             task.tracker.did_schedule(cx.global());
 
             let loop_ = uv::Loop::get();
@@ -1635,7 +1631,7 @@ mod _async_tasks {
 
         /// SAFETY: `this` must be the pointer Box::leak'd in `create()`. The body frees it before it calls back, so it is not `&mut self`.
         pub(crate) unsafe fn run_from_js_thread(this: *mut Self) -> JsResult<()> {
-            // SAFETY: fn contract. The borrow ends before `destroy` below.
+            // SAFETY: fn contract. The borrow ends before the free below.
             let (result, completion, global_ref, tracker) = unsafe {
                 let task = &mut *this;
                 if let Ok(result) = &task.result {
@@ -1653,7 +1649,7 @@ mod _async_tasks {
             };
             // The arguments pin their buffers. A callback runs inside `resolve`/`reject`, and a pinned buffer cannot be transferred.
             // SAFETY: fn contract. `this` is not used again.
-            unsafe { Self::destroy(this) };
+            unsafe { bun_core::heap::destroy(this) };
 
             let global_object = global_ref.get();
             let success = matches!(result, Ok(_));
@@ -1666,15 +1662,6 @@ mod _async_tasks {
             let _dispatch = tracker.dispatch(global_object);
 
             completion.settle(global_object, converted, success)
-        }
-
-        /// SAFETY: `this` must be the pointer Box::leak'd in `create()`; called exactly once.
-        pub(crate) unsafe fn destroy(this: *mut Self) {
-            // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
-            // reclaim ownership (paired with the Box::leak in create()).
-            let task = unsafe { bun_core::heap::take(this) };
-            // `bun_sys::Error` frees its path on Drop.
-            task.r#ref.unref(bun_io::js_vm_ctx());
         }
     }
 
@@ -1950,10 +1937,10 @@ mod _async_tasks {
     {
         const TAG: bun_event_loop::TaskTag = F.task_tag();
         /// A libuv fs request that completed into the queue after the last
-        /// tick: destroy releases its promise handle and keep-alive.
+        /// tick: the drop releases its promise handle and keep-alive.
         unsafe fn release_unrun(this: *mut Self) {
             // SAFETY: fn contract — `Box::leak`'d in `UVFSRequest::create`.
-            unsafe { Self::destroy(this) }
+            unsafe { bun_core::heap::destroy(this) }
         }
         /// The context whose script asked.
         unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
@@ -2207,7 +2194,7 @@ mod _async_tasks {
     pub(crate) struct NewAsyncCpTask<const IS_SHELL: bool> {
         pub(crate) promise: JSPromiseStrong,
         pub args: ThreadIsolated<args::Cp<'static>>,
-        /// Owning-thread uses (global object, keep-alive context).
+        /// Owning-thread uses (global object).
         pub(crate) evtloop: EventLoopHandle,
         /// How the last subtask's thread delivers the completion (moved out
         /// by it: the loop may free `self` once the completion is queued). For
@@ -2223,12 +2210,8 @@ mod _async_tasks {
         /// read), not by `Cell` itself — `Cell` is `repr(transparent)` over
         /// `UnsafeCell` and `set()` is exactly the prior `*ptr = val` open-coded.
         pub(crate) result: core::cell::Cell<Maybe<ret::Cp>>,
-        /// If this task is called by the shell then we shouldn't call this as
-        /// it is not threadsafe and is unnecessary as the process will be kept
-        /// alive by the shell instance.
-        // The field exists unconditionally; the `IS_SHELL` path simply skips
-        // `ref_()`/`unref()` (`KeepAlive::default()` is inert until ref'd).
-        pub(crate) r#ref: KeepAlive,
+        /// Inactive for the shell's `cp`, which the shell keeps alive.
+        _keep_alive: JsKeepAlive,
         pub(crate) tracker: AsyncTaskTracker,
         /// `fs.cp`: the context whose script asked. The shell's `cp`: a step of its script.
         pub(crate) context: bun_event_loop::ContextId,
@@ -2365,15 +2348,11 @@ mod _async_tasks {
         } else {
             bun_event_loop::task_tag::AsyncCpTask
         };
-        /// A finished fs.cp whose completion will not run: destroy releases
+        /// A finished fs.cp whose completion will not run: the drop releases
         /// its promise handle, protected arguments and keep-alive.
         unsafe fn release_unrun(this: *mut Self) {
             // SAFETY: fn contract — posted by `on_subtask_done` with the count at zero.
-            let this = unsafe { bun_core::heap::take(this) };
-            if let Some(shelltask) = &this.shelltask {
-                shelltask.task.unref_unrun();
-            }
-            this.destroy()
+            unsafe { bun_core::heap::destroy(this) }
         }
         unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
             // SAFETY: fn contract.
@@ -2487,14 +2466,15 @@ mod _async_tasks {
                 evtloop,
                 poster: core::cell::Cell::new(Some(poster)),
                 task: work_pool_task(Self::work_pool_callback),
-                r#ref: KeepAlive::default(),
+                _keep_alive: if IS_SHELL {
+                    JsKeepAlive::default()
+                } else {
+                    JsKeepAlive::active()
+                },
                 tracker,
                 subtask_count: AtomicUsize::new(1),
                 shelltask,
             });
-            if !IS_SHELL {
-                task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
-            }
 
             let raw = bun_core::heap::release(task);
             WorkPool::schedule(&raw mut raw.task);
@@ -2593,7 +2573,6 @@ mod _async_tasks {
                 let dest = core::mem::take(&mut self.args.dest);
                 let shelltask = self.shelltask.take().expect("IS_SHELL ⇒ shelltask");
                 shelltask.cp_on_finish(src, dest, result);
-                self.destroy();
                 return Ok(());
             }
             let go_ptr = self.evtloop.global_object();
@@ -2621,23 +2600,15 @@ mod _async_tasks {
 
             let _dispatch = self.tracker.dispatch(global_object);
 
-            // Raw: `destroy` drops the `Strong` this was borrowed from before the resolve/reject.
+            // Raw: the drop releases the `Strong` this was borrowed from before the resolve/reject.
             let promise: *mut bun_jsc::JSPromise = promise;
-            self.destroy();
+            drop(self);
             if success {
                 bun_jsc::JSPromise::opaque_mut(promise).resolve(global_object, result)?;
             } else {
                 bun_jsc::JSPromise::opaque_mut(promise).reject(global_object, Ok(result))?;
             }
             Ok(())
-        }
-
-        #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
-        pub(crate) fn destroy(self: Box<Self>) {
-            if !IS_SHELL {
-                let ctx = event_loop_handle_to_ctx(self.evtloop);
-                self.r#ref.unref(ctx);
-            }
         }
 
         /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version

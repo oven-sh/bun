@@ -24,7 +24,7 @@ pub(crate) struct FdPipe {
     /// In no uSockets group, so the context that opened it closes it through this when it stops.
     abort_handle: bun_jsc::AbortHandle,
     #[cfg(not(windows))]
-    poll: Cell<Option<*mut bun_io::posix_event_loop::FilePoll>>,
+    poll: JsCell<Option<bun_io::OwnedFilePoll>>,
 }
 
 bun_jsc::impl_abort_handle_owner!(FdPipe, abort_handle, |this, _cause| {
@@ -49,7 +49,7 @@ impl FdPipe {
             is_queued: Cell::new(false),
             abort_handle: bun_jsc::AbortHandle::for_owner::<Self>(),
             #[cfg(not(windows))]
-            poll: Cell::new(None),
+            poll: JsCell::new(None),
         }));
         // SAFETY: fully initialised and heap-pinned; dropping the handle disarms it.
         unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };
@@ -64,19 +64,18 @@ impl FdPipe {
     /// Returns true if `on_poll` will report that the descriptor takes bytes again.
     #[cfg(not(windows))]
     fn wait_until_writable(&self) -> bool {
-        use bun_io::posix_event_loop::{FilePoll, Flags, Owner, PollTag};
+        use bun_io::posix_event_loop::{Flags, Owner, PollTag};
         // kqueue doesn't reliably report a FIFO's readiness on macOS, and the write could wait forever.
         if !cfg!(target_os = "linux") {
             return false;
         }
         let ctx = bun_io::js_vm_ctx();
-        let poll = self.poll.get().unwrap_or_else(|| {
+        self.poll.with_mut(|poll| {
             let owner = Owner::new(PollTag::FdPipe, core::ptr::from_ref(self).cast_mut().cast());
-            FilePoll::init(ctx, self.fd, Default::default(), owner)
-        });
-        self.poll.set(Some(poll));
-        // SAFETY: `poll` is this pipe's live hive slot, and no other borrow of it is live.
-        unsafe { (*poll).register(ctx.loop_(), Flags::Writable, true) }.is_ok()
+            poll.get_or_insert_with(|| bun_io::OwnedFilePoll::new(ctx, self.fd, owner))
+                .register(ctx.loop_(), Flags::Writable, true)
+                .is_ok()
+        })
     }
 
     #[cfg(windows)]
@@ -151,10 +150,7 @@ impl Transport for FdPipe {
             return;
         };
         #[cfg(not(windows))]
-        if let Some(poll) = self.poll.take() {
-            // SAFETY: this pipe's live hive slot, given back here.
-            unsafe { (*poll).deinit() };
-        }
+        self.poll.set(None);
         // Leaves stdin, stdout and stderr open. The program may have closed the descriptor itself.
         let _ = self.fd.close_allowing_bad_file_descriptor(None);
         self.enqueue();

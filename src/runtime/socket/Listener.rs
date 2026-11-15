@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use bun_boringssl_sys as boring_sys;
 use bun_core::EncodedSlice;
-use bun_io::KeepAlive;
+use bun_io::JsKeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::strong::Optional as Strong;
@@ -53,9 +53,9 @@ const HOT_MAP_TAG_LISTENER: u8 = 4;
 
 pub(crate) struct Listener {
     pub(crate) handlers: Rc<Handlers>,
-    pub(crate) listener: Cell<ListenerType>,
+    pub(crate) listener: JsCell<ListenerType>,
 
-    pub poll_ref: KeepAlive,
+    pub poll_ref: JsKeepAlive,
     pub(crate) connection: JsCell<UnixOrHost>,
     /// Embedded sweep/iteration list-head for every accepted socket on this
     /// listener. `group.ext` = `*Listener`, so the dispatch handler recovers us
@@ -108,17 +108,11 @@ pub(crate) enum Connections {
     CloseAsThreadEnds,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Default)]
 pub(crate) enum ListenerType {
-    Uws(*mut uws_sys::ListenSocket),
-    /// Raw heap pointer (not `Box`) to a `WindowsNamedPipeListeningContext`.
-    /// The context's address is registered with libuv (`uv_pipe.data`) for the
-    /// lifetime of the handle, so we must never assert `noalias` over it via a
-    /// Box move or `&mut Listener` that transitively covers the context — that
-    /// would invalidate the pointer libuv holds under Stacked Borrows. Ownership
-    /// is still unique; freed via `close_pipe_and_deinit` → `on_pipe_closed` → `deinit`.
+    Uws(uws_sys::OwnedListenSocket),
     #[cfg(windows)]
-    NamedPipe(NonNull<WindowsNamedPipeListeningContext>),
+    NamedPipe(ListeningPipe),
     #[default]
     None,
 }
@@ -190,8 +184,8 @@ impl Listener {
     ) -> Listener {
         Listener {
             handlers: Rc::clone(&config.handlers),
-            listener: Cell::new(ListenerType::None),
-            poll_ref: KeepAlive::init(),
+            listener: JsCell::new(ListenerType::None),
+            poll_ref: JsKeepAlive::default(),
             connection: JsCell::new(connection),
             group: uws::SocketGroup::default(),
             secure_ctx: JsCell::new(secure_ctx),
@@ -380,12 +374,7 @@ impl Listener {
                     511,
                     this,
                 ) {
-                    Ok(named_pipe) => {
-                        this_ref.listener.set(ListenerType::NamedPipe(
-                            NonNull::new(named_pipe)
-                                .expect("listen returns a non-null heap pointer"),
-                        ));
-                    }
+                    Ok(named_pipe) => this_ref.listener.set(ListenerType::NamedPipe(named_pipe)),
                     Err(e) => {
                         // EUNKNOWN and UV_EAI_* (>= 3000) aren't codes Node reports for a listen().
                         if let ListenPipeError::Sys(sys_err) = &e
@@ -493,7 +482,7 @@ impl Listener {
             this_ref.secure_ctx.get().as_ref().map(|p| p.as_ptr());
 
         let mut failure = uws_sys::app::ListenError::default();
-        let listen_socket: *mut uws_sys::ListenSocket = match &mut connection {
+        let listen_socket = match &mut connection {
             UnixOrHost::Host { host, port } => {
                 let hostz = bun_core::ZBox::from_bytes(&host[..]);
                 let host_cstr = hostz.as_zstr().as_cstr();
@@ -507,9 +496,9 @@ impl Listener {
                     &mut failure.error,
                     &mut failure.dns_error,
                 );
-                if !ls.is_null() {
+                if let Some(ls) = &ls {
                     // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                    if let Some(p) = bun_opaque::opaque_deref_mut(ls).get_local_port() {
+                    if let Some(p) = bun_opaque::opaque_deref_mut(ls.as_ptr()).get_local_port() {
                         *port = p;
                     }
                 }
@@ -536,7 +525,7 @@ impl Listener {
                 )
             }
         };
-        if listen_socket.is_null() {
+        let Some(owned_socket) = listen_socket else {
             log!("Failed to listen {} {}", failure.error, failure.dns_error);
             let target = match &connection {
                 UnixOrHost::Host { host, port } => ListenTarget::Tcp {
@@ -552,10 +541,10 @@ impl Listener {
                 &target,
                 failure,
             ));
-        }
+        };
 
         this_ref.connection.with_mut(|c| *c = connection);
-        this_ref.listener.set(ListenerType::Uws(listen_socket));
+        this_ref.listener.set(ListenerType::Uws(owned_socket));
         if !default_data.is_empty() {
             this_ref
                 .strong_data
@@ -725,20 +714,7 @@ impl Listener {
             close_all();
         }
 
-        match listener {
-            // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-            ListenerType::Uws(socket) => bun_opaque::opaque_deref_mut(socket).close(),
-            #[cfg(windows)]
-            ListenerType::NamedPipe(named_pipe) => {
-                // SAFETY: named_pipe is the unique owner; close_pipe_and_deinit
-                // schedules the libuv close → on_pipe_closed → deinit chain.
-                unsafe {
-                    WindowsNamedPipeListeningContext::close_pipe_and_deinit(named_pipe.as_ptr())
-                };
-            }
-            ListenerType::None => {}
-        }
-
+        drop(listener);
         self.secure_ctx.set(None);
     }
 
@@ -781,7 +757,7 @@ impl Listener {
         let fd = match self.listener.get() {
             ListenerType::Uws(uws_listener) => {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                let socket = bun_opaque::opaque_deref_mut(uws_listener).socket::<false>();
+                let socket = bun_opaque::opaque_deref_mut(uws_listener.as_ptr()).socket::<false>();
                 // On Windows the listening socket fd is a system-kind SOCKET
                 // handle; routing it through `.uv()` panics for anything but
                 // stdio. The sys_jsc helper branches on kind
@@ -927,6 +903,7 @@ impl Listener {
         let ListenerType::Uws(socket) = self.listener.get() else {
             return Ok(());
         };
+        let socket = socket.as_ptr();
 
         let out = out.to_js();
         if !out.is_object() {
@@ -959,24 +936,11 @@ impl Drop for Listener {
         log!("finalize");
         this.unregister_for_hot_reload();
         this.abort_handle.leave();
-        match this.listener.replace(ListenerType::None) {
-            ListenerType::Uws(socket) => {
-                this.unlink_unix_socket_path();
-                // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(socket).close();
-            }
-            #[cfg(windows)]
-            ListenerType::NamedPipe(named_pipe) => {
-                // SAFETY: named_pipe is the unique owner; close_pipe_and_deinit
-                // schedules the libuv close → on_pipe_closed → deinit chain.
-                unsafe {
-                    WindowsNamedPipeListeningContext::close_pipe_and_deinit(named_pipe.as_ptr())
-                };
-            }
-            ListenerType::None => {}
+        if matches!(this.listener.get(), ListenerType::Uws(_)) {
+            this.unlink_unix_socket_path();
         }
+        this.listener.set(ListenerType::None);
         this.this_value.with_mut(|r| r.finalize());
-        this.poll_ref.unref(bun_io::js_vm_ctx());
 
         // Before force-closing: an accepted socket's `on_close` must not release this listener's refs a second time.
         this.handlers.set_listener(None);
@@ -1069,8 +1033,7 @@ fn connect_finish<const IS_SSL: bool>(
                 bun_sys::SystemErrno::SUCCESS => bun_sys::SystemErrno::ECONNREFUSED,
                 errno => errno,
             };
-            // A `connectError` handler that threw on this synchronous failure
-            // throws from `connect()`.
+            // What `connectError` throws on this synchronous failure throws from `connect()`.
             NewSocket::handle_connect_error(socket_ref, errno, 0)?;
             return Ok(promise_value);
         }
@@ -1085,7 +1048,7 @@ fn connect_finish<const IS_SSL: bool>(
 fn tls_listen_socket<'a>(listener: &TLSListener<'a>) -> Option<&'a mut uws_sys::ListenSocket> {
     let listen_socket = match listener {
         TLSListener::Listener(this) => match this.listener.get() {
-            ListenerType::Uws(listen_socket) if this.ssl => listen_socket,
+            ListenerType::Uws(listen_socket) if this.ssl => listen_socket.as_ptr(),
             _ => return None,
         },
         TLSListener::Https(server) => server.listener()?.cast(),
@@ -1210,7 +1173,7 @@ pub(crate) struct WindowsNamedPipeListeningContext {
     pub(crate) uv_pipe: uv::Pipe,
     /// BACKREF: the parent `Listener` allocated this context in
     /// `listen_named_pipe` and outlives it (cleared to `None` in
-    /// `close_pipe_and_deinit` before the listener is torn down). `BackRef`
+    /// `ListeningPipe::drop` before the listener is torn down). `BackRef`
     /// centralises the safe deref so call sites don't open-code a raw
     /// `NonNull::as_ref`.
     pub(crate) listener: Option<bun_ptr::BackRef<Listener>>,
@@ -1218,6 +1181,29 @@ pub(crate) struct WindowsNamedPipeListeningContext {
     /// JSC_BORROW: process-lifetime singleton; `&'static` so call sites read
     /// `self.vm.is_shutting_down()` without a raw-pointer deref.
     pub(crate) vm: &'static VirtualMachine,
+}
+
+/// A context whose pipe is on the loop, so it is freed once libuv has closed the pipe.
+#[cfg(windows)]
+pub(crate) struct ListeningPipe(NonNull<WindowsNamedPipeListeningContext>);
+
+#[cfg(windows)]
+impl Drop for ListeningPipe {
+    fn drop(&mut self) {
+        extern "C" fn on_closed(pipe: *mut uv::Pipe) {
+            // SAFETY: `data` is the box `listen` leaked, and libuv is done with it.
+            unsafe {
+                bun_core::heap::destroy((*pipe).data.cast::<WindowsNamedPipeListeningContext>())
+            };
+        }
+        let this = self.0.as_ptr();
+        // SAFETY: live until `on_closed` runs.
+        unsafe {
+            (*this).listener = None;
+            (*this).uv_pipe.data = this.cast::<c_void>();
+            (*this).uv_pipe.close(on_closed);
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -1275,50 +1261,21 @@ impl WindowsNamedPipeListeningContext {
         Self::on_client_connect(this, status);
     }
 
-    /// `uv_close_cb` trampoline. Only ever invoked by libuv (coerces to the
-    /// `uv_close_cb` fn-pointer type at the `Pipe::close` call site); body
-    /// wraps its deref explicitly.
-    extern "C" fn on_pipe_closed(pipe: *mut uv::Pipe) {
-        // SAFETY: `pipe.data` was set to `this` in `close_pipe_and_deinit`.
-        let this = unsafe { (*pipe).data.cast::<WindowsNamedPipeListeningContext>() };
-        Self::deinit(this);
-    }
-
-    /// # Safety
-    /// `this` must be the unique owner (the `ListenerType::NamedPipe` slot was
-    /// already cleared by the caller).
-    unsafe fn close_pipe_and_deinit(this: *mut Self) {
-        // SAFETY: caller contract — `this` is a live heap allocation.
-        unsafe {
-            (*this).listener = None;
-            (*this).uv_pipe.data = this.cast::<c_void>();
-            (*this).uv_pipe.close(Self::on_pipe_closed);
-        }
-    }
-
     fn listen(
         global_this: &JSGlobalObject,
         path: &[u8],
         backlog: i32,
         listener: *mut Listener,
-    ) -> Result<*mut WindowsNamedPipeListeningContext, ListenPipeError> {
+    ) -> Result<ListeningPipe, ListenPipeError> {
         // Heap-allocate at the final address so libuv can
         // store a pointer back into `uv_pipe`.
-        let this = bun_core::heap::into_raw(Box::new(WindowsNamedPipeListeningContext {
+        let owned = bun_ptr::AliasableBox::new(WindowsNamedPipeListeningContext {
             uv_pipe: bun_core::ffi::zeroed(),
             listener: NonNull::new(listener).map(bun_ptr::BackRef::from),
             global_this: GlobalRef::from(global_this),
             vm: global_this.bun_vm(),
-        }));
-        // A pipe handle that is registered with the loop must be closed via uv_close. `.1` flips once `uv_pipe_init` succeeds.
-        let mut cleanup = scopeguard::guard((this, false), |(this, pipe_initialized)| {
-            if pipe_initialized {
-                // SAFETY: pipe is registered with the loop; close → on_pipe_closed → deinit.
-                unsafe { Self::close_pipe_and_deinit(this) };
-            } else {
-                Self::deinit(this);
-            }
         });
+        let this = owned.as_ptr();
 
         // SAFETY: `this` was just allocated above; `&mut uv_pipe` is scoped to
         // this call.
@@ -1326,7 +1283,7 @@ impl WindowsNamedPipeListeningContext {
         if init_result.is_err() {
             return Err(ListenPipeError::Other(crate::Error::FailedToInitPipe));
         }
-        cleanup.1 = true;
+        let pipe = ListeningPipe(owned.into_non_null());
 
         let listen_rc = if path[path.len() - 1] == 0 {
             // is already null terminated
@@ -1381,16 +1338,7 @@ impl WindowsNamedPipeListeningContext {
         // SAFETY: `this` is live; `&mut uv_pipe` is scoped to this call.
         unsafe { (*this).uv_pipe.unref() };
 
-        let (this, _) = scopeguard::ScopeGuard::into_inner(cleanup);
-        Ok(this)
-    }
-
-    fn deinit(this: *mut Self) {
-        // SAFETY: `this` is a live `heap::alloc` allocation; this is the last owner.
-        unsafe {
-            (*this).listener = None;
-            drop(bun_core::heap::take(this));
-        }
+        Ok(pipe)
     }
 }
 

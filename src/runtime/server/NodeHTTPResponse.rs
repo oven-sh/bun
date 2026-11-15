@@ -2714,9 +2714,6 @@ impl Drop for NodeHTTPResponse {
         debug_assert!(!self.pending_pinned_write.get().is_some());
         let flags = self.flags.get();
         debug_assert!(flags.intersects(Flags::SOCKET_CLOSED | Flags::REQUEST_HAS_COMPLETED));
-
-        self.poll_ref.unref(VirtualMachine::get());
-        self.body_read_ref.unref(VirtualMachine::get());
     }
 }
 

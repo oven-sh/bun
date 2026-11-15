@@ -938,6 +938,7 @@ pub(crate) struct CopyFileWindows {
     pub(crate) mkdirp_if_not_exists: bool,
     pub(crate) destination_mode: Option<Mode>,
     pub(crate) event_loop: &'static jsc::event_loop::EventLoop,
+    _keep_alive: aio::JsKeepAlive,
     /// The context of the script that asked for the copy.
     pub(crate) context: jsc::ContextId,
 
@@ -1163,8 +1164,6 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
 #[cfg(windows)]
 impl CopyFileWindows {
     fn on_read_write_loop_complete(self: Box<Self>, result: bun_sys::Result<()>) {
-        self.event_loop.unref_keep_alive();
-
         if let Err(err) = result {
             self.throw(err);
             return;
@@ -1192,6 +1191,7 @@ impl CopyFileWindows {
             // SAFETY: all-zero is a valid libuv::fs_t
             io_request: bun_core::ffi::zeroed::<libuv::fs_t>(),
             event_loop,
+            _keep_alive: aio::JsKeepAlive::active(),
             context: context.id(),
             mkdirp_if_not_exists,
             destination_mode,
@@ -1286,7 +1286,6 @@ impl CopyFileWindows {
 
         self.read_write_loop.read_buf.reserve_exact(64 * 1024);
 
-        self.event_loop.ref_keep_alive();
         self.read_write_loop_read();
     }
 
@@ -1423,9 +1422,7 @@ impl CopyFileWindows {
             }
             // SAFETY: libuv keeps nothing of a request that it refuses.
             unsafe { bun_core::heap::take(this) }.throw(err.with_path(old_path.as_bytes()));
-            return;
         }
-        event_loop.ref_keep_alive();
     }
 
     fn throw(mut self: Box<Self>, err: bun_sys::Error) {
@@ -1490,9 +1487,7 @@ impl CopyFileWindows {
                         err = err.with_path(p.slice());
                     }
                     this.throw(err);
-                    return;
                 }
-                event_loop.ref_keep_alive();
                 return;
             }
         }
@@ -1554,7 +1549,6 @@ impl CopyFileWindows {
                 .unwrap_or(path_slice) as *const [u8]
         };
 
-        self.event_loop.ref_keep_alive();
         node_fs::async_::AsyncMkdirp::schedule(node_fs::async_::AsyncMkdirp {
             completion: on_mkdirp_complete_concurrent,
             completion_ctx: bun_core::heap::into_raw(self).cast::<()>(),
@@ -1565,8 +1559,6 @@ impl CopyFileWindows {
     }
 
     pub(crate) fn on_mkdirp_complete(mut self: Box<Self>) {
-        self.event_loop.unref_keep_alive();
-
         if let Some(err) = self.err.take() {
             // `bun_sys::Error.path` is an owned `Box<[u8]>` and is dropped with
             // `err` inside `throw`.
@@ -1590,8 +1582,6 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     // SAFETY: `req` is the `io_request` of the box that `copyfile` left to libuv.
     let mut this = unsafe { bun_core::heap::take(CopyFileWindows::from_uv_fs(req)) };
 
-    let event_loop = this.event_loop;
-    event_loop.unref_keep_alive();
     let rc = this.io_request.result;
 
     bun_sys::syslog!("uv_fs_copyfile() = {}", rc);
@@ -1669,9 +1659,6 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
     // SAFETY: `req` is the `io_request` of the box that `on_complete` left to libuv.
     let this = unsafe { bun_core::heap::take(CopyFileWindows::from_uv_fs(req)) };
 
-    let event_loop = this.event_loop;
-    event_loop.unref_keep_alive();
-
     let rc = this.io_request.result;
     if let Some(mut err) = rc.to_error(bun_sys::Tag::chmod) {
         let destination = &this.destination_file_store.data.as_file();
@@ -1708,8 +1695,7 @@ impl bun_event_loop::Taskable for CopyFileWindows {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::CopyFileWindowsMkdirp;
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract: the box that `on_mkdirp_complete_concurrent` posted.
-        let this = unsafe { bun_core::heap::take(this) };
-        this.event_loop.unref_keep_alive();
+        unsafe { bun_core::heap::destroy(this) };
     }
     /// Enters no context.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {

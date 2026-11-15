@@ -171,8 +171,7 @@ pub(crate) fn do_send(
             match unsafe { (*listener).listener.get() } {
                 crate::socket::listener::ListenerType::Uws(socket_uws) => {
                     // may need to handle ssl case
-                    // SAFETY: `socket_uws` is a live non-null `*mut ListenSocket` owned by uSockets.
-                    let listen_socket = unsafe { &mut *socket_uws };
+                    let listen_socket = bun_opaque::opaque_deref_mut(socket_uws.as_ptr());
                     listen_socket.set_shared();
                     let fd = listen_socket.get_socket().get_fd();
                     #[cfg(not(windows))]

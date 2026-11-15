@@ -8530,6 +8530,9 @@ impl CloseOnDrop {
     pub fn new(fd: Fd) -> Self {
         Self(fd)
     }
+    pub fn fd(&self) -> Fd {
+        self.0
+    }
 }
 impl Drop for CloseOnDrop {
     #[inline]

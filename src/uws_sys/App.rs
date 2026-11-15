@@ -313,7 +313,7 @@ impl<const SSL: bool> App<SSL> {
             )
         };
         NonNull::new(socket.cast())
-            .map(OwnedListenSocket)
+            .map(|socket| OwnedListenSocket(crate::OwnedListenSocket(socket)))
             .ok_or(failure)
     }
 
@@ -335,7 +335,7 @@ impl<const SSL: bool> App<SSL> {
             )
         };
         NonNull::new(socket.cast())
-            .map(OwnedListenSocket)
+            .map(|socket| OwnedListenSocket(crate::OwnedListenSocket(socket)))
             .ok_or(failure)
     }
 
@@ -354,7 +354,7 @@ impl<const SSL: bool> App<SSL> {
             &mut failure.error,
         );
         NonNull::new(socket.cast())
-            .map(OwnedListenSocket)
+            .map(|socket| OwnedListenSocket(crate::OwnedListenSocket(socket)))
             .ok_or(failure)
     }
 
@@ -501,17 +501,11 @@ pub struct ListenSocket<const SSL: bool> {
 }
 
 /// Drop it before [`App::close`], which closes the socket too.
-pub struct OwnedListenSocket<const SSL: bool>(NonNull<ListenSocket<SSL>>);
+pub struct OwnedListenSocket<const SSL: bool>(crate::OwnedListenSocket);
 
 impl<const SSL: bool> OwnedListenSocket<SSL> {
     pub fn as_ptr(&self) -> *mut ListenSocket<SSL> {
-        self.0.as_ptr()
-    }
-}
-
-impl<const SSL: bool> Drop for OwnedListenSocket<SSL> {
-    fn drop(&mut self) {
-        bun_opaque::opaque_deref_mut(self.as_ptr().cast::<UwsListenSocket>()).close()
+        self.0.as_ptr().cast()
     }
 }
 

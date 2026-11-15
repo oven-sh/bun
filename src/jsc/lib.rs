@@ -1420,6 +1420,12 @@ impl Ref {
     }
 }
 
+impl Drop for Ref {
+    fn drop(&mut self) {
+        self.unref(virtual_machine::VirtualMachine::get());
+    }
+}
+
 pub type OpaqueCallback = unsafe extern "C" fn(current: *mut c_void);
 
 /// Legacy alias for [`ErrorCode`] (`src/jsc/ErrorCode.rs`) — the same type

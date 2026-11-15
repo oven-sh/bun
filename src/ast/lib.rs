@@ -2198,21 +2198,14 @@ fn window_line_text(full_line: &[u8], offset_in_line: usize) -> &[u8] {
     &full_line[lo..hi]
 }
 
-/// Where a diagnostic stands in a buffer that a parser reads in its own
-/// units: 1-based line and column, and the `[line_start, line_end)` range
-/// of the units of the line that holds it. The conventions are those of
-/// [`Source::init_error_position`]: columns count UTF-16 code units (so
-/// `write_format` places its caret the same way), and an offset at the end
-/// of the input describes its last unit (`index`), so an error there stands
-/// on the last line and not on one past it. It differs from
-/// `ErrorPositionState` in two ways: a bare `\r` starts the next line at
-/// column 1, not 0, and U+2028/U+2029 are not line ends (`\n`, `\r\n` and
-/// `\r` are, the set XML §2.11 normalizes).
+/// A diagnostic's 1-based line and column (in UTF-16 code units, as
+/// [`Source::init_error_position`] counts) in a buffer of a parser's own
+/// units, and the range of its line. Unlike `ErrorPositionState`, a bare
+/// `\r` starts the next line at column 1, and U+2028/U+2029 are not line ends.
 pub struct LinePosition {
     pub line: i32,
     pub column: i32,
-    /// The unit the line and column describe: `offset`, clamped into the
-    /// buffer.
+    /// The unit the line and column describe: `offset`, clamped into the buffer.
     pub index: usize,
     pub line_start: usize,
     pub line_end: usize,
@@ -2223,8 +2216,7 @@ impl LinePosition {
     #[cold]
     #[inline(never)]
     pub fn utf8(contents: &[u8], offset: usize) -> LinePosition {
-        // An offset clamped to the end of the input can land inside its
-        // last character: the position is that character's.
+        // The end of the input can be inside its last character.
         let mut offset = offset.min(contents.len().saturating_sub(1));
         while offset > 0 && !bun_core::strings::is_utf8_char_boundary(contents[offset]) {
             offset -= 1;
@@ -2256,18 +2248,15 @@ impl LinePosition {
         Self::scan(contents, offset, |rest| (u32::from(rest[0]), 1))
     }
 
-    /// `decode` reads the character at the start of its argument, which is
-    /// never empty, as (code point, width in units). A code point above
-    /// U+FFFF is two columns; a UTF-16 caller decodes surrogates one unit at
-    /// a time, which counts the same.
+    /// `decode` reads the character at the start of its (never empty)
+    /// argument as (code point, width in units).
     fn scan<U: Copy>(
         contents: &[U],
         offset: usize,
         decode: impl Fn(&[U]) -> (u32, usize),
     ) -> LinePosition {
         let mut offset = offset.min(contents.len().saturating_sub(1));
-        // The `\n` of a `\r\n` belongs to the line break, not to a line of
-        // its own: an error there is at the end of the line before it.
+        // The `\n` of a `\r\n` ends the line before it.
         if offset > 0
             && decode(&contents[offset..]).0 == 0x0A
             && decode(&contents[offset - 1..]).0 == 0x0D
@@ -2316,10 +2305,8 @@ impl LinePosition {
         }
     }
 
-    /// The [`Location`] of a diagnostic at this position, for a source whose
-    /// line holding it is `line_text` as UTF-8 with the error `offset_in_line`
-    /// bytes into it, and whose caller-facing `offset` is given (unclamped:
-    /// the input's length for an error at its end).
+    /// The [`Location`]: `line_text` is the line as UTF-8 with the error
+    /// `offset_in_line` bytes into it, `offset` is the caller-facing one.
     pub fn to_location(
         &self,
         source: &Source,

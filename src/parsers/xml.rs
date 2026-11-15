@@ -764,16 +764,13 @@ struct Frame<'a, U: Unit> {
     report_pos: usize,
 }
 
-/// What the document buffer (`src` of frame 0) is to the bytes the caller
-/// handed over: the same thing, or UTF-8 the parser transcoded them to. A
-/// diagnostic's `offset` is an index into the caller's bytes, so a transcoded
-/// buffer's positions are mapped back; the sink's row `Loc`s (byte offsets
-/// into `source.contents` for the bundler) are left empty instead.
+/// What the document buffer (`src` of frame 0) is to the caller's bytes:
+/// the same, or UTF-8 the parser transcoded them to. A diagnostic's `offset`
+/// is mapped back to the caller's bytes; the sink's row `Loc`s are not.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Origin {
     Input,
-    /// From UTF-16 bytes whose units start `payload_start` bytes in (after
-    /// a byte-order mark).
+    /// From UTF-16 bytes whose units start `payload_start` bytes in.
     Utf16 {
         payload_start: usize,
     },
@@ -781,8 +778,7 @@ enum Origin {
     Latin1,
 }
 
-/// The [`Location`] of a diagnostic at `unit` of a UTF-16 document, with the
-/// line it stands on transcoded to UTF-8.
+/// The [`Location`] of a diagnostic at `unit` of a UTF-16 document.
 #[cold]
 #[inline(never)]
 fn locate_utf16(source: &Source, units: &[u16], unit: usize, offset: usize) -> Location {
@@ -918,8 +914,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
 
     // ── error helpers ──────────────────────────────────────────────────────
 
-    /// A row's position for the sink: a byte offset into `source.contents`,
-    /// which only the untranscoded document has.
+    /// A row's position for the sink, a byte offset into `source.contents`.
     fn loc(&self, pos: usize) -> Loc {
         if self.origin != Origin::Input {
             Loc::EMPTY
@@ -939,8 +934,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         PErr::Syntax
     }
 
-    /// The document buffer: `src` of frame 0, which `pos` (see `here`)
-    /// indexes whatever frame is being read.
+    /// `src` of frame 0, which every reported `pos` indexes (see `here`).
     fn document(&self) -> &'a [U] {
         match self.suspended.first() {
             Some(frame) => frame.src,
@@ -948,16 +942,12 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         }
     }
 
-    /// Logs the error with its location in the document, in the caller's
-    /// units: line and column over the units the parser reads, the line as
-    /// UTF-8, and `offset` mapped through `origin`.
+    /// Logs the error with its location, in the caller's units.
     #[cold]
     #[inline(never)]
     fn report_error(&mut self, pos: usize, args: core::fmt::Arguments<'_>) {
         let doc = self.document();
         let pos = pos.min(doc.len());
-        // `pos` is the error's offset; the line, column and text describe the
-        // clamped `index`, the last unit when the input ended.
         let location = if U::WIDE {
             locate_utf16(self.source, U::utf16(doc), pos, pos)
         } else {
@@ -1387,8 +1377,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         Ok(())
     }
 
-    /// An error in UTF-16 bytes before they are transcoded: located over
-    /// their `units`, at `unit`.
+    /// An error in UTF-16 bytes before they are transcoded, at `unit`.
     #[cold]
     fn err_in_utf16(
         &mut self,
@@ -1461,8 +1450,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                     "",
                 ));
             }
-            // The whole buffer, so positions before the cursor (the
-            // declaration, which is ASCII) keep their offsets.
+            // The whole buffer, so offsets before the cursor do not move.
             debug_assert!(strings::is_all_ascii(U::bytes(&self.src[..self.pos])));
             if let Some(utf8) = strings::to_utf8_from_latin1(U::bytes(self.src)) {
                 self.src = U::from_bytes(self.bump.alloc_slice_copy(&utf8));

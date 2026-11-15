@@ -731,9 +731,9 @@ pub(crate) fn run_task(
                 Ok(())
             }
         )?,
-        // A child's stdin pipe is a `FileSink` too, whether or not the program looks at it.
+        // A child's stdin pipe and a stream written to a file make a `FileSink` that the program need not name.
         task_tag::FlushPendingFileSinkTask => {
-            feature_arm!([FileSink, Spawn, Shell], |sink: FileSink| {
+            feature_arm!([FileSink, Bodies, Spawn, Shell], |sink: FileSink| {
                 // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
                 unsafe { RefPtr::from_raw(sink) }.run_pending_if_armed();
             })
@@ -1005,18 +1005,20 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
                 this.on_writer_io(event)
             })
         }
-        // A child's stdin pipe is a `FileSink` too, whether or not the program looks at it.
+        // A child's stdin pipe and a stream written to a file make a `FileSink` that the program need not name.
         PollTag::FileSink => io_arm!(
-            [FileSink, Spawn, Shell],
+            [FileSink, Bodies, Spawn, Shell],
             RefPtr::init_ref,
             FileSink,
             |this, _, event| this.writer.on_io(&*this, event)
         ),
         #[cfg(windows)]
-        PollTag::WindowsNamedPipe => {
-            // SAFETY: fn contract.
-            unsafe { &*owner.ptr().cast::<WindowsNamedPipe>() }.on_writer_io(event);
-        }
+        PollTag::WindowsNamedPipe => io_arm!(
+            [Sockets],
+            <*mut _>::as_ref_unchecked,
+            WindowsNamedPipe,
+            |this, _, event| this.on_writer_io(event)
+        ),
         PollTag::ShellIoReader => {
             io_arm!([Shell], clone_rc, ShellIoReader, |this, _, event| {
                 this.on_io(event)
@@ -1727,7 +1729,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             unreachable!("posix-only tag");
         }
         task_tag::FlushPendingFileSinkTask => {
-            release_in!([FileSink, Spawn, Shell], FileSink)
+            release_in!([FileSink, Bodies, Spawn, Shell], FileSink)
         }
         task_tag::RuntimeTranspilerStore => {
             release_in!([RuntimeTranspiler], RuntimeTranspilerStore)

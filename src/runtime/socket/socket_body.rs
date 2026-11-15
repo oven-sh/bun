@@ -331,7 +331,7 @@ pub(crate) struct NewSocket<const SSL: bool> {
     pub(crate) local_binding: JsCell<Option<(Box<[u8]>, u16)>>,
     pub(crate) protos: JsCell<Option<Box<[u8]>>>,
     pub(crate) server_name: JsCell<Option<Box<[u8]>>>,
-    pub(crate) buffered_data_for_node_net: Unwritten,
+    pub(crate) buffered_data_for_node_net: BufferedData,
     pub(crate) bytes_written: Cell<u64>,
 
     pub(crate) native_callback: JsCell<NativeCallbacks>,
@@ -537,19 +537,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             0
         };
-        let parked = &self.buffered_data_for_node_net.parked;
-        parked.with_taken(|b| b.capacity()) + ssl_cost
+        let bytes = &self.buffered_data_for_node_net.bytes;
+        bytes.with_taken(|b| b.capacity()) + ssl_cost
     }
 
     fn buffered_len(&self) -> usize {
-        let parked = &self.buffered_data_for_node_net.parked;
-        parked.with_taken(|b| b.len()) + self.in_flight_len()
+        let bytes = &self.buffered_data_for_node_net.bytes;
+        bytes.with_taken(|b| b.len()) + self.in_flight_len()
     }
 
-    /// Only script that runs under a write finds it set, and a write to a POSIX fd runs none.
+    /// Nonzero only for JS that runs during a write, and a plain TCP write on POSIX runs none.
     fn in_flight_len(&self) -> usize {
         if SSL || cfg!(windows) {
-            self.buffered_data_for_node_net.in_flight.get()
+            self.buffered_data_for_node_net.in_flight_len.get()
         } else {
             0
         }
@@ -1275,7 +1275,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let old = self.socket.get();
         let is_raw_twin = self.is_raw_twin();
         let slot = match old.socket {
-            // The slot belongs to the TLS half.
+            // The ext slot holds the encrypted half.
             _ if is_raw_twin => None,
             uws::InternalSocket::Connected(s) => Some(NativeRef::<SSL>::of(s)),
             uws::InternalSocket::Connecting(c) => Some(NativeRef::<SSL>::of_connecting(c)),
@@ -1298,12 +1298,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         old.close(uws::CloseCode::Failure);
         if is_raw_twin {
-            // The handlers of the TLS half can have connected this socket.
+            // The `close` handler of the encrypted half may have reconnected this socket.
             self.detach_for_reconnect();
         }
     }
 
-    /// False again once either half has left the pair.
+    /// False after `take_twin` or `detach_for_reconnect`.
     fn is_raw_twin(&self) -> bool {
         self.flags.get().contains(Flags::BYPASS_TLS)
     }
@@ -2693,7 +2693,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // fast-ish path: use writev() to avoid cloning to another buffer.
                 if let uws::InternalSocket::Connected(connected) = socket.socket {
                     if !buffer.slice().is_empty() {
-                        let mut buffered = self.buffered_data_for_node_net.parked.take();
+                        let mut buffered = self.buffered_data_for_node_net.bytes.take();
                         // SAFETY: `connected` is a live `*mut us_socket_t` (guard above).
                         let rc = unsafe { (*connected).write2(&buffered, buffer.slice()) };
                         let written: usize = usize::try_from(rc.max(0)).expect("int cast");
@@ -2712,7 +2712,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
                         buffered.drain_front(written);
                         buffered.append_slice(remaining_in_input_data);
-                        self.buffered_data_for_node_net.parked.set(buffered);
+                        self.buffered_data_for_node_net.bytes.set(buffered);
 
                         break 'brk rc;
                     }
@@ -2720,16 +2720,20 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
 
             // slower-path: clone the data, do one write.
-            let unwritten = &self.buffered_data_for_node_net;
-            (unwritten.parked).with_taken(|b| b.append_slice(buffer.slice()));
+            let buffered = &self.buffered_data_for_node_net;
+            buffered
+                .bytes
+                .with_taken(|b| b.append_slice(buffer.slice()));
             if self.in_flight_len() > 0 {
-                unwritten.flush_again.set(true);
+                buffered.needs_flush.set(true);
                 break 'brk 0;
             }
-            match self.write_parked(|parked| self.write_maybe_corked(parked)) {
-                (rc, false) => rc,
-                (rc, true) => self.flush_after_write(rc, total_to_write),
+            let rc = self.write_buffered_data(|bytes| self.write_maybe_corked(bytes));
+            if buffered.needs_flush.take() {
+                break 'brk self.flush_after_write(rc, total_to_write);
             }
+
+            rc
         };
 
         WriteResult::Success {
@@ -2738,28 +2742,28 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    /// A negative result of `write` drops the bytes. True: script under it asked for another flush.
-    fn write_parked(&self, write: impl FnOnce(&[u8]) -> i32) -> (i32, bool) {
+    /// Drops the bytes passed to `write` if it returns a negative number or JS replaces the socket.
+    fn write_buffered_data(&self, write: impl FnOnce(&[u8]) -> i32) -> i32 {
         let socket = self.socket.get();
-        let unwritten = &self.buffered_data_for_node_net;
-        let mut sent = unwritten.parked.take();
-        unwritten.in_flight.set(sent.len());
-        let rc = write(&sent);
-        let flush_again = unwritten.finish_write();
+        let buffered = &self.buffered_data_for_node_net;
+        let mut bytes = buffered.bytes.take();
+        buffered.in_flight_len.set(bytes.len());
+        let rc = write(&bytes);
+        buffered.in_flight_len.set(0);
         match usize::try_from(rc) {
             Ok(written) if self.socket.get().socket == socket.socket => {
-                if written < sent.len() {
-                    sent.drain_front(written);
-                    sent.append_slice(&unwritten.parked.take());
-                    unwritten.parked.set(sent);
+                if written < bytes.len() {
+                    bytes.drain_front(written);
+                    bytes.append_slice(&buffered.bytes.take());
+                    buffered.bytes.set(bytes);
                 }
-                (rc, flush_again)
             }
-            _ => (rc, false),
+            _ => buffered.needs_flush.set(false),
         }
+        rc
     }
 
-    /// How much of the `total` of a write that took `wrote` and parked the rest is written now.
+    /// Returns `wrote` plus the bytes flushed, at most `total`.
     fn flush_after_write(&self, wrote: i32, total: usize) -> i32 {
         let before = self.bytes_written.get();
         let _ = self.internal_flush();
@@ -2784,7 +2788,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return WriteResult::Success { wrote: 0, total: 0 };
         }
 
-        debug_assert!(self.buffered_len() == 0);
+        debug_assert!(self.buffered_len() == self.in_flight_len());
         let (offset_value, length_value, encoding_value) = if byte_length.is_string() {
             (byte_offset, JSValue::UNDEFINED, byte_length)
         } else if byte_offset.is_string() {
@@ -2945,32 +2949,36 @@ impl<const SSL: bool> NewSocket<SSL> {
             return WriteResult::Success { wrote: 0, total: 0 };
         }
         log!("writeOrEnd {}", bytes.len());
-        let unwritten = &self.buffered_data_for_node_net;
-        let to_fd = matches!(socket.socket, uws::InternalSocket::Connected(_));
-        let in_flight = buffer_unwritten_data && !to_fd;
-        if in_flight {
-            unwritten.in_flight.set(byte_length);
+        let buffered = &self.buffered_data_for_node_net;
+        let is_us_socket = matches!(socket.socket, uws::InternalSocket::Connected(_));
+        let track_in_flight = buffer_unwritten_data && !is_us_socket;
+        if track_in_flight {
+            buffered.in_flight_len.set(byte_length);
         }
         let mut wrote = self.write_maybe_corked(bytes);
-        let flush_again = in_flight && unwritten.finish_write();
+        if track_in_flight {
+            buffered.in_flight_len.set(0);
+        }
+        let needs_flush = track_in_flight && buffered.needs_flush.take();
         let uwrote: usize = usize::try_from(wrote.max(0)).expect("int cast");
         if buffer_unwritten_data
-            && (uwrote < byte_length || flush_again)
+            && (uwrote < byte_length || needs_flush)
             && self.socket.get().socket == socket.socket
         {
-            // Script that ran under the write can have detached or shrunk `data`.
-            let current = (SSL || !to_fd).then(|| data.as_array_buffer(global));
+            // JS that ran during the write may have detached or shrunk `data`.
+            let current = (SSL || !is_us_socket).then(|| data.as_array_buffer(global));
             let remaining = match &current {
-                Some(Some(current)) => (current.byte_slice())
+                Some(Some(current)) => current
+                    .byte_slice()
                     .get(byte_offset + uwrote..byte_offset + byte_length)
                     .unwrap_or_default(),
                 _ => &bytes[uwrote..],
             };
-            let mut parked = Vec::new();
-            parked.append_slice(remaining);
-            parked.append_slice(&unwritten.parked.take());
-            unwritten.parked.set(parked);
-            if flush_again && wrote >= 0 {
+            let mut unwritten = Vec::new();
+            unwritten.append_slice(remaining);
+            unwritten.append_slice(&buffered.bytes.take());
+            buffered.bytes.set(unwritten);
+            if needs_flush && wrote >= 0 {
                 wrote = self.flush_after_write(wrote, byte_length);
             }
         }
@@ -3018,11 +3026,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             return 0;
         }
         if self.in_flight_len() > 0 {
-            self.buffered_data_for_node_net.flush_again.set(true);
+            self.buffered_data_for_node_net.needs_flush.set(true);
             return 0;
         }
         while self.buffered_len() > 0 {
-            let (res, flush_again) = self.write_parked(|buffered| {
+            let res = self.write_buffered_data(|buffered| {
                 // The drain-driven retry must detect a fatal send error the same way
                 // the initial write does: once the peer is gone the kernel rejects
                 // every retry (EPIPE/ECONNRESET), and treating that as would-block
@@ -3049,7 +3057,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // already acknowledged to JS, so only an 'error' can).
                 return -res;
             }
-            if !flush_again {
+            if !self.buffered_data_for_node_net.needs_flush.take() {
                 break;
             }
         }
@@ -3407,7 +3415,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsKeepAlive::default(),
             ref_pollref_on_connect: Cell::new(true),
-            buffered_data_for_node_net: Unwritten::default(),
+            buffered_data_for_node_net: BufferedData::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: Cell::new(None),
@@ -3522,7 +3530,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsKeepAlive::default(),
             ref_pollref_on_connect: Cell::new(true),
-            buffered_data_for_node_net: Unwritten::default(),
+            buffered_data_for_node_net: BufferedData::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: Cell::new(None),
@@ -3693,25 +3701,20 @@ enum WriteResult {
     Success { wrote: i32, total: usize },
 }
 
-/// What `node:net` has written and the transport has yet to take.
 #[derive(Default)]
-pub(crate) struct Unwritten {
-    parked: Cell<Vec<u8>>,
-    /// How much the write on the stack was given. What comes meanwhile is parked behind it.
-    in_flight: Cell<usize>,
-    /// Script under that write left its own write or flush to the caller.
-    flush_again: Cell<bool>,
+pub(crate) struct BufferedData {
+    bytes: Cell<Vec<u8>>,
+    /// Length of the write that is running. Writes made by JS during it are appended to `bytes`.
+    in_flight_len: Cell<usize>,
+    /// JS wrote or flushed during that write, so its caller flushes afterwards.
+    needs_flush: Cell<bool>,
 }
 
-impl Unwritten {
-    fn finish_write(&self) -> bool {
-        self.in_flight.set(0);
-        self.flush_again.take()
-    }
-
+impl BufferedData {
     fn clear(&self) {
-        self.parked.set(Vec::new());
-        self.finish_write();
+        self.bytes.set(Vec::new());
+        self.in_flight_len.set(0);
+        self.needs_flush.set(false);
     }
 }
 
@@ -4388,7 +4391,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
         this_value: JsCell::new(JsRef::empty()),
         poll_ref: JsKeepAlive::default(),
         ref_pollref_on_connect: Cell::new(true),
-        buffered_data_for_node_net: Unwritten::default(),
+        buffered_data_for_node_net: BufferedData::default(),
         bytes_written: Cell::new(0),
         native_callback: JsCell::new(NativeCallbacks::None),
         twin: Cell::new(None),

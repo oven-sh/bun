@@ -1897,7 +1897,7 @@ pub enum PathOrFileDescriptor<'a> {
 // ─── Waker (moved from bun_io) ──────────────────────────────────────────────
 //
 // io (T2) owns the
-// Waker so `Loop::load` has no upward dep on bun_io (T3). bun_io re-exports.
+// Waker so `IoRequestLoop::init` has no upward dep on bun_io (T3). bun_io re-exports.
 
 pub mod waker {
     #[cfg(not(windows))]

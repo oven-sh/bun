@@ -742,9 +742,10 @@ impl DevServer {
         Ok(())
     }
 
-    /// Returns true if a catch-all handler was attached.
+    /// Returns true if a catch-all handler was attached. uWS keeps `this`, which `self` is borrowed from.
     pub(crate) fn set_routes<const SSL: bool, const DEBUG: bool>(
         &mut self,
+        this: *mut Self,
         server: &crate::server::NewServer<SSL, DEBUG>,
     ) -> crate::Result<bool> {
         // TODO: all paths here must be prefixed with publicPath if set.
@@ -752,7 +753,7 @@ impl DevServer {
         // The server has its routes now; the scan of the pages ran before it had them.
         self.report_pages_hidden_by_server_routes();
         let app = server.app().unwrap();
-        let dev = std::ptr::from_mut::<Self>(self).cast::<c_void>();
+        let dev = this.cast::<c_void>();
 
         // Each `dev_route_tramp::<SSL, ID>` is a distinct C function with its handler baked in.
         macro_rules! route {

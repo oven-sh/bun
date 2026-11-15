@@ -2092,9 +2092,9 @@ impl bun_event_loop::Taskable for UvDnsPoll {
 }
 
 /// Keeps the channel open during a call into it, which can run script that stops the resolver.
-pub(crate) struct ChannelRef<'a>(Rc<c_ares::OwnedChannel>, PhantomData<&'a Resolver>);
+pub(crate) struct ChannelGuard<'a>(Rc<c_ares::OwnedChannel>, PhantomData<&'a Resolver>);
 
-impl core::ops::Deref for ChannelRef<'_> {
+impl core::ops::Deref for ChannelGuard<'_> {
     type Target = c_ares::Channel;
     fn deref(&self) -> &c_ares::Channel {
         &self.0
@@ -2103,7 +2103,7 @@ impl core::ops::Deref for ChannelRef<'_> {
 
 pub(crate) enum ChannelResult<'a> {
     Err(c_ares::Error),
-    Result(ChannelRef<'a>),
+    Result(ChannelGuard<'a>),
 }
 
 // Canonical enum + parser live in `bun_dns` (lower tier so `cli` can parse
@@ -2297,14 +2297,14 @@ impl Resolver {
         self.timer_ref.set(None);
     }
 
-    fn channel(&self) -> Option<ChannelRef<'_>> {
+    fn channel(&self) -> Option<ChannelGuard<'_>> {
         let channel = self.channel.with_taken(|channel| channel.clone())?;
-        Some(ChannelRef(channel, PhantomData))
+        Some(ChannelGuard(channel, PhantomData))
     }
 
     fn ensure_channel(&self) -> Result<(), c_ares::Error> {
         if self.channel.is_none() {
-            // SAFETY: a resolver is reached through its `RefPtr`, and neither `channel` nor a `ChannelRef` outlives it.
+            // SAFETY: a resolver does not move, and neither `channel` nor a `ChannelGuard` outlives it.
             self.set_channel(unsafe { c_ares::OwnedChannel::new(self, self.options.get()) }?);
         }
         Ok(())
@@ -2317,14 +2317,14 @@ impl Resolver {
         }
     }
 
-    fn get_channel_from_vm(global_this: &JSGlobalObject) -> JsResult<ChannelRef<'_>> {
+    fn get_channel_from_vm(global_this: &JSGlobalObject) -> JsResult<ChannelGuard<'_>> {
         global_resolver(global_this).get_channel_or_error(global_this)
     }
 
     pub(crate) fn get_channel_or_error(
         &self,
         global_this: &JSGlobalObject,
-    ) -> JsResult<ChannelRef<'_>> {
+    ) -> JsResult<ChannelGuard<'_>> {
         self.ensure_channel_or_error(global_this)?;
         Ok(self.channel().unwrap())
     }
@@ -2951,7 +2951,8 @@ impl Resolver {
 
     // ───────── servers / local address ─────────
 
-    fn get_channel_servers(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_servers(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global_this = cx.global();
         let servers = self.with_channel(global_this, c_ares::Channel::servers)?;
         let servers = servers.map_err(|err| {
             global_this.throw_value(global_this.create_error_instance(format_args!(
@@ -3031,10 +3032,6 @@ impl Resolver {
 
     pub(crate) fn get_global_servers(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         global_resolver(cx.global()).get_servers(cx)
-    }
-
-    pub(crate) fn get_servers(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.get_channel_servers(cx.global())
     }
 
     pub(crate) fn set_local_address(

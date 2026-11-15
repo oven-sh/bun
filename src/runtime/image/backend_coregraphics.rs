@@ -119,24 +119,8 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<(u32, u32), Backend
 }
 
 pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendError> {
-    let mut w: u32 = 0;
-    let mut h: u32 = 0;
-    // Phase 1: dimensions only (out=null) so we can allocate in the global
-    // allocator like every other decode path.
-    // SAFETY: bytes is a valid slice; out=null signals "probe only" to the shim.
-    match unsafe {
-        bun_coregraphics_decode(
-            bytes.as_ptr(),
-            bytes.len(),
-            max_pixels,
-            &raw mut w,
-            &raw mut h,
-            core::ptr::null_mut(),
-        )
-    } {
-        CG_OK => {}
-        rc => return Err(map_err(rc)),
-    }
+    // Phase 1: dimensions only, to allocate in the global allocator.
+    let (mut w, mut h) = probe(bytes, max_pixels)?;
     let n = (w as usize) * (h as usize) * 4;
     let mut out: Vec<u8> = Vec::with_capacity(n);
     // Phase 2: render. The C side re-creates the CGImageSource (cheap — the
@@ -167,11 +151,10 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
 }
 
 pub(crate) fn encode(
-    rgba: &[u8],
-    width: u32,
-    height: u32,
+    rgba: codecs::RgbaImage<'_>,
     opts: &codecs::EncodeOptions,
 ) -> Result<Vec<u8>, BackendError> {
+    let (width, height) = (rgba.width(), rgba.height());
     // codecs::encode only routes heic/avif here, so the "knob ImageIO can't
     // express" bailouts (palette/compressionLevel/lossless) are dead — kept
     // only as a guard if a future caller passes png/webp directly.
@@ -179,7 +162,7 @@ pub(crate) fn encode(
     let fmt: i32 = opts.format as i32;
     let mut len: usize = 0;
     // Phase 1: encode into a thread-local CFData inside the shim, return size.
-    // SAFETY: rgba is valid; out=null signals "size probe" to the shim.
+    // SAFETY: rgba has width*height*4 bytes; out=null signals "size probe" to the shim.
     match unsafe {
         bun_coregraphics_encode(
             rgba.as_ptr(),
@@ -250,9 +233,7 @@ unsafe extern "C" {
 /// we only take this path for the `.lanczos3` default — explicit non-Lanczos
 /// filters fall through to the Highway kernel which honours them exactly.
 pub(crate) fn scale(
-    src: &[u8],
-    sw: u32,
-    sh: u32,
+    src: codecs::RgbaImage<'_>,
     dw: u32,
     dh: u32,
     filter: codecs::Filter,
@@ -261,17 +242,19 @@ pub(crate) fn scale(
         return Err(BackendError::BackendUnavailable);
     }
     // PERF: zero-fill alloc — profile if hot.
-    let mut out = vec![0u8; (dw as usize) * (dh as usize) * 4];
-    // SAFETY: src has sw*sh*4 bytes (caller invariant); out has dw*dh*4 bytes.
+    let mut out = vec![0u8; ((dw as usize) * (dh as usize)).strict_mul(4)];
+    let (sw, sh) = (src.width(), src.height());
+    // SAFETY: src has sw*sh*4 bytes; out has dw*dh*4 bytes.
     if unsafe { bun_coregraphics_scale(src.as_ptr(), sw, sh, out.as_mut_ptr(), dw, dh) } != CG_OK {
         return Err(BackendError::BackendUnavailable);
     }
     Ok(out)
 }
 
-pub(crate) fn rotate(src: &[u8], w: u32, h: u32, quarters: u32) -> Result<Vec<u8>, BackendError> {
+pub(crate) fn rotate(src: codecs::RgbaImage<'_>, quarters: u32) -> Result<Vec<u8>, BackendError> {
     // PERF: zero-fill alloc — profile if hot.
-    let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
+    let mut out = vec![0u8; src.len()];
+    let (w, h) = (src.width(), src.height());
     // SAFETY: src and out both have w*h*4 bytes.
     if unsafe { bun_coregraphics_rotate90(src.as_ptr(), w, h, out.as_mut_ptr(), quarters) } != CG_OK
     {
@@ -280,9 +263,10 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, quarters: u32) -> Result<Vec<u8
     Ok(out)
 }
 
-pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, BackendError> {
+pub(crate) fn flip(src: codecs::RgbaImage<'_>, horizontal: bool) -> Result<Vec<u8>, BackendError> {
     // PERF: zero-fill alloc — profile if hot.
-    let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
+    let mut out = vec![0u8; src.len()];
+    let (w, h) = (src.width(), src.height());
     // SAFETY: src and out both have w*h*4 bytes.
     if unsafe { bun_coregraphics_reflect(src.as_ptr(), w, h, out.as_mut_ptr(), horizontal as i32) }
         != CG_OK

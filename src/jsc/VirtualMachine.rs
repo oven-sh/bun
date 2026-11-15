@@ -4475,8 +4475,7 @@ impl VirtualMachine {
     /// Note: shares ~90% with [`init`]; the differences are (a) the
     /// transpiler is built without `Config::configureTransformOptionsForBunVM`,
     /// (b) `standalone_module_graph` is mandatory and propagated into the
-    /// resolver, (c) `configureLinkerWithAutoJSX(false)` instead of
-    /// `configureLinker()`. Rather than re-open-code the 80-line struct init,
+    /// resolver. Rather than re-open-code the 80-line struct init,
     /// we route through [`init`] and patch the deltas.
     pub fn init_with_module_graph(opts: Options) -> crate::CrateResult<&'static VirtualMachine> {
         let graph = opts.graph.expect("init_with_module_graph requires graph");
@@ -4496,9 +4495,6 @@ impl VirtualMachine {
         vm.transpiler
             .with_mut(|t| t.resolver.standalone_module_graph = Some(graph));
         vm.let_heap_take_initial_module_graph(graph);
-        // Avoid reading from tsconfig.json & package.json when in standalone mode
-        vm.transpiler
-            .with_mut(|t| t.configure_linker_with_auto_jsx(false));
         IS_SMOL_MODE.store(opts.smol, core::sync::atomic::Ordering::Relaxed);
         Ok(vm)
     }
@@ -4542,8 +4538,6 @@ impl VirtualMachine {
             t.resolver.standalone_module_graph = opts.graph;
             if opts.graph.is_none() {
                 t.configure_linker();
-            } else {
-                t.configure_linker_with_auto_jsx(false);
             }
         });
         Ok(vm)
@@ -5209,7 +5203,6 @@ impl VirtualMachine {
                 jsc_vm.transpiler.with_mut(|t| {
                     t.log = self.old_transpiler_log;
                     t.resolver.log = self.old_log;
-                    t.linker.log = self.old_log.as_ptr();
                 });
                 // `_resolve` may have lazily created the PM with
                 // `pm.log = resolver.log` (our stack `log`), so restore even

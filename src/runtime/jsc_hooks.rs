@@ -440,7 +440,7 @@ unsafe fn init_runtime_state(
                     // entries resolve via their link path (peer deps stay reachable).
                     t.resolver.opts.preserve_symlinks = preserve_symlinks;
                     // Branch on `opts.graph` here — with a module graph,
-                    // auto_jsx=true would
+                    // `configure_linker` would
                     // `read_dir_info(cwd)` and cache its tsconfig.json BEFORE
                     // `apply_standalone_runtime_flags` can set
                     // `resolver.opts.load_tsconfig_json = false`, defeating
@@ -451,9 +451,7 @@ unsafe fn init_runtime_state(
                             .compiled_program()
                             .is_some_and(|program| program.allows_code_from_disk)
                     });
-                    if !reads_tsconfig {
-                        t.configure_linker_with_auto_jsx(false);
-                    } else {
+                    if reads_tsconfig {
                         t.configure_linker();
                     }
                 }
@@ -2095,7 +2093,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
 
             let mut cache = RuntimeTranspilerCache::default();
 
-            // ── Swap `vm.transpiler.log` (and linker/resolver/pm logs) ──────
+            // ── Swap `vm.transpiler.log` (and resolver/pm logs) ──────
             // `parse_maybe_return_file_only` writes diagnostics
             // to `vm.transpiler.log`; the per-call `args.log` is what
             // `Bun__transpileFile` later passes to `process_fetch_log`
@@ -2118,7 +2116,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             unsafe {
                 (*transpiler).log = args.log;
                 (*transpiler).resolver.log = args_log_nn;
-                (*transpiler).linker.log = args.log;
                 if let Some(pm) = (*transpiler).resolver.package_manager {
                     (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = args.log;
                 }
@@ -2128,7 +2125,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 unsafe {
                     (*transpiler).log = old_log;
                     (*transpiler).resolver.log = old_log_nn;
-                    (*transpiler).linker.log = old_log;
                     if let Some(pm) = (*transpiler).resolver.package_manager {
                         (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = old_log;
                     }
@@ -2562,16 +2558,14 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 }
 
                 // Link import records.
-                // SAFETY: `options` is only read and `linker` is JS-thread-exclusive.
-                unsafe {
-                    (*transpiler).linker.link::<false, true>(
-                        &(*transpiler).options,
-                        path,
-                        &mut parse_result,
-                        &jsc_vm.origin,
-                        options::ImportPathFormat::AbsolutePath,
-                    )?;
-                }
+                bun_bundler::linker::link::<false, true>(
+                    jsc_vm.transpiler.get().log(),
+                    &jsc_vm.transpiler.get().options,
+                    path,
+                    &mut parse_result,
+                    &jsc_vm.origin,
+                    options::ImportPathFormat::AbsolutePath,
+                )?;
 
                 let printed_ast = bun_jsc::resolved_source::PrintedAst::new(&parse_result.ast);
                 let is_commonjs_module = printed_ast.is_commonjs_module;

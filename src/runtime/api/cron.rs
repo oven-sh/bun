@@ -1355,7 +1355,7 @@ impl CronJob {
     /// Defer downgrading the JS wrapper to weak until any in-flight promise
     /// has settled, so onPromiseReject can still read pendingPromise from
     /// the wrapper and pass the real Promise to unhandledRejection.
-    fn maybe_downgrade(&self) {
+    pub(crate) fn maybe_downgrade(&self) {
         if self.stopped.get()
             && self.tick_cell.get().is_empty()
             && !matches!(self.this_value.get(), JsRef::Finalized)
@@ -1375,44 +1375,39 @@ impl CronJob {
     /// Takes one ref as the cell's claim on the job and remembers the cell.
     fn create_tick_cell(this: ThisPtr<Self>) -> JSValue {
         debug_assert!(this.tick_cell.get().is_empty());
-        bun_ptr::CellRefCounted::ref_(&*this);
-        let cell =
-            crate::api::native_promise_context::create(&this.global, this.as_ptr(), JSValue::ZERO);
+        let cell = crate::api::native_promise_context::create(
+            &this.global,
+            RefPtr::from_this(this),
+            JSValue::ZERO,
+        );
         this.tick_cell.set(cell);
         cell
     }
 
-    /// A reaction took the claim back from its cell. May free `this`.
-    fn tick_settled(this: ThisPtr<Self>) {
-        this.tick_cell.set(JSValue::ZERO);
-        this.maybe_downgrade();
-        <Self as bun_ptr::CellRefCounted>::deref_nn(bun_ptr::BackRef::from(this).into());
+    /// The claim was taken back from its cell.
+    fn tick_settled(&self) {
+        self.tick_cell.set(JSValue::ZERO);
+        self.maybe_downgrade();
     }
 
     /// The tick's promise will not settle on this VM (it is going): take the claim back, so the
     /// reactions find an empty cell. May free `this`.
     fn reclaim_tick_claim(this: ThisPtr<Self>) {
         let cell = this.tick_cell.get();
-        if !cell.is_empty() && crate::api::native_promise_context::take::<Self>(cell).is_some() {
-            Self::tick_settled(this);
+        if cell.is_empty() {
+            return;
+        }
+        // SAFETY: from `create_tick_cell`; the field is cleared when the cell is collected.
+        if let Some(job) = unsafe { crate::api::native_promise_context::take::<Self>(cell) } {
+            job.tick_settled();
         }
     }
 
     /// From the cell's destructor (GC sweep): the tick's promise was collected unsettled. The
     /// field stops pointing at the dying cell now (a plain write); the claim is released from
-    /// the event loop ([`tick_promise_collected`](Self::tick_promise_collected)).
+    /// the event loop.
     pub(crate) fn tick_cell_collected(&self) {
         self.tick_cell.set(JSValue::ZERO);
-    }
-
-    /// Releases the claim of a cell that was collected. May free `this`.
-    ///
-    /// # Safety
-    /// `this` carries the collected cell's ref.
-    pub(crate) unsafe fn tick_promise_collected(this: core::ptr::NonNull<Self>) {
-        // SAFETY: fn contract.
-        unsafe { this.as_ref() }.maybe_downgrade();
-        <Self as bun_ptr::CellRefCounted>::deref_nn(this);
     }
 
     /// Idempotent — every step checks its own state.
@@ -1751,34 +1746,31 @@ impl CronJob {
 pub(crate) fn on_promise_resolve(
     _: &mut JsScope<'_>,
     _: JsLocal<'_>,
-    context: Option<core::ptr::NonNull<CronJob>>,
+    context: Option<RefPtr<CronJob>>,
 ) {
     // The cell hands back the job's ref. None: the claim was taken back (the VM is going).
     let Some(job) = context else {
         return;
     };
-    // SAFETY: the claim the cell handed back is a ref on the live job.
-    let this = unsafe { ThisPtr::new(job.as_ptr()) };
-    let _guard = scopeguard::guard(this, CronJob::tick_settled);
+    let this = job.this_ptr();
     let vm = this.global.bun_vm();
     if let Some(js_this) = this.this_value.get().try_get() {
         js::pending_promise_set_cached(js_this, &this.global, JSValue::UNDEFINED);
     }
     CronJob::schedule_next(this, vm);
+    job.tick_settled();
 }
 
 pub(crate) fn on_promise_reject(
     _: &mut JsScope<'_>,
     reason: JsLocal<'_>,
-    context: Option<core::ptr::NonNull<CronJob>>,
+    context: Option<RefPtr<CronJob>>,
 ) {
     // As `on_promise_resolve`.
     let Some(job) = context else {
         return;
     };
-    // SAFETY: the claim the cell handed back is a ref on the live job.
-    let this = unsafe { ThisPtr::new(job.as_ptr()) };
-    let _guard = scopeguard::guard(this, CronJob::tick_settled);
+    let this = job.this_ptr();
     let vm = this.global.bun_vm();
     let err = reason.to_js();
     let mut promise_value = JSValue::UNDEFINED;
@@ -1789,6 +1781,7 @@ pub(crate) fn on_promise_reject(
     let global_ref = vm.global();
     vm.unhandled_rejection(global_ref, err, promise_value);
     CronJob::schedule_next(this, vm);
+    job.tick_settled();
 }
 
 // ============================================================================

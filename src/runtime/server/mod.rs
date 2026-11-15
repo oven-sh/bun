@@ -3337,7 +3337,9 @@ mod trampoline {
 // Fallback` is `!Sync`: `claim`/`put` mutate through `&self` with no synchronization;
 // a process-static would race when two `Bun.serve` instances run on distinct
 // Worker threads (each Worker has its own event loop and may host a server).
-pub(crate) trait ServerPools<const SSL: bool, const DEBUG: bool>: Sized {
+pub(crate) trait ServerPools<const SSL: bool, const DEBUG: bool>:
+    ServerLike + Sized + 'static
+{
     fn request_pool()
     -> &'static request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>;
     fn mux_request_pool()

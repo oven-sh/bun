@@ -103,12 +103,12 @@ impl DeferredRequest {
         self.handler.replace(Handler::Aborted)
     }
 
-    /// A saved request holds two refs. The caller releases the second once it has responded.
+    /// The caller releases `defer_request`'s ref once it has responded.
     pub(super) fn take_response_for_error_page(&self) -> Option<(AnyResponse, AnyRequestContext)> {
         match self.take_handler() {
             Handler::Aborted => None,
-            Handler::ServerHandler(mut saved) => {
-                saved.deinit();
+            Handler::ServerHandler(saved) => {
+                saved.ctx.detach_response();
                 Some((saved.response, saved.ctx))
             }
             Handler::BundledHtmlPage(ram) => Some((ram.response, AnyRequestContext::NULL)),

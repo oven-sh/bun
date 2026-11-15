@@ -284,12 +284,9 @@ extern "C" fn select_alpn_callback(
 
 /// BoringSSL reads the server ALPN callback off the *current* `ssl->ctx`, and
 /// SNI replaces that with `SSL_set_SSL_CTX` before ALPN negotiation.
-pub(in crate::socket) fn install_sni_alpn_selector(ctx: *mut boringssl_sys::SSL_CTX) {
-    if ctx.is_null() {
-        return;
-    }
+pub(in crate::socket) fn install_sni_alpn_selector(ctx: &boringssl_sys::OwnedSslCtx) {
     tls_socket_functions::ffi::SSL_CTX_set_alpn_select_cb(
-        SSL_CTX::opaque_ref(ctx),
+        SSL_CTX::opaque_ref(ctx.as_ptr()),
         Some(select_alpn_callback),
         ptr::null_mut(),
     );
@@ -819,23 +816,16 @@ impl<const SSL: bool> NewSocket<SSL> {
         if socket.is_detached() {
             return;
         }
-        // The selected context: a native SecureContext (a +1 reference that
-        // us_socket_sni_resolve consumes) or null to fall through to the
-        // listener's default context.
-        let ctx_ptr = if !is_error {
-            if let Some(sc) = context
+        let ctx = if is_error {
+            None
+        } else {
+            context
                 .to_js()
                 .as_class_ref::<crate::api::bun_secure_context::SecureContext>()
-            {
-                sc.ctx.clone().into_raw()
-            } else {
-                core::ptr::null_mut()
-            }
-        } else {
-            core::ptr::null_mut()
+                .map(|sc| sc.ctx.clone())
+                .inspect(install_sni_alpn_selector)
         };
-        install_sni_alpn_selector(ctx_ptr);
-        socket.sni_resolve(ctx_ptr, is_error);
+        socket.sni_resolve(ctx, is_error);
     }
 
     pub(crate) fn handle_error(&self, err_value: JSValue) -> JsResult<()> {

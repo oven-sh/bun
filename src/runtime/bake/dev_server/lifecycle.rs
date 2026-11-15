@@ -95,6 +95,10 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(source_maps, SourceMapStore::empty());
         w!(plugin_state, PluginState::Unknown);
         w!(
+            plugins,
+            (options.bundler_options.plugin.as_ref()).map(|plugin| plugin.as_non_null())
+        );
+        w!(
             assume_perfect_incremental_bundling,
             bun_core::env_var::feature_flag::BUN_ASSUME_PERFECT_INCREMENTAL
                 .get()
@@ -551,6 +555,7 @@ impl Drop for DevServer {
                 ssr_transpiler: _,
                 log: _,
                 plugin_state: _,
+                plugins: _,
                 current_bundle: _,
                 next_bundle: _,
                 deferred_request_pool: _,

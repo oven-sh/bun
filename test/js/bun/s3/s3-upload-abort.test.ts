@@ -239,3 +239,43 @@ test.concurrent("an upload that rejects because the stream is locked doesn't rea
     exited: 0,
   });
 });
+
+// A native stream that holds a whole part before anything reads it.
+const rewritten = (then: string) => `
+  let input;
+  const appended = Promise.withResolvers();
+  const ended = Promise.withResolvers();
+  const { body } = new HTMLRewriter()
+    .on("p", { element: e => void e.append(Buffer.alloc(partSize, "a").toString()) })
+    .on("i", { element: () => appended.resolve() })
+    .onDocument({ end: () => ended.resolve() })
+    .transform(new Response(new ReadableStream({ start: c => void (input = c) })));
+  input.enqueue(new TextEncoder().encode("<p></p><i></i>"));
+  ${then}
+`;
+
+// Signing fails inside the write that fills the first part, which also fills the queue.
+test.concurrent.each([
+  [
+    "a later write",
+    `const origin = Bun.serve({ port: 0, fetch: () => new Response(new Uint8Array(partSize + 1024 * 1024)) });
+     origin.unref();
+     const { body } = await fetch(origin.url);`,
+  ],
+  ["the first write", rewritten(`await appended.promise;`)],
+  ["its only write", rewritten(`input.close(); await ended.promise;`)],
+])("a request that cannot be signed fails the upload of a native stream in %s", async (_, makeBody) => {
+  const body = `
+    ${makeBody}
+    const tooLongOnceEncoded = Buffer.alloc(400, "!").toString();
+    const result = await client
+      .write(tooLongOnceEncoded, body, { ...opts, queueSize: 1 })
+      .then(() => "resolved", e => "rejected: " + e.code);
+    console.log(result);
+  `;
+  expect(await run({ body, waitFor: `true` })).toEqual({
+    stdout: `rejected: ERR_S3_INVALID_PATH\n{"create":0,"part":0,"complete":0,"abort":0,"put":0}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});

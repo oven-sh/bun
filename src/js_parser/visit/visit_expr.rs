@@ -27,7 +27,7 @@ use js_ast::OpCode as Op;
 // The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
 // `visit_expr_in_out` are surfaced.
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SCAN_ONLY> {
     // PERF(port:noalias): `e: &mut Expr` is lowered to a `noalias` LLVM param, so reads
     // through `e` can be cached in registers across child recursion. The by-value
     // `Expr -> Expr` shape moved 24B in + 24B out per frame; the in-place form moves 8B
@@ -752,10 +752,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             (record.path.text, record.range)
                         };
                         // We must visit it to convert inline_identifiers and record usage
-                        // Reborrow via the field-disjoint `Lexer::log()` accessor
-                        // so `&p.lexer` and `&mut p.options` split cleanly under
-                        // borrowck.
-                        let log = bun_ast::LexerLog::log(&p.lexer);
+                        let log = p.lexer.log;
                         let source = p.source;
                         let Ok(macro_result) = p
                             .options
@@ -2461,10 +2458,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 let start_error_count = p.log().msgs_len();
                 p.macro_call_count += 1;
-                // Reborrow via the field-disjoint `Lexer::log()` accessor
-                // so `&p.lexer` and `&mut p.options` split cleanly under
-                // borrowck.
-                let log = bun_ast::LexerLog::log(&p.lexer);
+                let log = p.lexer.log;
                 let source = p.source;
                 let macro_result = match p
                     .options

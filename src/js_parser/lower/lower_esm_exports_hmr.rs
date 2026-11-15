@@ -39,7 +39,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
     // open-codes the equivalent transform (see bundler/AstBuilder.rs).
     pub(crate) fn convert_stmt<'p, const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, TS, SCAN>,
+        p: &mut P<'p, '_, TS, SCAN>,
         stmt: Stmt,
     ) -> Result<(), AllocError> {
         let new_stmt: Stmt = match stmt.data {
@@ -391,7 +391,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
     /// index if present.
     fn deduplicated_import<'p, const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, TS, SCAN>,
+        p: &mut P<'p, '_, TS, SCAN>,
         import_record_index: u32,
         namespace_ref: Ref,
         items: js_ast::StoreSlice<js_ast::ClauseItem>,
@@ -498,7 +498,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
     fn visit_binding_to_export<'p, const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, TS, SCAN>,
+        p: &mut P<'p, '_, TS, SCAN>,
         binding: Binding,
     ) -> Result<(), AllocError> {
         match binding.data {
@@ -522,7 +522,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
     fn visit_ref_to_export<'p, const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, TS, SCAN>,
+        p: &mut P<'p, '_, TS, SCAN>,
         ref_: Ref,
         export_symbol_name: Option<js_ast::StoreStr>,
         loc: bun_ast::Loc,
@@ -619,7 +619,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
     pub(crate) fn finalize<'p, const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, TS, SCAN>,
+        p: &mut P<'p, '_, TS, SCAN>,
         // Note: `self.last_part` must not alias into this slice
         // (Stacked Borrows: `&mut [Part]` asserts
         // exclusive access to every element). Caller passes the `[0..len-1]`

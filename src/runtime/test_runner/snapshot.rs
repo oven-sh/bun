@@ -194,9 +194,9 @@ impl Drop for ReportedLog<'_> {
 }
 
 /// Invariant: what `TSXParser::init` returned, the value in a slot that does not drop it.
-struct InitializedParser<'s, 'a>(&'s mut js_parser::TSXParser<'a>);
+struct InitializedParser<'s, 'a, 'log>(&'s mut js_parser::TSXParser<'a, 'log>);
 
-impl Drop for InitializedParser<'_, '_> {
+impl Drop for InitializedParser<'_, '_, '_> {
     #[optimize(size)]
     fn drop(&mut self) {
         // SAFETY: this holds the only reference to the value, so it is dropped once and not used afterwards.
@@ -864,24 +864,7 @@ impl Snapshots {
                     }
                     next_start += fn_name.len();
 
-                    // `Lexer.initWithoutReading` and `TSXParser.init` both need the same
-                    // `Log`, but Rust forbids two live `&'a mut Log`;
-                    // derive a raw pointer so borrowck doesn't track the lexer/parser borrow,
-                    // matching the pattern in `js_parser::Parser::init`. The unique `&mut`
-                    // logically lives inside `parser.lexer`; `log.add_error_fmt` calls below
-                    // reborrow between parser uses.
-                    // SAFETY: `log` outlives the `'blk` block; lexer/parser are dropped at
-                    // block exit (or `continue 'ils`). See Parser.rs:214 for the provenance
-                    // discussion.
-                    let log_ptr: *const bun_ast::Log = &raw const *log;
-                    let mut lexer = js_lexer::Lexer::init_without_reading(
-                        // SAFETY: `log_ptr` derived from `&raw const *log` just above; `log`
-                        // outlives `'blk` and no other `&mut Log` is live until `lexer` is
-                        // moved into `parser` below.
-                        unsafe { &*log_ptr },
-                        &source,
-                        &arena,
-                    );
+                    let mut lexer = js_lexer::Lexer::init_without_reading(&log, &source, &arena);
                     if next_start > 0 {
                         // equivalent to lexer.consumeRemainderBytes(next_start)
                         lexer.current += next_start - (lexer.current - lexer.end);
@@ -899,18 +882,17 @@ impl Snapshots {
                     // Mirror `init_p!` from `js_parser/parse/parse_entry.rs` here
                     // (that macro is crate-local).
                     let mut __parser_slot =
-                        core::mem::MaybeUninit::<js_parser::TSXParser<'_>>::uninit();
+                        core::mem::MaybeUninit::<js_parser::TSXParser<'_, '_>>::uninit();
                     let __parser = js_parser::TSXParser::init(
                         &mut __parser_slot,
                         &arena,
-                        core::ptr::NonNull::new(log_ptr.cast_mut()).expect("log_ptr derived from &*log"),
                         &source,
                         &vm.transpiler.get().options.define,
                         lexer,
                         opts,
                     );
                     let __parser_guard = InitializedParser(__parser);
-                    let parser: &mut js_parser::TSXParser<'_> = &mut *__parser_guard.0;
+                    let parser: &mut js_parser::TSXParser<'_, '_> = &mut *__parser_guard.0;
 
                     parser.lexer.expect(js_lexer::T::TOpenParen)?;
                     let after_open_paren_loc = parser.lexer.loc().start;

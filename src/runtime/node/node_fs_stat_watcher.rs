@@ -288,8 +288,7 @@ impl StatWatcherScheduler {
             let update = Box::new(StatWatcherTimerUpdate {
                 scheduler: pass.scheduler,
             });
-            let update = bun_core::heap::into_raw(update);
-            pass.ticket.post(ConcurrentTask::create_from(update));
+            pass.ticket.post(ConcurrentTask::create_boxed(update));
         }
     }
 
@@ -842,14 +841,11 @@ impl StatWatcherTimerUpdate {
     }
 }
 
-impl bun_event_loop::Taskable for StatWatcherTimerUpdate {
+impl bun_event_loop::BoxedTask for StatWatcherTimerUpdate {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::StatWatcherTimerUpdate;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box `work_pool_callback` posted.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// The scheduler's own timer; calls no script.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

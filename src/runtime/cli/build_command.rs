@@ -135,11 +135,7 @@ impl BuildCommand {
         // `exec` never returns until process exit (`exit_or_watch` diverges),
         // so use the shared CLI arena instead of allocating a fresh one.
         let arena: &'static bun_alloc::Arena = crate::cli::cli_arena();
-        // Note: `generate_from_cli` takes `&'a mut Transpiler<'a>`, which
-        // borrows the transpiler for its full lifetime — dropck then rejects a
-        // stack local because the borrow would still be live in its destructor.
-        // Allocate in the process-lifetime arena (same rationale as `arena`;
-        // `exec` diverges so this is never dropped).
+        // In the arena: `exec` diverges, so it is never dropped.
         let this_transpiler: &mut transpiler::Transpiler<'static> = arena.alloc(
             transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?,
         );

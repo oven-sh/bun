@@ -87,41 +87,10 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_buf_init") == 0) {
-    char *arg0 = {0};
-    unsigned int arg1 = {0};
-
-    uv_buf_init(arg0, arg1);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_chdir") == 0) {
     const char *arg0 = {0};
 
     uv_chdir(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_check_init") == 0) {
-    uv_loop_t *arg0 = {0};
-    uv_check_t *arg1 = {0};
-
-    uv_check_init(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_check_start") == 0) {
-    uv_check_t *arg0 = {0};
-    uv_check_cb arg1 = NULL;
-
-    uv_check_start(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_check_stop") == 0) {
-    uv_check_t *arg0 = {0};
-
-    uv_check_stop(arg0);
     return NULL;
   }
 
@@ -229,35 +198,11 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_err_name") == 0) {
-    int arg0 = {0};
-
-    uv_err_name(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_err_name_r") == 0) {
-    int arg0 = {0};
-    char *arg1 = {0};
-    size_t arg2 = {0};
-
-    uv_err_name_r(arg0, arg1, arg2);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_exepath") == 0) {
     char *arg0 = {0};
     size_t *arg1 = {0};
 
     uv_exepath(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_fileno") == 0) {
-    const uv_handle_t *arg0 = {0};
-    uv_os_fd_t *arg1 = {0};
-
-    uv_fileno(arg0, arg1);
     return NULL;
   }
 
@@ -880,29 +825,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_idle_init") == 0) {
-    uv_loop_t *arg0 = {0};
-    uv_idle_t *arg1 = {0};
-
-    uv_idle_init(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_idle_start") == 0) {
-    uv_idle_t *arg0 = {0};
-    uv_idle_cb arg1 = NULL;
-
-    uv_idle_start(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_idle_stop") == 0) {
-    uv_idle_t *arg0 = {0};
-
-    uv_idle_stop(arg0);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_if_indextoiid") == 0) {
     unsigned int arg0 = {0};
     char *arg1 = {0};
@@ -921,75 +843,11 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_inet_ntop") == 0) {
-    int arg0 = {0};
-    const void *arg1 = {0};
-    char *arg2 = {0};
-    size_t arg3 = {0};
-
-    uv_inet_ntop(arg0, arg1, arg2, arg3);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_inet_pton") == 0) {
-    int arg0 = {0};
-    const char *arg1 = {0};
-    void *arg2 = {0};
-
-    uv_inet_pton(arg0, arg1, arg2);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_interface_addresses") == 0) {
     uv_interface_address_t **arg0 = NULL;
     int *arg1 = {0};
 
     uv_interface_addresses(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_ip4_addr") == 0) {
-    const char *arg0 = {0};
-    int arg1 = {0};
-    struct sockaddr_in *arg2 = {0};
-
-    uv_ip4_addr(arg0, arg1, arg2);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_ip4_name") == 0) {
-    const struct sockaddr_in *arg0 = {0};
-    char *arg1 = {0};
-    size_t arg2 = {0};
-
-    uv_ip4_name(arg0, arg1, arg2);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_ip6_addr") == 0) {
-    const char *arg0 = {0};
-    int arg1 = {0};
-    struct sockaddr_in6 *arg2 = {0};
-
-    uv_ip6_addr(arg0, arg1, arg2);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_ip6_name") == 0) {
-    const struct sockaddr_in6 *arg0 = {0};
-    char *arg1 = {0};
-    size_t arg2 = {0};
-
-    uv_ip6_name(arg0, arg1, arg2);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_ip_name") == 0) {
-    const struct sockaddr *arg0 = {0};
-    char *arg1 = {0};
-    size_t arg2 = {0};
-
-    uv_ip_name(arg0, arg1, arg2);
     return NULL;
   }
 
@@ -1133,13 +991,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     uv_metrics_t *arg1 = {0};
 
     uv_metrics_info(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_now") == 0) {
-    const uv_loop_t *arg0 = {0};
-
-    uv_now(arg0);
     return NULL;
   }
 
@@ -1415,29 +1266,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_prepare_init") == 0) {
-    uv_loop_t *arg0 = {0};
-    uv_prepare_t *arg1 = {0};
-
-    uv_prepare_init(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_prepare_start") == 0) {
-    uv_prepare_t *arg0 = {0};
-    uv_prepare_cb arg1 = NULL;
-
-    uv_prepare_start(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_prepare_stop") == 0) {
-    uv_prepare_t *arg0 = {0};
-
-    uv_prepare_stop(arg0);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_print_active_handles") == 0) {
     uv_loop_t *arg0 = {0};
     FILE *arg1 = {0};
@@ -1494,14 +1322,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     uv_stream_t *arg0 = {0};
 
     uv_read_stop(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_recv_buffer_size") == 0) {
-    uv_handle_t *arg0 = {0};
-    int *arg1 = {0};
-
-    uv_recv_buffer_size(arg0, arg1);
     return NULL;
   }
 
@@ -1622,14 +1442,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_send_buffer_size") == 0) {
-    uv_handle_t *arg0 = {0};
-    int *arg1 = {0};
-
-    uv_send_buffer_size(arg0, arg1);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_set_process_title") == 0) {
     const char *arg0 = {0};
 
@@ -1735,22 +1547,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     int arg1 = {0};
 
     uv_stream_set_blocking(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_strerror") == 0) {
-    int arg0 = {0};
-
-    uv_strerror(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_strerror_r") == 0) {
-    int arg0 = {0};
-    char *arg1 = {0};
-    size_t arg2 = {0};
-
-    uv_strerror_r(arg0, arg1, arg2);
     return NULL;
   }
 
@@ -1914,60 +1710,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_timer_again") == 0) {
-    uv_timer_t *arg0 = {0};
-
-    uv_timer_again(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_timer_get_due_in") == 0) {
-    const uv_timer_t *arg0 = {0};
-
-    uv_timer_get_due_in(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_timer_get_repeat") == 0) {
-    const uv_timer_t *arg0 = {0};
-
-    uv_timer_get_repeat(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_timer_init") == 0) {
-    uv_loop_t *arg0 = {0};
-    uv_timer_t *arg1 = {0};
-
-    uv_timer_init(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_timer_set_repeat") == 0) {
-    uv_timer_t *arg0 = {0};
-    uint64_t arg1 = {0};
-
-    uv_timer_set_repeat(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_timer_start") == 0) {
-    uv_timer_t *arg0 = {0};
-    uv_timer_cb arg1 = NULL;
-    uint64_t arg2 = {0};
-    uint64_t arg3 = {0};
-
-    uv_timer_start(arg0, arg1, arg2, arg3);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_timer_stop") == 0) {
-    uv_timer_t *arg0 = {0};
-
-    uv_timer_stop(arg0);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_translate_sys_error") == 0) {
     int arg0 = {0};
 
@@ -2035,116 +1777,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_udp_bind") == 0) {
-    uv_udp_t *arg0 = {0};
-    const struct sockaddr *arg1 = {0};
-    unsigned int arg2 = {0};
-
-    uv_udp_bind(arg0, arg1, arg2);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_udp_connect") == 0) {
-    uv_udp_t *arg0 = {0};
-    const struct sockaddr *arg1 = {0};
-
-    uv_udp_connect(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_udp_get_send_queue_count") == 0) {
-    const uv_udp_t *arg0 = {0};
-
-    uv_udp_get_send_queue_count(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_udp_get_send_queue_size") == 0) {
-    const uv_udp_t *arg0 = {0};
-
-    uv_udp_get_send_queue_size(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_udp_getpeername") == 0) {
-    const uv_udp_t *arg0 = {0};
-    struct sockaddr *arg1 = {0};
-    int *arg2 = {0};
-
-    uv_udp_getpeername(arg0, arg1, arg2);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_udp_getsockname") == 0) {
-    const uv_udp_t *arg0 = {0};
-    struct sockaddr *arg1 = {0};
-    int *arg2 = {0};
-
-    uv_udp_getsockname(arg0, arg1, arg2);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_udp_init") == 0) {
-    uv_loop_t *arg0 = {0};
-    uv_udp_t *arg1 = {0};
-
-    uv_udp_init(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_udp_init_ex") == 0) {
-    uv_loop_t *arg0 = {0};
-    uv_udp_t *arg1 = {0};
-    unsigned int arg2 = {0};
-
-    uv_udp_init_ex(arg0, arg1, arg2);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_udp_open") == 0) {
-    uv_udp_t *arg0 = {0};
-    uv_os_sock_t arg1 = {0};
-
-    uv_udp_open(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_udp_recv_start") == 0) {
-    uv_udp_t *arg0 = {0};
-    uv_alloc_cb arg1 = NULL;
-    uv_udp_recv_cb arg2 = NULL;
-
-    uv_udp_recv_start(arg0, arg1, arg2);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_udp_recv_stop") == 0) {
-    uv_udp_t *arg0 = {0};
-
-    uv_udp_recv_stop(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_udp_send") == 0) {
-    uv_udp_send_t *arg0 = {0};
-    uv_udp_t *arg1 = {0};
-    const uv_buf_t *arg2 = {0};
-    unsigned int arg3 = {0};
-    const struct sockaddr *arg4 = {0};
-    uv_udp_send_cb arg5 = NULL;
-
-    uv_udp_send(arg0, arg1, arg2, arg3, arg4, arg5);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_udp_set_broadcast") == 0) {
-    uv_udp_t *arg0 = {0};
-    int arg1 = {0};
-
-    uv_udp_set_broadcast(arg0, arg1);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_udp_set_membership") == 0) {
     uv_udp_t *arg0 = {0};
     const char *arg1 = {0};
@@ -2163,22 +1795,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_udp_set_multicast_loop") == 0) {
-    uv_udp_t *arg0 = {0};
-    int arg1 = {0};
-
-    uv_udp_set_multicast_loop(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_udp_set_multicast_ttl") == 0) {
-    uv_udp_t *arg0 = {0};
-    int arg1 = {0};
-
-    uv_udp_set_multicast_ttl(arg0, arg1);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_udp_set_source_membership") == 0) {
     uv_udp_t *arg0 = {0};
     const char *arg1 = {0};
@@ -2187,38 +1803,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     uv_membership arg4 = {0};
 
     uv_udp_set_source_membership(arg0, arg1, arg2, arg3, arg4);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_udp_set_ttl") == 0) {
-    uv_udp_t *arg0 = {0};
-    int arg1 = {0};
-
-    uv_udp_set_ttl(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_udp_try_send") == 0) {
-    uv_udp_t *arg0 = {0};
-    const uv_buf_t *arg1 = {0};
-    unsigned int arg2 = {0};
-    const struct sockaddr *arg3 = {0};
-
-    uv_udp_try_send(arg0, arg1, arg2, arg3);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_udp_using_recvmmsg") == 0) {
-    const uv_udp_t *arg0 = {0};
-
-    uv_udp_using_recvmmsg(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_update_time") == 0) {
-    uv_loop_t *arg0 = {0};
-
-    uv_update_time(arg0);
     return NULL;
   }
 

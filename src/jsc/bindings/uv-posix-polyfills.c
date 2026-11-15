@@ -7,6 +7,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <stdio.h>
+#include <arpa/inet.h>
+#include <net/if.h>
+#include <netinet/in.h>
 
 // libuv does the annoying thing of #undef'ing these
 #include <errno.h>
@@ -317,6 +321,178 @@ UV_EXTERN uv_os_fd_t uv_get_osfhandle(int fd)
 UV_EXTERN int uv_open_osfhandle(uv_os_fd_t os_fd)
 {
     return os_fd;
+}
+
+// Copy-pasted from libuv (uv-common.c)
+UV_EXTERN uv_buf_t uv_buf_init(char* base, unsigned int len)
+{
+    uv_buf_t buf;
+    buf.base = base;
+    buf.len = len;
+    return buf;
+}
+
+static const char* uv__unknown_err_code(int err)
+{
+    char buf[32];
+    char* copy;
+
+    snprintf(buf, sizeof(buf), "Unknown system error %d", err);
+    copy = strdup(buf);
+
+    return copy != NULL ? copy : "Unknown system error";
+}
+
+#define UV_ERR_NAME_GEN_R(name, _)            \
+    case UV_##name:                           \
+        snprintf(buf, buflen, "%s", #name);   \
+        break;
+UV_EXTERN char* uv_err_name_r(int err, char* buf, size_t buflen)
+{
+    switch (err) {
+        UV_ERRNO_MAP(UV_ERR_NAME_GEN_R)
+    default:
+        snprintf(buf, buflen, "Unknown system error %d", err);
+    }
+    return buf;
+}
+#undef UV_ERR_NAME_GEN_R
+
+#define UV_ERR_NAME_GEN(name, _) \
+    case UV_##name:              \
+        return #name;
+UV_EXTERN const char* uv_err_name(int err)
+{
+    switch (err) {
+        UV_ERRNO_MAP(UV_ERR_NAME_GEN)
+    }
+    return uv__unknown_err_code(err);
+}
+#undef UV_ERR_NAME_GEN
+
+#define UV_STRERROR_GEN_R(name, msg)        \
+    case UV_##name:                         \
+        snprintf(buf, buflen, "%s", msg);   \
+        break;
+UV_EXTERN char* uv_strerror_r(int err, char* buf, size_t buflen)
+{
+    switch (err) {
+        UV_ERRNO_MAP(UV_STRERROR_GEN_R)
+    default:
+        snprintf(buf, buflen, "Unknown system error %d", err);
+    }
+    return buf;
+}
+#undef UV_STRERROR_GEN_R
+
+#define UV_STRERROR_GEN(name, msg) \
+    case UV_##name:                \
+        return msg;
+UV_EXTERN const char* uv_strerror(int err)
+{
+    switch (err) {
+        UV_ERRNO_MAP(UV_STRERROR_GEN)
+    }
+    return uv__unknown_err_code(err);
+}
+#undef UV_STRERROR_GEN
+
+// libuv has its own parser and formatter (inet.c). The system's take the same
+// input and produce the same output, so these map their results to libuv's codes.
+UV_EXTERN int uv_inet_ntop(int af, const void* src, char* dst, size_t size)
+{
+    if (af != AF_INET && af != AF_INET6)
+        return UV_EAFNOSUPPORT;
+    if (inet_ntop(af, src, dst, size) == NULL)
+        return UV__ERR(errno);
+    return 0;
+}
+
+UV_EXTERN int uv_inet_pton(int af, const char* src, void* dst)
+{
+    if (src == NULL || dst == NULL)
+        return UV_EINVAL;
+    if (af == AF_INET)
+        return inet_pton(AF_INET, src, dst) == 1 ? 0 : UV_EINVAL;
+    if (af != AF_INET6)
+        return UV_EAFNOSUPPORT;
+    // Like libuv, ignore a zone index ("fe80::1%eth0").
+    char tmp[sizeof("ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255")];
+    const char* percent = strchr(src, '%');
+    if (percent != NULL) {
+        size_t len = (size_t)(percent - src);
+        if (len >= sizeof(tmp))
+            return UV_EINVAL;
+        memcpy(tmp, src, len);
+        tmp[len] = '\0';
+        src = tmp;
+    }
+    return inet_pton(AF_INET6, src, dst) == 1 ? 0 : UV_EINVAL;
+}
+
+// Copy-pasted from libuv (uv-common.c)
+UV_EXTERN int uv_ip4_addr(const char* ip, int port, struct sockaddr_in* addr)
+{
+    memset(addr, 0, sizeof(*addr));
+    addr->sin_family = AF_INET;
+    addr->sin_port = htons(port);
+#ifdef SIN6_LEN
+    addr->sin_len = sizeof(*addr);
+#endif
+    return uv_inet_pton(AF_INET, ip, &(addr->sin_addr.s_addr));
+}
+
+UV_EXTERN int uv_ip6_addr(const char* ip, int port, struct sockaddr_in6* addr)
+{
+    char address_part[40];
+    size_t address_part_size;
+    const char* zone_index;
+
+    memset(addr, 0, sizeof(*addr));
+    addr->sin6_family = AF_INET6;
+    addr->sin6_port = htons(port);
+#ifdef SIN6_LEN
+    addr->sin6_len = sizeof(*addr);
+#endif
+
+    zone_index = strchr(ip, '%');
+    if (zone_index != NULL) {
+        address_part_size = zone_index - ip;
+        if (address_part_size >= sizeof(address_part))
+            address_part_size = sizeof(address_part) - 1;
+
+        memcpy(address_part, ip, address_part_size);
+        address_part[address_part_size] = '\0';
+        ip = address_part;
+
+        zone_index++; /* skip '%' */
+        /* NOTE: unknown interface (id=0) is silently ignored */
+        addr->sin6_scope_id = if_nametoindex(zone_index);
+    }
+
+    return uv_inet_pton(AF_INET6, ip, &addr->sin6_addr);
+}
+
+UV_EXTERN int uv_ip4_name(const struct sockaddr_in* src, char* dst, size_t size)
+{
+    return uv_inet_ntop(AF_INET, &src->sin_addr, dst, size);
+}
+
+UV_EXTERN int uv_ip6_name(const struct sockaddr_in6* src, char* dst, size_t size)
+{
+    return uv_inet_ntop(AF_INET6, &src->sin6_addr, dst, size);
+}
+
+UV_EXTERN int uv_ip_name(const struct sockaddr* src, char* dst, size_t size)
+{
+    switch (src->sa_family) {
+    case AF_INET:
+        return uv_inet_ntop(AF_INET, &((struct sockaddr_in*)src)->sin_addr, dst, size);
+    case AF_INET6:
+        return uv_inet_ntop(AF_INET6, &((struct sockaddr_in6*)src)->sin6_addr, dst, size);
+    default:
+        return UV_EAFNOSUPPORT;
+    }
 }
 
 #endif

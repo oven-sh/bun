@@ -8,7 +8,7 @@ use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-use bun_core::{StackCheck, String as BunString, strings};
+use bun_core::{EncodedUnits, StackCheck, String as BunString, strings};
 
 // `strings::Cursor` aliased as `CodepointCursor` for readability.
 type CodepointCursor = strings::Cursor;
@@ -3141,22 +3141,14 @@ impl<'bump, 'src, const ENCODING: StringEncoding> Lexer<'bump, 'src, ENCODING> {
 
     fn append_string_to_str_pool(&mut self, bunstr: &BunString) -> Result<(), LexerError> {
         let start = self.strpool.len();
-        if bunstr.is_utf16() {
-            let utf16 = bunstr.utf16();
-            // The transcoding helpers in bun_core take
-            // `&mut Vec<u8>` (global allocator), so go through a scratch Vec
-            // and copy. PERF: re-unify once a bumpalo-aware transcoder
-            // lands in bun_core.
-            let mut scratch: Vec<u8> = Vec::with_capacity(utf16.len() * 3);
-            bun_core::convert_utf16_to_utf8_append(&mut scratch, utf16);
-            self.strpool.extend_from_slice(&scratch);
-        } else if bunstr.is_utf8() {
-            self.strpool.extend_from_slice(bunstr.byte_slice());
-        } else if bunstr.is_8bit() {
-            let bytes = bunstr.byte_slice();
-            if is_all_ascii(bytes) {
-                self.strpool.extend_from_slice(bytes);
-            } else {
+        match bunstr.encoded_units() {
+            EncodedUnits::Utf16(utf16) => {
+                // PERF: the transcoding helpers in bun_core take a `&mut Vec<u8>`, not an arena vector.
+                let mut scratch: Vec<u8> = Vec::with_capacity(utf16.len() * 3);
+                bun_core::convert_utf16_to_utf8_append(&mut scratch, utf16);
+                self.strpool.extend_from_slice(&scratch);
+            }
+            EncodedUnits::Latin1(bytes) if !is_all_ascii(bytes) => {
                 let non_ascii_idx = bun_core::strings::first_non_ascii(bytes).unwrap_or(0) as usize;
                 if non_ascii_idx > 0 {
                     self.strpool.extend_from_slice(&bytes[..non_ascii_idx]);
@@ -3173,6 +3165,9 @@ impl<'bump, 'src, const ENCODING: StringEncoding> Lexer<'bump, 'src, ENCODING> {
                         self.strpool.push(0x80 | (b & 0x3F));
                     }
                 }
+            }
+            EncodedUnits::Latin1(utf8) | EncodedUnits::Utf8(utf8) => {
+                self.strpool.extend_from_slice(utf8)
             }
         }
         let end = self.strpool.len();
@@ -3939,17 +3934,15 @@ pub fn escape_bun_str<const ADD_QUOTES: bool>(
     bunstr: &BunString,
     outbuf: &mut Vec<u8>,
 ) -> Result<bool, bun_alloc::AllocError> {
-    if bunstr.is_utf16() {
-        let res = escape_utf16::<ADD_QUOTES>(bunstr.utf16(), outbuf)?;
-        return Ok(!res.is_invalid);
+    match bunstr.encoded_units() {
+        EncodedUnits::Utf16(units) => {
+            let res = escape_utf16::<ADD_QUOTES>(units, outbuf)?;
+            return Ok(!res.is_invalid);
+        }
+        EncodedUnits::Utf8(bytes) => escape_8bit::<ADD_QUOTES, false>(bytes, outbuf)?,
+        // `outbuf` is consumed as UTF-8, so 0x80..=0xFF must be re-encoded, not copied verbatim.
+        EncodedUnits::Latin1(bytes) => escape_8bit::<ADD_QUOTES, true>(bytes, outbuf)?,
     }
-    if bunstr.is_utf8() {
-        escape_8bit::<ADD_QUOTES, false>(bunstr.byte_slice(), outbuf)?;
-        return Ok(true);
-    }
-    // Otherwise 8-bit (Latin-1/ASCII). `outbuf` is consumed as UTF-8, so
-    // Latin-1 code units 0x80..=0xFF must be re-encoded, not copied verbatim.
-    escape_8bit::<ADD_QUOTES, true>(bunstr.byte_slice(), outbuf)?;
     Ok(true)
 }
 
@@ -4042,11 +4035,12 @@ pub(crate) fn escape_utf16<const ADD_QUOTES: bool>(
 }
 
 pub fn needs_escape_bunstr(bunstr: &BunString) -> bool {
-    if bunstr.is_utf16() {
-        return needs_escape_utf16(bunstr.utf16());
+    match bunstr.encoded_units() {
+        EncodedUnits::Utf16(units) => needs_escape_utf16(units),
+        EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => {
+            needs_escape_utf8_ascii_latin1(bytes)
+        }
     }
-    // Otherwise is utf-8, ascii, or latin-1
-    needs_escape_utf8_ascii_latin1(bunstr.byte_slice())
 }
 
 pub(crate) fn needs_escape_utf16(str: &[u16]) -> bool {

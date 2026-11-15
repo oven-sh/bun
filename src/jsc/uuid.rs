@@ -3,7 +3,7 @@
 use core::fmt;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-use bun_core::strings;
+use bun_core::{String as BunString, strings};
 
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum UuidError {
@@ -40,8 +40,10 @@ impl UUID {
 
     pub const STRING_LENGTH: usize = 36;
 
-    pub fn print(&self, buf: &mut [u8; 36]) {
-        print_bytes(&self.bytes, buf);
+    pub fn to_bun_string(self) -> BunString {
+        BunString::create_latin1_with(Self::STRING_LENGTH, |mut text| {
+            text.append(&print_bytes(&self.bytes))
+        })
     }
 
     pub fn parse(buf: &[u8]) -> Result<UUID, UuidError> {
@@ -70,24 +72,21 @@ const ENCODED_POS: [u8; 16] = [0, 2, 4, 6, 9, 11, 14, 16, 19, 21, 24, 26, 28, 30
 
 impl fmt::Display for UUID {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut buf = [0u8; 36];
-        self.print(&mut buf);
+        let buf = print_bytes(&self.bytes);
 
         // SAFETY: print_bytes only writes ASCII hex digits and '-'
         f.write_str(unsafe { core::str::from_utf8_unchecked(&buf) })
     }
 }
 
-fn print_bytes(bytes: &[u8; 16], buf: &mut [u8; 36]) {
-    buf[8] = b'-';
-    buf[13] = b'-';
-    buf[18] = b'-';
-    buf[23] = b'-';
+fn print_bytes(bytes: &[u8; 16]) -> [u8; 36] {
+    let mut buf = [b'-'; 36];
     for (j, &i) in ENCODED_POS.iter().enumerate() {
         let [hi, lo] = bun_core::fmt::hex_byte_lower(bytes[j]);
         buf[i as usize] = hi;
         buf[i as usize + 1] = lo;
     }
+    buf
 }
 
 /// # --- 48 ---   -- 4 --   - 12 -   -- 2 --   - 62 -
@@ -208,8 +207,8 @@ impl UUID7 {
         self.bytes
     }
 
-    pub fn print(self, buf: &mut [u8; 36]) {
-        print_bytes(&self.to_bytes(), buf);
+    pub fn to_bun_string(self) -> BunString {
+        self.to_uuid().to_bun_string()
     }
 
     pub(crate) fn to_uuid(self) -> UUID {
@@ -295,8 +294,8 @@ impl UUID5 {
         self.bytes
     }
 
-    pub fn print(self, buf: &mut [u8; 36]) {
-        print_bytes(&self.to_bytes(), buf);
+    pub fn to_bun_string(self) -> BunString {
+        self.to_uuid().to_bun_string()
     }
 
     pub(crate) fn to_uuid(self) -> UUID {

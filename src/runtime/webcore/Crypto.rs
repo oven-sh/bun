@@ -59,16 +59,8 @@ impl Crypto {
     }
 
     pub(crate) fn random_uuid(&self) -> BunString {
-        let (str, bytes) = BunString::create_uninitialized_latin1(36);
-
         let uuid = VirtualMachine::get().rare_data().next_uuid();
-
-        uuid.print(
-            (&mut bytes[0..36])
-                .try_into()
-                .expect("infallible: size matches"),
-        );
-        str
+        uuid.to_bun_string()
     }
 
     pub(crate) fn timing_safe_equal<'a>(
@@ -162,15 +154,7 @@ pub(crate) fn random_uuid_v7<'a>(
     let uuid = UUID7::init(timestamp, entropy, timestamp_source);
 
     match encoding {
-        Encoding::Hex => {
-            let (str, bytes) = BunString::create_uninitialized_latin1(36);
-            uuid.print(
-                (&mut bytes[0..36])
-                    .try_into()
-                    .expect("infallible: size matches"),
-            );
-            Ok(EncodedUUID::Text(str))
-        }
+        Encoding::Hex => Ok(EncodedUUID::Text(uuid.to_bun_string())),
         Encoding::Buffer => Ok(EncodedUUID::Bytes(heap.create_buffer(&uuid.bytes)?)),
         encoding => Ok(EncodedUUID::Text(crate::webcore::encoding::to_bun_string(
             &uuid.bytes,
@@ -217,15 +201,7 @@ pub(crate) fn random_uuid_v5<'a>(
     let uuid = UUID5::init(&namespace, name);
 
     match encoding {
-        Encoding::Hex => {
-            let (str, bytes) = BunString::create_uninitialized_latin1(36);
-            uuid.print(
-                (&mut bytes[0..36])
-                    .try_into()
-                    .expect("infallible: size matches"),
-            );
-            Ok(EncodedUUID::Text(str))
-        }
+        Encoding::Hex => Ok(EncodedUUID::Text(uuid.to_bun_string())),
         Encoding::Buffer => Ok(EncodedUUID::Bytes(
             heap.create_buffer_from_box(Box::from(uuid.bytes))?,
         )),

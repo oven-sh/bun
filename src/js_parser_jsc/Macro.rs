@@ -7,8 +7,8 @@ use bun_ast::{Log, Range, Source};
 use bun_bundler::options::TransformOptions;
 use bun_bundler::{Transpiler, entry_points::MacroEntryPoint};
 use bun_collections::HashMap;
-use bun_core::Output;
 use bun_core::strings;
+use bun_core::{EncodedUnits, Output};
 use bun_dotenv::Loader as DotEnvLoader;
 
 use crate::Error;
@@ -684,10 +684,11 @@ impl<'a> Run<'a> {
                 // encode into utf16 so the printer escapes the string correctly
                 // UTF-16 → memcpy, Latin-1 → byte-widen. JS-sourced WTF
                 // strings are never UTF-8-tagged, so two arms suffice.
-                let utf16_bytes: Vec<u16> = if bun_str.is_utf16() {
-                    bun_str.utf16().to_vec()
-                } else {
-                    bun_str.latin1().iter().map(|&b| b as u16).collect()
+                let utf16_bytes: Vec<u16> = match bun_str.encoded_units() {
+                    EncodedUnits::Utf16(units) => units.to_vec(),
+                    EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => {
+                        bytes.iter().map(|&b| b as u16).collect()
+                    }
                 };
                 // `E::EString::init_utf16` lifetime-erases the slice
                 // (arena-owned per the parser's `Str` convention).

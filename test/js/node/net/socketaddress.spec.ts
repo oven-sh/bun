@@ -1,7 +1,7 @@
 /**
  * @see https://nodejs.org/api/net.html#class-netsocketaddress
  */
-import { rss } from "harness";
+import { bunEnv, bunExe, isDebug, rss } from "harness";
 import { SocketAddress, SocketAddressInitOptions } from "node:net";
 
 let v4: SocketAddress;
@@ -229,6 +229,32 @@ describe("SocketAddress.parse", () => {
     "[1:0:::::::]", // line break
   ])("parse('%s') == undefined", invalidInput => {
     expect(SocketAddress.parse(invalidInput)).toBeUndefined();
+  });
+
+  it.each([
+    ["1.2.3.4/", { address: "1.2.3.4", port: 0, family: "ipv4" }],
+    ["1.2.3.4:81/", { address: "1.2.3.4", port: 81, family: "ipv4" }],
+    ["[::1]/", { address: "::1", port: 0, family: "ipv6" }],
+  ])("parse('%s') stored as UTF-16", (input, expected) => {
+    expect(SocketAddress.parse(Buffer.from(input, "utf16le").toString("utf16le"))).toMatchObject(expected);
+  });
+
+  // `BUN_JSC_maxSingleAllocationSize` exists in debug WTF only. These inputs are external strings, which it does not cap.
+  it.skipIf(!isDebug)("returns undefined when the URL string cannot be allocated", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { SocketAddress } = require("node:net");
+        console.log(SocketAddress.parse(Buffer.alloc(6 * 1024 ** 2).toString("base64")));
+        console.log(SocketAddress.parse(Buffer.alloc(6 * 1024 ** 2, "é").toString("utf8")));`,
+      ],
+      env: { ...bunEnv, BUN_JSC_maxSingleAllocationSize: String(4 * 1024 ** 2) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "undefined\nundefined\n", stderr: "", exitCode: 0 });
   });
 }); // </SocketAddress.parse>
 

@@ -717,6 +717,89 @@ it("request.url should log successfully", async () => {
   );
 });
 
+// `BUN_JSC_maxSingleAllocationSize` exists in debug WTF only.
+describe.concurrent.skipIf(!isDebug)("request.url throws when the string cannot be allocated", () => {
+  it.each([
+    ["in fetch", "/", "Host: localhost"],
+    ["in routes", "/route/", "Host: localhost"],
+    ["for a path that is not ASCII", "/é", "Host: localhost"],
+    ["for an invalid Host header", "/", "Host: a b"],
+    [
+      "after server.upgrade()",
+      "/",
+      "Host: localhost\r\nUpgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13",
+    ],
+  ])("%s", async (_, path, headers) => {
+    using dir = tempDir("serve-url-oom", { "index.tsx": "" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        `--max-http-header-size=${8 * 1024 ** 2}`,
+        "-e",
+        `const router = new Bun.FileSystemRouter({ dir: process.cwd(), style: "nextjs" });
+        function thrown(fn) {
+          try {
+            fn();
+          } catch (e) {
+            return e;
+          }
+        }
+        const read = async req => ({
+          url: thrown(() => req.url)?.code,
+          clone: thrown(() => req.clone())?.name,
+          constructor: thrown(() => new Request(req))?.name,
+          match: thrown(() => router.match(req))?.name,
+          otherUrl: new Request("http://other/", req).url,
+          inspect: Bun.inspect(req).includes('url: "",'),
+          fetch: await fetch(req).catch(e => e.name),
+        });
+        const { promise, resolve, reject } = Promise.withResolvers();
+        async function handler(req, server) {
+          const upgraded = server.upgrade(req);
+          const sync = read(req);
+          await new Promise(setImmediate);
+          resolve({ upgraded, sync: await sync, afterAwait: await read(req) });
+          if (!upgraded) return new Response();
+        }
+        using server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          routes: { "/route/*": handler },
+          fetch: handler,
+          error: reject,
+          websocket: { message() {} },
+        });
+        const socket = require("node:net").connect(server.port, "127.0.0.1");
+        socket.on("error", reject).on("close", reject).resume();
+        socket.write("GET " + ${JSON.stringify(path)});
+        socket.write(Buffer.alloc(5 * 1024 ** 2, "a"));
+        socket.write(" HTTP/1.1\\r\\n" + ${JSON.stringify(headers)} + "\\r\\n\\r\\n");
+        console.log(JSON.stringify(await promise));
+        socket.destroy();`,
+      ],
+      env: { ...bunEnv, BUN_JSC_maxSingleAllocationSize: String(4 * 1024 ** 2) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const read = {
+      url: "ERR_MEMORY_ALLOCATION_FAILED",
+      clone: "RangeError",
+      constructor: "RangeError",
+      match: "RangeError",
+      otherUrl: "http://other/",
+      inspect: true,
+      fetch: "RangeError",
+    };
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ upgraded: headers.includes("Upgrade"), sync: read, afterAwait: read }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 it("request.url should be based on the Host header", async () => {
   const fixture = resolve(import.meta.dir, "./fetch.js.txt");
   const textToExpect = readFileSync(fixture, "utf-8");

@@ -1605,9 +1605,7 @@ where
             // SAFETY: re-derived after the JS-running option getters above; still
             // the live JsClass payload for `request`.
             let request = unsafe { &*request_ptr };
-            if request.ensure_url().is_err() {
-                request.url.set(BunString::EMPTY);
-            }
+            let _ = request.ensure_url();
 
             request.request_context.set(AnyRequestContext::NULL);
             upgrader.request_weakref.set(request::WeakRef::EMPTY);

@@ -20,7 +20,7 @@ use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
     self as jsc, Exception, JSGlobalObject, JSInternalPromise, JSValue, JsCell, JsResult,
-    PlatformEventLoop, ResolvedSource, VM, ZigException,
+    PlatformEventLoop, ResolvedSource, StrongCell, VM, ZigException,
 };
 
 pub use crate::process_auto_killer as ProcessAutoKiller;
@@ -71,7 +71,7 @@ pub struct StringTooLong;
 
 #[derive(Default)]
 pub struct EntryPointResult {
-    pub value: JsCell<crate::strong::Optional>, // jsc.Strong.Optional
+    pub value: StrongCell,
     pub cjs_set_value: Cell<bool>,
     /// True when the entry module evaluated as CommonJS: Node reports a CJS
     /// entry's top-level throw with origin `uncaughtException` but an ESM
@@ -191,10 +191,10 @@ pub struct VirtualMachine {
     pub did_look_for_server: Cell<bool>,
     pub main_resolved_path: JsCell<bun_core::String>,
     /// Set if code overrides Bun.main to a custom value.
-    pub overridden_main: JsCell<crate::strong::Optional>,
+    pub overridden_main: StrongCell,
     /// `bun bake`: the plugins of `bake.config.ts`, a JS array. The dev server loads them after the
     /// `[serve.static] plugins` of bunfig.toml.
-    pub bake_config_plugins: JsCell<crate::strong::Optional>,
+    pub bake_config_plugins: StrongCell,
     /// The names of `bake_config_plugins`.
     pub bake_config_plugin_names: JsCell<Box<[Box<[u8]>]>>,
     /// `bun bake`: the next `Bun.serve()` (its own) adds the routers of a framework: the one in
@@ -202,7 +202,7 @@ pub struct VirtualMachine {
     pub bake_pages: Cell<bool>,
     /// `bun bake`: the `framework` object of a plugin in `bake.config.ts`, as for the `app` option of
     /// `Bun.serve()`. Empty for the default React framework.
-    pub bake_framework: JsCell<crate::strong::Optional>,
+    pub bake_framework: StrongCell,
     /// Synthetic `bun:main` wrapper source.
     pub entry_point: JsCell<bun_bundler::entry_points::ServerEntryPoint>,
     pub origin: bun_url::URL<'static>,
@@ -347,7 +347,7 @@ pub struct VirtualMachine {
     pub rare_data: OnceCell<Box<RareData>>,
     /// A second owner, so that `env_mut()` panics instead of changing the loader under a borrow.
     env_loader: OnceCell<Arc<bun_dotenv::Loader>>,
-    pending_internal_promise: JsCell<crate::strong::Optional>,
+    pending_internal_promise: StrongCell,
     pub pending_internal_promise_reported_at: Cell<u32>,
     pub hot_reload_deferred: Cell<bool>,
     /// File changes that no hot reload has started for. Shared with the watcher thread.
@@ -3311,7 +3311,7 @@ impl VirtualMachine {
         self.has_loaded.set(false);
         self.set_main(entry_path);
         self.main_resolved_path.set(bun_core::String::EMPTY);
-        self.overridden_main.set(Default::default());
+        self.overridden_main.clear();
 
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
@@ -4212,15 +4212,15 @@ impl VirtualMachine {
     /// The promise of the latest load of the entry point. `--hot` looks at it on every tick,
     /// long after it has settled and the module loader has let go of it.
     pub fn pending_internal_promise(&self) -> Option<*mut JSInternalPromise> {
-        Some(self.pending_internal_promise.get().get()?.to_cell()?.cast())
+        Some(self.pending_internal_promise.get()?.to_cell()?.cast())
     }
 
     pub fn set_pending_internal_promise(&self, promise: Option<*mut JSInternalPromise>) {
-        self.pending_internal_promise
-            .with_mut(|slot| match promise {
-                Some(promise) => slot.set(self.global(), JSValue::from_cell(promise)),
-                None => slot.clear_without_deallocation(),
-            })
+        let slot = &self.pending_internal_promise;
+        match promise {
+            Some(promise) => slot.set(self.global(), JSValue::from_cell(promise)),
+            None => slot.clear_without_deallocation(),
+        }
     }
 
     /// After a hot reload, surfaces the entry-point promise's rejection (if any) and re-arms the watcher.
@@ -5251,11 +5251,11 @@ impl VirtualMachine {
             drop((*this).ref_strings.take());
             drop((*this).sampling_profiler_directory.take());
 
-            drop((*this).overridden_main.take());
-            drop((*this).bake_config_plugins.take());
+            (*this).overridden_main.clear();
+            (*this).bake_config_plugins.clear();
             drop((*this).bake_config_plugin_names.take());
-            drop((*this).bake_framework.take());
-            drop((*this).pending_internal_promise.take());
+            (*this).bake_framework.clear();
+            (*this).pending_internal_promise.clear();
             drop((*this).pending_reloads.take());
 
             if let Some(hooks) = runtime_hooks() {
@@ -5340,7 +5340,7 @@ impl VirtualMachine {
         );
         self.set_main(Some(entry_path));
         self.main_resolved_path.set(bun_core::String::EMPTY);
-        self.overridden_main.set(Default::default());
+        self.overridden_main.clear();
         if self.test_isolation_state.shares_global.get() {
             Bun__Process__resetArgv(self.global());
         }
@@ -5595,7 +5595,7 @@ impl VirtualMachine {
             // global makes the next file's call a no-op and dispatches
             // node:quic events into the dead realm.
             if !shares_global {
-                rare.node_quic_callbacks.set(Default::default());
+                rare.node_quic_callbacks.clear();
             }
         }
         let _ = self.event_loop().drain_microtasks();
@@ -5645,8 +5645,8 @@ impl VirtualMachine {
             (hooks.cancel_timers)(self, None);
         }
 
-        self.overridden_main.set(Default::default());
-        self.entry_point_result.value.set(Default::default());
+        self.overridden_main.clear();
+        self.entry_point_result.value.clear();
         self.entry_point_result.cjs_set_value.set(false);
         self.entry_point_result.evaluated_as_cjs.set(false);
         self.set_pending_internal_promise(None);

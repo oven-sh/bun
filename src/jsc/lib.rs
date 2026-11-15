@@ -345,7 +345,7 @@ impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
 pub use self::counters::Counters;
 pub use self::decoded_js_value::DecodedJSValue;
 pub use self::js_array::JSArray;
-pub use self::js_ref::{JsCellRefExt, JsRef};
+pub use self::js_ref::JsRef;
 pub use self::string_builder::StringBuilder;
 pub use self::uuid::{UUID, UUID5, UUID7};
 

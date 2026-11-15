@@ -16,10 +16,9 @@ pub(crate) fn set_config_plugins<'a>(
     let vm = global.bun_vm();
     // With none, the server sets up no plugins, unless bunfig.toml has some.
     if names.is_empty() {
-        vm.bake_config_plugins.set(Default::default());
+        vm.bake_config_plugins.clear();
     } else {
-        vm.bake_config_plugins
-            .with_mut(|strong| strong.set(global, plugins.to_js()));
+        vm.bake_config_plugins.set(global, plugins.to_js());
     }
     vm.bake_config_plugin_names
         .set(names.into_iter().map(|name| Box::from(&*name)).collect());
@@ -76,10 +75,9 @@ pub(crate) fn set_pages<'a>(cx: &mut JsScope<'a>, framework: JsLocal<'a>) {
     let framework = framework.to_js();
     let vm = global.bun_vm();
     if framework.is_undefined_or_null() {
-        vm.bake_framework.set(Default::default());
+        vm.bake_framework.clear();
     } else {
-        vm.bake_framework
-            .with_mut(|strong| strong.set(global, framework));
+        vm.bake_framework.set(global, framework);
     }
     vm.bake_pages.set(true);
 }

@@ -624,9 +624,10 @@ it.skipIf(!isPosix)("close() in a worker's exit listener leaves the sink to the 
 });
 
 // A "beforeExit" listener is not inside the event loop, so the reaction runs before the write() that settles it returns.
+// Linux only: `page` has to reach the writer's CHUNK_SIZE, which is 16 KiB on Apple Silicon.
 it.concurrent.skipIf(!isLinux).each([
   ["bytes", `Buffer.from("x")`, 1],
-  ["a latin1 string", `"x"`, 1],
+  ["a latin1 string", `"\\xe9"`, 2],
   ["a UTF-16 string", `"\\u{1F600}"`, 4],
 ])("a write() of %s survives a close() by the reaction to an earlier write()", async (_, chunk, length) => {
   using dir = tempDir("filesink-close-inside-write", {});
@@ -743,11 +744,7 @@ it("writing after end() fails during flush does not crash", async () => {
   await 1;
 });
 
-// On Windows the libuv write completion path re-enters JS (promise resolution)
-// while a `&mut WindowsStreamingWriter` is live, so without raw-ptr laundering
-// LLVM `noalias` lets release builds cache stale `is_done`/`parent` and
-// over-deref the FileSink. Spawn a subprocess so a crash there is observable
-// here as a non-zero exit code.
+// On Windows a write completion runs JS that can end the sink. A subprocess makes a crash a non-zero exit code.
 it("Bun.file(fd).writer() write/end under GC pressure does not crash", async () => {
   const dir = tmpdirSync();
   await using proc = Bun.spawn({

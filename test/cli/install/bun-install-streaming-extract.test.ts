@@ -149,7 +149,7 @@ function makeEntries(): Entry[] {
 
 // -------------------------------------------------------------------
 // Drip-feed registry. The tarball body is written in small slices with
-// a microtask yield between each so `NetworkTask.notify` is called
+// a microtask yield between each so `NetworkTask::on_progress` is called
 // repeatedly with `has_more=true`, which is what commits the request
 // to the streaming extractor.
 //
@@ -509,7 +509,7 @@ describe("streaming tarball extraction", () => {
 
   test("tarballs below BUN_INSTALL_STREAMING_MIN_SIZE take the buffered path", async () => {
     // Reuse the same large tarball but raise the threshold above it.
-    // The server sends Content-Length, so `notify()` sees a body_size
+    // The server sends Content-Length, so `on_progress()` sees a body_size
     // below the minimum and never commits to streaming even though
     // the body arrives over many packets.
     await using reg = await makeRegistry(tgz, shasum, integrity, chunkBytes);

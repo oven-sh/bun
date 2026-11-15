@@ -972,18 +972,13 @@ pub(crate) fn edit(
     let update_to_latest = manager.subcommand == Subcommand::Update
         && manager.options.do_.contains(Do::UPDATE_TO_LATEST);
     if update_to_latest && options.before_install {
-        if let Some(request) = updates.iter().find(|request| {
-            !request
-                .version
-                .literal
-                .slice(request.version_buf())
-                .is_empty()
-        }) {
+        if let Some(request) = updates
+            .iter()
+            .find(|request| !request.input_literal().is_empty())
+        {
             Output::err_generic(
                 "--latest cannot be combined with a version: {}\n",
-                (bun_core::fmt::for_terminal(bstr::BStr::new(
-                    request.version_buf(),
-                )),),
+                (bun_core::fmt::for_terminal(bstr::BStr::new(request.input)),),
             );
             Global::crash();
         }
@@ -1025,12 +1020,18 @@ pub(crate) fn edit(
                 // `"<spec>": "<spec>"` has a name now, which the file may declare already.
                 let resolved_name = if fold_positionals
                     && !request.is_aliased
-                    && string_entry(current_package_json, dependency_list, request.get_name())
-                        .is_some()
+                    && string_entry(
+                        current_package_json,
+                        dependency_list,
+                        request.get_name(&manager.lockfile),
+                    )
+                    .is_some()
                 {
                     request
                         .get_name_in_lockfile(&manager.lockfile)
-                        .filter(|name| !name.is_empty() && *name != request.get_name())
+                        .filter(|name| {
+                            !name.is_empty() && *name != request.get_name(&manager.lockfile)
+                        })
                         .map(|name| arena_dup(arena, name))
                 } else {
                     None
@@ -1066,7 +1067,11 @@ pub(crate) fn edit(
                         }
                     }
                     if let Some(slot) = slot {
-                        remove_entry(current_package_json, dependency_list, request.get_name());
+                        remove_entry(
+                            current_package_json,
+                            dependency_list,
+                            request.get_name(&manager.lockfile),
+                        );
                         request.e_string = Some(slot);
                         remaining -= 1;
                         changed = true;
@@ -1078,7 +1083,7 @@ pub(crate) fn edit(
                 'dependency_group: for list in lists.map(|g| g.prop) {
                     if let Some(query) = current_package_json.as_property(list) {
                         if matches!(query.expr.data, bun_ast::ExprData::EObject(_)) {
-                            let name = request.get_name();
+                            let name = request.get_name(&manager.lockfile);
 
                             if let Some(value) = query.expr.as_property(name) {
                                 if matches!(value.expr.data, bun_ast::ExprData::EString(_)) {
@@ -1201,10 +1206,7 @@ pub(crate) fn edit(
                                         .slice()
                                     {
                                         if let Some(v) = &item.value {
-                                            let url = request
-                                                .version
-                                                .literal
-                                                .slice(request.version_buf());
+                                            let url = request.version_literal(&manager.lockfile);
                                             if let bun_ast::ExprData::EString(s) = &v.data {
                                                 if s.eql_bytes(url) {
                                                     request.e_string = Some(
@@ -1267,7 +1269,7 @@ pub(crate) fn edit(
             let mut k: usize = 0;
             while k < new_dependencies.len() {
                 if let Some(key) = &new_dependencies[k].key {
-                    let name = request.get_name();
+                    let name = request.get_name(&manager.lockfile);
                     if !key
                         .data
                         .e_string()
@@ -1443,7 +1445,7 @@ pub(crate) fn edit(
                 let existing: Option<&[u8]> = (manager.subcommand == Subcommand::Update
                     && !e_string.is_blank())
                 .then(|| e_string.data.slice());
-                let requested: &[u8] = request.version.literal.slice(request.version_buf());
+                let requested: &[u8] = request.version_literal(&manager.lockfile);
                 // A bare `bun update <name>` parses as an empty dist-tag; `<name>@<tag>` is an explicit request.
                 let explicit_dist_tag =
                     request.version.tag() == dependency::Tag::DistTag && !requested.is_empty();
@@ -1470,7 +1472,7 @@ pub(crate) fn edit(
             }
             let new_literal: &[u8] = match resolutions[request.package_id as usize].tag {
                 resolution::Tag::Npm => 'npm: {
-                    let installed = request.version.literal.slice(request.version_buf());
+                    let installed = request.version_literal(&manager.lockfile);
                     let resolved = resolutions[request.package_id as usize].npm().version;
                     let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
                     // `bun update <name>` keeps a dist-tag literal as written unless --latest, like the bare path.
@@ -1556,7 +1558,7 @@ pub(crate) fn edit(
                     _ if split_npm_alias(e_string.data.slice()).is_some() => e_string.data.slice(),
                     _ => b"workspace:*",
                 },
-                _ => arena_dup(arena, request.version.literal.slice(request.version_buf())),
+                _ => arena_dup(arena, request.version_literal(&manager.lockfile)),
             };
             if e_string.data.slice() != new_literal {
                 changed = true;

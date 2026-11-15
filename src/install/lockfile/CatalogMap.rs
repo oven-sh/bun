@@ -1,6 +1,7 @@
 use core::cmp::Ordering;
 
 use crate::bun_json::{E, Expr, ExprData, JsonView, value_loc_of_property};
+use crate::package_manager_real::NpmAliasMap;
 use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_ast::{Log, Source};
@@ -12,7 +13,7 @@ use bun_install::dependency::{
     Version as DependencyVersion,
 };
 use bun_install::lockfile::{Buffers, StringBuilder};
-use bun_install::{Behavior, Dependency, Lockfile, PackageManager, PackageNameHash};
+use bun_install::{Behavior, Dependency, Lockfile, PackageNameHash};
 use bun_semver::SlicedString;
 use bun_semver::String;
 use bun_semver::string::{ArrayHashContext, Buf as StringBuf, Builder as StringBuilderNs};
@@ -278,7 +279,7 @@ impl CatalogMap {
 
     pub(crate) fn parse_append(
         &mut self,
-        pm: &mut PackageManager,
+        aliases: &mut NpmAliasMap,
         log: &Log,
         source: &Source,
         expr: JsonView<'_>,
@@ -288,7 +289,7 @@ impl CatalogMap {
         if let Some(default_catalog) = expr.get(b"catalog") {
             let group = self.get_or_put_group(builder.string_bytes.as_slice(), String::EMPTY)?;
             found_any = true;
-            Self::parse_append_group(group, pm, log, source, default_catalog, builder)?;
+            Self::parse_append_group(group, aliases, log, source, default_catalog, builder)?;
         }
 
         if let Some(catalogs) = expr.get(b"catalogs") {
@@ -296,7 +297,7 @@ impl CatalogMap {
             catalogs.try_for_each_property(|catalog_name_str, _, catalog_value| {
                 let catalog_name = builder.append::<String>(catalog_name_str);
                 let group = self.get_or_put_group(builder.string_bytes.as_slice(), catalog_name)?;
-                Self::parse_append_group(group, pm, log, source, catalog_value, builder)
+                Self::parse_append_group(group, aliases, log, source, catalog_value, builder)
             })?;
         }
 
@@ -337,7 +338,7 @@ impl CatalogMap {
 
     fn parse_append_group(
         group: &mut Map,
-        pm: &mut PackageManager,
+        aliases: &mut NpmAliasMap,
         log: &Log,
         source: &Source,
         catalog: JsonView<'_>,
@@ -360,7 +361,7 @@ impl CatalogMap {
                 version_sliced.slice,
                 &version_sliced,
                 log,
-                Some(&mut *pm),
+                &mut *aliases,
             ) else {
                 log.add_error(
                     Some(source),

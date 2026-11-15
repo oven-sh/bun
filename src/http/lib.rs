@@ -49,7 +49,7 @@ pub mod thread_safe_stream_buffer;
 pub mod websocket;
 
 // ── crate-root re-exports ──
-pub use async_http::AsyncHTTP;
+pub use async_http::{AsyncHTTP, HTTPClientResultHandler, OwnedRequest};
 pub use certificate_info::CertificateInfo;
 pub use decompressor::Decompressor;
 pub use header_builder::HeaderBuilder;
@@ -150,6 +150,9 @@ pub struct HTTPResponseMetadata {
     status_code: u32,
 }
 
+// SAFETY: `headers` points into `owned_buf`.
+unsafe impl Send for HTTPResponseMetadata {}
+
 impl HTTPResponseMetadata {
     #[inline]
     pub fn status_code(&self) -> u32 {
@@ -214,7 +217,7 @@ pub struct Flags {
     /// `PooledSocket::verification` of the socket this request took from the
     /// pool, so a weaker request re-pooling it doesn't downgrade the record.
     pub(crate) reused_socket_verification: PeerVerification,
-    pub force_last_modified: bool,
+    pub(crate) force_last_modified: bool,
     pub(crate) redirected: bool,
     pub(crate) proxy_tunneling: bool,
     pub reject_unauthorized: bool,
@@ -228,7 +231,7 @@ pub struct Flags {
     pub is_node_http_client: bool,
     pub redirect_credentials: RedirectCredentialsPolicy,
     /// While all connections are taken, this request lets the ones without the flag go first.
-    pub yields_to_other_requests: bool,
+    pub(crate) yields_to_other_requests: bool,
 }
 
 impl Default for Flags {
@@ -731,7 +734,7 @@ impl ProxySettings {
 // Many of these fields can be moved to a packed struct and use less space
 //
 // Lifetime `'a` ties every borrowed input — `url`, `http_proxy`, `header_buf`,
-// `if_modified_since`, `unix_socket_path`, `progress`, and the borrowed
+// `unix_socket_path`, `progress`, and the borrowed
 // `HTTPRequestBody::Bytes` payload — to the caller's storage. The original port erased these to `'static`
 // and lifetime-erased at every call site; threading the lifetime removes that hazard.
 // Intrusive raw-pointer backrefs (socket ext, h2/h3 streams) store the
@@ -774,8 +777,8 @@ pub struct HTTPClient<'a> {
     pub(crate) custom_ssl_ctx: Option<RefPtr<HttpsContext>>,
 
     /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
-    /// This is a workaround for that.
-    pub if_modified_since: &'a [u8],
+    /// This is a workaround for that. Points into `header_buf`.
+    pub(crate) if_modified_since: StringPointer,
     /// The `Content-Length` header that `build_request` returns points into this.
     pub(crate) request_content_len_buf: [u8; b"18446744073709551615".len()],
 
@@ -2387,8 +2390,8 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"if-modified-since") => {
-                    if self.flags.force_last_modified && self.if_modified_since.is_empty() {
-                        self.if_modified_since = self.header_str(header_values[i]);
+                    if self.flags.force_last_modified && self.if_modified_since.length == 0 {
+                        self.if_modified_since = header_values[i];
                     }
                 }
                 h if h == hash_header_const(HOST_HEADER_NAME) => {
@@ -2611,27 +2614,27 @@ impl<'a> HTTPClient<'a> {
     /// this, a redirect into a `no_proxy`-exempt host would still be sent via
     /// the proxy, and a redirect out of one would bypass it.
     fn reevaluate_proxy_for_redirect(&mut self) {
+        if self.select_proxy() {
+            self.proxy_authorization =
+                (self.http_proxy.as_ref()).and_then(async_http::basic_authorization);
+        }
+    }
+
+    /// Sets `http_proxy` to what `proxy_settings` has for `url`. False if that changes nothing.
+    pub(crate) fn select_proxy(&mut self) -> bool {
         let Some(settings) = self.proxy_settings.as_deref() else {
-            return;
+            return false;
         };
         let new_href = settings.resolve(&self.url);
         let current = self.http_proxy.as_ref().map(|p| p.href).unwrap_or(b"");
         if new_href.unwrap_or(b"") == current {
-            return;
+            return false;
         }
-        match new_href {
-            None => {
-                self.http_proxy = None;
-                self.proxy_authorization = None;
-            }
-            Some(href) => {
-                // SAFETY: self-borrow. `href` points into `self.proxy_settings`'s
-                // boxed storage, which lives as long as `self` (>= `'a`).
-                let proxy: URL<'a> = unsafe { URL::parse_single_reader(href).erase_lifetime() };
-                self.proxy_authorization = async_http::basic_authorization(&proxy);
-                self.http_proxy = Some(proxy);
-            }
-        }
+        // SAFETY: self-borrow. `href` points into `self.proxy_settings`'s
+        // boxed storage, which lives as long as `self` (>= `'a`).
+        self.http_proxy =
+            new_href.map(|href| unsafe { URL::parse_single_reader(href).erase_lifetime() });
+        true
     }
 
     /// **Not thread safe while request is in-flight**
@@ -4871,8 +4874,8 @@ impl<'a> HTTPClient<'a> {
                     pretend_304 = self.flags.force_last_modified
                         && response.status_code > 199
                         && response.status_code < 300
-                        && !self.if_modified_since.is_empty()
-                        && self.if_modified_since == header.value();
+                        && self.if_modified_since.length > 0
+                        && self.header_str(self.if_modified_since) == header.value();
                 }
                 h if h == hash_header_const(b"Alt-Svc") => {
                     // Record regardless of *this* request's shape — a future

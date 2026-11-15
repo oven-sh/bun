@@ -18,7 +18,7 @@ use bun_sys::FdDirExt;
 use bun_sys::{self as sys, Dir, Fd, File};
 
 use super::options::{self, Enable, LogLevel};
-use super::{Command, PackageManager, ProgressStrings, Subcommand};
+use super::{Command, InstallFields, Options, PackageManager, ProgressStrings, Subcommand};
 
 // ───────────────────────────── method wrappers ───────────────────────────────
 // Thin `&mut self` shims so call sites can use method-style spelling
@@ -27,15 +27,14 @@ use super::{Command, PackageManager, ProgressStrings, Subcommand};
 
 impl PackageManager {
     #[inline]
-    pub(crate) fn get_cache_directory(&mut self) -> &'static CacheDirectory {
-        get_cache_directory(self)
+    pub fn get_cache_directory(&mut self) -> &'static CacheDirectory {
+        get_cache_directory(&self.install_fields())
     }
 
     /// Snapshot the four `PackageManager` scalars
     /// `PackageManifestMap::by_name_hash_allow_expired`'s disk-fallback path
     /// reads. Captured by value so the loop body can hold `&mut self.manifests`
-    /// alongside `&self.lockfile` / `&self.options` without aliasing the whole
-    /// `&mut self` (which would be Stacked-Borrows UB).
+    /// alongside `&self.lockfile` / `&self.options`.
     ///
     /// The cache directory is opened lazily here only when
     /// `options.enable.manifest_cache` is set (the only branch that reads it).
@@ -45,7 +44,7 @@ impl PackageManager {
         crate::package_manifest_map::DiskCacheCtx {
             enable_manifest_cache,
             enable_manifest_cache_control: self.options.enable.manifest_cache_control(),
-            cache_directory: enable_manifest_cache.then(|| get_cache_directory(self).handle.fd()),
+            cache_directory: enable_manifest_cache.then(|| self.get_cache_directory().handle.fd()),
             timestamp_for_manifest_cache_control: self.timestamp_for_manifest_cache_control,
             accept_expired: self.options.offline != super::options::OfflineMode::Online,
         }
@@ -53,7 +52,7 @@ impl PackageManager {
 
     #[inline]
     pub(crate) fn get_temporary_directory(&mut self) -> &'static TemporaryDirectory {
-        get_temporary_directory(self)
+        get_temporary_directory(&self.install_fields())
     }
 
     /// `None` means that the manifest is used without being saved.
@@ -63,9 +62,11 @@ impl PackageManager {
         if !self.options.enable.manifest_cache() {
             return None;
         }
-        try_get_temporary_directory(self).ok()
+        try_get_temporary_directory(&self.install_fields()).ok()
     }
+}
 
+impl InstallFields<'_> {
     /// Prints `why` and exits. Auto-install only logs `why`, and the import that needed the
     /// directory then throws it.
     pub(crate) fn exit_or_log(&mut self, why: &DirectoryError) {
@@ -73,8 +74,7 @@ impl PackageManager {
             Output::err_generic("{}", (why,));
             Global::exit(1);
         }
-        self.log()
-            .add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("{why}"));
+        (self.state.log()).add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("{why}"));
     }
 }
 
@@ -115,7 +115,7 @@ pub enum DirectoryError {
         "{}: failed to open global link dir node_modules at '{global_dir}'",
         bun_fmt::s(.err.name())
     )]
-    OpenGlobalLink { global_dir: Fd, err: sys::Error },
+    OpenGlobalLink { global_dir: String, err: sys::Error },
     #[error("{}: failed to get full path of global directory", bun_fmt::s(.0.name()))]
     GlobalLinkPath(sys::Error),
 }
@@ -130,7 +130,7 @@ pub struct CacheDirectory {
 static CACHE_DIRECTORY: std::sync::OnceLock<CacheDirectory> = std::sync::OnceLock::new();
 
 #[inline]
-pub fn get_cache_directory(this: &mut PackageManager) -> &'static CacheDirectory {
+pub(crate) fn get_cache_directory(this: &InstallFields<'_>) -> &'static CacheDirectory {
     try_get_cache_directory(this).unwrap_or_else(|why| {
         Output::err_generic("{}", (why,));
         Global::crash();
@@ -140,13 +140,13 @@ pub fn get_cache_directory(this: &mut PackageManager) -> &'static CacheDirectory
 /// Like `get_cache_directory`, but returns the error instead of crashing. Auto-install calls this
 /// first, because `get_cache_directory` cannot fail once the directory is open.
 #[inline]
-pub fn try_get_cache_directory(
-    this: &mut PackageManager,
+pub(crate) fn try_get_cache_directory(
+    this: &InstallFields<'_>,
 ) -> Result<&'static CacheDirectory, DirectoryError> {
     if let Some(cache) = CACHE_DIRECTORY.get() {
         return Ok(cache);
     }
-    ensure_cache_directory(this).map_err(DirectoryError::OpenCache)
+    ensure_cache_directory(this.options, this.state.env()).map_err(DirectoryError::OpenCache)
 }
 
 /// Any thread.
@@ -155,7 +155,7 @@ pub(crate) fn cache_directory_if_open() -> Option<&'static CacheDirectory> {
 }
 
 #[inline]
-pub fn get_temporary_directory(this: &mut PackageManager) -> &'static TemporaryDirectory {
+pub(crate) fn get_temporary_directory(this: &InstallFields<'_>) -> &'static TemporaryDirectory {
     try_get_temporary_directory(this).unwrap_or_else(|why| {
         Output::err_generic("{}", (why,));
         Global::crash();
@@ -164,14 +164,13 @@ pub fn get_temporary_directory(this: &mut PackageManager) -> &'static TemporaryD
 
 /// Like `get_temporary_directory`, but returns the error instead of crashing. A failure is not
 /// cached, so the next call tries again.
-pub fn try_get_temporary_directory(
-    this: &mut PackageManager,
+pub(crate) fn try_get_temporary_directory(
+    this: &InstallFields<'_>,
 ) -> Result<&'static TemporaryDirectory, DirectoryError> {
-    // Split get/set so the closure doesn't need to capture `this`.
     if let Some(td) = GET_TEMPORARY_DIRECTORY_ONCE.get() {
         return Ok(td);
     }
-    let td = get_temporary_directory_run(this)?;
+    let td = get_temporary_directory_run(try_get_cache_directory(this)?, this.options.log_level)?;
     let _ = GET_TEMPORARY_DIRECTORY_ONCE.set(td);
     Ok(GET_TEMPORARY_DIRECTORY_ONCE.get().expect("just set"))
 }
@@ -194,9 +193,9 @@ static GET_TEMPORARY_DIRECTORY_ONCE: std::sync::OnceLock<TemporaryDirectory> =
     std::sync::OnceLock::new();
 
 fn get_temporary_directory_run(
-    manager: &mut PackageManager,
+    cache: &'static CacheDirectory,
+    log_level: LogLevel,
 ) -> Result<TemporaryDirectory, DirectoryError> {
-    let cache = try_get_cache_directory(manager)?;
     let cache_directory = &cache.handle;
     // The chosen tempdir must be on the same filesystem as the cache directory
     // This makes renameat() work
@@ -223,7 +222,7 @@ fn get_temporary_directory_run(
     let tmpname =
         FileSystem::tmpname(b"hm", &mut tmpbuf, bun_core::fast_random()).expect("unreachable");
 
-    let mut timer = if manager.options.log_level != LogLevel::Silent
+    let mut timer = if log_level != LogLevel::Silent
         && !bun_core::env_var::feature_flag::BUN_DISABLE_SLOW_FILESYSTEM_WARNING
             .get()
             .unwrap_or(false)
@@ -352,17 +351,17 @@ fn get_temporary_directory_run(
 
 #[cold]
 #[inline(never)]
-fn ensure_cache_directory(this: &mut PackageManager) -> sys::Maybe<&'static CacheDirectory> {
-    if this.options.enable.contains(Enable::CACHE) {
-        let configured = this.options.cache_directory;
-        if let Ok(CacheDir { path, .. }) =
-            fetch_cache_directory_path(this.env_mut(), Some(configured))
-            && let Ok(handle) = Dir::cwd().make_open_path(&path, Default::default())
-        {
-            let path = ZBox::from_vec(path);
-            return Ok(CACHE_DIRECTORY.get_or_init(|| CacheDirectory { handle, path }));
-        }
-        this.options.enable.set(Enable::CACHE, false);
+fn ensure_cache_directory(
+    options: &Options,
+    env: &DotEnvLoader,
+) -> sys::Maybe<&'static CacheDirectory> {
+    if options.enable.contains(Enable::CACHE)
+        && let Ok(CacheDir { path, .. }) =
+            fetch_cache_directory_path(env, Some(options.cache_directory))
+        && let Ok(handle) = Dir::cwd().make_open_path(&path, Default::default())
+    {
+        let path = ZBox::from_vec(path);
+        return Ok(CACHE_DIRECTORY.get_or_init(|| CacheDirectory { handle, path }));
     }
 
     let handle = Dir::cwd().make_open_path(b"node_modules/.cache", Default::default())?;
@@ -382,7 +381,7 @@ pub struct CacheDir {
 
 /// An empty variable counts as unset, because `abs(&[b""])` would be the project directory.
 pub fn fetch_cache_directory_path(
-    env: &mut DotEnvLoader,
+    env: &DotEnvLoader,
     configured: Option<&[u8]>,
 ) -> sys::Maybe<CacheDir> {
     const CWD_FALLBACK: &[u8] = b"node_modules/.bun-cache";
@@ -576,26 +575,26 @@ pub fn cached_git_folder_name_print<'a>(
 }
 
 pub fn cached_git_folder_name<'a>(
-    this: &PackageManager,
+    lockfile: &Lockfile,
     buf: &'a mut [u8],
     repository: &Repository,
     patch_hash: Option<u64>,
 ) -> &'a ZStr {
-    cached_git_folder_name_print(buf, this.lockfile.str(&repository.resolved), patch_hash)
+    cached_git_folder_name_print(buf, lockfile.str(&repository.resolved), patch_hash)
 }
 
 pub fn cached_git_folder_name_print_auto<'a>(
-    this: &PackageManager,
+    lockfile: &Lockfile,
     buf: &'a mut [u8],
     repository: &Repository,
     patch_hash: Option<u64>,
 ) -> &'a ZStr {
     if !repository.resolved.is_empty() {
-        return cached_git_folder_name(this, buf, repository, patch_hash);
+        return cached_git_folder_name(lockfile, buf, repository, patch_hash);
     }
 
     if !repository.repo.is_empty() && !repository.committish.is_empty() {
-        let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
         let mut w = ByteCursor::new(buf);
         w.put(b"@G@");
         w.put(repository.committish.slice(string_buf));
@@ -621,22 +620,22 @@ pub fn cached_github_folder_name_print<'a>(
 }
 
 pub fn cached_github_folder_name<'a>(
-    this: &PackageManager,
+    lockfile: &Lockfile,
     buf: &'a mut [u8],
     repository: &Repository,
     patch_hash: Option<u64>,
 ) -> &'a ZStr {
-    cached_github_folder_name_print(buf, this.lockfile.str(&repository.resolved), patch_hash)
+    cached_github_folder_name_print(buf, lockfile.str(&repository.resolved), patch_hash)
 }
 
 pub fn cached_github_folder_name_print_auto<'a>(
-    this: &PackageManager,
+    lockfile: &Lockfile,
     buf: &'a mut [u8],
     repository: &Repository,
     patch_hash: Option<u64>,
 ) -> &'a ZStr {
     if !repository.resolved.is_empty() {
-        return cached_github_folder_name(this, buf, repository, patch_hash);
+        return cached_github_folder_name(lockfile, buf, repository, patch_hash);
     }
 
     if !repository.owner.is_empty()
@@ -645,7 +644,7 @@ pub fn cached_github_folder_name_print_auto<'a>(
     {
         return cached_github_folder_name_print_guess(
             buf,
-            this.lockfile.buffers.string_bytes.as_slice(),
+            lockfile.buffers.string_bytes.as_slice(),
             repository,
             patch_hash,
         );
@@ -655,20 +654,19 @@ pub fn cached_github_folder_name_print_auto<'a>(
 }
 
 pub fn cached_npm_package_folder_name<'a>(
-    this: &PackageManager,
+    options: &Options,
     buf: &'a mut [u8],
     name: &[u8],
     version: Semver::Version,
     patch_hash: Option<u64>,
 ) -> &'a ZStr {
-    let registry = folder_cache_key(this, this.scope_for_package_name(name));
+    let registry = folder_cache_key(options, options.scope_for_package_name(name));
     cached_npm_package_folder_name_print(buf, name, version, registry, patch_hash)
 }
 
 /// `None` for the default registry.
-pub(crate) fn folder_cache_key(this: &PackageManager, scope: &Scope) -> Option<FolderCacheKey> {
-    (!scope.name.is_empty() || this.options.did_override_default_scope)
-        .then_some(scope.folder_cache_key)
+pub(crate) fn folder_cache_key(options: &Options, scope: &Scope) -> Option<FolderCacheKey> {
+    (!scope.name.is_empty() || options.did_override_default_scope).then_some(scope.folder_cache_key)
 }
 
 // TODO: normalize to alphanumeric
@@ -806,25 +804,21 @@ pub fn cached_tarball_folder_name_print<'a>(
     w.finish_z()
 }
 
-/// Returns an empty name, which callers treat as a cache miss, for a dependency that only gets its
-/// integrity during this run.
-pub fn cached_tarball_folder_name<'a>(
-    this: &PackageManager,
+pub(crate) fn cached_tarball_folder_name<'a>(
+    options: &Options,
+    lockfile: &Lockfile,
     buf: &'a mut [u8],
     integrity: &Integrity,
     resolution: &Resolution,
     patch_hash: Option<u64>,
 ) -> &'a ZStr {
-    if !integrity.tag.is_supported() && this.pins_tarballs() {
-        return ZStr::EMPTY;
-    }
     let url = match resolution.tag {
         ResolutionTag::LocalTarball => resolution.local_tarball(),
         _ => resolution.remote_tarball(),
     };
-    let (tag, url) = (resolution.tag, this.lockfile.str(url));
+    let (tag, url) = (resolution.tag, lockfile.str(url));
     // Verified bytes are good for every install, so `--no-verify` prefers them. A patched entry is made from its base.
-    let skips_verify = this.skips_verify(tag)
+    let skips_verify = options.skips_verify(tag)
         && !cache_directory_if_open().is_some_and(|cache| {
             let base = cached_tarball_folder_name_print(buf, integrity, false, tag, url, None);
             is_package_in_cache_at(cache.handle.fd(), base, tag)
@@ -832,19 +826,46 @@ pub fn cached_tarball_folder_name<'a>(
     cached_tarball_folder_name_print(buf, integrity, skips_verify, tag, url, patch_hash)
 }
 
-impl PackageManager {
-    /// Returns true if what this run reads from a `file:` path or URL can become the integrity in
-    /// bun.lock.
+/// Returns true if what this run reads from a `file:` path or URL can become the integrity in
+/// bun.lock.
+fn pins_tarballs(do_: options::Do, options: &Options) -> bool {
+    do_.save_lockfile() && options.offline != options::OfflineMode::Offline
+}
+
+impl InstallFields<'_> {
     pub(crate) fn pins_tarballs(&self) -> bool {
-        self.options.do_.save_lockfile() && self.options.offline != options::OfflineMode::Offline
+        pins_tarballs(self.effective_do(), self.options)
     }
 
+    pub(crate) fn waits_for_integrity(&self, integrity: &Integrity) -> bool {
+        !integrity.tag.is_supported() && self.pins_tarballs()
+    }
+
+    /// Returns an empty name, which callers treat as a cache miss, for a dependency that only gets
+    /// its integrity during this run.
+    pub(crate) fn cached_tarball_folder_name<'a>(
+        &self,
+        buf: &'a mut [u8],
+        integrity: &Integrity,
+        resolution: &Resolution,
+        patch_hash: Option<u64>,
+    ) -> &'a ZStr {
+        if self.waits_for_integrity(integrity) {
+            return ZStr::EMPTY;
+        }
+        let (options, lockfile) = (self.options, self.lockfile);
+        cached_tarball_folder_name(options, lockfile, buf, integrity, resolution, patch_hash)
+    }
+}
+
+impl Options {
     /// `--no-verify` skips the hash check of a download, never of a `file:` tarball.
     pub(crate) fn skips_verify(&self, tag: ResolutionTag) -> bool {
-        tag != ResolutionTag::LocalTarball
-            && !self.options.do_.contains(options::Do::VERIFY_INTEGRITY)
+        tag != ResolutionTag::LocalTarball && !self.do_.contains(options::Do::VERIFY_INTEGRITY)
     }
+}
 
+impl PackageManager {
     /// `named_here` means the names on the command line refer to the package.json that `dependency`
     /// is in.
     pub(crate) fn repins_tarball(
@@ -853,7 +874,7 @@ impl PackageManager {
         string_buf: &[u8],
         named_here: bool,
     ) -> bool {
-        self.pins_tarballs()
+        pins_tarballs(self.effective_do(), &self.options)
             && (self.options.enable.force_install()
                 || if self.update_requests.is_empty() {
                     self.to_update
@@ -877,7 +898,7 @@ impl PackageManager {
     }
 }
 
-pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
+pub(crate) fn is_folder_in_cache(this: &InstallFields<'_>, folder_path: &ZStr) -> bool {
     sys::directory_exists_at(get_cache_directory(this).handle.fd(), folder_path).unwrap_or(false)
 }
 
@@ -903,7 +924,7 @@ pub fn is_package_in_cache(
     folder_path: &ZStr,
     tag: ResolutionTag,
 ) -> bool {
-    is_package_in_cache_at(get_cache_directory(this).handle.fd(), folder_path, tag)
+    is_package_in_cache_at(this.get_cache_directory().handle.fd(), folder_path, tag)
 }
 
 // ─────────────────────────── global directories ───────────────────────────────
@@ -925,53 +946,51 @@ pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) ->
     Ok(())
 }
 
-/// Returns a borrowed view (`Fd`) of the lazily-opened global link directory.
-/// The descriptor is owned by `PackageManager::global_link_dir` (closed only if
-/// the singleton is ever dropped). Callers must not close the returned `Fd`;
-/// use `Dir::borrow(&fd)` to call `&self` `Dir` methods on it.
-pub fn global_link_dir(this: &mut PackageManager) -> Fd {
-    try_global_link_dir(this).unwrap_or_else(|why| {
+pub struct GlobalLinkDirectory {
+    pub(crate) handle: Dir,
+    pub path: &'static [u8],
+}
+
+static GLOBAL_LINK_DIRECTORY: std::sync::OnceLock<GlobalLinkDirectory> = std::sync::OnceLock::new();
+
+pub fn global_link_dir(options: &Options) -> &'static GlobalLinkDirectory {
+    try_global_link_dir(options).unwrap_or_else(|why| {
         Output::err_generic("{}", (why,));
         Global::exit(1);
     })
 }
 
 /// Like `global_link_dir`, but returns the error instead of exiting.
-pub fn try_global_link_dir(this: &mut PackageManager) -> Result<Fd, DirectoryError> {
-    if let Some(d) = this.global_link_dir.as_ref() {
-        return Ok(d.fd());
+pub(crate) fn try_global_link_dir(
+    options: &Options,
+) -> Result<&'static GlobalLinkDirectory, DirectoryError> {
+    if let Some(dir) = GLOBAL_LINK_DIRECTORY.get() {
+        return Ok(dir);
     }
 
-    let global_dir = match options::open_global_dir(this.options.explicit_global_directory) {
+    let global_dir = match options::open_global_dir(options.explicit_global_directory) {
         Ok(d) => Dir::from_fd(d),
         Err(crate::Error::NoGlobalDirectoryFound) => return Err(DirectoryError::NoGlobal),
         Err(err) => return Err(DirectoryError::OpenGlobal(err)),
     };
-    let link_dir = match global_dir.make_open_path(b"node_modules", Default::default()) {
+    let handle = match global_dir.make_open_path(b"node_modules", Default::default()) {
         Ok(d) => d,
         Err(err) => {
-            // The error message prints this descriptor, and a debug build looks up its path, so
-            // the directory has to stay open.
-            let global_dir = this.global_dir.insert(global_dir).fd();
+            let global_dir = global_dir.fd().to_string();
             return Err(DirectoryError::OpenGlobalLink { global_dir, err });
         }
     };
-    let link_fd = link_dir.fd();
     let mut buf = bun_paths::path_buffer_pool::get();
-    let path_ = match sys::get_fd_path(link_fd, &mut buf) {
-        Ok(p) => p,
+    let path = match sys::get_fd_path(handle.fd(), &mut buf) {
+        Ok(p) => bun_core::handle_oom(FileSystem::get().dirname_store().append(p)),
         Err(err) => return Err(DirectoryError::GlobalLinkPath(err)),
     };
-    this.global_link_dir_path =
-        bun_core::handle_oom(FileSystem::get().dirname_store().append(path_));
-    this.global_dir = Some(global_dir);
-    this.global_link_dir = Some(link_dir);
-    Ok(link_fd)
+    Ok(GLOBAL_LINK_DIRECTORY.get_or_init(|| GlobalLinkDirectory { handle, path }))
 }
 
-pub fn global_link_dir_path(this: &mut PackageManager) -> &'static [u8] {
-    let _ = global_link_dir(this);
-    this.global_link_dir_path
+/// Any thread.
+pub(crate) fn global_link_dir_if_open() -> Option<&'static GlobalLinkDirectory> {
+    GLOBAL_LINK_DIRECTORY.get()
 }
 
 // ────────────────────────── cached path resolution ────────────────────────────
@@ -985,7 +1004,7 @@ pub fn path_for_cached_npm_path<'a>(
 ) -> Result<&'a mut [u8], Error> {
     let mut folder_name_buf = bun_paths::path_buffer_pool::get();
     let folder_name = cached_npm_package_folder_name(
-        this,
+        &this.options,
         &mut folder_name_buf.0[..],
         package_name,
         version,
@@ -1004,7 +1023,7 @@ fn path_for_cached_folder<'a>(
         return Err(Error::FileNotFound);
     }
     let len = path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
-        get_cache_directory(this).path.as_bytes(),
+        this.get_cache_directory().path.as_bytes(),
         &mut buf.0[..],
         &[folder_name.as_bytes()],
     )
@@ -1033,14 +1052,18 @@ pub fn path_for_resolution<'a>(
         ResolutionTag::Github => {
             let mut name_buf = bun_paths::path_buffer_pool::get();
             let folder_name =
-                cached_github_folder_name(this, &mut name_buf, resolution.github(), None);
+                cached_github_folder_name(&this.lockfile, &mut name_buf, resolution.github(), None);
             path_for_cached_folder(this, buf, folder_name, resolution.tag)
         }
         ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
             let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
             let mut name_buf = bun_paths::path_buffer_pool::get();
-            let folder_name =
-                cached_tarball_folder_name(this, &mut name_buf, &integrity, resolution, None);
+            let folder_name = this.install_fields().cached_tarball_folder_name(
+                &mut name_buf,
+                &integrity,
+                resolution,
+                None,
+            );
             path_for_cached_folder(this, buf, folder_name, resolution.tag)
         }
         _ => Ok(&mut buf.0[..0]),
@@ -1055,8 +1078,8 @@ pub struct CacheDirAndSubpath<'a> {
 
 /// this is copy pasted from `installPackageWithNameAndResolution()`
 /// it's not great to do this
-pub fn compute_cache_dir_and_subpath<'a>(
-    manager: &mut PackageManager,
+pub(crate) fn compute_cache_dir_and_subpath<'a>(
+    manager: &InstallFields<'_>,
     pkg_name: &[u8],
     resolution: &Resolution,
     integrity: &Integrity,
@@ -1070,19 +1093,25 @@ pub fn compute_cache_dir_and_subpath<'a>(
     match resolution.tag {
         ResolutionTag::Npm => {
             let version = resolution.npm().version;
-            cache_dir_subpath =
-                cached_npm_package_folder_name(manager, folder_path_buf, name, version, patch_hash);
+            cache_dir_subpath = cached_npm_package_folder_name(
+                manager.options,
+                folder_path_buf,
+                name,
+                version,
+                patch_hash,
+            );
             cache_dir = get_cache_directory(manager).handle.fd();
         }
         ResolutionTag::Git => {
             let git = resolution.git();
-            cache_dir_subpath = cached_git_folder_name(manager, folder_path_buf, git, patch_hash);
+            cache_dir_subpath =
+                cached_git_folder_name(manager.lockfile, folder_path_buf, git, patch_hash);
             cache_dir = get_cache_directory(manager).handle.fd();
         }
         ResolutionTag::Github => {
             let github = resolution.github();
             cache_dir_subpath =
-                cached_github_folder_name(manager, folder_path_buf, github, patch_hash);
+                cached_github_folder_name(manager.lockfile, folder_path_buf, github, patch_hash);
             cache_dir = get_cache_directory(manager).handle.fd();
         }
         ResolutionTag::Folder => {
@@ -1103,8 +1132,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
         ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
             // Open it first, because with `--no-verify` the name depends on what's in the cache.
             cache_dir = get_cache_directory(manager).handle.fd();
-            cache_dir_subpath = cached_tarball_folder_name(
-                manager,
+            cache_dir_subpath = manager.cached_tarball_folder_name(
                 folder_path_buf,
                 integrity,
                 resolution,
@@ -1138,30 +1166,20 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = Fd::cwd();
         }
         ResolutionTag::Symlink => {
-            // borrowck — `global_link_dir_path` below reborrows
-            // `manager` mutably, so copy the symlink target out of the lockfile
-            // string buffer first instead of holding a slice across that call.
-            let folder = resolution
-                .symlink()
-                .slice(manager.lockfile.buffers.string_bytes.as_slice())
-                .to_vec();
+            let folder = manager.lockfile.str(resolution.symlink());
 
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                 cache_dir_subpath = z_static(b".\0");
                 cache_dir = Fd::cwd();
             } else {
                 // A path is relative to the project, a name to the global link dir.
-                let is_path = crate::dependency::is_link_path(&folder);
-                let directory = if is_path {
-                    Fd::cwd()
-                } else {
-                    global_link_dir(manager)
-                };
-                let global_link_dir: &[u8] = if is_path {
-                    b""
-                } else {
-                    global_link_dir_path(manager)
-                };
+                let (directory, global_link_dir): (Fd, &[u8]) =
+                    if crate::dependency::is_link_path(folder) {
+                        (Fd::cwd(), b"")
+                    } else {
+                        let dir = global_link_dir(manager.options);
+                        (dir.handle.fd(), dir.path)
+                    };
                 let ptr = &mut folder_path_buf.0[..];
                 if global_link_dir.len() + 1 + folder.len() < ptr.len() {
                     let mut off = 0usize;
@@ -1171,7 +1189,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
                         ptr[off] = SEP;
                         off += 1;
                     }
-                    ptr[off..off + folder.len()].copy_from_slice(&folder);
+                    ptr[off..off + folder.len()].copy_from_slice(folder);
                     off += folder.len();
                     ptr[off] = 0;
                     let len = off;
@@ -1225,9 +1243,8 @@ pub fn save_lockfile(
     load_result: &LoadResult,
     save_format: LockfileFormat,
     had_any_diffs: bool,
-    // NOTE(dylan-conway): this and `packages_len_before_install` can most likely be deleted
+    // NOTE(dylan-conway): this can most likely be deleted
     // now that git dependnecies don't append to lockfile during installation.
-    lockfile_before_install: &Lockfile,
     packages_len_before_install: usize,
     log_level: LogLevel,
 ) -> Result<bool, AllocError> {
@@ -1283,10 +1300,10 @@ pub fn save_lockfile(
     }
 
     if log_level.show_progress() {
-        this.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        this.progress.start(ProgressStrings::save(), 0);
+        this.state.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
+        this.state.progress.start(ProgressStrings::save(), 0);
 
-        this.progress.refresh();
+        this.state.progress.refresh();
     }
 
     let wrote = this.lockfile.save_to_disk(load_result, &this.options);
@@ -1296,35 +1313,23 @@ pub fn save_lockfile(
         let _ = sys::unlinkat(Fd::cwd(), bun_paths::path_literal!("bun.lockb"));
     }
 
-    if cfg!(debug_assertions) {
-        if !matches!(load_result, LoadResult::NotFound) {
-            if load_result.loaded_from_text_lockfile() {
-                if !Lockfile::eql(
-                    &this.lockfile,
-                    lockfile_before_install,
-                    packages_len_before_install,
-                )? {
-                    Output::panic(format_args!("Lockfile non-deterministic after saving"));
-                }
-            } else {
-                if this
-                    .lockfile
-                    .has_meta_hash_changed(false, packages_len_before_install)
-                    .unwrap_or(false)
-                {
-                    Output::panic(format_args!(
-                        "Lockfile metahash non-deterministic after saving"
-                    ));
-                }
-            }
-        }
+    if cfg!(debug_assertions)
+        && !matches!(load_result, LoadResult::NotFound)
+        && !load_result.loaded_from_text_lockfile()
+        && (this.lockfile)
+            .has_meta_hash_changed(false, packages_len_before_install)
+            .unwrap_or(false)
+    {
+        Output::panic(format_args!(
+            "Lockfile metahash non-deterministic after saving"
+        ));
     }
 
     if log_level.show_progress() {
-        this.progress.end();
-        this.progress.refresh();
-        this.progress.end();
-        this.progress = Default::default();
+        this.state.progress.end();
+        this.state.progress.refresh();
+        this.state.progress.end();
+        this.state.progress = Default::default();
     } else if wrote && log_level != LogLevel::Silent {
         bun_core::pretty_errorln!("Saved lockfile");
         Output::flush();

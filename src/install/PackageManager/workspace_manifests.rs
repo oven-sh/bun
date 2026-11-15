@@ -8,7 +8,9 @@ use bun_semver as Semver;
 use crate::dependency::{
     Behavior, Tag as DependencyTag, Value as DependencyValue, Version as DependencyVersion,
 };
-use crate::lockfile::package::{PackageColumns as _, folder_relative_to_top_level_dir};
+use crate::lockfile::package::{
+    PackageColumns as _, ParseFields, folder_relative_to_top_level_dir,
+};
 use crate::lockfile::{self, DependencySlice, Lockfile, Package};
 use crate::npm::{FindResult, FindVersionResult, MinimumReleaseAgeExcludes, PackageManifest};
 use crate::{
@@ -17,7 +19,9 @@ use crate::{
 };
 
 use super::PackageManager;
-use super::add_remove_with_filter::{WorkspaceTarget, fetch_entry, root_package_json_path};
+use super::add_remove_with_filter::{
+    WorkspaceTarget, fetch_entry, fetch_entry_from, root_package_json_path,
+};
 use super::workspace_package_json_cache::GetJSONOptions;
 use super::workspace_selection::WorkspaceGraph;
 
@@ -53,7 +57,7 @@ impl ScratchManifests {
         let mut resolver: () = ();
         self.root.parse_with_json(
             &mut self.lockfile,
-            manager,
+            &mut ParseFields::new(manager),
             &self.log,
             &root_source,
             bun_ast::JsonView::from(&root_json),
@@ -138,19 +142,16 @@ impl ScratchManifests {
         target: &WorkspaceTarget,
         features: Features,
     ) -> crate::Result<Package> {
-        let (source, json) = {
-            let entry = fetch_entry(manager, target);
-            (bun_ptr::ParentRef::new(&entry.source), entry.root)
-        };
+        let log = manager.log();
+        let entry = fetch_entry_from(&mut manager.workspace_package_json_cache, log, target);
         let mut resolver: () = ();
         let mut pkg = Package::default();
-        // Unlike the root's workspaces walk, a `Features::WORKSPACE` parse never grows the cache, so the entry stays put.
         pkg.parse_with_json(
             &mut self.lockfile,
-            manager,
+            &mut ParseFields::for_package(&manager.options, &mut manager.project),
             &self.log,
-            source.get(),
-            bun_ast::JsonView::from(&json),
+            &entry.source,
+            bun_ast::JsonView::from(&entry.root),
             &mut resolver,
             features,
         )?;

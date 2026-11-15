@@ -380,7 +380,6 @@ pub struct Resolver<'a> {
     /// Stored as a `Copy` enum tag (no self-reference) and resolved on demand
     /// via [`Self::extension_order`] / [`options::BundleOptions::ext_order_slice`].
     pub(crate) extension_order: options::ExtOrder,
-    pub(crate) timer: Timer,
 
     pub care_about_bin_folder: bool,
     pub care_about_scripts: bool,
@@ -483,7 +482,7 @@ impl<'a> Resolver<'a> {
     /// Per-worker constructor — replaces the bundler's prior bitwise
     /// copy-from-`from` for the resolver
     /// portion. Every `Copy` field is copied from `from`; the
-    /// `watcher` is cloned, and the per-worker `caches` and `debug_logs`/`timer` are freshly
+    /// `watcher` is cloned, and the per-worker `caches` and `debug_logs` are freshly
     /// constructed so nothing the parent owns is aliased into the worker.
     ///
     /// `opts` and `log` are supplied by the caller (the worker projects a
@@ -499,7 +498,6 @@ impl<'a> Resolver<'a> {
             opts,
             log: SyncView::new(log),
             extension_order: from.extension_order,
-            timer: Timer::start().unwrap_or_else(|_| panic!("Timer fail")),
             care_about_bin_folder: from.care_about_bin_folder,
             care_about_scripts: from.care_about_scripts,
             care_about_browser_field: from.care_about_browser_field,
@@ -689,7 +687,6 @@ impl<'a> Resolver<'a> {
             mutex: &RESOLVER_MUTEX,
             caches: CacheSet::init(),
             opts,
-            timer: Timer::start().unwrap_or_else(|_| panic!("Timer fail")),
             log: SyncView::new(Some(log)),
             extension_order: options::ExtOrder::DefaultDefault,
             care_about_browser_field,
@@ -1092,6 +1089,23 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion<'r> {
+        let timer =
+            FeatureFlags::TRACING.then(|| Timer::start().unwrap_or_else(|_| panic!("Timer fail")));
+        let result =
+            self.resolve_and_auto_install_inner(source_dir, import_path, kind, global_cache);
+        if let Some(timer) = timer {
+            self.elapsed += timer.read();
+        }
+        result
+    }
+
+    fn resolve_and_auto_install_inner<'r>(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &'r [u8],
+        kind: ast::ImportKind,
+        global_cache: GlobalCache,
+    ) -> ResultUnion<'r> {
         let _tracer = ::bun_perf::trace(::bun_perf::PerfEvent::ModuleResolverResolve);
 
         // Only setting 'current_action' in debug mode because module resolution
@@ -1140,23 +1154,6 @@ impl<'a> Resolver<'a> {
             }
             _ => options::ExtOrder::DefaultDefault,
         };
-
-        if FeatureFlags::TRACING {
-            self.timer.reset();
-        }
-
-        // The tracing-elapsed accumulation
-        // fires on EVERY return path. Capture raw field ptrs (Copy) so the closure
-        // does not hold a `&mut self` borrow across the function body.
-        let elapsed_ptr: *mut u64 = core::ptr::addr_of_mut!(self.elapsed);
-        let timer_ptr: *const Timer = core::ptr::addr_of!(self.timer);
-        scopeguard::defer! {
-            if FeatureFlags::TRACING {
-                // SAFETY: `self` outlives this guard (drops at end of fn body);
-                // `elapsed`/`timer` are not borrowed when the guard fires.
-                unsafe { *elapsed_ptr += (*timer_ptr).read(); }
-            }
-        }
 
         if (self.log()).is_some_and(|log| log.level.get() == bun_ast::Level::Verbose) {
             if self.debug_logs.is_some() {
@@ -1575,7 +1572,6 @@ impl<'a> Resolver<'a> {
             }
         };
 
-        // (tracing `elapsed` accumulation handled by `_elapsed_guard` above on all paths)
         self.extension_order = original_order;
         ret
     }
@@ -5102,33 +5098,18 @@ impl<'a> Resolver<'a> {
         out: &mut MatchResult,
     ) -> MatchStatus {
         // Try the "index" file with extensions
-        // NOTE: index by `0..len` so each iteration takes a fresh short
-        // borrow of `self.opts` that ends before `&mut self` is taken by
-        // `load_index_with_extension` (matches `extra_cjs_extensions` loop below).
-        let n = self.opts.ext_order_slice(extension_order).len();
-        for i in 0..n {
-            // BACKREF: `RawSlice` detaches the `&self.opts` borrow so the loop
-            // body can take `&mut self`. Backing `Box<[u8]>` is owned by
-            // `self.opts` and never mutated while the resolver runs.
-            let ext = bun_ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
-            if self
-                .load_index_with_extension(bufs, dir_info, &ext, out)
-                .is_success()
-            {
-                return MatchStatus::Success;
-            }
-        }
-        // NOTE: index by `0..len` so each iteration takes a fresh short
-        // borrow of `self.opts` that ends before `&mut self` is taken by
-        // `load_index_with_extension` (avoids the forbidden lifetime-extension cast).
-        let n = self.opts.extra_cjs_extensions.len();
-        for i in 0..n {
-            // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
-            // `extra_cjs_extensions` is heap-stable for the resolver's life.
-            let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
-            if self
-                .load_index_with_extension(bufs, dir_info, &ext, out)
-                .is_success()
+        let extensions = self.opts.ext_order_slice(extension_order);
+        for ext in extensions.iter().chain(&self.opts.extra_cjs_extensions) {
+            if Self::load_index_with_extension(
+                &mut self.debug_logs,
+                self.generation,
+                self.store_fd,
+                bufs,
+                dir_info,
+                ext,
+                out,
+            )
+            .is_success()
             {
                 return MatchStatus::Success;
             }
@@ -5138,12 +5119,15 @@ impl<'a> Resolver<'a> {
     }
 
     fn load_index_with_extension(
-        &mut self,
+        debug_logs: &mut Option<DebugLogs>,
+        generation: Generation,
+        store_fd: bool,
         bufs: &mut LookupBufs,
         dir_info: &'static DirInfo::DirInfo,
         ext: &[u8],
         out: &mut MatchResult,
     ) -> MatchStatus {
+        let fs = Fs::FileSystem::get();
         let ext_buf = &mut bufs.extension_path;
 
         if b"index".len() + ext.len() > ext_buf.len() {
@@ -5155,7 +5139,7 @@ impl<'a> Resolver<'a> {
 
         // The fd gate matches `DirInfo::get_file_descriptor`.
         let looked_up = dir_info
-            .get_entries(&mut self.rfs_ref().entries.lock(), self.generation)
+            .get_entries(&mut fs.fs.entries.lock(), generation)
             .map(|entries| {
                 (
                     entries.get(&base[..]),
@@ -5167,16 +5151,12 @@ impl<'a> Resolver<'a> {
                 )
             });
         if let Some((Some(lookup), dirname_fd)) = looked_up {
-            if lookup.kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::File {
+            if lookup.kind(&fs.fs, store_fd) == Fs::file_system::EntryKind::File {
                 let Ok(out_buf) = lookup.abs_path_or_try_fill(|| {
                     let parts = [dir_info.abs_path, &base[..]];
-                    let out_buf_ = self
-                        .fs_ref()
-                        .abs_buf_checked(&parts, &mut bufs.index)
-                        .ok_or(())?;
+                    let out_buf_ = fs.abs_buf_checked(&parts, &mut bufs.index).ok_or(())?;
                     Ok::<_, ()>(Interned::from_static(
-                        self.fs_ref()
-                            .dirname_store
+                        fs.dirname_store
                             .append_slice(out_buf_)
                             .expect("unreachable"),
                     ))
@@ -5185,7 +5165,7 @@ impl<'a> Resolver<'a> {
                 };
                 let out_buf: &[u8] = out_buf.as_bytes();
 
-                if let Some(debug) = self.debug_logs.as_mut() {
+                if let Some(debug) = debug_logs.as_mut() {
                     debug
                         .add_note_fmt(format_args!("Found file: \"{}\"", bstr::BStr::new(out_buf)));
                 }
@@ -5215,7 +5195,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        if let Some(debug) = self.debug_logs.as_mut() {
+        if let Some(debug) = debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Failed to find file: \"{}/{}\"",
                 bstr::BStr::new(dir_info.abs_path),
@@ -5424,11 +5404,6 @@ impl<'a> Resolver<'a> {
             package_json = Some(pkg_json);
             if pkg_json.main_fields.count() > 0 {
                 let main_field_values = &pkg_json.main_fields;
-                // BACKREF: `RawSlice` detaches the `&self.opts.main_fields`
-                // borrow so the loop body can take `&mut self`. Backing
-                // `Box<[Box<[u8]>]>` heap buffer is owned by `self.opts` and
-                // never mutated during resolve.
-                let main_field_keys = bun_ptr::RawSlice::<Box<[u8]>>::new(&self.opts.main_fields);
                 let mf_ext_order = options::ExtOrder::MainField;
                 // The bundler projects "user did not pass --main-fields" as an
                 // explicit bool because the owned `Box<[Box<[u8]>]>` can never
@@ -5442,19 +5417,18 @@ impl<'a> Resolver<'a> {
                     ));
                 }
 
-                for key in main_field_keys.iter() {
-                    let key: &[u8] = key;
-                    let field_rel_path = match main_field_values.get(key) {
-                        Some(v) => v,
-                        None => {
-                            if let Some(debug) = self.debug_logs.as_mut() {
-                                debug.add_note_fmt(format_args!(
-                                    "Did not find main field \"{}\"",
-                                    bstr::BStr::new(key)
-                                ));
-                            }
-                            continue;
+                let mut i = 0;
+                while let Some(key) = self.opts.main_fields.get(i) {
+                    i += 1;
+                    // The key of the map is not borrowed from `self`.
+                    let Some((key, field_rel_path)) = main_field_values.get_key_value(key) else {
+                        if let Some(debug) = self.debug_logs.as_mut() {
+                            debug.add_note_fmt(format_args!(
+                                "Did not find main field \"{}\"",
+                                bstr::BStr::new(key)
+                            ));
                         }
+                        continue;
                     };
 
                     if !self
@@ -5699,29 +5673,17 @@ impl<'a> Resolver<'a> {
             dec_ret!(None);
         }
         buf[..path.len()].copy_from_slice(path);
-        // NOTE: index by `0..len` so each iteration takes a fresh short
-        // borrow of `self.opts` that ends before `&mut self` is taken by
-        // `load_extension` (matches `extra_cjs_extensions` loop below).
-        let n = self.opts.ext_order_slice(extension_order).len();
-        for i in 0..n {
-            // BACKREF: `RawSlice` detaches the `&self.opts` borrow so the loop
-            // body can take `&mut self`. Backing `Box<[u8]>` is owned by
-            // `self.opts` and never mutated while the resolver runs.
-            let ext = bun_ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
-            if let Some(result) = self.load_extension(buf, base, path, &ext, dir_entry_index) {
-                dec_ret!(Some(result));
-            }
-        }
-
-        // NOTE: index by `0..len` so each iteration takes a fresh short
-        // borrow of `self.opts` that ends before `&mut self` is taken by
-        // `load_extension` (avoids the forbidden lifetime-extension cast).
-        let n = self.opts.extra_cjs_extensions.len();
-        for i in 0..n {
-            // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
-            // `extra_cjs_extensions` is heap-stable for the resolver's life.
-            let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
-            if let Some(result) = self.load_extension(buf, base, path, &ext, dir_entry_index) {
+        let extensions = self.opts.ext_order_slice(extension_order);
+        for ext in extensions.iter().chain(&self.opts.extra_cjs_extensions) {
+            if let Some(result) = Self::load_extension(
+                &mut self.debug_logs,
+                self.store_fd,
+                buf,
+                base,
+                path,
+                ext,
+                dir_entry_index,
+            ) {
                 dec_ret!(Some(result));
             }
         }
@@ -5824,7 +5786,8 @@ impl<'a> Resolver<'a> {
     }
 
     fn load_extension(
-        &mut self,
+        debug_logs: &mut Option<DebugLogs>,
+        store_fd: bool,
         buf: &mut PathBuffer,
         base: &[u8],
         path: &[u8],
@@ -5838,17 +5801,18 @@ impl<'a> Resolver<'a> {
         buffer[path.len()..].copy_from_slice(ext);
         let file_name = &buffer[path.len() - base.len()..buffer.len()];
 
-        if let Some(debug) = self.debug_logs.as_mut() {
+        if let Some(debug) = debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Checking for file \"{}\" ",
                 bstr::BStr::new(&buffer[..])
             ));
         }
 
-        let (ext_query, dirname_fd) = self.rfs_ref().lookup(dir_entry_index, file_name);
+        let fs = Fs::FileSystem::get();
+        let (ext_query, dirname_fd) = fs.fs.lookup(dir_entry_index, file_name);
         if let Some(query) = ext_query {
-            if query.kind(self.rfs_ref(), self.store_fd) == Fs::file_system::EntryKind::File {
-                if let Some(debug) = self.debug_logs.as_mut() {
+            if query.kind(&fs.fs, store_fd) == Fs::file_system::EntryKind::File {
+                if let Some(debug) = debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!(
                         "Found file \"{}\" ",
                         bstr::BStr::new(&buffer[..])
@@ -5860,8 +5824,7 @@ impl<'a> Resolver<'a> {
                     path: query
                         .abs_path_or_fill(|| {
                             Interned::from_static(
-                                self.fs_ref()
-                                    .dirname_store
+                                fs.dirname_store
                                     .append_slice(&buffer[..])
                                     .expect("unreachable"),
                             )

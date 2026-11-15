@@ -1137,9 +1137,9 @@ test("lowering many decorated instance fields into a large constructor body stay
           tSmall = Math.min(tSmall, time(100, small));
           tLarge = Math.min(tLarge, time(50000, large));
         }
-        // The first transform of a process is slow. After a single turn the small source has no other sample,
-        // and the ratio is then too low to show a quadratic lowering: take one more.
-        if (turns === 1) tSmall = Math.min(tSmall, time(100, small));
+        // The first transform of a process is slow. After a single turn the small source has no other sample, and the
+        // ratio is then too low to show a quadratic lowering. One more takes a third of that turn: take it if it fits.
+        if (turns === 1 && performance.now() < ${(limit * 2) / 3}) tSmall = Math.min(tSmall, time(100, small));
         console.log(JSON.stringify({ tSmall, tLarge, ratio: tLarge / tSmall }));
       `,
     ],

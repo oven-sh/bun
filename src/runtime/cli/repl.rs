@@ -17,6 +17,7 @@ use core::fmt::Arguments;
 
 use bstr::BStr;
 
+use bun_bundler::transpiler::{MacroJSCtx, Transpiler};
 use bun_collections::VecExt;
 use bun_core::strings;
 #[cfg(unix)]
@@ -2155,10 +2156,10 @@ impl<'a> Repl<'a> {
         // SAFETY: JS thread; the VM outlives the parse. Does not hold for a macro: `enable_macro_mode`
         // borrows the transpiler mutably while the parser holds `define` and `macro_remap`.
         opts.macro_context = Some(unsafe {
-            bun_js_parser::Macro::MacroContext::new(
-                vm.transpiler.as_ptr().cast(),
+            Transpiler::macro_context(
+                vm.transpiler.as_ptr(),
                 &vm.module_loader.macro_load_states,
-                Default::default(),
+                MacroJSCtx::ZERO,
             )
         });
 

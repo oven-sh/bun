@@ -996,12 +996,13 @@ impl JSTranspiler {
 impl JSTranspiler {
     fn get_parse_result<'p>(
         &'p self,
+        global: &JSGlobalObject,
         arena: &'p Arena,
         code: &'p [u8],
         loader: Option<Loader>,
         macro_js_ctx: MacroJSCtx,
         log: &mut bun_ast::Log,
-    ) -> Option<ParseResult<'p>> {
+    ) -> JsResult<Option<ParseResult<'p>>> {
         let config = &self.config;
         let name = config.default_loader.stdin_name();
 
@@ -1076,7 +1077,10 @@ impl JSTranspiler {
         transpiler.set_log(log);
         let result = transpiler.parse(parse_options, None);
         self.transpiler.with_mut(|t| t.set_log(old_log));
-        result
+        if (log.warnings + log.errors) > 0 {
+            return Err(global.throw_value(log.to_js(global, format_args!("Parse error"))?));
+        }
+        Ok(result)
     }
 
     pub(crate) fn scan(
@@ -1098,11 +1102,9 @@ impl JSTranspiler {
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        let parse_result = self.get_parse_result(&arena, code, loader, MacroJSCtx::ZERO, &mut log);
-        if (log.warnings + log.errors) > 0 {
-            return Err(global.throw_value(log.to_js(global, format_args!("Parse error"))?));
-        }
-        let Some(mut parse_result) = parse_result else {
+        let Some(mut parse_result) =
+            self.get_parse_result(global, &arena, code, loader, MacroJSCtx::ZERO, &mut log)?
+        else {
             return Err(global.throw(format_args!("Failed to parse")));
         };
 
@@ -1214,15 +1216,12 @@ impl JSTranspiler {
 
         // `MacroJSCtx` carries the encoded `JSValue` bits (`#[repr(transparent)] i64`).
         let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0 as i64);
-        // `transformSync` does not reuse what an earlier call loaded.
-        let macro_load_states = MacroLoadStates::default();
-        self.macro_load_states.swap(&macro_load_states);
-        let parse_result = self.get_parse_result(&arena, code, loader, macro_js_ctx, &mut log);
-        self.macro_load_states.swap(&macro_load_states);
-        if (log.warnings + log.errors) > 0 {
-            return Err(global.throw_value(log.to_js(global, format_args!("Parse error"))?));
-        }
-        let Some(parse_result) = parse_result else {
+        // `transformSync` does not reuse what an earlier call loaded, and a nested `scan` has to see what this call is still loading.
+        let old_states = self.macro_load_states.replace(MacroLoadStates::default());
+        let parse_result =
+            self.get_parse_result(global, &arena, code, loader, macro_js_ctx, &mut log);
+        self.macro_load_states.replace(old_states);
+        let Some(parse_result) = parse_result? else {
             return Err(global.throw(format_args!("Failed to parse code")));
         };
 
@@ -1352,7 +1351,7 @@ impl JSTranspiler {
         };
 
         let mut opts = bun_js_parser::ParserOptions::init(jsx, loader);
-        opts.macro_remap = Some(&self.config.macro_map);
+        opts.macro_remap = Some(&options.macro_remap);
 
         // NOTE: spec calls `transpiler.resolver.caches.js.scan`. The
         // resolver-side `cache::JavaScript` is a fieldless shell with

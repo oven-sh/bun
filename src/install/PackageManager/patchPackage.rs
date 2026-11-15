@@ -263,7 +263,7 @@ fn resolve_target(
             workspace_package_id,
             hoisted_folder,
         );
-        let pkg = *lockfile.packages.get(pkg_id as usize);
+        let pkg = lockfile.packages.get(pkg_id as usize);
         (pkg, folder, other_folders)
     };
 
@@ -398,7 +398,7 @@ pub(crate) fn package_for_folder(
     let mut has_npm = false;
     let mut has_other = false;
     for &id in entry.as_slice() {
-        let pkg = *lockfile.packages.get(id as usize);
+        let pkg = lockfile.packages.get(id as usize);
         if pkg.resolution.tag != ResolutionTag::Npm {
             has_other = true;
             continue;
@@ -410,7 +410,7 @@ pub(crate) fn package_for_folder(
         }
     }
     match (has_npm, has_other, entry.as_slice()) {
-        (false, true, [id]) => Ok(*lockfile.packages.get(*id as usize)),
+        (false, true, [id]) => Ok(lockfile.packages.get(*id as usize)),
         (_, true, _) => Err(FolderLookupError::NeedsLabel),
         (_, false, _) => Err(FolderLookupError::NotInLockfile),
     }

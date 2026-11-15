@@ -9,12 +9,13 @@
 
 use core::cell::{Cell, RefCell};
 use core::ffi::{c_int, c_void};
-use core::mem::size_of;
+use core::mem::{MaybeUninit, size_of};
 use core::net::IpAddr;
 
 use bun_boringssl::c::OwnedSslCtx;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
+use bun_core::vec::{BorrowedBuf, BorrowedCursor};
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader, is_valid_close_code};
 use bun_io::KeepAlive;
@@ -121,7 +122,7 @@ struct Unmask {
 }
 
 impl Unmask {
-    fn copy(&mut self, output: &mut [u8], input: &[u8]) {
+    fn copy(&mut self, output: BorrowedCursor<'_, u8>, input: &[u8]) {
         bun_highway::fill_with_skip_mask(self.key, output, input, false);
         self.key.rotate_left(input.len() % 4);
     }
@@ -561,10 +562,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     fn buffer_payload(&self, data: &[u8]) -> Result<(), bun_alloc::AllocError> {
         let mut receive_buffer = self.receive_buffer.borrow_mut();
-        let writable = receive_buffer.writable_with_size(data.len())?;
-        writable[..data.len()].copy_from_slice(data);
-        receive_buffer.update(data.len());
-        Ok(())
+        receive_buffer.write_with(data.len(), |mut cursor| cursor.append(data))
     }
 
     pub(crate) fn consume(
@@ -961,9 +959,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         if !chunk.is_empty() {
             let mut unmask = self.unmask.get();
             let mut receive_buffer = self.receive_buffer.borrow_mut();
-            let writable = bun_core::handle_oom(receive_buffer.writable_with_size(chunk.len()));
-            unmask.copy(writable, chunk);
-            receive_buffer.update(chunk.len());
+            bun_core::handle_oom(
+                receive_buffer.write_with(chunk.len(), |cursor| unmask.copy(cursor, chunk)),
+            );
             self.unmask.set(unmask);
         }
 
@@ -1184,17 +1182,13 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
 
         let frame_size = WebsocketHeader::frame_size(compressed.len(), kind.masked);
-        {
-            let mut send_buffer = self.send_buffer.borrow_mut();
-            let writable = bun_core::handle_oom(send_buffer.writable_with_size(frame_size));
-            Copy::copy_compressed(
-                &self.global_this,
-                &mut writable[..frame_size],
-                &compressed,
-                kind,
-            );
-            send_buffer.update(frame_size);
-        }
+        bun_core::handle_oom(
+            self.send_buffer
+                .borrow_mut()
+                .write_with(frame_size, |cursor| {
+                    Copy::copy_compressed(&self.global_this, cursor, &compressed, kind)
+                }),
+        );
 
         if do_write {
             self.debug_assert_socket_writable();
@@ -1206,17 +1200,13 @@ impl<const SSL: bool> WebSocket<SSL> {
         let (write_len, content_byte_len) = bytes.frame_and_content_len(kind.masked);
         debug_assert!(write_len > 0);
 
-        {
-            let mut send_buffer = self.send_buffer.borrow_mut();
-            let writable = bun_core::handle_oom(send_buffer.writable_with_size(write_len));
-            bytes.copy(
-                &self.global_this,
-                &mut writable[..write_len],
-                content_byte_len,
-                kind,
-            );
-            send_buffer.update(write_len);
-        }
+        bun_core::handle_oom(
+            self.send_buffer
+                .borrow_mut()
+                .write_with(write_len, |cursor| {
+                    bytes.copy(&self.global_this, cursor, content_byte_len, kind)
+                }),
+        );
 
         if do_write {
             self.debug_assert_socket_writable();
@@ -1300,15 +1290,10 @@ impl<const SSL: bool> WebSocket<SSL> {
             deflate: Deflate::Never,
             masked: !self.options.is_server,
         };
-        let frame_size = WebsocketHeader::frame_size(payload.len(), kind.masked);
-        let mut frame = [0u8; MAX_CONTROL_FRAME_SIZE];
-        Copy::Bytes(payload).copy(
-            &self.global_this,
-            &mut frame[..frame_size],
-            payload.len(),
-            kind,
-        );
-        self.enqueue_encoded_bytes(&frame[..frame_size]);
+        let mut frame_buf = [const { MaybeUninit::uninit() }; MAX_CONTROL_FRAME_SIZE];
+        let mut frame = BorrowedBuf::from(&mut frame_buf[..]);
+        Copy::Bytes(payload).copy(&self.global_this, frame.unfilled(), payload.len(), kind);
+        self.enqueue_encoded_bytes(frame.filled());
     }
 
     /// Once our Close frame is flushed and we've stopped reading, half-close and wait for the
@@ -1433,7 +1418,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     fn send_frame(&self, bytes: Copy<'_>, payload_byte_len: usize, kind: FrameKind) {
         let frame_size = WebsocketHeader::frame_size(payload_byte_len, kind.masked);
         if frame_size < STACK_FRAME_SIZE && self.can_send_inline(kind) {
-            self.send_inline_frame(bytes, payload_byte_len, frame_size, kind);
+            self.send_inline_frame(bytes, payload_byte_len, kind);
             return;
         }
 
@@ -1464,22 +1449,11 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     /// Encode a frame small enough for a stack buffer and hand it straight to
     /// the socket, bypassing the heap-backed send queue.
-    fn send_inline_frame(
-        &self,
-        bytes: Copy<'_>,
-        content_len: usize,
-        frame_size: usize,
-        kind: FrameKind,
-    ) {
-        debug_assert!(frame_size <= STACK_FRAME_SIZE);
-        let mut inline_buf = [0u8; STACK_FRAME_SIZE];
-        bytes.copy(
-            &self.global_this,
-            &mut inline_buf[..frame_size],
-            content_len,
-            kind,
-        );
-        self.enqueue_encoded_bytes(&inline_buf[..frame_size]);
+    fn send_inline_frame(&self, bytes: Copy<'_>, content_len: usize, kind: FrameKind) {
+        let mut inline_buf = [const { MaybeUninit::uninit() }; STACK_FRAME_SIZE];
+        let mut frame = BorrowedBuf::from(&mut inline_buf[..]);
+        bytes.copy(&self.global_this, frame.unfilled(), content_len, kind);
+        self.enqueue_encoded_bytes(frame.filled());
     }
 
     fn has_tcp(&self) -> bool {
@@ -1514,14 +1488,14 @@ impl<const SSL: bool> WebSocket<SSL> {
             let bytes = Copy::Latin1(str.slice());
             let (frame_size, byte_len) = bytes.frame_and_content_len(kind.masked);
             if frame_size < STACK_FRAME_SIZE && this.can_send_inline(kind) {
-                this.send_inline_frame(bytes, byte_len, frame_size, kind);
+                this.send_inline_frame(bytes, byte_len, kind);
                 return;
             }
             // max length of a utf16 -> utf8 conversion is 4 times the length of the utf16 string
         } else if (str.len() * 4) < STACK_FRAME_SIZE && this.can_send_inline(kind) {
             let bytes = Copy::Utf16(str.utf16_slice());
-            let (frame_size, byte_len) = bytes.frame_and_content_len(kind.masked);
-            this.send_inline_frame(bytes, byte_len, frame_size, kind);
+            let (_, byte_len) = bytes.frame_and_content_len(kind.masked);
+            this.send_inline_frame(bytes, byte_len, kind);
             return;
         }
 
@@ -2232,33 +2206,21 @@ impl ErrorCode {
 // Mask
 // ──────────────────────────────────────────────────────────────────────────
 
-struct Mask;
+#[derive(Copy, Clone)]
+struct Mask([u8; 4]);
 
 impl Mask {
-    fn generate(global_this: &JSGlobalObject) -> [u8; 4] {
-        global_this.bun_vm().rare_data().entropy()
+    fn generate(global_this: &JSGlobalObject) -> Mask {
+        Mask(global_this.bun_vm().rare_data().entropy())
     }
 
-    fn fill(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], output: &mut [u8], input: &[u8]) {
-        *mask_buf = Self::generate(global_this);
-        let skip_mask = u32::from_ne_bytes(*mask_buf) == 0;
-        if input.is_empty() {
-            bun_core::hint::cold();
-            return;
-        }
-        bun_highway::fill_with_skip_mask(*mask_buf, output, input, skip_mask);
+    fn fill(self, output: BorrowedCursor<'_, u8>, input: &[u8]) {
+        bun_highway::fill_with_skip_mask(self.0, output, input, self.0 == [0; 4]);
     }
 
-    /// In-place variant for when output and input alias the same buffer
-    /// (borrowck forbids `&mut [u8]` + `&[u8]` aliasing in `fill`).
-    fn fill_in_place(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], buf: &mut [u8]) {
-        *mask_buf = Self::generate(global_this);
-        let skip_mask = u32::from_ne_bytes(*mask_buf) == 0;
-        if buf.is_empty() {
-            bun_core::hint::cold();
-            return;
-        }
-        bun_highway::fill_with_skip_mask_inplace(*mask_buf, buf, skip_mask);
+    /// In-place variant for when output and input alias the same buffer.
+    fn fill_in_place(self, buf: &mut [u8]) {
+        bun_highway::fill_with_skip_mask_inplace(self.0, buf, self.0 == [0; 4]);
     }
 }
 
@@ -2429,43 +2391,6 @@ impl FrameKind {
     }
 }
 
-/// Disjoint header / masking-key / payload views of one outbound frame.
-struct FrameParts<'a> {
-    header: &'a mut [u8],
-    mask: Option<&'a mut [u8; 4]>,
-    payload: &'a mut [u8],
-}
-
-/// Split a frame-sized `buf` into its [`FrameParts`], writing the extended length bytes.
-fn split_frame(buf: &mut [u8], content_byte_len: usize, masked: bool) -> FrameParts<'_> {
-    let length_byte_count = WebsocketHeader::length_byte_count(content_byte_len);
-    debug_assert_eq!(
-        WebsocketHeader::frame_size(content_byte_len, masked),
-        buf.len()
-    );
-    match length_byte_count {
-        0 => {}
-        2 => buf[2..4].copy_from_slice(&(content_byte_len as u16).to_be_bytes()),
-        8 => buf[2..10].copy_from_slice(&(content_byte_len as u64).to_be_bytes()),
-        _ => unreachable!(),
-    }
-    let (header, rest) = buf.split_at_mut(2 + length_byte_count);
-    let (mask, payload) = if masked {
-        let (mask, payload) = rest.split_at_mut(4);
-        (
-            Some(mask.try_into().expect("infallible: size matches")),
-            payload,
-        )
-    } else {
-        (None, rest)
-    };
-    FrameParts {
-        header,
-        mask,
-        payload: &mut payload[..content_byte_len],
-    }
-}
-
 impl Copy<'_> {
     /// Returns `(frame_len, content_byte_len)`: the size of the full frame to
     /// write out and the UTF-8/byte length of the payload it carries.
@@ -2481,7 +2406,7 @@ impl Copy<'_> {
     fn copy(
         &self,
         global_this: &JSGlobalObject,
-        buf: &mut [u8],
+        buf: BorrowedCursor<'_, u8>,
         content_byte_len: usize,
         kind: FrameKind,
     ) {
@@ -2491,7 +2416,7 @@ impl Copy<'_> {
     /// Frame an already-deflated message.
     fn copy_compressed(
         global_this: &JSGlobalObject,
-        buf: &mut [u8],
+        buf: BorrowedCursor<'_, u8>,
         compressed_data: &[u8],
         kind: FrameKind,
     ) {
@@ -2507,7 +2432,7 @@ impl Copy<'_> {
     fn copy_with_rsv1(
         &self,
         global_this: &JSGlobalObject,
-        buf: &mut [u8],
+        mut buf: BorrowedCursor<'_, u8>,
         content_byte_len: usize,
         kind: FrameKind,
         compressed: bool,
@@ -2520,33 +2445,36 @@ impl Copy<'_> {
         header.set_final(kind.fin);
         header.set_compressed(compressed);
 
-        let mut parts = split_frame(buf, content_byte_len, kind.masked);
-        header
-            .write_header(&mut parts.header, content_byte_len)
-            .expect("unreachable");
+        buf.append(&header.to_bytes());
+        match WebsocketHeader::length_byte_count(content_byte_len) {
+            0 => {}
+            2 => buf.append(&(content_byte_len as u16).to_be_bytes()),
+            8 => buf.append(&(content_byte_len as u64).to_be_bytes()),
+            _ => unreachable!(),
+        }
+        let mask = kind.masked.then(|| Mask::generate(global_this));
+        if let Some(Mask(key)) = &mask {
+            buf.append(key);
+        }
 
-        match self {
-            Copy::Utf16(utf16) => {
-                let encoded = strings::copy_utf16_into_utf8_impl::<true>(parts.payload, utf16);
-                debug_assert_eq!(encoded.written, content_byte_len);
-                debug_assert_eq!(encoded.read, utf16.len());
-            }
-            Copy::Latin1(latin1) => {
-                let encoded = strings::copy_latin1_into_utf8(parts.payload, latin1);
-                debug_assert_eq!(encoded.written, content_byte_len);
+        buf.with_unfilled_buf(|payload| {
+            match *self {
+                Copy::Utf16(utf16) => strings::write_utf16_as_utf8(utf16, payload.unfilled()),
                 // latin1 can contain non-ascii
-                debug_assert_eq!(encoded.read, latin1.len());
-            }
-            Copy::Bytes(bytes) => {
-                match parts.mask {
-                    Some(mask) => Mask::fill(global_this, mask, parts.payload, bytes),
-                    None => parts.payload.copy_from_slice(bytes),
+                Copy::Latin1(latin1) if latin1.len() != content_byte_len => {
+                    strings::write_latin1_as_utf8(latin1, payload.unfilled());
                 }
-                return;
+                Copy::Latin1(bytes) | Copy::Bytes(bytes) => {
+                    return match mask {
+                        Some(mask) => mask.fill(payload.unfilled(), bytes),
+                        None => payload.unfilled().append(bytes),
+                    };
+                }
             }
-        }
-        if let Some(mask) = parts.mask {
-            Mask::fill_in_place(global_this, mask, parts.payload);
-        }
+            debug_assert_eq!(payload.len(), content_byte_len);
+            if let Some(mask) = mask {
+                mask.fill_in_place(payload.filled_mut());
+            }
+        });
     }
 }

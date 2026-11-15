@@ -733,6 +733,7 @@ pub mod fs {
             // borrow is bounded by that `&mut self` — it cannot outlive the
             // field borrow nor be sent to another thread independently of it.
             // Cross-thread exclusion is provided by the mutex asserted above.
+            // No other `bss_map_inner!` map is dereferenced, so every index is of this one.
             unsafe { &mut *entries_option_map() }
         }
         pub fn get(&mut self, key: &[u8]) -> Option<&mut EntriesOption> {

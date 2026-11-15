@@ -36,7 +36,9 @@ use bun_http::{HeaderValueIterator, Headers};
 use bun_io::KeepAlive;
 use bun_jsc::{JSGlobalObject, VirtualMachineRef};
 use bun_picohttp as picohttp;
-use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
+use bun_ptr::{
+    BackRef, CellExt as _, JsCell, OptionCellExt as _, RefPtr, ThisPtr, VecCellExt as _,
+};
 
 use super::websocket_proxy_tunnel::IntoUpgradeClientRef;
 use bun_uws::{self as uws, SocketHandler, SocketKind};
@@ -193,9 +195,9 @@ pub struct HTTPClient<const SSL: bool> {
     /// C++ `WebSocket::m_upgradeClient` and the ref held on its behalf;
     /// released together when C++ lets go (`cancel`, `didConnect*`,
     /// `didFail`).
-    outgoing_websocket: JsCell<Option<(BackRef<CppWebSocket>, RefPtr<Self>)>>,
+    outgoing_websocket: Cell<Option<(BackRef<CppWebSocket>, RefPtr<Self>)>>,
     /// Owned request bytes. Freed via `clear_input`.
-    input_body_buf: JsCell<Vec<u8>>,
+    input_body_buf: Cell<Vec<u8>>,
     // The unsent bytes are always a suffix of `input_body_buf`; stored here as
     // the suffix length so we don't hold a self-referential slice.
     to_send_len: Cell<usize>,
@@ -208,25 +210,25 @@ pub struct HTTPClient<const SSL: bool> {
     ws_mode: bool,
     /// `Some` while reading that body.
     response_body: Cell<Option<ResponseBody>>,
-    /// Hostname used for SNI and certificate verification: `tls.serverName`, or the URL's host. Empty when unset.
-    hostname: JsCell<ZBox>,
+    /// Hostname used for SNI and certificate verification: `tls.serverName`, or the URL's host. Never empty.
+    hostname: Cell<Option<ZBox>>,
     /// The context of the script that made the WebSocket. `checkServerIdentity` runs in it.
     context: bun_jsc::ContextId,
     poll_ref: KeepAlive,
     state: Cell<State>,
-    subprotocols: JsCell<StringSet>,
+    subprotocols: StringSet,
 
     /// Proxy state (None when not using proxy)
     proxy: JsCell<Option<WebSocketProxy>>,
 
     /// TLS options (full SSLConfig for complete TLS customization)
-    ssl_config: JsCell<Option<Box<SSLConfig>>>,
+    ssl_config: Cell<Option<Box<SSLConfig>>>,
 
     /// `SslCtx` built from `ssl_config` when it carries a custom CA.
     /// Heap-allocated because ownership transfers to the connected
     /// `WebSocket` after the upgrade completes (so the `SSL_CTX` outlives
     /// this struct). RAII: dropping the wrapper releases the retained ref.
-    secure: JsCell<Option<OwnedSslCtx>>,
+    secure: Cell<Option<OwnedSslCtx>>,
 
     /// Expected Sec-WebSocket-Accept value for handshake validation per RFC 6455 §4.2.2.
     /// This is base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")).
@@ -463,23 +465,23 @@ where
             ref_count: bun_ptr::RefCount::init(),
             tcp: Cell::new(Socket::<SSL>::detached()),
             socket_ref: Cell::new(None),
-            outgoing_websocket: JsCell::new(None),
-            input_body_buf: JsCell::new(input_body_buf),
+            outgoing_websocket: Cell::new(None),
+            input_body_buf: Cell::new(input_body_buf),
             to_send_len: Cell::new(0),
             body: JsCell::new(Vec::new()),
             interim_len: Cell::new(0),
             ws_mode: websocket.is_ws_mode(),
             response_body: Cell::new(None),
-            hostname: JsCell::new(ZBox::default()),
+            hostname: Cell::new(None),
             context: context.id(),
             poll_ref,
             state: Cell::new(State::Initializing),
             proxy: JsCell::new(proxy_state),
-            ssl_config: JsCell::new(ssl_config),
-            secure: JsCell::new(secure),
+            ssl_config: Cell::new(ssl_config),
+            secure: Cell::new(secure),
             expected_accept: request_result.expected_accept,
             offered_deflate: extensions_slice.is_some(),
-            subprotocols: JsCell::new(subprotocols),
+            subprotocols,
         });
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::TYPE_NAME, client.as_ptr());
         let this = client.this_ptr();
@@ -527,7 +529,7 @@ where
                 None => bun_http::strip_ipv6_brackets(display_host),
             };
             if !sni.is_empty() {
-                this.hostname.set(ZBox::from_bytes(sni));
+                this.hostname.set(Some(ZBox::from_bytes(sni)));
             }
         }
 
@@ -558,7 +560,8 @@ where
 
     /// C++'s back-reference, while it still holds one.
     fn cpp_websocket(&self) -> Option<BackRef<CppWebSocket>> {
-        self.outgoing_websocket.get().as_ref().map(|(ws, _)| *ws)
+        self.outgoing_websocket
+            .with_taken(|outgoing| outgoing.as_ref().map(|(ws, _)| *ws))
     }
 
     /// C++ let go of `m_upgradeClient`: forget the back-reference and release
@@ -577,7 +580,7 @@ where
     /// possibly re-entrant write. On failure the client is terminated — which
     /// clears the buffer anyway — and `false` is returned.
     fn write_pending(this: ThisPtr<Self>, write: impl FnOnce(&[u8]) -> Option<usize>) -> bool {
-        let buf = this.input_body_buf.replace(Vec::new());
+        let buf = this.input_body_buf.take();
         let pending = this.to_send_len.get().min(buf.len());
         let Some(wrote) = write(&buf[buf.len() - pending..]) else {
             drop(buf);
@@ -644,7 +647,7 @@ where
         system_code: BunString,
         detail: BunString,
     ) {
-        if let Some((ws, _cpp_ref)) = this.outgoing_websocket.replace(None) {
+        if let Some((ws, _cpp_ref)) = this.outgoing_websocket.take() {
             match this.response_body.take() {
                 Some(body) => ws.did_end_response_body(
                     // Our own timeout always aborts, since the peer never ended the body.
@@ -728,7 +731,7 @@ where
             let hostname = this.hostname.take();
             // SAFETY: `socket` is live, and `accepts_tls_peer` does not use `ssl` after that callback.
             let ssl = unsafe { socket.ssl() };
-            let name = identity_name(hostname.as_bytes(), ssl);
+            let name = identity_name(hostname.as_ref(), ssl);
             let handshake = TlsHandshake::First {
                 context: this.context,
                 peer: this.tls_peer(),
@@ -742,7 +745,7 @@ where
                 log!(
                     "TLS handshake failed: ssl_error={}, has_custom_ctx={}",
                     ssl_error.error_no,
-                    this.secure.get().is_some()
+                    this.secure.is_some()
                 );
                 Self::fail_tls(this, ssl_error, true);
             }
@@ -758,8 +761,10 @@ where
         let Some(ws) = self.cpp_websocket() else {
             return boringssl::ServerIdentity::Unchecked;
         };
-        let hostname = identity_name(self.hostname.get().as_bytes(), Some(ssl));
-        ws.server_identity(self.tls_peer(), ssl, &hostname)
+        self.hostname.with_taken(|hostname| {
+            let hostname = identity_name(hostname.as_ref(), Some(ssl));
+            ws.server_identity(self.tls_peer(), ssl, &hostname)
+        })
     }
 
     /// Through a proxy this socket's peer is the proxy. The tunnel handshakes with the target.
@@ -807,12 +812,12 @@ where
         // TCP connect. Re-arm so an accept-but-never-answer peer times out.
         socket.set_timeout(this.handshake_timeout());
 
-        debug_assert!(!this.input_body_buf.get().is_empty());
+        debug_assert!(!this.input_body_buf.is_empty());
         debug_assert!(this.to_send_len.get() == 0);
 
         if SSL {
-            let hostname = this.hostname.get();
-            if !hostname.is_empty() {
+            this.hostname.with_taken(|hostname| {
+                let Some(hostname) = hostname else { return };
                 // SAFETY: `socket` is live, and nothing in this block closes it.
                 if let Some(ssl) = unsafe { socket.ssl() } {
                     bun_http::configure_http_client_with_alpn(
@@ -821,7 +826,7 @@ where
                         bun_http::AlpnOffer::H1,
                     );
                 }
-            }
+            });
             if this
                 .cpp_websocket()
                 .is_some_and(|ws| ws.reject_unauthorized(this.tls_peer()))
@@ -835,7 +840,7 @@ where
             this.state.set(State::ProxyHandshake);
         }
 
-        this.to_send_len.set(this.input_body_buf.get().len());
+        this.to_send_len.set(this.input_body_buf.len());
         Self::write_pending(this, |buf| Self::socket_write(socket, buf));
     }
 
@@ -1163,16 +1168,14 @@ where
         };
 
         // Use ssl_config if available, otherwise use defaults
-        let ssl_options: SSLConfig = match this.ssl_config.get().as_deref() {
-            Some(config) => config.clone(),
+        let ssl_options: SSLConfig = match this.ssl_config.with_taken(|c| c.as_deref().cloned()) {
+            Some(config) => config,
             None => {
                 let mut c = SSLConfig::default();
                 c.reject_unauthorized = 0; // We verify manually
                 c.request_cert = 1;
                 let vm = bun_jsc::virtual_machine::VirtualMachine::get();
-                if let Some(ciphers) = vm.tls_default_ciphers() {
-                    c.set_default_ciphers(ciphers);
-                }
+                vm.with_tls_default_ciphers(|ciphers| c.set_default_ciphers(ciphers));
                 c
             }
         };
@@ -1346,7 +1349,7 @@ where
                             }
 
                             // Protocol must be in the list of allowed protocols.
-                            if !self.subprotocols.get().contains(protocol) {
+                            if !self.subprotocols.contains(protocol) {
                                 break 'brk false;
                             }
 
@@ -1402,7 +1405,7 @@ where
             return Err(ErrorCode::MissingWebsocketAcceptHeader);
         }
 
-        if !protocol_header_seen && !self.subprotocols.get().is_empty() {
+        if !protocol_header_seen && !self.subprotocols.is_empty() {
             return Err(ErrorCode::MissingClientProtocol);
         }
 
@@ -1457,7 +1460,7 @@ where
                 // never call cancel() to drop it. The TCP socket's ref (released
                 // in handle_close) is what keeps this struct alive to forward
                 // socket data to the tunnel after we switch to .done.
-                let (ws, _cpp_ref) = this.outgoing_websocket.replace(None).unwrap();
+                let (ws, _cpp_ref) = this.outgoing_websocket.take().unwrap();
 
                 // Switch to forwarding before entering C++. did_connect_with_tunnel
                 // dispatches `open`, and an open handler that spins the event loop
@@ -1492,7 +1495,7 @@ where
         // custom `OwnedSslCtx` to the connected WebSocket (it must outlive
         // the upgrade client because the socket's SSL* still references the
         // SSL_CTX inside it).
-        let mut saved_secure = this.secure.replace(None); // prevent clear_data from freeing it
+        let mut saved_secure = this.secure.take(); // prevent clear_data from freeing it
         // Any arm below that doesn't hand `saved_secure` to did_connect must
         // release the ref it took out of `self` (SSL_CTX_free at fn end).
         // The connected client checks a TLS renegotiation against this name.
@@ -1505,7 +1508,7 @@ where
             tcp.set_timeout(0);
             log!("onDidConnect");
 
-            let (ws, cpp_ref) = this.outgoing_websocket.replace(None).unwrap();
+            let (ws, cpp_ref) = this.outgoing_websocket.take().unwrap();
             let socket = tcp;
 
             // Normal mode: pass socket directly to WebSocket client
@@ -1517,7 +1520,9 @@ where
                     deflate_params.as_ref(),
                     // Ownership transferred to the connected client.
                     saved_secure.take(),
-                    verified_hostname.as_bytes(),
+                    verified_hostname
+                        .as_ref()
+                        .map_or(b"", |name| name.as_bytes()),
                 );
             } else {
                 Self::terminate(this, ErrorCode::FailedToConnect);
@@ -1633,13 +1638,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
     pub(crate) fn clear_data(&self) {
         self.poll_ref.unref(VirtualMachineRef::get().loop_ctx());
 
-        self.subprotocols.with_mut(|s| s.clear_and_free());
         self.clear_input();
         self.body.set(Vec::new());
-
-        if !self.hostname.get().is_empty() {
-            self.hostname.set(ZBox::default());
-        }
+        self.hostname.set(None);
 
         // Clean up proxy state. Null the field and detach the tunnel's
         // back-reference before deinit so that SSLWrapper shutdown callbacks
@@ -1878,11 +1879,11 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
 
 /// Returns the name the certificate must match: `hostname` (`tls.serverName` or the URL's host), falling back to the SNI.
 fn identity_name<'a>(
-    hostname: &'a [u8],
+    hostname: Option<&'a ZBox>,
     ssl: Option<&boringssl::c::SSL>,
 ) -> std::borrow::Cow<'a, [u8]> {
-    if !hostname.is_empty() {
-        hostname.into()
+    if let Some(hostname) = hostname {
+        hostname.as_bytes().into()
     } else {
         ssl.and_then(|ssl| ssl.servername())
             .map(|name| name.to_vec())

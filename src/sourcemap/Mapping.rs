@@ -175,9 +175,9 @@ impl List {
 
     pub(crate) fn sort(&mut self) {
         both_lists!(&mut self.r#impl, |list| {
-            list.sort_by::<"generated", LineColumnOffset>(|a, b| {
+            list.sort_by_column::<"generated", LineColumnOffset>(|a, b| {
                 (a.lines.zero_based(), a.columns.zero_based())
-                    < (b.lines.zero_based(), b.columns.zero_based())
+                    .cmp(&(b.lines.zero_based(), b.columns.zero_based()))
             });
         })
     }

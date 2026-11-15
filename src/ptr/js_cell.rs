@@ -1,11 +1,4 @@
-/// A `#[repr(transparent)]` wrapper over `UnsafeCell<T>` that lends `&T` and `&mut T` from `&self`.
-///
-/// Like `Cell<T>` it is never `Sync`, and `Send` only when `T` is.
-///
-/// Unlike `Cell<T>` it checks nothing on its own thread: a reference from [`Self::get`] or
-/// [`Self::with_mut`] that is live while other code writes to the cell, which any call into
-/// JavaScript can, is undefined behaviour, although both are safe to call. For a value that is used
-/// across such a call, take it out of a `Cell` ([`CellExt`](crate::CellExt)).
+/// An `UnsafeCell<T>` whose safe `get` and `with_mut` leave it to the caller that no borrows overlap.
 #[repr(transparent)]
 pub struct JsCell<T>(core::cell::UnsafeCell<T>);
 

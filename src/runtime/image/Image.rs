@@ -56,16 +56,11 @@ use crate::generated_bindgen::image::js_Image as js;
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `max_pixels`
 // / `auto_orient` are read-only after construction so stay bare.
 pub(crate) struct Image {
-    /// Empty while there is an `unread_blob`.
+    /// Empty while `unread_blob` is `Some`.
     source: OnceCell<Source>,
-    /// `Bun.file()`, `Bun.s3()`, an fd-backed Blob — anything whose bytes
-    /// don't exist until read. We hold a Strong on the JS Blob and, at
-    /// terminal time, just call its own `.bytes()` (whatever that means for
-    /// that kind of Blob — file, S3, pipe, slice) and chain the pipeline
-    /// task off the resulting Promise. After the first read completes the
-    /// source is `.owned` so subsequent terminals reuse the bytes.
+    /// A Blob with no bytes in memory (`Bun.file()`, `Bun.s3()`, an fd), until `set_source`.
     unread_blob: Cell<Option<Strong>>,
-    /// What `source` owns, for the marking threads.
+    /// The bytes that `source` owns. `estimated_size` reads it on GC threads.
     source_size: AtomicUsize,
     pipeline: Cell<Pipeline>,
     /// Decompression-bomb guard. Checked against the *header* dimensions before
@@ -299,7 +294,7 @@ impl Image {
         Ok(())
     }
 
-    /// The first one stays: a worker can be reading it.
+    /// Ignored once `source` is set: a `PipelineTask` can be reading it.
     fn set_source(&self, source: Source) {
         // Only the bytes WE own. .js_buffer is the caller's ArrayBuffer (already
         // counted via the cached value slot); the worker's RGBA scratch is
@@ -340,7 +335,7 @@ fn apply_options(img: &mut Image, global: &JSGlobalObject, opt: JSValue) -> JsRe
     Ok(())
 }
 
-/// The caller of a `Source::JsBuffer` result puts `value` in the `sourceJS` slot. `None`: a Blob that is yet to be read.
+/// The caller of a `Source::JsBuffer` result puts `value` in the `sourceJS` slot. `None` for a Blob that has to be read first.
 fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Source>> {
     // String → file path or data:/base64 URL. Everything else → bytes.
     if value.is_string() {
@@ -702,7 +697,7 @@ impl Image {
         this_value: JSValue,
         _global: &JSGlobalObject,
     ) -> Result<(Input, Pin), PinError> {
-        match self.source.get().expect("the caller has read the Blob") {
+        match self.source.get().expect("`unread_blob` was read") {
             Source::JsBuffer => {
                 let Some(v) = js::source_js_get_cached(this_value) else {
                     return Err(PinError::Detached);
@@ -1156,7 +1151,7 @@ impl Image {
         this_value: JSValue,
     ) -> JsResult<(codecs::Encoded, &'static ZStr)> {
         bun_removable_features::removable_definition!(Image, Self::encode_for_body);
-        // The body-init contract is synchronous, so a `.blob` source can't go
+        // The body-init contract is synchronous, so an `unread_blob` can't go
         // through the async read chain here. For the common case (file by path)
         // fall back to the `.path` source — `run()` reads it inline. fd/S3-backed
         // BunFiles would block or need network; refuse with a clear message until
@@ -1229,7 +1224,7 @@ fn into_buffer(out: codecs::Encoded, global: &JSGlobalObject) -> JsResult<JSValu
 
 // ───────────────────────────── worker task ──────────────────────────────────
 
-/// `.blob` source: ask the Blob for its bytes via the store-agnostic
+/// `unread_blob`: ask the Blob for its bytes via the store-agnostic
 /// `Blob.readBytesToHandler` (file → ReadFile/ReadFileUV, S3 → S3.download,
 /// memory → dupe), receive the owned `[]u8` directly — never wrapped in a
 /// JSValue — store it as `image.source = .owned`, and re-enter `schedule()`.
@@ -1290,12 +1285,10 @@ impl BlobReadChain {
             ReadBytesResult::Ok(bytes) => {
                 let cx = global.js_thread(global.bun_vm().context_of(self.context));
                 let image = self.image.image(&cx);
-                // Concurrent terminals can have started multiple BlobReadChains
-                // (no in-flight serialisation — `start()` re-enters every time
-                // it sees `.blob`).
+                // Concurrent terminals each start a `BlobReadChain`, so `source` may already be set.
                 image.set_source(Source::Owned(bytes));
                 let this_value = image.this_ref.get().get();
-                // There is a source now; this re-entry takes the regular path. If `schedule()` threw,
+                // `source` is set; this re-entry takes the regular path. If `schedule()` threw,
                 // `deliver` was already dropped there and the pending exception is the rejection.
                 let inner = image.schedule(&cx, this_value, kind, deliver);
                 outer.settle(global, inner)

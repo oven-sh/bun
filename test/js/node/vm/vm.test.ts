@@ -3508,24 +3508,28 @@ test.concurrent("microtasks left on an afterEvaluate context by a timed-out scri
   const code = `
     const vm = require("node:vm");
     // The timeout is wall-clock, so on a busy machine it can cut a run short before the script has queued its
-    // microtask, or before the checkpoint has started it. Then reach() was not called: the attempt shows
-    // nothing, and the next one has a new context and twice the time.
+    // microtask, or before the checkpoint has started it. Such a run timed out without its call of queued() or
+    // started(). It shows nothing: the next attempt has a new context and twice the time. Every other result
+    // is what the test compares. The attempts end at 640 ms, so that all of them take 2.5 s at most.
+    const timedOut = "ERR_SCRIPT_EXECUTION_TIMEOUT";
     function attempt(timeout) {
       const lines = [];
-      let reached = 0;
-      const sandbox = { log: line => lines.push(line), reach: () => { reached++; } };
+      let queued = false, started = false;
+      const sandbox = { log: line => lines.push(line), queued: () => { queued = true; }, started: () => { started = true; } };
       const ctx = vm.createContext(sandbox, { microtaskMode: "afterEvaluate" });
       const run = (src, ms) => { try { return String(vm.runInContext(src, ctx, { timeout: ms })); } catch (e) { return e.code; } };
-      lines.push(run("Promise.resolve().then(() => log('leftover ran')); reach(); for (;;) {}", timeout));
-      if (reached !== 1) return { lines, inTime: false };
+      const first = run("Promise.resolve().then(() => log('leftover ran')); queued(); for (;;) {}", timeout);
+      lines.push(first);
+      if (first === timedOut && !queued) return { lines, early: true };
       lines.push(run("1 + 1", 1000));
-      lines.push(run("Promise.resolve().then(() => { reach(); for (;;) {} }); 2", timeout));
-      if (reached !== 2) return { lines, inTime: false };
+      const third = run("Promise.resolve().then(() => { started(); for (;;) {} }); 2", timeout);
+      lines.push(third);
+      if (third === timedOut && !started) return { lines, early: true };
       lines.push(run("3", 1000));
-      return { lines, inTime: true };
+      return { lines, early: false };
     }
     let last;
-    for (let timeout = 20; !last?.inTime && timeout <= 1280; timeout *= 2) last = attempt(timeout);
+    for (let timeout = 20; (!last || last.early) && timeout <= 640; timeout *= 2) last = attempt(timeout);
     for (const line of last.lines) console.log(line);
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });

@@ -403,3 +403,203 @@ describe("endpoint.close() with an unsent stateless reset", () => {
     60_000,
   );
 });
+
+describe.concurrent("script that runs under a native call", () => {
+  async function run(body: string, env = {}) {
+    const fixture = `
+      import { createPrivateKey } from "node:crypto";
+      import { readFileSync } from "node:fs";
+      import { connect, listen, QuicEndpoint } from "node:quic";
+
+      const key = createPrivateKey(readFileSync(${JSON.stringify(join(keysDir, "agent1-key.pem"))}));
+      const cert = readFileSync(${JSON.stringify(join(keysDir, "agent1-cert.pem"))});
+      const identity = { keys: [key], certs: [cert] };
+      const transportParams = { maxIdleTimeout: 2 };
+      const client = { alpn: "x", verifyPeer: "manual", transportParams };
+      const nativeTls = { keys: [key.export({ type: "pkcs8", format: "pem" })], certs: [cert] };
+      const nativeAlpn = Buffer.from("\\x01x");
+      const turn = () => new Promise(setImmediate);
+      const symbol = (object, name) => Object.getOwnPropertySymbols(object).find(s => s.description === name);
+      function quiet(session) {
+        session.onstream = stream => stream.closed.catch(() => {});
+        session.opened.catch(() => {});
+        session.closed.catch(() => {});
+        return session;
+      }
+      // The library validates the element, and then native code reads it.
+      function onNativeRead(value, callback) {
+        let reads = 0;
+        return Object.defineProperty([], 0, { enumerable: true, get: () => (++reads === 2 && callback(), value) });
+      }
+      async function nativeEndpoint() {
+        let session, handle;
+        Object.defineProperty(Object.prototype, "_pendingQlog", { configurable: true, get() { session ??= this; } });
+        await quiet(await connect(server.address, client)).opened;
+        delete Object.prototype._pendingQlog;
+        const kOwner = symbol(session, "kOwner");
+        Object.defineProperty(Object.prototype, kOwner, {
+          configurable: true,
+          set(value) { handle = Object.defineProperty(this, kOwner, { value, writable: true }); },
+        });
+        const endpoint = new QuicEndpoint();
+        delete Object.prototype[kOwner];
+        return [endpoint, handle];
+      }
+      const server = await listen(quiet, { sni: { "*": identity }, alpn: "x", transportParams });
+      ${body}
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, NODE_NO_WARNINGS: "1", ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // AddressSanitizer only sees the memory of an ArrayBuffer with Malloc=1. Without it, a later buffer gets the write.
+  const seesBuffers = isASAN ? { Malloc: "1", ASAN_OPTIONS: bunEnv.ASAN_OPTIONS + ":detect_leaks=0" } : {};
+  const takeAway = `
+    const later = [];
+    function takeAway(buffer) {
+      const copy = buffer.slice(0);
+      buffer.transfer(0);
+      for (let i = 0; i < 128; i++) later.push(new Uint8Array(new ArrayBuffer(copy.byteLength)));
+      return copy;
+    }
+    const sizes = () => [...new Set(later.map(bytes => bytes.length))].sort().join();
+    const written = () => later.filter(bytes => bytes.some(Boolean)).length;
+  `;
+
+  test("transfers the state of an endpoint, a session and a stream", async () => {
+    const result = await run(
+      `
+        ${takeAway}
+        const { DataView } = globalThis;
+        globalThis.DataView = function (buffer) {
+          return new DataView(takeAway(buffer));
+        };
+        const endpoint = new QuicEndpoint();
+        const session = quiet(await connect(server.address, { ...client, endpoint }));
+        await session.opened;
+        (await session.createBidirectionalStream()).destroy();
+        endpoint.busy = true;
+        console.log(sizes(), written());
+        process.exit(0);
+      `,
+      seesBuffers,
+    );
+    expect(result).toEqual({ stdout: "24,40,56 0\n", stderr: "", exitCode: 0 });
+  });
+
+  test("transfers the stats of a stream", async () => {
+    const result = await run(
+      `
+        ${takeAway}
+        const session = quiet(await connect(server.address, client));
+        await session.opened;
+        const stream = await session.createBidirectionalStream();
+        stream.stats;
+        BigUint64Array.prototype.constructor = {
+          [Symbol.species]: function (buffer) {
+            return new BigUint64Array(takeAway(buffer));
+          },
+        };
+        stream.destroy();
+        console.log(sizes(), written());
+        process.exit(0);
+      `,
+      seesBuffers,
+    );
+    expect(result).toEqual({ stdout: "104 0\n", stderr: "", exitCode: 0 });
+  });
+
+  test("closes the endpoint while connect() reads the certificates", async () => {
+    const result = await run(`
+      const endpoint = new QuicEndpoint();
+      const ca = onNativeRead(cert, () => endpoint.close());
+      const session = await connect(server.address, { ...client, endpoint, ca }).then(quiet, e => console.log(e.code));
+      await endpoint.closed;
+      await turn();
+      session?.destroy(undefined, { code: 1 });
+      process.exit(0);
+    `);
+    expect(result).toEqual({ stdout: "ERR_QUIC_ENDPOINT_CLOSED\n", stderr: "", exitCode: 0 });
+  });
+
+  test.each(["transportParams", "qlog"])("releases the socket while connect() reads %s", async name => {
+    const result = await run(`
+      const [, handle] = await nativeEndpoint();
+      handle.connect(server.address, { tls: { alpn: nativeAlpn } });
+      try {
+        handle.connect(server.address, { tls: { alpn: nativeAlpn }, get ${name}() { handle.releaseSocket(); } });
+      } catch (e) {
+        console.log(e.code);
+      }
+      process.exit(0);
+    `);
+    expect(result).toEqual({ stdout: "ERR_QUIC_ENDPOINT_CLOSED\n", stderr: "", exitCode: 0 });
+  });
+
+  test("listens while listen() reads the transport parameters", async () => {
+    const result = await run(`
+      const endpoint = new QuicEndpoint();
+      let inner;
+      endpoint[symbol(QuicEndpoint.prototype, "kListen")](quiet, {
+        tls: { ...nativeTls, origins: ["https://a.example"] },
+        transportParams: {
+          get maxIdleTimeout() {
+            inner ??= listen(quiet, { endpoint, sni: { "*": identity, "b.example": identity } });
+          },
+        },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      quiet(await connect(endpoint.address, { verifyPeer: "manual", transportParams, onorigin: resolve }));
+      console.log((await promise).join());
+      process.exit(0);
+    `);
+    expect(result).toEqual({ stdout: "https://b.example\n", stderr: "", exitCode: 0 });
+  });
+
+  test.skipIf(!isASAN || !isLinux)(
+    "listens while listen() reads the certificates",
+    async () => {
+      const result = await run(
+        `
+          const endpoint = new QuicEndpoint();
+          const options = certs => ({ endpoint, alpn: "x", sni: { "*": { keys: [key], certs } } });
+          await listen(quiet, options(onNativeRead(cert, () => console.log(typeof listen(quiet, options([cert]))))));
+          await Promise.all([endpoint.close(), server.close()]);
+        `,
+        {
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "..", "..", "..", "leaksan.supp")}`,
+        },
+      );
+      expect(result).toEqual({ stdout: "object\n", stderr: "", exitCode: 0 });
+    },
+    // LeakSanitizer needs more than the default 5 s on a debug build.
+    60_000,
+  );
+
+  test("the options of listen() are read once, not for each session", async () => {
+    const result = await run(`
+      const [endpoint, handle] = await nativeEndpoint();
+      process.on("uncaughtException", () => {});
+      let reads = 0;
+      handle.listen({ tls: { ...nativeTls, alpn: nativeAlpn }, get qlog() { if (reads++) handle.releaseSocket(); } });
+      reads = 1;
+      // Not announced for its first packet, so the session is made when lsquic promotes the connection.
+      endpoint.busy = true;
+      quiet(await connect(handle.address(), client));
+      while (endpoint.stats.packetsReceived === 0n) await turn();
+      endpoint.busy = false;
+      while (endpoint.stats.serverSessions === 0n) await turn();
+      console.log(reads);
+      process.exit(0);
+    `);
+    expect(result).toEqual({ stdout: "1\n", stderr: "", exitCode: 0 });
+  });
+});

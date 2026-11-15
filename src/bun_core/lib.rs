@@ -1,6 +1,5 @@
 #![feature(allocator_api)]
 #![feature(adt_const_params)]
-#![feature(atomic_volatile)]
 #![feature(core_io, core_io_borrowed_buf)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
 #![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time
@@ -34,7 +33,6 @@ pub use c_str_list::{CStrList, CStrRef, CStringList};
 /// `bun_brotli` / `bun_zlib` / `bun_zstd`.
 pub mod compress {
     use crate::vec::BorrowedCursor;
-    use core::sync::atomic::{AtomicU8, Ordering};
 
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum State {
@@ -96,10 +94,9 @@ pub mod compress {
         }
 
         pub fn input_byte(&self, index: usize) -> Option<u8> {
-            let input = self.input.cast::<AtomicU8>();
-            // SAFETY: in bounds. The load is atomic because script may be storing to the byte.
-            (index < self.input.len())
-                .then(|| unsafe { input.add(index).load_volatile(Ordering::Relaxed) })
+            let input = self.input.cast::<u8>();
+            // SAFETY: in bounds. Volatile, because script may be storing to the byte.
+            (index < self.input.len()).then(|| unsafe { input.add(index).read_volatile() })
         }
     }
 

@@ -1214,6 +1214,858 @@ describe("bundler", () => {
     },
   });
 
+  // One memo cache for each component, kept between renders, as a fiber keeps it. `render` gives back the props of the
+  // element that the component returns, and `slotsOf` how many memo slots the component asked for.
+  const reactWithAFiberForEachComponent = {
+    "/node_modules/react/index.js": /* js */ `
+      const fibers = new Map();
+      let current;
+      exports.render = (Component, props) => {
+        current = fibers.get(Component);
+        if (!current) fibers.set(Component, (current = { cache: null }));
+        return Component(props);
+      };
+      exports.memoCache = size => (current.cache ??= new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+      exports.slotsOf = Component => fibers.get(Component)?.cache?.length;
+      exports.useState = initial => [initial, () => {}];
+      exports.useMemo = make => make();
+    `,
+    "/node_modules/react/compiler-runtime.js": `exports.c = size => require("./index.js").memoCache(size);`,
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props;`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props;`,
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+  };
+  // Renders each export of ./forms once for each of `renders`, and prints a line for it: what each render gave, then in
+  // brackets how many memo slots the component has. A component that is not compiled has none. `*` marks a render that
+  // got the `pattern` of the render before it.
+  const entryThatRenders = (renders: string, withSlots = true) => /* jsx */ `
+    import { render, slotsOf } from "react";
+    import * as forms from "./forms";
+
+    const props = {
+      map: new Map([["a", 1], ["b", 2], ["c", 3]]),
+      set: new Set(["a", "b"]),
+      list: ["a", "b"],
+      groups: { a: [1], b: [2, 3] },
+    };
+    for (const [name, form] of Object.entries(forms)) {
+      const Component = name.startsWith("make") ? form() : form;
+      let last;
+      const rendered = ${renders}.map(more => {
+        try {
+          const { children, onClick, pattern } = render(Component, { ...props, ...more });
+          const kept = pattern !== undefined && pattern === last ? "*" : "";
+          last = pattern;
+          return String(onClick ? onClick() : children) + kept;
+        } catch (error) {
+          return "THROW(" + error.message + ")";
+        }
+      });
+      const slots = ${withSlots} ? slotsOf(Component) : undefined;
+      console.log(name + " " + rendered.join(" ") + (slots === undefined ? "" : " [" + slots + "]"));
+    }
+  `;
+  // What the plain build prints: no memo slots, and a new `pattern` in each render.
+  const asPlain = (compiled: string) => compiled.replace(/\*| \[\d+\]/g, "");
+
+  // What takes from an iterator uses it up. In a memo block of its own, the iterator of one render is given to the
+  // next one, at the place where it stopped. So a spread argument is in the memo block of the iterator that it takes
+  // from. For a call with no signature, and for one whose signature has an effect for each argument, it was. For a
+  // call whose signature lists its effects it was not: a method of a builtin collection, and a local function that
+  // has a rest parameter and writes what it captures. Each component renders three times on one memo cache, the
+  // third time with another `n`, and has to render what the plain build renders.
+  const spreadArgumentOutput = `
+    SpreadIntoALocalFunction 3,1 3,1 3,2 [6]
+    SpreadIntoAnUnknownFunction 1,a,b,c 1,a,b,c 2,a,b,c [5]
+    SpreadIntoMathMax 3 3 3 [5]
+    SpreadIntoPush 1,1,2,3 1,1,2,3 2,1,2,3 [5]
+    SpreadIntoPushThroughALocal 1,a,b,c 1,a,b,c 2,a,b,c [5]
+    SpreadIntoSetAdd 1,a 1,a 2,a [9]
+    SpreadIntoUnshift a,b,c,1 a,b,c,1 a,b,c,2 [5]
+    SpreadOfAnArray 1,a,b 1,a,b 2,a,b [5]
+  `;
+  for (const reactCompiler of [false, true]) {
+    itBundled(`react-compiler/SpreadArgumentTakesFromAnIteratorOfItsRender-${reactCompiler ? "compiled" : "plain"}`, {
+      files: {
+        "/entry.jsx": entryThatRenders(`[{ n: 1 }, { n: 1 }, { n: 2 }]`),
+        "/forms.jsx": /* jsx */ `
+          const pick = (...all) => all.join();
+
+          // A spread argument of a call whose effects are known: a method of a builtin collection, and a local function
+          // that has a rest parameter and writes what it captures.
+          export function SpreadIntoPush({ map, n }) {
+            const rows = [];
+            rows.push(n, ...map.values());
+            return <b>{rows.join()}</b>;
+          }
+          export function SpreadIntoPushThroughALocal({ map, n }) {
+            const it = map.keys();
+            const rows = [n];
+            rows.push(...it);
+            return <b>{rows.join()}</b>;
+          }
+          export function SpreadIntoSetAdd({ map, n }) {
+            const it = map.keys();
+            const seen = new Set([n]);
+            seen.add(...it);
+            return <b>{[...seen].join()}</b>;
+          }
+          export function SpreadIntoALocalFunction({ map, n }) {
+            const log = [];
+            const count = (...all) => {
+              log.push(n);
+              return all.length;
+            };
+            const size = count(...map.keys());
+            return <b>{size + "," + log.join()}</b>;
+          }
+          export function SpreadIntoUnshift({ map, n }) {
+            const rows = [n];
+            rows.unshift(...map.keys());
+            return <b>{rows.join()}</b>;
+          }
+          // These were right: a call with no signature, one whose signature lists an effect for each argument, and an array.
+          export function SpreadIntoAnUnknownFunction({ map, n }) {
+            const it = map.keys();
+            return <b>{pick(n, ...it)}</b>;
+          }
+          export function SpreadIntoMathMax({ map, n }) {
+            const it = map.values();
+            return <b>{Math.max(n, ...it)}</b>;
+          }
+          export function SpreadOfAnArray({ list, n }) {
+            const rows = [n];
+            rows.push(...list);
+            return <b>{rows.join()}</b>;
+          }
+        `,
+        ...reactWithAFiberForEachComponent,
+      },
+      reactCompiler,
+      target: "browser",
+      backend: "cli",
+      run: { stdout: reactCompiler ? spreadArgumentOutput : asPlain(spreadArgumentOutput) },
+    });
+  }
+
+  // A regular expression literal, what a tagged template returns and what `new String()` makes are objects. A call or
+  // a store can change them, so it is in their memo block, and what is read from them can depend on a prop. A tagged
+  // template is a call of its tag, which can change what the tag captures. Each component renders the texts a, ab and
+  // abc on one memo cache and has to render what the plain build renders. A literal or a tag result that is only
+  // handed on is still kept.
+  const objectOutput = `
+    ExecAsAString a a a [4]
+    ExecInALoop a a a [4]
+    InAFindCallback a ab abc [5]
+    InAMapCallback true,false,true true,false,true true,false,true [4]
+    InAnArray true true true [5]
+    InAnObject true true true [5]
+    MethodAsATag 1a 1ab 1abc [4]
+    MethodTagThatReturnsWhatItCaptures a ab abc [4]
+    MoreFlags true true true [4]
+    NewBoolean a ab abc [4]
+    NewNumber a ab abc [4]
+    NewString a ab abc [4]
+    OnlyHandedOn a ab* abc* [3]
+    PassedToAFunction true true true [4]
+    PassedToAnArrow true true true [6]
+    PopAsATag 2a 2ab 2abc [3]
+    PushAsATag 1a 1ab 1abc [3]
+    ReplaceAndSplit b1 bb2 bbc2 [6]
+    ResetThenTest true true true [5]
+    Sticky true true true [4]
+    StickyTwice a,undefined a,b a,b [5]
+    StoreOnALiteral a ab abc [4]
+    TagResultMutated a ab abc [4]
+    TagResultOnlyHandedOn a ab* abc* [3]
+    TagResultStoredInto a ab abc [4]
+    TagThatReadsWhatItWrote a ab abc [4]
+    TagThatReturnsWhatItCaptures a ab abc [4]
+    TagThatWritesWhatItCaptures xa xab xabc [7]
+    Test true true true [4]
+    TestThroughALocal true true true [4]
+    makeNested true true true [4]
+  `;
+  for (const reactCompiler of [false, true]) {
+    itBundled(`react-compiler/RegExpLiteralTagResultAndNewStringAreObjects-${reactCompiler ? "compiled" : "plain"}`, {
+      files: {
+        "/entry.jsx": entryThatRenders(`[{ text: "a" }, { text: "ab" }, { text: "abc" }]`),
+        "/forms.jsx": /* jsx */ `
+          const has = (re, text) => re.test(text);
+          const box = () => ({ list: [] });
+
+          // \`test()\` and \`exec()\` go on from the \`lastIndex\` of a literal with \`g\` or \`y\`. Each text begins with an a.
+          export function Test({ text }) {
+            return <b>{String(/a/g.test(text))}</b>;
+          }
+          export function TestThroughALocal({ text }) {
+            const re = /a/g;
+            const found = re.test(text);
+            return <b>{String(found)}</b>;
+          }
+          export function Sticky({ text }) {
+            return <b>{String(/a/y.test(text))}</b>;
+          }
+          export function MoreFlags({ text }) {
+            return <b>{String(/a/gi.test(text))}</b>;
+          }
+          export function ExecInALoop({ text }) {
+            const re = /[a-c]/g;
+            let first = "";
+            let match;
+            while ((match = re.exec(text)) !== null) {
+              first += match[0];
+              break;
+            }
+            return <b>{first}</b>;
+          }
+          export function ExecAsAString({ text }) {
+            return <b>{String(/a/g.exec(text))}</b>;
+          }
+          export function StickyTwice({ text }) {
+            const re = /[a-c]/y;
+            const first = re.exec(text)?.[0];
+            const second = re.exec(text)?.[0];
+            return <b>{first + "," + second}</b>;
+          }
+          export function PassedToAFunction({ text }) {
+            return <b>{String(has(/a/g, text))}</b>;
+          }
+          export function PassedToAnArrow({ text }) {
+            const hasIt = re => re.test(text);
+            return <b>{String(hasIt(/a/g))}</b>;
+          }
+          export function InAnArray({ text }) {
+            const all = [/a/g];
+            return <b>{String(all[0].test(text))}</b>;
+          }
+          export function InAnObject({ text }) {
+            const all = { re: /a/g };
+            return <b>{String(all.re.test(text))}</b>;
+          }
+          export function InAFindCallback({ text }) {
+            const own = [text];
+            const re = /a/g;
+            return <b>{String(own.find(it => re.test(it)))}</b>;
+          }
+          export function InAMapCallback({ text }) {
+            const own = [text, "b", text];
+            const re = /a/g;
+            return <b>{own.map(it => re.test(it)).join()}</b>;
+          }
+          export function makeNested() {
+            function Nested({ text }) {
+              return <b>{String(/a/g.test(text))}</b>;
+            }
+            return Nested;
+          }
+          // A store on a literal, whatever its flags are.
+          export function StoreOnALiteral({ text }) {
+            const re = /a/;
+            re.seen = (re.seen ?? "") + text;
+            return <b>{re.seen}</b>;
+          }
+
+          // What a tag returns, and what a tag changes.
+          export function TagResultMutated({ text }) {
+            const made = box\`x\`;
+            made.list.push(text);
+            return <b>{made.list.join()}</b>;
+          }
+          export function TagResultStoredInto({ text }) {
+            const made = box\`x\`;
+            made.seen = (made.seen ?? "") + text;
+            return <b>{made.seen}</b>;
+          }
+          export function TagThatWritesWhatItCaptures({ text }) {
+            const seen = new Set();
+            const tag = strings => {
+              seen.add(text);
+              return strings[0];
+            };
+            const x = tag\`x\`;
+            return <b>{x + [...seen].join()}</b>;
+          }
+          export function TagThatReadsWhatItWrote({ text }) {
+            const log = [];
+            const tag = () => {
+              log.push(text);
+              return log.join();
+            };
+            return <b>{tag\`x\`}</b>;
+          }
+          // A tag that is a member: a method of a local object, and a method of an array.
+          export function MethodAsATag({ text }) {
+            const log = [];
+            const tags = {
+              note: () => {
+                log.push(text);
+                return log.length;
+              },
+            };
+            const first = tags.note\`x\`;
+            return <b>{first + text}</b>;
+          }
+          export function PushAsATag({ text }) {
+            const list = [];
+            list.push\`x\`;
+            return <b>{list.length + text}</b>;
+          }
+          export function PopAsATag({ text }) {
+            const list = ["x", "y", "z"];
+            list.pop\`\`;
+            return <b>{list.length + text}</b>;
+          }
+          export function TagThatReturnsWhatItCaptures({ text }) {
+            const parts = [];
+            const tag = () => parts;
+            const same = tag\`x\`;
+            same.push(text);
+            return <b>{parts.join()}</b>;
+          }
+          export function MethodTagThatReturnsWhatItCaptures({ text }) {
+            const parts = [];
+            const tags = { all: () => parts };
+            const same = tags.all\`x\`;
+            same.push(text);
+            return <b>{parts.join()}</b>;
+          }
+
+          // \`new\` of a function that returns a primitive when it is called.
+          export function NewString({ text }) {
+            const made = new String("x");
+            made.seen = (made.seen ?? "") + text;
+            return <b>{made.seen}</b>;
+          }
+          export function NewNumber({ text }) {
+            const made = new Number(1);
+            made.seen = (made.seen ?? "") + text;
+            return <b>{made.seen}</b>;
+          }
+          export function NewBoolean({ text }) {
+            const made = new Boolean(true);
+            made.seen = (made.seen ?? "") + text;
+            return <b>{made.seen}</b>;
+          }
+
+          // These were right. A literal or a tag result that is only handed on is still kept.
+          export function ReplaceAndSplit({ text }) {
+            return <b>{text.replace(/a/g, "b") + text.split(/b/).length}</b>;
+          }
+          export function ResetThenTest({ text }) {
+            const re = /a/g;
+            re.lastIndex = 0;
+            return <b>{String(re.test(text))}</b>;
+          }
+          export function OnlyHandedOn({ text }) {
+            return <input pattern={/a/g}>{text}</input>;
+          }
+          export function TagResultOnlyHandedOn({ text }) {
+            return <input pattern={box\`a\`}>{text}</input>;
+          }
+        `,
+        ...reactWithAFiberForEachComponent,
+      },
+      reactCompiler,
+      target: "browser",
+      backend: "cli",
+      run: { stdout: reactCompiler ? objectOutput : asPlain(objectOutput) },
+    });
+  }
+
+  // An array pattern takes from an iterator, as a spread does, so it is in the memo block of the iterator that it
+  // takes from. Each component renders three times on one memo cache, the third time with another `n`, and has to
+  // render what the plain build renders.
+  const arrayPatternOutput = `
+    AcrossAHook a1 a1 a2 [2]
+    AcrossAnEarlyReturn a1 a1 none [7]
+    AcrossJsx a1 a1 a2 [8]
+    ArrayLiteralPattern 3 3 5 [5]
+    ArrayValues a a a [4]
+    Assignment a a a [4]
+    AssignmentInAnExpression a a a [4]
+    CallbackParameter a1 a1 a2 [7]
+    Closure a1 a1 a2 [4]
+    Default a a a [4]
+    Entries a a a [4]
+    EntriesOfAnObject a1 a1 a2 [4]
+    EntriesThenMap a11,b21 a11,b21 a12,b22 [9]
+    ForOfHead a1 a1 a2 [5]
+    Generator a a a [4]
+    InAnArrayPattern a a a [4]
+    InAnObjectPattern a a a [4]
+    IteratorHelper a a a [4]
+    JoinOfTwoIterators a a 1 [5]
+    Keys a a a [4]
+    MatchAll a a a [4]
+    MemoOverAnEntry a11,b21 a11,b21 a12,b22
+    OwnArray a a a [4]
+    OwnMap a a a [4]
+    OwnSet a a a [4]
+    PropsPattern ab1 ab1 ab2 [2]
+    SetValues a a a [4]
+    StatePair 1 1 2 [2]
+    SymbolIterator a a a [4]
+    TagResult 2 2 3 [3]
+    ThroughALocal a a a [4]
+    TwoPatterns ab ab ab [5]
+    UnusedRest a a a [4]
+    Values 1 1 1 [4]
+    makeNested a a a [4]
+  `;
+  for (const reactCompiler of [false, true]) {
+    itBundled(`react-compiler/ArrayPatternTakesFromAnIteratorOfItsRender-${reactCompiler ? "compiled" : "plain"}`, {
+      files: {
+        "/entry.jsx": entryThatRenders(`[{ text: "ab", n: 1 }, { text: "ab", n: 1 }, { text: "ab", n: 2 }]`),
+        "/forms.jsx": /* jsx */ `
+          import { useMemo, useState } from "react";
+
+          function* letters(list) {
+            yield* list;
+          }
+          function* numbers() {
+            yield 1;
+            yield 2;
+          }
+          const count = () => numbers();
+          const describe = entry => ({ size: entry[1].length });
+
+          // An array pattern over an iterator that the component makes.
+          export function Keys({ map }) {
+            const [first] = map.keys();
+            return <b>{first}</b>;
+          }
+          export function Values({ map }) {
+            const [first] = map.values();
+            return <b>{first}</b>;
+          }
+          export function SetValues({ set }) {
+            const [first] = set.values();
+            return <b>{first}</b>;
+          }
+          export function ArrayValues({ list }) {
+            const [first] = list.values();
+            return <b>{first}</b>;
+          }
+          export function Entries({ map }) {
+            const [[first]] = map.entries();
+            return <b>{first}</b>;
+          }
+          export function MatchAll({ text }) {
+            const [[first]] = text.matchAll(/[a-z]/g);
+            return <b>{first}</b>;
+          }
+          export function SymbolIterator({ map }) {
+            const [[first]] = map[Symbol.iterator]();
+            return <b>{first}</b>;
+          }
+          export function Generator({ list }) {
+            const [first] = letters(list);
+            return <b>{first}</b>;
+          }
+          export function IteratorHelper({ list }) {
+            const [first] = list.values().map(it => it);
+            return <b>{first}</b>;
+          }
+          export function TagResult({ n }) {
+            const [first] = count\`x\`;
+            return <b>{first + n}</b>;
+          }
+          export function OwnMap({ map }) {
+            const own = new Map(map);
+            const [first] = own.keys();
+            return <b>{first}</b>;
+          }
+          export function OwnSet({ list }) {
+            const own = new Set(list);
+            const [first] = own.values();
+            return <b>{first}</b>;
+          }
+          export function OwnArray({ list }) {
+            const own = [...list];
+            const [first] = own.values();
+            return <b>{first}</b>;
+          }
+          export function UnusedRest({ map }) {
+            const [first, ...rest] = map.keys();
+            return <b>{first}</b>;
+          }
+          export function Default({ map }) {
+            const [first = "none"] = map.keys();
+            return <b>{first}</b>;
+          }
+          export function Assignment({ map }) {
+            let first;
+            [first] = map.keys();
+            return <b>{first}</b>;
+          }
+          export function AssignmentInAnExpression({ map }) {
+            let first;
+            void ([first] = map.keys());
+            return <b>{first}</b>;
+          }
+          export function ThroughALocal({ map }) {
+            const it = map.keys();
+            const [first] = it;
+            return <b>{first}</b>;
+          }
+          // The second pattern goes on where the first one stopped, in the same render.
+          export function TwoPatterns({ map }) {
+            const it = map.keys();
+            const [first] = it;
+            const [second] = it;
+            return <b>{first + second}</b>;
+          }
+          export function InAnObjectPattern({ map }) {
+            const {
+              keys: [first],
+            } = { keys: map.keys() };
+            return <b>{first}</b>;
+          }
+          export function InAnArrayPattern({ map }) {
+            const [[first]] = [map.keys()];
+            return <b>{first}</b>;
+          }
+          export function makeNested() {
+            function Nested({ map }) {
+              const [first] = map.keys();
+              return <b>{first}</b>;
+            }
+            return Nested;
+          }
+          // The third render has another \`n\` and an iterator of the same \`map\`.
+          export function ForOfHead({ map, n }) {
+            const found = [];
+            for (const [first] of [map.keys()]) found.push(first + n);
+            return <b>{found.join()}</b>;
+          }
+          export function CallbackParameter({ map, n }) {
+            const found = [map.keys()].map(([first]) => first + n);
+            return <b>{found.join()}</b>;
+          }
+          export function Closure({ map, n }) {
+            const it = map.keys();
+            const take = () => {
+              const [first] = it;
+              return first;
+            };
+            return <b>{take() + n}</b>;
+          }
+          // What stands between the iterator and the pattern: a hook call (no memo block has one, so nothing is kept),
+          // an early return that the third render takes, JSX, and a join of two iterators.
+          export function AcrossAHook({ map, n }) {
+            const it = map.keys();
+            useState(0);
+            const [first] = it;
+            return <b>{first + n}</b>;
+          }
+          export function AcrossAnEarlyReturn({ map, n }) {
+            const it = map.keys();
+            if (n === 2) return <b>none</b>;
+            const [first] = it;
+            return <b>{first + n}</b>;
+          }
+          export function AcrossJsx({ map, n }) {
+            const it = map.keys();
+            const label = <i>{n}</i>;
+            const [first] = it;
+            return <b>{first + label.children}</b>;
+          }
+          export function JoinOfTwoIterators({ map, n }) {
+            const it = n === 2 ? map.values() : map.keys();
+            const [first] = it;
+            return <b>{first}</b>;
+          }
+
+          // No iterator is in these. What they render and how many memo slots they have stays as it was.
+          export function StatePair({ n }) {
+            const [count, setCount] = useState(n);
+            return <b title={typeof setCount}>{count}</b>;
+          }
+          export function PropsPattern({ list, n }) {
+            const [first, second] = list;
+            return <b>{first + second + n}</b>;
+          }
+          export function ArrayLiteralPattern({ n }) {
+            const [first, second] = [n, n + 1];
+            return <b>{first + second}</b>;
+          }
+          export function EntriesOfAnObject({ n }) {
+            const rows = Object.entries({ a: n }).map(([key, value]) => key + value);
+            return <b>{rows.join()}</b>;
+          }
+          // No iterator is in these either, and they pay: a callback that takes its parameter apart counts as a change of
+          // the array, so \`entries\` and \`rows\` share one memo block. With a \`useMemo\` over what the array holds the component
+          // is not compiled.
+          export function EntriesThenMap({ groups, n }) {
+            const entries = Object.entries(groups);
+            const rows = entries.map(([key, items]) => key + items.length + n);
+            return <b title={entries.length}>{rows.join()}</b>;
+          }
+          export function MemoOverAnEntry({ groups, n }) {
+            const entries = Object.entries(groups);
+            const found = entries.find(entry => entry[0] === "b");
+            const details = useMemo(() => describe(found), [found]);
+            return <b title={details.size}>{entries.map(([key, items]) => key + items.length + n).join()}</b>;
+          }
+        `,
+        ...reactWithAFiberForEachComponent,
+      },
+      reactCompiler,
+      target: "browser",
+      backend: "cli",
+      run: { stdout: reactCompiler ? arrayPatternOutput : asPlain(arrayPatternOutput) },
+    });
+  }
+
+  // The compiler takes it that nothing changes a local after a function over it went to JSX or to a hook
+  // (`enable_transitively_freeze_function_expressions`). These components do: each pushes onto `list` after `onClick`
+  // has it. When the function can change what it captures, JSX freezes `list` with it, the push after that is not
+  // seen, and `list` is kept and pushed onto again in each render. `MethodCall` renders so on main too. The other
+  // functions count as such a change only by the rules of the tests above: main renders them as the plain build
+  // does. `IteratorToAHook` is the same order with a hook, which takes from its argument: React documents the
+  // arguments of a hook as immutable.
+  const changedAfterOutput = {
+    plain: `
+      IteratorToAHook abc abc abc
+      MethodCall 0/3 0/3 0/3
+      NewString 4/3 4/3 4/3
+      OnlyReads 0/3 0/3 0/3
+      Pattern 0/3 0/3 0/3
+      PatternThroughAHook 0/3 0/3 0/3
+      RegExpLiteral 0/3 0/3 0/3
+      SpreadArgument 1/3 1/3 1/3
+      TagResult 4/3 4/3 4/3
+    `,
+    compiled: `
+      IteratorToAHook abc   [4]
+      MethodCall 0/3 0/4 0/5 [4]
+      NewString 4/3 4/4 4/5 [5]
+      OnlyReads 0/3 0/3 0/3 [4]
+      Pattern 0/3 0/4 0/5 [4]
+      PatternThroughAHook 0/3 0/4 0/5 [6]
+      RegExpLiteral 0/3 0/4 0/5 [7]
+      SpreadArgument 1/3 1/4 1/5 [4]
+      TagResult 4/3 4/4 4/5 [5]
+    `,
+  };
+  for (const reactCompiler of [false, true]) {
+    itBundled(`react-compiler/LocalChangedAfterAFunctionOverItWentToJsx-${reactCompiler ? "compiled" : "plain"}`, {
+      files: {
+        "/entry.jsx": entryThatRenders(`[{ text: "a", n: 2 }, { text: "a", n: 2 }, { text: "a", n: 2 }]`),
+        "/forms.jsx": /* jsx */ `
+          const makeList = n => Array.from({ length: n }, (_, i) => i);
+          const toast = label => label.length;
+          const tag = strings => strings[0];
+          const useEvent = handler => handler;
+          const useNames = it => [...it].join("");
+
+          export function Pattern({ n }) {
+            const list = makeList(n);
+            const onClick = () => {
+              const [first] = list;
+              return first + "/" + list.length;
+            };
+            const button = <button onClick={onClick} />;
+            list.push(9);
+            return button;
+          }
+          export function PatternThroughAHook({ n }) {
+            const list = makeList(n);
+            const onClick = useEvent(() => {
+              const [first] = list;
+              return first + "/" + list.length;
+            });
+            const button = <button onClick={onClick} />;
+            list.push(9);
+            return button;
+          }
+          export function SpreadArgument({ n }) {
+            const list = makeList(n);
+            const onClick = () => {
+              const seen = new Set();
+              seen.add(...list);
+              return seen.size + "/" + list.length;
+            };
+            const button = <button onClick={onClick} />;
+            list.push(9);
+            return button;
+          }
+          export function RegExpLiteral({ n, text }) {
+            const list = makeList(n);
+            const re = /a/;
+            const onClick = () => (re.test(text) ? list[0] : -1) + "/" + list.length;
+            const button = <button onClick={onClick} />;
+            list.push(9);
+            return button;
+          }
+          export function NewString({ n }) {
+            const list = makeList(n);
+            const label = new String("Save");
+            const onClick = () => toast(label) + "/" + list.length;
+            const button = <button onClick={onClick} />;
+            list.push(9);
+            return button;
+          }
+          export function TagResult({ n }) {
+            const list = makeList(n);
+            const label = tag\`Save\`;
+            const onClick = () => toast(label) + "/" + list.length;
+            const button = <button onClick={onClick} />;
+            list.push(9);
+            return button;
+          }
+          export function MethodCall({ n }) {
+            const list = makeList(n);
+            const onClick = () => list.at(0) + "/" + list.length;
+            const button = <button onClick={onClick} />;
+            list.push(9);
+            return button;
+          }
+          export function OnlyReads({ n }) {
+            const list = makeList(n);
+            const onClick = () => list[0] + "/" + list.length;
+            const button = <button onClick={onClick} />;
+            list.push(9);
+            return button;
+          }
+          export function IteratorToAHook({ map }) {
+            const names = useNames(map.keys());
+            return <b>{names}</b>;
+          }
+        `,
+        ...reactWithAFiberForEachComponent,
+      },
+      reactCompiler,
+      target: "browser",
+      backend: "cli",
+      run: { stdout: reactCompiler ? changedAfterOutput.compiled : changedAfterOutput.plain },
+    });
+  }
+
+  // What the rules of the tests above do not reach: each of these is still kept and changed again in a later render.
+  // `stdout` is what the plain build prints.
+  const stillKept = {
+    ConditionalValue: {
+      forms: /* jsx */ `
+        // A value that can be one that the render made or one that it was given: a default, \`??\`, \`?:\`.
+        export function DefaultLiteral({ text, pattern = /a/g }) {
+          return <b>{String(pattern.test(text))}</b>;
+        }
+        export function NullishLiteral(props) {
+          const pattern = props.pattern ?? /a/g;
+          return <b>{String(pattern.test(props.text))}</b>;
+        }
+        export function NullishIterator({ map, order }) {
+          const it = order ?? map.keys();
+          const [first] = it;
+          return <b>{first}</b>;
+        }
+        export function ConditionalIterator({ map, list }) {
+          const [first] = list.length ? map.keys() : list;
+          return <b>{first}</b>;
+        }
+      `,
+      stdout: `
+        ConditionalIterator a a a
+        DefaultLiteral true true true
+        NullishIterator a a a
+        NullishLiteral true true true
+      `,
+    },
+    UnusedPattern: {
+      forms: /* jsx */ `
+        function* logged(log, text) {
+          log.push(text);
+          yield 1;
+        }
+
+        // A pattern that nothing reads is removed, and with it what it takes.
+        export function UnusedPattern({ map }) {
+          const it = map.keys();
+          const [unused] = it;
+          const [second] = it;
+          return <b>{second}</b>;
+        }
+        export function UnusedPatternOverAGenerator({ text }) {
+          const log = [];
+          const [unused] = logged(log, text);
+          return <b>{log.join()}</b>;
+        }
+      `,
+      stdout: `
+        UnusedPattern b b b
+        UnusedPatternOverAGenerator a ab abc
+      `,
+    },
+    MemberAssignment: {
+      forms: /* jsx */ `
+        // The value of a member assignment is made as a primitive.
+        export function MemberAssignment({ text }) {
+          const result = {};
+          const errors = (result.errors = []);
+          errors.push(text);
+          return <b>{result.errors.length + errors.join()}</b>;
+        }
+      `,
+      stdout: `
+        MemberAssignment 1a 1ab 1abc
+      `,
+    },
+    Other: {
+      forms: /* jsx */ `
+        // \`new\` of a function expression takes the signature that its body has as a call.
+        export function NewOfAFunctionExpression({ text }) {
+          const made = new (function () {})();
+          made.seen = (made.seen ?? "") + text;
+          return <b>{made.seen}</b>;
+        }
+        // JSX has the literal before \`test()\` changes it.
+        export function LiteralThatJsxHas({ text }) {
+          const pattern = /a/g;
+          const input = <input pattern={pattern} />;
+          return <b>{String(pattern.test(text)) + (input.pattern === pattern)}</b>;
+        }
+        // The tag is a method of a prop.
+        export function TagOfAProp({ text }) {
+          const parts = text.split\`\`;
+          parts.push("!");
+          return <b>{parts.join("")}</b>;
+        }
+        // The parameter of a callback of \`flatMap\`, whose signature lists no effects.
+        export function FlatMapParameter({ map, n }) {
+          const found = [map.keys()].flatMap(([first]) => [first + n]);
+          return <b>{found.join()}</b>;
+        }
+        export function FilterParameter({ map, n }) {
+          const found = [map.keys()].filter(([first]) => first === "a" || n < 0);
+          return <b>{found.length}</b>;
+        }
+      `,
+      stdout: `
+        FilterParameter 1 1 1
+        FlatMapParameter a0 a1 a2
+        LiteralThatJsxHas truetrue truetrue truetrue
+        NewOfAFunctionExpression a ab abc
+        TagOfAProp a! ab! abc!
+      `,
+    },
+  };
+  for (const [name, { forms, stdout }] of Object.entries(stillKept)) {
+    itBundled(`react-compiler/StillKeptAndChangedInALaterRender-${name}`, {
+      todo: true,
+      files: {
+        "/entry.jsx": entryThatRenders(`[{ text: "a", n: 0 }, { text: "ab", n: 1 }, { text: "abc", n: 2 }]`, false),
+        "/forms.jsx": forms,
+        ...reactWithAFiberForEachComponent,
+      },
+      reactCompiler: true,
+      target: "browser",
+      backend: "cli",
+      run: { stdout },
+    });
+  }
+
   // The pattern was what is left when all slashes are taken off both ends: `/^https?:\/\//` lost the one that closes it.
   itBundled("react-compiler/RegExpThatEndsInASlash", {
     files: {

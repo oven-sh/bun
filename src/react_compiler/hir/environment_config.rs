@@ -106,6 +106,25 @@ pub struct EnvironmentConfig {
     /// For `validate_exhaustive_*_dependencies`: the dependencies that are inferred are in the order of their bytes.
     /// Upstream's are in that of `localeCompare`: `a`, `A`, `b`.
     pub dependencies_are_sorted_by_bytes: bool,
+    /// A spread argument of a call whose signature lists its effects takes from the iterator that it is given, as a
+    /// spread argument of every other call does. A kept iterator would go on where the render before it stopped.
+    /// Upstream computes that effect and only uses it to refuse a spread into a hook. It had the rule until the
+    /// inference was written again (`InferReferenceEffects`, 19.1.0).
+    pub spread_arguments_run_iterators: bool,
+    /// A regular expression literal, and what `new String(x)`, `new Number(x)` or `new Boolean(x)` makes, is an
+    /// object: a call or a store can change it, so they are in its memo block, and what is read from it can depend
+    /// on a prop. To upstream the literal is a primitive and `new` makes what the call without it returns. Both
+    /// were objects there in 19.1.0. Still primitives here: the value of `a.b = []`, and `new` of a function
+    /// expression.
+    pub objects_are_not_primitives: bool,
+    /// A tagged template has the effects of a call of its tag with the template object as the argument: it returns
+    /// what the signature of the tag says, or a mutable object, and it can change what the tag captures. To upstream
+    /// it makes a primitive and calls nothing. It was a call there in 19.1.0, it is one in oxc, and react/react#37506
+    /// makes it one again. Unlike `tagged_templates_are_always_called`, a memo block can still hold it.
+    pub tagged_templates_have_the_effects_of_a_call: bool,
+    /// An array pattern takes from the iterator that it is given, as a spread in an array does, so it is in the memo
+    /// block of an iterator that the render made. To every version of upstream it only reads its operand.
+    pub array_patterns_run_iterators: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -164,6 +183,10 @@ impl Default for EnvironmentConfig {
             tagged_templates_are_always_called: false,
             react_is_known_by_its_module: true,
             dependencies_are_sorted_by_bytes: false,
+            spread_arguments_run_iterators: true,
+            objects_are_not_primitives: true,
+            tagged_templates_have_the_effects_of_a_call: true,
+            array_patterns_run_iterators: true,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

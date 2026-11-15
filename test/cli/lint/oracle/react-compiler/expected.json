@@ -4284,6 +4284,176 @@
     ]
    }
   },
+  "only in a build": {
+   "exit": 1,
+   "files": 3,
+   "diagnostics": {
+    "tagged.jsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value previously passed as an argument to a hook is not allowed. Consider moving the modification before calling the hook",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 4,
+         "line": 11,
+         "offset": 216
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX",
+      "labels": [
+       {
+        "label": "`log` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 3,
+         "line": 25,
+         "offset": 486
+        }
+       },
+       {
+        "label": "`log` originates here",
+        "span": {
+         "column": 9,
+         "length": 3,
+         "line": 23,
+         "offset": 450
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX",
+      "labels": [
+       {
+        "label": "`log` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 3,
+         "line": 50,
+         "offset": 992
+        }
+       },
+       {
+        "label": "`log` originates here",
+        "span": {
+         "column": 9,
+         "length": 3,
+         "line": 48,
+         "offset": 951
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX",
+      "labels": [
+       {
+        "label": "`log` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 3,
+         "line": 61,
+         "offset": 1246
+        }
+       },
+       {
+        "label": "`log` originates here",
+        "span": {
+         "column": 9,
+         "length": 3,
+         "line": 59,
+         "offset": 1192
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 4,
+         "line": 4,
+         "offset": 96
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 4,
+         "line": 84,
+         "offset": 1805
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `made` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `made`",
+        "span": {
+         "column": 5,
+         "length": 4,
+         "line": 42,
+         "offset": 837
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `made` after render",
+        "span": {
+         "column": 13,
+         "length": 7,
+         "line": 41,
+         "offset": 825
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     }
+    ]
+   }
+  },
   "node_modules": {
    "exit": 1,
    "files": 4,
@@ -4996,6 +5166,7 @@
     ],
     "suppressed": []
    }
-  }
+  },
+  "build": {}
  }
 }

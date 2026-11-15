@@ -30,6 +30,7 @@ import {
   eslintConfig,
   eslintSmall,
   type Files,
+  onlyInABuild,
   rc,
   small,
 } from "./inputs.ts";
@@ -103,6 +104,8 @@ export type Expected = {
     fixtures: Record<string, string[]>;
     /** The complete messages. */
     small: ReturnType<typeof byEslintFile>;
+    /** The same for the inputs of "only in a build". */
+    build: ReturnType<typeof byEslintFile>;
   };
 };
 
@@ -226,6 +229,7 @@ if (compare === undefined) {
       cases: briefly(eslint(modules, withEslint(cases))),
       fixtures: briefly(eslint(modules, withEslint(fixtures))),
       small: eslint(modules, eslintSmall),
+      build: eslint(modules, onlyInABuild),
     };
     console.log(`ESLint, cases: ${total(expected.eslint.cases)} messages`);
     console.log(`ESLint, fixtures: ${total(expected.eslint.fixtures)} messages`);
@@ -256,6 +260,7 @@ if (compare === undefined) {
   each("ESLint, cases", expected.eslint.cases, briefly(likeEslint(withEslint(cases))));
   each("ESLint, fixtures", expected.eslint.fixtures, briefly(likeEslint(withEslint(fixtures))));
   each("ESLint, small", expected.eslint.small, likeEslint(eslintSmall));
+  each("ESLint, only in a build", expected.eslint.build, likeEslint(onlyInABuild));
   console.log(`${different} files differ`);
   process.exitCode = different === 0 ? 0 : 1;
 }

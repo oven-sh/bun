@@ -336,8 +336,8 @@ fn build_symbol_table(file: &object::File) -> Vec<Sym> {
 
     let mut raw = collect(file.symbols());
     if raw.is_empty() {
-        // Fallback for stripped binaries. Release bun keeps .symtab but
-        // musl static builds sometimes strip harder.
+        // Fallback for a stripped binary: the release bun has no .symtab.
+        // CI scans bun-profile, which keeps it.
         raw = collect(file.dynamic_symbols());
     }
 

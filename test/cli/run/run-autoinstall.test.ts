@@ -136,6 +136,30 @@ async function runAutoInstallWithEnv(env: Record<string, string>, cwd: string, .
 
 const printNoDepsVersion = `console.log(require("no-deps").version);\n`;
 
+// Linux only: reads /proc/self/fd.
+test.skipIf(!isLinux)("auto-install closes the directory of the package it resolved", async () => {
+  using registry = fixtureRegistry();
+  using dir = tempDir("autoinstall-dir-fd", {
+    "index.js": `
+      const { readdirSync, readlinkSync } = require("fs");
+      require("no-deps");
+      const open = readdirSync("/proc/self/fd").flatMap(fd => {
+        try {
+          return readlinkSync("/proc/self/fd/" + fd);
+        } catch {
+          return [];
+        }
+      });
+      console.log(JSON.stringify(open.filter(path => path.includes("no-deps"))));
+    `,
+    "bunfig.toml": registry.bunfig,
+  });
+
+  const { stdout, exitCode } = await runAutoInstall(String(dir), "index.js");
+  expect(stdout).toBe("[]\n");
+  expect(exitCode).toBe(0);
+});
+
 // docs/runtime/auto-install.mdx: a bare import resolves to the version range the
 // nearest package.json declares for it, and only falls back to `latest` when no
 // package.json lists the package.

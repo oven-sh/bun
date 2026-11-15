@@ -299,7 +299,7 @@ pub mod bv2_impl {
     //
     // - Globally allocated data must be in a cache & reused, or we will create an infinite
     //   memory leak over time. To do that, we have a DirnameStore, FilenameStore, and the other
-    //   data structures related to `BSSMap`. This still leaks memory, but not very
+    //   data structures related to `BSSList`. This still leaks memory, but not very
     //   much since it only allocates the first time around.
     //
     // In development, it is strongly recommended to use either a debug build of

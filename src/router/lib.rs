@@ -439,19 +439,7 @@ impl<'a> RouteLoader<'a> {
     ) {
         let fs = self.fs;
 
-        // Snapshot the cached `DirEntry`'s entries under `entries_mutex`:
-        // another thread (e.g. the bundler's resolver) rewrites this map in place
-        // under that lock, so iterating it live would walk freed buckets.
-        let entries: Vec<&Fs::Entry> = {
-            let _entries_lock = fs.fs.entries_mutex.lock_guard();
-            match root_dir_info.get_entries_const() {
-                Some(entries) => entries.data.values().copied().collect(),
-                None => return,
-            }
-        };
-        // NOTE: the guard is dropped before this loop on purpose — the
-        // `read_dir_info_ignore_error` recursion below re-acquires `entries_mutex`.
-        'outer: for entry in entries {
+        'outer: for entry in fs.fs.snapshot_entries(root_dir_info.entries) {
             if entry.base()[0] == b'.' {
                 continue 'outer;
             }
@@ -730,7 +718,7 @@ impl Route {
                     }
                 });
 
-                if let Some(valid) = entry.cache().fd.unwrap_valid() {
+                if let Some(valid) = entry.cached_fd().unwrap_valid() {
                     *file = Some(bun_sys::File::from_fd(valid));
                     needs_close.set(false);
                 } else {

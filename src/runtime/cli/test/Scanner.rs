@@ -10,9 +10,7 @@ use bun_output::{declare_scope, scoped_log};
 use bun_paths::resolve_path::{SpillBuf, join_abs_string_buf_checked, platform, relative_spill};
 use bun_paths::{self, PathBuffer};
 use bun_ptr::Interned;
-use bun_resolver::fs::{
-    self as fs, DirEntryIterator, EntriesOption, EntryKindResolver, FileSystem,
-};
+use bun_resolver::fs::{self as fs, DirEntryIterator, DirEntryRef, FileSystem};
 use bun_sys::{Dir, Fd};
 
 declare_scope!(jest, hidden);
@@ -29,7 +27,6 @@ pub(crate) struct Scanner<'a> {
     pub(crate) dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
     pub(crate) test_files: Vec<Interned>,
-    pub(crate) fs: *mut FileSystem,
     pub(crate) open_dir_buf: PathBuffer,
     pub(crate) options: &'a BundleOptions<'a>,
     pub(crate) has_iterated: bool,
@@ -61,8 +58,8 @@ pub(crate) enum ScanError {
 bun_core::oom_from_alloc!(ScanError);
 
 impl DirEntryIterator for Scanner<'_> {
-    fn next<R: EntryKindResolver>(&mut self, rfs: &R, entry: &fs::Entry) {
-        Scanner::next(self, rfs, entry)
+    fn next(&mut self, entry: &fs::Entry) {
+        Scanner::next(self, entry)
     }
 }
 
@@ -78,7 +75,6 @@ impl<'a> Scanner<'a> {
             path_ignore_patterns: &[],
             dirs_to_scan: Fifo::new(),
             options: &transpiler.options,
-            fs: transpiler.resolver.fs(),
             test_files: results,
             open_dir_buf: PathBuffer::ZEROED,
             has_iterated: false,
@@ -87,7 +83,6 @@ impl<'a> Scanner<'a> {
         })
     }
 
-    /// Not from `next`: it runs under `read_dir_with_name`'s `&mut RealFS`.
     #[inline]
     pub(crate) fn fs(&self) -> &'static FileSystem {
         FileSystem::get()
@@ -127,13 +122,12 @@ impl<'a> Scanner<'a> {
             return Err(ScanError::DoesNotExist);
         };
 
-        let root = self
-            .read_dir_with_name(path, None)
-            .map_err(|_| ScanError::OutOfMemory)?;
+        let root = self.read_dir_with_name(path, None);
 
-        if let EntriesOption::Err(root_err) = root {
-            let e = root_err.original_err;
-            if e == bun_resolver::Error::Sys(bun_errno::SystemErrno::ENOTDIR) {
+        if let Err(e) = root {
+            if let bun_resolver::Error::Alloc(_) = e {
+                return Err(ScanError::OutOfMemory);
+            } else if e == bun_resolver::Error::Sys(bun_errno::SystemErrno::ENOTDIR) {
                 if self.is_test_file(path) {
                     let stored = self
                         .filename_store()
@@ -149,16 +143,14 @@ impl<'a> Scanner<'a> {
                     jest,
                     "Scanner.readDirWithName('{}') -> {}",
                     bstr::BStr::new(path),
-                    root_err.original_err.name()
+                    e.name()
                 );
             }
         }
 
         // you typed "." and we already scanned it
         if !self.has_iterated {
-            if let EntriesOption::Entries(entries) = root {
-                // Collect first so `self.next(…)` doesn't overlap the
-                // `entries.data` borrow.
+            if let Ok(root) = root {
                 // this branch is taken when the resolver already has
                 // `path` cached (e.g. `run_env_loader`/`read_dir_info` read the
                 // cwd before the scanner runs), so `read_directory_with_iterator`
@@ -167,12 +159,12 @@ impl<'a> Scanner<'a> {
                 // base name so test-file discovery order is deterministic —
                 // regression/issue/26851 relies on `a_*.test` running before
                 // `b_*.test` under `--bail`.
-                let mut entries: Vec<&fs::Entry> = entries.data.values().copied().collect();
+                let mut entries = self.fs().fs.snapshot_entries(root.index);
                 index_sort::sort_slice_by(&mut entries, |a, b| {
                     a.base_lowercase().cmp(b.base_lowercase())
                 });
                 for entry in entries {
-                    self.next(&self.fs().fs, entry);
+                    self.next(entry);
                 }
             }
         }
@@ -204,7 +196,9 @@ impl<'a> Scanner<'a> {
             self.current_dir = Some(Rc::clone(&child_dir));
             let result = self.read_dir_with_name(path2, Some(child_dir.fd));
             self.current_dir = None;
-            result.map_err(|_| ScanError::OutOfMemory)?;
+            if let Err(bun_resolver::Error::Alloc(_)) = result {
+                return Err(ScanError::OutOfMemory);
+            }
         }
 
         Ok(())
@@ -216,12 +210,10 @@ impl<'a> Scanner<'a> {
         &mut self,
         name: &[u8],
         handle: Option<Fd>,
-    ) -> crate::Result<&'static EntriesOption> {
-        let fs_ptr = self.fs;
-        // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
-        unsafe { &mut (*fs_ptr).fs }
+    ) -> Result<DirEntryRef, bun_resolver::Error> {
+        self.fs()
+            .fs
             .read_directory_with_iterator(name, handle, 0, false, self)
-            .map_err(Into::into)
     }
 
     pub(crate) fn could_be_test_file<const NEEDS_TEST_SUFFIX: bool>(&self, name: &[u8]) -> bool {
@@ -326,10 +318,10 @@ impl<'a> Scanner<'a> {
             && !self.matches_path_ignore_pattern(name)
     }
 
-    fn next<R: EntryKindResolver>(&mut self, rfs: &R, entry: &fs::Entry) {
+    fn next(&mut self, entry: &fs::Entry) {
         let name = entry.base_lowercase();
         self.has_iterated = true;
-        match entry.kind(rfs, false) {
+        match entry.kind(&self.fs().fs, false) {
             fs::EntryKind::Dir => {
                 if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {
                     return;

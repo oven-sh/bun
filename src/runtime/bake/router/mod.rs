@@ -586,11 +586,9 @@ impl FrameworkRouter {
                 ZigStringHashContext,
             > = Default::default();
             {
-                // Copy under `entries_mutex`: other threads rewrite the cached
-                // `DirEntry` map in place under that lock. Dropped before the
-                // walk so the `read_dir_info_ignore_error` recursion can re-lock.
-                let _entries_lock = fs_ref.fs.entries_mutex.lock_guard();
-                if let Some(entries) = dir_info.get_entries_const() {
+                // Dropped before the walk so the `read_dir_info_ignore_error` recursion can re-lock.
+                let entries_map = fs_ref.fs.entries.lock();
+                if let Some(entries) = entries_map.at_index(dir_info.entries) {
                     for (k, &v) in entries.data.iter() {
                         let _ = zig_order.put(Box::from(&**k), v);
                     }

@@ -251,7 +251,7 @@ impl MacroContext {
 /// Runs `f`, and moves what `vm` logs meanwhile to `log`.
 fn with_vm_logging_to<R>(vm: &VirtualMachine, log: &Log, f: impl FnOnce() -> R) -> R {
     let mut logged = Log::init();
-    logged.level.set(vm.log.level.get());
+    logged.level.set(log.level.get());
     let redirect = vm.log.redirect(&mut logged);
     let result = f();
     drop(redirect);
@@ -425,10 +425,7 @@ impl Macro {
 
             let vm = VirtualMachine::init(VirtualMachineInitOptions {
                 transform_options,
-                own_log: Log {
-                    level: log.level.clone(),
-                    ..Default::default()
-                },
+                own_log_level: bun_ast::DEFAULT_LOG_LEVEL.load(),
                 owned_env_loader,
                 is_main_thread: false,
                 ..Default::default()

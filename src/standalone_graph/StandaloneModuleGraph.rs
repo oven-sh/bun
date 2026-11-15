@@ -589,6 +589,12 @@ pub enum ModuleFormat {
     Cjs = 2,
 }
 
+/// A second `RawPayload` over the executable's section would alias the first.
+fn assert_first_get_data_call() {
+    static CALLED: AtomicBool = AtomicBool::new(false);
+    assert!(!CALLED.swap(true, Ordering::Relaxed));
+}
+
 #[cfg(target_os = "macos")]
 mod macho {
     // Declared inline rather than in a dedicated `*_sys` crate: this crate is
@@ -598,10 +604,7 @@ mod macho {
     }
 
     /// The embedded `__BUN` section data.
-    ///
-    /// # Safety
-    /// Must be called at most once.
-    pub(super) unsafe fn get_data() -> Option<super::RawPayload> {
+    pub(super) fn get_data() -> Option<super::RawPayload> {
         let length_ptr = Bun__getStandaloneModuleGraphMachoLength();
         if length_ptr.is_null() {
             return None;
@@ -614,8 +617,9 @@ mod macho {
         // BlobHeader has 8 bytes size (u64), so data starts at offset 8.
         let data_offset = core::mem::size_of::<u64>();
         let slice_ptr = length_ptr.cast::<u8>();
+        super::assert_first_get_data_call();
         // SAFETY: section data is `length` bytes immediately following the u64 header. It is never
-        // unmapped, and this is the only call.
+        // unmapped.
         Some(unsafe { super::RawPayload::new(slice_ptr.add(data_offset), length as usize, None) })
     }
 
@@ -678,10 +682,8 @@ mod pe {
     };
 
     /// The embedded `.bun` PE section data.
-    ///
-    /// # Safety
-    /// Must be called at most once.
-    pub(super) unsafe fn get_data() -> Option<super::RawPayload> {
+    pub(super) fn get_data() -> Option<super::RawPayload> {
+        super::assert_first_get_data_call();
         // SAFETY: this is the only call, so nothing races it.
         let length = unsafe { Bun__getStandaloneModuleGraphPELength() };
         if length == 0 {
@@ -692,8 +694,7 @@ mod pe {
         if data_ptr.is_null() {
             return None;
         }
-        // SAFETY: data_ptr points to `length` bytes of section data valid for program lifetime, and
-        // this is the only call.
+        // SAFETY: data_ptr points to `length` bytes of section data valid for program lifetime.
         Some(unsafe { super::RawPayload::new(data_ptr, length as usize, None) })
     }
 }
@@ -707,10 +708,7 @@ mod elf {
     }
 
     /// The embedded ELF segment data.
-    ///
-    /// # Safety
-    /// Must be called at most once.
-    pub(super) unsafe fn get_data() -> Option<super::RawPayload> {
+    pub(super) fn get_data() -> Option<super::RawPayload> {
         let vaddr_ptr = Bun__getStandaloneModuleGraphELFVaddr();
         if vaddr_ptr.is_null() {
             return None;
@@ -744,7 +742,8 @@ mod elf {
         let payload = unsafe { target.add(8) };
         // Truncation only removes the end of the file, so if the last page is present, the whole payload is.
         exit_if_page_is_past_eof(payload as usize + payload_len as usize - 1);
-        // SAFETY: as above. The segment is never unmapped, and this is the only call.
+        super::assert_first_get_data_call();
+        // SAFETY: as above. The segment is never unmapped.
         Some(unsafe { super::RawPayload::new(payload, payload_len as usize, None) })
     }
 
@@ -1189,13 +1188,13 @@ impl StandaloneModuleGraph {
         }
         let source_hashes_length = record_at - source_hashes_at;
 
-        let mut builtin_bytecode_at = record_at;
+        let mut builtin_bytecode_table_at = record_at;
         if flags.contains(Flags::HAS_BUILTIN_BYTECODE) {
             let count = read_u32(record_at)? as usize;
-            builtin_bytecode_at += size_of::<u32>();
-            record_at = builtin_bytecode_at + count * 3 * size_of::<u32>();
+            builtin_bytecode_table_at += size_of::<u32>();
+            record_at = builtin_bytecode_table_at + count * 3 * size_of::<u32>();
         }
-        let builtin_bytecode_length = record_at - builtin_bytecode_at;
+        let builtin_bytecode_table_length = record_at - builtin_bytecode_table_at;
 
         let mut bytecode_string_table_ptr = StringPointer::default();
         if flags.contains(Flags::HAS_BYTECODE_STRING_TABLE) {
@@ -1307,10 +1306,12 @@ impl StandaloneModuleGraph {
         let linked_bytecode = slice_to(linked_bytecode_payload)?;
         let has_linked_bytecode_payload = flags.contains(Flags::HAS_LINKED_BYTECODE_PAYLOAD);
 
-        let builtin_table = payload.bytes(builtin_bytecode_at, builtin_bytecode_length);
-        let builtin_table = Unaligned::<[u32; 3]>::slice_of(builtin_table.ok_or(CORRUPTED)?);
-        let mut builtin_bytecode = Vec::with_capacity(builtin_table.len());
-        for record in builtin_table {
+        let builtin_bytecode_table =
+            payload.bytes(builtin_bytecode_table_at, builtin_bytecode_table_length);
+        let builtin_bytecode_table =
+            Unaligned::<[u32; 3]>::slice_of(builtin_bytecode_table.ok_or(CORRUPTED)?);
+        let mut builtin_bytecode = Vec::with_capacity(builtin_bytecode_table.len());
+        for record in builtin_bytecode_table {
             let [id, offset, length] = record.get();
             if !has_linked_bytecode_payload {
                 builtin_bytecode.push((id, slice_to(StringPointer { offset, length })?, 0));
@@ -3270,19 +3271,14 @@ pub fn to_executable(
 }
 
 impl StandaloneModuleGraph {
-    /// Loads the standalone module graph from the executable and sets it globally. Panics if called twice.
+    /// Loads the standalone module graph from the executable and sets it globally. Call it once.
     pub fn from_executable() -> crate::Result<Option<&'static StandaloneModuleGraph>> {
-        static CALLED: AtomicBool = AtomicBool::new(false);
-        assert!(!CALLED.swap(true, Ordering::Relaxed));
         #[cfg(target_os = "macos")]
-        // SAFETY: the first call, asserted above.
-        let data = unsafe { macho::get_data() };
+        let data = macho::get_data();
         #[cfg(windows)]
-        // SAFETY: as above.
-        let data = unsafe { pe::get_data() };
+        let data = pe::get_data();
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-        // SAFETY: as above.
-        let data = unsafe { elf::get_data() };
+        let data = elf::get_data();
         #[cfg(not(any(
             target_os = "macos",
             windows,

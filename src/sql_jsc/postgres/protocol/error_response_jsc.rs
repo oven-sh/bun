@@ -61,15 +61,10 @@ pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSV
         if !message.is_empty() {
             let utf8 = message.to_utf8();
             let _ = b.append(utf8.slice());
-            needs_newline = true;
             break 'construct_message;
         }
         if !detail.is_empty() {
-            if needs_newline {
-                let _ = b.append(b"\n");
-            } else {
-                let _ = b.append(b" ");
-            }
+            let _ = b.append(b" ");
             needs_newline = true;
             let utf8 = detail.to_utf8();
             let _ = b.append(utf8.slice());
@@ -80,12 +75,10 @@ pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSV
             } else {
                 let _ = b.append(b" ");
             }
-            needs_newline = true;
             let utf8 = hint.to_utf8();
             let _ = b.append(utf8.slice());
         }
     }
-    let _ = needs_newline;
 
     fn utf8(s: &String) -> Option<Utf8Bytes<'_>> {
         (!s.is_empty()).then(|| s.to_utf8())

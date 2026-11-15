@@ -93,8 +93,8 @@ public:
     JSC::JSValue exportJwkRsaKey(JSC::JSGlobalObject*, JSC::ThrowScope&, WebCore::CryptoKeyType exportType);
     JSC::JSValue exportJwkAkpKey(JSC::JSGlobalObject*, JSC::ThrowScope&, WebCore::CryptoKeyType exportType);
     JSC::JSValue exportJwkSecretKey(JSC::JSGlobalObject*, JSC::ThrowScope&);
-    JSC::JSValue exportJwkAsymmetricKey(JSC::JSGlobalObject*, JSC::ThrowScope&, WebCore::CryptoKeyType exportType, bool handleRsaPss);
-    JSC::JSValue exportJwk(JSC::JSGlobalObject*, JSC::ThrowScope&, WebCore::CryptoKeyType type, bool handleRsaPss);
+    JSC::JSValue exportJwkAsymmetricKey(JSC::JSGlobalObject*, JSC::ThrowScope&, WebCore::CryptoKeyType exportType);
+    JSC::JSValue exportJwk(JSC::JSGlobalObject*, JSC::ThrowScope&, WebCore::CryptoKeyType type);
     JSC::JSValue exportRaw(JSC::JSGlobalObject*, JSC::ThrowScope&, ncrypto::EVPKeyPointer::PKFormatType format, int ecPointForm);
     JSC::JSValue exportPublic(JSC::JSGlobalObject*, JSC::ThrowScope&, const ncrypto::EVPKeyPointer::PublicKeyEncodingConfig&);
     JSC::JSValue exportPrivate(JSC::JSGlobalObject*, JSC::ThrowScope&, const ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig&);

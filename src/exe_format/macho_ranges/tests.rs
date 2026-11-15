@@ -241,10 +241,7 @@ fn assert_removal_can_be_planned(bytes: &[u8]) {
 
 fn assert_no_cuts(bytes: &[u8], reason: NoCutReason) {
     let model = cut_model(bytes);
-    assert_eq!(
-        model,
-        CutModel::without_cuts(ExecutableFormat::MachO, CUT_ALIGNMENT, reason)
-    );
+    assert_eq!(model, CutModel::without_cuts(CUT_ALIGNMENT, reason));
     assert_eq!(model.max_cuts(), 0);
 }
 
@@ -290,7 +287,6 @@ fn reads_toy_headers() {
     assert_eq!(count_sections(&toy()), TOY_SECTION_COUNT);
 
     let model = cut_model(&toy());
-    assert_eq!(model.format, ExecutableFormat::MachO);
     assert_eq!(model.alignment, CUT_ALIGNMENT);
     assert_eq!(
         model.capacity,

@@ -4,8 +4,7 @@ use core::ops::Range;
 use crate::builtins::u32_at;
 use crate::cut_model::{CutCapacity, CutModel, NoCutReason, SlotCosts};
 use crate::image::{
-    AddressRange, Architecture, ExecutableFormat, ImageError, MappedSpan, merge_ranges,
-    subtract_cuts,
+    AddressRange, Architecture, ImageError, MappedSpan, merge_ranges, subtract_cuts,
 };
 use crate::pe::{
     self, DataDirectory, OptionalHeader64, PEFile, PEHeader, PELayout, SectionHeader, align_up_u32,
@@ -70,17 +69,16 @@ pub(crate) fn mapped_spans(pe: &[u8]) -> Result<Vec<MappedSpan>, Error> {
 }
 
 pub(crate) fn cut_model(pe: &[u8]) -> CutModel {
-    let format = ExecutableFormat::Pe;
     let Ok(headers) = read_headers(pe) else {
-        return CutModel::without_cuts(format, MIN_CUT_ALIGNMENT, NoCutReason::HeadersUnreadable);
+        return CutModel::without_cuts(MIN_CUT_ALIGNMENT, NoCutReason::HeadersUnreadable);
     };
     let section_alignment = u64::from(headers.optional.section_alignment);
     let alignment = section_alignment.max(MIN_CUT_ALIGNMENT);
     let (Ok(()), Some(first)) = (check(pe, &headers), headers.sections.first()) else {
-        return CutModel::without_cuts(format, alignment, NoCutReason::HeadersUnreadable);
+        return CutModel::without_cuts(alignment, NoCutReason::HeadersUnreadable);
     };
     let Ok(spans) = find_cuttable_spans(pe, &headers) else {
-        return CutModel::without_cuts(format, alignment, NoCutReason::HeadersUnreadable);
+        return CutModel::without_cuts(alignment, NoCutReason::HeadersUnreadable);
     };
     let (cuttable_spans, saved_at_ends): (Vec<AddressRange>, Vec<[usize; 2]>) =
         spans.into_iter().unzip();
@@ -92,10 +90,9 @@ pub(crate) fn cut_model(pe: &[u8]) -> CutModel {
     // A cut that touches a hole takes no slot.
     let has_holes = headers.sections.iter().any(is_hole);
     if free_slots < SLOTS_FOR_A_CUT && !has_holes {
-        return CutModel::without_cuts(format, alignment, NoCutReason::HeaderRoomExhausted);
+        return CutModel::without_cuts(alignment, NoCutReason::HeaderRoomExhausted);
     }
     CutModel {
-        format,
         alignment,
         capacity: CutCapacity::Cuts(free_slots / SLOTS_FOR_A_CUT),
         cuttable_spans,

@@ -99,10 +99,7 @@ fn assert_remove_error(elf: &[u8], cuts: &[AddressRange], expected: ImageError) 
 
 fn assert_no_cuts(elf: &[u8], alignment: u64, reason: NoCutReason) {
     let model = cut_model(elf);
-    assert_eq!(
-        model,
-        CutModel::without_cuts(ExecutableFormat::Elf, alignment, reason)
-    );
+    assert_eq!(model, CutModel::without_cuts(alignment, reason));
     assert_eq!(model.max_cuts(), 0);
 }
 
@@ -279,7 +276,6 @@ fn reads_toy_headers() {
         let model = cut_model(&elf);
         let max_cuts = ROOM_CAPACITY - TOY_SEGMENT_COUNT as usize - PAYLOAD_SEGMENT_COUNT;
         assert_eq!(architecture(&read_header(&elf).unwrap()), Ok(target));
-        assert_eq!(model.format, ExecutableFormat::Elf);
         assert_eq!(model.alignment, alignment);
         assert_eq!(model.capacity, CutCapacity::Cuts(max_cuts));
 

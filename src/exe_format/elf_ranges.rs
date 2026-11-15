@@ -13,8 +13,8 @@ use crate::elf_program_headers::{
     ProgramHeaderTable, bytes_at, read_header,
 };
 use crate::image::{
-    AddressRange, Architecture, ExecutableFormat, ImageBytes, ImageError, MappedSpan,
-    RemovedFileRanges, merge_ranges, subtract_cuts,
+    AddressRange, Architecture, ImageBytes, ImageError, MappedSpan, RemovedFileRanges,
+    merge_ranges, subtract_cuts,
 };
 use crate::{align_up, read_struct, write_struct};
 
@@ -47,13 +47,12 @@ pub(crate) fn mapped_spans(elf: &[u8]) -> Result<Vec<MappedSpan>, ImageError> {
 }
 
 pub(crate) fn cut_model(elf: &[u8]) -> CutModel {
-    let format = ExecutableFormat::Elf;
     let Ok(ehdr) = read_header(elf) else {
         let reason = NoCutReason::HeadersUnreadable;
-        return CutModel::without_cuts(format, UNREADABLE_FILE_ALIGNMENT, reason);
+        return CutModel::without_cuts(UNREADABLE_FILE_ALIGNMENT, reason);
     };
     let alignment = ElfFile::<Vec<u8>>::page_size(ehdr);
-    let without_cuts = |reason| CutModel::without_cuts(format, alignment, reason);
+    let without_cuts = |reason| CutModel::without_cuts(alignment, reason);
     let Ok(table) = ProgramHeaderTable::read(elf, &ehdr) else {
         return without_cuts(NoCutReason::HeadersUnreadable);
     };
@@ -63,7 +62,6 @@ pub(crate) fn cut_model(elf: &[u8]) -> CutModel {
     }
     match find_cuttable_spans(elf, &ehdr, &table) {
         Ok(cuttable_spans) => CutModel {
-            format,
             alignment,
             capacity,
             cuttable_spans,

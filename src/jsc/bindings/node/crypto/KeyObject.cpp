@@ -358,16 +358,9 @@ JSC::JSValue KeyObject::exportJwkSecretKey(JSC::JSGlobalObject* lexicalGlobalObj
     return jwk;
 }
 
-JSC::JSValue KeyObject::exportJwkAsymmetricKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, CryptoKeyType exportType, bool handleRsaPss)
+JSC::JSValue KeyObject::exportJwkAsymmetricKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, CryptoKeyType exportType)
 {
     switch (m_data->asymmetricKey.id()) {
-    case EVP_PKEY_RSA_PSS: {
-        if (handleRsaPss) {
-            return exportJwkRsaKey(globalObject, scope, exportType);
-        }
-        break;
-    }
-
     case EVP_PKEY_RSA:
         return exportJwkRsaKey(globalObject, scope, exportType);
 
@@ -390,13 +383,13 @@ JSC::JSValue KeyObject::exportJwkAsymmetricKey(JSC::JSGlobalObject* globalObject
     return {};
 }
 
-JSC::JSValue KeyObject::exportJwk(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, CryptoKeyType type, bool handleRsaPss)
+JSC::JSValue KeyObject::exportJwk(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, CryptoKeyType type)
 {
     if (type == CryptoKeyType::Secret) {
         return exportJwkSecretKey(globalObject, scope);
     }
 
-    return exportJwkAsymmetricKey(globalObject, scope, type, handleRsaPss);
+    return exportJwkAsymmetricKey(globalObject, scope, type);
 }
 
 static JSValue dataPointerToBuffer(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, ncrypto::DataPointer&& data)
@@ -555,7 +548,7 @@ JSC::JSValue KeyObject::exportPublic(JSC::JSGlobalObject* lexicalGlobalObject, J
     }
 
     if (config.format == ncrypto::EVPKeyPointer::PKFormatType::JWK) {
-        return exportJwk(lexicalGlobalObject, scope, CryptoKeyType::Public, false);
+        return exportJwk(lexicalGlobalObject, scope, CryptoKeyType::Public);
     }
 
     if (config.format == ncrypto::EVPKeyPointer::PKFormatType::RawPublic || config.format == ncrypto::EVPKeyPointer::PKFormatType::RawPrivate || config.format == ncrypto::EVPKeyPointer::PKFormatType::RawSeed) {
@@ -587,7 +580,7 @@ JSValue KeyObject::exportPrivate(JSGlobalObject* lexicalGlobalObject, ThrowScope
     }
 
     if (config.format == ncrypto::EVPKeyPointer::PKFormatType::JWK) {
-        return exportJwk(lexicalGlobalObject, scope, CryptoKeyType::Private, false);
+        return exportJwk(lexicalGlobalObject, scope, CryptoKeyType::Private);
     }
 
     if (config.format == ncrypto::EVPKeyPointer::PKFormatType::RawPublic || config.format == ncrypto::EVPKeyPointer::PKFormatType::RawPrivate || config.format == ncrypto::EVPKeyPointer::PKFormatType::RawSeed) {
@@ -631,7 +624,7 @@ JSValue KeyObject::exportAsymmetric(JSGlobalObject* globalObject, ThrowScope& sc
                     }
                 }
 
-                RELEASE_AND_RETURN(scope, exportJwk(globalObject, scope, exportType, false));
+                RELEASE_AND_RETURN(scope, exportJwk(globalObject, scope, exportType));
             }
 
             if (formatView == "raw-public"_s || formatView == "raw-private"_s || formatView == "raw-seed"_s) {
@@ -736,7 +729,7 @@ JSValue KeyObject::exportSecret(JSGlobalObject* lexicalGlobalObject, ThrowScope&
                 RETURN_IF_EXCEPTION(scope, {});
 
                 if (formatView == "jwk"_s) {
-                    return exportJwk(lexicalGlobalObject, scope, CryptoKeyType::Secret, false);
+                    return exportJwk(lexicalGlobalObject, scope, CryptoKeyType::Secret);
                 }
 
                 if (formatView == "buffer"_s) {

@@ -102,7 +102,7 @@ impl JSSourceMap {
         let payload = payload.to_js();
         let options = options.to_js();
 
-        global.validate_object("payload", payload, Default::default())?;
+        global.validate_object("payload", payload)?;
 
         let mut line_lengths = JSValue::ZERO;
         if options.is_object() {

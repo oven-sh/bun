@@ -1036,7 +1036,7 @@ const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
 // deliberately one contiguous block faulted in with a single read-around on
 // every cold start (including `bun --version` / `bun .` / `bun <file>`) —
 // padding it with tables those paths never touch just grows that run. So
-// `RUN_TABLE` (`bun run` / `bun x`), the subcommand tables (`build` / `test`)
+// `RUN_TABLE` (`bun run`), the subcommand tables (`build` / `test`)
 // and the `BASE_RUNTIME_TRANSPILER` catch-all (`install` / `pm` / …) are all
 // built with `comptime_table!(.., cold)` and stay in plain `.rodata`, where
 // `src/startup.order` can still cluster the ones a sampled cold path actually
@@ -1066,7 +1066,6 @@ fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
         CommandTag::BuildCommand => BUILD_TABLE,
         CommandTag::CompileCommand => COMPILE_TABLE,
         CommandTag::TestCommand => TEST_TABLE,
-        CommandTag::BunxCommand => RUN_TABLE,
         _ => BASE_RUNTIME_TRANSPILER_TABLE,
     }
 }
@@ -1975,10 +1974,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
     }
 
-    if matches!(
-        cmd,
-        CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::BunxCommand
-    ) {
+    if matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand) {
         // "run.bun" in bunfig.toml
         if args.flag(b"--bun") {
             ctx.debug.run_in_bun = true;
@@ -2653,21 +2649,19 @@ fn parse_build_command_options(
 
     if let Some(target) = args.option(b"--target") {
         'brk: {
-            if matches!(cmd, CommandTag::BuildCommand | CommandTag::CompileCommand) {
-                if compiles {
-                    if target.len() > 4 && strings::has_prefix(target, b"bun-") {
-                        ctx.bundler_options.compile_target =
-                            cli::Cli::CompileTarget::from(&target[3..]);
-                        if !ctx.bundler_options.compile_target.is_supported() {
-                            Output::err_generic(
-                                "Unsupported compile target: {}\n",
-                                format_args!("{}", ctx.bundler_options.compile_target),
-                            );
-                            Global::exit(1);
-                        }
-                        opts.target = Some(api::Target::Bun);
-                        break 'brk;
+            if compiles {
+                if target.len() > 4 && strings::has_prefix(target, b"bun-") {
+                    ctx.bundler_options.compile_target =
+                        cli::Cli::CompileTarget::from(&target[3..]);
+                    if !ctx.bundler_options.compile_target.is_supported() {
+                        Output::err_generic(
+                            "Unsupported compile target: {}\n",
+                            format_args!("{}", ctx.bundler_options.compile_target),
+                        );
+                        Global::exit(1);
                     }
+                    opts.target = Some(api::Target::Bun);
+                    break 'brk;
                 }
             }
 
@@ -2677,14 +2671,7 @@ fn parse_build_command_options(
                     .unwrap_or_else(|| match target {
                         b"browser" => api::Target::Browser,
                         b"node" => api::Target::Node,
-                        b"macro" => {
-                            if matches!(cmd, CommandTag::BuildCommand | CommandTag::CompileCommand)
-                            {
-                                api::Target::BunMacro
-                            } else {
-                                api::Target::Bun
-                            }
-                        }
+                        b"macro" => api::Target::BunMacro,
                         b"bun" => api::Target::Bun,
                         _ => cli::invalid_target(diag, target),
                     }),

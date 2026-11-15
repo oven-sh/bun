@@ -5,7 +5,7 @@
 use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
 
 use crate::Loop;
-use crate::quic::{PendingConnect, Socket, Stream};
+use crate::quic::{OwnedPendingConnect, Socket, Stream};
 
 bun_opaque::opaque_ffi! { pub struct Context; }
 
@@ -17,10 +17,6 @@ unsafe extern "C" {
         stream_ext: c_uint,
     ) -> *mut Context;
 
-    // `Context` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so
-    // `&mut Context` is ABI-identical to a non-null `*mut Context` with no
-    // `noalias`/`readonly` attribute. Shims taking only the handle + value
-    // types (incl. fn-pointer callbacks) are `safe fn`.
     fn us_quic_socket_context_connect(
         ctx: *mut Context,
         host: *const c_char,
@@ -28,10 +24,11 @@ unsafe extern "C" {
         sni: *const c_char,
         reject_unauthorized: c_int,
         out_qs: *mut *mut Socket,
-        out_pending: *mut Option<PendingConnect>,
+        out_pending: *mut Option<OwnedPendingConnect>,
         user: *mut c_void,
     ) -> c_int;
 
+    // `Context` is an `opaque_ffi!` ZST: shims that take only it and a callback are `safe fn`.
     safe fn us_quic_socket_context_on_hsk_done(
         ctx: &mut Context,
         cb: unsafe extern "C" fn(*mut Socket, c_int),
@@ -71,7 +68,7 @@ pub enum ConnectResult {
     Socket(*mut Socket),
     /// DNS cache miss: caller must register a `Bun__addrinfo` callback on
     /// `pending.addrinfo()` and call `pending.resolved()` when it fires.
-    Pending(PendingConnect),
+    Pending(OwnedPendingConnect),
     Err,
 }
 

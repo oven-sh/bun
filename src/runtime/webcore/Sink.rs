@@ -15,9 +15,10 @@ use crate::webcore::streams::{
 };
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload, JsScope, JsWrapper};
 use bun_jsc::{
-    ErrorCode, JSGlobalObject, JSValue, JsClass, JsError, JsResult, JsThread, SysErrorJsc as _,
+    ErrorCode, JSGlobalObject, JSValue, JsCell, JsClass, JsError, JsResult, JsThread,
+    SysErrorJsc as _,
 };
-use bun_ptr::{AliasableBox, BackRef, JsCell, RawSlice};
+use bun_ptr::{AliasableBox, BackRef, RawSlice};
 use bun_removable_features::removable_body_behind_value;
 use bun_sys::{self as sys, Error as SysError};
 
@@ -113,8 +114,8 @@ pub(crate) trait JsSinkType: Sized + 'static {
 /// A sink that script holds through a [`JSSink`].
 pub(crate) trait WrappedSink: JsSinkType {
     /// Keeps the sink alive. Dropped by `close()`, or inside a GC sweep.
-    type Claim;
-    fn claimed(claim: &Self::Claim) -> NonNull<Self>;
+    type Wrapped;
+    fn as_non_null(wrapped: &Self::Wrapped) -> NonNull<Self>;
 }
 
 /// A sink that a stream writes to through a [`ReadableSinkController`].
@@ -136,7 +137,7 @@ pub(crate) trait ControlledSink: JsSinkType {
     /// [`controller_detached`](Self::controller_detached).
     ///
     /// # Safety
-    /// `this` is the controller's live sink and must not be used after the call, which may free it.
+    /// `this` is live unless `controller_detached` released its last ref, and is not used after the call, which may free it.
     unsafe fn controller_finalize(this: *mut Self);
 
     /// The source failed, so the bytes written so far are a truncated body:
@@ -292,24 +293,24 @@ fn sink_memory_cost<T: JsSinkType>(sink: NonNull<T>) -> usize {
 
 /// What the JS object of an `ArrayBufferSink`, a `FileSink` or a `NetworkSink` holds.
 pub(crate) struct JSSink<T: WrappedSink> {
-    /// `None` once `close()` gave it up.
-    claim: JsCell<Option<T::Claim>>,
+    /// `None` after `close()`.
+    sink: JsCell<Option<T::Wrapped>>,
     ref_count: Cell<i32>,
     /// Notified that its stdin is gone when the object closes or is collected.
     subprocess: Cell<Option<NonNull<Subprocess<'static>>>>,
 }
 
 impl<T: WrappedSink> JSSink<T> {
-    fn new(claim: T::Claim, subprocess: Option<NonNull<Subprocess<'static>>>) -> Self {
+    fn new(sink: T::Wrapped, subprocess: Option<NonNull<Subprocess<'static>>>) -> Self {
         Self {
-            claim: JsCell::new(Some(claim)),
+            sink: JsCell::new(Some(sink)),
             ref_count: Cell::new(1),
             subprocess: Cell::new(subprocess),
         }
     }
 
     fn sink(&self) -> Option<NonNull<T>> {
-        self.claim.get().as_ref().map(T::claimed)
+        self.sink.get().as_ref().map(T::as_non_null)
     }
 
     fn sink_or_throw(&self, global: &JSGlobalObject) -> JsResult<NonNull<T>> {
@@ -331,13 +332,13 @@ impl<T: WrappedSink> JSSink<T> {
     }
 
     pub(crate) fn close(&self, cx: &mut JsScope<'_>) -> JsResult<()> {
-        let Some(claim) = self.claim.take() else {
+        let Some(sink) = self.sink.take() else {
             return Ok(());
         };
-        let sink = T::claimed(&claim);
         // SAFETY: the object's live sink.
-        let result = pending_exception_or(cx.global(), unsafe { &mut *sink.as_ptr() }.end(None));
-        // Before the claim goes, so that it clears its weak back-pointer.
+        let ended = unsafe { T::as_non_null(&sink).as_mut() }.end(None);
+        let result = pending_exception_or(cx.global(), ended);
+        // Before `sink` drops: the subprocess clears `weak_file_sink_stdin_ptr`.
         self.notify_subprocess();
         result
     }
@@ -410,10 +411,10 @@ where
 {
     pub(crate) fn create_object(
         global: &JSGlobalObject,
-        claim: T::Claim,
+        sink: T::Wrapped,
         subprocess: Option<NonNull<Subprocess<'static>>>,
     ) -> JSValue {
-        Self::new(claim, subprocess).to_js(global)
+        Self::new(sink, subprocess).to_js(global)
     }
 
     /// The sink of `value`, unless that is not such an object or it is closed.

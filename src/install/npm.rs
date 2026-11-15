@@ -10,7 +10,6 @@ use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
 use bun_http::{self as http, HeaderBuilder};
-use bun_picohttp as picohttp;
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
 use bun_sys::{self, Fd, File};
 use bun_url::{OwnedURL, URL};
@@ -708,9 +707,9 @@ pub mod registry {
             && expiry > seconds_from_now(MAX_MANIFEST_AGE)
     }
 
-    pub(crate) fn manifest_expiry(headers: &picohttp::HeaderList) -> u32 {
+    pub(crate) fn manifest_expiry(response: &http::HTTPResponseMetadata) -> u32 {
         let mut max_age = u64::from(MAX_MANIFEST_AGE);
-        for directive in strings::split(headers.get(b"cache-control").unwrap_or(b""), b",") {
+        for directive in strings::split(response.header(b"cache-control").unwrap_or(b""), b",") {
             let directive = directive.trim_ascii();
             if strings::eql_case_insensitive_ascii(directive, b"no-cache", true)
                 || strings::eql_case_insensitive_ascii(directive, b"no-store", true)
@@ -763,7 +762,7 @@ pub mod registry {
             package_name,
             newly_last_modified,
             new_etag,
-            manifest_expiry(&response.headers()),
+            manifest_expiry(response),
             is_extended_manifest,
         )? {
             // If the cache cannot be written, the manifest is still used. It is just not saved.

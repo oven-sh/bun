@@ -101,7 +101,7 @@ use bun_io::JsKeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JsCell};
-use bun_ptr::{AliasableBox, RefPtr};
+use bun_ptr::RefPtr;
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::S3Credentials;
 use bun_s3_signing::error::S3Error;
@@ -110,7 +110,7 @@ use bun_s3_signing::storage_class::StorageClass;
 // File-level mods are declared flat in `webcore.rs` via `#[path]`, so `super`
 // here is `crate::webcore`, not the `s3` directory. Route through the `s3`
 // re-export hub instead.
-use crate::webcore::s3::client::{S3UploadStreamWrapper, settle_writer};
+use crate::webcore::s3::client::S3UploadStreamWrapper;
 use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 use crate::webcore::s3::simple_request::{
     self as s3_simple_request, S3CommitResult, S3DeleteResult, S3DownloadResult, S3PartResult,
@@ -166,12 +166,12 @@ pub struct MultiPartUpload {
 
     pub(crate) state: Cell<State>,
 
-    /// `None` once it has the result.
-    pub(crate) listener: JsCell<Option<Listener>>,
+    /// Taken by `notify_finished`.
+    pub(crate) callback: JsCell<Option<UploadCallback>>,
 }
 
-/// What feeds an upload.
-pub(crate) enum Listener {
+/// Told when the upload can take more bytes and when it finishes.
+pub(crate) enum UploadCallback {
     Writer(RefPtr<NetworkSink>),
     Stream(RefPtr<S3UploadStreamWrapper>),
 }
@@ -233,23 +233,25 @@ impl MultiPartUpload {
     }
 
     fn notify_writable(&self, flushed: u64) {
-        let sink = match self.listener.get() {
-            Some(Listener::Writer(sink)) => Some(sink.as_ptr()),
-            Some(Listener::Stream(stream)) if !self.ended.get() => {
-                stream.sink.as_ref().map(AliasableBox::as_ptr)
+        let sink = match self.callback.get() {
+            Some(UploadCallback::Writer(sink)) => sink.as_ptr(),
+            // After `end()` the stream has nothing left to write.
+            Some(UploadCallback::Stream(wrapper))
+                if !self.ended.get()
+                    && let Some(sink) = &wrapper.sink =>
+            {
+                sink.as_ptr()
             }
-            _ => None,
+            _ => return,
         };
-        if let Some(sink) = sink {
-            NetworkSink::on_writable(self, sink, flushed);
-        }
+        NetworkSink::on_writable(self, sink, flushed);
     }
 
     fn notify_finished(&self, result: S3UploadResult) -> bun_jsc::JsResult<()> {
         bun_removable_features::removable_body_behind_value!(S3Client, {
-            match self.listener.take().expect("an upload finishes once") {
-                Listener::Writer(sink) => settle_writer(&sink, self, result),
-                Listener::Stream(stream) => S3UploadStreamWrapper::resolve(&stream, result),
+            match self.callback.take().expect("an upload finishes once") {
+                UploadCallback::Writer(sink) => NetworkSink::on_finished(&sink, self, result),
+                UploadCallback::Stream(wrapper) => S3UploadStreamWrapper::resolve(&wrapper, result),
             }
         })
     }
@@ -526,7 +528,7 @@ impl MultiPartUpload {
         // empty queue
         if this.is_queue_empty() {
             this.notify_writable(flushed);
-            // `on_writable` may re-enter and enqueue a final part; re-check.
+            // `notify_writable` may re-enter and enqueue a final part; re-check.
             if this.ended.get() && this.is_queue_empty() {
                 this.done()?;
             }

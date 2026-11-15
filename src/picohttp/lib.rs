@@ -8,10 +8,7 @@ use bun_core::fmt::{escape_control_chars, for_terminal};
 use bun_core::output::enable_ansi_colors_stderr;
 use bun_core::pretty_fmt;
 
-// `Header::clone` and its callers need the unbound-lifetime `append_raw`
-// so they can interleave appends and stash the raw ptr/len pairs. The buffer
-// is heap-owned; callers keep the builder (or its moved-out buffer) alive
-// while the returned slices are in use.
+// `Header::clone` uses `append_raw`: callers keep the builder, or its moved-out buffer, alive.
 pub use bun_core::StringBuilder;
 
 // FFI surface over vendor/picohttpparser. Hand-written rather than
@@ -416,7 +413,6 @@ pub enum ParseResponseError {
 }
 bun_core::impl_tag_error!(ParseResponseError);
 
-#[derive(Clone, Copy)]
 pub struct Response<'a> {
     pub minor_version: usize,
     pub status_code: u32,
@@ -434,7 +430,7 @@ impl<'a> Response<'a> {
         }
     }
 
-    /// They point into `builder`'s buffer.
+    /// The headers point into `builder`'s buffer.
     pub fn clone_headers(&self, builder: &mut StringBuilder) -> Box<[Header]> {
         let headers = self.headers.list.iter();
         headers.map(|header| header.clone(builder)).collect()

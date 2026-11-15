@@ -523,11 +523,12 @@ pub fn run_tasks(
                     return_network_task(task_ptr);
                     continue;
                 };
+
                 if metadata.status_code() > 399 {
                     if metadata.status_code() == 404
                         && let Some(entry) = manager.network_dedupe_map.get_mut(&task.task_id)
                     {
-                        entry.missing_until = npm::Registry::manifest_expiry(&metadata.headers());
+                        entry.missing_until = npm::Registry::manifest_expiry(metadata);
                     }
                     if let Caller::PendingImports(imports) = &mut caller {
                         let err: PackageManifestError = match metadata.status_code() {
@@ -632,8 +633,7 @@ pub fn run_tasks(
                             !is_extended_manifest || manifest.pkg.has_extended_manifest()
                         );
 
-                        manifest.pkg.public_max_age =
-                            npm::Registry::manifest_expiry(&metadata.headers());
+                        manifest.pkg.public_max_age = npm::Registry::manifest_expiry(metadata);
 
                         // reshaped for borrowck —
                         // `bun_collections::HashMap` lacks `get_or_put` for

@@ -21,7 +21,7 @@ pub struct S3HttpDownloadStreamingTask {
     pub(crate) sign_result: SignResult,
     pub(crate) headers: Headers,
     /// JS thread only.
-    pub(crate) stream: bun_ptr::AliasableBox<S3DownloadStreamWrapper>,
+    pub(crate) wrapper: bun_ptr::AliasableBox<S3DownloadStreamWrapper>,
     pub(crate) has_schedule_callback: AtomicBool,
     pub(crate) signal_store: bun_http::signals::Store,
     pub poll_ref: JsKeepAlive,
@@ -76,7 +76,7 @@ impl S3HttpDownloadStreamingTask {
         self.state.store(state.0, Ordering::Relaxed);
     }
 
-    /// The chunk callback runs JS, which reaches back into this task through the stream
+    /// `on_chunk` and `on_error` run JS, which reaches back into this task through the stream
     /// wrapper's pointer (`pause_receive`, `poll_ref`). No borrow of `this` may span that call,
     /// so this takes the raw pointer and scopes every access to its statement.
     ///
@@ -89,8 +89,8 @@ impl S3HttpDownloadStreamingTask {
             200 | 204 | 206 => state.request_error() != 0,
             _ => true,
         };
-        // SAFETY: fn contract; an allocation of its own.
-        let stream: &S3DownloadStreamWrapper = unsafe { &(*this).stream };
+        // SAFETY: fn contract; the wrapper is a separate allocation, so `*this` is not borrowed.
+        let wrapper: &S3DownloadStreamWrapper = unsafe { &(*this).wrapper };
         bun_core::scoped_log!(
             S3,
             "reportProgres failed: {} has_more: {} len: {}",
@@ -111,7 +111,7 @@ impl S3HttpDownloadStreamingTask {
             if let Some(req_err) = unsafe { (*this).request_error } {
                 code = req_err.name().as_bytes();
             } else {
-                // SAFETY: fn contract; the buffer is not touched again before the callback
+                // SAFETY: fn contract; the buffer is not touched again before `on_error`
                 // returns, and `message` is not used after it.
                 let bytes = unsafe { (*this).reported_response_buffer.list.as_slice() };
                 if !bytes.is_empty() {
@@ -123,7 +123,7 @@ impl S3HttpDownloadStreamingTask {
                     message = error.message.as_deref().unwrap_or(message);
                 }
             }
-            return stream.on_error(&S3Error { code, message });
+            return wrapper.on_error(&S3Error { code, message });
         }
 
         // dont report empty chunks if we have more data to read
@@ -133,8 +133,8 @@ impl S3HttpDownloadStreamingTask {
             // empty MutableString behind.
             // SAFETY: fn contract; the borrow ends with the statement.
             let chunk = unsafe { core::mem::take(&mut (*this).reported_response_buffer) };
-            stream.on_chunk(&chunk, has_more);
-            // SAFETY: fn contract; the callback does not free the task, `on_response` does,
+            wrapper.on_chunk(&chunk, has_more);
+            // SAFETY: fn contract; `on_chunk` does not free the task, `on_response` does,
             // after this returns.
             unsafe { (*this).reported_response_buffer.reset() };
         }
@@ -150,7 +150,7 @@ impl S3HttpDownloadStreamingTask {
         // SAFETY: `this` is a live heap allocation created via `Self::new`; the event loop
         // guarantees exclusive access on the main thread for the duration of this callback.
         // Each access below is scoped so no borrow spans `report_progress` (which invokes
-        // the chunk callback).
+        // `on_chunk` or `on_error`).
         let guard = unsafe { (*this).mutex.lock_guard() };
         // the state is atomic let's load it once
         // SAFETY: as above.
@@ -171,7 +171,7 @@ impl S3HttpDownloadStreamingTask {
         drop(guard);
         if !has_more {
             // SAFETY: the HTTP thread does not call back again.
-            drop(unsafe { bun_core::heap::take(this) });
+            unsafe { bun_core::heap::destroy(this) };
         }
     }
 

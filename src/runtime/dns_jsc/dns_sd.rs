@@ -303,7 +303,7 @@ impl QueryState {
         }
     }
 
-    pub(crate) fn take_results(&mut self) -> bun_dns::ResultList {
+    fn take_results(&mut self) -> bun_dns::ResultList {
         let mut results = core::mem::take(&mut self.results);
         // Family arrival order races upstream; match getaddrinfo's RFC 6724 default (IPv6 first).
         index_sort::sort_slice_by(&mut results, |a, b| {
@@ -313,30 +313,30 @@ impl QueryState {
     }
 }
 
-pub(crate) enum Asker {
+pub(crate) enum Request {
     Jsc(Query),
     Internal(Arc<internal::Request>),
 }
 
 struct Inflight {
-    /// The `context` of its replies.
+    /// Its address is the `context` that `on_reply` receives.
     query: AliasableBox<QueryState>,
-    asker: Asker,
+    request: Request,
 }
 
 impl Inflight {
     fn complete(mut self) {
         let results = self.query.take_results();
-        match self.asker {
-            Asker::Jsc(query) => {
+        match self.request {
+            Request::Jsc(pending) => {
                 bun_output::scoped_log!(GetAddrInfoRequest, "completeDnsSd: {}", results.len());
-                query.complete_native(if results.is_empty() {
+                pending.complete_native(if results.is_empty() {
                     Err(EMPTY_STATUS)
                 } else {
                     Ok(results)
                 });
             }
-            Asker::Internal(request) => internal::dns_sd_complete(request, &results),
+            Request::Internal(request) => internal::dns_sd_complete(request, &results),
         }
     }
 }
@@ -359,7 +359,7 @@ unsafe extern "C" fn on_reply(
     // SAFETY: caller contract; the slice is only read before this callback returns.
     let rdata = unsafe { bun::ffi::slice(rdata.cast::<u8>(), rdlen as usize) };
     // SAFETY: caller contract; event-loop thread, and no other borrow of the query is live here.
-    let query = unsafe { &mut *context.cast::<QueryState>() };
+    let query = unsafe { bun_ptr::callback_ctx::<QueryState>(context) };
     query.record_reply(
         sd_ref,
         flags,
@@ -373,6 +373,7 @@ unsafe extern "C" fn on_reply(
 
 /// One per event loop: owns the primary `DNSServiceRef` + `FilePoll`; lookups are ShareConnection subordinates.
 pub(crate) struct SharedConnection {
+    /// Before `main_ref`: it holds the subordinate refs, which have to drop first.
     inflight: Vec<Inflight>,
     file_poll: bun_io::OwnedFilePoll,
     /// After `file_poll`, whose fd it closes.
@@ -452,7 +453,7 @@ impl SharedConnection {
         Self::current()
     }
 
-    /// Start the queries, for `track`; `None` if the daemon refused.
+    /// Sends the queries; the caller passes the result to `track`. `None` if the daemon refused.
     pub(crate) fn start(
         &mut self,
         protocol: DNSServiceProtocol,
@@ -469,12 +470,12 @@ impl SharedConnection {
         Some(query)
     }
 
-    /// Keeps the process alive until `finish()`.
-    pub(crate) fn track(&mut self, query: AliasableBox<QueryState>, asker: Asker) {
+    /// Adds the query to `inflight`, which keeps the process alive while it is not empty.
+    pub(crate) fn track(&mut self, query: AliasableBox<QueryState>, request: Request) {
         if self.inflight.is_empty() {
             self.file_poll.enable_keeping_process_alive(self.ctx);
         }
-        self.inflight.push(Inflight { query, asker });
+        self.inflight.push(Inflight { query, request });
     }
 
     /// One query per family in `protocol`, as libinfo does; `None`, with none left running, if the daemon refused one.
@@ -487,7 +488,7 @@ impl SharedConnection {
         let flags = FLAGS_SHARE_CONNECTION | FLAGS_TIMEOUT | FLAGS_RETURN_INTERMEDIATES | suppress;
         // Sent as given: the daemon tries search domains only for a name with no trailing dot.
         let name = query.hostname.as_ptr().cast::<c_char>();
-        let (callback, context) = (on_reply as QueryRecordReply, query.as_ptr().cast());
+        let context = query.as_ptr().cast();
         let mut sd_refs = FamilyRefs::default();
         let families = [(PROTOCOL_IPV4, TYPE_A), (PROTOCOL_IPV6, TYPE_AAAA)];
         for (i, (family, rrtype)) in families.into_iter().enumerate() {
@@ -507,7 +508,7 @@ impl SharedConnection {
                         rrtype,
                         CLASS_IN,
                         allow_failover,
-                        callback,
+                        on_reply,
                         context,
                     ),
                     None => DNSServiceQueryRecord(
@@ -517,7 +518,7 @@ impl SharedConnection {
                         name,
                         rrtype,
                         CLASS_IN,
-                        callback,
+                        on_reply,
                         context,
                     ),
                 }
@@ -651,9 +652,9 @@ impl SharedConnection {
         inf.query.sd_refs = FamilyRefs::default();
         if inf.query.should_retry_unsuppressed()
             && let Some(this) = Self::current()
-            && this.reissue_unsuppressed(&mut inf.query)
+            && this.retry_unsuppressed(&mut inf.query)
         {
-            return this.track(inf.query, inf.asker);
+            return this.track(inf.query, inf.request);
         }
         inf.complete();
     }
@@ -666,7 +667,7 @@ impl SharedConnection {
     }
 
     /// Reissue `q` without SuppressUnusable; `false` if it couldn't be reissued.
-    fn reissue_unsuppressed(&mut self, q: &mut AliasableBox<QueryState>) -> bool {
+    fn retry_unsuppressed(&mut self, q: &mut AliasableBox<QueryState>) -> bool {
         let protocol = protocol_for_pending(q);
         q.reset_for_retry(protocol);
         let Some(sd_refs) = self.issue(q, protocol, 0) else {
@@ -690,16 +691,16 @@ impl SharedConnection {
         };
         // Subordinates are dealt with (deallocating them) before the parent.
         while let Some(inf) = conn.inflight.pop() {
-            match inf.asker {
+            match inf.request {
                 // A connect-path lookup lives in the process-wide cache and may
                 // have waiters on other threads (and its outcome is cached): this
                 // thread going away is not an answer. Finish it on the work pool.
-                Asker::Internal(req) => {
+                Request::Internal(req) => {
                     drop(inf.query);
                     internal::run_on_work_pool(req);
                 }
                 // A dns.lookup() from this thread's script: only this VM waits on it.
-                Asker::Jsc(_) => Self::fail(inf),
+                Request::Jsc(_) => Self::fail(inf),
             }
         }
         // SAFETY: `this` is detached and drained.
@@ -730,6 +731,6 @@ pub(crate) fn start(query: &GetAddrInfo, pending: Query) -> Result<(), Query> {
     let Some(state) = shared.start(protocol, bun::ZBox::from_bytes(query.name.as_ref())) else {
         return Err(pending);
     };
-    shared.track(state, Asker::Jsc(pending));
+    shared.track(state, Request::Jsc(pending));
     Ok(())
 }

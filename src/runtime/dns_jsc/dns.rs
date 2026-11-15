@@ -9,7 +9,7 @@ use core::ops::DerefMut;
 use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_collections::{ArrayHashMap, IntegerBitSet};
+use bun_collections::{ArrayHashMap, BoundedArray, IntegerBitSet};
 #[cfg(not(windows))]
 use bun_core::Output;
 use bun_core::{self as bun, env_var, fmt as bun_fmt};
@@ -908,7 +908,7 @@ pub(crate) mod internal {
         /// Not a precise timestamp.
         created_at: u32,
 
-        /// Used with the cache locked.
+        /// Only accessed with `GLOBAL_CACHE` locked, so `Relaxed` is enough.
         valid: AtomicBool,
     }
 
@@ -947,14 +947,14 @@ pub(crate) mod internal {
             false
         }
 
-        /// Gives `owner` back if there is nothing to wait for.
-        fn wait(&self, owner: DNSRequestOwner) -> Option<DNSRequestOwner> {
+        /// Gives `owner` back if `result` is already set.
+        fn join(&self, owner: DNSRequestOwner) -> Result<(), DNSRequestOwner> {
             let mut notify = self.notify.lock();
             if self.result.get().is_some() {
-                return Some(owner);
+                return Err(owner);
             }
             notify.push(owner);
-            None
+            Ok(())
         }
     }
 
@@ -965,13 +965,13 @@ pub(crate) mod internal {
     /// The cache data guarded by `GLOBAL_CACHE`; the lock owns the data
     /// (PORTING.md §Concurrency).
     struct GlobalCache {
-        cache: bun_core::BoundedArray<Arc<Request>, MAX_ENTRIES>,
+        cache: BoundedArray<Arc<Request>, MAX_ENTRIES>,
     }
 
     impl GlobalCache {
         const fn new() -> Self {
             Self {
-                cache: bun_core::BoundedArray::new(),
+                cache: BoundedArray::new(),
             }
         }
 
@@ -981,20 +981,20 @@ pub(crate) mod internal {
             timestamp_to_store: &mut u32,
         ) -> Option<&Arc<Request>> {
             let mut i: usize = 0;
-            while let Some(entry) = self.cache.as_slice().get(i) {
+            while let Some(entry) = self.cache.get(i) {
                 if entry.key.matches(key) {
                     if entry.is_valid() && !entry.is_expired(timestamp_to_store) {
                         break;
                     }
                     bun_output::scoped_log!(dns, "get: stale entry");
-                    if Arc::strong_count(entry) == 1 {
+                    if Self::is_unused(entry) {
                         self.delete_entry_at(i);
                         continue;
                     }
                 }
                 i += 1;
             }
-            self.cache.as_slice().get(i)
+            self.cache.get(i)
         }
 
         // To preserve memory, we use a 32 bit timestamp
@@ -1012,16 +1012,20 @@ pub(crate) mod internal {
             self.cache.len() * 5 >= MAX_ENTRIES * 4
         }
 
+        /// Only the cache holds `entry`.
+        fn is_unused(entry: &Arc<Request>) -> bool {
+            Arc::strong_count(entry) == 1
+        }
+
         fn delete_entry_at(&mut self, i: usize) {
             let last = self.cache.len() - 1;
-            self.cache.slice().swap(i, last);
+            self.cache.swap(i, last);
             self.cache.pop();
             DNS_CACHE_SIZE.store(last, Ordering::Relaxed);
         }
 
         fn remove(&mut self, entry: &Arc<Request>) {
-            let cache = self.cache.as_slice();
-            if let Some(i) = cache.iter().position(|e| Arc::ptr_eq(e, entry)) {
+            if let Some(i) = self.cache.iter().position(|e| Arc::ptr_eq(e, entry)) {
                 self.delete_entry_at(i);
             }
         }
@@ -1032,9 +1036,11 @@ pub(crate) mod internal {
                 return true;
             }
             // check if there is an element to evict
-            let mut cache = self.cache.slice().iter_mut();
-            let unused = cache.find(|e| Arc::strong_count(e) == 1);
-            unused.map(|e| *e = entry).is_some()
+            let Some(unused) = self.cache.iter_mut().find(|e| Self::is_unused(e)) else {
+                return false;
+            };
+            *unused = entry;
+            true
         }
     }
 
@@ -1164,7 +1170,7 @@ pub(crate) mod internal {
         Quic(PendingConnect),
     }
 
-    // SAFETY: no VM state is read: another thread only queues them for the thread of their loop.
+    // SAFETY: no VM state is read: `notify_threadsafe` only queues the socket for its loop's thread.
     unsafe impl Send for DNSRequestOwner {}
 
     impl DNSRequestOwner {
@@ -1304,7 +1310,7 @@ pub(crate) mod internal {
             let _ = req.result.set(result);
             core::mem::take(&mut *notify)
         };
-        // Before a waiter lets go, and counts who is left.
+        // Before notifying: `Bun__addrinfo_freeRequest` evicts only if its ref and the cache's are the last two.
         drop(req);
 
         for query in notify {
@@ -1352,13 +1358,26 @@ pub(crate) mod internal {
     }
 
     #[cfg(target_os = "macos")]
-    fn lookup_dns_sd(req: Arc<Request>, loop_: jsc::EventLoopHandle) -> Result<(), Arc<Request>> {
+    fn lookup_dns_sd(req: Arc<Request>, loop_: *const Loop) -> Result<(), Arc<Request>> {
+        use bun_uws::InternalLoopDataExt as _;
+
+        if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO
+            .get()
+            .unwrap_or(false)
+        {
+            return Err(req);
+        }
         let Some(host) = &req.key.host else {
             // Null host: fall through to getaddrinfo(NULL, service) on the work pool.
             return Err(req);
         };
+        // SAFETY: `loop_` is the live uSockets loop; `EventLoopHandle::set_as_parent_of` set its parent.
+        let handle = unsafe {
+            let (tag, ptr) = (*loop_).internal_loop_data.get_parent();
+            jsc::EventLoopHandle::from_tag_ptr(tag, ptr)
+        };
         let Some(shared) = dns_sd::SharedConnection::get(
-            crate::api::bun::process::event_loop_handle_to_ctx(loop_),
+            crate::api::bun::process::event_loop_handle_to_ctx(handle),
         ) else {
             return Err(req);
         };
@@ -1367,13 +1386,13 @@ pub(crate) mod internal {
         let Some(query) = shared.start(protocol, host.clone()) else {
             return Err(req);
         };
-        shared.track(query, dns_sd::Asker::Internal(req));
+        shared.track(query, dns_sd::Request::Internal(req));
         Ok(())
     }
 
     /// Complete an internal request: build an addrinfo chain and reuse `process_results` (happy-eyeballs order).
     #[cfg(target_os = "macos")]
-    pub(super) fn dns_sd_complete(req: Arc<Request>, results: &bun_dns::ResultList) {
+    pub(super) fn dns_sd_complete(req: Arc<Request>, results: &[GetAddrInfoResult]) {
         let port = req.key.port;
 
         if results.is_empty() {
@@ -1534,6 +1553,7 @@ pub(crate) mod internal {
         }
     }
 
+    /// A prefetch passes `None` for `is_cache_hit` and gets no ref.
     fn getaddrinfo(
         loop_: *const Loop,
         host: Option<&[u8]>,
@@ -1586,7 +1606,7 @@ pub(crate) mod internal {
         ));
 
         let _ = guard.try_push(Arc::clone(&req));
-        let callers_ref = is_cache_hit.is_some().then(|| Arc::clone(&req));
+        let caller_ref = is_cache_hit.is_some().then(|| Arc::clone(&req));
         DNS_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
         DNS_CACHE_SIZE.store(guard.cache.len(), Ordering::Relaxed);
         drop(guard);
@@ -1601,7 +1621,7 @@ pub(crate) mod internal {
             if let Some(is_cache_hit) = is_cache_hit {
                 *is_cache_hit = true;
             }
-            return callers_ref;
+            return caller_ref;
         }
 
         if host.is_some_and(is_localhost_name) {
@@ -1614,33 +1634,18 @@ pub(crate) mod internal {
             if let Some(is_cache_hit) = is_cache_hit {
                 *is_cache_hit = true;
             }
-            return callers_ref;
+            return caller_ref;
         }
 
+        // if dns_sd is unavailable, fall back to the work pool
         #[cfg(target_os = "macos")]
-        let req = if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO
-            .get()
-            .unwrap_or(false)
-        {
-            req
-        } else {
-            use bun_uws::InternalLoopDataExt as _;
-            // SAFETY: `loop_` is the live uSockets loop; its parent tag/ptr
-            // was set by `EventLoopHandle::set_as_parent_of` at startup.
-            let handle = unsafe {
-                let (tag, ptr) = (*loop_).internal_loop_data.get_parent();
-                jsc::EventLoopHandle::from_tag_ptr(tag, ptr)
-            };
-            let Err(req) = lookup_dns_sd(req, handle) else {
-                bun_output::scoped_log!(
-                    dns,
-                    "getaddrinfo({}) = cache miss (dns_sd)",
-                    bstr::BStr::new(host.unwrap_or(b""))
-                );
-                return callers_ref;
-            };
-            // if dns_sd was unavailable, fall back to the work pool
-            req
+        let Err(req) = lookup_dns_sd(req, loop_) else {
+            bun_output::scoped_log!(
+                dns,
+                "getaddrinfo({}) = cache miss (dns_sd)",
+                bstr::BStr::new(host.unwrap_or(b""))
+            );
+            return caller_ref;
         };
         #[cfg(not(target_os = "macos"))]
         let _ = loop_;
@@ -1652,7 +1657,7 @@ pub(crate) mod internal {
         );
         // schedule the request to be executed on the work pool
         run_on_work_pool(req);
-        callers_ref
+        caller_ref
     }
 
     /// getaddrinfo() on the work pool; the result reaches every waiter through
@@ -1681,7 +1686,7 @@ pub(crate) mod internal {
         prefetch(loop_.cast::<Loop>(), host, port);
     }
 
-    /// Gives `request` a ref, which `Bun__addrinfo_freeRequest` takes back.
+    /// Writes a ref to `request`, for `Bun__addrinfo_freeRequest`. SAFETY: `loop_` is live; `host` is null or NUL-terminated.
     #[unsafe(no_mangle)]
     unsafe extern "C" fn Bun__addrinfo_get(
         loop_: *mut Loop,
@@ -1699,7 +1704,7 @@ pub(crate) mod internal {
 
     #[unsafe(no_mangle)]
     extern "C" fn Bun__addrinfo_set(request: &Request, socket: *mut ConnectingSocket) {
-        if let Some(query) = request.wait(DNSRequestOwner::Socket(socket)) {
+        if let Err(query) = request.join(DNSRequestOwner::Socket(socket)) {
             // Also wakes the loop: this can run inside the dns_ready_head drain itself.
             query.notify_threadsafe();
         }
@@ -1709,17 +1714,21 @@ pub(crate) mod internal {
     #[unsafe(no_mangle)]
     extern "C" fn Bun__addrinfo_cancel(request: &Request, socket: *mut ConnectingSocket) -> c_int {
         let mut notify = request.notify.lock();
-        let waiting = notify
+        let Some(i) = notify
             .iter()
-            .position(|item| matches!(item, DNSRequestOwner::Socket(s) if *s == socket));
-        waiting.map(|i| notify.swap_remove(i)).is_some() as c_int
+            .position(|item| matches!(item, DNSRequestOwner::Socket(s) if *s == socket))
+        else {
+            return 0;
+        };
+        notify.swap_remove(i);
+        1
     }
 
+    /// SAFETY: `req` is a ref from `Bun__addrinfo_get`, given back once.
     #[unsafe(no_mangle)]
     unsafe extern "C" fn Bun__addrinfo_freeRequest(req: *const Request, err: c_int) {
         let mut guard = global_cache().lock();
-        // SAFETY: the ref that `Bun__addrinfo_get` gave out. It drops before `guard`, so that the
-        // next caller counts right.
+        // SAFETY: caller contract. `req` drops before `guard`, so the next lock holder reads the lowered count.
         let req = unsafe { Arc::from_raw(req) };
 
         if err != 0 {
@@ -1727,14 +1736,14 @@ pub(crate) mod internal {
         }
         DNS_CACHE_ERRORS.fetch_add((err != 0) as usize, Ordering::Relaxed);
 
-        // This one and the cache's.
+        // 2: `req` and the cache's ref.
         if Arc::strong_count(&req) == 2 && (guard.is_nearly_full() || !req.is_valid()) {
             bun_output::scoped_log!(dns, "cache --");
             guard.remove(&req);
         }
     }
 
-    /// Only once there is a result.
+    /// Panics if `req` has no result yet.
     #[unsafe(no_mangle)]
     extern "C" fn Bun__addrinfo_getRequestResult(req: &Request) -> RequestResult {
         match req.result.get().unwrap() {
@@ -1752,9 +1761,9 @@ pub(crate) mod internal {
     /// QUIC analogue of `Bun__addrinfo_set`, declared in `bun_http`.
     #[unsafe(no_mangle)]
     fn __bun_dns_register_quic(pc: PendingConnect) {
-        // SAFETY: what `Bun__addrinfo_get` gave out. `pc` holds the ref, until `on_dns_resolved`.
+        // SAFETY: `pc` holds this ref from `Bun__addrinfo_get` until `on_dns_resolved`.
         let request = unsafe { &*pc.addrinfo().cast::<Request>() };
-        if let Some(DNSRequestOwner::Quic(pc)) = request.wait(DNSRequestOwner::Quic(pc)) {
+        if let Err(DNSRequestOwner::Quic(pc)) = request.join(DNSRequestOwner::Quic(pc)) {
             pc.on_dns_resolved();
         }
     }

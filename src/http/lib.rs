@@ -143,10 +143,10 @@ pub use init_error::InitError;
 // hoisted so `InternalState` can name it.
 pub struct HTTPResponseMetadata {
     /// `headers` points into it.
-    buf: Box<[u8]>,
+    owned_buf: Box<[u8]>,
     headers: Box<[picohttp::Header]>,
-    status_text: bun_core::StringPointer,
-    url: bun_core::StringPointer,
+    status_text: StringPointer,
+    url: StringPointer,
     status_code: u32,
 }
 
@@ -157,10 +157,10 @@ impl HTTPResponseMetadata {
     }
     #[inline]
     pub fn status_text(&self) -> &[u8] {
-        self.status_text.slice(&self.buf)
+        self.status_text.slice(&self.owned_buf)
     }
     pub fn url(&self) -> &[u8] {
-        self.url.slice(&self.buf)
+        self.url.slice(&self.owned_buf)
     }
     pub fn headers(&self) -> picohttp::HeaderList<'_> {
         picohttp::HeaderList {
@@ -4094,7 +4094,7 @@ impl<'a> HTTPClient<'a> {
             status_text: builder.append_count(response.status),
             headers: response.clone_headers(&mut builder),
             url: builder.append_count(self.url.href),
-            buf: builder.move_to_slice(),
+            owned_buf: builder.move_to_slice(),
         });
     }
 

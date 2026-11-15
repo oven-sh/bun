@@ -5,7 +5,7 @@
 //! `ClientSession`.
 //!
 //! Lifetime: holds one ref on `session` from `register` until
-//! `onDNSResolved` runs.
+//! `on_dns_resolved` runs.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -20,7 +20,7 @@ use super::client_session::{quic_socket_mut, session_mut};
 
 pub struct PendingConnect {
     session: RefPtr<ClientSession>,
-    pc: quic::PendingConnect,
+    pc: quic::OwnedPendingConnect,
 }
 
 // SAFETY: a DNS thread only moves it into `RESOLVED`. The HTTP thread uses and drops it.
@@ -32,7 +32,7 @@ unsafe extern "Rust" {
 }
 
 impl PendingConnect {
-    pub(crate) fn register(session: *mut ClientSession, pc: quic::PendingConnect) {
+    pub(crate) fn register(session: *mut ClientSession, pc: quic::OwnedPendingConnect) {
         __bun_dns_register_quic(PendingConnect {
             // SAFETY: caller passes a live intrusive-refcounted ClientSession.
             session: unsafe { RefPtr::init_ref(session) },
@@ -79,7 +79,9 @@ impl PendingConnect {
 
     pub(crate) fn drain_resolved() {
         let batch = core::mem::take(&mut *RESOLVED.lock());
-        batch.into_iter().for_each(Self::on_dns_resolved);
+        for pc in batch {
+            pc.on_dns_resolved();
+        }
     }
 
     /// Tear down a session that never reached `on_conn_close` (DNS failure or

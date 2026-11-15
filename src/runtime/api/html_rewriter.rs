@@ -1917,7 +1917,7 @@ impl crate::webcore::sink::ControlledSink for RewriterPipe {
         self.pump_ref.set(None);
     }
 
-    /// `controller_detached` released the controller's ref, which can have been the last.
+    /// `controller_detached` released the controller's ref: `_this` may already be freed.
     unsafe fn controller_finalize(_this: *mut Self) {}
 
     unsafe fn close_with_error(

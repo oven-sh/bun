@@ -9,22 +9,22 @@ use crate::quic::Socket;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for `us_quic_pending_connect_s`.
-    struct Raw;
+    struct PendingConnect;
 }
 
-/// Dropping it cancels the connect.
+/// Cancelled on drop.
 #[repr(transparent)]
-pub struct PendingConnect(NonNull<Raw>);
+pub struct OwnedPendingConnect(NonNull<PendingConnect>);
 
 unsafe extern "C" {
-    safe fn us_quic_pending_connect_addrinfo(pc: &Raw) -> *mut c_void;
-    safe fn us_quic_pending_connect_resolved(pc: PendingConnect) -> Option<NonNull<Socket>>;
-    fn us_quic_pending_connect_cancel(pc: NonNull<Raw>);
+    safe fn us_quic_pending_connect_addrinfo(pc: &PendingConnect) -> *mut c_void;
+    safe fn us_quic_pending_connect_resolved(pc: OwnedPendingConnect) -> Option<NonNull<Socket>>;
+    fn us_quic_pending_connect_cancel(pc: NonNull<PendingConnect>);
 }
 
-impl PendingConnect {
+impl OwnedPendingConnect {
     pub fn addrinfo(&self) -> *mut c_void {
-        us_quic_pending_connect_addrinfo(Raw::opaque_ref(self.0.as_ptr()))
+        us_quic_pending_connect_addrinfo(PendingConnect::opaque_ref(self.0.as_ptr()))
     }
 
     pub fn resolved(self) -> Option<NonNull<Socket>> {
@@ -32,7 +32,7 @@ impl PendingConnect {
     }
 }
 
-impl Drop for PendingConnect {
+impl Drop for OwnedPendingConnect {
     fn drop(&mut self) {
         // SAFETY: `self` is the only owner.
         unsafe { us_quic_pending_connect_cancel(self.0) }

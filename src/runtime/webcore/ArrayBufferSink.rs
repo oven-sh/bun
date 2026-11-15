@@ -117,9 +117,9 @@ impl ArrayBufferSink {
 }
 
 impl crate::webcore::sink::WrappedSink for ArrayBufferSink {
-    type Claim = bun_ptr::AliasableBox<Self>;
-    fn claimed(claim: &Self::Claim) -> core::ptr::NonNull<Self> {
-        claim.as_non_null()
+    type Wrapped = bun_ptr::AliasableBox<Self>;
+    fn as_non_null(wrapped: &Self::Wrapped) -> core::ptr::NonNull<Self> {
+        wrapped.as_non_null()
     }
 }
 

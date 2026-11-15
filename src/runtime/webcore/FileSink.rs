@@ -1396,10 +1396,11 @@ impl FileSink {
 
 pub(crate) type JSSink = crate::webcore::sink::JSSink<FileSink>;
 
+/// The JS wrapper's ref.
 pub(crate) struct WrapperRef(RefPtr<FileSink>);
 
 impl Drop for WrapperRef {
-    /// Leaves `pending` and `pipe`, which I/O in flight may still need.
+    /// Does not clear `pending` or `pipe`: I/O in flight may still need them.
     fn drop(&mut self) {
         self.0.release_ref_stranded_by_shutdown();
         self.0.js_sink_ref.set(Default::default());
@@ -1407,9 +1408,9 @@ impl Drop for WrapperRef {
 }
 
 impl crate::webcore::sink::WrappedSink for FileSink {
-    type Claim = WrapperRef;
-    fn claimed(claim: &WrapperRef) -> NonNull<Self> {
-        claim.0.as_non_null()
+    type Wrapped = WrapperRef;
+    fn as_non_null(wrapped: &WrapperRef) -> NonNull<Self> {
+        wrapped.0.as_non_null()
     }
 }
 

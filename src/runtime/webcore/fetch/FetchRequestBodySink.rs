@@ -219,7 +219,7 @@ impl crate::webcore::sink::ControlledSink for FetchRequestBodySink {
     }
 
     unsafe fn controller_finalize(this: *mut Self) {
-        // SAFETY: trait contract. The tasklet owns `*this`, and this can be its last ref.
+        // SAFETY: trait contract. The tasklet owns `*this`, and `task` can be its last ref.
         drop(unsafe { (*this).task.take() });
     }
 

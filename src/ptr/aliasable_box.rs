@@ -40,7 +40,7 @@ impl<T> core::ops::Deref for AliasableBox<T> {
 
 impl<T> core::ops::DerefMut for AliasableBox<T> {
     fn deref_mut(&mut self) -> &mut T {
-        // SAFETY: as above. Whoever reads through `as_ptr` answers for not overlapping this borrow.
+        // SAFETY: as above; code that dereferences `as_ptr()` must not overlap this borrow.
         unsafe { self.0.as_mut() }
     }
 }

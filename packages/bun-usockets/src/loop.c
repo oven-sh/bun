@@ -369,21 +369,14 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
 }
 
 // Called when DNS resolution completes
-// Does not wake up the loop.
-static void us_internal_dns_callback(struct us_connecting_socket_t *c) {
+// Wakes up the loop.
+// Can be caleld from any thread.
+void us_internal_dns_callback_threadsafe(struct us_connecting_socket_t *c) {
     struct us_loop_t *loop = c->loop;
     Bun__lock(&loop->data.mutex);
     c->next = loop->data.dns_ready_head;
     loop->data.dns_ready_head = c;
     Bun__unlock(&loop->data.mutex);
-}
-
-// Called when DNS resolution completes
-// Wakes up the loop.
-// Can be caleld from any thread.
-void us_internal_dns_callback_threadsafe(struct us_connecting_socket_t *c) {
-    struct us_loop_t *loop = c->loop;
-    us_internal_dns_callback(c);
     us_wakeup_loop(loop);
 }
 

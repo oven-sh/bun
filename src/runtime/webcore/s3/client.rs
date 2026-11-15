@@ -49,7 +49,7 @@ use crate::webcore::ByteStream;
 use crate::webcore::ReadableStream;
 use crate::webcore::readable_stream::Source as ReadableStreamPtr;
 use crate::webcore::readable_stream::Strong as ReadableStreamStrong;
-use crate::webcore::s3::multipart::{Listener, State as MultiPartUploadState};
+use crate::webcore::s3::multipart::{State as MultiPartUploadState, UploadCallback};
 use crate::webcore::sink::ReadableSinkController;
 use crate::webcore::streams::NetworkSink;
 use bun_collections::IntegerBitSet;
@@ -389,46 +389,6 @@ pub(crate) fn upload(
     )
 }
 
-/// The upload of a `writer()` is over. The sink may have let go of `task` already.
-pub(crate) fn settle_writer(
-    sink: &RefPtr<NetworkSink>,
-    task: &MultiPartUpload,
-    result: S3UploadResult,
-) -> JsResult<()> {
-    // SAFETY: the ref outlives the borrow.
-    let sink = unsafe { &mut *sink.as_ptr() };
-    let global = &*task.global_this;
-    if sink.end_promise.has_value() || sink.flush_promise.has_value() {
-        let _exit_guard = global.bun_vm().enter_event_loop_scope();
-        match result {
-            S3UploadResult::Success => {
-                if sink.flush_promise.has_value() {
-                    sink.flush_promise
-                        .resolve(global, JSValue::js_number(0.0))?;
-                }
-                if sink.end_promise.has_value() {
-                    sink.end_promise
-                        .resolve(global, JSValue::js_number(task.uploaded_bytes.get() as f64))?;
-                }
-            }
-            S3UploadResult::Failure(err) => {
-                let js_err = s3_error_to_js(&err, global, Some(&task.path));
-                if sink.flush_promise.has_value() {
-                    sink.flush_promise.reject(global, Ok(js_err))?;
-                }
-                if sink.end_promise.has_value() {
-                    sink.end_promise.reject(global, Ok(js_err))?;
-                }
-                if !sink.done {
-                    sink.abort();
-                }
-            }
-        }
-    }
-    sink.detach_writable();
-    Ok(())
-}
-
 /// returns a writable stream that writes to the s3 path
 ///
 /// `credentials` is moved into the `MultiPartUpload`.
@@ -481,20 +441,22 @@ pub(crate) fn writable_stream(
         multipart_etags: JsCell::new(Vec::new()),
         multipart_upload_list: JsCell::new(Vec::new()),
         state: Cell::new(MultiPartUploadState::NotStarted),
-        listener: JsCell::new(None), // assigned below
+        callback: JsCell::new(None), // assigned below
     });
     task.unfinished.set(Some(task.clone()));
 
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
     unsafe { bun_jsc::AbortHandle::arm_owner(task.as_ptr(), cx.context()) };
 
-    let upload = task.this_ptr();
+    let task_ptr = task.this_ptr();
     let sink = RefPtr::new(NetworkSink {
         task: Some(task),
         global_this: Some(bun_ptr::BackRef::new(cx.global())),
         ..Default::default()
     });
-    upload.listener.set(Some(Listener::Writer(sink.clone())));
+    task_ptr
+        .callback
+        .set(Some(UploadCallback::Writer(sink.clone())));
     Ok(NetworkSink::to_js(sink, cx.global()))
 }
 
@@ -551,7 +513,7 @@ impl S3UploadStreamWrapper {
     pub(crate) fn resolve(this: &RefPtr<Self>, result: S3UploadResult) -> JsResult<()> {
         bun_output::scoped_log!(S3UploadStream, "resolve");
         let this = this.as_ptr();
-        // SAFETY: both refs outlive the borrows.
+        // SAFETY: the caller's ref outlives both borrows.
         unsafe {
             let native_pump_ref = (*this)
                 .sink_mut()
@@ -786,7 +748,7 @@ pub(crate) fn upload_stream(
         multipart_etags: JsCell::new(Vec::new()),
         multipart_upload_list: JsCell::new(Vec::new()),
         state: Cell::new(MultiPartUploadState::WaitStreamCheck),
-        listener: JsCell::new(None), // assigned below
+        callback: JsCell::new(None), // assigned below
     });
     task.unfinished.set(Some(task.clone()));
 
@@ -802,7 +764,10 @@ pub(crate) fn upload_stream(
         readable_stream_ref: ReadableStreamStrong::default(),
         global: global_static,
     });
-    (pump_ref.task.listener).set(Some(Listener::Stream(pump_ref.clone())));
+    pump_ref
+        .task
+        .callback
+        .set(Some(UploadCallback::Stream(pump_ref.clone())));
     // SAFETY: freshly heap-allocated; exclusive access here.
     let ctx = unsafe { &mut *pump_ref.as_ptr() };
 
@@ -957,13 +922,12 @@ fn download_stream(
     offset: usize,
     size: Option<usize>,
     request_payer: bool,
-    stream: AliasableBox<S3DownloadStreamWrapper>,
+    wrapper: AliasableBox<S3DownloadStreamWrapper>,
 ) {
     bun_removable_features::removable_definition!(S3Client, download_stream);
     if s3_simple_request::nothing_new_leaves(context) {
-        return stream.on_error(&s3_simple_request::NOTHING_NEW_LEAVES);
+        return wrapper.on_error(&s3_simple_request::NOTHING_NEW_LEAVES);
     }
-    let path = &stream.path;
     let range: Option<Vec<u8>> = 'brk: {
         if let Some(size_) = size {
             let mut end = offset + size_;
@@ -984,7 +948,7 @@ fn download_stream(
 
     let result = match this.sign_request::<false>(
         &bun_s3_signing::SignOptions {
-            path,
+            path: &wrapper.path,
             method: bun_http::Method::GET,
             request_payer,
             content_hash: None,
@@ -1002,7 +966,7 @@ fn download_stream(
         Err(sign_err) => {
             drop(range);
             let error_code_and_message = Error::get_sign_error_code_and_message(sign_err.into());
-            return stream.on_error(&Error::S3Error {
+            return wrapper.on_error(&Error::S3Error {
                 code: error_code_and_message.code,
                 message: error_code_and_message.message,
             });
@@ -1027,7 +991,7 @@ fn download_stream(
         S3HttpDownloadStreamingTask {
             sign_result: result,
             proxy_url: owned_proxy,
-            stream,
+            wrapper,
             headers,
             http_ticket: None,
             has_schedule_callback: core::sync::atomic::AtomicBool::new(false),
@@ -1089,7 +1053,7 @@ fn download_stream(
         },
     );
     task.async_http_id = http.async_http_id;
-    task.stream.task.set(task_ptr);
+    task.wrapper.task.set(task_ptr);
     // enable streaming
     http.enable_response_body_streaming();
     // queue http request
@@ -1106,7 +1070,7 @@ pub struct S3DownloadStreamWrapper {
     stream: crate::webcore::byte_stream::ProducerHold,
     pub path: Box<[u8]>,
     pub global: GlobalRef, // JSC_BORROW
-    /// The owner of `self`. Null once the stream is cancelled.
+    /// Owns `self`, so it is live. Null until `download_stream` sets it and once the stream is cancelled.
     pub task: Cell<*mut S3HttpDownloadStreamingTask>,
 }
 
@@ -1199,7 +1163,7 @@ impl S3DownloadStreamWrapper {
     }
 
     pub(crate) fn on_stream_cancelled(&self) {
-        // The download may still be in progress, but the callback will see no stream and skip
+        // The download may still be in progress, but `on_chunk` will see no stream and skip
         // delivery. When the download finishes (has_more == false) the task frees this wrapper.
         self.stream.release();
         // Abort the in-flight HTTP request so the HTTP thread delivers a final
@@ -1263,9 +1227,8 @@ pub(crate) fn readable_stream(
     reader
         .producer
         .set(crate::webcore::streams::SourceHandle::S3DownloadBody(
-            // SAFETY: `wrapper` is the live heap allocation; cleared from the producer slot before
-            // it is freed (`ProducerHold::take`).
-            unsafe { bun_ptr::BackRef::from_raw(wrapper.as_ptr()) },
+            // Cleared before `wrapper` is freed (`ProducerHold::take`).
+            bun_ptr::BackRef::from(wrapper.as_non_null()),
         ));
 
     download_stream(this, cx.context(), offset, size, request_payer, wrapper);

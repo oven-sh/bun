@@ -35,6 +35,7 @@ type ByteListPoolNode = bun_collections::pool::Node<Vec<u8>>;
 // for callers that still spell it that way.
 pub(crate) mod bun_s3 {
     pub(crate) use crate::webcore::s3::MultiPartUpload;
+    pub(crate) use crate::webcore::s3::client::{S3UploadResult, s3_error_to_js};
     pub(crate) use crate::webcore::s3::multipart::UploadBackpressure;
 }
 
@@ -2023,7 +2024,7 @@ pub(crate) type HTTPResponseSink = HTTPServerWritable<false>;
 
 #[derive(bun_ptr::CellRefCounted)]
 pub struct NetworkSink {
-    /// For `s3file.writer()`. `S3UploadStreamWrapper` owns its sink alone.
+    /// `s3file.writer()`: the JS wrapper's ref and the upload's. Unused in `S3UploadStreamWrapper`'s box.
     pub(crate) ref_count: core::cell::Cell<u32>,
     /// The sink's ref on the upload.
     pub task: Option<RefPtr<bun_s3::MultiPartUpload>>,
@@ -2097,7 +2098,7 @@ impl NetworkSink {
         bun_sys::Result::Ok(())
     }
 
-    pub(crate) fn detach_writable(&mut self) {
+    fn detach_writable(&mut self) {
         self.task = None;
     }
 
@@ -2144,6 +2145,48 @@ impl NetworkSink {
         // Wake the upstream source (JS controller onPull or native ByteStream
         // resume). No-op when `source` is `None` (the `writer()` path).
         source.ready(None, None);
+    }
+
+    /// The upload of a `writer()` finished. `this.task` may already be `None`.
+    pub(crate) fn on_finished(
+        this: &RefPtr<Self>,
+        task: &bun_s3::MultiPartUpload,
+        result: bun_s3::S3UploadResult,
+    ) -> JsResult<()> {
+        // SAFETY: the ref outlives the borrow.
+        let sink = unsafe { &mut *this.as_ptr() };
+        let global = &*task.global_this;
+        if sink.end_promise.has_value() || sink.flush_promise.has_value() {
+            let _exit_guard = global.bun_vm().enter_event_loop_scope();
+            match result {
+                bun_s3::S3UploadResult::Success => {
+                    if sink.flush_promise.has_value() {
+                        sink.flush_promise
+                            .resolve(global, JSValue::js_number(0.0))?;
+                    }
+                    if sink.end_promise.has_value() {
+                        sink.end_promise.resolve(
+                            global,
+                            JSValue::js_number(task.uploaded_bytes.get() as f64),
+                        )?;
+                    }
+                }
+                bun_s3::S3UploadResult::Failure(err) => {
+                    let js_err = bun_s3::s3_error_to_js(&err, global, Some(&task.path));
+                    if sink.flush_promise.has_value() {
+                        sink.flush_promise.reject(global, Ok(js_err))?;
+                    }
+                    if sink.end_promise.has_value() {
+                        sink.end_promise.reject(global, Ok(js_err))?;
+                    }
+                    if !sink.done {
+                        sink.abort();
+                    }
+                }
+            }
+        }
+        sink.detach_writable();
+        Ok(())
     }
 
     pub(crate) fn flush_from_js(
@@ -2386,7 +2429,7 @@ impl NetworkSink {
     }
 
     pub fn to_js(this: RefPtr<Self>, global_this: &JSGlobalObject) -> JSValue {
-        NetworkSinkJSSink::create_object(global_this, WriterRef(this), None)
+        NetworkSinkJSSink::create_object(global_this, NetworkSinkWrapperRef(this), None)
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -2401,9 +2444,10 @@ impl NetworkSink {
     pub(crate) const NAME: &'static str = "NetworkSink";
 }
 
-pub(crate) struct WriterRef(RefPtr<NetworkSink>);
+/// The JS wrapper's ref.
+pub(crate) struct NetworkSinkWrapperRef(RefPtr<NetworkSink>);
 
-impl Drop for WriterRef {
+impl Drop for NetworkSinkWrapperRef {
     fn drop(&mut self) {
         // SAFETY: the ref outlives the borrow, and neither call runs script.
         let sink = unsafe { &mut *self.0.as_ptr() };
@@ -2413,9 +2457,9 @@ impl Drop for WriterRef {
 }
 
 impl crate::webcore::sink::WrappedSink for NetworkSink {
-    type Claim = WriterRef;
-    fn claimed(claim: &WriterRef) -> NonNull<Self> {
-        claim.0.as_non_null()
+    type Wrapped = NetworkSinkWrapperRef;
+    fn as_non_null(wrapped: &NetworkSinkWrapperRef) -> NonNull<Self> {
+        wrapped.0.as_non_null()
     }
 }
 

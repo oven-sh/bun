@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "child_process";
 import { once } from "events";
-import { bunEnv, bunExe, bunRun, tls as certs, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, tls as certs, isLinux, isWindows } from "harness";
 import net from "net";
 import { Duplex } from "stream";
 import tls from "tls";
@@ -562,6 +562,59 @@ describe.concurrent("tls.connect({ socket: duplex }): duplex.write()", () => {
         process.exit(0)`,
       )}`);
     expect(result).toSpawn("0 0");
+  });
+});
+
+describe.concurrent("upgradeTLS() on a socket that is still connecting", () => {
+  // With a synchronous lookup the native connect starts inside connect().
+  const withReconnect = (target: string, script: string) => `
+    // A process that cannot exit must not outlive the test.
+    setTimeout(() => process.exit(3), 10_000).unref();
+    const server = tls.createServer(JSON.parse(process.env.CERTS), peer => peer.on("error", () => {}).resume());
+    const closed = net.createServer();
+    for (const listener of [server, closed]) await new Promise(resolve => listener.listen(0, "127.0.0.1", resolve));
+    const ports = { open: server.address().port, closed: closed.address().port };
+    await new Promise(resolve => closed.close(resolve));
+    const socket = net.connect(ports.open, "127.0.0.1");
+    const lookup = (host, options, callback) => callback(null, "127.0.0.1", 4);
+    const reconnect = () => socket.connect({ host: "localhost", port: ports.${target}, autoSelectFamily: false, lookup });
+    ${script}`;
+
+  // Outside Linux, connect() itself can report the refusal.
+  test.each(isLinux ? ["open", "closed"] : ["open"])(
+    "tls.connect({ socket }) fails if 'connect' reconnects to the %s port",
+    async target => {
+      const result = await run(
+        withReconnect(
+          target,
+          `socket.once("connect", reconnect);
+        const tlsSocket = tls.connect({ socket, rejectUnauthorized: false });
+        tlsSocket.on("secureConnect", () => tlsSocket.destroy());
+        tlsSocket.on("error", error => console.log(error.message));
+        // After the loop iteration that frees a native socket whose connect failed.
+        tlsSocket.on("close", () => setImmediate(() => setImmediate(() => (socket.destroy(), server.close()))));`,
+        ),
+      );
+      expect(result).toSpawn("upgradeTLS requires an established socket");
+    },
+  );
+
+  test("throws if an option getter reconnects the socket", async () => {
+    const result = await run(
+      withReconnect(
+        "open",
+        `socket.once("connect", () => {
+          try {
+            socket._handle.upgradeTLS({ tls: true, socket: { data() {} }, get data() { reconnect(); } });
+          } catch (error) {
+            console.log(error.message);
+          }
+          socket.destroy();
+          server.close();
+        });`,
+      ),
+    );
+    expect(result).toSpawn("upgradeTLS requires an established socket");
   });
 });
 

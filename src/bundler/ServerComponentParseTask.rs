@@ -79,7 +79,6 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         .ctx
         .expect("ServerComponentParseTask.ctx set at enqueue");
     let worker = Worker::get(ctx.get());
-    // `defer worker.unget()` — handled at end of fn (no early returns).
     let mut log = Log::new();
 
     // SAFETY: `worker.arena` is set in `Worker::create` to point at the
@@ -146,8 +145,6 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
             }
         }
     }
-    // Runs at function exit, i.e. after enqueue.
-    worker.unget();
 }
 
 fn on_complete_mini(result: *mut parse_task::Result<'static>, _ctx: *mut BundleV2<'static>) {

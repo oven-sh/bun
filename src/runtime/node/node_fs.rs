@@ -3017,7 +3017,7 @@ mod _async_tasks {
         pub(crate) result_list_queue: UnboundedQueue<ResultListEntry>,
 
         /// All the subtasks will use this fd to open files
-        pub(crate) root_fd: FD,
+        pub(crate) root_dir: Option<sys::File>,
 
         /// This is used when joining the file paths for error messages.
         /// Heap-owned, NUL-terminated (`[path.., 0]`); freed on drop.
@@ -3033,7 +3033,6 @@ mod _async_tasks {
 
     impl Drop for AsyncReaddirRecursiveTask {
         fn drop(&mut self) {
-            debug_assert!(self.root_fd == FD::INVALID, "scan still owns its root fd");
             self.clear_result_list();
         }
     }
@@ -3213,7 +3212,7 @@ mod _async_tasks {
                     result_list,
                     result_list_count: AtomicUsize::new(0),
                     result_list_queue: UnboundedQueue::default(),
-                    root_fd: FD::INVALID,
+                    root_dir: None,
                     pending_err: None,
                     pending_err_mutex: bun_threading::Mutex::default(),
                 },
@@ -3323,12 +3322,7 @@ mod _async_tasks {
             }
             debug_assert!(self.subtask_count.load(Ordering::Relaxed) == 0);
 
-            let root_fd = self.root_fd;
-            if root_fd != FD::INVALID {
-                use bun_sys::FdExt as _;
-                self.root_fd = FD::INVALID;
-                root_fd.close();
-            }
+            self.root_dir = None;
 
             if self.pending_err.is_some() {
                 self.clear_result_list();
@@ -7273,11 +7267,10 @@ impl NodeFS {
         };
         #[cfg(not(windows))]
         let flags = sys::O::DIRECTORY | sys::O::RDONLY;
-        let atfd = if is_root {
-            FD::cwd()
-        } else {
-            async_task.root_fd
-        };
+        let atfd = async_task
+            .root_dir
+            .as_ref()
+            .map_or_else(FD::cwd, sys::File::fd);
         #[cfg(not(windows))]
         let open_res = Syscall::openat(atfd, basename, flags, 0);
         #[cfg(windows)]
@@ -7306,7 +7299,7 @@ impl NodeFS {
         };
 
         if is_root {
-            async_task.root_fd = fd;
+            async_task.root_dir = Some(sys::File::from_fd(fd));
         }
         let _subdir = (!is_root).then(|| sys::File::from_fd(fd));
 

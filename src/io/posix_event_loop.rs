@@ -392,7 +392,7 @@ impl FilePoll {
         self.deinit_possibly_defer(vm, false);
     }
 
-    pub fn is_registered(&self) -> bool {
+    pub(crate) fn is_registered(&self) -> bool {
         self.flags.contains(Flags::PollWritable)
             || self.flags.contains(Flags::PollReadable)
             || self.flags.contains(Flags::PollProcess)

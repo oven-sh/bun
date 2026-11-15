@@ -1033,17 +1033,15 @@ impl<'a> LinkerContext<'a> {
     // `ctx.chunks` shared. The `post_process_*` callees take `GenerateChunkCtx`
     // by value and get `&mut LinkerContext` from `ctx.c()`.
     pub(crate) fn generate_chunk(ctx: &GenerateChunkCtx, chunk: &mut Chunk, chunk_index: usize) {
-        let worker = crate::thread_pool::Worker::get(ctx.bundle());
-        let mut worker = scopeguard::guard(worker, |w| w.unget());
-        let worker: &mut crate::thread_pool::Worker = &mut **worker;
+        let mut worker = crate::thread_pool::Worker::get(ctx.bundle());
         // Note: dispatch on a discriminant copy so `chunk` isn't borrowed
         // across the post-process call (which takes `&mut Chunk`).
         let result = match chunk.content {
             crate::chunk::Content::Javascript(_) => {
-                post_process_js_chunk(*ctx, worker, chunk, chunk_index)
+                post_process_js_chunk(*ctx, &mut worker, chunk, chunk_index)
             }
-            crate::chunk::Content::Css(_) => post_process_css_chunk(*ctx, worker, chunk),
-            crate::chunk::Content::Html => post_process_html_chunk(*ctx, worker, chunk),
+            crate::chunk::Content::Css(_) => post_process_css_chunk(*ctx, &mut worker, chunk),
+            crate::chunk::Content::Html => post_process_html_chunk(*ctx, &mut worker, chunk),
         };
         if let Err(err) = result {
             Output::panic(format_args!("TODO: handle error: {}", err.name()));
@@ -1061,10 +1059,9 @@ impl<'a> LinkerContext<'a> {
         chunk: &mut Chunk,
         chunk_index: usize,
     ) {
-        let worker = crate::thread_pool::Worker::get(ctx.bundle());
-        let mut worker = scopeguard::guard(worker, |w| w.unget());
+        let mut worker = crate::thread_pool::Worker::get(ctx.bundle());
         if let crate::chunk::Content::Javascript(_) = chunk.content {
-            Self::generate_js_renamer_(*ctx, &mut **worker, chunk, chunk_index);
+            Self::generate_js_renamer_(*ctx, &mut worker, chunk, chunk_index);
         }
     }
 
@@ -1504,7 +1501,6 @@ impl SourceMapDataTask<'_> {
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
         // SAFETY: `worker.arena` points at `worker.heap` (init by `Worker::create`).
         SourceMapData::compute_line_offsets(ctx, worker.arena(), task.source_index);
-        worker.unget();
     }
 
     // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
@@ -1550,7 +1546,6 @@ impl SourceMapDataTask<'_> {
         // pass the worker arena unconditionally; `DevServerHandle` does not
         // expose an arena accessor (§Dispatch).
         SourceMapData::compute_quoted_source_contents(ctx, worker.arena(), task.source_index);
-        worker.unget();
     }
 }
 
@@ -1782,8 +1777,7 @@ pub struct PendingPartRange<'c, 'a> {
 /// Shared prologue for `generate_compile_result_for_{js,css,html}_chunk` thread-pool
 /// callbacks: recover the intrusive [`PendingPartRange`] from `task`, extract
 /// the raw `*mut Chunk` from its [`GenerateChunkCtx`],
-/// and acquire the per-thread [`Worker`](crate::thread_pool::Worker) (returned
-/// as a scopeguard that calls `unget()` on drop).
+/// and acquire the per-thread [`Worker`](crate::thread_pool::Worker).
 ///
 /// `GenerateChunkCtx.chunk` is a `BackRef<Chunk, Mut>` (Copy), so reading it
 /// through `&GenerateChunkCtx` preserves the mutable provenance it was
@@ -1807,10 +1801,7 @@ pub(crate) unsafe fn pending_part_range_prologue<'c, 'a>(
 ) -> (
     &'c PendingPartRange<'c, 'a>,
     *mut Chunk<'a>,
-    scopeguard::ScopeGuard<
-        &'static mut crate::thread_pool::Worker,
-        impl FnOnce(&'static mut crate::thread_pool::Worker),
-    >,
+    crate::thread_pool::WorkerGuard,
 ) {
     // SAFETY: per fn contract — `task` is the intrusive `task` field.
     let part_range: &PendingPartRange =
@@ -1818,7 +1809,6 @@ pub(crate) unsafe fn pending_part_range_prologue<'c, 'a>(
     let ctx = part_range.ctx;
     let chunk_ptr: *mut Chunk = ctx.chunk.as_ptr();
     let worker = crate::thread_pool::Worker::get(ctx.bundle());
-    let worker = scopeguard::guard(worker, |w| w.unget());
     (part_range, chunk_ptr, worker)
 }
 

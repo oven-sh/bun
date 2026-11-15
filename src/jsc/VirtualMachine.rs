@@ -1844,7 +1844,7 @@ impl VirtualMachine {
         }
         // Idempotent; outside the `has_enabled_macro_mode` guard because
         // `__bun_macro_context_deinit` runs per-job (RuntimeTranspilerStore
-        // scopeguard, JSTranspiler TransformTask, bundler `Worker::deinit`) and
+        // job, JSTranspiler TransformTask, bundler `Worker::deinit`) and
         // frees the printer while this VM survives with the flag still set —
         // the next macro on the same pool thread would otherwise skip re-init
         // and panic at `SOURCE_CODE_PRINTER.get().expect(...)`.
@@ -4058,7 +4058,7 @@ fn drop_source_code_printer() {
 /// Also a no-op while a [`MacroModeGuard`] is still active on this thread:
 /// `__bun_macro_context_deinit` can fire *inside* the guard scope (e.g. a
 /// macro that calls `new Bun.Transpiler().transformSync(...)` —
-/// `TranspilerStateGuard::drop` deinits the nested `MacroContext`), and freeing
+/// `TranspilerStateGuard::drop` drops the nested `MacroContext`), and freeing
 /// here would panic the next module fetch at
 /// `SOURCE_CODE_PRINTER.get().expect(...)` with no intervening
 /// `enable_macro_mode()`. Gated on `macro_guard_depth`: nonzero exactly while a
@@ -4086,7 +4086,7 @@ pub fn drop_source_code_printer_if_macro_owned() {
 /// is the discriminant — JS `Worker` threads never reach it), after both
 /// per-worker `MacroContext` boxes are freed. Not called from
 /// `__bun_macro_context_deinit`: that path is reached from
-/// `TranspilerStateGuard::drop` and `JSTranspiler::Drop` (during a sweep),
+/// `TranspilerStateGuard::drop` and a `JSTranspiler`'s drop (during a sweep),
 /// where re-entering `run_gc` would be a recursion hazard.
 pub fn collect_macro_vm_garbage() {
     let Some(vm_ref) = VirtualMachine::get_or_null() else {
@@ -6083,9 +6083,7 @@ impl VirtualMachine {
             callback.unprotect();
         }
         self.macros.with_mut(MacroMap::clear_retaining_capacity);
-        if let Some(ctx) = self.transpiler.with_mut(|t| t.macro_context.take()) {
-            ctx.deinit();
-        }
+        drop(self.transpiler.with_mut(|t| t.macro_context.take()));
 
         let old_global = self.global.get();
         // `old_global` valid for VM lifetime (safe ZST-handle deref);

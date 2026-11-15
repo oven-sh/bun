@@ -12,7 +12,8 @@ use bun_paths::strings;
 #[cfg(not(windows))]
 use bun_resolver::fs::PathName;
 use bun_resolver::fs::{self as Fs, FileSystem};
-use bun_sys::{self, Fd};
+#[cfg(not(windows))]
+use bun_sys::Fd;
 use bun_watcher::WatchItemColumns as _;
 use bun_watcher::{ChangedFilePath, Op as WatchOp, Watcher};
 
@@ -58,19 +59,18 @@ impl ImportWatcher {
     }
 
     #[inline]
-    pub fn add_file<const COPY_FILE_PATH: bool>(
+    pub fn add_owned_file(
         &mut self,
-        fd: Fd,
+        file: Option<bun_sys::File>,
         file_path: &[u8],
         hash: bun_watcher::HashType,
-        dir_fd: Fd,
         // Note: bun_watcher::PackageJSON is an opaque forward-decl;
         // callers cast from `&bun_resolver::PackageJSON`.
         package_json: Option<&'static bun_watcher::PackageJSON>,
-    ) -> bun_sys::Result<bun_watcher::FdOwnership> {
+    ) -> bun_sys::Result<()> {
         match self {
             ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => {
-                watcher.add_file::<COPY_FILE_PATH>(fd, file_path, hash, dir_fd, package_json)
+                watcher.add_owned_file(file, file_path, hash, package_json)
             }
         }
     }

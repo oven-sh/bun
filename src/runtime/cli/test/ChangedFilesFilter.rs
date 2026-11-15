@@ -166,7 +166,7 @@ pub(crate) fn filter<'a>(
     // scope exit; the arena bulk-free skips Drop.
     let event_loop = bun_event_loop::AnyEventLoop::init();
 
-    let mut bundle = match BundleV2::scan_module_graph_from_cli(
+    let bundle = match BundleV2::scan_module_graph_from_cli(
         scan_transpiler,
         arena,
         Some(core::ptr::NonNull::from(&event_loop)),
@@ -302,11 +302,12 @@ pub(crate) fn filter<'a>(
     // everything needed has been copied out above. The scan transpiler itself
     // is in the CLI arena (the `&'a mut Transpiler<'a>` invariant forces a
     // `'static` borrow), so its Drop never runs either; free its heap-backed
-    // options through the borrow `bundle` still holds.
-    bundle.deinit_without_freeing_arena();
-    // SAFETY: `bundle.transpiler` is the arena-backed `&'static mut` noted
-    // above — its `Drop` never runs, so `deinit` cannot lead to a double-drop.
-    unsafe { bundle.transpiler.deinit() };
+    // options through the borrow `bundle` held.
+    let scan_transpiler = &raw mut *bundle.transpiler;
+    drop(bundle);
+    // SAFETY: the arena-backed `&'static mut` noted above — its `Drop` never
+    // runs, so `deinit` cannot lead to a double-drop.
+    unsafe { (*scan_transpiler).deinit() };
 
     Ok(Result {
         test_files: &mut test_files[0..write],

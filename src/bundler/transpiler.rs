@@ -37,6 +37,8 @@ pub const fn default_macro_js_value() -> MacroJSCtx {
 /// This object is not exclusive to bundle_v2/Bun.build; one of these is stored
 /// on every VM so that the options can be used for transpilation.
 pub struct Transpiler<'a> {
+    /// First: points into `options` and `resolver`.
+    pub macro_context: Option<js_ast::Macro::MacroContext>,
     pub options: options::BundleOptions<'a>,
     // Raw ptr — the same `*Log` is aliased into `linker.log` and
     // `resolver.log` (see `set_log`). `&'a mut` would forbid that aliasing.
@@ -57,8 +59,6 @@ pub struct Transpiler<'a> {
     pub linker: crate::linker::Linker,
     // Raw ptr — the global `DotEnv::Loader` singleton.
     pub env: *mut dot_env::Loader,
-
-    pub macro_context: Option<js_ast::Macro::MacroContext>,
 }
 
 impl<'a> Transpiler<'a> {
@@ -97,15 +97,7 @@ impl<'a> Transpiler<'a> {
     /// `&'static mut`. Owned `Transpiler`s from [`Self::for_worker`] must use
     /// normal `Drop` instead.
     pub unsafe fn deinit(&mut self) {
-        // The lazily-created `Box<bun_js_parser_jsc::Macro::MacroContext>` is
-        // process-lifetime by default, but
-        // worker VMs run `destroy()` on thread exit and would otherwise strand
-        // one box per worker. The box only owns a `MacroMap` and an optional
-        // `bun_alloc::Arena` — no JSC handles — so freeing it from either
-        // worker section-5 teardown or main-thread `global_exit` is safe.
-        if let Some(ctx) = self.macro_context.take() {
-            ctx.deinit();
-        }
+        self.macro_context = None;
         // SAFETY: `options`, `result`, and `resolver.opts` are init'd and never
         // read past `destroy()` / the `--changed` scan teardown. Caller upholds
         // the no-auto-drop contract above.
@@ -846,7 +838,7 @@ pub struct ParseOptions<'a, 'b> {
     pub file_descriptor: Option<FD>,
 
     /// On exception, we might still want to watch the file.
-    pub file_fd_ptr: Option<&'b mut FD>,
+    pub opened_file: Option<&'b mut Option<bun_sys::File>>,
 
     pub path: bun_paths::fs::Path<'a>,
     pub loader: options::Loader,
@@ -855,6 +847,8 @@ pub struct ParseOptions<'a, 'b> {
     pub jsx: crate::options_impl::jsx::Pragma,
     pub macro_remappings: MacroRemap,
     pub macro_js_ctx: MacroJSCtx,
+    /// Used and filled instead of the transpiler's.
+    pub macro_context: Option<&'a mut Option<js_ast::Macro::MacroContext>>,
     pub virtual_source: Option<&'b bun_ast::Source<'a>>,
     pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>,
     pub inject_jest_globals: bool,
@@ -1337,8 +1331,11 @@ impl<'a> Transpiler<'a> {
                     return None;
                 }
             };
-            if let Some(file_fd_ptr) = this_parse.file_fd_ptr {
-                *file_fd_ptr = entry.fd;
+            if let Some(opened_file) = this_parse.opened_file
+                && entry.fd.is_valid()
+            {
+                debug_assert!(file_descriptor.is_none());
+                *opened_file = Some(bun_sys::File::from_fd(entry.fd));
             }
             // The bytes live either in the per-thread shared
             // buffer (`USE_SHARED_BUFFER` → `Contents::SharedBuffer`, no-op
@@ -1532,35 +1529,34 @@ impl<'a> Transpiler<'a> {
                     entries: this_parse.replace_exports,
                 };
 
-                if self.macro_context.is_none() {
-                    let ctx = js_ast::Macro::MacroContext::init(self);
-                    self.macro_context = Some(ctx);
-                }
+                let macro_context = match this_parse.macro_context {
+                    Some(own) => own.get_or_insert_with(|| js_ast::Macro::MacroContext::init(self)),
+                    None => {
+                        if self.macro_context.is_none() {
+                            self.macro_context = Some(js_ast::Macro::MacroContext::init(self));
+                        }
+                        self.macro_context.as_mut().unwrap()
+                    }
+                };
                 // Thread the caller-supplied JS
                 // context into the macro runtime so macros invoked during
-                // runtime transpilation see it (instead of null). Written on
-                // `self.macro_context` before reborrowing into `opts` so the
-                // `&mut` handed to the parser already carries the value.
+                // runtime transpilation see it (instead of null).
                 if target != crate::options_impl::Target::BunMacro {
-                    // SAFETY: `is_none()` check above guarantees `Some` here.
-                    self.macro_context.as_mut().unwrap().javascript_object =
-                        this_parse.macro_js_ctx;
+                    macro_context.javascript_object = this_parse.macro_js_ctx;
                 }
+                let macro_context = core::ptr::from_mut(macro_context);
                 // `crate::defines::Define` IS
                 // `bun_js_parser::defines::Define`. Hand the parser the real
                 // table so user `--define` values apply at parse time.
                 let define: &'p js_ast::defines::Define;
-                // SAFETY: `self.options.define` / `self.macro_context` are owned by the
-                // long-lived `Transpiler`, and neither is dropped while a parse is in flight.
+                // SAFETY: `self.options.define` / `macro_context` are owned by the long-lived
+                // `Transpiler` or the caller, and neither is dropped while a parse is in flight.
                 // Erased to `'p` so the returned `Ast<'p>` is not pinned to the `&mut self` borrow.
                 unsafe {
                     let define_ptr: *const js_ast::defines::Define =
                         &raw const *self.options.define;
                     define = &*define_ptr;
-                    opts.macro_context = self
-                        .macro_context
-                        .as_mut()
-                        .map(|m| &mut *core::ptr::from_mut(m));
+                    opts.macro_context = Some(&mut *macro_context);
                 }
                 // Only the runtime's module loader sets `allow_commonjs`. Other callers just transform text.
                 if this_parse.allow_commonjs {
@@ -2835,9 +2831,10 @@ impl<'a> Transpiler<'a> {
                     loader,
                     dirname_fd,
                     file_descriptor: None,
-                    file_fd_ptr: None,
+                    opened_file: None,
                     macro_remappings,
                     macro_js_ctx: default_macro_js_value(),
+                    macro_context: None,
                     jsx,
                     emit_decorator_metadata,
                     experimental_decorators,

@@ -232,7 +232,8 @@ impl Process {
         matches!(self.status(), Some(Status::Exited(_) | Status::Signaled(_)))
     }
 
-    /// Takes the ref that the callback of a poll or of a closing handle adopts.
+    /// Takes the ref that the callback of a closing handle adopts.
+    #[cfg(windows)]
     #[inline]
     fn ref_(&self) {
         let this = core::ptr::from_ref(self).cast_mut();
@@ -451,23 +452,15 @@ impl Process {
             unsafe { (*poll).enable_keeping_process_alive(ctx) };
 
             // SAFETY: poll is live; borrow scoped to the call.
-            match unsafe {
+            unsafe {
                 (*poll).register(
                     this.event_loop.platform_event_loop(),
                     bun_io::PollKind::Process,
                     PROCESS_POLL_ONE_SHOT,
                 )
-            } {
-                Ok(()) => {
-                    this.ref_();
-                    Ok(())
-                }
-                Err(err) => {
-                    // SAFETY: poll is live; borrow scoped to the call.
-                    unsafe { (*poll).disable_keeping_process_alive(ctx) };
-                    Err(err)
-                }
             }
+            // SAFETY: as above.
+            .inspect_err(|_| unsafe { (*poll).disable_keeping_process_alive(ctx) })
         }
     }
 
@@ -476,6 +469,7 @@ impl Process {
         let ctx = this.event_loop_ctx();
         if WaiterThread::should_use_waiter_thread() {
             WaiterThread::start()?;
+            this.with_poll(FilePoll::deinit);
             this.poller.set(Poller::WaiterThread);
             this.waiter_keep_alive.ref_(ctx);
             WaiterThread::append(RefPtr::from_this(this));
@@ -487,22 +481,16 @@ impl Process {
             return Ok(());
         }
 
-        if let Some(maybe) = this.with_poll(|fd| {
+        this.with_poll(|fd| {
             fd.register(
                 this.event_loop.platform_event_loop(),
                 bun_io::PollKind::Process,
                 PROCESS_POLL_ONE_SHOT,
             )
-        }) {
-            if maybe.is_ok() {
-                this.ref_();
-            }
-            maybe
-        } else {
-            panic!(
-                "Internal Bun error: poll_ref in Subprocess is null unexpectedly. Please file a bug report."
-            );
-        }
+        })
+        .expect(
+            "Internal Bun error: poll_ref in Subprocess is null unexpectedly. Please file a bug report.",
+        )
     }
 
     #[cfg(windows)]
@@ -569,14 +557,8 @@ impl Process {
     pub fn close(&self) {
         #[cfg(unix)]
         {
-            let stranded_watch_ref = self.with_poll(|poll| poll.is_registered());
             self.deinit_poller();
             self.poller.set(Poller::Detached);
-            if stranded_watch_ref == Some(true) && !self.has_exited() {
-                let this = core::ptr::from_ref(self).cast_mut();
-                // SAFETY: callers hold their own +1, so this never drops to zero.
-                unsafe { bun_ptr::ThreadSafeRefCount::<Process>::deref(this) };
-            }
         }
         #[cfg(windows)]
         self.with_handle(|process| {

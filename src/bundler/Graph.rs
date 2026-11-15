@@ -17,7 +17,7 @@ pub(crate) use crate::IndexInt;
 
 pub struct Graph<'a> {
     // `BundleV2::init` allocates this from the `self.heap` arena and
-    // `BundleV2::deinit` calls `pool.deinit()`, so this is arena-owned but self-referential
+    // `BundleV2::drop` calls `pool.deinit()`, so this is arena-owned but self-referential
     // (sibling field). `BackRef` (not raw `NonNull`) so the read accessor `pool()` is
     // safe — the BACKREF invariant (pointee outlives holder) holds for the entire
     // bundle pass.
@@ -187,7 +187,7 @@ impl<'a> Graph<'a> {
     /// Shared borrow of the bundler `ThreadPool`.
     ///
     /// `pool` is arena-allocated in `BundleV2::init` and
-    /// torn down in `BundleV2::deinit`. It is non-null
+    /// torn down in `BundleV2::drop`. It is non-null
     /// and valid for the entire bundle pass; see LIFETIMES.tsv row 170
     /// (BACKREF). All `ThreadPool` driver methods (`schedule`, `start`,
     /// `worker_pool`, `schedule_inside_thread_pool`) take `&self`, so callers
@@ -196,7 +196,7 @@ impl<'a> Graph<'a> {
     #[inline]
     pub(crate) fn pool(&self) -> &ThreadPool {
         // BackRef invariant: `pool` is set in `BundleV2::init` to an
-        // arena-owned `ThreadPool` and remains valid until `BundleV2::deinit`;
+        // arena-owned `ThreadPool` and remains valid until `BundleV2::drop`;
         // no `&mut ThreadPool` is live across any `pool()` borrow (the only
         // `&mut` site is `deinit`, called after all schedule/worker activity
         // has drained).

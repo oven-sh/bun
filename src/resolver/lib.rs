@@ -1891,12 +1891,12 @@ pub mod cache {
         pub(crate) stream: bool,
     }
 
-    /// Optional external destructor (`function(ctx)`) for foreign-owned
+    /// Runs the external destructor (`function(ctx)`) on drop, for foreign-owned
     /// source bytes; `NONE` when there is nothing external to free.
     #[repr(C)]
     pub struct ExternalFreeFunction {
         pub ctx: *mut c_void,
-        pub function: Option<unsafe extern "C" fn(*mut c_void)>,
+        pub function: Option<extern "C" fn(*mut c_void)>,
     }
 
     impl ExternalFreeFunction {
@@ -1904,11 +1904,12 @@ pub mod cache {
             ctx: core::ptr::null_mut(),
             function: None,
         };
+    }
 
-        pub fn call(&self) {
-            if let Some(func) = self.function {
-                // SAFETY: ctx was provided by the same native plugin that provided `function`.
-                unsafe { func(self.ctx) };
+    impl Drop for ExternalFreeFunction {
+        fn drop(&mut self) {
+            if let Some(function) = self.function {
+                function(self.ctx);
             }
         }
     }

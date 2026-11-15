@@ -1580,7 +1580,10 @@ fn spawn_maybe_sync(
     }
 
     let mut setup_err = match subprocess.stdin.get() {
-        Writable::Buffer(buffer) => Writable::buffer_writer_mut(buffer).start().err(),
+        Writable::Buffer(buffer) => {
+            let start_ref = buffer.clone();
+            Writable::buffer_writer_mut(buffer).start(start_ref).err()
+        }
         _ => None,
     };
     if let Some(err) = &setup_err {
@@ -1662,7 +1665,6 @@ fn spawn_maybe_sync(
         // Not `kill_signal`, which the child may ignore: nothing else bounds the wait.
         if subprocess.try_kill(SignalCode::SIGKILL).is_err() {
             // Nor can anything end it: give it up, as `Process::kill_and_reap` does.
-            process.close();
             Process::on_exit(
                 process,
                 bun_spawn::Status::Err(err.clone()),

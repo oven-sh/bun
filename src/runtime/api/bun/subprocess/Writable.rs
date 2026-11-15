@@ -188,7 +188,7 @@ impl<'a> Writable<'a> {
                         evtloop,
                         subprocess as *mut Subprocess<'a>,
                         result,
-                        super::source_from_blob(blob),
+                        blob,
                     )));
                 }
                 Stdio::Fd(fd) => {
@@ -273,7 +273,7 @@ impl<'a> Writable<'a> {
                     evtloop,
                     std::ptr::from_mut::<Subprocess<'a>>(subprocess),
                     result,
-                    super::source_from_blob(blob),
+                    blob,
                 )))
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]

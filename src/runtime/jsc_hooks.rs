@@ -2253,20 +2253,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 _ => ModuleType::Unknown,
             };
 
-            // The deferred fd close is independent of `give_back_arena`
-            // and must fire on every exit path: parse failure, JSON early
-            // return, `disable_transpilying`, already_bundled, empty `.cjs`,
-            // cache-hit, AsyncModule, the wasm recurse, and the print error.
-            let mut fd_guard = scopeguard::guard(
-                (true, bun_sys::Fd::INVALID),
-                |(should_close_input_file_fd, input_file_fd)| {
-                    if should_close_input_file_fd && input_file_fd.is_valid() {
-                        use bun_sys::FdExt as _;
-                        input_file_fd.close();
-                    }
-                },
-            );
-            let (should_close_input_file_fd, input_file_fd) = &mut *fd_guard;
+            let mut input_file = None;
 
             // ── Node-fallback virtual source ────────────────────────────────
             let fallback_source: bun_ast::Source;
@@ -2315,7 +2302,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     loader,
                     dirname_fd: bun_sys::Fd::INVALID,
                     file_descriptor: None,
-                    file_fd_ptr: Some(&mut *input_file_fd),
+                    opened_file: Some(&mut input_file),
                     macro_remappings,
                     jsx: options.jsx.clone(),
                     emit_decorator_metadata: options.emit_decorator_metadata,
@@ -2344,6 +2331,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     remove_cjs_module_wrapper: is_main
                         && jsc_vm.module_loader.eval_source.get().is_some(),
                     macro_js_ctx: bun_bundler::transpiler::default_macro_js_value(),
+                    macro_context: None,
                     replace_exports: Default::default(),
                 };
                 let own = (jsc_vm.transpiler)
@@ -2382,8 +2370,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     if !disable_transpilying {
                         maybe_watch_file(
                             jsc_vm,
-                            should_close_input_file_fd,
-                            *input_file_fd,
+                            &mut input_file,
                             is_node_override,
                             path,
                             hash,
@@ -2429,8 +2416,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 if !disable_transpilying {
                     maybe_watch_file(
                         jsc_vm,
-                        should_close_input_file_fd,
-                        *input_file_fd,
+                        &mut input_file,
                         is_node_override,
                         path,
                         hash,
@@ -2965,9 +2951,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
                 }
 
-                // (fd close handled by `fd_guard` registered above; spec
-                // :251-256 `defer` fires on every exit path.)
-
                 return Ok(ResolvedSource {
                     source_url: input_specifier.create_if_different(path.text),
                     module_info,
@@ -3180,8 +3163,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
 #[inline]
 fn maybe_watch_file(
     jsc_vm: &VirtualMachine,
-    should_close_input_file_fd: &mut bool,
-    input_file_fd: bun_sys::Fd,
+    input_file: &mut Option<bun_sys::File>,
     is_node_override: bool,
     path: &Fs::Path,
     hash: u32,
@@ -3190,7 +3172,7 @@ fn maybe_watch_file(
     if !jsc_vm.is_watcher_enabled() {
         return;
     }
-    if !input_file_fd.is_valid() {
+    if input_file.is_none() {
         return;
     }
     if is_node_override
@@ -3202,18 +3184,7 @@ fn maybe_watch_file(
     // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
     // `is_watcher_enabled()`; cast recovers the concrete type.
     let watcher = unsafe { &mut *jsc_vm.bun_watcher.get().cast::<bun_jsc::ImportWatcher>() };
-    if matches!(
-        watcher.add_file::<true>(
-            input_file_fd,
-            path.text,
-            hash,
-            bun_sys::Fd::INVALID,
-            package_json,
-        ),
-        Ok(bun_watcher::FdOwnership::Watcher)
-    ) {
-        *should_close_input_file_fd = false;
-    }
+    let _ = watcher.add_owned_file(input_file.take(), path.text, hash, package_json);
 }
 
 /// Like `maybe_watch_file`, for a file the transpiler didn't open itself.
@@ -3226,31 +3197,24 @@ fn auto_watch_file(jsc_vm: &VirtualMachine, path_text: &[u8]) {
         return;
     }
     // kqueue watchers need a file descriptor to receive event notifications on it; inotify/win32 watch by path.
-    let input_fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
+    let file = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
         let mut buf = bun_paths::path_buffer_pool::get();
         if path_text.len() >= buf.len() {
             return;
         }
         let z = bun_paths::resolve_path::z(path_text, &mut buf);
-        match bun_sys::open(z, bun_watcher::WATCH_OPEN_FLAGS, 0) {
-            Ok(fd) => fd,
+        match bun_sys::File::open(z, bun_watcher::WATCH_OPEN_FLAGS, 0) {
+            Ok(file) => Some(file),
             Err(_) => return,
         }
     } else {
-        bun_sys::Fd::INVALID
+        None
     };
     let hash = bun_watcher::Watcher::get_hash(path_text);
     // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
     // `is_watcher_enabled()`; cast recovers the concrete type.
     let watcher = unsafe { &mut *jsc_vm.bun_watcher.get().cast::<bun_jsc::ImportWatcher>() };
-    let added = watcher.add_file::<true>(input_fd, path_text, hash, bun_sys::Fd::INVALID, None);
-    if !matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
-        // Not adopted (already watched, or add failed); close the fd opened above.
-        if input_fd.is_valid() {
-            use bun_sys::FdExt as _;
-            input_fd.close();
-        }
-    }
+    let _ = watcher.add_owned_file(file, path_text, hash, None);
 }
 
 struct CssModuleHost<'a>(&'a VirtualMachine);
@@ -4200,11 +4164,7 @@ fn transpile_file<const DATA_ONLY: bool>(
 
     // Create a fresh parse log.
     // Note: per §Allocators the explicit allocator threads are dropped.
-    let log = bun_ast::Log::init();
-    // Note: a scopeguard so every `return null` path still frees the msg vec.
-    let mut log = scopeguard::guard(log, |mut l| {
-        l.msgs.clear();
-    });
+    let mut log = bun_ast::Log::init();
 
     let _specifier = specifier.to_utf8();
     let referrer_slice = referrer.to_utf8();
@@ -4429,7 +4389,7 @@ fn transpile_file<const DATA_ONLY: bool>(
         specifier: lr.specifier,
         referrer: referrer_slice.slice(),
         input_specifier: specifier,
-        log: &raw mut *log,
+        log: &raw mut log,
         virtual_source: lr.virtual_source,
         global_object: global,
         flags: FetchFlags::Transpile,

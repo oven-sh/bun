@@ -398,7 +398,7 @@ impl DevServer {
                 bun_threading::work_pool::WorkPool::get(),
             )),
             heap_ref,
-        )?;
+        );
         bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut **self.bun_watcher));
         bv2.asynchronous = true;
         let dev_handle = self.bundler_handle();

@@ -1677,14 +1677,14 @@ fn encode_text_module(
     string_builder: &mut bun_core::StringBuilder,
     utf8: &[u8],
 ) -> (StringPointer, Encoding, u32) {
-    if strings::is_all_ascii(utf8) {
+    let Some(first_non_ascii) = strings::first_non_ascii(utf8) else {
         let hash = if utf8.is_empty() {
             0
         } else {
             wtf_latin1_string_hash(utf8)
         };
         return (string_builder.append_count_z(utf8), Encoding::Latin1, hash);
-    }
+    };
     if !string_builder.len.is_multiple_of(align_of::<u16>()) {
         string_builder.writable()[0] = 0;
         string_builder.len += 1;
@@ -1693,7 +1693,10 @@ fn encode_text_module(
     // `to_bytes` reserved `2 * utf8.len() + 4` bytes for this file.
     let dst: &mut [u16] =
         bun_core::cast_slice_mut(&mut string_builder.writable()[..2 * utf8.len() + 2]);
-    let len = strings::convert_utf8_to_utf16_in_buffer(dst, utf8).len();
+    let (ascii, rest) = utf8.split_at(first_non_ascii as usize);
+    let (ascii_units, rest_units) = dst.split_at_mut(ascii.len());
+    strings::copy_u8_into_u16(ascii_units, ascii);
+    let len = ascii.len() + strings::convert_utf8_to_utf16_in_buffer(rest_units, rest).len();
     dst[len] = 0;
     // SAFETY: `dst` starts with `len` initialized units.
     let hash = unsafe { Bun__WTFStringHashUTF16(dst.as_ptr(), len) };

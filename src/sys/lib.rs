@@ -6925,11 +6925,20 @@ pub(crate) fn open_file_at_windows_nt_path(
     }
 }
 
+/// `normalizePathWindows(u8, …)` length-checks before
+/// `convertUTF8toUTF16InBuffer` because simdutf forwards only `output.ptr`
+/// (no output bounds checking). UTF-16 output length ≤ UTF-8 input byte
+/// length, so use `path.len()` as a cheap upper bound; on overflow compute
+/// the exact post-conversion length to avoid over-rejecting multi-byte
+/// inputs whose UTF-16 representation fits.
 #[cfg(windows)]
 #[inline]
 fn convert_path_u8_to_u16<'a>(buf: &'a mut [u16], path: &[u8]) -> Maybe<&'a mut [u16]> {
-    bun_core::strings::try_convert_utf8_to_utf16_in_buffer(buf, path)
-        .ok_or_else(|| Error::from_code(E::ENAMETOOLONG, Tag::open))
+    if path.len() > buf.len() && bun_core::strings::element_length_utf8_into_utf16(path) > buf.len()
+    {
+        return Err(Error::from_code(E::ENAMETOOLONG, Tag::open));
+    }
+    Ok(bun_core::convert_utf8_to_utf16_in_buffer(buf, path))
 }
 
 #[cfg(windows)]

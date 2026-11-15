@@ -2376,15 +2376,15 @@ fn try_write_wtf8_as_utf16(input: &[u8], mut out: BorrowedCursor<'_, u16>) -> bo
     if input.is_empty() {
         return true;
     }
-    let measured = WithUtf16Len::utf8_worst_case(input, out.capacity())
+    let bounded = WithUtf16Len::utf8_worst_case(input, out.capacity())
         .unwrap_or_else(|| WithUtf16Len::utf8(input));
-    if measured.utf16_len() > out.capacity() {
+    if bounded.utf16_len() > out.capacity() {
         return false;
     }
-    if simdutf::convert::utf8::to::utf16::with_errors::le(measured, out.reborrow()).is_successful()
-    {
+    if simdutf::convert::utf8::to::utf16::with_errors::le(bounded, out.reborrow()).is_successful() {
         return true;
     }
+    // A stray continuation byte adds nothing to `utf16_len` but becomes one U+FFFD.
     let mut rest = input;
     while let [byte, after @ ..] = rest {
         if byte.is_ascii() && out.capacity() >= 1 {

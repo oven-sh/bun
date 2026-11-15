@@ -234,18 +234,20 @@ pub mod analyze_transpiled_module {
         let mut blob: Vec<u8> = Vec::new();
         for wtf8 in strings {
             offsets.push(blob.len() as u32);
-            if bun_core::strings::is_all_ascii(wtf8) {
+            let Some(first_non_ascii) = bun_core::strings::first_non_ascii(wtf8) else {
                 blob.push(1);
                 blob.extend_from_slice(wtf8);
                 continue;
-            }
+            };
             blob.push(0);
             if !blob.len().is_multiple_of(2) {
                 blob.push(0);
             }
             blob.reserve(2 * wtf8.len());
+            let (ascii, rest) = wtf8.split_at(first_non_ascii as usize);
+            blob.extend(ascii.iter().flat_map(|&b| [b, 0]));
             bun_core::vec::append_with(&mut blob, usize::MAX, |spare| {
-                bun_core::strings::write_wtf8_as_utf16le(wtf8, spare)
+                bun_core::strings::write_wtf8_as_utf16le(rest, spare)
             });
         }
         offsets.push(blob.len() as u32);

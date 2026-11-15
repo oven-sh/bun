@@ -26,7 +26,6 @@ impl Status {
     /// The leading byte must be followed by N-1 continuation bytes, where N is the UTF-8 character length.
     /// This is also the error when the input is truncated.
     pub const TOO_SHORT: Status = Status(2);
-    pub const SURROGATE: Status = Status(6);
     /// Found a character that cannot be part of a valid base64 string.
     pub const INVALID_BASE64_CHARACTER: Status = Status(7);
     // `_` => any other i32: not related to validation/transcoding.
@@ -255,7 +254,7 @@ pub mod length {
             use super::*;
             pub mod utf16 {
                 use super::*;
-                pub fn le(input: &[u16]) -> usize {
+                pub(crate) fn le(input: &[u16]) -> usize {
                     // SAFETY: input is a valid slice; FFI reads exactly len u16s.
                     unsafe { simdutf__utf8_length_from_utf16le(input.as_ptr(), input.len()) }
                 }

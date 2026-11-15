@@ -129,7 +129,28 @@ const cases: Record<string, () => unknown> = {
     vi.fn().mockName("x").mockReset().getMockName(),
   ],
   "mockObject": () => vi.mockObject({ a() {}, b: { c() {} }, d: 1 }),
+  "in the arguments of a custom matcher": () => {
+    const called = vi.fn();
+    called(1);
+    return [
+      vi.fn(),
+      (expect as any).toBeFoo(vi.fn(), vi.fn().mockName("renamed"), called),
+      (expect as any).toBeFoo(vi.spyOn({ m() {} }, "m"), { nested: [vi.fn(function impl() {})] }),
+    ];
+  },
+  "called with the custom matcher that it is an argument of": () => {
+    const f = vi.fn();
+    const holder = { name: "h", f };
+    f((expect as any).toBeFoo(holder));
+    return holder;
+  },
 };
+
+expect.extend({
+  toBeFoo() {
+    return { pass: true, message: () => "" };
+  },
+});
 
 describe("mocks", () => {
   for (const [name, make] of Object.entries(cases)) {

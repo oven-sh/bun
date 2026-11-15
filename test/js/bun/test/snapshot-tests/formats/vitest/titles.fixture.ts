@@ -451,3 +451,26 @@ describe("names", () => {
     },
   );
 });
+
+describe("custom matcher", () => {
+  expect.extend({
+    toBeFoo() {
+      return { pass: true, message: () => "" };
+    },
+  });
+  each(
+    "%o",
+    [expect.toBeFoo(/r.e/)],
+    [expect.not.toBeFoo(/x?/, function named() {}, ["s"])],
+    [{ in: expect.toBeFoo(/r+/) }],
+    [expect.toBeFoo(repeat("x", 60))],
+    [[expect.toBeFoo({ long: repeat("x", 30) })]],
+  );
+  each("$m and $n.o", { m: expect.toBeFoo(/r.e/), n: { o: expect.not.toBeFoo({ re: /x?/ }) } });
+  // Every time the title is printed again to make it shorter, so are the arguments.
+  let calls = 0;
+  each("printed again %o", [expect.toBeFoo({ toJSON: () => ({ calls: ++calls, long: repeat("x", 30) }) })]);
+  it("printed so often when the test was collected", () => {
+    expect(calls).toMatchSnapshot();
+  });
+});

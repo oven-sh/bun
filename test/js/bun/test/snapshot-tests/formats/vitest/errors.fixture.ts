@@ -63,6 +63,16 @@ describe("toThrowErrorMatchingSnapshot", () => {
       throw { message: "object message", code: 1 };
     }).toThrowErrorMatchingSnapshot();
   });
+  test("a thrown object with a custom matcher", () => {
+    expect.extend({
+      toBeFoo() {
+        return { pass: true, message: () => "" };
+      },
+    });
+    expect(() => {
+      throw { matcher: (expect as any).toBeFoo(/a+b.c/, [/x?/]), re: /a+b.c/ };
+    }).toThrowErrorMatchingSnapshot();
+  });
   test("a thrown number", () => {
     expect(() => {
       throw 5;

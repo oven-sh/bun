@@ -2646,6 +2646,131 @@ exports[`constructor of an array > zero 1`] = `
 ]"
 `;
 
+exports[`custom matcher: an argument > array 1`] = `
+"toBeFoo<"before", Array [
+  1,
+  "two",
+], "after">"
+`;
+
+exports[`custom matcher: an argument > bigint 1`] = `"toBeFoo<"before", 10n, "after">"`;
+
+exports[`custom matcher: an argument > empty array 1`] = `"toBeFoo<"before", Array [], "after">"`;
+
+exports[`custom matcher: an argument > empty string 1`] = `"toBeFoo<"before", "", "after">"`;
+
+exports[`custom matcher: an argument > false 1`] = `"toBeFoo<"before", false, "after">"`;
+
+exports[`custom matcher: an argument > function 1`] = `"toBeFoo<"before", [Function f], "after">"`;
+
+exports[`custom matcher: an argument > null 1`] = `"toBeFoo<"before", null, "after">"`;
+
+exports[`custom matcher: an argument > number 1`] = `"toBeFoo<"before", 5, "after">"`;
+
+exports[`custom matcher: an argument > object 1`] = `
+"toBeFoo<"before", Object {
+  "a": 1,
+}, "after">"
+`;
+
+exports[`custom matcher: an argument > proxy 1`] = `
+"toBeFoo<"before", Object {
+  "a": 1,
+}, "after">"
+`;
+
+exports[`custom matcher: an argument > proxy of an array 1`] = `
+"toBeFoo<"before", Array [
+  1,
+], "after">"
+`;
+
+exports[`custom matcher: an argument > revoked proxy 1`] = `"throws"`;
+
+exports[`custom matcher: an argument > string 1`] = `"toBeFoo<"before", "abc", "after">"`;
+
+exports[`custom matcher: an argument > symbol 1`] = `"toBeFoo<"before", Symbol(s), "after">"`;
+
+exports[`custom matcher: an argument > throwing getters 1`] = `"throws"`;
+
+exports[`custom matcher: an argument > throwing proxy 1`] = `"throws"`;
+
+exports[`custom matcher: an argument > true 1`] = `"toBeFoo<"before", true, "after">"`;
+
+exports[`custom matcher: an argument > undefined 1`] = `"toBeFoo<"before", undefined, "after">"`;
+
+exports[`custom matcher: an argument > zero 1`] = `"toBeFoo<"before", 0, "after">"`;
+
+exports[`custom matcher: what toJSON() of an argument returns > array 1`] = `
+"toBeFoo<Array [
+  1,
+  "two",
+]>"
+`;
+
+exports[`custom matcher: what toJSON() of an argument returns > bigint 1`] = `"toBeFoo<10n>"`;
+
+exports[`custom matcher: what toJSON() of an argument returns > empty array 1`] = `"toBeFoo<Array []>"`;
+
+exports[`custom matcher: what toJSON() of an argument returns > empty string 1`] = `"toBeFoo<"">"`;
+
+exports[`custom matcher: what toJSON() of an argument returns > false 1`] = `"toBeFoo<false>"`;
+
+exports[`custom matcher: what toJSON() of an argument returns > function 1`] = `"toBeFoo<[Function f]>"`;
+
+exports[`custom matcher: what toJSON() of an argument returns > null 1`] = `"toBeFoo<null>"`;
+
+exports[`custom matcher: what toJSON() of an argument returns > number 1`] = `"toBeFoo<5>"`;
+
+exports[`custom matcher: what toJSON() of an argument returns > object 1`] = `
+"toBeFoo<Object {
+  "a": 1,
+}>"
+`;
+
+exports[`custom matcher: what toJSON() of an argument returns > proxy 1`] = `
+"toBeFoo<Object {
+  "a": 1,
+}>"
+`;
+
+exports[`custom matcher: what toJSON() of an argument returns > proxy of an array 1`] = `
+"toBeFoo<Array [
+  1,
+]>"
+`;
+
+exports[`custom matcher: what toJSON() of an argument returns > revoked proxy 1`] = `
+"toBeFoo<Object {
+  "a": 1,
+  "toJSON": [Function toJSON],
+}>"
+`;
+
+exports[`custom matcher: what toJSON() of an argument returns > string 1`] = `"toBeFoo<"abc">"`;
+
+exports[`custom matcher: what toJSON() of an argument returns > symbol 1`] = `"toBeFoo<Symbol(s)>"`;
+
+exports[`custom matcher: what toJSON() of an argument returns > throwing getters 1`] = `
+"toBeFoo<Object {
+  "a": 1,
+  "toJSON": [Function toJSON],
+}>"
+`;
+
+exports[`custom matcher: what toJSON() of an argument returns > throwing proxy 1`] = `
+"toBeFoo<Object {
+  "a": 1,
+  "toJSON": [Function toJSON],
+}>"
+`;
+
+exports[`custom matcher: what toJSON() of an argument returns > true 1`] = `"toBeFoo<true>"`;
+
+exports[`custom matcher: what toJSON() of an argument returns > undefined 1`] = `"toBeFoo<undefined>"`;
+
+exports[`custom matcher: what toJSON() of an argument returns > zero 1`] = `"toBeFoo<0>"`;
+
 exports[`element of React 19: props > array 1`] = `
 "<a
   0={1}

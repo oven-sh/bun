@@ -21,6 +21,15 @@ exports[`toThrowErrorMatchingSnapshot > a thrown object 1`] = `
 }
 `;
 
+exports[`toThrowErrorMatchingSnapshot > a thrown object with a custom matcher 1`] = `
+{
+  "matcher": toBeFoo</a+b.c/, Array [
+  /x?/,
+]>,
+  "re": /a\\+b\\.c/,
+}
+`;
+
 exports[`toThrowErrorMatchingSnapshot > a thrown string 1`] = `"just a string"`;
 
 exports[`toThrowErrorMatchingSnapshot > a thrown undefined 1`] = `undefined`;

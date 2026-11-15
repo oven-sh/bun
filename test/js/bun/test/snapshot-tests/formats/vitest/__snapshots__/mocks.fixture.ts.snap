@@ -1,5 +1,27 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`mocks > called with the custom matcher that it is an argument of 1`] = `
+{
+  "f": [MockFunction] {
+    "calls": [
+      [
+        toBeFoo<Object {
+  "f": [Function Mock],
+  "name": "h",
+}>,
+      ],
+    ],
+    "results": [
+      {
+        "type": "return",
+        "value": undefined,
+      },
+    ],
+  },
+  "name": "h",
+}
+`;
+
 exports[`mocks > in a Map 1`] = `
 Map {
   "f" => [MockFunction],
@@ -19,6 +41,18 @@ exports[`mocks > in an object 1`] = `
   "onNamed": [MockFunction named],
   "plain": [Function],
 }
+`;
+
+exports[`mocks > in the arguments of a custom matcher 1`] = `
+[
+  [MockFunction],
+  toBeFoo<[Function Mock], [Function Mock], [Function Mock]>,
+  toBeFoo<[Function m], Object {
+  "nested": Array [
+    [Function Mock],
+  ],
+}>,
+]
 `;
 
 exports[`mocks > mock.calls 1`] = `

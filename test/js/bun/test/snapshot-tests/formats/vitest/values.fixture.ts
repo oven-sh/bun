@@ -44,6 +44,13 @@ const shared = { s: 1 };
 function args(..._a: any[]) {
   return arguments;
 }
+const nested = (levels: number, leaf: unknown) => {
+  let value = leaf;
+  for (let i = 0; i < levels; i++) value = { o: value };
+  return value;
+};
+// At 10,000 characters an argument of a custom matcher is printed again with fewer levels.
+const long = Buffer.alloc(10_000, "x").toString();
 
 const cases: Record<string, () => unknown> = {
   "undefined": () => undefined,
@@ -325,6 +332,163 @@ const cases: Record<string, () => unknown> = {
     (expect as any).toBeBetween(function low() {}, () => {}),
     { nested: (expect as any).not.toBeBetween({ low() {} }) },
   ],
+  "custom asymmetric matcher of a regular expression": () => [
+    (expect as any).toBeBetween(/ab+c/gi, /^[a-z]+(foo|bar)?\s*\{1,2\}\$.$/m),
+    /ab+c/gi,
+    (expect as any).not.toBeBetween({ re: /x\d/y, list: [/a\/b/] }, new Map([[/k+/, new Set([/v*/])]]), args(/a.b/)),
+    { nested: (expect as any).toBeBetween(/a.b/), beside: /a.b/ },
+    expect.toSatisfy(function isOdd() {}, /a.b/),
+  ],
+  "custom asymmetric matcher of an asymmetric matcher": () => [
+    (expect as any).toBeBetween(expect.stringMatching(/x+/), expect.not.stringMatching("y?")),
+    (expect as any).toBeBetween(expect.objectContaining({ re: /x+/ }), expect.not.arrayContaining([/y?/])),
+    (expect as any).toBeBetween((expect as any).not.toBeBetween(/x+/, [/y?/]), expect.toSatisfy(() => true, /z*/)),
+    (expect as any).toBeBetween(expect.any(Number), expect.anything(), expect.closeTo(1.5, 2), expect.stringContaining("a.b")),
+    expect.objectContaining({ inside: (expect as any).toBeBetween(/x+/), beside: /x+/ }),
+  ],
+  "custom asymmetric matcher of a react element": () =>
+    (expect as any).toBeBetween({
+      $$typeof: Symbol.for("react.element"),
+      type: "div",
+      props: { re: /a+b/, f: function named() {}, o: { list: [1] }, children: [/c+/] },
+    }),
+  "custom asymmetric matcher of a value with toJSON": () => [
+    (expect as any).toBeBetween({ toJSON: () => ({ json: /a+/ }) }),
+    (expect as any).toBeBetween(
+      {
+        a: 1,
+        toJSON() {
+          throw new Error("not printed");
+        },
+      },
+      { toJSON: () => "each argument is printed on its own" },
+    ),
+    (expect as any).toBeBetween({
+      first: {
+        toJSON() {
+          throw new Error("not printed");
+        },
+      },
+      second: { toJSON: () => "not called when the argument is printed again" },
+    }),
+  ],
+  "custom asymmetric matcher of a getter that throws once": () => {
+    let reads = 0;
+    return (expect as any).toBeBetween({
+      get once() {
+        if (reads++ === 0) throw new Error("not printed");
+        return "read again";
+      },
+    });
+  },
+  // Each retry prints the matchers inside again, and each of those starts with toJSON() again.
+  "custom asymmetric matchers in each other, each beside a toJSON that throws": () => {
+    let calls = 0;
+    let value: unknown = "innermost";
+    for (let i = 0; i < 8; i++) {
+      value = (expect as any).toBeBetween([
+        value,
+        {
+          toJSON() {
+            calls++;
+            throw new Error("not printed");
+          },
+        },
+      ]);
+    }
+    return {
+      printed: value,
+      get total() {
+        return calls;
+      },
+    };
+  },
+  "custom asymmetric matcher prints its arguments each time it is printed": () => {
+    let calls = 0;
+    const matcher = (expect as any).toBeBetween({ toJSON: () => ++calls });
+    const constructed = calls;
+    expect(1).not.toEqual(matcher);
+    return {
+      constructed,
+      matched: calls,
+      printed: matcher,
+      printedAgain: matcher,
+      get total() {
+        return calls;
+      },
+    };
+  },
+  "custom asymmetric matcher of a deep value": () => ({
+    "9 levels": (expect as any).toBeBetween(nested(9, { leaf: true })),
+    "10 levels": (expect as any).toBeBetween(nested(10, { leaf: true }), nested(10, ["leaf"])),
+    "counted from the argument": [[(expect as any).toBeBetween(nested(10, new Map([["leaf", new Set([true])]])))]],
+  }),
+  "custom asymmetric matcher of a matcher at the deepest level": () =>
+    (expect as any).toBeBetween(
+      nested(9, {
+        custom: (expect as any).toBeBetween(nested(9, { leaf: true })),
+        objectContaining: expect.objectContaining({ a: 1 }),
+        arrayContaining: expect.arrayContaining([1]),
+        stringMatching: expect.stringMatching(/a+/),
+      }),
+    ),
+  "custom asymmetric matcher of a long value": () => {
+    let reads = 0;
+    return [
+      (expect as any).toBeBetween({ a: { b: long } }, { a: { b: { c: { d: "each argument is measured on its own" } } } }),
+      (expect as any).toBeBetween(nested(3, long), [[long]]),
+      (expect as any).toBeBetween(nested(6, long)),
+      (expect as any).toBeBetween({ a: { inside: (expect as any).toBeBetween({ b: { c: long } }) } }),
+      (expect as any).toBeBetween({
+        a: { b: long },
+        get timesPrinted() {
+          return ++reads;
+        },
+      }),
+    ];
+  },
+  "custom asymmetric matcher of a value past 1,000,000 characters": () => {
+    let reads = 0;
+    return (expect as any).toBeBetween({
+      a: nested(5, Buffer.alloc(1_000_000, "x").toString()),
+      b: {
+        get timesExpanded() {
+          return ++reads;
+        },
+      },
+    });
+  },
+  "custom asymmetric matchers beside each other in an argument": () => [
+    (expect as any).toBeBetween(Array.from({ length: 7 }, (_, id) => ({ id, body: (expect as any).toBeBetween(long) }))),
+    (expect as any).toBeBetween(Array.from({ length: 22 }, () => (expect as any).toBeBetween({ a: { b: long } }))),
+  ],
+  "custom asymmetric matcher that its own argument returns, but not at every read": () => {
+    let reads = 0;
+    const fromGetter: any = (expect as any).toBeBetween({
+      get once() {
+        return reads++ === 0 ? fromGetter : "read again";
+      },
+    });
+    let calls = 0;
+    const fromToJSON: any = (expect as any).not.toBeBetween("before", {
+      toJSON() {
+        return calls++ < 3 ? { again: fromToJSON } : "done";
+      },
+    });
+    return [fromGetter, fromToJSON];
+  },
+  "custom asymmetric matcher of a value that holds itself": () => {
+    const circular: any = { name: "c" };
+    circular.self = circular;
+    return { shared, matcher: (expect as any).toBeBetween(circular, shared, shared) };
+  },
+  "custom asymmetric matcher more than 10 levels below its argument": () => {
+    const holder: any = { name: "h" };
+    const tail: any = {};
+    holder.chain = nested(8, tail);
+    tail.matcher = (expect as any).toBeBetween({ holder });
+    return holder;
+  },
   "expect.toSatisfy": () => {
     const isOdd = (n: number) => n % 2 === 1;
     return {
@@ -376,6 +540,9 @@ expect.extend({
   toBeBetween(received: number, low: number, high: number) {
     return { pass: received >= low && received <= high, message: () => "" };
   },
+  toMatchOneOf(received: string, ...patterns: RegExp[]) {
+    return { pass: patterns.some(pattern => pattern.test(received)), message: () => "" };
+  },
 });
 
 describe("values", () => {
@@ -412,5 +579,11 @@ describe("property matchers", () => {
   });
   test("empty properties", () => {
     expect({ a: 1 }).toMatchSnapshot({});
+  });
+  test("custom matchers", () => {
+    expect({ id: "ab.c", n: 3, re: /a+/ }).toMatchSnapshot({
+      id: (expect as any).toMatchOneOf(/^x$/, /ab?\.c/),
+      n: (expect as any).toBeBetween(1, 5),
+    });
   });
 });

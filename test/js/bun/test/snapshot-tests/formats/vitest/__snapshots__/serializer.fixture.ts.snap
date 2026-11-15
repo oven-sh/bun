@@ -1,5 +1,15 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`serializers > a custom matcher of what holds it, behind what only a serializer prints 1`] = `
+{
+  "hidden": Hidden(toBeFoo<Object {
+  "hidden": Hidden {},
+  "name": "h",
+}>),
+  "name": "h",
+}
+`;
+
 exports[`serializers > in a Map and a Set 1`] = `
 Map {
   Money<1 A> => Set {
@@ -17,6 +27,20 @@ exports[`serializers > nested 1`] = `
   ],
   "price": Money<1 USD>,
 }
+`;
+
+exports[`serializers > not in the arguments of a custom matcher 1`] = `
+[
+  Money<1 USD>,
+  toBeFoo<Money {
+  "amount": 2,
+  "currency": "GBP",
+}, Object {
+  "nested": Wrapper {
+    "inner": "raw:text",
+  },
+}, "raw:text">,
+]
 `;
 
 exports[`serializers > old api 1`] = `
@@ -42,6 +66,26 @@ Wrapper({
     Money<3 JPY>,
   ],
 })
+`;
+
+exports[`serializers > printer and print, of a custom matcher 1`] = `
+Wrapper([
+  toBeFoo</a+/, Array [
+  Money {
+    "amount": 3,
+    "currency": "JPY",
+  },
+]>,
+])
+`;
+
+exports[`serializers > printer and print, of a custom matcher 2`] = `
+Old:
+  {
+    "v": not.toBeFoo</b+/, Old {
+    "v": 1,
+  }>,
+  }
 `;
 
 exports[`serializers > printer, nested 1`] = `

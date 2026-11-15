@@ -1,0 +1,152 @@
+use super::hash::{Candidate, Match, score, score_of_recent};
+use super::matching::{HASH_MULTIPLIER_64, load32, load64, match_length};
+use crate::format::MAX_ALLOWED_DISTANCE;
+use crate::memory::{self, Result};
+
+const BUCKET_LIMIT: u8 = 32;
+
+/// What came before the stream, and a hash table over it.
+pub(super) struct PreparedDictionary {
+    bytes: Vec<u8>,
+    bucket_bits: u32,
+    /// Where each bucket starts in `offsets`, and where the last one ends.
+    starts: Vec<u32>,
+    offsets: Vec<u32>,
+}
+
+#[inline(always)]
+fn hash(eight_bytes: u64, bucket_bits: u32) -> usize {
+    ((eight_bytes & 0xFF_FFFF_FFFF).wrapping_mul(HASH_MULTIPLIER_64) >> (64 - bucket_bits)) as usize
+}
+
+impl PreparedDictionary {
+    pub(super) fn new(bytes: &[u8]) -> Result<Self> {
+        let bytes = memory::copied(bytes)?;
+        let mut bucket_bits = 17;
+        while 16 << bucket_bits < bytes.len() && bucket_bits < 22 {
+            bucket_bits += 1;
+        }
+        let keys = || {
+            (0..bytes.len().saturating_sub(7)).map(|i| (i, hash(load64(&bytes, i), bucket_bits)))
+        };
+        let mut room = memory::zeroed::<u8>(1 << bucket_bits)?;
+        for (_, key) in keys() {
+            room[key] = (room[key] + 1).min(BUCKET_LIMIT);
+        }
+        let mut starts = memory::empty(room.len() + 1)?;
+        let mut total = 0;
+        starts.push(total);
+        starts.extend(room.iter().map(|&size| {
+            total += u32::from(size);
+            total
+        }));
+        let mut offsets = memory::zeroed(total as usize)?;
+        for (offset, key) in keys().rev() {
+            if room[key] != 0 {
+                offsets[starts[key + 1] as usize - usize::from(room[key])] = offset as u32;
+                room[key] -= 1;
+            }
+        }
+        Ok(Self {
+            bytes,
+            bucket_bits,
+            starts,
+            offsets,
+        })
+    }
+
+    pub(super) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// The latest first.
+    fn offsets_for(&self, eight_bytes: u64) -> impl Iterator<Item = usize> {
+        let key = hash(eight_bytes, self.bucket_bits);
+        let bucket = &self.offsets[self.starts[key] as usize..self.starts[key + 1] as usize];
+        bucket.iter().map(|&offset| offset as usize)
+    }
+
+    /// The bytes that `distance` refers to, if the last byte of the dictionary is at `end_distance + 1`.
+    pub(super) fn at_distance(&self, distance: usize, end_distance: usize) -> Option<&[u8]> {
+        if distance > MAX_ALLOWED_DISTANCE as usize {
+            return None;
+        }
+        let length = distance.checked_sub(end_distance).filter(|&n| n != 0)?;
+        Some(&self.bytes[self.bytes.len().checked_sub(length)?..])
+    }
+
+    #[inline(never)]
+    pub(super) fn improve(&self, query: &Query<'_>, recent: [i32; 4], mut best: Match) -> Match {
+        let mut best_length = best.length;
+        for (i, distance) in recent.into_iter().enumerate() {
+            let distance = distance as usize;
+            let Some(source) = self.at_distance(distance, query.end_distance) else {
+                continue;
+            };
+            let length = match_length(source, query.data);
+            let score = score_of_recent(length, i);
+            if length >= 2 && best.score < score {
+                best_length = best_length.max(length);
+                best = Match::new(length, distance, score);
+            }
+        }
+        best_length = best_length.max(3);
+        for offset in self.offsets_for(query.eight_bytes) {
+            let Some((distance, source)) = self.worth_comparing(query, offset, best_length) else {
+                continue;
+            };
+            if load32(query.data, best_length - 3) != load32(source, best_length - 3) {
+                continue;
+            }
+            let length = match_length(source, query.data);
+            let score = score(length, distance);
+            if length >= 4 && best.score < score {
+                best_length = length;
+                best = Match::new(length, distance, score);
+            }
+        }
+        best
+    }
+
+    /// Matches of four bytes or more, each longer than the one before. `found` has room for them.
+    pub(super) fn find_all(&self, query: &Query<'_>, found: &mut Vec<Candidate>) {
+        let mut best_length = 3;
+        for offset in self.offsets_for(query.eight_bytes) {
+            let Some((distance, source)) = self.worth_comparing(query, offset, best_length) else {
+                continue;
+            };
+            if query.data[best_length] != source[best_length] {
+                continue;
+            }
+            let length = match_length(source, query.data);
+            if length > best_length {
+                best_length = length;
+                found.push(Candidate::new(distance, length));
+            }
+        }
+    }
+
+    fn worth_comparing(
+        &self,
+        query: &Query<'_>,
+        offset: usize,
+        best_length: usize,
+    ) -> Option<(usize, &[u8])> {
+        let source = &self.bytes[offset..];
+        let distance = query.end_distance + source.len();
+        (distance <= query.max_distance
+            && best_length <= query.before_ring_end
+            && best_length < source.len().min(query.data.len()))
+        .then_some((distance, source))
+    }
+}
+
+pub(super) struct Query<'a> {
+    pub(super) data: &'a [u8],
+    /// The start of `data`, and what follows it if it is short.
+    pub(super) eight_bytes: u64,
+    pub(super) before_ring_end: usize,
+    /// One less than the distance of the last byte of the dictionary.
+    pub(super) end_distance: usize,
+    pub(super) max_distance: usize,
+}

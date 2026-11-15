@@ -3,7 +3,7 @@
 //! Runs on the HTTP thread inside `HTTPClient::start()` so it can reuse
 //! [`LibdeflateState`]'s 512 KiB scratch buffer and cached libdeflate handle
 //! (the same struct that backs the response-decompression fast path).
-//! gzip/deflate go through libdeflate; brotli/zstd use their one-shot
+//! gzip/deflate go through libdeflate; brotli/zstd take one call of their
 //! encoders. Only buffered bodies reach this — streams and sendfile are
 //! filtered out on the JS thread.
 
@@ -187,36 +187,29 @@ fn compress_zlib_streaming(
 
 fn compress_brotli(
     state: &mut LibdeflateState,
-    input: &[u8],
+    mut input: &[u8],
     level: Option<i32>,
     spill: &mut Vec<u8>,
 ) -> crate::Result<CompressOutput> {
-    use bun_brotli::c;
-    let quality = level.unwrap_or(DEFAULT_BROTLI_QUALITY);
-    let window = c::BROTLI_DEFAULT_WINDOW;
-    let mode = c::BrotliEncoderMode::generic;
-
-    let bound = c::BrotliEncoderMaxCompressedSize(input.len());
-    // BrotliEncoderMaxCompressedSize returns 0 when the bound would overflow
-    // size_t — fall back to a heap buffer in that case.
-    if bound != 0 && bound <= state.shared_buffer.len() {
-        if let Some(n) = bun_brotli::encode(quality, window, mode, input, &mut state.shared_buffer)
-        {
-            return Ok(CompressOutput::Shared(n));
-        }
-    }
-
-    let cap = if bound != 0 {
-        bound
+    use bun_brotli::{EncodeError, Encoder, Operation, Output};
+    let bound = bun_brotli::max_compressed_size(input.len());
+    let shared_len = state.shared_buffer.len();
+    let mut output = if bound <= shared_len {
+        Output::Slice(&mut state.shared_buffer)
     } else {
-        input.len() + 1024
+        spill
+            .try_reserve_exact(bound)
+            .map_err(|_| bun_alloc::AllocError)?;
+        Output::append(spill, bound)
     };
-    spill
-        .try_reserve_exact(cap)
-        .map_err(|_| bun_alloc::AllocError)?;
-    match bun_brotli::encode_append(quality, window, mode, input, spill) {
-        Some(_) => Ok(CompressOutput::Spilled),
-        None => Err(crate::Error::CompressionFailed),
+    let mut encoder = Encoder::with_quality(level.unwrap_or(DEFAULT_BROTLI_QUALITY));
+    match encoder.compress(Operation::Finish, &mut input, &mut output) {
+        Ok(()) if output.room() != 0 => Ok(match output {
+            Output::Slice(rest) => CompressOutput::Shared(shared_len - rest.len()),
+            Output::Append { .. } => CompressOutput::Spilled,
+        }),
+        Err(EncodeError::OutOfMemory) => Err(bun_alloc::AllocError.into()),
+        _ => Err(crate::Error::CompressionFailed),
     }
 }
 

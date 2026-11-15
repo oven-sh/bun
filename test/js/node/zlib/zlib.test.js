@@ -2,7 +2,7 @@ import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
-import { randomFillSync } from "node:crypto";
+import { createCipheriv, randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
 import { resolve } from "node:path";
 import * as stream from "node:stream";
@@ -639,6 +639,608 @@ describe("zlib.brotli", () => {
       });
       expect(compressed.toString()).toEqual(Buffer.from(compressedString3, "base64").toString());
     }
+  });
+});
+
+// The snapshots are what google/brotli 1.2 does, so they are never to be updated.
+describe("zlib.brotli known answers", () => {
+  const {
+    BROTLI_PARAM_MODE: MODE,
+    BROTLI_PARAM_QUALITY: QUALITY,
+    BROTLI_PARAM_LGWIN: LGWIN,
+    BROTLI_PARAM_LGBLOCK: LGBLOCK,
+    BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING: NO_CONTEXTS,
+    BROTLI_PARAM_SIZE_HINT: SIZE_HINT,
+    BROTLI_PARAM_LARGE_WINDOW: LARGE_WINDOW,
+    BROTLI_PARAM_NPOSTFIX: NPOSTFIX,
+    BROTLI_PARAM_NDIRECT: NDIRECT,
+    BROTLI_DECODER_PARAM_LARGE_WINDOW: DECODER_LARGE_WINDOW,
+    BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION: DECODER_WHOLE_WINDOW,
+    BROTLI_OPERATION_PROCESS: PROCESS,
+    BROTLI_OPERATION_FLUSH: FLUSH,
+    BROTLI_OPERATION_FINISH: FINISH,
+    BROTLI_OPERATION_EMIT_METADATA: METADATA,
+  } = zlib.constants;
+  const STREAM_OFFSET = 9;
+  const qualities = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+
+  const noise = createCipheriv("aes-128-ctr", Buffer.alloc(16, 1), Buffer.alloc(16)).update(Buffer.alloc(1 << 16));
+  const vocabulary = (
+    'the|of|and|The|time|TIME|people|Information|function|return|<div class="|">|</div>|</a>|href="http://www.|.com/|' +
+    "qzx|vvkj|1987|3.14|, |. |\n|\n\t|(|)|='|=\"|ing|ed|ful|ous|été|ÉTÉ|привет|мир|中文|日本語|한국어|😀|\u00a0"
+  ).split("|");
+  const pickWord = (byte, i) => vocabulary[byte % vocabulary.length] + (i % 3 ? " " : "");
+  const text = Buffer.from(Array.from(noise.subarray(0, 6000), pickWord).join(""));
+  const samples = Buffer.from(Int16Array.from(noise.subarray(0, 2500), (byte, i) => i * 7 + (byte & 15)).buffer);
+  const mixed = Buffer.concat([
+    text,
+    noise.subarray(0, 9000),
+    Buffer.alloc(40000),
+    samples,
+    text.subarray(5000, 15000),
+    Buffer.alloc(30000, "period"),
+    noise.subarray(8000, 12000),
+    samples.subarray(1, 2001),
+    text.subarray(100, 9000),
+  ]);
+
+  const digest = bytes => `${bytes.length} ${zlib.crc32(bytes).toString(16).padStart(8, "0")}`;
+
+  function roundTrip(input, params, dictionary) {
+    const compressed = zlib.brotliCompressSync(input, { params, dictionary });
+    const options = { params: { [DECODER_LARGE_WINDOW]: params[LARGE_WINDOW] ?? 0 }, dictionary };
+    expect(digest(zlib.brotliDecompressSync(compressed, options))).toBe(digest(input));
+    return digest(compressed);
+  }
+
+  /** Runs `[operation, input]` pairs on one stream, with `room` bytes of output at a time. */
+  function drive(engine, steps, room) {
+    const chunks = [];
+    const out = Buffer.alloc(room);
+    let error;
+    engine._handle.onerror = (message, errno, code) => (error = { message, errno, code });
+    for (const [operation, input] of steps) {
+      let [availOut, availIn] = [0, input.length];
+      while (availOut === 0 && !error) {
+        engine._handle.writeSync(operation, input, input.length - availIn, availIn, out, 0, room);
+        [availOut, availIn] = engine._writeState;
+        chunks.push(Buffer.from(out.subarray(0, room - availOut)));
+      }
+    }
+    engine.close();
+    return error ?? Buffer.concat(chunks);
+  }
+
+  it("has the inputs that the answers are for", () => {
+    expect([text, samples, mixed].map(digest)).toMatchInlineSnapshot(`
+      [
+        "32231 e1fc2f33",
+        "5000 9d6ad7d7",
+        "141131 fda6fcc3",
+      ]
+    `);
+  });
+
+  it("compresses short inputs", () => {
+    const lengths = [0, 1, 2, 3, 4, 15, 16, 17, 64, 200, 1000, 3000];
+    const row = quality => lengths.map(length => roundTrip(text.subarray(0, length), { [QUALITY]: quality }));
+    expect(qualities.map(quality => row(quality).join())).toMatchInlineSnapshot(`
+      [
+        "1 630906a9,5 0f938b84,6 9ac8a024,7 086a4429,8 e1a03a32,19 37882ea1,20 0d83f0a8,21 638e8cfe,68 a377100b,204 09b45c05,641 4b3bf569,1417 a1599778",
+        "1 630906a9,5 0f938b84,6 9ac8a024,7 086a4429,8 e1a03a32,19 37882ea1,20 0d83f0a8,21 638e8cfe,68 a377100b,203 ea75fdcc,563 7f4192dd,1258 813afecc",
+        "1 630906a9,5 0f938b84,6 9ac8a024,7 086a4429,8 e1a03a32,19 37882ea1,20 0d83f0a8,21 638e8cfe,68 a377100b,192 a11e6bac,586 6f323566,1252 2213e656",
+        "1 630906a9,5 0f938b84,6 9ac8a024,7 086a4429,8 e1a03a32,19 37882ea1,20 0d83f0a8,21 638e8cfe,68 a377100b,169 22807ec7,532 1ad07bd2,1217 45cd25e7",
+        "1 630906a9,5 0f938b84,6 9ac8a024,7 086a4429,8 e1a03a32,19 37882ea1,14 e72d9d9d,18 344be1e0,60 45553a72,133 57ecb59f,463 34df1f1f,1147 de847d39",
+        "1 630906a9,5 0f938b84,6 9ac8a024,7 086a4429,8 e1a03a32,19 37882ea1,14 bfcf9a2a,15 0151a062,60 2378b17d,120 9669d39c,417 fd853810,1029 5eff65f7",
+        "1 630906a9,5 0f938b84,6 9ac8a024,7 086a4429,8 e1a03a32,19 37882ea1,14 bfcf9a2a,15 0151a062,60 2378b17d,120 9669d39c,417 fd853810,1029 5eff65f7",
+        "1 630906a9,5 0f938b84,6 9ac8a024,7 086a4429,8 e1a03a32,19 37882ea1,14 bfcf9a2a,15 0151a062,64 9bcccc8d,125 99ae1572,423 f7856dcc,1030 e00484ec",
+        "1 630906a9,5 0f938b84,6 9ac8a024,7 086a4429,8 e1a03a32,19 37882ea1,14 bfcf9a2a,15 0151a062,64 9bcccc8d,125 99ae1572,423 f7856dcc,1030 e00484ec",
+        "1 630906a9,5 0f938b84,6 9ac8a024,7 086a4429,8 e1a03a32,19 37882ea1,14 bfcf9a2a,15 0151a062,64 9bcccc8d,125 99ae1572,423 f7856dcc,1030 f211206f",
+        "1 630906a9,5 0f938b84,6 9ac8a024,7 086a4429,8 e1a03a32,15 0cf2e110,14 9341d523,18 5798879d,62 98bcc005,138 c5a0f513,418 f8b3ad88,1010 e2b92a0c",
+        "1 630906a9,5 0f938b84,6 9ac8a024,7 086a4429,8 e1a03a32,15 0cf2e110,14 9341d523,18 5798879d,62 98bcc005,138 6f44a6fe,403 c9e76c07,966 04f0d9e9",
+      ]
+    `);
+  });
+
+  it("compresses with the default window", () => {
+    expect(qualities.map(quality => roundTrip(mixed, { [QUALITY]: quality }))).toMatchInlineSnapshot(`
+      [
+        "31280 af6a4de2",
+        "28640 364f5962",
+        "27376 42893bef",
+        "27386 5b5ee8f9",
+        "26008 908c11ee",
+        "25710 57141f65",
+        "25455 13baa67c",
+        "25197 e68f0263",
+        "25129 66e9728f",
+        "25051 dc4ea02e",
+        "23433 1427ab98",
+        "23277 11ae21b0",
+      ]
+    `);
+  });
+
+  it("compresses with a window of 10 bits", () => {
+    expect(qualities.map(quality => roundTrip(mixed, { [QUALITY]: quality, [LGWIN]: 10 }))).toMatchInlineSnapshot(`
+      [
+        "55231 fc71d46d",
+        "50361 05adb89d",
+        "38117 5d650089",
+        "38046 4b7e42ec",
+        "36416 248a04c3",
+        "34696 1e516991",
+        "34696 1e516991",
+        "34831 4abde730",
+        "34831 4abde730",
+        "34866 be5586c1",
+        "32447 4d2f5adf",
+        "31896 2c201660",
+      ]
+    `);
+  });
+
+  it("compresses with a window of 16 bits", () => {
+    expect(qualities.map(quality => roundTrip(mixed, { [QUALITY]: quality, [LGWIN]: 16 }))).toMatchInlineSnapshot(`
+      [
+        "41431 e053673e",
+        "38563 3b734689",
+        "33304 429b481a",
+        "33354 f928af25",
+        "31701 00fbdb37",
+        "31001 4f1de949",
+        "30627 d8432195",
+        "30346 c3e36fe6",
+        "30244 7b96a706",
+        "30167 1c5633aa",
+        "28392 b7fc139f",
+        "28065 6dbd769b",
+      ]
+    `);
+  });
+
+  it("stores what does not compress", () => {
+    expect(qualities.map(quality => roundTrip(noise, { [QUALITY]: quality }))).toMatchInlineSnapshot(`
+      [
+        "65540 64d0bad2",
+        "65540 64d0bad2",
+        "65540 64d0bad2",
+        "65540 64d0bad2",
+        "65540 64d0bad2",
+        "65540 64d0bad2",
+        "65540 64d0bad2",
+        "65540 64d0bad2",
+        "65540 64d0bad2",
+        "65540 64d0bad2",
+        "65540 64d0bad2",
+        "65540 64d0bad2",
+      ]
+    `);
+  });
+
+  it("compresses with the hint of a large input", () => {
+    const params = quality => ({ [QUALITY]: quality, [SIZE_HINT]: 1 << 20 });
+    expect([4, 5, 6, 7, 9].map(quality => roundTrip(mixed, params(quality)))).toMatchInlineSnapshot(`
+      [
+        "27177 0504fffc",
+        "28502 50fd6c5b",
+        "28321 3e4fd6b9",
+        "28079 b32316d6",
+        "27921 03540c11",
+      ]
+    `);
+  });
+
+  it("compresses with a large window", () => {
+    const params = quality => ({ [QUALITY]: quality, [SIZE_HINT]: 1 << 20, [LARGE_WINDOW]: 1, [LGWIN]: 25 });
+    expect([2, 3, 4, 5, 6, 9, 10].map(quality => roundTrip(mixed, params(quality)))).toMatchInlineSnapshot(`
+      [
+        "27376 5f478bae",
+        "27387 0899932c",
+        "27179 58ddf1be",
+        "28503 9191c487",
+        "28322 0de4657d",
+        "27923 ab893317",
+        "23434 5e2facf8",
+      ]
+    `);
+  });
+
+  it("compresses with a dictionary", () => {
+    const [dictionary, input] = [text.subarray(0, 15000), mixed.subarray(10000, 45000)];
+    expect(qualities.map(quality => roundTrip(input, { [QUALITY]: quality }, dictionary))).toMatchInlineSnapshot(`
+      [
+        "18168 26faaac6",
+        "17488 2de29d71",
+        "16537 16ef46aa",
+        "16558 fba79c4c",
+        "16047 1edfd8f4",
+        "13606 4b90028c",
+        "13531 eb6bc1b6",
+        "14057 49e64e92",
+        "14056 bf27f352",
+        "14052 7c3de2d1",
+        "13326 035b080d",
+        "13240 b65855fc",
+      ]
+    `);
+  });
+
+  it("follows the other parameters", () => {
+    const input = mixed.subarray(80000, 95000);
+    const answers = {};
+    for (const [name, params] of Object.entries({
+      "font": { [MODE]: zlib.constants.BROTLI_MODE_FONT },
+      "postfix 3, direct 120": { [NPOSTFIX]: 3, [NDIRECT]: 120 },
+      "postfix 1, direct 3": { [NPOSTFIX]: 1, [NDIRECT]: 3 },
+      "no contexts": { [NO_CONTEXTS]: 1 },
+      "window 5": { [LGWIN]: 5 },
+      "window 17": { [LGWIN]: 17 },
+      "window 40": { [LGWIN]: 40 },
+    })) {
+      answers[name] = [4, 7, 10].map(quality => roundTrip(input, { ...params, [QUALITY]: quality })).join();
+    }
+    answers["block 17"] = [4, 7, 10].map(quality => roundTrip(mixed, { [QUALITY]: quality, [LGBLOCK]: 17 })).join();
+    expect(answers).toMatchInlineSnapshot(`
+      {
+        "block 17": "26012 02d810aa,25197 e68f0263,23433 1427ab98",
+        "font": "7192 90527b60,6867 06a17fae,6541 36e487e2",
+        "no contexts": "7189 a638e271,6865 8407afb0,6791 760c41f7",
+        "postfix 1, direct 3": "7189 a638e271,6865 8407afb0,6537 2fa041b1",
+        "postfix 3, direct 120": "7193 c8c03561,6873 02d0fcdc,6576 413a8312",
+        "window 17": "7189 bca8261b,6865 625ba800,6537 cbbd202d",
+        "window 40": "7189 e5d6d89b,6865 5ab83687,6537 7e3e2333",
+        "window 5": "7287 49bef762,7007 53654a24,6776 68f95124",
+      }
+    `);
+  });
+
+  it("flushes and emits metadata", () => {
+    let at = 0;
+    const steps = [0, 1, 2, 5, 300, 0, 40000, 7, 30000, 66000].flatMap((size, i) => [
+      [i % 4 === 3 ? PROCESS : FLUSH, mixed.subarray(at, (at += size))],
+      ...(i % 3 === 1 ? [[METADATA, noise.subarray(0, i * i * 9)]] : []),
+    ]);
+    steps.push([FINISH, mixed.subarray(at)]);
+    const answers = qualities.map(quality => {
+      const compressed = drive(zlib.createBrotliCompress({ params: { [QUALITY]: quality } }), steps, 1 << 18);
+      expect(digest(zlib.brotliDecompressSync(compressed))).toBe(digest(mixed));
+      return digest(compressed);
+    });
+    expect(answers).toMatchInlineSnapshot(`
+      [
+        "42022 bb038424",
+        "38158 119d842e",
+        "28154 bc955bf2",
+        "28049 24719021",
+        "26631 f320ee55",
+        "26026 4e3c59da",
+        "25784 8a34a7ed",
+        "26000 fd3775fb",
+        "25895 f3ad826b",
+        "25828 6dc7bc05",
+        "24904 97459de0",
+        "24727 d26e2d17",
+      ]
+    `);
+  });
+
+  it.each(qualities)("makes what was flushed decodable at quality %d", quality => {
+    const input = text.subarray(0, 700);
+    const flushed = drive(zlib.createBrotliCompress({ params: { [QUALITY]: quality } }), [[FLUSH, input]], 5);
+    expect(drive(zlib.createBrotliDecompress(), [[PROCESS, flushed]], 5)).toEqual(input);
+  });
+
+  it("continues another stream", () => {
+    const [head, tail] = [text.subarray(0, 5000), text.subarray(5000, 9000)];
+    const first = drive(zlib.createBrotliCompress({ params: { [QUALITY]: 5 } }), [[FLUSH, head]], 8192);
+    const answers = [2, 5, 9, 11].map(quality => {
+      const second = zlib.brotliCompressSync(tail, { params: { [QUALITY]: quality, [STREAM_OFFSET]: head.length } });
+      expect(zlib.brotliDecompressSync(Buffer.concat([first, second]))).toEqual(text.subarray(0, 9000));
+      return digest(second);
+    });
+    expect(answers).toMatchInlineSnapshot(`
+      [
+        "1518 48488fba",
+        "1312 61a50cfa",
+        "1319 47c56c48",
+        "1225 b341962b",
+      ]
+    `);
+  });
+
+  it("refuses input after the end of the stream", () => {
+    const steps = [
+      [FINISH, text.subarray(0, 10)],
+      [PROCESS, text.subarray(0, 10)],
+    ];
+    expect(drive(zlib.createBrotliCompress(), steps, 64)).toEqual({
+      message: "Compression failed",
+      errno: -1,
+      code: "ERR_BROTLI_COMPRESSION_FAILED",
+    });
+  });
+
+  it.each([
+    ["createBrotliCompress", NO_CONTEXTS, 2],
+    ["createBrotliCompress", STREAM_OFFSET, 2 ** 30 + 1],
+    ["createBrotliDecompress", 2, 0],
+  ])("%s refuses parameter %d with value %d", (create, key, value) => {
+    expect(() => zlib[create]({ params: { [key]: value } })).toThrow(
+      expect.objectContaining({ code: "ERR_ZLIB_INITIALIZATION_FAILED" }),
+    );
+  });
+
+  it.each([1, 2, 5, 11])("decodes a stream of quality %d in pieces of any size", quality => {
+    const input = Buffer.concat([text.subarray(0, 2500), samples.subarray(0, 1200), noise.subarray(0, 100)]);
+    const compressed = zlib.brotliCompressSync(input, { params: { [QUALITY]: quality, [LGWIN]: 10 } });
+    for (const [piece, room] of [
+      [1, 8192],
+      [9, 61],
+      [8192, 7],
+    ]) {
+      const steps = Array.from(window(compressed, piece), chunk => [PROCESS, chunk]);
+      expect(drive(zlib.createBrotliDecompress(), steps, room)).toEqual(input);
+    }
+  });
+
+  it("reports the end of the input at every length of a stream", () => {
+    const compressed = zlib.brotliCompressSync(text.subarray(0, 400));
+    const codes = new Set();
+    for (let length = 1; length < compressed.length; length++) {
+      codes.add(drive(zlib.createBrotliDecompress(), [[FINISH, compressed.subarray(0, length)]], 1024).code);
+    }
+    expect([...codes]).toEqual(["Z_BUF_ERROR"]);
+  });
+
+  it("leaves what follows the stream", () => {
+    const compressed = zlib.brotliCompressSync(text.subarray(0, 400));
+    const followed = Buffer.concat([compressed, noise.subarray(0, 20)]);
+    const { buffer, engine } = zlib.brotliDecompressSync(followed, { info: true });
+    expect({ buffer, used: engine.bytesWritten }).toEqual({ buffer: text.subarray(0, 400), used: compressed.length });
+  });
+
+  it("decodes with the whole window allocated up front", () => {
+    const compressed = zlib.brotliCompressSync(mixed, { params: { [QUALITY]: 5, [LGWIN]: 16 } });
+    const decompressed = zlib.brotliDecompressSync(compressed, { params: { [DECODER_WHOLE_WINDOW]: 1 } });
+    expect(digest(decompressed)).toBe(digest(mixed));
+  });
+
+  /** Writes streams by hand (RFC 7932 section 9). */
+  class Bits {
+    bytes = [];
+    pending = 0;
+    count = 0;
+
+    /** `[count, value]` pairs of up to 24 bits. */
+    put(...fields) {
+      for (const [count, value] of fields) {
+        this.pending |= value << this.count;
+        for (this.count += count; this.count >= 8; this.count -= 8) {
+          this.bytes.push(this.pending & 255);
+          this.pending >>>= 8;
+        }
+      }
+      return this;
+    }
+
+    /** The highest bit comes first. */
+    code(length, code) {
+      let reversed = 0;
+      for (let i = 0; i < length; i++) reversed = (reversed << 1) | ((code >> i) & 1);
+      return this.put([length, reversed]);
+    }
+
+    simpleCode(symbolBits, ...symbols) {
+      return this.put([2, 1], [2, symbols.length - 1], ...symbols.map(symbol => [symbolBits, symbol]));
+    }
+
+    /** For 64 symbols, as the encoder describes it at quality 2. */
+    sixBitCode() {
+      return this.put([14, 0x1c03], [14, 0xda7]);
+    }
+
+    uncompressed(bytes) {
+      this.put([1, 0], [2, 0], [16, bytes.length - 1], [1, 1]).align();
+      this.bytes.push(...bytes);
+      return this;
+    }
+
+    lastHeader(length) {
+      const nibbles = length > 1 << 16 ? 5 : 4;
+      return this.put([2, 1], [2, nibbles - 4], [nibbles * 4, length - 1]);
+    }
+
+    /** With one block type of each category, no distance parameters and no contexts. */
+    plainLastHeader(length) {
+      return this.lastHeader(length).put([13, 0]);
+    }
+
+    /** What `copy` and `distance` use: the codes of quality 2 for short inputs. The first 448 commands have 9 bits. */
+    fixedCodes() {
+      return this.simpleCode(8, 0).put([24, 0x307003], [24, 0x624416], [11, 0x92]).sixBitCode();
+    }
+
+    copy(length) {
+      const bases = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 18, 22, 30, 38, 54, 70];
+      const index = bases.findLastIndex(base => base <= length);
+      this.code(9, [128, 192, 384][index >> 3] + (index & 7));
+      return this.put([Math.max(0, (index - 6) >> 1), length - bases[index]]);
+    }
+
+    distance(distance) {
+      const extraBits = 30 - Math.clz32(distance + 3);
+      this.code(6, 12 + 2 * extraBits + ((distance + 3) >> extraBits));
+      return this.put([extraBits, (distance + 3) & ((1 << extraBits) - 1)]);
+    }
+
+    align() {
+      return this.put([-this.count & 7, 0]);
+    }
+
+    finish() {
+      return Buffer.from(this.align().bytes);
+    }
+  }
+
+  const windowOf = bits => new Bits().put(bits === 16 ? [1, 0] : [7, ((bits - 8) << 4) | 1]);
+  const WORD_INDEX_BITS = [10, 10, 11, 11, 10, 10, 10, 10, 10, 9, 9, 8, 7, 7, 8, 7, 7, 6, 6, 5, 5];
+
+  /** `words` are `[length, index, transform]`, and come to `total` bytes. */
+  function decodeWords(words, total) {
+    const fullWindow = Buffer.alloc(1024 - 16);
+    const bits = windowOf(10).uncompressed(fullWindow).plainLastHeader(total).fixedCodes();
+    for (const [length, index, transform] of words) {
+      bits.copy(length).distance(fullWindow.length + 1 + index + (transform << WORD_INDEX_BITS[length - 4]));
+    }
+    return zlib.brotliDecompressSync(bits.finish()).subarray(fullWindow.length);
+  }
+
+  it("has every word of the static dictionary", () => {
+    const words = WORD_INDEX_BITS.flatMap((bits, i) => Array.from({ length: 1 << bits }, (_, j) => [i + 4, j, 0]));
+    // RFC 7932 appendix A
+    expect(digest(decodeWords(words, 122784))).toBe("122784 5136cb04");
+  });
+
+  it("has every transform", () => {
+    const words = WORD_INDEX_BITS.flatMap((bits, i) =>
+      [0, (1 << bits) - 1].flatMap(index => Array.from({ length: 121 }, (_, transform) => [i + 4, index, transform])),
+    );
+    expect(digest(decodeWords(words, 79752))).toMatchInlineSnapshot(`"79752 aee2cea4"`);
+  });
+
+  it("has every context mode", () => {
+    const pairs = Array.from({ length: 256 }, (_, byte) => [0, byte, byte, 0]).flat();
+    const answers = [0, 1, 2, 3].map(mode => {
+      // After a copy of each pair, a literal that is the number of its context.
+      const bits = windowOf(11).uncompressed(pairs).lastHeader(1536).put([9, 0], [2, mode]);
+      bits.put([4, 11], [5, 31], [1, 0]).sixBitCode();
+      for (let context = 0; context < 64; context++) bits.code(6, context);
+      bits.put([1, 0], [1, 0]);
+      for (let tree = 0; tree < 64; tree++) bits.simpleCode(8, tree);
+      bits.simpleCode(10, 128, 136).simpleCode(6, 5, 32);
+      bits.put([1, 0], [1, 1], [9, 3]);
+      for (let pair = 1; pair < 512; pair++) bits.put([1, 1], [1, 0]);
+      return digest(zlib.brotliDecompressSync(bits.put([1, 1]).finish()));
+    });
+    expect(answers).toMatchInlineSnapshot(`
+      [
+        "2560 2dabbf67",
+        "2560 95f42902",
+        "2560 79080a22",
+        "2560 65e3dadc",
+      ]
+    `);
+  });
+
+  it("has every short distance code", () => {
+    const bits = windowOf(16)
+      .uncompressed(noise.subarray(0, 100))
+      .plainLastHeader(16 * 5 * 3)
+      .fixedCodes();
+    for (let code = 0; code < 16; code++) {
+      for (const distance of [80, 60, 40, 20]) bits.copy(3).distance(distance + code);
+      bits.copy(3).code(6, code);
+    }
+    expect(digest(zlib.brotliDecompressSync(bits.finish()))).toMatchInlineSnapshot(`"340 9c0bc6cf"`);
+  });
+
+  it("copies byte by byte where source and target overlap", () => {
+    const expected = [];
+    const bits = windowOf(10);
+    for (let distance = 1; distance <= 34; distance++) {
+      const lengths = [2, 3, 8, 15, 16, 17, 31, 32, 33, 64, 100];
+      const fresh = noise.subarray(distance * 40, distance * 40 + 40);
+      for (const length of lengths) {
+        bits.uncompressed(fresh).put([1, 0], [2, 0], [16, length - 1], [1, 0], [13, 0]);
+        bits.fixedCodes().copy(length).distance(distance);
+        expected.push(...fresh);
+        for (let i = 0; i < length; i++) expected.push(expected.at(-distance));
+      }
+    }
+    expect(zlib.brotliDecompressSync(bits.put([2, 3]).finish())).toEqual(Buffer.from(expected));
+  });
+
+  it.each([
+    ["a", [97], [], []],
+    ["ab", [98, 97], [], ["0", "1"]],
+    ["cab", [99, 98, 97], [], ["0", "10", "11"]],
+    ["abcd", [100, 99, 98, 97], [[1, 0]], ["00", "01", "10", "11"]],
+    ["dcab", [100, 99, 98, 97], [[1, 1]], ["0", "10", "110", "111"]],
+  ])("decodes the simple prefix code for %p", (expected, symbols, shape, codes) => {
+    const bits = windowOf(16).plainLastHeader(expected.length);
+    bits.simpleCode(8, ...symbols).put(...shape);
+    bits.simpleCode(10, expected.length << 3).simpleCode(6, 0);
+    for (const code of codes) bits.code(code.length, parseInt(code, 2));
+    expect(zlib.brotliDecompressSync(bits.finish()).toString()).toBe(expected);
+  });
+
+  it("accepts metadata as the last meta-block", () => {
+    const bits = windowOf(16).uncompressed([97]).put([2, 1], [2, 3], [1, 0], [2, 1], [8, 1]).align();
+    expect(zlib.brotliDecompressSync(bits.put([16, 0xffff]).finish()).toString()).toBe("a");
+  });
+
+  const zeroLengths = count => Array(count).fill([2, 0]);
+
+  it.each([
+    ["FORMAT_EXUBERANT_NIBBLE", -1, windowOf(16).put([1, 0], [2, 1], [20, 5])],
+    ["FORMAT_RESERVED", -2, windowOf(16).put([1, 0], [2, 3], [1, 1])],
+    ["FORMAT_EXUBERANT_META_NIBBLE", -3, windowOf(16).put([1, 0], [2, 3], [1, 0], [2, 2], [16, 5])],
+    ["FORMAT_SIMPLE_HUFFMAN_ALPHABET", -4, windowOf(16).plainLastHeader(1).simpleCode(8, 0).simpleCode(10, 704)],
+    ["FORMAT_SIMPLE_HUFFMAN_SAME", -5, windowOf(16).plainLastHeader(1).simpleCode(8, 7, 7)],
+    [
+      "FORMAT_CL_SPACE",
+      -6,
+      windowOf(16)
+        .plainLastHeader(1)
+        .put([2, 0], [3, 3], [3, 3], ...zeroLengths(16)),
+    ],
+    [
+      "FORMAT_HUFFMAN_SPACE",
+      -7,
+      windowOf(16)
+        .plainLastHeader(1)
+        .put([2, 0], ...zeroLengths(11), [4, 7], ...zeroLengths(6)),
+    ],
+    [
+      "FORMAT_CONTEXT_MAP_REPEAT",
+      -8,
+      windowOf(16).lastHeader(1).put([11, 0], [4, 1], [5, 11]).simpleCode(3, 6).put([6, 1]),
+    ],
+    [
+      "FORMAT_BLOCK_LENGTH_1",
+      -9,
+      windowOf(10).plainLastHeader(1).simpleCode(8, 0).simpleCode(10, 488).simpleCode(6, 0).put([12, 0]),
+    ],
+    [
+      "FORMAT_BLOCK_LENGTH_2",
+      -10,
+      windowOf(16).plainLastHeader(1).simpleCode(8, 0).simpleCode(10, 16).simpleCode(6, 0),
+    ],
+    [
+      "FORMAT_TRANSFORM",
+      -11,
+      windowOf(16)
+        .plainLastHeader(4)
+        .fixedCodes()
+        .copy(4)
+        .distance(5 + (121 << 10)),
+    ],
+    ["FORMAT_DICTIONARY", -12, windowOf(16).plainLastHeader(3).fixedCodes().copy(3).distance(5)],
+    ["FORMAT_WINDOW_BITS", -13, windowOf(9)],
+    ["FORMAT_PADDING_1", -14, windowOf(16).put([1, 0], [2, 0], [16, 0], [1, 1], [1, 1])],
+    ["FORMAT_PADDING_2", -15, windowOf(16).put([2, 3], [1, 1])],
+    [
+      "FORMAT_DISTANCE",
+      -16,
+      windowOf(16).uncompressed([0]).plainLastHeader(4).fixedCodes().copy(2).distance(1).copy(2).code(6, 4),
+    ],
+    ["COMPOUND_DICTIONARY", -18, windowOf(16).plainLastHeader(5).fixedCodes().copy(5).distance(4)],
+  ])("fails with ERR__ERROR_%s", (name, errno, bits) => {
+    const expected = { message: "Decompression failed", errno, code: `ERR__ERROR_${name}` };
+    const stream = Buffer.concat([bits.finish(), Buffer.alloc(40)]);
+    const engine = zlib.createBrotliDecompress({ dictionary: Buffer.from("abcd") });
+    expect(drive(engine, [[FINISH, stream]], 4096)).toEqual(expected);
   });
 });
 

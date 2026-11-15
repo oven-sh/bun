@@ -20,7 +20,6 @@ import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
 export const safeStackDependencies: readonly DepName[] = [
-  "brotli",
   "libdeflate",
   "libjpeg-turbo",
   "libwebp",

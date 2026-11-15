@@ -1,0 +1,173 @@
+//! Collects the commands of a block, and then writes them with codes of their own (quality 1).
+
+use core::ops::ControlFlow;
+
+use super::{
+    FIRST_COPY_AT_LAST_DISTANCE, SYMBOLS, Sink, Table, Token, build_and_write_codes, find_matches,
+    table_bits, write_fragment,
+};
+use crate::encoder::bit_stream::{MetaBlockKind, write_plain_header, write_uncompressed};
+use crate::encoder::bit_writer::BitWriter;
+use crate::encoder::histogram::{bits_entropy, count_bytes, count_every_nth_byte};
+use crate::encoder::huffman::{Code, SYMBOL_SLACK, TreeBuilder, write_symbols};
+use crate::format::{LITERAL_SYMBOLS, WINDOW_GAP};
+use crate::memory::{self, Result};
+
+const BLOCK_SIZE: usize = 1 << 17;
+
+#[derive(Default)]
+pub(in crate::encoder) struct TwoPass {
+    table: Table,
+    tokens: Vec<[u32; 2]>,
+    literals: Vec<u8>,
+}
+
+struct Block {
+    /// The symbol in the low 8 bits, and above it the value. Nothing goes with a token that inserts.
+    tokens: Vec<[u32; 2]>,
+    literals: Vec<u8>,
+    histogram: [u32; SYMBOLS],
+}
+
+impl Sink for Block {
+    #[inline(always)]
+    fn refuses(&mut self, _start: usize, _end: usize) -> bool {
+        false
+    }
+
+    #[inline(always)]
+    fn insert(&mut self, padded: &[u8]) {
+        let length = padded.len() - WINDOW_GAP;
+        self.tokens(Token::insert(length), Token::NONE);
+        match padded.first_chunk::<WINDOW_GAP>() {
+            Some(chunk) if length <= WINDOW_GAP => {
+                let end = self.literals.len() + length;
+                self.literals.extend_from_slice(chunk);
+                self.literals.truncate(end);
+            }
+            _ => self.literals.extend_from_slice(&padded[..length]),
+        }
+    }
+
+    #[inline(always)]
+    fn tokens(&mut self, first: Token, second: Token) {
+        let packed = [first, second].map(|token| (token.symbol | (token.value << 8)) as u32);
+        self.tokens.push(packed);
+        self.histogram[first.symbol % SYMBOLS] += 1;
+        self.histogram[second.symbol % SYMBOLS] += 1;
+    }
+}
+
+impl TwoPass {
+    pub(in crate::encoder) fn compress(
+        &mut self,
+        input: &[u8],
+        is_last: bool,
+        trees: &mut TreeBuilder,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        write_fragment(input, is_last, writer, |writer| {
+            match table_bits(input.len(), 17) {
+                8 => self.write_meta_blocks::<{ 1 << 8 }, 4>(input, trees, writer),
+                9 => self.write_meta_blocks::<{ 1 << 9 }, 4>(input, trees, writer),
+                10 => self.write_meta_blocks::<{ 1 << 10 }, 4>(input, trees, writer),
+                11 => self.write_meta_blocks::<{ 1 << 11 }, 4>(input, trees, writer),
+                12 => self.write_meta_blocks::<{ 1 << 12 }, 4>(input, trees, writer),
+                13 => self.write_meta_blocks::<{ 1 << 13 }, 4>(input, trees, writer),
+                14 => self.write_meta_blocks::<{ 1 << 14 }, 4>(input, trees, writer),
+                15 => self.write_meta_blocks::<{ 1 << 15 }, 4>(input, trees, writer),
+                16 => self.write_meta_blocks::<{ 1 << 16 }, 6>(input, trees, writer),
+                _ => self.write_meta_blocks::<{ 1 << 17 }, 6>(input, trees, writer),
+            }
+        })
+    }
+
+    #[inline(never)]
+    fn write_meta_blocks<const TABLE_SIZE: usize, const MIN_MATCH: usize>(
+        &mut self,
+        input: &[u8],
+        trees: &mut TreeBuilder,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        let table = self.table.cleared::<TABLE_SIZE>()?;
+        // Pushing to a local is faster than pushing to a field.
+        let mut block = Block {
+            tokens: core::mem::take(&mut self.tokens),
+            literals: core::mem::take(&mut self.literals),
+            histogram: [0; SYMBOLS],
+        };
+        for start in (0..input.len()).step_by(BLOCK_SIZE) {
+            let end = input.len().min(start + BLOCK_SIZE);
+            block.tokens.clear();
+            block.literals.clear();
+            block.histogram.fill(0);
+            memory::try_reserve(&mut block.tokens, (end - start) / 2 + 1)?;
+            memory::try_reserve(&mut block.literals, end - start + WINDOW_GAP)?;
+            let (ControlFlow::Continue(next_literal) | ControlFlow::Break(next_literal)) =
+                find_matches::<_, MIN_MATCH>(input, start, end, start, table, &mut block);
+            if next_literal < end {
+                block.tokens(Token::insert(end - next_literal), Token::NONE);
+                block.literals.extend_from_slice(&input[next_literal..end]);
+            }
+            block.write(&input[start..end], trees, writer)?;
+        }
+        (self.tokens, self.literals) = (block.tokens, block.literals);
+        Ok(())
+    }
+}
+
+impl Block {
+    #[inline(never)]
+    fn write(
+        &mut self,
+        input: &[u8],
+        trees: &mut TreeBuilder,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        if !self.is_worth_compressing(input) {
+            write_uncompressed(writer, [input, &[]]);
+            return Ok(());
+        }
+        write_plain_header(writer, MetaBlockKind::Compressed, input.len());
+        let mut literal_codes = [Code::EMPTY; LITERAL_SYMBOLS];
+        trees.build_and_write_fast(&count_bytes(&self.literals), 8, &mut literal_codes, writer);
+        // Each code needs two symbols.
+        for symbol in [1, 2, 64, 84] {
+            self.histogram[symbol] += 1;
+        }
+        let codes = build_and_write_codes(self.histogram, 0, trees, writer);
+
+        self.literals.extend([0; SYMBOL_SLACK]);
+        let max_bytes = 7 * self.tokens.len() + 2 * self.literals.len();
+        writer.try_reserve(max_bytes)?;
+        let mut room = writer.with_room(max_bytes);
+        let mut literals = &*self.literals;
+        for packed in &self.tokens {
+            let [first, second] = packed.map(|packed| Token {
+                symbol: packed as usize % SYMBOLS,
+                value: packed as usize >> 8,
+            });
+            if first.symbol < FIRST_COPY_AT_LAST_DISTANCE {
+                let padded = &literals[..first.value + SYMBOL_SLACK];
+                write_symbols(&mut room, codes.bits(first), padded, |literal| {
+                    literal_codes[usize::from(literal)]
+                });
+                literals = &literals[first.value..];
+            } else {
+                room.write_bits(codes.bits(first).then(codes.bits(second)));
+            }
+        }
+        Ok(())
+    }
+
+    fn is_worth_compressing(&self, input: &[u8]) -> bool {
+        const MIN_RATIO: f64 = 0.98;
+        const SAMPLE_RATE: usize = 43;
+        let size = input.len() as f64;
+        if (self.literals.len() as f64) < MIN_RATIO * size {
+            return true;
+        }
+        let histogram = count_every_nth_byte::<SAMPLE_RATE>(input);
+        bits_entropy(&histogram) < size * 8.0 * MIN_RATIO / SAMPLE_RATE as f64
+    }
+}

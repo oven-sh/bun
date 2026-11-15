@@ -1,0 +1,291 @@
+use core::hint::{Locality, prefetch_read};
+
+use super::{Filter, Hasher, Match, RecentDistances, Search, Small, prefetch_for_store};
+use crate::encoder::input_block::InputBlock;
+use crate::encoder::matching::{HASH_MULTIPLIER_64, hash_of_four};
+use crate::encoder::ring_buffer::Window;
+use crate::encoder::words::QuickWordSearch;
+use crate::memory::{self, Result};
+
+/// The top `bits` bits of a hash of five bytes if `LONG`, or else of four.
+#[inline(always)]
+fn hash<const LONG: bool>(eight: u64, bits: u32) -> usize {
+    if LONG {
+        (eight.wrapping_mul(HASH_MULTIPLIER_64 << 24) >> (64 - bits)) as usize
+    } else {
+        hash_of_four(eight as u32, bits)
+    }
+}
+
+const BUCKET_BITS: u32 = 15;
+const FIRST_CAPACITY: usize = 4;
+
+/// The state of a bucket.
+#[derive(Clone, Copy)]
+struct Head(u64);
+
+impl Head {
+    const ROOM_SHIFT: u32 = 17;
+    const NEXT_SHIFT: u32 = 32;
+
+    #[inline(always)]
+    fn new(count: usize, room: usize, next: usize) -> Self {
+        Self(((next << Self::NEXT_SHIFT) | (room << Self::ROOM_SHIFT) | count) as u64)
+    }
+
+    /// How many positions it has seen, up to `1 << 16`, where it starts over.
+    #[inline(always)]
+    fn count(self) -> usize {
+        self.0 as usize % (1 << Self::ROOM_SHIFT)
+    }
+
+    /// How many slots it has from `next` on.
+    #[inline(always)]
+    fn room(self) -> usize {
+        (self.0 as u32 >> Self::ROOM_SHIFT) as usize
+    }
+
+    #[inline(always)]
+    fn next(self) -> usize {
+        (self.0 >> Self::NEXT_SHIFT) as usize
+    }
+
+    #[inline(always)]
+    fn advanced(self) -> Self {
+        Self(self.0 + (1 << Self::NEXT_SHIFT) + 1 - (1 << Self::ROOM_SHIFT))
+    }
+}
+
+/// Keeps the last positions for each hash (qualities 7 to 9).
+pub(in crate::encoder) struct Buckets<const LONG: bool> {
+    heads: Box<[u64; 1 << BUCKET_BITS]>,
+    /// A bucket moves to the end when it grows, so that a small input touches little memory.
+    slots: Vec<u32>,
+    bucket_size: usize,
+    recent_count: usize,
+    words: QuickWordSearch,
+}
+
+impl<const LONG: bool> Buckets<LONG> {
+    pub(in crate::encoder) fn new(bucket_size_bits: u32, recent_count: usize) -> Result<Self> {
+        Ok(Self {
+            heads: memory::zeroed_array()?,
+            slots: Vec::new(),
+            bucket_size: 1 << bucket_size_bits,
+            recent_count,
+            words: QuickWordSearch::default(),
+        })
+    }
+
+    #[inline(always)]
+    fn insert(&mut self, key: usize, mut head: Head, position: usize) {
+        if head.0 == 0 {
+            head = Head::new(0, FIRST_CAPACITY, self.slots.len());
+            self.slots.extend([0; FIRST_CAPACITY]);
+        } else if head.room() == 0 {
+            head = self.make_room(head);
+        }
+        let slot = &mut self.slots[head.next()];
+        prefetch_for_store(slot);
+        *slot = position as u32;
+        self.heads[key] = head.advanced().0;
+    }
+
+    #[inline(never)]
+    fn make_room(&mut self, head: Head) -> Head {
+        let count = head.count();
+        if count >= self.bucket_size {
+            let start = head.next() - self.bucket_size;
+            return Head::new(count % (1 << 16), self.bucket_size, start);
+        }
+        let room = (4 * count).min(self.bucket_size) - count;
+        self.slots
+            .extend_from_within(head.next() - count..head.next());
+        let next = self.slots.len();
+        self.slots.resize(next + room, 0);
+        Head::new(count, room, next)
+    }
+}
+
+impl<const LONG: bool> Hasher for Buckets<LONG> {
+    const LOOKAHEAD: usize = if LONG { 8 } else { 4 };
+
+    fn recent_count(&self) -> usize {
+        self.recent_count
+    }
+
+    fn clear(&mut self) {
+        self.heads.fill(0);
+        self.slots.clear();
+    }
+
+    fn try_reserve(&mut self, block: &InputBlock<'_>) -> Result<()> {
+        // A bucket takes up less than six times its count, with what it left behind.
+        let most = (2 * self.bucket_size) << BUCKET_BITS;
+        let needed = if block.may_be_all() {
+            most.min(6 * block.length)
+        } else {
+            most
+        };
+        memory::try_reserve_total(&mut self.slots, needed)
+    }
+
+    #[inline(always)]
+    fn store(&mut self, eight: u64, position: usize) {
+        let key = hash::<LONG>(eight, BUCKET_BITS);
+        self.insert(key, Head(self.heads[key]), position);
+    }
+
+    #[inline(always)]
+    fn prefetch(&self, eight: u64) {
+        let next = Head(self.heads[hash::<LONG>(eight, BUCKET_BITS)]).next();
+        prefetch_read(self.slots.as_ptr().wrapping_add(next), Locality::L1);
+    }
+
+    #[inline(always)]
+    fn find(&mut self, search: &Search<'_>, recent: &RecentDistances, _: usize) -> Match {
+        let key = hash::<LONG>(search.first_eight(), BUCKET_BITS);
+        let head = Head(self.heads[key]);
+        let count = head.count() % (1 << 16);
+        let (newer, older) = if count > self.bucket_size {
+            (self.bucket_size - head.room(), head.room())
+        } else {
+            (count, 0)
+        };
+        let (newer, older) = self.slots[head.next() - newer..head.next() + older].split_at(newer);
+        prefetch_read(newer.as_ptr_range().end.wrapping_sub(1), Locality::L1);
+        let mut best = Match::NONE;
+        let length = search.try_recent(recent, self.recent_count, &mut best);
+        let mut filter = Filter::new(search, length);
+        'bucket: for part in [newer, older] {
+            for &candidate in part.iter().rev() {
+                let distance = search.position.wrapping_sub(candidate as usize);
+                if !search.reaches(distance) {
+                    break 'bucket;
+                }
+                filter.try_position(search, candidate as usize, distance, &mut best);
+            }
+        }
+        self.insert(key, head, search.position);
+        search.try_words(&mut self.words, 2, &mut best);
+        best
+    }
+}
+
+/// A bit for each tag that equals `tag`, starting at `first` and going around.
+#[inline(never)] // Inlined, it does not always become vector instructions.
+fn equal_tags<const SIZE: usize>(tags: &[u8; SIZE], tag: u8, first: usize) -> u32 {
+    let equal = (0..SIZE).fold(0, |bits, i| bits | (u32::from(tags[i] == tag) << i));
+    if SIZE == 16 {
+        u32::from((equal as u16).rotate_right(first as u32))
+    } else {
+        equal.rotate_right(first as u32)
+    }
+}
+
+/// Keeps 8 more bits of the hash with each position, to skip those that differ (qualities 5 and 6).
+pub(in crate::encoder) struct TaggedBuckets<
+    const LONG: bool,
+    const BUCKETS: usize,
+    const SIZE: usize,
+> {
+    /// How many positions each bucket has seen.
+    counts: Box<[u16; BUCKETS]>,
+    /// Filled from the end, so that older positions follow newer ones.
+    positions: Box<[[u32; SIZE]; BUCKETS]>,
+    tags: Box<[[u8; SIZE]; BUCKETS]>,
+    words: QuickWordSearch,
+}
+
+impl<const LONG: bool, const BUCKETS: usize, const SIZE: usize> TaggedBuckets<LONG, BUCKETS, SIZE> {
+    pub(in crate::encoder) fn new() -> Result<Self> {
+        Ok(Self {
+            counts: memory::zeroed_array()?,
+            positions: memory::zeroed_array()?,
+            tags: memory::zeroed_array()?,
+            words: QuickWordSearch::default(),
+        })
+    }
+
+    /// Goes on where `small` left off.
+    pub(in crate::encoder) fn after(small: &Small, window: Window<'_>) -> Result<Self> {
+        let mut buckets = Self::new()?;
+        buckets.words = small.words;
+        for position in small.stored_positions() {
+            buckets.store(u64::from_le_bytes(window.bytes_at(position)), position);
+        }
+        Ok(buckets)
+    }
+
+    #[inline(always)]
+    fn key_and_tag(eight: u64) -> (usize, u8) {
+        let hash = hash::<LONG>(eight, BUCKETS.ilog2() + 8);
+        ((hash >> 8) % BUCKETS, hash as u8)
+    }
+
+    #[inline(always)]
+    fn insert(&mut self, key: usize, tag: u8, position: usize) {
+        let count = &mut self.counts[key];
+        let slot = usize::from(!*count) % SIZE;
+        *count = count.wrapping_add(1);
+        prefetch_for_store(&self.positions[key][slot]);
+        prefetch_for_store(&self.tags[key]);
+        self.positions[key][slot] = position as u32;
+        self.tags[key][slot] = tag;
+    }
+}
+
+impl<const LONG: bool, const BUCKETS: usize, const SIZE: usize> Hasher
+    for TaggedBuckets<LONG, BUCKETS, SIZE>
+{
+    const LOOKAHEAD: usize = if LONG { 8 } else { 4 };
+
+    fn recent_count(&self) -> usize {
+        4
+    }
+
+    fn clear(&mut self) {
+        self.counts.fill(0);
+    }
+
+    #[inline(always)]
+    fn store(&mut self, eight: u64, position: usize) {
+        let (key, tag) = Self::key_and_tag(eight);
+        self.insert(key, tag, position);
+    }
+
+    #[inline(always)]
+    fn prefetch(&self, eight: u64) {
+        let (key, _) = Self::key_and_tag(eight);
+        prefetch_read(&raw const self.counts[key], Locality::L1);
+        prefetch_read(&raw const self.tags[key], Locality::L1);
+        prefetch_read(&raw const self.positions[key], Locality::L1);
+    }
+
+    #[inline(always)]
+    fn find(&mut self, search: &Search<'_>, recent: &RecentDistances, _: usize) -> Match {
+        let (key, tag) = Self::key_and_tag(search.first_eight());
+        let (count, positions, tags) = (self.counts[key], &self.positions[key], &self.tags[key]);
+        for line in positions.as_chunks::<16>().0 {
+            prefetch_read(line, Locality::L1);
+        }
+        let newest = usize::from(count.wrapping_neg()) % SIZE;
+        let used = usize::from(count).min(SIZE);
+        let mut candidates = equal_tags(tags, tag, newest) & ((1u64 << used) - 1) as u32;
+        let mut best = Match::NONE;
+        let length = search.try_recent(recent, 4, &mut best);
+        let mut filter = Filter::new(search, length);
+        while candidates != 0 {
+            let candidate = positions[(newest + candidates.trailing_zeros() as usize) % SIZE];
+            let distance = search.position.wrapping_sub(candidate as usize);
+            if !search.reaches(distance) {
+                break;
+            }
+            filter.try_position(search, candidate as usize, distance, &mut best);
+            candidates &= candidates - 1;
+        }
+        self.insert(key, tag, search.position);
+        search.try_words(&mut self.words, 2, &mut best);
+        best
+    }
+}

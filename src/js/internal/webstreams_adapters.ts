@@ -168,8 +168,7 @@ function handleKnownInternalErrors(cause: Error | null | undefined): Error | nul
       return $makeAbortError(undefined, { cause });
     }
     case ZLIB_FAILURES.has(causeCode):
-    // Brotli decoder errors carry the BrotliDecoderErrorString() name,
-    // formatted as 'ERR_' + '_ERROR_...' (= 'ERR__ERROR_*').
+    // Brotli decoder errors are 'ERR__ERROR_*'.
     // Falls through
     case causeCode != null && StringPrototypeStartsWith.$call(causeCode, "ERR__ERROR_"): {
       // Upstream uses `new TypeError(undefined, { cause })`, but the builtins

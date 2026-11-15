@@ -1,0 +1,627 @@
+//! Writes meta-blocks (RFC 7932 section 9.2).
+
+use super::bit_writer::{BitWriter, Bits, Room};
+use super::block_splitter::{Block, BlockSplit};
+use super::command::Command;
+use super::histogram::Histogram;
+use super::huffman::{
+    Code, SYMBOL_SLACK, TreeBuilder, assign_codes, max_description_size, write_symbols,
+};
+use super::log2::log2_floor;
+use super::meta_block::{Literals, MetaBlock, Source};
+use super::params::Params;
+use crate::context::{ContextMode, DISTANCE_CONTEXT_BITS, DISTANCE_CONTEXTS, LITERAL_CONTEXT_BITS};
+use crate::format::{
+    BLOCK_LENGTH_CODES, BLOCK_LENGTH_SYMBOLS, COMMAND_SYMBOLS, DistanceParams, LITERAL_SYMBOLS,
+    MAX_BLOCK_TYPES,
+};
+use crate::memory::{self, Result};
+
+const MAX_RUN_LENGTH_CODE: u32 = 6;
+const MAX_CONTEXT_MAP_SYMBOLS: usize = MAX_BLOCK_TYPES + MAX_RUN_LENGTH_CODE as usize;
+/// Without postfix bits and direct codes.
+const PLAIN_DISTANCE_SYMBOLS: usize =
+    DistanceParams::new(0, 0, true).nominal_alphabet_size as usize;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum MetaBlockKind {
+    Compressed,
+    LastCompressed,
+    Uncompressed,
+}
+
+/// `length` is in `1..=1 << 24`.
+fn write_header(writer: &mut BitWriter, kind: MetaBlockKind, length: usize) {
+    let nibbles = match length {
+        ..=0x1_0000 => 4,
+        0x1_0001..=0x10_0000 => 5,
+        _ => 6,
+    };
+    if kind == MetaBlockKind::LastCompressed {
+        writer.write(2, 1);
+    } else {
+        writer.write(1, 0);
+    }
+    writer.write(2, u64::from(nibbles - 4));
+    writer.write(nibbles * 4, length as u64 - 1);
+    if kind != MetaBlockKind::LastCompressed {
+        writer.write(1, u64::from(kind == MetaBlockKind::Uncompressed));
+    }
+}
+
+/// One block type of each category, no distance parameters and no contexts.
+pub(super) fn write_plain_header(writer: &mut BitWriter, kind: MetaBlockKind, length: usize) {
+    write_header(writer, kind, length);
+    writer.write(13, 0);
+}
+
+pub(super) fn write_uncompressed(writer: &mut BitWriter, parts: [&[u8]; 2]) {
+    write_header(
+        writer,
+        MetaBlockKind::Uncompressed,
+        parts[0].len() + parts[1].len(),
+    );
+    writer.align();
+    for part in parts {
+        writer.write_bytes(part);
+    }
+}
+
+pub(super) fn write_empty_last(writer: &mut BitWriter) {
+    writer.write(2, 3);
+    writer.align();
+}
+
+/// `length` is at most `1 << 24`.
+pub(super) fn write_metadata_header(writer: &mut BitWriter, length: usize) {
+    writer.write(4, 6);
+    match length.checked_sub(1) {
+        None => writer.write(2, 0),
+        Some(stored) => {
+            let bytes = log2_floor(stored) / 8 + 1;
+            writer.write(2, u64::from(bytes));
+            writer.write(8 * bytes, stored as u64);
+        }
+    }
+    writer.align();
+}
+
+/// `count` is in `1..=256`.
+fn write_count(writer: &mut BitWriter, count: usize) {
+    if count == 1 {
+        writer.write(1, 0);
+    } else {
+        let bits = log2_floor(count - 1);
+        writer.write(4, u64::from(bits << 1) | 1);
+        writer.write(bits, (count - 1 - (1 << bits)) as u64);
+    }
+}
+
+fn block_length_symbol(length: u32) -> usize {
+    BLOCK_LENGTH_CODES.partition_point(|code| u32::from(code.base) <= length) - 1
+}
+
+struct LastTypes([usize; 2]);
+
+impl LastTypes {
+    fn new() -> Self {
+        Self([1, 0])
+    }
+
+    fn symbol_for(&mut self, kind: u8) -> usize {
+        let kind = usize::from(kind);
+        let [last, second_last] = self.0;
+        self.0 = [kind, last];
+        if kind == last + 1 {
+            1
+        } else if kind == second_last {
+            0
+        } else {
+            kind + 2
+        }
+    }
+}
+
+/// Follows the blocks of a split.
+struct BlockCursor<'a> {
+    rest: &'a [Block],
+    left: u32,
+}
+
+impl<'a> BlockCursor<'a> {
+    const ENDLESS: Self = Self {
+        rest: &[],
+        left: u32::MAX,
+    };
+
+    fn new(split: &'a BlockSplit) -> Self {
+        Self {
+            rest: &split.blocks[1..],
+            left: split.blocks[0].length,
+        }
+    }
+
+    /// How many symbols the current block has left.
+    #[inline(always)]
+    fn left(&self) -> usize {
+        self.left as usize
+    }
+
+    #[inline(always)]
+    fn skip(&mut self, symbols: usize) {
+        self.left -= symbols as u32;
+    }
+
+    fn next_block(&mut self) -> Block {
+        let block = self.rest[0];
+        self.rest = &self.rest[1..];
+        self.left = block.length;
+        block
+    }
+}
+
+/// Writes the block switch commands of a category.
+struct BlockSwitcher<'a> {
+    cursor: BlockCursor<'a>,
+    last_types: LastTypes,
+    type_codes: Vec<Code>,
+    length_codes: [Code; BLOCK_LENGTH_SYMBOLS],
+}
+
+impl<'a> BlockSwitcher<'a> {
+    fn single_block() -> Self {
+        Self {
+            cursor: BlockCursor::ENDLESS,
+            last_types: LastTypes::new(),
+            type_codes: Vec::new(),
+            length_codes: [Code::EMPTY; BLOCK_LENGTH_SYMBOLS],
+        }
+    }
+
+    fn build_and_write(
+        split: &'a BlockSplit,
+        trees: &mut TreeBuilder,
+        writer: &mut BitWriter,
+    ) -> Result<Self> {
+        let mut switcher = Self::single_block();
+        write_count(writer, split.type_count);
+        if split.type_count == 1 {
+            return Ok(switcher);
+        }
+        switcher.cursor = BlockCursor::new(split);
+        switcher.type_codes = memory::filled(Code::EMPTY, split.type_count + 2)?;
+        let mut types = [0; MAX_BLOCK_TYPES + 2];
+        let mut lengths = [0; BLOCK_LENGTH_SYMBOLS];
+        let mut last_types = LastTypes::new();
+        for (i, block) in split.blocks.iter().enumerate() {
+            types[last_types.symbol_for(block.kind)] += u32::from(i != 0);
+            lengths[block_length_symbol(block.length)] += 1;
+        }
+        let types = &types[..split.type_count + 2];
+        writer
+            .try_reserve(max_description_size(types.len()) + max_description_size(lengths.len()))?;
+        trees.build_and_write(types, types.len(), &mut switcher.type_codes, writer);
+        trees.build_and_write(&lengths, lengths.len(), &mut switcher.length_codes, writer);
+        let first = split.blocks[0];
+        switcher.last_types.symbol_for(first.kind);
+        writer.write_bits(switcher.length_bits(first.length));
+        Ok(switcher)
+    }
+
+    fn length_bits(&self, length: u32) -> Bits {
+        let symbol = block_length_symbol(length);
+        let range = BLOCK_LENGTH_CODES[symbol];
+        self.length_codes[symbol].bits().then(Bits::new(
+            u32::from(range.extra_bits),
+            u64::from(length - u32::from(range.base)),
+        ))
+    }
+
+    /// Returns the type of the next block.
+    fn switch(&mut self, writer: &mut BitWriter) -> usize {
+        let block = self.cursor.next_block();
+        let type_code = self.type_codes[self.last_types.symbol_for(block.kind)];
+        writer.write_bits(type_code.bits().then(self.length_bits(block.length)));
+        usize::from(block.kind)
+    }
+}
+
+fn move_to_front(values: &[u32]) -> impl Iterator<Item = u32> {
+    let mut list: [u8; 256] = core::array::from_fn(|i| i as u8);
+    values.iter().map(move |&value| {
+        let index = list.iter().take_while(|&&v| u32::from(v) != value).count();
+        list[..=index].rotate_right(1);
+        index as u32
+    })
+}
+
+fn write_context_map(
+    map: &[u32],
+    tree_count: usize,
+    trees: &mut TreeBuilder,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    write_count(writer, tree_count);
+    if tree_count == 1 {
+        return Ok(());
+    }
+    let mut values = memory::empty(map.len())?;
+    values.extend(move_to_front(map));
+    let runs = || values.chunk_by(|&a, &b| a == 0 && b == 0);
+    let longest = runs().filter(|run| run[0] == 0).map(<[u32]>::len).max();
+    let max_code = longest.map_or(0, log2_floor).min(MAX_RUN_LENGTH_CODE);
+
+    let mut symbols = memory::empty(map.len())?;
+    for run in runs() {
+        if run[0] != 0 {
+            symbols.push((run[0] + max_code, 0));
+            continue;
+        }
+        let mut left = run.len() as u32;
+        while left >= 2 << max_code {
+            symbols.push((max_code, (1 << max_code) - 1));
+            left -= (2 << max_code) - 1;
+        }
+        let code = left.ilog2();
+        symbols.push((code, left - (1 << code)));
+    }
+
+    let mut histogram = [0; MAX_CONTEXT_MAP_SYMBOLS];
+    for &(symbol, _) in &symbols {
+        histogram[symbol as usize] += 1;
+    }
+    match max_code {
+        0 => writer.write(1, 0),
+        _ => writer.write(5, u64::from((max_code - 1) << 1) | 1),
+    }
+    let histogram = &histogram[..tree_count + max_code as usize];
+    writer.try_reserve(max_description_size(histogram.len()) + 3 * symbols.len())?;
+    let mut codes = [Code::EMPTY; MAX_CONTEXT_MAP_SYMBOLS];
+    trees.build_and_write(histogram, histogram.len(), &mut codes, writer);
+    for (symbol, extra) in symbols {
+        let extra_bits = if symbol <= max_code { symbol } else { 0 };
+        let extra = Bits::new(extra_bits, u64::from(extra));
+        writer.write_bits(codes[symbol as usize].bits().then(extra));
+    }
+    writer.write(1, 1);
+    Ok(())
+}
+
+/// All contexts of a block type use the tree with its number.
+fn write_trivial_context_map(
+    type_count: usize,
+    context_bits: u32,
+    trees: &mut TreeBuilder,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    write_count(writer, type_count);
+    if type_count == 1 {
+        return Ok(());
+    }
+    let run_code = context_bits - 1;
+    writer.write(5, u64::from((run_code - 1) << 1) | 1);
+    let mut histogram = [1; MAX_CONTEXT_MAP_SYMBOLS];
+    histogram[1..run_code as usize].fill(0);
+    histogram[run_code as usize] = type_count as u32;
+    let histogram = &histogram[..type_count + run_code as usize];
+    writer.try_reserve(max_description_size(histogram.len()) + 5 * type_count)?;
+    let mut codes = [Code::EMPTY; MAX_CONTEXT_MAP_SYMBOLS];
+    trees.build_and_write(histogram, histogram.len(), &mut codes, writer);
+    for i in 0..type_count {
+        writer.write_bits(codes[if i == 0 { 0 } else { i + run_code as usize }].bits());
+        let extra = Bits::new(run_code, (1 << run_code) - 1);
+        writer.write_bits(codes[run_code as usize].bits().then(extra));
+    }
+    writer.write(1, 1);
+    Ok(())
+}
+
+fn build_and_write_codes<const N: usize>(
+    histograms: &[Histogram<N>],
+    used: usize,
+    alphabet_size: usize,
+    trees: &mut TreeBuilder,
+    writer: &mut BitWriter,
+) -> Result<Vec<[Code; N]>> {
+    let mut all_codes = memory::filled([Code::EMPTY; N], histograms.len())?;
+    for (codes, histogram) in all_codes.iter_mut().zip(histograms) {
+        writer.try_reserve(max_description_size(used))?;
+        trees.build_and_write(&histogram.counts[..used], alphabet_size, codes, writer);
+    }
+    Ok(all_codes)
+}
+
+pub(super) fn write_full_meta_block(
+    length: usize,
+    commands: &[Command],
+    block: &MetaBlock,
+    context_mode: ContextMode,
+    kind: MetaBlockKind,
+    trees: &mut TreeBuilder,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    write_header(writer, kind, length);
+    let mut switchers = [
+        BlockSwitcher::build_and_write(&block.literal_split, trees, writer)?,
+        BlockSwitcher::build_and_write(&block.command_split, trees, writer)?,
+        BlockSwitcher::build_and_write(&block.distance_split, trees, writer)?,
+    ];
+
+    let distance = &block.distance_params;
+    writer.write(2, u64::from(distance.postfix_bits));
+    writer.write(4, u64::from(distance.direct_codes >> distance.postfix_bits));
+    writer.try_reserve(block.literal_split.type_count / 4)?;
+    for _ in 0..block.literal_split.type_count {
+        writer.write(2, context_mode as u64);
+    }
+    let literal_map = block.literal_context_map.as_deref();
+    let distance_map = block.distance_context_map.as_deref();
+    for (map, tree_count, context_bits) in [
+        (
+            literal_map,
+            block.literal_histograms.len(),
+            LITERAL_CONTEXT_BITS,
+        ),
+        (
+            distance_map,
+            block.distance_histograms.len(),
+            DISTANCE_CONTEXT_BITS,
+        ),
+    ] {
+        match map {
+            Some(map) => write_context_map(map, tree_count, trees, writer)?,
+            None => write_trivial_context_map(tree_count, context_bits, trees, writer)?,
+        }
+    }
+    let literals = build_and_write_codes(
+        &block.literal_histograms,
+        LITERAL_SYMBOLS,
+        LITERAL_SYMBOLS,
+        trees,
+        writer,
+    )?;
+    let symbols = build_and_write_codes(
+        &block.command_histograms,
+        COMMAND_SYMBOLS,
+        COMMAND_SYMBOLS,
+        trees,
+        writer,
+    )?;
+    let distances = build_and_write_codes(
+        &block.distance_histograms,
+        distance.alphabet_size as usize,
+        distance.nominal_alphabet_size as usize,
+        trees,
+        writer,
+    )?;
+
+    let codes = Codes {
+        literals: literals.as_flattened(),
+        commands: &symbols,
+        distances: &distances,
+        distance_map,
+    };
+    write_commands(commands, &block.literals, &codes, &mut switchers, writer)
+}
+
+struct Codes<'a, const DISTANCES: usize> {
+    literals: &'a [Code],
+    commands: &'a [[Code; COMMAND_SYMBOLS]],
+    distances: &'a [[Code; DISTANCES]],
+    distance_map: Option<&'a [u32]>,
+}
+
+impl<const DISTANCES: usize> Codes<'_, DISTANCES> {
+    fn distances_by_context(&self, kind: usize) -> [&[Code; DISTANCES]; DISTANCE_CONTEXTS] {
+        core::array::from_fn(|context| match self.distance_map {
+            Some(map) => &self.distances[map[kind * DISTANCE_CONTEXTS + context] as usize],
+            None => &self.distances[kind],
+        })
+    }
+}
+
+/// The codes of the current block types.
+struct CurrentCodes<'a, const DISTANCES: usize> {
+    literals: &'a [Code],
+    commands: &'a [Code; COMMAND_SYMBOLS],
+    distances: [&'a [Code; DISTANCES]; DISTANCE_CONTEXTS],
+}
+
+impl<const DISTANCES: usize> CurrentCodes<'_, DISTANCES> {
+    #[inline(always)]
+    fn literal(&self, literal: u16) -> Code {
+        self.literals[usize::from(literal)]
+    }
+
+    #[inline(always)]
+    fn distance_bits(&self, command: &Command) -> Bits {
+        let code = self.distances[command.distance_context()][command.distance().symbol()];
+        let code = code.only_if(command.has_distance_symbol());
+        code.bits().then(command.distance_extra())
+    }
+
+    /// Returns how many commands, literals and distances it wrote before it ran out of any of them.
+    #[inline(never)]
+    fn write_batch(
+        &self,
+        commands: &[Command],
+        literals: &[u16],
+        max_distances: usize,
+        mut room: Room<'_>,
+    ) -> [usize; 3] {
+        let (mut rest, mut distances_left) = (literals, max_distances);
+        let mut distance = Bits::EMPTY;
+        let mut written = 0;
+        for command in commands {
+            let count = command.insert_length();
+            let distances = usize::from(command.has_distance_symbol());
+            if count + SYMBOL_SLACK > rest.len() || distances > distances_left {
+                break;
+            }
+            let (code, extra) = (
+                self.commands[command.symbol()].bits(),
+                command.length_extra(),
+            );
+            let before = if distance.count + code.count + extra.count <= Bits::MAX_COUNT {
+                distance.then(code.then(extra))
+            } else {
+                room.write_bits(distance);
+                room.write_bits(code);
+                extra
+            };
+            let padded = &rest[..count + SYMBOL_SLACK];
+            write_symbols(&mut room, before, padded, |literal| self.literal(literal));
+            rest = &rest[count..];
+            distance = self.distance_bits(command);
+            distances_left -= distances;
+            written += 1;
+        }
+        room.write_bits(distance);
+        [
+            written,
+            literals.len() - rest.len(),
+            max_distances - distances_left,
+        ]
+    }
+}
+
+fn write_commands<const DISTANCES: usize>(
+    mut commands: &[Command],
+    literals: &Literals,
+    codes: &Codes<'_, DISTANCES>,
+    [literal_blocks, command_blocks, distance_blocks]: &mut [BlockSwitcher<'_>; 3],
+    writer: &mut BitWriter,
+) -> Result<()> {
+    const BATCH: usize = 2048;
+    let mut literals = literals.padded();
+    let mut current = CurrentCodes {
+        literals: codes.literals,
+        commands: &codes.commands[0],
+        distances: codes.distances_by_context(0),
+    };
+    loop {
+        let batch = &commands[..commands.len().min(BATCH).min(command_blocks.cursor.left())];
+        let max_literals = literal_blocks.cursor.left().min(8 * BATCH);
+        let padded = &literals[..literals.len().min(max_literals + SYMBOL_SLACK)];
+        let max_bytes = 14 * batch.len() + 2 * padded.len();
+        writer.try_reserve(max_bytes)?;
+        let [command_count, literal_count, distance_count] = current.write_batch(
+            batch,
+            padded,
+            distance_blocks.cursor.left(),
+            writer.with_room(max_bytes),
+        );
+        command_blocks.cursor.skip(command_count);
+        literal_blocks.cursor.skip(literal_count);
+        distance_blocks.cursor.skip(distance_count);
+        literals = &literals[literal_count..];
+
+        let [command, rest @ ..] = &commands[command_count..] else {
+            return Ok(());
+        };
+        commands = rest;
+        if command_blocks.cursor.left() == 0 {
+            current.commands = &codes.commands[command_blocks.switch(writer)];
+        }
+        command_blocks.cursor.skip(1);
+        writer.write_bits(current.commands[command.symbol()].bits());
+        writer.write_bits(command.length_extra());
+        let mut left = command.insert_length();
+        while left != 0 {
+            if literal_blocks.cursor.left() == 0 {
+                literal_blocks.switch(writer);
+            }
+            let count = left.min(literal_blocks.cursor.left()).min(8 * BATCH);
+            writer.try_reserve(2 * count)?;
+            let mut room = writer.with_room(2 * count);
+            let padded = &literals[..count + SYMBOL_SLACK];
+            write_symbols(&mut room, Bits::EMPTY, padded, |literal| {
+                current.literal(literal)
+            });
+            literal_blocks.cursor.skip(count);
+            (literals, left) = (&literals[count..], left - count);
+        }
+        if command.has_distance_symbol() {
+            if distance_blocks.cursor.left() == 0 {
+                current.distances = codes.distances_by_context(distance_blocks.switch(writer));
+            }
+            distance_blocks.cursor.skip(1);
+            writer.write_bits(current.distance_bits(command));
+        }
+    }
+}
+
+/// One prefix code for each category.
+pub(super) fn write_plain_meta_block(
+    source: &Source<'_>,
+    commands: &[Command],
+    params: &Params,
+    kind: MetaBlockKind,
+    trees: &mut TreeBuilder,
+    writer: &mut BitWriter,
+) -> Result<()> {
+    // https://github.com/google/brotli/blob/db24a98aed38a16de78cc05ca15cdd8dc2a0d92d/c/enc/entropy_encode_static.h#L524
+    static FIXED_COMMAND_CODES: [Code; COMMAND_SYMBOLS] = {
+        let mut lengths = [11; COMMAND_SYMBOLS];
+        lengths.split_at_mut(448).0.copy_from_slice(&[9; 448]);
+        let mut codes = [Code::EMPTY; COMMAND_SYMBOLS];
+        assign_codes(&lengths, &mut codes);
+        codes
+    };
+    static FIXED_DISTANCE_CODES: [Code; PLAIN_DISTANCE_SYMBOLS] = {
+        let mut codes = [Code::EMPTY; PLAIN_DISTANCE_SYMBOLS];
+        assign_codes(&[6; 64], &mut codes);
+        codes
+    };
+
+    let nominal_distance_symbols = params.distance.nominal_alphabet_size;
+    let fast = params.quality == 2;
+    write_plain_header(writer, kind, source.length);
+    let literals = Literals::gather(source, commands)?;
+    let mut literal_counts = [0; LITERAL_SYMBOLS];
+    for &literal in literals.all() {
+        literal_counts[usize::from(literal as u8)] += 1;
+    }
+    let mut literal_codes = [Code::EMPTY; LITERAL_SYMBOLS];
+    if fast {
+        trees.build_and_write_fast(&literal_counts, 8, &mut literal_codes, writer);
+    } else {
+        trees.build_and_write(&literal_counts, LITERAL_SYMBOLS, &mut literal_codes, writer);
+    }
+
+    let (mut command_codes, mut distance_codes);
+    let (command_codes, distance_codes) = if fast && commands.len() <= 128 {
+        // How the stream describes these two codes.
+        writer.write(56, 0x92_6244_1630_7003);
+        writer.write(3, 0);
+        writer.write(28, 0x0369_DC03);
+        (&FIXED_COMMAND_CODES, &FIXED_DISTANCE_CODES)
+    } else {
+        let mut symbols = [0; COMMAND_SYMBOLS];
+        let mut distances = [0; PLAIN_DISTANCE_SYMBOLS];
+        for command in commands {
+            symbols[command.symbol()] += 1;
+            distances[command.distance().symbol()] += u32::from(command.has_distance_symbol());
+        }
+        command_codes = [Code::EMPTY; COMMAND_SYMBOLS];
+        distance_codes = [Code::EMPTY; PLAIN_DISTANCE_SYMBOLS];
+        if fast {
+            let distance_bits = (nominal_distance_symbols - 1).ilog2() + 1;
+            trees.build_and_write_fast(&symbols, 10, &mut command_codes, writer);
+            trees.build_and_write_fast(&distances, distance_bits, &mut distance_codes, writer);
+        } else {
+            let nominal = nominal_distance_symbols as usize;
+            trees.build_and_write(&symbols, COMMAND_SYMBOLS, &mut command_codes, writer);
+            trees.build_and_write(&distances, nominal, &mut distance_codes, writer);
+        }
+        (&command_codes, &distance_codes)
+    };
+    let codes = Codes {
+        literals: &literal_codes,
+        commands: core::slice::from_ref(command_codes),
+        distances: core::slice::from_ref(distance_codes),
+        distance_map: None,
+    };
+    let mut switchers = core::array::from_fn(|_| BlockSwitcher::single_block());
+    write_commands(commands, &literals, &codes, &mut switchers, writer)
+}

@@ -37,7 +37,7 @@ use bun_jsc::{
     Completion, JSGlobalObject, Job, JobContext, JsError, JsResult, JsThread, LoopKind, Posted,
     VmHandle,
 };
-use bun_ptr::AliasableBox;
+use bun_ptr::{AliasableBox, CellExt};
 
 use crate::jsc_hooks::{RuntimeState, runtime_state, timer_all, try_runtime_state};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
@@ -93,9 +93,8 @@ const UV_PREPARE: c_uint = 9;
 const UV_TIMER: c_uint = 13;
 const UV_WORK: c_uint = 7;
 
-// Same `flags` values as libuv (src/uv-common.h).
+// Same `flags` value as libuv (src/uv-common.h).
 const UV_HANDLE_CLOSING: c_uint = 0x01;
-const UV_HANDLE_CLOSED: c_uint = 0x02;
 
 // `sizeof` each struct on 64-bit unix. The addon allocates them, so Bun's versions can't be bigger.
 const UV_ASYNC_T_SIZE: usize = 128;
@@ -227,23 +226,18 @@ impl<T> HandleList<T> {
     /// # Safety
     /// `handle` is removed before its `close_cb` runs.
     unsafe fn add(&self, handle: &HandleRef<'_, T>) {
-        let mut listed = self.listed.take();
-        listed.push(handle.ptr);
-        self.listed.set(listed);
+        self.listed.with_taken(|listed| listed.push(handle.ptr));
     }
 
     /// Uses `retain` because a handle that was initialized twice is in the list twice.
     fn remove(&self, handle: &HandleRef<'_, T>) {
         for list in [&self.listed, &self.walking] {
-            let mut handles = list.take();
-            handles.retain(|h| *h != handle.ptr);
-            list.set(handles);
+            list.with_taken(|handles| handles.retain(|h| *h != handle.ptr));
         }
     }
 
     fn is_empty(&self) -> bool {
-        // SAFETY: the list is not `Sync`, and the borrow ends before anything can write the cell.
-        unsafe { &*self.listed.as_ptr() }.is_empty()
+        self.listed.with_taken(|listed| listed.is_empty())
     }
 
     /// Handles added from here on wait for the next walk.
@@ -258,12 +252,10 @@ impl<T> HandleList<T> {
     /// # Safety
     /// The caller is done with the handle before the event loop runs another task.
     unsafe fn walk_next(&self) -> Option<HandleRef<'_, T>> {
-        let mut walking = self.walking.take();
-        let next = walking.pop();
-        self.walking.set(walking);
+        let next = self.walking.with_taken(Vec::pop)?;
         // SAFETY: `add`'s contract, and fn contract. Other threads cannot change a listed handle.
         unsafe {
-            let handle = HandleRef::new(next?);
+            let handle = HandleRef::new(next);
             self.add(&handle);
             Some(handle)
         }
@@ -271,13 +263,12 @@ impl<T> HandleList<T> {
 
     /// Handles only remain here after a termination.
     fn end_walk(&self) {
-        let mut walking = self.walking.take();
-        if !walking.is_empty() {
-            let mut listed = self.listed.take();
-            listed.extend(walking.drain(..).rev());
-            self.listed.set(listed);
-        }
-        self.walking.set(walking);
+        self.walking.with_taken(|walking| {
+            if !walking.is_empty() {
+                self.listed
+                    .with_taken(|listed| listed.extend(walking.drain(..).rev()));
+            }
+        });
     }
 }
 
@@ -914,19 +905,21 @@ impl UvTimerNode {
     }
 }
 
-impl HandleFields<TimerFields> {
+impl HandleRef<'_, TimerFields> {
     /// Schedules the timer to fire `timeout_ms` from now and marks it started.
     fn arm(&self, timeout_ms: u64) {
-        let Some(node) = self.body.node.take() else {
-            return;
-        };
-        let due = Timespec::ms_from_now(
-            TimespecMockMode::ForceRealTime,
-            i64::try_from(timeout_ms).unwrap_or(i64::MAX),
-        );
-        timer_all().update(&raw const node.event_loop_timer, &due);
-        self.body.node.set(Some(node));
-        self.ref_state.set_active(true);
+        self.body.node.with_taken(|node| {
+            let Some(node) = node else {
+                // Closed.
+                return;
+            };
+            let due = Timespec::ms_from_now(
+                TimespecMockMode::ForceRealTime,
+                i64::try_from(timeout_ms).unwrap_or(i64::MAX),
+            );
+            timer_all().update(&raw const node.event_loop_timer, &due);
+            self.ref_state.set_active(true);
+        });
     }
 
     /// Implements `uv_timer_stop`. Checks the node's state before removing it from the
@@ -936,11 +929,11 @@ impl HandleFields<TimerFields> {
         if !self.ref_state.active.get() {
             return;
         }
-        let node = self.body.node.take();
-        if let Some(node) = &node {
-            node.event_loop_timer.disarm();
-        }
-        self.body.node.set(node);
+        self.body.node.with_taken(|node| {
+            if let Some(node) = node {
+                node.event_loop_timer.disarm();
+            }
+        });
         self.ref_state.set_active(false);
     }
 
@@ -1052,11 +1045,13 @@ pub(crate) extern "C" fn uv_timer_get_due_in(handle: HandleRef<'_>) -> u64 {
     if !timer.ref_state.active.get() {
         return 0;
     }
-    let Some(node) = timer.body.node.take() else {
+    let Some(due) = timer
+        .body
+        .node
+        .with_taken(|node| node.as_ref().map(|node| node.event_loop_timer.next.get()))
+    else {
         return 0;
     };
-    let due = node.event_loop_timer.next.get();
-    timer.body.node.set(Some(node));
     let now = Timespec::now(TimespecMockMode::ForceRealTime);
     u64::try_from(due.ms().wrapping_sub(now.ms())).unwrap_or(0)
 }
@@ -1102,7 +1097,6 @@ impl UvHandle {
     pub(crate) unsafe fn run_close(handle: *mut UvHandle, global: &JSGlobalObject) -> JsResult<()> {
         // SAFETY: fn contract.
         let handle = unsafe { HandleRef::new(NonNull::new_unchecked(handle)) };
-        handle.flags.update(|flags| flags | UV_HANDLE_CLOSED);
         bun_output::scoped_log!(uv, "uv_handle_t {:?}: close_cb", handle.ptr);
         if let Some(close_cb) = handle.close_cb.get() {
             let _handles = CallbackScope::open(global);

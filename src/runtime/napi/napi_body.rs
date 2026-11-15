@@ -20,6 +20,7 @@ use bun_jsc::{
     self as jsc, Debugger, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, StrongOptional,
     Task, VmBound,
 };
+use bun_ptr::CellExt;
 use bun_threading::Condition as Condvar;
 use bun_threading::guarded::GuardedLock;
 use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
@@ -887,11 +888,7 @@ unsafe extern "C" fn napi_create_string_utf16(
                 // SAFETY: caller guarantees ptr is NUL-terminated when length == NAPI_AUTO_LENGTH.
                 // Scan to the NUL u16 terminator.
                 break 'brk unsafe {
-                    let mut length = 0;
-                    while (*str_.add(length)).get() != 0 {
-                        length += 1;
-                    }
-                    bun_core::ffi::slice(str_, length)
+                    bun_core::ffi::slice(str_, bun_core::ffi::wcslen(str_.cast()))
                 };
             } else if length > i32::MAX as usize {
                 return env.invalid_arg();
@@ -1965,6 +1962,35 @@ struct AsyncWorkOffThread {
 bun_threading::intrusive_work_task!(AsyncWorkOffThread, task);
 
 impl napi_async_work {
+    /// # Safety
+    /// As [`napi_create_async_work`].
+    unsafe fn new(
+        env: &NapiEnv,
+        execute: napi_async_execute_callback,
+        complete: Option<napi_async_complete_callback>,
+        data: *mut c_void,
+    ) -> *mut napi_async_work {
+        bun_core::heap::into_raw(Box::new(napi_async_work {
+            off_thread: UnsafeCell::new(AsyncWorkOffThread {
+                task: WorkPoolTask {
+                    node: bun_threading::thread_pool::Node::default(),
+                    callback: Self::run_from_thread_pool,
+                },
+                concurrent_task: ConcurrentTask::default(),
+                ticket: None,
+                env: env.as_mut_ptr(),
+                execute,
+            }),
+            status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
+            data,
+            env: Cell::new(Some(env.ref_())),
+            complete,
+            scheduled: Cell::new(false),
+            poll_ref: Cell::default(),
+            context: env.to_js().bun_vm().context_of_caller().id(),
+        }))
+    }
+
     /// Returns false if the VM is closed. The addon still has to delete the work.
     ///
     /// # Safety
@@ -2326,25 +2352,8 @@ unsafe extern "C" fn napi_create_async_work(
     let Some(execute) = execute_ else {
         return env.invalid_arg();
     };
-    result.write(bun_core::heap::into_raw(Box::new(napi_async_work {
-        off_thread: UnsafeCell::new(AsyncWorkOffThread {
-            task: WorkPoolTask {
-                node: bun_threading::thread_pool::Node::default(),
-                callback: napi_async_work::run_from_thread_pool,
-            },
-            concurrent_task: ConcurrentTask::default(),
-            ticket: None,
-            env: env.as_mut_ptr(),
-            execute,
-        }),
-        status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
-        data,
-        env: Cell::new(Some(env.ref_())),
-        complete,
-        scheduled: Cell::new(false),
-        poll_ref: Cell::default(),
-        context: env.to_js().bun_vm().context_of_caller().id(),
-    })));
+    // SAFETY: fn contract.
+    result.write(unsafe { napi_async_work::new(env, execute, complete, data) });
     env.ok()
 }
 
@@ -2732,6 +2741,11 @@ impl Drop for ThreadSafeFunction {
 }
 
 impl ThreadSafeFunction {
+    fn new(init: ThreadSafeFunction) -> Arc<ThreadSafeFunction> {
+        let _ = THREADSAFE_FUNCTION_LIVE_COUNT.fetch_add(1, Ordering::SeqCst);
+        Arc::new(init)
+    }
+
     /// Runs `f` under the lock when `f` can give up the caller's reference.
     ///
     /// # Safety
@@ -2870,16 +2884,14 @@ impl ThreadSafeFunction {
     /// One queued call from the drain, which is its landing frame: what it
     /// left pending is folded here. `Err`: the VM is stopping.
     fn call(&self, js: &TsfnJsSide, item: AddonData) -> Result<(), bun_jsc::Stopped> {
-        let Some(target) = js.target.take() else {
-            // env torn down; nothing to call into.
-            return Ok(());
-        };
-        let result = match self.deliver(&target, item) {
-            Ok(()) => Ok(()),
-            Err(err) => bun_jsc::task::report_error_or_terminate(target.env.to_js(), err),
-        };
-        js.target.set(Some(target));
-        result
+        js.target.with_taken(|target| {
+            let Some(target) = target else {
+                // env torn down; nothing to call into.
+                return Ok(());
+            };
+            self.deliver(target, item)
+                .or_else(|err| bun_jsc::task::report_error_or_terminate(target.env.to_js(), err))
+        })
     }
 
     /// One queued call: a JS entry of its own, so what it leaves pending is
@@ -3175,8 +3187,7 @@ unsafe extern "C" fn napi_create_threadsafe_function(
         },
     };
 
-    let _ = THREADSAFE_FUNCTION_LIVE_COUNT.fetch_add(1, Ordering::SeqCst);
-    let function = Arc::new(ThreadSafeFunction {
+    let function = ThreadSafeFunction::new(ThreadSafeFunction {
         shared: Guarded::new(TsfnShared {
             queue: TsfnQueue::init(),
             thread_count: i64::try_from(initial_thread_count).expect("int cast"),

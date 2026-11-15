@@ -74,7 +74,7 @@ use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_picohttp as picohttp;
 use bun_ptr::RefPtr;
 use bun_resolver::data_url::DataURL;
-use bun_s3_signing::{SignOptions, SignResult};
+use bun_s3_signing::SignOptions;
 use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 use std::sync::Arc;
@@ -1512,7 +1512,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // ArrayBuffer/TypedArray, string) are handled; ReadableStream and sendfile
     // are skipped. S3 destinations replace the header set with a signed one,
     // so compression is skipped there too. The actual compression runs on the
-    // HTTP thread (HTTPClient::compress_body_for_send) so it can reuse LibdeflateState's shared
+    // HTTP thread (HTTPClient::compress_body_into_shared) so it can reuse LibdeflateState's shared
     // scratch buffer; here we only commit to it by appending Content-Encoding
     // and forwarding the option.
     if let Some(compress_opt) = &compress
@@ -1668,28 +1668,16 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         let content_type = headers.as_ref().and_then(|h| h.get_content_type());
-        let mut header_buffer: [picohttp::Header; SignResult::MAX_HEADERS + 1] =
-            [picohttp::Header::ZERO; SignResult::MAX_HEADERS + 1];
-
-        if let Some(range_) = &range {
-            let new_headers = result.mix_with_header(
-                &mut header_buffer,
-                picohttp::Header::new(b"range", range_.as_bytes()),
-            );
-            set_headers(&mut headers, new_headers);
-        } else if let Some(ct) = content_type {
-            if !ct.is_empty() {
-                let new_headers = result.mix_with_header(
-                    &mut header_buffer,
-                    picohttp::Header::new(b"Content-Type", ct),
-                );
-                set_headers(&mut headers, new_headers);
-            } else {
-                set_headers(&mut headers, result.headers());
+        headers = Some({
+            let mut new_headers = result.headers();
+            if let Some(range_) = &range {
+                new_headers
+                    .append_assume_capacity(picohttp::Header::new(b"range", range_.as_bytes()));
+            } else if let Some(ct) = content_type.filter(|ct| !ct.is_empty()) {
+                new_headers.append_assume_capacity(picohttp::Header::new(b"Content-Type", ct));
             }
-        } else {
-            set_headers(&mut headers, result.headers());
-        }
+            Headers::from_pico_http_headers(&new_headers)
+        });
     }
 
     // Decided before anything is queued, so an unusable framing header rejects up front.
@@ -1857,15 +1845,4 @@ impl S3StreamWrapper {
         }
         Ok(())
     }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// setHeaders helper
-// ──────────────────────────────────────────────────────────────────────────
-
-fn set_headers(headers: &mut Option<Headers>, new_headers: &[picohttp::Header]) {
-    let old = headers.take();
-    *headers = Some(Headers::from_pico_http_headers(new_headers));
-    // `if (old) |*h| h.deinit()` → Drop on `old`.
-    drop(old);
 }

@@ -11,7 +11,7 @@ use crate::vec::BorrowedCursor;
 // Note: the `append*` methods return `&[u8]` borrowing the buffer while also
 // taking `&mut self`, so callers cannot hold two returned slices at once.
 // Callers that need to interleave appends
-// use `StringPointer` offsets or the unsafe `append_raw` escape hatch below.
+// use `StringPointer` offsets.
 pub struct StringBuilder<State = Allocated>(State);
 
 /// The state before `allocate()`.
@@ -73,21 +73,6 @@ impl StringBuilder {
     pub fn append_zeros(&mut self, count: usize) {
         assert!(count <= self.capacity() - self.len()); // didn't count everything
         self.0.0.resize(self.len() + count, 0);
-    }
-
-    /// Copy `slice` into the reserved buffer and return a borrow of the copied
-    /// bytes with an *unbound* lifetime, so callers may interleave appends and
-    /// stash both slices (e.g. `picohttp::Header::clone`).
-    ///
-    /// # Safety
-    /// The returned slice aliases the buffer. Caller must keep the builder (or the
-    /// moved-out buffer) alive, and those bytes unchanged, while the slice is in use.
-    pub unsafe fn append_raw<'a>(&mut self, slice: &[u8]) -> &'a [u8] {
-        let start = self.len();
-        self.append_with(|mut cursor| cursor.append(slice));
-        // SAFETY: `append_with` initialized these bytes, and the buffer is never reallocated. The
-        // unbound `'a` lifetime is the documented caller contract of `append_raw`.
-        unsafe { core::slice::from_raw_parts(self.0.0.as_ptr().add(start), slice.len()) }
     }
 
     pub fn add_concat(&mut self, slices: &[&[u8]]) -> StringPointer {

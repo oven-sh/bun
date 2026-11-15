@@ -621,11 +621,13 @@ pub fn err_error_string_n(packed_error: u32, buf: &mut [u8]) -> &[u8] {
     bun_core::slice_to_nul(buf)
 }
 
+const MAX_REASON_LEN: usize = 128;
+
 /// Copied, because the reason of an `ERR_LIB_SYS` error comes from `strerror`.
-pub fn err_reason_error_string(packed_error: u32) -> BoundedArray<u8, 128> {
+pub fn err_reason_error_string(packed_error: u32) -> BoundedArray<u8, MAX_REASON_LEN> {
     // SAFETY: the call takes any code. The string is never null, and lives until this thread calls `strerror` again.
     let reason = unsafe { CStr::from_ptr(ERR_reason_error_string(packed_error)) }.to_bytes();
-    BoundedArray::from_slice(&reason[..reason.len().min(128)]).expect("truncated to fit")
+    BoundedArray::from_slice(&reason[..reason.len().min(MAX_REASON_LEN)]).expect("truncated to fit")
 }
 
 impl OwnedSslSession {

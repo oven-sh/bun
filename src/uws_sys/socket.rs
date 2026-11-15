@@ -608,7 +608,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    /// `None` unless this is an open TLS socket.
+    /// `None` if the socket has no `SSL`.
     ///
     /// # Safety
     /// The socket has not been freed, and the result is not used after the socket closes: the close frees the `SSL`.

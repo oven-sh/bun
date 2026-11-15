@@ -127,11 +127,6 @@ impl WindowsNamedPipe {
         self.flags.set(flags);
     }
 
-    #[inline]
-    fn wrapper_ref(&self) -> Option<&WrapperType> {
-        self.wrapper.get()
-    }
-
     fn install_wrapper(&self, wrapper: WrapperType) {
         debug_assert!(self.wrapper.get().is_none(), "TLS was set up twice");
         self.wrapper.get_or_init(|| wrapper);
@@ -192,7 +187,7 @@ impl WindowsNamedPipe {
 
         let mut data = self.incoming.replace(Vec::new());
 
-        match self.wrapper_ref() {
+        match self.wrapper.get() {
             Some(w) => w.receive_data(data.as_slice()),
             None => (self.handlers.on_data)(self.handlers.ctx, data.as_slice()),
         }
@@ -340,7 +335,7 @@ impl WindowsNamedPipe {
         }
 
         if !msg_more {
-            if let Some(w) = self.wrapper_ref() {
+            if let Some(w) = self.wrapper.get() {
                 let _ = w.shutdown(false);
             }
             self.writer.end(self);
@@ -384,7 +379,7 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__flush")]
     pub(crate) fn flush(&self) {
-        if let Some(w) = self.wrapper_ref() {
+        if let Some(w) = self.wrapper.get() {
             let _ = w.flush();
         }
         if !self.flags.get().disconnected() {
@@ -453,7 +448,7 @@ impl WindowsNamedPipe {
         if self.start(true) {
             if self.is_tls() {
                 // trigger onOpen and start the handshake
-                if let Some(w) = self.wrapper_ref() {
+                if let Some(w) = self.wrapper.get() {
                     w.start();
                 }
             } else {
@@ -494,7 +489,7 @@ impl WindowsNamedPipe {
         if self.start(false) {
             if self.is_tls() {
                 // trigger onOpen and start the handshake
-                if let Some(w) = self.wrapper_ref() {
+                if let Some(w) = self.wrapper.get() {
                     w.start();
                 }
             } else {
@@ -638,7 +633,7 @@ impl WindowsNamedPipe {
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__encode_and_write")]
     pub(crate) fn encode_and_write(&self, data: &[u8]) -> i32 {
         bun_output::scoped_log!(WindowsNamedPipe, "encodeAndWrite (len: {})", data.len());
-        if let Some(w) = self.wrapper_ref() {
+        if let Some(w) = self.wrapper.get() {
             return i32::try_from(w.write_data(data).unwrap_or(0)).expect("int cast");
         }
         self.internal_write(data);
@@ -672,7 +667,7 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__close")]
     pub(crate) fn close(&self) {
-        if let Some(w) = self.wrapper_ref() {
+        if let Some(w) = self.wrapper.get() {
             let _ = w.shutdown(false);
         }
         self.writer.end(self);
@@ -680,7 +675,7 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__shutdown")]
     pub(crate) fn shutdown(&self) {
-        if let Some(w) = self.wrapper_ref() {
+        if let Some(w) = self.wrapper.get() {
             let _ = w.shutdown(false);
         } else {
             // Plain (non-TLS) named pipe: half-close the write side so the peer
@@ -694,7 +689,7 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__shutdown_read")]
     pub(crate) fn shutdown_read(&self) {
-        if let Some(wrapper) = self.wrapper_ref() {
+        if let Some(wrapper) = self.wrapper.get() {
             wrapper.shutdown_read();
         } else {
             if let Some(stream) = self.writer.get_stream() {
@@ -707,7 +702,7 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__is_shutdown", no_catch)]
     pub(crate) fn is_shutdown(&self) -> bool {
-        if let Some(wrapper) = self.wrapper_ref() {
+        if let Some(wrapper) = self.wrapper.get() {
             return wrapper.is_shutdown();
         }
 
@@ -716,7 +711,7 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__is_closed", no_catch)]
     pub(crate) fn is_closed(&self) -> bool {
-        if let Some(wrapper) = self.wrapper_ref() {
+        if let Some(wrapper) = self.wrapper.get() {
             return wrapper.is_closed();
         }
         self.flags.get().disconnected()
@@ -779,7 +774,7 @@ impl WindowsNamedPipe {
         }
         self.writer.close_without_reporting(self);
         self.writer.discard_queued();
-        if let Some(wrapper) = self.wrapper_ref() {
+        if let Some(wrapper) = self.wrapper.get() {
             wrapper.stop();
         }
         self.ssl_error.set(CertError::default());
@@ -795,7 +790,7 @@ impl Drop for WindowsNamedPipe {
 // The other `WindowsNamedPipe__*` symbols are emitted by `#[uws_callback(export = …)]` above.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn WindowsNamedPipe__set_inline_reject(this: &WindowsNamedPipe) {
-    if let Some(wrapper) = this.wrapper_ref() {
+    if let Some(wrapper) = this.wrapper.get() {
         wrapper.set_inline_reject();
     }
 }
@@ -804,12 +799,12 @@ pub(crate) extern "C" fn WindowsNamedPipe__set_inline_reject(this: &WindowsNamed
 pub(crate) extern "C" fn WindowsNamedPipe__latest_session(
     this: &WindowsNamedPipe,
 ) -> Option<bun_boringssl_sys::OwnedSslSession> {
-    this.wrapper_ref()?.latest_session()
+    this.wrapper.get()?.latest_session()
 }
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn WindowsNamedPipe__ssl(this: &WindowsNamedPipe) -> Option<&boringssl::SSL> {
-    this.wrapper_ref()?.ssl()
+    this.wrapper.get()?.ssl()
 }
 
 impl WriteHandler for WindowsNamedPipe {

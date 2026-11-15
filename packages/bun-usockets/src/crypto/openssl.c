@@ -495,6 +495,8 @@ static long BIO_s_custom_ctrl(BIO *bio, int cmd, long num, void *user) {
   }
 }
 
+#define US_SSL_LOOP_STATE_SLOTS 6
+
 /* Save/restore the per-loop BIO routing state around a JS callback that runs
  * from inside SSL_do_handshake/SSL_read: user JS that writes to or destroys a
  * different TLS socket on the same loop re-points loop_ssl_data->ssl_socket
@@ -503,22 +505,19 @@ static long BIO_s_custom_ctrl(BIO *bio, int cmd, long num, void *user) {
  * flag is saved-and-zeroed so a write or close_notify for a different socket
  * inside the callback goes to that socket's fd via the per-record BIO path
  * instead of appending to the interrupted handshake's batch. */
-#define US_SSL_LOOP_STATE_SLOTS 6
-
 static void us_internal_ssl_loop_state_save(SSL *ssl, void **out) {
   struct loop_ssl_data *d = (struct loop_ssl_data *)BIO_get_data(SSL_get_wbio(ssl));
   out[0] = d;
-  out[1] = d ? (void *)d->ssl_socket : NULL;
-  out[2] = d ? (void *)d->ssl_read_input : NULL;
-  out[3] = d ? (void *)(uintptr_t)d->ssl_read_input_length : NULL;
-  out[4] = d ? (void *)(uintptr_t)d->ssl_read_input_offset : NULL;
-  out[5] = d ? (void *)(uintptr_t)d->ssl_write_batching : NULL;
-  if (d) d->ssl_write_batching = 0;
+  out[1] = d->ssl_socket;
+  out[2] = d->ssl_read_input;
+  out[3] = (void *)(uintptr_t)d->ssl_read_input_length;
+  out[4] = (void *)(uintptr_t)d->ssl_read_input_offset;
+  out[5] = (void *)(uintptr_t)d->ssl_write_batching;
+  d->ssl_write_batching = 0;
 }
 
 static void us_internal_ssl_loop_state_restore(void **saved) {
   struct loop_ssl_data *d = (struct loop_ssl_data *)saved[0];
-  if (!d) return;
   d->ssl_socket = (struct us_socket_t *)saved[1];
   d->ssl_read_input = (char *)saved[2];
   d->ssl_read_input_length = (unsigned int)(uintptr_t)saved[3];
@@ -526,8 +525,8 @@ static void us_internal_ssl_loop_state_restore(void **saved) {
   d->ssl_write_batching = (int)(uintptr_t)saved[5];
 }
 
-static int us_alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
-                             const unsigned char *in, unsigned int inlen, void *arg) {
+static int us_ssl_alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
+                                 const unsigned char *in, unsigned int inlen, void *arg) {
   (void)arg;
   void *wrapper = us_ssl_wrapper(ssl);
   if (wrapper) return us_ssl_wrapper_alpn_select(wrapper, ssl, out, outlen, in, inlen);
@@ -541,7 +540,7 @@ static int us_alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char 
 }
 
 void us_ssl_ctx_enable_alpn_select(SSL_CTX *ctx) {
-  SSL_CTX_set_alpn_select_cb(ctx, us_alpn_select_cb, NULL);
+  SSL_CTX_set_alpn_select_cb(ctx, us_ssl_alpn_select_cb, NULL);
 }
 
 /* A send() that no retry can save loses sealed records: nothing may follow them, but what the peer sent is still read. */

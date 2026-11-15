@@ -353,7 +353,7 @@ fn read_name_and_version(manager: &PackageManager, folder: &[u8]) -> (Vec<u8>, V
     let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
         Ok(p) => p,
         Err(err) => {
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print(Output::error_writer());
             bun_core::pretty_errorln!(
                 "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
                 err.name(),
@@ -712,7 +712,7 @@ fn patch_applies(
 ) -> bool {
     let mut log = bun_ast::Log::init();
     let patchfile = crate::patch_install::parse_patch_source(patch, &mut log);
-    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+    let _ = log.print(Output::error_writer());
     // An install only warns about the sections it skips, because older versions of Bun wrote patch
     // files that have them. A new patch must not have any.
     let Some(patchfile) = patchfile.filter(|patchfile| patchfile.skipped.is_empty()) else {
@@ -783,10 +783,8 @@ fn diff_against_cache(
         &from_cwd(cwd.as_bytes(), old_folder),
         &from_cwd(cwd.as_bytes(), new_folder),
     );
-    let (opts, _envp_guard) =
-        bun_patch::spawn_opts(&paths[0], &paths[1], cwd, git, &manager.event_loop);
-
-    let mut spawn_result = match bun_spawn::sync::spawn(&opts) {
+    let spawned = bun_patch::spawn_git_diff(&paths[0], &paths[1], cwd, git, &manager.event_loop);
+    let mut spawn_result = match spawned {
         Err(e) => {
             bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e.name(),);
             return None;
@@ -1128,9 +1126,7 @@ fn download_if_not_cached(manager: &mut PackageManager, pkg: &Package) {
         return;
     }
     if download_pinned_packages(manager, Some(pkg.meta.id), false).is_err() || !is_cached(manager) {
-        let _ = manager
-            .log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()));
+        let _ = manager.log_mut().print(Output::error_writer());
         bun_core::pretty_errorln!(
             "<r><red>error<r>: <b>{}<r> not in cache, re-download failed",
             bstr::BStr::new(&name),

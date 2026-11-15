@@ -1,5 +1,6 @@
 #![feature(allocator_api)]
 #![feature(adt_const_params)]
+#![feature(core_io, core_io_borrowed_buf)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
 #![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time
 #![allow(non_snake_case)]
@@ -16,6 +17,7 @@
 
 pub mod Global;
 pub mod atomic_cell;
+pub mod c_str_list;
 pub mod ci_info;
 pub mod comptime_string_map;
 pub mod error;
@@ -25,6 +27,7 @@ pub mod thread_id;
 pub mod tty;
 pub mod util;
 pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
+pub use c_str_list::{CStrList, CStrRef, CStringList};
 
 /// Shared state-machine tag for the streaming (de)compressors in
 /// `bun_brotli` / `bun_zlib` / `bun_zstd`.
@@ -386,24 +389,6 @@ pub mod vec {
         &mut v[prev..]
     }
 
-    /// As [`writable_slice`] but skips `reserve`; caller must guarantee
-    /// `len + additional <= capacity` (debug-asserted).
-    ///
-    /// # Safety
-    /// `v.len() + additional <= v.capacity()`, and the returned slice must be
-    /// fully written before any read.
-    #[inline]
-    pub(crate) unsafe fn writable_slice_assume_capacity<T>(
-        v: &mut Vec<T>,
-        additional: usize,
-    ) -> &mut [T] {
-        debug_assert!(v.len() + additional <= v.capacity());
-        let prev = v.len();
-        // SAFETY: caller contract — capacity asserted; slice fully written before any read.
-        unsafe { v.set_len(prev + additional) };
-        &mut v[prev..]
-    }
-
     /// Drop the first `n` elements of `v` in place via overlapping memmove
     /// (`copy_within(n.., 0)`) + `truncate`, retaining capacity. Equivalent
     /// to `v.drain(..n)` for `T: Copy` but without the iterator machinery.
@@ -428,7 +413,7 @@ pub mod vec {
     // ── Spare-capacity fill helpers ────────────────────────────────────────
     // Consolidates 11 hand-rolled `spare_capacity_mut().as_mut_ptr().cast::<u8>()`
     // + `set_len(len+n)` copies: `spare_capacity_mut` returns
-    // `MaybeUninit<u8>` and every C-ABI fill site (read/recv/pread, simdutf,
+    // `MaybeUninit<u8>` and every C-ABI fill site (simdutf,
     // zlib, zstd, libdeflate, base64) needs `*mut u8` / `&mut [u8]`.
 
     /// View `v[len..capacity]` as a write-only `&mut [u8]` for an FFI /
@@ -526,6 +511,25 @@ pub mod vec {
         }
     }
 
+    pub use core::io::{BorrowedBuf, BorrowedCursor};
+
+    /// Appends what `fill` writes to its cursor: the spare capacity of `v`, up to `max` items.
+    #[inline]
+    pub fn append_with<T: Copy, R>(
+        v: &mut Vec<T>,
+        max: usize,
+        fill: impl FnOnce(BorrowedCursor<'_, T>) -> R,
+    ) -> R {
+        let spare = v.spare_capacity_mut();
+        let max = max.min(spare.len());
+        let mut buf = BorrowedBuf::from(&mut spare[..max]);
+        let result = fill(buf.unfilled());
+        let filled = buf.len();
+        // SAFETY: the filled part of a `BorrowedBuf` is initialized, and starts where `v` ends.
+        unsafe { v.set_len(v.len() + filled) };
+        result
+    }
+
     /// The stack-array form of [`spare_bytes_mut`]: `N` uninitialized bytes for a producer that reports how many it wrote.
     pub struct UninitBuf<const N: usize>(core::mem::MaybeUninit<[u8; N]>);
 
@@ -572,10 +576,7 @@ bun_dispatch::link_interface! {
         fn stderr() -> output::File;
         fn make_path(cwd: Fd, dir: &[u8]) -> core::result::Result<(), Error>;
         fn create_file(cwd: Fd, path: &[u8]) -> core::result::Result<Fd, Error>;
-        fn quiet_writer_from_fd(fd: Fd) -> output::QuietWriter;
-        fn quiet_writer_adapt(qw: output::QuietWriter, buf: *mut u8, len: usize) -> output::QuietWriterAdapter;
-        fn quiet_writer_write_all(qw: &mut output::QuietWriter, bytes: &[u8]) -> bool;
-        fn quiet_writer_fd(qw: &output::QuietWriter) -> Fd;
+        fn write_all_quiet(fd: Fd, bytes: &[u8]) -> bool;
         fn tty_winsize(fd: Fd) -> Option<Winsize>;
         fn is_terminal(fd: Fd) -> bool;
         fn read(fd: Fd, buf: &mut [u8]) -> core::result::Result<usize, Error>;
@@ -1681,31 +1682,13 @@ pub(crate) mod strings_impl {
     /// `Vec<u8>` / `&[u8]` of LE bytes (e.g. BOM-stripping a file buffer) MUST
     /// route through this helper instead of casting.
     ///
-    /// The bytes are first copied into a freshly-allocated, properly-aligned
-    /// `Vec<u16>` via a raw byte `memcpy` (no per-element decode — simdutf
-    /// interprets the buffer as little-endian and Bun targets only LE hosts),
-    /// then handed to `to_utf8_alloc`. An odd trailing byte is dropped, which
-    /// matches the prior `len() / 2` truncation.
+    /// An odd trailing byte is dropped.
     pub fn to_utf8_alloc_from_le_bytes(le_bytes: &[u8]) -> Vec<u8> {
-        let n_u16 = le_bytes.len() / 2;
-        if n_u16 == 0 {
+        let (units, _) = le_bytes.as_chunks::<2>();
+        if units.is_empty() {
             return Vec::new();
         }
-        let mut aligned: Vec<u16> = Vec::with_capacity(n_u16);
-        // SAFETY: `aligned.as_mut_ptr()` is a fresh `Vec<u16>` allocation, so it
-        // is 2-byte-aligned and has `n_u16 * 2` writable bytes of capacity. We
-        // copy exactly that many bytes from `le_bytes` (which has at least
-        // `n_u16 * 2` readable bytes) into it as raw `u8`, then expose them as
-        // initialized `u16` via `set_len`. No `&[u16]` is ever formed over the
-        // possibly-misaligned source.
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                le_bytes.as_ptr(),
-                aligned.as_mut_ptr().cast::<u8>(),
-                n_u16 * 2,
-            );
-            aligned.set_len(n_u16);
-        }
+        let aligned: Vec<u16> = units.iter().map(|&unit| u16::from_le_bytes(unit)).collect();
         to_utf8_alloc(&aligned)
     }
 

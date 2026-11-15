@@ -444,9 +444,7 @@ impl<'a> Installer<'a> {
                 apply.logger.append_to(&mut log);
                 return Err(TaskError::Patching(log));
             }
-            let _ = apply
-                .logger
-                .print(std::ptr::from_mut(Output::error_writer()));
+            let _ = apply.logger.print(Output::error_writer());
         }
         Ok(())
     }
@@ -475,7 +473,7 @@ impl<'a> Installer<'a> {
             }
             TaskError::Patching(patch_log) => {
                 Output::err_generic("failed to patch package: {}@{}", pkg);
-                let _ = patch_log.print(std::ptr::from_mut(Output::error_writer()));
+                let _ = patch_log.print(Output::error_writer());
             }
             TaskError::Binaries(err) => {
                 Output::err(*err, "failed to link binaries for package: {}@{}", pkg);

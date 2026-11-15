@@ -36,7 +36,7 @@ pub(crate) fn read_trusted_dependencies(pm: &mut PackageManager) -> Option<Trust
     {
         Ok(recorded) => recorded,
         Err(err) => {
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print(Output::error_writer());
             Output::err(err, "failed to read trustedDependencies", ());
             Global::crash();
         }
@@ -601,9 +601,7 @@ impl TrustCommand {
         ) {
             Ok(v) => v,
             Err(err) => {
-                let _ = ctx
-                    .log_ref()
-                    .print(std::ptr::from_mut(Output::error_writer()));
+                let _ = ctx.log_ref().print(Output::error_writer());
 
                 Output::err_generic("failed to parse package.json: {s}", (err.name(),));
                 Global::crash();

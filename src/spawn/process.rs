@@ -1,9 +1,11 @@
 #[cfg(windows)]
 use core::cell::UnsafeCell;
 use core::cell::{Cell, OnceCell};
+#[cfg(windows)]
+use core::ffi::c_char;
+use core::ffi::c_int;
 #[cfg(any(windows, target_os = "macos"))]
 use core::ffi::c_void;
-use core::ffi::{c_char, c_int};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use core::sync::atomic::AtomicI32;
 #[cfg(unix)]
@@ -12,7 +14,7 @@ use core::sync::atomic::Ordering;
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 use bun_core::Global;
-use bun_core::Output;
+use bun_core::{CStrList, CStrRef, CStringList, Output};
 use bun_event_loop::EventLoopHandle;
 #[cfg(unix)]
 use bun_io::ParentDeathWatchdog;
@@ -61,8 +63,7 @@ pub use bun_spawn_sys::spawn_process::rusage_zeroed;
 #[cfg(windows)]
 use bun_spawn_sys::uv_getrusage;
 pub use bun_spawn_sys::{
-    Argv, CStrPtr, Dup2, Envp, ExtraPipe, PidT, PosixSpawnOptions, PosixSpawnResult, PosixStdio,
-    Rusage, StdioKind,
+    Dup2, ExtraPipe, PidT, PosixSpawnOptions, PosixSpawnResult, PosixStdio, Rusage, StdioKind,
 };
 
 /// Whether the process-exit poll should be registered one-shot.
@@ -1356,7 +1357,7 @@ impl WindowsSpawnResult {
 }
 
 #[cfg(windows)]
-pub struct WindowsSpawnOptions {
+pub struct WindowsSpawnOptions<'a> {
     pub stdin: WindowsStdio,
     pub stdout: WindowsStdio,
     pub stderr: WindowsStdio,
@@ -1371,7 +1372,7 @@ pub struct WindowsSpawnOptions {
     /// `UV_ENOTSUP` on Windows, exactly like Node.
     pub gid: Option<u32>,
     pub windows: WindowsOptions,
-    pub argv0: Option<*const c_char>,
+    pub argv0: Option<CStrRef<'a>>,
     pub stream: bool,
     pub use_execve_on_macos: bool,
     pub can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: bool,
@@ -1387,7 +1388,7 @@ pub struct WindowsSpawnOptions {
 }
 
 #[cfg(windows)]
-impl Default for WindowsSpawnOptions {
+impl Default for WindowsSpawnOptions<'_> {
     fn default() -> Self {
         Self {
             stdin: WindowsStdio::Inherit,
@@ -1469,9 +1470,9 @@ impl SpawnResultExt for PosixSpawnResult {
 }
 
 #[cfg(unix)]
-pub type SpawnOptions = PosixSpawnOptions;
+pub type SpawnOptions<'a> = PosixSpawnOptions<'a>;
 #[cfg(windows)]
-pub type SpawnOptions = WindowsSpawnOptions;
+pub type SpawnOptions<'a> = WindowsSpawnOptions<'a>;
 
 #[cfg(unix)]
 pub type Stdio = PosixStdio;
@@ -1493,21 +1494,15 @@ mod spawn_process_body {
     #[cfg(unix)]
     pub use bun_spawn_sys::spawn_process_posix;
 
-    /// # Safety
-    /// `argv` must point to a null-terminated array of NUL-terminated C
-    /// strings with at least one non-null element; `envp` must point to a
-    /// null-terminated array of NUL-terminated C strings, or be null on
-    /// Windows (libuv then inherits the parent environment). Both must remain
-    /// valid for the duration of the call.
-    pub unsafe fn spawn_process(
-        options: &SpawnOptions,
-        argv: Argv, // [*:null]?[*:0]const u8
-        envp: Envp,
+    /// Without `envp`, the child inherits ours. Panics if neither `argv0` nor `argv[0]` is there.
+    pub fn spawn_process(
+        options: &SpawnOptions<'_>,
+        argv: CStrList<'_>,
+        envp: Option<CStrList<'_>>,
     ) -> Result<bun_sys::Result<SpawnProcessResult>, crate::Error> {
         #[cfg(unix)]
         {
-            // SAFETY: forwarded from this function's safety contract.
-            unsafe { spawn_process_posix(options, argv, envp) }.map_err(Into::into)
+            spawn_process_posix(options, argv, envp).map_err(Into::into)
         }
         #[cfg(not(unix))]
         {
@@ -1515,55 +1510,22 @@ mod spawn_process_body {
         }
     }
 
-    /// The environment block handed to the child by [`spawn_process_cstr`].
-    #[derive(Clone, Copy)]
-    pub enum SpawnEnv<'a> {
-        /// This process's own `environ`.
-        Inherit,
-        /// `KEY=VALUE` strings; the null-terminated pointer block is built here.
-        Strings(&'a [&'a core::ffi::CStr]),
-    }
-
-    /// [`spawn_process`] for callers holding borrowed C strings: builds the
-    /// null-terminated `argv`/`envp` pointer blocks for the duration of the call.
+    /// [`spawn_process`] for callers holding borrowed C strings: builds the `argv` pointer block.
     pub fn spawn_process_cstr(
-        options: &SpawnOptions,
+        options: &SpawnOptions<'_>,
         argv: &[&core::ffi::CStr],
-        env: SpawnEnv<'_>,
+        envp: Option<CStrList<'_>>,
     ) -> Result<bun_sys::Result<SpawnProcessResult>, crate::Error> {
-        assert!(!argv.is_empty(), "spawn_process_cstr: argv[0] is required");
-        let argv: Vec<CStrPtr> = argv
-            .iter()
-            .map(|s| s.as_ptr())
-            .chain(core::iter::once(core::ptr::null()))
-            .collect();
-        let env_block: Vec<CStrPtr>;
-        let envp: Envp = match env {
-            // libuv: a null `env` inherits the parent's environment.
-            #[cfg(windows)]
-            SpawnEnv::Inherit => core::ptr::null(),
-            #[cfg(unix)]
-            SpawnEnv::Inherit => bun_core::c_environ(),
-            SpawnEnv::Strings(strings) => {
-                env_block = strings
-                    .iter()
-                    .map(|s| s.as_ptr())
-                    .chain(core::iter::once(core::ptr::null()))
-                    .collect();
-                env_block.as_ptr()
-            }
-        };
-        // SAFETY: `argv` is a null-terminated array of NUL-terminated strings
-        // with argv[0] non-null (asserted); `envp` is likewise, or null on
-        // Windows for `Inherit`. Both are borrowed for the call.
-        unsafe { spawn_process(options, argv.as_ptr(), envp) }
+        let argv = argv.iter().map(|&arg| Some(arg.into()));
+        let argv: Vec<_> = argv.chain([None]).collect();
+        spawn_process(options, CStrList::new(&argv), envp)
     }
 
     #[cfg(windows)]
     pub(crate) fn spawn_process_windows(
-        options: &WindowsSpawnOptions,
-        argv: *const *const c_char,
-        envp: *const *const c_char,
+        options: &WindowsSpawnOptions<'_>,
+        argv: CStrList<'_>,
+        envp: Option<CStrList<'_>>,
     ) -> Result<bun_sys::Result<WindowsSpawnResult>, crate::Error> {
         bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
 
@@ -1571,10 +1533,11 @@ mod spawn_process_body {
         let mut uv_process_options: uv::uv_process_options_t =
             unsafe { bun_core::ffi::zeroed_unchecked() };
 
-        uv_process_options.args = argv;
-        uv_process_options.env = envp;
-        // SAFETY: argv is null-terminated, argv[0] is non-null
-        uv_process_options.file = options.argv0.unwrap_or_else(|| unsafe { *argv });
+        uv_process_options.args = argv.as_ptr();
+        // libuv: a null `env` inherits the parent's environment.
+        uv_process_options.env = envp.map_or(core::ptr::null(), CStrList::as_ptr);
+        let argv0 = options.argv0.or_else(|| argv.first());
+        uv_process_options.file = argv0.expect("argv[0] is required").as_ptr();
         uv_process_options.exit_cb = Some(Process::on_exit_uv);
         // `WindowsOptions::default()` leaves a null handle, which `uv_loop()` would dereference.
         assert!(
@@ -1886,7 +1849,7 @@ mod spawn_process_body {
         #[cfg(windows)]
         pub type WindowsOptions = super::WindowsOptions;
 
-        pub struct Options {
+        pub struct Options<'a> {
             pub stdin: SyncStdio,
             pub stdout: SyncStdio,
             pub stderr: SyncStdio,
@@ -1895,11 +1858,11 @@ mod spawn_process_body {
             pub detached: bool,
 
             pub argv: Vec<Box<[u8]>>,
-            /// null = inherit parent env
-            pub envp: Option<*const *const c_char>,
+            /// `None` = inherit parent env
+            pub envp: Option<CStrList<'a>>,
 
             pub use_execve_on_macos: bool,
-            pub argv0: Option<*const c_char>,
+            pub argv0: Option<CStrRef<'a>>,
 
             #[cfg(windows)]
             pub windows: WindowsOptions,
@@ -1934,7 +1897,7 @@ mod spawn_process_body {
         #[cfg(windows)]
         pub(crate) type SpawnOptionsStdio = WindowsStdio;
 
-        impl Default for Options {
+        impl Default for Options<'_> {
             fn default() -> Self {
                 Self {
                     stdin: SyncStdio::Ignore,
@@ -1955,8 +1918,8 @@ mod spawn_process_body {
             }
         }
 
-        impl Options {
-            pub(crate) fn to_spawn_options(&self, new_process_group: bool) -> SpawnOptions {
+        impl<'a> Options<'a> {
+            pub(crate) fn to_spawn_options(&self, new_process_group: bool) -> SpawnOptions<'a> {
                 SpawnOptions {
                     stdin: self.stdin.to_stdio(),
                     stdout: self.stdout.to_stdio(),
@@ -2199,9 +2162,9 @@ mod spawn_process_body {
 
         #[cfg(windows)]
         fn spawn_windows_without_pipes(
-            options: &Options,
-            argv: *const *const c_char,
-            envp: *const *const c_char,
+            options: &Options<'_>,
+            argv: CStrList<'_>,
+            envp: Option<CStrList<'_>>,
         ) -> core::result::Result<Maybe<Result>, crate::Error> {
             // All stdio inherited: the child is the foreground program on our console.
             let _child = crate::ctrl_c::Child::enter();
@@ -2231,9 +2194,9 @@ mod spawn_process_body {
 
         #[cfg(windows)]
         fn spawn_windows_with_pipes(
-            options: &Options,
-            argv: *const *const c_char,
-            envp: *const *const c_char,
+            options: &Options<'_>,
+            argv: CStrList<'_>,
+            envp: Option<CStrList<'_>>,
         ) -> core::result::Result<Maybe<Result>, crate::Error> {
             let loop_: EventLoopHandle = options.windows.loop_;
             let mut spawned =
@@ -2302,13 +2265,13 @@ mod spawn_process_body {
             }))
         }
 
-        pub fn spawn_with_argv(
-            options: &Options,
-            argv: *const *const c_char,
-            envp: *const *const c_char,
-        ) -> core::result::Result<Maybe<Result>, crate::Error> {
+        pub fn spawn(options: &Options<'_>) -> core::result::Result<Maybe<Result>, crate::Error> {
+            let argv = CStringList::concat(options.argv.iter().map(|arg| [&**arg]));
+            let argv = argv.as_list();
+
             #[cfg(windows)]
             {
+                let envp = Some(options.envp.unwrap_or_else(|| bun_sys::environ_list()));
                 if options.stdin != SyncStdio::Buffer
                     && options.stderr != SyncStdio::Buffer
                     && options.stdout != SyncStdio::Buffer
@@ -2319,49 +2282,7 @@ mod spawn_process_body {
             }
 
             #[cfg(unix)]
-            spawn_posix(options, argv, envp)
-        }
-
-        pub fn spawn(options: &Options) -> core::result::Result<Maybe<Result>, crate::Error> {
-            // SAFETY: `bun_sys::environ_ptr` returns the live, NULL-terminated C
-            // `environ` array when no envp override is provided.
-            let envp: *const *const c_char = options.envp.unwrap_or_else(bun_sys::environ_ptr);
-            let argv = &options.argv;
-            let mut string_builder = bun_core::StringBuilder::default();
-            for arg in argv {
-                string_builder.count_z(arg);
-            }
-            string_builder.allocate()?;
-
-            // Stacked Borrows: `append_z` returns a borrow derived from a fresh
-            // `&mut` over the whole buffer, so each call would invalidate the raw
-            // pointer saved from the previous one. Instead, copy all strings first
-            // (recording offsets), then derive every argv pointer in one pass from
-            // the builder's base `NonNull` — those raw pointers share the
-            // allocation's original provenance and stay valid until `string_builder`
-            // drops after `spawn_with_argv` returns.
-            for arg in argv {
-                string_builder.append_count_z(arg);
-            }
-            let base = string_builder
-                .ptr
-                .expect("allocate() succeeded")
-                .as_ptr()
-                .cast_const()
-                .cast::<c_char>();
-            let mut args: Vec<*const c_char> = Vec::with_capacity(argv.len() + 1);
-            let mut off = 0usize;
-            for arg in argv {
-                // SAFETY: `append_count_z` wrote `arg` + NUL at `[off, off+arg.len()+1)`
-                // contiguously in append order; `base` has provenance for the whole
-                // `cap`-byte buffer.
-                args.push(unsafe { base.add(off) });
-                off += arg.len() + 1;
-            }
-            debug_assert_eq!(off, string_builder.len);
-            args.push(core::ptr::null());
-
-            spawn_with_argv(options, args.as_ptr(), envp)
+            spawn_posix(options, argv, options.envp)
         }
 
         // Forward signals from parent to the child process.
@@ -2507,9 +2428,9 @@ mod spawn_process_body {
 
         #[cfg(unix)]
         fn spawn_posix(
-            options: &Options,
-            argv: *const *const c_char,
-            envp: *const *const c_char,
+            options: &Options<'_>,
+            argv: CStrList<'_>,
+            envp: Option<CStrList<'_>>,
         ) -> core::result::Result<Maybe<Result>, crate::Error> {
             // --no-orphans: put the script in its own process group so we can
             // `kill(-pgid, SIGKILL)` on every exit path. Pgroup membership is
@@ -2610,14 +2531,11 @@ mod spawn_process_body {
             Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::SeqCst);
             let _signals = SignalForwarding::register();
 
-            // SAFETY: caller-built argv/envp are null-terminated C-string
-            // arrays with argv[0] non-null; valid for this call.
-            let process = match unsafe {
-                spawn_process_posix(&options.to_spawn_options(no_orphans), argv, envp)
-            }? {
-                Err(err) => return Ok(Err(err)),
-                Ok(proces) => proces,
-            };
+            let process =
+                match spawn_process_posix(&options.to_spawn_options(no_orphans), argv, envp)? {
+                    Err(err) => return Ok(Err(err)),
+                    Ok(proces) => proces,
+                };
             // Negative → kill() in the C++ signal forwarder targets the pgroup, so
             // a SIGTERM/SIGINT delivered to `bun run` reaches every descendant
             // that hasn't `setsid()`-escaped.
@@ -3316,10 +3234,9 @@ mod spawn_process_body {
                         bun_sys::Tag::recv,
                     ));
                 }
-                // SAFETY: recvNonBlock writes into uninit bytes; we extend len by bytes_read.
-                // Keep the fallible `try_reserve` above — do NOT use fill_spare here.
-                let spare_slice = unsafe { bun_core::vec::spare_bytes_mut(bytes) };
-                match bun_sys::recv_non_block(*fd, spare_slice) {
+                match bun_core::vec::append_with(bytes, usize::MAX, |spare| {
+                    bun_sys::recv_non_block_buf(*fd, spare)
+                }) {
                     Err(err) => {
                         if err.is_retry() || err.get_errno() == bun_sys::E::EPIPE {
                             return None;
@@ -3327,8 +3244,6 @@ mod spawn_process_body {
                         return Some(err);
                     }
                     Ok(bytes_read) => {
-                        // SAFETY: recv wrote `bytes_read` bytes into spare capacity
-                        unsafe { bun_core::vec::commit_spare(bytes, bytes_read) };
                         if bytes_read == 0 {
                             *fd = Fd::INVALID;
                             *file = None;
@@ -3353,8 +3268,8 @@ mod spawn_process_body {
 } // mod spawn_process_body
 
 pub use spawn_process_body::spawn_process;
+pub use spawn_process_body::spawn_process_cstr;
 #[cfg(unix)]
 pub use spawn_process_body::spawn_process_posix;
-pub use spawn_process_body::{SpawnEnv, spawn_process_cstr};
 
 pub use spawn_process_body::sync;

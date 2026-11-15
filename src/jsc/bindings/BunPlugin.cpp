@@ -9105,19 +9105,20 @@ __attribute__((minsize)) static bool isLoadedByOriginalOfFile(Zig::GlobalObject*
     auto* loader = Bun::testFileModuleLoader(globalObject);
     JSC::JSMap* requireMap = Bun::testFileRequireMap(globalObject);
 
-    // A requirer is known by its filename alone, and the mock API requires under the name of a mock's file. Under the path itself it is the original only if the file is what is loaded there.
-    std::optional<bool> isFileLoadedUnderItsPath;
+    // A requirer is known by its filename alone: an ES module requires under its path, whatever its key, and so does the mock API for a mock's file.
+    // Under the path itself it is the original only while the loader has the file itself, there or under the key of its original.
+    std::optional<bool> isFileItselfLoaded;
     auto isOriginal = [&](const String& key, bool isRequirer) {
         if (Zig::withoutOriginalModuleQuery(key) != file)
             return false;
         if (key.length() != file.length() || !isRequirer)
             return true;
-        if (!isFileLoadedUnderItsPath) {
+        if (!isFileItselfLoaded) {
             auto* standing = Zig::registeredModuleMock(globalObject, file);
             auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, file));
-            isFileLoadedUnderItsPath = !standing || standing->originalCommonJSExports || (entry && entry->record() && !entry->record()->hasLiveExports());
+            isFileItselfLoaded = !standing || standing->originalCommonJSExports || (entry && entry->record() && !entry->record()->hasLiveExports()) || loader->registryEntry(JSC::Identifier::fromString(vm, Zig::originalModuleKey(file)));
         }
-        return *isFileLoadedUnderItsPath;
+        return *isFileItselfLoaded;
     };
 
     std::optional<Zig::ModuleImporters> importersOf;

@@ -19,7 +19,7 @@ impl Exit {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let bltn = Builtin::of(interp, cmd);
         let code: crate::shell::ExitCode = match bltn.args_slice().len() {
-            0 => 0,
+            0 => Builtin::shell(interp, cmd).last_exit_code,
             1 => {
                 let s = bltn.arg_bytes(0);
                 match parse_exit_code(s) {

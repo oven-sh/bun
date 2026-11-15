@@ -71,6 +71,11 @@ describe("bun exec", () => {
     }
   });
 
+  TestBuilder.command`${BUN} exec ${"false; exit"}`
+    .env(bunEnv)
+    .exitCode(1)
+    .runAsTest("exit with no argument gives the status of the last command");
+
   TestBuilder.command`${BUN} exec cd`
     .env(bunEnv)
     .exitCode(0)

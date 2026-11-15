@@ -383,19 +383,8 @@ fn bind_scanned_modules(
     let mut replaced_variables: Vec<Sym> = replaced_variables.copied().collect();
     let replaced_names = imports.iter().flat_map(|file| &file.replaced_names);
     let mut replaced_names: Vec<(ModuleRef, Atom)> = replaced_names.copied().collect();
-    let mut replace = |resolution: Resolution| match resolution {
-        Resolution::Variable(variable) => replaced_variables.push(variable),
-        Resolution::Synthetic { module, name } => replaced_names.push((module, name)),
-        Resolution::RuntimeMember { module, name } => {
-            replaced_names.push((ModuleRef::Runtime(module), name));
-        }
-        Resolution::Namespace { .. }
-        | Resolution::LiveName { .. }
-        | Resolution::DynamicStar { .. }
-        | Resolution::Unloadable { .. }
-        | Resolution::NotFound
-        | Resolution::Ambiguous => {}
-    };
+    let mut replaced_resolutions: Vec<Resolution> = Vec::new();
+    let mut replace = |resolution: Resolution| replaced_resolutions.push(resolution);
     let mocked_modules = imports.iter().flat_map(|file| &file.mocked_modules);
     let mut mocked_modules: FxHashSet<ModuleRef> = mocked_modules.copied().collect();
     if !input.run.modules_replaced_in_text.is_empty() {
@@ -551,6 +540,46 @@ fn bind_scanned_modules(
         let files = modules.compiled_files.iter();
         mocked_modules.extend(files.map(|&file| ModuleRef::File(file)));
     }
+    let mocked_files = mocked_modules.iter();
+    for file in mocked_files.filter_map(|&module| modules.table_file(module)) {
+        for &(_, resolved) in tables.names(file) {
+            replace(resolved.resolution);
+        }
+    }
+    let mut names_found_in_run: FxHashSet<(FileId, Atom)> = FxHashSet::default();
+    let mut searched_files: FxHashSet<FileId> = FxHashSet::default();
+    while let Some(resolution) = replaced_resolutions.pop() {
+        match resolution {
+            Resolution::Variable(variable) => replaced_variables.push(variable),
+            Resolution::Synthetic { module, name } => replaced_names.push((module, name)),
+            Resolution::RuntimeMember { module, name } => {
+                replaced_names.push((ModuleRef::Runtime(module), name));
+            }
+            Resolution::LiveName {
+                module: ModuleRef::File(file),
+                name,
+            }
+            | Resolution::DynamicStar { module: file, name } => {
+                if modules.table_file(ModuleRef::File(file)).is_none()
+                    || !names_found_in_run.insert((file, name))
+                {
+                    continue;
+                }
+                let behind = tables.names_behind(&scans, file, name).into_iter();
+                let found =
+                    behind.filter_map(|(file, name)| tables.find_statement_or_result(file, name));
+                replaced_resolutions.extend(found);
+                if tables.has_dynamic_names(ModuleRef::File(file)) && searched_files.insert(file) {
+                    mocked_modules.extend(find_modules_behind_stars(input, &scans, &modules, file));
+                }
+            }
+            Resolution::Namespace { .. }
+            | Resolution::LiveName { .. }
+            | Resolution::Unloadable { .. }
+            | Resolution::NotFound
+            | Resolution::Ambiguous => {}
+        }
+    }
     let of_library = |&module: &ModuleRef| match module {
         ModuleRef::Runtime(module) => Some(module),
         _ => None,
@@ -561,12 +590,6 @@ fn bind_scanned_modules(
     let answered_for = imports.iter();
     let answered_for = answered_for.flat_map(|file| &file.library_modules_answered_for);
     mocked_modules.extend(answered_for.map(|&module| ModuleRef::Runtime(module)));
-    let mocked_files = mocked_modules.iter();
-    for file in mocked_files.filter_map(|&module| modules.table_file(module)) {
-        for &(_, resolved) in tables.names(file) {
-            replace(resolved.resolution);
-        }
-    }
     let replaced = ReplacedNames {
         names: &replaced_names,
         modules: &mocked_modules,

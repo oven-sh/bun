@@ -254,6 +254,7 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       bytes.writeUInt32BE(n);
       return bytes;
     }
+    const settingsAndAck = () => Buffer.concat([frame(4, 0, 0), frame(4, 1, 0)]);
     const ping = () => frame(6, 0, 0, Buffer.alloc(8));
     const windowUpdate = streamId => frame(8, 0, streamId, u32(1 << 20));
     const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -262,28 +263,83 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       if (!condition()) throw new Error("never happened: " + condition);
     }
     // duplex.inNextWrite runs once, inside _write. duplex.stall holds the write callback back.
-    async function connect(options, settings) {
+    function transport(options, onWrite) {
       const duplex = new Duplex({
         ...options,
         read() {},
         write(chunk, encoding, callback) {
-          duplex.written.push(Buffer.from(chunk));
-          const hook = duplex.inNextWrite;
-          duplex.inNextWrite = undefined;
-          hook?.();
+          onWrite(chunk);
+          const hook = chunk.length >= (duplex.minLength ?? 0) && duplex.inNextWrite;
+          if (hook) {
+            duplex.inNextWrite = undefined;
+            hook();
+          }
           if (duplex.stall) duplex.stalled = callback;
           else callback();
         },
       });
-      duplex.written = [];
-      const session = http2.connect("http://localhost:1", { createConnection: () => duplex, settings });
-      await once(session, "connect");
+      return duplex;
+    }
+    const preface = Buffer.from("PRI * HTTP/2.0\\r\\n\\r\\nSM\\r\\n\\r\\n");
+    function parse(bytes, type) {
+      const found = [];
+      for (let rest = bytes; rest.length; rest = rest.subarray(9 + rest.readUIntBE(0, 3))) {
+        const body = rest.subarray(9, 9 + rest.readUIntBE(0, 3));
+        if (rest[3] === type) found.push({ flags: rest[4], id: rest.readUInt32BE(5), body });
+      }
+      return found;
+    }
+    async function handshake(options, greeting, open) {
+      const written = [];
+      const duplex = transport(options, chunk => written.push(Buffer.from(chunk)));
+      const session = await open(duplex);
       const acked = once(session, "localSettings");
-      duplex.push(Buffer.concat([frame(4, 0, 0), frame(4, 1, 0)]));
+      duplex.push(greeting);
       await acked;
       await tick();
-      duplex.written.length = 0;
-      return { session, duplex };
+      written.length = 0;
+      return { session, duplex, frames: type => parse(Buffer.concat(written), type) };
+    }
+    const connect = (options, settings) =>
+      handshake(options, settingsAndAck(), async duplex => {
+        const session = http2.connect("http://localhost:1", { createConnection: () => duplex, settings });
+        await once(session, "connect");
+        return session;
+      });
+    const accept = () => handshake({}, Buffer.concat([preface, settingsAndAck()]), http2.performServerHandshake);
+    // The socket is native, but every TLS record goes through the Duplex.
+    async function connectTls() {
+      const tls = require("node:tls");
+      const server = tls.createServer({ ...${JSON.stringify(tls)}, ALPNProtocols: ["h2"] });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const accepted = once(server, "secureConnection");
+      const raw = require("node:net").connect(server.address().port, "127.0.0.1");
+      await once(raw, "connect");
+      const duplex = transport({}, chunk => raw.write(chunk));
+      let held;
+      raw.on("data", chunk => (held ? (held = Buffer.concat([held, chunk])) : duplex.push(chunk)));
+      const socket = tls.connect({ socket: duplex, ALPNProtocols: ["h2"], rejectUnauthorized: false });
+      await once(socket, "secureConnect");
+      const [peer] = await accepted;
+      peer.resume();
+      const session = http2.connect("https://localhost", { createConnection: () => socket });
+      await once(session, "connect");
+      const acked = once(session, "localSettings");
+      peer.write(Buffer.concat([settingsAndAck(), windowUpdate(0)]));
+      await acked;
+      // The record that carries these bytes, for the test to push when it wants them read.
+      async function encrypt(bytes) {
+        held = Buffer.alloc(0);
+        peer.write(bytes);
+        while (held.length < 5 || held.length < 5 + held.readUInt16BE(3)) await once(raw, "data");
+        return held;
+      }
+      function close() {
+        session.destroy();
+        raw.destroy();
+        server.close();
+      }
+      return { session, socket, duplex, encrypt, close };
     }
     function isAllocated(session, streamId) {
       try {
@@ -294,6 +350,7 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
         return false;
       }
     }
+    const post = { ":method": "POST", ":path": "/" };
   `;
 
   async function run(body: string, env = bunEnv) {
@@ -307,69 +364,76 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
     return { stdout: stdout.trim(), stderr, exitCode };
   }
 
-  // Sessions share one cork buffer: a's write first flushes b's PING through b's Duplex, which
-  // closes the stream that a is writing and makes a read.
-  const closeFromOtherSession = /* js */ `
-    const result = {};
-    b.duplex.inNextWrite = () => {
-      controller.abort();
-      a.duplex.push(ping());
-      result.duringWrite = isAllocated(a.session, 1);
-    };
-    b.session.ping(() => {});
-    write();
-    await once(req, "error");
-    a.duplex.push(ping());
-    result.afterNextRead = isAllocated(a.session, 1);
-    console.log(JSON.stringify(result));
-    a.session.destroy();
-    b.session.destroy();
-  `;
-
-  test(
-    "does not free the stream that sendTrailers({}) is ending",
-    async () => {
-      const result = await run(/* js */ `
-      const a = await connect();
-      const b = await connect();
-      const controller = new AbortController();
-      const req = a.session.request(
-        { ":method": "POST", ":path": "/" },
-        { waitForTrailers: true, signal: controller.signal },
-      );
+  test.each([
+    [
+      "sendTrailers({}) is ending",
+      /* js */ `
+      const req = session.request(post, { waitForTrailers: true, signal: controller.signal });
       const wanted = once(req, "wantTrailers");
       req.end();
       await wanted;
-      await until(() => a.duplex.written.length > 0);
-      const write = () => req.sendTrailers({});
-      ${closeFromOtherSession}
+      const write = () => {
+        // Leaves no room in the cork buffer for the next frame.
+        other.write(Buffer.alloc(16374));
+        req.sendTrailers({});
+      };`,
+    ],
+    [
+      "has its queued DATA flushed",
+      /* js */ `
+      const req = session.request(post, { signal: controller.signal });
+      // More than its window: from now on every write is queued.
+      other.write(Buffer.alloc(70000));
+      await until(() => session.state.outboundQueueSize > 0);
+      const write = () => {
+        req.write(Buffer.alloc(40000));
+        session.ping(() => {});
+      };`,
+    ],
+  ])(
+    "does not free the stream that %s",
+    async (_, setup) => {
+      const result = await run(/* js */ `
+      const { session, duplex, encrypt, close } = await connectTls();
+      const controller = new AbortController();
+      const other = session.request(post).on("error", () => {});
+      ${setup}
+      const records = [await encrypt(ping()), await encrypt(ping())];
+      let pings = 0;
+      session.on("ping", () => pings++);
+      duplex.minLength = 16384;
+      duplex.inNextWrite = () => {
+        controller.abort();
+        duplex.push(records[0]);
+      };
+      write();
+      await once(req, "error");
+      console.log(pings, isAllocated(session, 3));
+      duplex.push(records[1]);
+      await until(() => pings === 2);
+      console.log(pings, isAllocated(session, 3));
+      close();
     `);
-      expect(result).toEqual({ stdout: '{"duringWrite":true,"afterNextRead":false}', stderr: "", exitCode: 0 });
+      expect(result).toEqual({ stdout: "1 true\n2 false", stderr: "", exitCode: 0 });
     },
     10_000 * ASAN_MULTIPLIER,
   );
 
   test(
-    "does not free the stream whose queued DATA is being flushed",
+    "does not free the TLS socket that is writing",
     async () => {
       const result = await run(/* js */ `
-      const a = await connect({ writableHighWaterMark: 1 });
-      const b = await connect();
-      const controller = new AbortController();
-      const req = a.session.request({ ":method": "POST", ":path": "/" }, { signal: controller.signal });
-      req.write(Buffer.alloc(1 << 19, "a"));
-      await until(() => a.session.state.outboundQueueSize > 0);
-      a.duplex.stall = true;
-      a.duplex.push(Buffer.concat([windowUpdate(0), windowUpdate(1)]));
-      await until(() => a.duplex.stalled);
-      // 'drain' flushes the rest of the queue.
-      const write = () => {
-        a.duplex.stall = false;
-        a.duplex.stalled();
+      const { session, socket, duplex, close } = await connectTls();
+      duplex.inNextWrite = () => {
+        socket.destroy();
+        Bun.gc(true);
       };
-      ${closeFromOtherSession}
+      session.ping(() => {});
+      await once(session, "close");
+      console.log("closed");
+      close();
     `);
-      expect(result).toEqual({ stdout: '{"duringWrite":true,"afterNextRead":false}', stderr: "", exitCode: 0 });
+      expect(result).toEqual({ stdout: "closed", stderr: "", exitCode: 0 });
     },
     10_000 * ASAN_MULTIPLIER,
   );
@@ -378,9 +442,9 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
     "can still write to a stream that the peer reset during that write",
     async () => {
       const result = await run(/* js */ `
-      const { session, duplex } = await connect();
-      const req = session.request({ ":method": "POST", ":path": "/" });
-      await until(() => duplex.written.length > 0);
+      const { session, duplex, frames } = await connect();
+      const req = session.request(post);
+      await until(() => frames(1).length === 1);
       duplex.inNextWrite = () => {
         duplex.push(frame(3, 0, 1, u32(http2.constants.NGHTTP2_INTERNAL_ERROR)));
         duplex.push(ping());
@@ -400,49 +464,45 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
     "does not leave DATA queued on a stream it aborts",
     async () => {
       const result = await run(/* js */ `
-      const { session, duplex } = await connect();
+      const { session, duplex, frames } = await connect();
       const controller = new AbortController();
-      const aborted = session.request({ ":method": "POST", ":path": "/" }, { signal: controller.signal });
-      await until(() => duplex.written.length > 0);
+      const aborted = session.request(post, { signal: controller.signal });
+      await until(() => frames(1).length === 1);
       duplex.inNextWrite = () => controller.abort();
       // More than the window: the rest would be queued once the first part is written.
-      aborted.write(Buffer.alloc(65535 + 40000, "a"));
+      aborted.write(Buffer.alloc(65535 + 40000));
       await once(aborted, "error");
       console.log(session.state.outboundQueueSize);
 
       duplex.push(windowUpdate(0));
-      duplex.written.length = 0;
-      const next = session.request({ ":method": "POST", ":path": "/" });
-      next.on("error", () => {});
-      await until(() => duplex.written.length > 0);
+      const next = session.request(post).on("error", () => {});
+      await until(() => frames(1).length === 2);
       next.write("hello");
-      await until(() => Buffer.concat(duplex.written).includes("hello"));
-      console.log("sent");
+      await until(() => frames(0).at(-1).id === 3);
+      console.log(frames(0).at(-1).body.toString());
       session.destroy();
     `);
-      expect(result).toEqual({ stdout: "0\nsent", stderr: "", exitCode: 0 });
+      expect(result).toEqual({ stdout: "0\nhello", stderr: "", exitCode: 0 });
     },
     10_000 * ASAN_MULTIPLIER,
   );
 
-  test.each([
-    ["a", { a: ["a-outer.", "reenter!"], b: ["b-first."], c: [] }],
-    ["b", { a: ["a-outer."], b: ["b-first.", "reenter!"], c: [] }],
-    ["c", { a: ["a-outer."], b: ["b-first."], c: ["reenter!"] }],
-  ])(
-    "does not lose a frame it sends on session %s while b hands the cork buffer over to a",
-    async (target, expected) => {
+  test(
+    "can reopen the window that the write used up",
+    async () => {
       const result = await run(/* js */ `
-      const peers = { a: await connect(), b: await connect(), c: await connect() };
-      const pings = ({ duplex }) => duplex.written.join("").match(/a-outer.|b-first.|reenter!/g)?.sort() ?? [];
-      peers.b.duplex.inNextWrite = () => peers.${target}.session.ping(Buffer.from("reenter!"), () => {});
-      peers.b.session.ping(Buffer.from("b-first."), () => {});
-      peers.a.session.ping(Buffer.from("a-outer."), () => {});
-      await until(() => pings(peers.a).includes("a-outer."));
-      console.log(JSON.stringify({ a: pings(peers.a), b: pings(peers.b), c: pings(peers.c) }));
-      for (const { session } of Object.values(peers)) session.destroy();
+      const { session, duplex, frames } = await connect();
+      const req = session.request(post).on("error", () => {});
+      await until(() => frames(1).length === 1);
+      duplex.inNextWrite = () => duplex.push(Buffer.concat([windowUpdate(0), windowUpdate(1)]));
+      const body = Buffer.alloc(70000);
+      for (let i = 0; i < body.length; i += 4) body.writeUInt32BE(i, i);
+      req.end(body);
+      await until(() => req.writableFinished);
+      console.log(Buffer.concat(frames(0).map(frame => frame.body)).equals(body));
+      session.destroy();
     `);
-      expect(result).toEqual({ stdout: JSON.stringify(expected), stderr: "", exitCode: 0 });
+      expect(result).toEqual({ stdout: "true", stderr: "", exitCode: 0 });
     },
     10_000 * ASAN_MULTIPLIER,
   );
@@ -451,63 +511,24 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
     "can feed a session that is reopening the window of a resumed stream",
     async () => {
       const result = await run(/* js */ `
-      const a = await connect({}, { initialWindowSize: 1 << 20 });
-      const b = await connect();
-      const req = a.session.request({ ":path": "/" });
-      req.on("error", () => {});
-      await until(() => a.duplex.written.length > 0);
+      const { session, duplex, frames } = await connect({}, { initialWindowSize: 1 << 20 });
+      const req = session.request({ ":path": "/" }).on("error", () => {});
+      const other = session.request(post).on("error", () => {});
+      await until(() => frames(1).length === 2);
       req.pause();
-      a.duplex.push(frame(1, 4, 1, Buffer.from([0x88 /* :status 200 */])));
-      for (let i = 0; i < 40; i++) a.duplex.push(frame(0, 0, 1, Buffer.alloc(16384)));
+      duplex.push(frame(1, 4, 1, Buffer.from([0x88 /* :status 200 */])));
+      for (let i = 0; i < 40; i++) duplex.push(frame(0, 0, 1, Buffer.alloc(16384)));
       let pinged = false;
-      a.session.on("ping", () => (pinged = true));
-      b.duplex.inNextWrite = () => a.duplex.push(ping());
-      req.prependListener("resume", () => b.session.ping(() => {}));
+      session.on("ping", () => (pinged = true));
+      duplex.inNextWrite = () => duplex.push(ping());
+      // Leaves no room in the cork buffer for the WINDOW_UPDATE.
+      req.prependListener("resume", () => other.write(Buffer.alloc(16374)));
       req.resume();
       await until(() => pinged);
       console.log("pinged");
-      a.session.destroy();
-      b.session.destroy();
+      session.destroy();
     `);
       expect(result).toEqual({ stdout: "pinged", stderr: "", exitCode: 0 });
-    },
-    10_000 * ASAN_MULTIPLIER,
-  );
-
-  test(
-    "does not free the TLS socket that is writing",
-    async () => {
-      const result = await run(/* js */ `
-      const server = http2.createSecureServer(${JSON.stringify(tls)});
-      await once(server.listen(0, "127.0.0.1"), "listening");
-      const raw = require("node:net").connect(server.address().port, "127.0.0.1");
-      await once(raw, "connect");
-      let inNextWrite;
-      const duplex = new Duplex({
-        read() {},
-        write(chunk, encoding, callback) {
-          const hook = inNextWrite;
-          inNextWrite = undefined;
-          hook?.();
-          raw.write(chunk, callback);
-        },
-      });
-      raw.on("data", chunk => duplex.push(chunk));
-      const socket = require("node:tls").connect({ socket: duplex, ALPNProtocols: ["h2"], rejectUnauthorized: false });
-      await once(socket, "secureConnect");
-      const session = http2.connect("https://localhost", { createConnection: () => socket });
-      await once(session, "localSettings");
-      inNextWrite = () => {
-        socket.destroy();
-        Bun.gc(true);
-      };
-      session.ping(() => {});
-      await once(session, "close");
-      console.log("closed");
-      raw.destroy();
-      server.close();
-    `);
-      expect(result).toEqual({ stdout: "closed", stderr: "", exitCode: 0 });
     },
     10_000 * ASAN_MULTIPLIER,
   );
@@ -535,4 +556,196 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
     },
     10_000 * ASAN_MULTIPLIER,
   );
+
+  // Sessions share one cork buffer. b has a frame in it when a starts to write.
+  describe("of another session", () => {
+    const withQueuedBody = /* js */ `
+      const a = await connect({ writableHighWaterMark: 1 });
+      const b = await connect();
+      const controller = new AbortController();
+      const req = a.session.request(post, { signal: controller.signal }).on("error", () => {});
+      const body = Buffer.alloc(1 << 18);
+      for (let i = 0; i < body.length; i += 4) body.writeUInt32BE(i, i);
+      req.write(body);
+      await until(() => a.session.state.outboundQueueSize > 0);
+      a.duplex.stall = true;
+      a.duplex.push(Buffer.concat([windowUpdate(0), windowUpdate(1)]));
+      await until(() => a.duplex.stalled);
+      // 'drain' flushes the rest of the queue.
+      const write = () => {
+        a.duplex.stall = false;
+        a.duplex.stalled();
+      };`;
+
+    test.each([
+      [
+        "sendTrailers({}) is ending",
+        /* js */ `
+      const a = await connect();
+      const b = await connect();
+      const controller = new AbortController();
+      const req = a.session.request(post, { waitForTrailers: true, signal: controller.signal }).on("error", () => {});
+      const wanted = once(req, "wantTrailers");
+      req.end();
+      await wanted;
+      await until(() => a.frames(1).length === 1);
+      const write = () => req.sendTrailers({});`,
+      ],
+      ["has its queued DATA flushed", withQueuedBody],
+    ])(
+      "does not free the stream that %s",
+      async (_, setup) => {
+        const result = await run(/* js */ `
+      ${setup}
+      b.duplex.inNextWrite = () => {
+        controller.abort();
+        a.duplex.push(ping());
+        console.log(isAllocated(a.session, 1));
+      };
+      b.session.ping(() => {});
+      write();
+      await once(req, "error");
+      a.duplex.push(ping());
+      console.log(isAllocated(a.session, 1));
+      a.session.destroy();
+      b.session.destroy();
+    `);
+        expect(result).toEqual({ stdout: "true\nfalse", stderr: "", exitCode: 0 });
+      },
+      10_000 * ASAN_MULTIPLIER,
+    );
+
+    test(
+      "does not reorder queued DATA",
+      async () => {
+        const result = await run(/* js */ `
+      ${withQueuedBody}
+      b.duplex.inNextWrite = () => a.duplex.push(ping());
+      b.session.ping(() => {});
+      write();
+      const sent = () => Buffer.concat(a.frames(0).map(frame => frame.body));
+      await until(() => sent().length === body.length);
+      console.log(sent().equals(body));
+      a.session.destroy();
+      b.session.destroy();
+    `);
+        expect(result).toEqual({ stdout: "true", stderr: "", exitCode: 0 });
+      },
+      10_000 * ASAN_MULTIPLIER,
+    );
+
+    // The block that adds the field to the dynamic table has to go out before the one that indexes it.
+    test.each([
+      [
+        "request()",
+        "1,3",
+        /* js */ `
+      const a = await connect();
+      const nested = () => a.session.request({ ...field }).on("error", () => {});
+      const write = nested;`,
+      ],
+      [
+        "sendTrailers()",
+        "3,1",
+        /* js */ `
+      const a = await connect();
+      const req = a.session.request(post, { waitForTrailers: true }).on("error", () => {});
+      const wanted = once(req, "wantTrailers");
+      req.end();
+      await wanted;
+      await until(() => a.frames(1).length === 1);
+      const nested = () => a.session.request({ ...field }).on("error", () => {});
+      const write = () => req.sendTrailers({ ...field });`,
+      ],
+      [
+        "respond()",
+        "3,1",
+        /* js */ `
+      const a = await accept();
+      const streams = [];
+      a.session.on("stream", stream => streams.push(stream.on("error", () => {})));
+      const get = Buffer.from([0x82, 0x86, 0x84, 0x41, 0x01, 0x61]);
+      a.duplex.push(Buffer.concat([frame(1, 5, 1, get), frame(1, 5, 3, get)]));
+      await until(() => streams.length === 2);
+      const nested = () => streams[1].respond({ ...field });
+      const write = () => streams[0].respond({ ...field });`,
+      ],
+    ])(
+      "does not overtake the header block of %s",
+      async (_, ids, setup) => {
+        const result = await run(/* js */ `
+      const field = { "x-field": Buffer.alloc(200, "a").toString() };
+      ${setup}
+      const b = await connect();
+      const sent = a.frames(1).length;
+      b.duplex.inNextWrite = nested;
+      b.session.ping(() => {});
+      write();
+      await until(() => a.frames(1).length === sent + 2);
+      const [first, second] = a.frames(1).slice(sent);
+      console.log([first.id, second.id].join(), first.body.length > 100, second.body.length > 100);
+      a.session.destroy();
+      b.session.destroy();
+    `);
+        expect(result).toEqual({ stdout: ids + " true false", stderr: "", exitCode: 0 });
+      },
+      10_000 * ASAN_MULTIPLIER,
+    );
+
+    test(
+      "can destroy the session that is making a request",
+      async () => {
+        const result = await run(/* js */ `
+      const a = await connect();
+      const b = await connect();
+      b.duplex.inNextWrite = () => a.session.destroy();
+      b.session.ping(() => {});
+      const [error] = await once(a.session.request(post), "error");
+      console.log(error.code);
+      b.session.destroy();
+    `);
+        expect(result).toEqual({ stdout: "ERR_HTTP2_OUT_OF_STREAMS", stderr: "", exitCode: 0 });
+      },
+      10_000 * ASAN_MULTIPLIER,
+    );
+
+    test.each([
+      ["a", { a: ["reenter!", "a-outer."], b: ["b-first."], c: [] }],
+      ["b", { a: ["a-outer."], b: ["b-first.", "reenter!"], c: [] }],
+      ["c", { a: ["a-outer."], b: ["b-first."], c: ["reenter!"] }],
+    ])(
+      "does not lose the frame it sends on %s",
+      async (target, expected) => {
+        const result = await run(/* js */ `
+      const peers = { a: await connect(), b: await connect(), c: await connect() };
+      const pings = peer => peer.frames(6).map(frame => frame.body.toString());
+      peers.b.duplex.inNextWrite = () => peers.${target}.session.ping(Buffer.from("reenter!"), () => {});
+      peers.b.session.ping(Buffer.from("b-first."), () => {});
+      peers.a.session.ping(Buffer.from("a-outer."), () => {});
+      await until(() => Object.values(peers).flatMap(pings).length === 3);
+      console.log(JSON.stringify({ a: pings(peers.a), b: pings(peers.b), c: pings(peers.c) }));
+      for (const { session } of Object.values(peers)) session.destroy();
+    `);
+        expect(result).toEqual({ stdout: JSON.stringify(expected), stderr: "", exitCode: 0 });
+      },
+      10_000 * ASAN_MULTIPLIER,
+    );
+
+    test.each(["connect", "accept"])(
+      "gets b's frame before b is destroyed (%s)",
+      async open => {
+        const result = await run(/* js */ `
+      const a = await connect();
+      const b = await ${open}();
+      b.session.ping(Buffer.from("b-first."), () => {});
+      a.session.ping(() => {});
+      b.session.destroy();
+      console.log(b.frames(6).map(frame => frame.body.toString()).join());
+      a.session.destroy();
+    `);
+        expect(result).toEqual({ stdout: "b-first.", stderr: "", exitCode: 0 });
+      },
+      10_000 * ASAN_MULTIPLIER,
+    );
+  });
 });

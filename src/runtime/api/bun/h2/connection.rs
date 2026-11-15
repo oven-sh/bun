@@ -244,8 +244,7 @@ impl RateLimit {
 }
 
 /// What the connection engine calls back into the embedder (the JSC binding) for. Methods take
-/// `&self`: the sink borrows the H2FrameParser, which owns the `Connection` and which JS can reach
-/// during a callback.
+/// `&self`: JS can reach the H2FrameParser, which owns the `Connection`, during a callback.
 pub(crate) trait Sink {
     fn write(&self, bytes: &[u8]) -> WriteResult;
     /// A locally-detected connection error: the GOAWAY (when one applies) is already on the wire.
@@ -2185,9 +2184,9 @@ impl Connection {
         self.streams.remove(&stream_id);
     }
 
-    /// The WINDOW_UPDATE increment (0 if none) for the embedder to send now that its reader resumed
-    /// after a pause. Without this, a peer stalled on a zero stream window would only be released
-    /// by the next inbound batch — which may never come, since the peer is the one waiting.
+    /// The WINDOW_UPDATE increment to send now, or 0 (the embedder's reader resumed after a
+    /// pause). Without this, a peer stalled on a zero stream window would only be released by the
+    /// next inbound batch — which may never come, since the peer is the one waiting.
     pub(crate) fn take_stream_window_update(&mut self, stream_id: u32) -> u32 {
         match self.streams.get_mut(&stream_id) {
             Some(s) if s.state != State::Closed && s.recv_window.needs_update() => {

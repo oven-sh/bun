@@ -348,6 +348,52 @@ export function F({ text = css\`a\` }) {
 }
 `;
 
+/**
+ * `useWindowVirtualizer` by another name and from the namespace, and `useVirtualizer` by its name. From a compiler that
+ * knows the hook, the call is the only report for its function. One that takes it for a custom hook reports the rest:
+ * a read of a ref after the call or before it, and a write to the options, which such a hook freezes.
+ */
+const virtualCallers = `import { useRef } from "react";
+import { useVirtualizer as useWindowVirtualizer, useWindowVirtualizer as useRows } from "@tanstack/react-virtual";
+import * as Virtual from "@tanstack/react-virtual";
+
+function Renamed(props) {
+  const virtualizer = useRows({ count: props.count });
+  return <div>{virtualizer.getTotalSize()}</div>;
+}
+
+function Namespace(props) {
+  const virtualizer = Virtual.useWindowVirtualizer({ count: props.count });
+  return <div>{virtualizer.getTotalSize()}</div>;
+}
+
+function OtherHook(props) {
+  const virtualizer = useWindowVirtualizer({ count: props.count });
+  return <div>{virtualizer.getTotalSize()}</div>;
+}
+
+function ReadsRef(props) {
+  const ref = useRef(null);
+  const virtualizer = useRows({ count: props.count });
+  const value = ref.current;
+  return <div>{virtualizer.getTotalSize()}{value}</div>;
+}
+
+function WritesOptions(props) {
+  const options = { count: props.count };
+  const virtualizer = useRows(options);
+  options.count = 2;
+  return <div>{virtualizer.getTotalSize()}</div>;
+}
+
+function ReadsRefFirst(props) {
+  const ref = useRef(null);
+  const value = ref.current;
+  const virtualizer = useRows({ count: props.count });
+  return <div>{virtualizer.getTotalSize()}{value}</div>;
+}
+`;
+
 /** Reads a ref during render at the top, followed by `n` copies of `unit`. */
 export const long = (
   n: number,
@@ -609,6 +655,7 @@ function Component(props) {
 }
 `,
   },
+  virtual: { ".oxlintrc.json": rc(), "virtual-callers.jsx": virtualCallers },
   casts: { ".oxlintrc.json": rc(), "casts.tsx": casts },
   long: {
     ".oxlintrc.json": rc(),
@@ -744,6 +791,12 @@ ${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.
   return <div>{value}</div>;
 });
 `,
+};
+
+/** The plugin's compiler is older than facebook/react#36912: `useWindowVirtualizer` is a custom hook to it. */
+export const eslintVirtual: Files = {
+  "virtual.jsx": small.fork["virtual.jsx"],
+  "virtual-callers.jsx": virtualCallers,
 };
 
 type EslintMessage = {

@@ -3352,6 +3352,122 @@
     ]
    }
   },
+  "virtual": {
+   "exit": 1,
+   "files": 1,
+   "diagnostics": {
+    "virtual-callers.jsx": [
+     {
+      "code": "react(incompatible-library)",
+      "help": "This API returns functions which cannot be memoized without leading to stale UI. To prevent this, by default React Compiler will skip memoizing this component/hook. However, you may see issues if values from this API are passed to other components/hooks that are memoized",
+      "labels": [
+       {
+        "label": "TanStack Virtual's `useVirtualizer()` API returns functions that cannot be memoized safely",
+        "span": {
+         "column": 23,
+         "length": 20,
+         "line": 16,
+         "offset": 541
+        }
+       }
+      ],
+      "message": "Use of incompatible library",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/incompatible-library",
+      "severity": "error"
+     },
+     {
+      "code": "react(incompatible-library)",
+      "help": "This API returns functions which cannot be memoized without leading to stale UI. To prevent this, by default React Compiler will skip memoizing this component/hook. However, you may see issues if values from this API are passed to other components/hooks that are memoized",
+      "labels": [
+       {
+        "label": "TanStack Virtual's `useWindowVirtualizer()` API returns functions that cannot be memoized safely",
+        "span": {
+         "column": 23,
+         "length": 7,
+         "line": 11,
+         "offset": 384
+        }
+       }
+      ],
+      "message": "Use of incompatible library",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/incompatible-library",
+      "severity": "error"
+     },
+     {
+      "code": "react(incompatible-library)",
+      "help": "This API returns functions which cannot be memoized without leading to stale UI. To prevent this, by default React Compiler will skip memoizing this component/hook. However, you may see issues if values from this API are passed to other components/hooks that are memoized",
+      "labels": [
+       {
+        "label": "TanStack Virtual's `useWindowVirtualizer()` API returns functions that cannot be memoized safely",
+        "span": {
+         "column": 23,
+         "length": 7,
+         "line": 22,
+         "offset": 717
+        }
+       }
+      ],
+      "message": "Use of incompatible library",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/incompatible-library",
+      "severity": "error"
+     },
+     {
+      "code": "react(incompatible-library)",
+      "help": "This API returns functions which cannot be memoized without leading to stale UI. To prevent this, by default React Compiler will skip memoizing this component/hook. However, you may see issues if values from this API are passed to other components/hooks that are memoized",
+      "labels": [
+       {
+        "label": "TanStack Virtual's `useWindowVirtualizer()` API returns functions that cannot be memoized safely",
+        "span": {
+         "column": 23,
+         "length": 7,
+         "line": 29,
+         "offset": 935
+        }
+       }
+      ],
+      "message": "Use of incompatible library",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/incompatible-library",
+      "severity": "error"
+     },
+     {
+      "code": "react(incompatible-library)",
+      "help": "This API returns functions which cannot be memoized without leading to stale UI. To prevent this, by default React Compiler will skip memoizing this component/hook. However, you may see issues if values from this API are passed to other components/hooks that are memoized",
+      "labels": [
+       {
+        "label": "TanStack Virtual's `useWindowVirtualizer()` API returns functions that cannot be memoized safely",
+        "span": {
+         "column": 23,
+         "length": 7,
+         "line": 37,
+         "offset": 1138
+        }
+       }
+      ],
+      "message": "Use of incompatible library",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/incompatible-library",
+      "severity": "error"
+     },
+     {
+      "code": "react(incompatible-library)",
+      "help": "This API returns functions which cannot be memoized without leading to stale UI. To prevent this, by default React Compiler will skip memoizing this component/hook. However, you may see issues if values from this API are passed to other components/hooks that are memoized",
+      "labels": [
+       {
+        "label": "TanStack Virtual's `useWindowVirtualizer()` API returns functions that cannot be memoized safely",
+        "span": {
+         "column": 23,
+         "length": 7,
+         "line": 6,
+         "offset": 248
+        }
+       }
+      ],
+      "message": "Use of incompatible library",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/incompatible-library",
+      "severity": "error"
+     }
+    ]
+   }
+  },
   "casts": {
    "exit": 1,
    "files": 1,
@@ -4991,6 +5107,53 @@
       "column": 3,
       "endLine": 5,
       "endColumn": 4,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   }
+  },
+  "virtual": {
+   "virtual-callers.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/incompatible-library",
+      "severity": 2,
+      "message": "Compilation Skipped: Use of incompatible library\n\nThis API returns functions which cannot be memoized without leading to stale UI. To prevent this, by default React Compiler will skip memoizing this component/hook. However, you may see issues if values from this API are passed to other components/hooks that are memoized.\n\n  14 |\n  15 | function OtherHook(props) {\n> 16 |   const virtualizer = useWindowVirtualizer({ count: props.count });\n     |                       ^^^^^^^^^^^^^^^^^^^^ TanStack Virtual's `useVirtualizer()` API returns functions that cannot be memoized safely\n  17 |   return <div>{virtualizer.getTotalSize()}</div>;\n  18 | }\n  19 |",
+      "line": 16,
+      "column": 23,
+      "endLine": 16,
+      "endColumn": 43,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/refs",
+      "severity": 2,
+      "message": "Error: Cannot access refs during render\n\nReact refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected (https://react.dev/reference/react/useRef).\n\n  21 |   const ref = useRef(null);\n  22 |   const virtualizer = useRows({ count: props.count });\n> 23 |   const value = ref.current;\n     |                 ^^^^^^^^^^^ Cannot access ref value during render\n  24 |   return <div>{virtualizer.getTotalSize()}{value}</div>;\n  25 | }\n  26 |",
+      "line": 23,
+      "column": 17,
+      "endLine": 23,
+      "endColumn": 28,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/immutability",
+      "severity": 2,
+      "message": "Error: This value cannot be modified\n\nModifying a value previously passed as an argument to a hook is not allowed. Consider moving the modification before calling the hook.\n\n  28 |   const options = { count: props.count };\n  29 |   const virtualizer = useRows(options);\n> 30 |   options.count = 2;\n     |   ^^^^^^^ value cannot be modified\n  31 |   return <div>{virtualizer.getTotalSize()}</div>;\n  32 | }\n  33 |",
+      "line": 30,
+      "column": 3,
+      "endLine": 30,
+      "endColumn": 10,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/refs",
+      "severity": 2,
+      "message": "Error: Cannot access refs during render\n\nReact refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected (https://react.dev/reference/react/useRef).\n\n  34 | function ReadsRefFirst(props) {\n  35 |   const ref = useRef(null);\n> 36 |   const value = ref.current;\n     |                 ^^^^^^^^^^^ Cannot access ref value during render\n  37 |   const virtualizer = useRows({ count: props.count });\n  38 |   return <div>{virtualizer.getTotalSize()}{value}</div>;\n  39 | }",
+      "line": 36,
+      "column": 17,
+      "endLine": 36,
+      "endColumn": 28,
       "suggestions": []
      }
     ],

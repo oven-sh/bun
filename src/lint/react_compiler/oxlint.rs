@@ -230,8 +230,8 @@ fn render<'a>(file: &'a File<'a>, finding: &Finding) -> Rendered {
         ErrorCategory::Syntax => syntax(file, finding, &mut out),
         ErrorCategory::UnsupportedSyntax => unsupported_syntax(finding, &mut out),
         ErrorCategory::Suppression => suppression(finding, &mut out),
-        ErrorCategory::IncompatibleLibrary => incompatible_library(file, &mut out),
-        ErrorCategory::Config
+        ErrorCategory::IncompatibleLibrary
+        | ErrorCategory::Config
         | ErrorCategory::Gating
         | ErrorCategory::EffectDependencies
         | ErrorCategory::FBT => {}
@@ -1090,16 +1090,6 @@ fn set_state_in_render(finding: &Finding, out: &mut Rendered) {
             );
         }
         _ => {}
-    }
-}
-
-/// The tree given to the compiler has `useVirtualizer` in place of `useWindowVirtualizer`.
-fn incompatible_library<'a>(file: &'a File<'a>, out: &mut Rendered) {
-    if (out.primary_span()).is_some_and(|at| file.slice(at) == b"useWindowVirtualizer")
-        && let Some(rest) = (out.text()).strip_prefix("TanStack Virtual's `useVirtualizer()`")
-    {
-        let text = format!("TanStack Virtual's `useWindowVirtualizer()`{rest}");
-        out.relabel(text);
     }
 }
 

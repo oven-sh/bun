@@ -1,7 +1,6 @@
 use crate::Int;
-use crate::native::COMPRESS_4;
 pub(crate) use crate::native::{load_shared, store_shared};
-pub use crate::portable::prefix_xor;
+pub use crate::portable::{bit_indices, prefix_xor};
 pub(crate) use crate::portable::{load_shared_masked, store_shared_masked};
 use core::arch::aarch64::*;
 use core::simd::{ToBytes, prelude::*};
@@ -92,15 +91,6 @@ impl I32 {
             .extract::<0, 4>()
             .deinterleave(products.extract::<4, 4>());
         Self::new(even + odd)
-    }
-}
-
-impl U32 {
-    #[inline]
-    #[target_feature(enable = "neon")]
-    pub fn compress(self, bits: u64) -> Self {
-        let indices = U8::from_array(COMPRESS_4[bits as usize & 15]);
-        self.bitcast::<U8>().lookup(indices).bitcast()
     }
 }
 

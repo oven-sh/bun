@@ -38,21 +38,3 @@ pub(crate) fn store_shared<const N: usize, const K: usize, const AT: usize>(
         _ => portable::store_shared::<N, K, AT>(v, to),
     }
 }
-
-/// For each 4-bit mask, the indices of the bytes of the selected 32-bit lanes.
-pub(crate) static COMPRESS_4: [[u8; 16]; 16] = {
-    let mut table = [[0x80; 16]; 16];
-    let mut bits = 0;
-    while bits < 16 {
-        let (mut from, mut to) = (0, 0);
-        while from < 16 {
-            if bits >> (from / 4) & 1 != 0 {
-                table[bits][to] = from as u8;
-                to += 1;
-            }
-            from += 1;
-        }
-        bits += 1;
-    }
-    table
-};

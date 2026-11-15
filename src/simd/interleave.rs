@@ -10,15 +10,18 @@ where
     const IS_ONE_ACCESS: bool = I::HAS_INTERLEAVED_MEMORY && N == 16;
 
     #[inline(always)]
-    pub fn store_interleaved2([a, b]: [Self; 2], to: &mut [[u8; 2]; N]) {
-        let to = to.as_flattened_mut();
+    pub fn to_interleaved2([a, b]: [Self; 2]) -> [[u8; 2]; N] {
+        let mut pairs = [[0; 2]; N];
+        let to = pairs.as_flattened_mut();
         if Self::IS_ONE_ACCESS {
             let both: u8x32 = Interleave::<2>::concat_swizzle(a.0.resize::<16>(0), b.0.resize(0));
-            return both.copy_to_slice(to);
+            both.copy_to_slice(to);
+        } else {
+            let (first, second) = a.interleave(b);
+            first.copy_to_slice(to);
+            second.copy_to_slice(&mut to[N..]);
         }
-        let (first, second) = a.interleave(b);
-        first.copy_to_slice(to);
-        second.copy_to_slice(&mut to[N..]);
+        pairs
     }
 
     #[inline(always)]

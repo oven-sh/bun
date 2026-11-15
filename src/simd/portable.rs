@@ -1,4 +1,5 @@
 //! The definition of the ops that have intrinsics. Debug builds panic on input for which targets differ.
+use crate::BitIndices;
 use core::array;
 use core::simd::{ToBytes, prelude::*};
 use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
@@ -58,26 +59,13 @@ impl<const N: usize, const B: usize> Lanes<i16, N, B> {
     }
 }
 
-impl<const N: usize, const B: usize> Lanes<i32, N, B> {
+impl<const B: usize> Lanes<i32, 4, B> {
     /// `a[2i] * b[2i] + a[2i + 1] * b[2i + 1]`
     #[inline]
-    pub fn pairwise_dot<const M: usize>(a: Lanes<i16, M, B>, b: Lanes<i16, M, B>) -> Self
-    where
-        Simd<i16, M>: ToBytes<Bytes = <Simd<i32, N> as ToBytes>::Bytes>,
-        Simd<i32, N>: ToBytes,
-    {
+    pub fn pairwise_dot(a: Lanes<i16, 8, B>, b: Lanes<i16, 8, B>) -> Self {
         let products = a.0.cast::<i32>() * b.0.cast();
         let (even, odd) = products.deinterleave(products);
-        Self::new((even + odd).extract::<0, N>())
-    }
-}
-
-impl<const N: usize, const B: usize> Lanes<u32, N, B> {
-    /// Moves the lanes whose bit is set to the front. The other lanes are unspecified.
-    #[inline]
-    pub fn compress(self, bits: u64) -> Self {
-        let mut kept = (0..N).filter(|lane| bits >> lane & 1 != 0);
-        Self::from_array(array::from_fn(|_| kept.next().map_or(0xDEAD, |i| self[i])))
+        Self::new((even + odd).extract::<0, 4>())
     }
 }
 
@@ -119,6 +107,13 @@ pub fn prefix_xor(mut bits: u64) -> u64 {
     bits
 }
 
+/// The indices of the bits that are set.
+#[inline(always)]
+pub fn bit_indices(bits: u64) -> BitIndices {
+    let compressed = None;
+    BitIndices { bits, compressed }
+}
+
 /// Pads with zeros if `from` is too short.
 #[inline(always)]
 pub(crate) fn load_shared_masked<const N: usize>(from: &[AtomicU8]) -> Simd<u8, N> {
@@ -156,7 +151,7 @@ crate::isa::vector_types!(Portable<16>, 16);
 
 #[cfg(any(feature = "test_support", not(target_arch = "x86_64")))]
 pub mod portable32 {
-    pub use super::prefix_xor;
+    pub use super::{bit_indices, prefix_xor};
     pub(crate) use super::{load_shared, load_shared_masked, store_shared, store_shared_masked};
 
     crate::isa::vector_types!(super::Portable<32>, 32);
@@ -168,4 +163,11 @@ pub mod portable64 {
     pub(crate) use super::{load_shared, load_shared_masked, store_shared, store_shared_masked};
 
     crate::isa::vector_types!(super::Portable<64>, 64);
+
+    #[inline]
+    pub fn bit_indices(bits: u64) -> crate::BitIndices {
+        let mut set = (0..64).filter(|i| bits >> i & 1 != 0);
+        let compressed = Some(core::array::from_fn(|_| set.next().unwrap_or(0xAA)));
+        crate::BitIndices { bits, compressed }
+    }
 }

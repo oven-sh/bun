@@ -1,14 +1,12 @@
 //! All the `unsafe` of `bun_simd`, and what it relies on.
 #![no_std]
-#![feature(fn_static)]
-#![cfg_attr(
-    any(target_arch = "x86_64", target_arch = "aarch64"),
-    feature(portable_simd)
-)]
+#![feature(portable_simd, fn_static)]
 #![deny(unsafe_code)]
 // The decoders for other systems are public, so that every machine can test them.
 #![cfg_attr(mordant, allow(unused_pub))]
 #![allow(clippy::disallowed_methods, clippy::disallowed_types)]
+
+extern crate alloc;
 
 pub mod aarch64;
 #[allow(unsafe_code)]
@@ -18,6 +16,8 @@ mod gate;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[allow(unsafe_code)]
 mod os;
+#[allow(unsafe_code)]
+mod output;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[allow(unsafe_code)]
 pub mod shared;
@@ -27,6 +27,7 @@ pub mod x86_64;
 #[cfg(target_arch = "aarch64")]
 pub use aarch64::Features;
 pub use atomic_fn::AtomicFn;
+pub use output::{Out, Writer, extend_vec};
 pub use target::Target;
 #[cfg(target_arch = "x86_64")]
 pub use x86_64::Features;

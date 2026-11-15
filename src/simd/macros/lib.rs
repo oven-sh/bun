@@ -43,7 +43,7 @@ fn block(head: &str, body: TokenStream) -> TokenStream {
 }
 
 /// Replaces the body of `mod name { .. }`.
-fn map_module(item: TokenStream, f: impl FnOnce(TokenStream) -> TokenStream) -> TokenStream {
+fn map_module(item: TokenStream, f: fn(TokenStream) -> TokenStream) -> TokenStream {
     let mut item: Vec<TokenTree> = item.into_iter().collect();
     let Some(TokenTree::Group(body)) = item.pop() else {
         panic!("expected `mod name {{ .. }}`");

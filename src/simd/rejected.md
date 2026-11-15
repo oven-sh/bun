@@ -236,6 +236,84 @@ fn f(bytes: &[[AtomicU64; 1]; 1]) {
 }
 ```
 
+## `Out`
+
+A read:
+
+```rust,compile_fail,E0616
+fn f(out: bun_simd::Out<'_, u8>) {
+    out.0;
+}
+```
+
+A second handle:
+
+```rust,compile_fail,E0382
+fn f(out: bun_simd::Out<'_, u8>) {
+    (out.take(1), out.take(1));
+}
+```
+
+A value that is not initialized, into memory that is:
+
+```rust,compile_fail,E0308
+let mut bytes = [0u8; 1];
+let mut out = bun_simd::Out::<u8>::from(&mut bytes[..]).into_writer();
+out.push([std::mem::MaybeUninit::uninit()]);
+```
+
+The same, with another type of `Out`:
+
+```rust,compile_fail,E0277
+let mut bytes = [0u8; 1];
+bun_simd::Out::<std::mem::MaybeUninit<u8>>::from(&mut bytes[..]);
+```
+
+A reference that lives less long than the memory promises:
+
+```rust,compile_fail,E0597
+let (mut all, short) = ([&1u8; 1], 2);
+let all: &mut [&'static u8] = &mut all;
+bun_simd::Out::from(all).into_writer().push([&short]);
+```
+
+A value with a destructor:
+
+```rust,compile_fail,E0277
+fn f(all: &mut [String]) -> bun_simd::Out<'_, String> {
+    all.into()
+}
+```
+
+A length out of nothing:
+
+```rust,compile_fail,E0616
+fn f(mut out: bun_simd::Writer<'_, u8>) {
+    out.len = 1;
+}
+```
+
+Keeping what was lent:
+
+```rust,compile_fail,E0521
+let mut kept = None;
+bun_simd::extend_vec(&mut vec![0u8], 1, |out| {
+    kept = Some(out);
+    &mut []
+});
+```
+
+A write to the lender in the meantime:
+
+```rust,compile_fail,E0499
+fn f(mut out: bun_simd::Writer<'_, u8>) {
+    out.append(|_| {
+        out.push([1]);
+        &mut []
+    });
+}
+```
+
 ## In the module
 
 An op of another target:

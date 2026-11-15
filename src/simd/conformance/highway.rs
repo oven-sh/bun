@@ -1,6 +1,8 @@
 //! The Highway kernels, with the signatures of `bun_simd_kernels`.
+use crate::Uninit;
 pub(crate) use bun_highway::*;
-use bun_simd_kernels::{Columns, MappingsState};
+use bun_simd_kernels::{Columns, ColumnsFilled, MappingsState};
+use core::mem::MaybeUninit;
 
 const LANCZOS3: i32 = 2;
 
@@ -63,13 +65,55 @@ pub(crate) fn fill_with_mask(mask: [u8; 4], output: &mut [u8], input: &[u8]) {
 }
 
 #[inline(always)]
+pub(crate) fn encode_hex_lower(src: &[u8], dst: &mut [[u8; 2]]) {
+    bun_highway::encode_hex_lower(src, dst.as_flattened_mut());
+}
+
+#[inline(always)]
+pub(crate) fn decode_hex<'a>(src: &[[u8; 2]], dst: &'a mut [u8]) -> &'a mut [u8] {
+    let len = bun_highway::decode_hex(src.as_flattened(), dst);
+    &mut dst[..len]
+}
+
+#[inline(always)]
+pub(crate) fn unpack_words<'a>(
+    controls: &[u8],
+    data: &[u8],
+    words: &'a mut [[u32; 4]],
+) -> (&'a mut [[u32; 4]], usize) {
+    // SAFETY: the layout is the same, and the kernel writes only initialized values.
+    let out = unsafe { &mut *(&raw mut *words as *mut [[MaybeUninit<u32>; 4]]) };
+    let (groups, used) = bun_highway::unpack_words(controls, data, out);
+    (&mut words[..groups], used)
+}
+
+#[inline(always)]
+pub(crate) fn json_structural_index_chunk<'a>(
+    input: &[u8],
+    base_offset: usize,
+    out: &'a mut [MaybeUninit<u32>],
+    dirty: &mut [u64],
+    state: &mut [u64; 3],
+) -> (&'a mut [u32], u32) {
+    let (len, flags) =
+        bun_highway::json_structural_index_chunk(input, base_offset, out, dirty, state);
+    // SAFETY: the kernel has written that many.
+    (unsafe { out[..len].assume_init_mut() }, flags)
+}
+
+#[inline(always)]
 pub(crate) fn xxhash3_64_long(input: &[u8]) -> Option<u64> {
     Some(xxhash3_64(0, input))
 }
 
 #[inline(always)]
-pub(crate) fn png_unfilter4(filter_type: u8, row: &mut [u8], above: &[u8]) {
-    png_unfilter(filter_type, 4, row, above);
+pub(crate) fn png_filter_rgba(
+    row: &[[u8; 4]],
+    above: &[[u8; 4]],
+    filtered: [&mut [[u8; 4]]; 4],
+) -> [u64; 5] {
+    let filtered = filtered.map(<[_]>::as_flattened_mut);
+    bun_highway::png_filter_rgba(row.as_flattened(), above.as_flattened(), filtered)
 }
 
 #[inline(always)]
@@ -97,41 +141,59 @@ pub(crate) fn modulate(pixels: &mut [[u8; 4]], brightness: f32, saturation: f32)
     unsafe { bun_image_modulate_rgba8(bytes, len, brightness, saturation) }
 }
 
-/// Returns the number of rows written.
-pub(crate) fn parse_mappings(
+pub(crate) fn parse_mappings<'a>(
     bytes: &[u8],
-    out: Columns<'_>,
+    out: Columns<Uninit<'a, [i32; 2]>, Uninit<'a, i32>>,
     sources_count: i32,
-    from: &MappingsState,
-) -> usize {
+    state: &mut MappingsState,
+) -> ColumnsFilled<'a> {
     let Columns {
         generated,
         original,
         src_idx,
-        name_idx,
+        mut name_idx,
     } = out;
     let cap = src_idx.len();
     let out = ParseMappingsOut {
         generated: generated[..cap].as_mut_ptr().cast(),
         original: original[..cap].as_mut_ptr().cast(),
         src_idx: src_idx.as_mut_ptr().cast(),
-        name_idx: name_idx.map_or(core::ptr::null_mut(), |names| {
+        name_idx: name_idx.as_mut().map_or(core::ptr::null_mut(), |names| {
             names[..cap].as_mut_ptr().cast()
         }),
         cap,
     };
-    let state = &mut ParseMappingsState {
-        gen_line: from.gen_line,
-        gen_col: from.gen_col,
-        orig_line: from.orig_line,
-        orig_col: from.orig_col,
-        src_idx: from.src_idx,
-        name_idx: from.name_idx,
-        has_names: from.has_names.into(),
+    let mut raw = ParseMappingsState {
+        gen_line: state.gen_line,
+        gen_col: state.gen_col,
+        orig_line: state.orig_line,
+        orig_col: state.orig_col,
+        src_idx: state.src_idx,
+        name_idx: state.name_idx,
+        has_names: state.has_names.into(),
         ..Default::default()
     };
-    // SAFETY: each column has `cap` rows, and is borrowed exclusively.
-    unsafe { bun_highway::parse_mappings(bytes, &out, sources_count, state, &mut 0) }
+    // SAFETY: each column has `cap` rows and is borrowed exclusively.
+    let rows = unsafe { bun_highway::parse_mappings(bytes, &out, sources_count, &mut raw, &mut 0) };
+    *state = MappingsState {
+        gen_line: raw.gen_line,
+        gen_col: raw.gen_col,
+        orig_line: raw.orig_line,
+        orig_col: raw.orig_col,
+        src_idx: raw.src_idx,
+        name_idx: raw.name_idx,
+        needs_sort: raw.needs_sort != 0,
+        has_names: raw.has_names != 0,
+    };
+    // SAFETY: the kernel has filled that many rows.
+    unsafe {
+        Columns {
+            generated: generated[..rows].assume_init_mut(),
+            original: original[..rows].assume_init_mut(),
+            src_idx: src_idx[..rows].assume_init_mut(),
+            name_idx: name_idx.map(|names| names[..rows].assume_init_mut()),
+        }
+    }
 }
 
 #[derive(Default)]

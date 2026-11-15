@@ -3,7 +3,6 @@ use crate::swizzle::{Repeat, ShiftRight, SwapPairs};
 use crate::{Isa, Mask};
 use core::array;
 use core::marker::PhantomData;
-use core::mem::MaybeUninit;
 use core::ops::{
     Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Index, Mul,
     Not, RangeInclusive, Shl, Shr, Sub, SubAssign,
@@ -28,6 +27,7 @@ pub trait Int<const N: usize> = Lane
 where
     Simd<Self, N>: Add<Output = Simd<Self, N>>
         + Sub<Output = Simd<Self, N>>
+        + Mul<Output = Simd<Self, N>>
         + BitAnd<Output = Simd<Self, N>>
         + BitOr<Output = Simd<Self, N>>
         + BitXor<Output = Simd<Self, N>>
@@ -98,12 +98,6 @@ impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I> {
         self.store(lanes.first_chunk_mut().unwrap());
     }
 
-    /// Panics if `lanes` is too short.
-    #[inline(always)]
-    pub fn write_to_slice(self, lanes: &mut [MaybeUninit<T>]) {
-        lanes[..N].write_copy_of_slice(&self.to_array());
-    }
-
     #[inline(always)]
     pub fn store(self, lanes: &mut [T; N]) {
         *lanes = self.to_array();
@@ -137,11 +131,6 @@ impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I> {
     #[inline(always)]
     pub fn swap_pairs(self) -> Self {
         Self::new(SwapPairs::swizzle(self.0))
-    }
-
-    #[inline(always)]
-    pub fn splat_last(self) -> Self {
-        Self::splat(self[N - 1])
     }
 }
 
@@ -295,6 +284,14 @@ impl<const N: usize, I: Isa> Vector<u16, N, I> {
             Self::new(products.extract::<0, N>()),
             Self::new(products.extract::<N, N>()),
         )
+    }
+}
+
+impl<const N: usize, I: Isa> Vector<i16, N, I> {
+    /// Converts each lane with `as`.
+    #[inline(always)]
+    pub fn cast<U: Lane>(self) -> Vector<U, N, I> {
+        Vector::new(self.0.cast())
     }
 }
 

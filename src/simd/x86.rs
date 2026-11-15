@@ -1,5 +1,5 @@
-use crate::native::{self, COMPRESS_4, as_group};
-use crate::{Int, Isa, Mask, Vector};
+use crate::native::{self, as_group};
+use crate::{BitIndices, Int, Isa, Mask, Vector};
 use bun_simd_trusted::shared;
 use core::arch::x86_64::*;
 use core::array::from_fn;
@@ -132,15 +132,6 @@ impl<I: Xmm> Vector<i32, 4, I> {
     }
 }
 
-impl<I: Xmm> Vector<u32, 4, I> {
-    #[inline]
-    #[target_feature(enable = "ssse3")]
-    pub fn compress(self, bits: u64) -> Self {
-        let indices = Simd::from_array(COMPRESS_4[bits as usize & 15]);
-        Self::new(_mm_shuffle_epi8(self.0.into(), indices.into()))
-    }
-}
-
 impl<I: Xmm> Vector<u64, 2, I> {
     #[inline]
     #[target_feature(enable = "sse2")]
@@ -182,41 +173,6 @@ impl Vector<i16, 16, Avx2> {
     #[target_feature(enable = "avx2")]
     pub fn saturating_pairwise_dot(a: Vector<u8, 32, Avx2>, b: Vector<i8, 32, Avx2>) -> Self {
         Self::new(_mm256_maddubs_epi16(a.0.into(), b.0.into()))
-    }
-}
-
-impl Vector<i32, 8, Avx2> {
-    #[inline]
-    #[target_feature(enable = "avx2")]
-    pub fn pairwise_dot(a: Vector<i16, 16, Avx2>, b: Vector<i16, 16, Avx2>) -> Self {
-        Self::new(_mm256_madd_epi16(a.0.into(), b.0.into()))
-    }
-}
-
-/// For each 8-bit mask, the indices of the selected lanes.
-static COMPRESS_8: [[u8; 8]; 256] = {
-    let mut table = [[0; 8]; 256];
-    let mut bits = 0;
-    while bits < 256 {
-        let (mut from, mut to) = (0, 0);
-        while from < 8 {
-            if bits >> from & 1 != 0 {
-                table[bits][to] = from;
-                to += 1;
-            }
-            from += 1;
-        }
-        bits += 1;
-    }
-    table
-};
-
-impl Vector<u32, 8, Avx2> {
-    #[inline]
-    #[target_feature(enable = "avx2")]
-    pub fn compress(self, bits: u64) -> Self {
-        let indices = Simd::from_array(COMPRESS_8[bits as usize & 255]).cast::<u32>();
-        Self::new(_mm256_permutevar8x32_epi32(self.0.into(), indices.into()))
     }
 }
 
@@ -268,24 +224,6 @@ impl<I: Zmm> Vector<i16, 32, I> {
     }
 }
 
-impl<I: Zmm> Vector<i32, 16, I> {
-    #[inline]
-    #[target_feature(enable = "avx512bw")]
-    pub fn pairwise_dot(a: Vector<i16, 32, I>, b: Vector<i16, 32, I>) -> Self {
-        Self::new(_mm512_madd_epi16(a.0.into(), b.0.into()))
-    }
-}
-
-impl<I: Zmm> Vector<u32, 16, I> {
-    #[inline]
-    #[target_feature(enable = "avx512f")]
-    pub fn compress(self, bits: u64) -> Self {
-        // The zeroing form has a false dependency on Zen 4 and 5: https://github.com/golang/go/issues/81609
-        let lanes = self.0.into();
-        Self::new(_mm512_mask_compress_epi32(lanes, bits as u16, lanes))
-    }
-}
-
 impl<I: Zmm> Vector<u64, 8, I> {
     #[inline]
     #[target_feature(enable = "avx512bw")]
@@ -310,7 +248,7 @@ impl<I: Zmm> Vector<f32, 16, I> {
 
 pub mod sse4 {
     pub(crate) use crate::native::{load_shared, store_shared};
-    pub use crate::portable::prefix_xor;
+    pub use crate::portable::{bit_indices, prefix_xor};
     pub(crate) use crate::portable::{load_shared_masked, store_shared_masked};
 
     crate::isa::vector_types!(super::Sse4, 16);
@@ -318,6 +256,7 @@ pub mod sse4 {
 
 pub mod avx2 {
     use super::*;
+    pub use crate::portable::bit_indices;
     pub(crate) use crate::portable::{load_shared_masked, store_shared_masked};
 
     crate::isa::vector_types!(Avx2, 32);
@@ -397,6 +336,7 @@ mod avx512 {
 pub mod avx512_skx {
     pub use super::avx2::prefix_xor;
     pub(crate) use super::avx512::*;
+    pub use crate::portable::bit_indices;
 
     crate::isa::vector_types!(super::Avx512Skx, 64);
 }
@@ -404,6 +344,16 @@ pub mod avx512_skx {
 pub mod avx512_icl {
     pub use super::avx2::prefix_xor;
     pub(crate) use super::avx512::*;
+    use super::*;
 
-    crate::isa::vector_types!(super::Avx512Icl, 64);
+    crate::isa::vector_types!(Avx512Icl, 64);
+
+    #[inline]
+    #[target_feature(enable = "avx512vbmi2")]
+    pub fn bit_indices(bits: u64) -> BitIndices {
+        // The zeroing form has a false dependency on Zen 4 and 5: https://github.com/golang/go/issues/81609
+        let all = U8::iota().0.into();
+        let compressed = Some(U8::new(_mm512_mask_compress_epi8(all, bits, all)).to_array());
+        BitIndices { bits, compressed }
+    }
 }

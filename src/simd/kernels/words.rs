@@ -1,5 +1,5 @@
 //! Ports of highway_strings.cpp: words in as few bytes as they take.
-use core::mem::MaybeUninit;
+use bun_simd::{Out, Writer};
 
 /// LLVM knows its range even when it comes out of a table, so bounds checks on it go away.
 #[derive(Clone, Copy)]
@@ -51,114 +51,104 @@ static PACKED: PackedWordTables = {
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
-    use isa::{I32, U8, U32, x128};
+    use isa::{I8, I16, I32, U8, U16, U32, x128};
 
-    /// Returns the size. `data` gets 16 bytes for each group at most.
+    const GROUPS: usize = if U8::LEN > 32 { 8 } else { 4 };
+
+    /// Returns the control bytes. `data` needs 16 bytes for each group.
     #[inline(always)]
-    fn pack_four(groups: &[[u32; 4]; 4], controls: &mut [u8; 4], data: &mut [u8; 64]) -> usize {
-        let lowest = U8::repeat_16([
-            0, 4, 8, 12, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
-        ]);
-        let (mut all_folded, mut all_codes) = ([[0; 16]; 4], [[0; 4]; 4]);
-        for (i, words) in groups.as_flattened().as_chunks().0.iter().enumerate() {
-            let word = U32::load(words);
-            let folded = word << 1 ^ (word.bitcast::<I32>() >> 31).bitcast::<U32>();
-            let codes = folded.simd_eq(0).to_vector()
-                + (folded >> 8).simd_eq(0).to_vector()
-                + (folded >> 16).simd_eq(0).to_vector()
-                + 3;
-            folded
-                .bitcast::<U8>()
-                .copy_to_slice(&mut all_folded.as_flattened_mut()[i * U8::LEN..]);
-            codes
-                .bitcast::<U8>()
-                .lookup(lowest)
-                .bitcast::<U32>()
-                .copy_to_slice(&mut all_codes.as_flattened_mut()[i * U32::LEN..]);
-        }
-        let mut at = 0;
-        for i in 0..4 {
-            let control = (all_codes[i][0].wrapping_mul(0x0104_1040) >> 24) as u8;
-            x128::U8::load(&all_folded[i])
-                .lookup(x128::U8::load(&PACKED.packing[usize::from(control)]))
-                .copy_to_slice(&mut data[at..]);
-            controls[i] = control;
-            at += PACKED.sizes[usize::from(control)] as usize;
-        }
-        at
-    }
-
-    /// Stops where `data` has less than 16 bytes for each group that is left.
-    #[export(up_to = avx2)]
-    pub fn pack_words(words: &[[u32; 4]], controls: &mut [u8], data: &mut [u8]) -> usize {
-        let (room, groups) = (data.len(), words.len().min(controls.len()));
-        let ((fours, words), (four_controls, controls)) = (
-            words[..groups].as_chunks(),
-            controls[..groups].as_chunks_mut(),
-        );
-        let mut rest = data;
-        for (four, controls) in fours.iter().zip(four_controls) {
-            let Some(window) = rest.first_chunk_mut() else {
-                return room - rest.len();
+    fn pack(groups: &[[u32; 4]; GROUPS], data: &mut Writer<'_, u8>) -> [u8; GROUPS] {
+        let (mut folded, mut controls) = ([[0; 16]; GROUPS], 0);
+        let vectors = groups.as_flattened().as_chunks().0;
+        for (i, pair) in vectors.as_chunks::<2>().0.iter().enumerate() {
+            let mut fold = |k: usize| {
+                let word = U32::load(&pair[k]);
+                let bytes: U8 =
+                    (word << 1 ^ (word.bitcast::<I32>() >> 31).bitcast::<U32>()).bitcast();
+                bytes.copy_to_slice(&mut folded.as_flattened_mut()[(2 * i + k) * U8::LEN..]);
+                bytes.simd_min(1).bitcast::<I16>()
             };
-            let size = pack_four(four, controls, window);
-            rest = &mut rest[size..];
+            // 0, 1, 0xFF or 0x100 for a word that takes 0, 1, 2 or 4 bytes.
+            let size = U8::saturating_narrow(fold(0), fold(1))
+                .bitcast::<U16>()
+                .simd_min(0x100);
+            let code_in_signs: I8 = (size + (size >> 8) + 0x7F7F).bitcast();
+            controls |= code_in_signs.simd_lt(0).to_bitmask() << (i * U8::LEN);
         }
-        // Words that are zero take no room.
-        let (mut four, mut four_controls, mut window) = ([[0; 4]; 4], [0; 4], [0; 64]);
-        four.iter_mut()
-            .zip(words)
-            .for_each(|(to, from)| *to = *from);
-        let size = pack_four(&four, &mut four_controls, &mut window).min(rest.len());
+        let controls = *controls.to_le_bytes().first_chunk().unwrap();
+        for (folded, control) in folded.iter().zip(controls.map(usize::from)) {
+            let packed = x128::U8::load(folded).lookup(x128::U8::load(&PACKED.packing[control]));
+            data.push_first(packed.to_array(), PACKED.sizes[control] as usize);
+        }
         controls
-            .iter_mut()
-            .zip(four_controls)
-            .for_each(|(to, from)| *to = from);
-        rest[..size].copy_from_slice(&window[..size]);
-        room - rest.len() + size
     }
 
-    /// Returns the size.
+    /// `data` needs 16 bytes for each group.
+    #[export(up_to = avx2)]
+    pub fn pack_words<'a, 'b>(
+        words: &[[u32; 4]],
+        controls: Out<'a, u8>,
+        data: Out<'b, u8>,
+    ) -> (&'a mut [u8], &'b mut [u8]) {
+        let len = words.len().min(controls.len()).min(data.len() / 16);
+        let (chunks, rest) = words[..len].as_chunks();
+        let (mut controls, mut data) = (controls.into_writer(), data.into_writer());
+        controls.extend_with(chunks, |groups| {
+            assert!(data.remaining() >= 16 * GROUPS);
+            let mut controls = [0; GROUPS];
+            data.append(|window| {
+                let mut window = window.take(16 * GROUPS).into_writer();
+                controls = pack(groups, &mut window);
+                window.finish()
+            });
+            Some(controls)
+        });
+        // Words that are zero take no room.
+        let (mut groups, mut window) = ([[0; 4]; GROUPS], [0; 16 * GROUPS]);
+        groups[..rest.len()].copy_from_slice(rest);
+        let mut window = Out::from(&mut window[..]).into_writer();
+        controls.extend_from_slice(&pack(&groups, &mut window)[..rest.len()]);
+        data.extend_from_slice(window.finish());
+        (controls.finish(), data.finish())
+    }
+
+    /// Returns the size too.
     #[inline(always)]
-    fn unpack_group(control: u8, data: &[u8], out: &mut [MaybeUninit<u32>; 4]) -> usize {
+    fn unpack_group(control: u8, data: &[u8]) -> ([u32; 4], usize) {
         use x128::{U8, U32};
         let folded: U32 = U8::from_slice(data)
             .lookup(U8::load(&PACKED.unpacking[usize::from(control)]))
             .bitcast();
-        ((folded >> 1) ^ (folded & 1).wrapping_neg()).write_to_slice(out);
-        PACKED.sizes[usize::from(control)] as usize
+        let words = (folded >> 1) ^ (folded & 1).wrapping_neg();
+        (
+            words.to_array(),
+            PACKED.sizes[usize::from(control)] as usize,
+        )
     }
 
+    /// Stops 16 bytes before the end of `data`, and returns how much of it was used.
     #[export]
-    pub fn unpack_words(
+    pub fn unpack_words<'a>(
         controls: &[u8],
         data: &[u8],
-        words: &mut [[MaybeUninit<u32>; 4]],
-    ) -> (usize, usize) {
-        let (mut rest, mut groups) = (data, 0);
-        for (controls, four) in controls
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .zip(words.as_chunks_mut::<4>().0)
-        {
-            let Some(window) = rest.first_chunk::<64>() else {
-                break;
-            };
-            let mut at = 0;
+        words: Out<'a, [u32; 4]>,
+    ) -> (&'a mut [[u32; 4]], usize) {
+        let (mut rest, mut words) = (data, words.into_writer());
+        words.extend_with(controls.as_chunks().0, |controls: &[u8; 4]| {
+            let (window, mut four, mut at) = (rest.first_chunk::<64>()?, [[0; 4]; 4], 0);
             for i in 0..4 {
-                at += unpack_group(controls[i], &window[at..], &mut four[i]);
+                let size;
+                (four[i], size) = unpack_group(controls[i], &window[at..]);
+                at += size;
             }
             rest = &rest[at..];
-            groups += 4;
-        }
-        for (&control, out) in controls.iter().zip(words).skip(groups) {
-            let Some(window) = rest.first_chunk::<16>() else {
-                break;
-            };
-            rest = &rest[unpack_group(control, window, out)..];
-            groups += 1;
-        }
-        (groups, data.len() - rest.len())
+            Some(four)
+        });
+        words.extend_with(&controls[words.len()..], |&control| {
+            let (group, size) = unpack_group(control, rest.first_chunk::<16>()?);
+            rest = &rest[size..];
+            Some([group])
+        });
+        (words.finish(), data.len() - rest.len())
     }
 }

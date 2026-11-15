@@ -1,13 +1,6 @@
 //! Ports of highway_strings.cpp.
-use bun_simd::Int;
+use bun_simd::{Int, Out, Partial, blocks};
 use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
-
-#[inline(always)]
-fn padded(rest: &[u8], fill: u8) -> [u8; 64] {
-    let mut block = [fill; 64];
-    block[..rest.len()].copy_from_slice(rest);
-    block
-}
 
 struct Nibbles {
     upper: [u8; 16],
@@ -55,7 +48,7 @@ const STRING_STOP: Nibbles = Nibbles::new(&[
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
-    use isa::{I8, U8, U16, U32, Vector};
+    use isa::{I8, U8, U16, U32, Vector, x128};
 
     #[export]
     pub fn index_of_char(text: &[u8], needle: u8) -> Option<usize> {
@@ -167,10 +160,10 @@ pub(crate) mod simd {
     }
 
     #[export]
-    pub fn lower_ascii16(from: &[u16], to: &mut [u16]) {
+    pub fn lower_ascii16<'a>(from: &[u16], to: Out<'a, u16>) -> &'a mut [u16] {
         U16::map(from, to, |v| {
             v | v.in_range(b'A'.into()..=b'Z'.into()).to_vector() & 0x20
-        });
+        })
     }
 
     #[export]
@@ -186,22 +179,19 @@ pub(crate) mod simd {
         U8::map_to_shared(words, words, |v| v.lookup(reversed));
     }
 
+    /// The offset after each newline. Panics unless there is room for 64 more than there are.
     #[export]
-    pub fn line_starts(text: &[u8], out: &mut Vec<u32>) {
-        let mut block_at = |block: &[u8; 64], pos: usize| {
-            let [mut newlines] = U8::bitmasks(block, |v| [v.simd_eq(b'\n')]);
-            let after = pos as u32 + 1;
-            out.extend((0..newlines.count_ones()).map(|_| {
-                let at = after + newlines.trailing_zeros();
-                newlines &= newlines - 1;
-                at
-            }));
-        };
-        let (blocks, rest) = text.as_chunks();
-        for (i, block) in blocks.iter().enumerate() {
-            block_at(block, 64 * i);
+    pub fn line_starts<'a>(text: &[u8], out: Out<'a, u32>) -> &'a mut [u32] {
+        let (mut out, mut had_newlines) = (out.into_writer(), 0u8);
+        for (i, block) in blocks(text, &mut [0; 64]).enumerate() {
+            let [newlines] = U8::bitmasks(block, |v| [v.simd_eq(b'\n')]);
+            // A branch on this block alone is hard to predict.
+            had_newlines = had_newlines << 2 | u8::from(newlines != 0);
+            if had_newlines != 0 {
+                isa::bit_indices(newlines).push_to(&mut out, 64 * i as u32 + 1);
+            }
         }
-        block_at(&padded(rest, 0), 64 * blocks.len());
+        out.finish()
     }
 
     fn class(v: U8, of: &Nibbles) -> U8 {
@@ -221,40 +211,41 @@ pub(crate) mod simd {
         [!name, name | neither, !plain].map(u64::to_le_bytes)
     }
 
+    /// Panics unless each plane has a bit for each byte.
     #[export]
     pub fn scanner_run_stops(text: &[u8], planes: [&mut [[u8; 8]]; 3]) {
-        let [names, blanks, strings] = planes;
-        let (blocks, rest) = text.as_chunks();
-        for (((block, a), b), c) in blocks
-            .iter()
-            .zip(&mut *names)
-            .zip(&mut *blanks)
-            .zip(&mut *strings)
-        {
+        let (whole, rest) = text.as_chunks();
+        let [names, blanks, strings] =
+            planes.map(|plane| plane[..text.len().div_ceil(64)].split_at_mut(whole.len()));
+        let planes = names.0.iter_mut().zip(blanks.0).zip(strings.0);
+        for (block, ((a, b), c)) in whole.iter().zip(planes) {
             [*a, *b, *c] = stops_of_block(block);
         }
-        let at = blocks.len();
-        if !rest.is_empty()
-            && let (Some(a), Some(b), Some(c)) =
-                (names.get_mut(at), blanks.get_mut(at), strings.get_mut(at))
+        if let ([a], [b], [c]) = (names.1, blanks.1, strings.1)
+            && let Some(block) = blocks(rest, &mut [0; 64]).next()
         {
-            [*a, *b, *c] = stops_of_block(&padded(rest, 0));
+            [*a, *b, *c] = stops_of_block(block);
         }
     }
 
     #[export]
-    pub fn copy_u16_to_u8(input: &[u16], output: &mut [u8]) {
-        let len = input.len().min(output.len());
-        let (input, output) = (&input[..len], &mut output[..len]);
-        if !width::full::copy_u16_to_u8(input, output)
-            && !width::x128::copy_u16_to_u8(input, output)
-        {
-            let n = U16::LEN - 1;
-            for (from, to) in input.chunks(n).zip(output.chunks_mut(n)) {
-                if let Some(partial) = U16::load_partial(from) {
-                    U8::narrow(partial.lanes, partial.lanes).store_partial(to);
-                }
-            }
+    pub fn copy_u16_to_u8<'a>(input: &[u16], output: Out<'a, u8>) -> &'a mut [u8] {
+        let output = output.take(input.len());
+        if output.len() >= U8::LEN {
+            return width::full::copy_u16_to_u8(input, output);
+        }
+        if output.len() >= 16 {
+            return width::x128::copy_u16_to_u8(input, output);
+        }
+        let input = &input[..output.len()];
+        if let (Some(first), Some((_, last))) = (input.first_chunk(), input.split_last_chunk()) {
+            let both = x128::U8::narrow(x128::U16::load(first), x128::U16::load(last)).to_array();
+            let [first, last] = *both.as_chunks::<8>().0.as_array().unwrap();
+            return output.fill_ends(first, last).unwrap_or_default();
+        }
+        match x128::U16::load_partial(input) {
+            Some(Partial { lanes, .. }) => x128::U8::narrow(lanes, lanes).store_partial(output),
+            None => &mut [],
         }
     }
 
@@ -262,38 +253,28 @@ pub(crate) mod simd {
     mod width {
         use isa::{U8, U16};
 
-        /// Whether there is enough for a vector. The last one overlaps.
-        pub fn copy_u16_to_u8(input: &[u16], output: &mut [u8]) -> bool {
-            let narrow = |from: &[u16; U8::LEN]| {
-                U8::narrow(U16::from_slice(from), U16::from_slice(&from[U16::LEN..]))
-            };
-            let Some((_, last)) = input.split_last_chunk() else {
-                return false;
-            };
-            for (from, to) in input[..input.len() - 1]
-                .as_chunks()
-                .0
-                .iter()
-                .zip(output.as_chunks_mut().0)
-            {
-                narrow(from).store(to);
-            }
-            output
-                .split_last_chunk_mut()
-                .map(|(_, to)| narrow(last).store(to))
-                .is_some()
+        pub fn copy_u16_to_u8<'a>(input: &[u16], output: Out<'a, u8>) -> &'a mut [u8] {
+            output.fill_chunks(input, |_, from: &[u16; U8::LEN]| {
+                let (low, high) = from.split_at(U16::LEN);
+                Some(U8::narrow(U16::from_slice(low), U16::from_slice(high)).to_array())
+            })
         }
     }
 
     #[export]
-    pub fn fill_with_mask(mask: [u8; 4], output: &mut [u8], input: &[u8]) {
-        let len = input.len().min(output.len());
-        let m: U8 = U32::splat(u32::from_le_bytes(mask)).bitcast();
-        let (words, rest) = input[..len].split_at(len & !3);
-        let (words_out, rest_out) = output[..len].split_at_mut(len & !3);
-        U8::map(words, words_out, |v| v ^ m);
-        for ((from, to), mask) in rest.iter().zip(rest_out).zip(mask) {
-            *to = from ^ mask;
+    pub fn fill_with_mask<'a>(mask: [u8; 4], output: Out<'a, u8>, input: &[u8]) -> &'a mut [u8] {
+        let output = output.take(input.len());
+        let (len, mask) = (output.len(), u32::from_le_bytes(mask));
+        let mask_at =
+            |at: usize| U32::splat(mask.rotate_right(8 * (at % 4) as u32)).bitcast::<U8>();
+        if len >= U8::LEN {
+            return output.fill_chunks(input, |at, from| {
+                Some((U8::load(from) ^ mask_at(at)).to_array())
+            });
+        }
+        match U8::load_partial(&input[..len]) {
+            Some(it) => (it.lanes ^ mask_at(0).lookup(it.indices() & 3)).store_partial(output),
+            None => &mut [],
         }
     }
 

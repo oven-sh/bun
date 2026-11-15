@@ -1,6 +1,7 @@
 //! Each line has a name and two times in nanoseconds, separated by tabs.
+#![allow(clippy::useless_conversion)] // to `Out` for Rust, and to the same type for Highway
 use crate::room::Room;
-use crate::{PER_ROW, Random, columns, highway, write_line, zeroed};
+use crate::{Random, columns, highway, write_line};
 use bun_simd_kernels as rust;
 use core::fmt::Arguments;
 use core::hint::black_box as opaque;
@@ -146,10 +147,14 @@ fn pieces(js: &[u8]) {
             each(all, |t| k::memmem(t, b"this"))
         });
         compare!("fill_with_mask of 20000 {name}", |k| {
-            each(all, |t| k::fill_with_mask([1, 2, 3, 4], out, t))
+            each(all, |t| {
+                _ = k::fill_with_mask([1, 2, 3, 4], out.as_mut_slice().into(), t)
+            })
         });
         compare!("encode_hex_lower of 20000 {name}", |k| {
-            each(all, |t| k::encode_hex_lower(t, out))
+            each(all, |t| {
+                _ = k::encode_hex_lower(t, out.as_chunks_mut().0.into())
+            })
         });
     }
 }
@@ -185,6 +190,10 @@ fn whole_files(js: &[u8], json: &[u8], map: &[u8]) {
         k::memmem(opaque(&js[..40]), opaque(b"xyz"))
     });
     compare!("line_starts 1 MB", |k| k::line_starts(opaque(js)));
+    let one_line = &vec![b'a'; js.len()];
+    compare!("line_starts miss 1 MB", |k| k::line_starts(opaque(
+        one_line
+    )));
     for n in [300, 65536] {
         compare!("xxhash3 {n}", |k| k::xxhash3_64_long(opaque(&js[..n])));
     }
@@ -206,35 +215,32 @@ fn whole_files(js: &[u8], json: &[u8], map: &[u8]) {
             opaque(k::json_structural_index_chunk(
                 chunk,
                 i * 8192,
-                index,
+                index.as_mut_slice().into(),
                 dirty,
                 &mut state,
             ));
         }
     });
 
+    let (random, segments) = (
+        &mut Random(3),
+        ["CAAC,", "EAAE,", "IAAI,", "gBAAgB,", "kCAAkC,"],
+    );
+    let one_line: String = (0..45_000).map(|_| random.one_of(&segments)).collect();
     for (name, map, has_names) in [
         ("of a bundle", map, true),
+        ("of one line", one_line.as_bytes(), false),
         ("all alike", &b"CAAC,".repeat(50_000), false),
     ] {
         let cap = highway::count_mapping_delims(map) + 1;
-        let mut out = PER_ROW.map(|per_row| zeroed(per_row * cap));
-        let out = &mut out.each_mut().map(|column| &mut column[..]);
-        compare!(
-            "mappings {name}",
-            highway::parse_mappings(
-                opaque(map),
-                columns(out, has_names),
-                1 << 20,
-                &Default::default()
-            ),
-            rust::parse_mappings(
-                opaque(map),
-                columns(out, has_names),
-                1 << 20,
-                &mut Default::default()
-            )
-        );
+        let mut pairs = [(); 2].map(|()| Box::new_uninit_slice(cap));
+        let mut indices = [(); 2].map(|()| Box::new_uninit_slice(cap));
+        let pairs = &mut pairs.each_mut().map(|column| &mut column[..]);
+        let indices = &mut indices.each_mut().map(|column| &mut column[..]);
+        compare!("mappings {name}", |k| {
+            let out = columns(pairs, indices, has_names);
+            k::parse_mappings(opaque(map), out, 1 << 20, &mut Default::default())
+        });
     }
 }
 
@@ -243,20 +249,20 @@ fn conversions(js: &[u8]) {
         let (t, out, wide_out) = (&js[..n], &mut vec![0; 2 * n], &mut vec![0; n]);
         let wide: &Vec<u16> = &t.iter().map(|&byte| byte.into()).collect();
         compare!("copy_u16_to_u8 {n}", |k| {
-            k::copy_u16_to_u8(opaque(wide), opaque(out))
+            k::copy_u16_to_u8(opaque(wide), opaque(&mut out[..]).into())
         });
         compare!("lower_ascii16 {n}", |k| {
-            k::lower_ascii16(opaque(wide), opaque(wide_out))
+            k::lower_ascii16(opaque(wide), opaque(&mut wide_out[..]).into())
         });
         compare!("fill_with_mask {n}", |k| {
-            k::fill_with_mask([1, 2, 3, 4], opaque(out), opaque(t))
+            k::fill_with_mask([1, 2, 3, 4], opaque(&mut out[..]).into(), opaque(t))
         });
         compare!("encode_hex_lower {n}", |k| {
-            k::encode_hex_lower(opaque(t), opaque(out))
+            k::encode_hex_lower(opaque(t), opaque(out.as_chunks_mut().0).into())
         });
         let hex = &out.clone();
         compare!("decode_hex {n}", |k| {
-            k::decode_hex(opaque(hex), opaque(out))
+            k::decode_hex(opaque(hex.as_chunks().0), opaque(&mut out[..]).into())
         });
         compare!("bswap32 {n}", |k| {
             k::bswap32(opaque(&mut out[..n]).as_chunks_mut().0)
@@ -265,11 +271,15 @@ fn conversions(js: &[u8]) {
     let words = &Random(7).words_of_all_sizes(4096);
     let (controls, data) = (&mut vec![0; 4096], &mut vec![0; 16 * 4096]);
     compare!("pack_words 16384", |k| {
-        k::pack_words(opaque(words), controls, data)
+        k::pack_words(
+            opaque(words),
+            controls.as_mut_slice().into(),
+            data.as_mut_slice().into(),
+        )
     });
-    let out = &mut vec![[MaybeUninit::uninit(); 4]; 4096];
+    let out = &mut vec![[0; 4]; 4096];
     compare!("unpack_words 16384", |k| {
-        k::unpack_words(opaque(controls), data, out)
+        k::unpack_words(opaque(controls), data, out.as_mut_slice().into())
     });
 }
 
@@ -291,26 +301,29 @@ fn images() {
         compare!("cmyk_to_rgba {n} px", |k| k::cmyk_to_rgba(opaque(pixels)));
         compare!("modulate {n} px", |k| k::modulate(opaque(pixels), 1.0, 1.0));
     }
-    let [above, row] = [299, 300].map(|y| image[y * WIDTH..][..WIDTH].as_flattened());
-    let rows = &mut [(); 4].map(|()| vec![0; 4 * WIDTH]);
+    let [above, row] = [299, 300].map(|y| &image[y * WIDTH..][..WIDTH]);
+    let rows = &mut [(); 4].map(|()| vec![[0; 4]; WIDTH]);
     for n in [3, 7, 15, WIDTH] {
         compare!("png_filter_rgba {n} px", |k| {
-            let into = rows.each_mut().map(|row| &mut row[..4 * n]);
-            k::png_filter_rgba(opaque(&row[..4 * n]), &above[..4 * n], into)
+            let into = rows.each_mut().map(|row| &mut row[..n]);
+            k::png_filter_rgba(opaque(&row[..n]), &above[..n], into)
         });
     }
-    for (filter_type, name) in (1..).zip(["sub", "up", "average", "paeth"]) {
-        let row = &mut row.to_vec();
-        compare!("png_unfilter4 {name}", |k| {
-            k::png_unfilter4(filter_type, opaque(row), above)
-        });
+    for size in [1, 2, 4, 6, 8] {
+        let [above, row] = [above, row].map(|row| &row.as_flattened()[..4080]);
+        for (filter_type, name) in (1..).zip(["sub", "up", "average", "paeth"]) {
+            let row = &mut row.to_vec();
+            compare!("png_unfilter {size} {name}", |k| {
+                k::png_unfilter(filter_type, size, opaque(row), above)
+            });
+        }
     }
     let (mut a, mut b) = (highway::Resizer::default(), rust::Resizer::default());
     let out = &mut vec![[0; 4]; 400 * 300];
     compare!(
         "lanczos3 1024x768 to 400x300",
         a.lanczos3(opaque(image), WIDTH, out, 400),
-        b.lanczos3(opaque(image), WIDTH, out, 400)
+        b.lanczos3(opaque(image), WIDTH, out.as_mut_slice().into(), 400)
     );
 }
 
@@ -336,8 +349,8 @@ fn shared() {
         );
         compare!(
             "shared: encode_hex_lower {n}",
-            highway::encode_hex_lower(opaque(t), out),
-            rust::encode_hex_lower_shared(shared(opaque(t)), out)
+            highway::encode_hex_lower(opaque(t), out.as_chunks_mut().0),
+            rust::encode_hex_lower_shared(shared(opaque(t)), out.as_chunks_mut().0.into())
         );
         compare!(
             "shared: fill_with_mask {n}",
@@ -390,13 +403,15 @@ pub(crate) fn at_the_end_of_a_page() {
             rust::index_of_char_shared(AtomicU8::from_mut_slice(t), b'x')
         });
         both("fill_with_mask", texts, |t| {
-            rust::fill_with_mask([0; 4], t, text)
+            rust::fill_with_mask([0; 4], t.into(), text);
         });
-        both("copy_u16_to_u8", texts, |t| rust::copy_u16_to_u8(wide, t));
+        both("copy_u16_to_u8", texts, |t| {
+            _ = rust::copy_u16_to_u8(wide, t.into())
+        });
         both("encode_hex_lower", texts, |t| {
-            rust::encode_hex_lower(text, t)
+            rust::encode_hex_lower(text, t.as_chunks_mut().0.into());
         });
-        both("png_unfilter4", texts, |t| rust::png_unfilter4(2, t, text));
+        both("png_unfilter", texts, |t| rust::png_unfilter(2, 1, t, text));
     }
 }
 

@@ -1,11 +1,14 @@
 //! Ports of image_resize.cpp.
-use bun_simd::Isa;
+use bun_simd::{Int, Isa, Out};
+use core::slice::ChunksExact;
+
+type Pixel = [u8; 4];
 
 /// The pixels that one of the result is made of.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct Span {
+struct Span {
     start: usize,
-    n: usize,
+    len: usize,
 }
 
 const MAX_TAPS: usize = 256;
@@ -14,92 +17,90 @@ const ROUND: i32 = 1 << (SHIFT - 1);
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
-    use isa::{F32, I16, I32, U8, U16, U32, Vector, x128};
+    use isa::{F32, I32, U8, U16, U32, Vector, x128};
 
-    #[export]
-    pub fn horizontal(
-        src: &[[u8; 4]],
-        src_w: usize,
-        dst: &mut [[u8; 4]],
-        dst_w: usize,
-        spans: &[Span],
-        weights: &[i16],
-        stride: usize,
-    ) {
+    #[inline(always)]
+    fn weighted_sum(pixels: &[Pixel], weights: &[i16]) -> Pixel {
         use x128::{I16, I32, U8, U32, U64};
         let by_channel = U8::load(&[
             0, 0x80, 4, 0x80, 1, 0x80, 5, 0x80, 2, 0x80, 6, 0x80, 3, 0x80, 7, 0x80,
         ]);
-        for (src_row, dst_row) in src.chunks_exact(src_w).zip(dst.chunks_exact_mut(dst_w)) {
-            for ((out, span), w) in dst_row
-                .iter_mut()
-                .zip(spans)
-                .zip(weights.chunks_exact(stride))
-            {
-                let (pixels, w) = (&src_row[span.start..][..span.n], &w[..span.n]);
-                let ((pairs, last), (w_pairs, w_last)) =
-                    (pixels.as_chunks::<2>(), w.as_chunks::<2>());
-                let mut sum = I32::splat(ROUND);
-                for (pair, &[w0, w1]) in pairs.iter().zip(w_pairs) {
-                    let pair = U64::load(&[
-                        u64::from_le_bytes(*pair.as_flattened().as_array().unwrap()),
-                        0,
-                    ]);
-                    let weights = U32::splat(u32::from(w0 as u16) | u32::from(w1 as u16) << 16);
-                    let channels = pair.bitcast::<U8>().lookup(by_channel);
-                    sum += I32::pairwise_dot(channels.bitcast::<I16>(), weights.bitcast());
-                }
-                if let ([pixel], &[w]) = (last, w_last) {
-                    let channels: I32 = Vector::load(pixel).cast();
-                    sum += I32::pairwise_dot(channels.bitcast(), I16::splat(w));
-                }
-                *out = (sum >> SHIFT).saturating_cast_u8().to_array();
-            }
+        let ((pairs, last), (weight_pairs, last_weight)) =
+            (pixels.as_chunks::<2>(), weights.as_chunks::<2>());
+        let mut sum = I32::splat(ROUND);
+        for (pair, &[w0, w1]) in pairs.iter().zip(weight_pairs) {
+            let pair = u64::from_le_bytes(*pair.as_flattened().as_array().unwrap());
+            let channels = U64::from_first(pair).bitcast::<U8>().lookup(by_channel);
+            let weights = U32::splat(u32::from(w0 as u16) | u32::from(w1 as u16) << 16);
+            sum += I32::pairwise_dot(channels.bitcast::<I16>(), weights.bitcast());
         }
+        if let ([pixel], &[weight]) = (last, last_weight) {
+            sum += Vector::load(pixel).cast::<i32>() * i32::from(weight);
+        }
+        (sum >> SHIFT).saturating_cast_u8().to_array()
     }
 
+    /// Resamples each row of `src`.
     #[export]
-    pub fn vertical(
-        src: &[u8],
-        row_bytes: usize,
-        dst: &mut [u8],
-        spans: &[Span],
+    pub fn horizontal<'a>(
+        src: &[Pixel],
+        src_w: usize,
+        axis: &Axis,
+        dst: Out<'a, Pixel>,
+    ) -> &'a mut [Pixel] {
+        let mut dst = dst.into_writer();
+        for row in src.chunks_exact(src_w) {
+            dst.extend_with(axis.taps(), |(span, weights)| {
+                let pixels = &row[span.start..][..span.len];
+                Some([weighted_sum(pixels, &weights[..span.len])])
+            });
+        }
+        dst.finish()
+    }
+
+    /// Of the chunk at `index` in each row.
+    #[inline(always)]
+    fn weighted_sum_of_rows<const N: usize, const PIXELS: usize>(
+        rows: ChunksExact<'_, u8>,
+        index: usize,
         weights: &[i16],
-        stride: usize,
-    ) {
-        for ((dst_row, span), w) in dst
-            .chunks_exact_mut(row_bytes)
-            .zip(spans)
-            .zip(weights.chunks_exact(stride))
-        {
-            let window = &src[span.start * row_bytes..][..span.n * row_bytes];
-            let (chunks, rest) = dst_row.as_chunks_mut();
-            let mut x = 0;
-            for out in chunks {
-                let mut sum = I32::splat(ROUND);
-                for (row, &w) in window.chunks_exact(row_bytes).zip(w) {
-                    let bytes = row[x..x + I32::LEN].as_array().unwrap();
-                    let channels: I32 = Vector::load(bytes).cast();
-                    sum += I32::pairwise_dot(channels.bitcast(), I16::splat(w));
-                }
-                *out = (sum >> SHIFT).saturating_cast_u8().to_array();
-                x += I32::LEN;
-            }
-            for out in rest {
-                let acc = window
-                    .chunks_exact(row_bytes)
-                    .zip(w)
-                    .fold(ROUND, |acc, (row, &w)| {
-                        acc + i32::from(row[x]) * i32::from(w)
-                    });
-                *out = (acc >> SHIFT).clamp(0, 255) as u8;
-                x += 1;
-            }
+    ) -> [Pixel; PIXELS]
+    where
+        i32: Int<N>,
+    {
+        let mut sum = Vector::<i32, N>::splat(ROUND);
+        for (row, &weight) in rows.zip(weights) {
+            let channels = Vector::load(&row.as_chunks().0[index]).cast::<i32>();
+            sum += channels * Vector::splat(weight).cast();
         }
+        let bytes = (sum >> SHIFT).saturating_cast_u8().to_array();
+        *bytes.as_chunks().0.as_array().unwrap()
+    }
+
+    /// Resamples each column of `src`.
+    #[export]
+    pub fn vertical<'a>(
+        src: &[Pixel],
+        width: usize,
+        axis: &Axis,
+        dst: Out<'a, Pixel>,
+    ) -> &'a mut [Pixel] {
+        let mut dst = dst.into_writer();
+        for (span, weights) in axis.taps() {
+            let window = src[span.start * width..][..span.len * width].as_flattened();
+            let rows = || window.chunks_exact(4 * width);
+            dst.extend_with(0..width / 4, |i| {
+                Some(weighted_sum_of_rows::<16, 4>(rows(), i, weights))
+            });
+            dst.extend_with(width / 4 * 4..width, |i| {
+                Some(weighted_sum_of_rows::<4, 1>(rows(), i, weights))
+            });
+        }
+        dst.finish()
     }
 
     #[export]
-    pub fn cmyk_to_rgba(mut pixels: &mut [[u8; 4]]) {
+    pub fn cmyk_to_rgba(mut pixels: &mut [Pixel]) {
         if isa::Isa::HAS_INTERLEAVED_MEMORY {
             let blocks;
             (blocks, pixels) = pixels.as_chunks_mut();
@@ -129,7 +130,7 @@ pub(crate) mod simd {
     }
 
     #[export(long_running)]
-    pub fn modulate(pixels: &mut [[u8; 4]], brightness: f32, saturation: f32) {
+    pub fn modulate(pixels: &mut [Pixel], brightness: f32, saturation: f32) {
         U8::map_in_place(pixels.as_flattened_mut(), |v| {
             let v: U32 = v.bitcast();
             let channel = |at: u32| (v >> at & 0xFF).bitcast::<I32>().cast::<f32>();
@@ -196,19 +197,26 @@ fn build_weights(src_len: i32, spans: &mut [Span], weights: &mut [i16], stride: 
         w[big] = (i32::from(w[big]) + (16384 - total)) as i16;
         *span = Span {
             start: start as usize,
-            n,
+            len: n,
         };
     }
 }
 
 #[derive(Default)]
-struct Axis {
+pub(crate) struct Axis {
     spans: Vec<Span>,
     weights: Vec<i16>,
     stride: usize,
 }
 
 impl Axis {
+    #[inline(always)]
+    fn taps(&self) -> impl Iterator<Item = (&Span, &[i16])> {
+        self.spans
+            .iter()
+            .zip(self.weights.chunks_exact(self.stride))
+    }
+
     fn set(&mut self, src_len: usize, dst_len: usize) {
         let support = 3.0 / (dst_len as f64 / src_len as f64).min(1.0);
         self.stride = (support.ceil() as usize * 2 + 2).min(MAX_TAPS);
@@ -228,19 +236,26 @@ impl Axis {
 pub struct Resizer {
     x: Axis,
     y: Axis,
-    between: Vec<[u8; 4]>,
+    between: Vec<Pixel>,
 }
 
 impl Resizer {
     /// Neither image is empty.
-    pub fn lanczos3(&mut self, src: &[[u8; 4]], src_w: usize, dst: &mut [[u8; 4]], dst_w: usize) {
+    pub fn lanczos3<'a>(
+        &mut self,
+        src: &[Pixel],
+        src_w: usize,
+        dst: Out<'a, Pixel>,
+        dst_w: usize,
+    ) -> &'a mut [Pixel] {
         let Self { x, y, between } = self;
         let src_h = src.len() / src_w;
         x.set(src_w, dst_w);
         y.set(src_h, dst.len() / dst_w);
-        between.resize(dst_w * src_h, [0; 4]);
-        simd::horizontal(src, src_w, between, dst_w, &x.spans, &x.weights, x.stride);
-        let (between, dst) = (between.as_flattened(), dst.as_flattened_mut());
-        simd::vertical(between, 4 * dst_w, dst, &y.spans, &y.weights, y.stride);
+        between.clear();
+        bun_simd::extend_vec(between, dst_w * src_h, |out| {
+            simd::horizontal(src, src_w, x, out)
+        });
+        simd::vertical(between, dst_w, y, dst)
     }
 }

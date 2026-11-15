@@ -1,10 +1,30 @@
 //! Loops over slices of any length.
-use crate::{Int, Source};
+use crate::partial::copy_short;
+use crate::{Int, Out, Source};
 use core::sync::atomic::AtomicU8;
 
 #[inline(always)]
 fn index_of<S, const N: usize>(chunk: &[S; N], slice: &[S]) -> usize {
     (chunk.as_ptr().addr() - slice.as_ptr().addr()) / size_of::<S>()
+}
+
+/// `slice` in blocks for `bitmasks`. What is left of it is copied to the start of `padding`.
+#[inline(always)]
+pub fn blocks<'a, T: Copy>(
+    slice: &'a [T],
+    padding: &'a mut [T; 64],
+) -> impl Iterator<Item = &'a [T; 64]> {
+    let (whole, rest) = slice.as_chunks();
+    copy_short(rest, padding[..rest.len()].as_mut().into());
+    let last = core::slice::from_ref(&*padding);
+    let (mut blocks, mut last) = (whole.iter(), &last[..usize::from(!rest.is_empty())]);
+    // One comparison for each block, unlike `chain`.
+    core::iter::from_fn(move || {
+        if blocks.as_slice().is_empty() {
+            blocks = core::mem::take(&mut last).iter();
+        }
+        blocks.next()
+    })
 }
 
 #[bun_simd_macros::foreach_target]
@@ -124,21 +144,18 @@ mod simd {
         }
 
         /// `to[i] = f(from[i])`. `f` may mix groups of 2, 4 or 8 lanes if the length is a multiple.
-        pub fn map<S: Source<Lane = T>>(from: &[S], to: &mut [T], f: impl Fn(Self) -> Self) {
-            let len = from.len().min(to.len());
-            let (from, to) = (&from[..len], &mut to[..len]);
-            let Some((_, last)) = from.split_last_chunk() else {
-                if let Some(partial) = Self::load_partial_inline(from) {
-                    f(partial.lanes).store_partial(to);
-                }
-                return;
-            };
-            let chunks = from[..len - 1].as_chunks().0;
-            for (from, to) in chunks.iter().zip(to.as_chunks_mut().0) {
-                f(Self::load(from)).store(to);
+        pub fn map<'a, S: Source<Lane = T>>(
+            from: &[S],
+            to: Out<'a, T>,
+            f: impl Fn(Self) -> Self,
+        ) -> &'a mut [T] {
+            let to = to.take(from.len());
+            if to.len() >= N {
+                return to.fill_chunks(from, |_, chunk| Some(f(Self::load(chunk)).to_array()));
             }
-            if let Some((_, to)) = to.split_last_chunk_mut() {
-                f(Self::load(last)).store(to);
+            match Self::load_partial_inline(&from[..to.len()]) {
+                Some(partial) => f(partial.lanes).store_partial(to),
+                None => &mut [],
             }
         }
 
@@ -146,7 +163,7 @@ mod simd {
         pub fn map_in_place(slice: &mut [T], f: impl Fn(Self) -> Self) {
             let Some((_, last)) = slice.split_last_chunk() else {
                 if let Some(partial) = Self::load_partial_inline(slice) {
-                    f(partial.lanes).store_partial(slice);
+                    f(partial.lanes).store_partial(slice.into());
                 }
                 return;
             };
@@ -155,6 +172,30 @@ mod simd {
             let len = slice.len();
             for chunk in slice[..len - 1].as_chunks_mut().0 {
                 f(Self::load(chunk)).store(chunk);
+            }
+            if let Some((_, to)) = slice.split_last_chunk_mut() {
+                last.store(to);
+            }
+        }
+
+        /// `slice[i] = f(slice[i], other[i])`. Panics if `other` is shorter.
+        pub fn zip_in_place(slice: &mut [T], other: &[T], f: impl Fn(Self, Self) -> Self) {
+            let (len, other) = (slice.len(), &other[..slice.len()]);
+            let (Some((_, a)), Some((_, b))) = (slice.split_last_chunk(), other.split_last_chunk())
+            else {
+                let (a, b) = (
+                    Self::load_partial_inline(slice),
+                    Self::load_partial_inline(other),
+                );
+                if let (Some(a), Some(b)) = (a, b) {
+                    f(a.lanes, b.lanes).store_partial(slice.into());
+                }
+                return;
+            };
+            let last = f(Self::load(a), Self::load(b));
+            let others = other[..len - 1].as_chunks().0;
+            for (a, b) in slice[..len - 1].as_chunks_mut().0.iter_mut().zip(others) {
+                f(Self::load(a), Self::load(b)).store(a);
             }
             if let Some((_, to)) = slice.split_last_chunk_mut() {
                 last.store(to);

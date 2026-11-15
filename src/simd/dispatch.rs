@@ -56,12 +56,13 @@ macro_rules! export {
         best[$($Best:ident)*]
         native[$($is_wanted:ident $arch:literal $Target:ident $module:ident $features:tt)*]
         portable_for_tests[$($Portable:ident $portable:ident)*]
-        $(#[$meta:meta])* $vis:vis fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?
+        $(#[$meta:meta])* $vis:vis fn $name:ident $(<$($life:lifetime),+>)?
+        ($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?
     ) => {
         $(#[$meta])*
         #[inline(always)]
-        $vis fn $name($($arg: $ty),*) $(-> $ret)? {
-            type __Kernel = fn($($ty),*) $(-> $ret)?;
+        $vis fn $name $(<$($life),+>)? ($($arg: $ty),*) $(-> $ret)? {
+            type __Kernel = $(for<$($life),+>)? fn($($ty),*) $(-> $ret)?;
 
             // rustc generates no code for a branch that a constant rules out.
             #[inline(always)]
@@ -98,7 +99,7 @@ macro_rules! export {
                 static __CHOSEN: $crate::AtomicFn<__Kernel> = $crate::AtomicFn::new(__first_call);
                 #[cold]
                 #[inline(never)]
-                fn __first_call($($arg: $ty),*) $(-> $ret)? {
+                fn __first_call $(<$($life),+>)? ($($arg: $ty),*) $(-> $ret)? {
                     let chosen = __choose();
                     __CHOSEN.set(chosen);
                     chosen($($arg),*)

@@ -69,20 +69,19 @@ impl Random {
     }
 }
 
-fn zeroed<T: Copy + Default>(len: usize) -> Vec<MaybeUninit<T>> {
-    vec![MaybeUninit::new(T::default()); len]
-}
+type Uninit<'a, T> = &'a mut [MaybeUninit<T>];
 
-/// The numbers per row in each of the `Columns`.
-const PER_ROW: [usize; 4] = [2, 2, 1, 1];
-
-fn columns<'a>(of: &'a mut [&mut [MaybeUninit<i32>]; 4], has_names: bool) -> Columns<'a> {
-    let [generated, original, src_idx, name_idx] = of;
+fn columns<'a, P: From<Uninit<'a, [i32; 2]>>, I: From<Uninit<'a, i32>>>(
+    pairs: &'a mut [Uninit<'_, [i32; 2]>; 2],
+    indices: &'a mut [Uninit<'_, i32>; 2],
+    has_names: bool,
+) -> Columns<P, I> {
+    let ([generated, original], [src_idx, name_idx]) = (pairs, indices);
     Columns {
-        generated: generated.as_chunks_mut().0,
-        original: original.as_chunks_mut().0,
-        src_idx,
-        name_idx: has_names.then_some(name_idx),
+        generated: P::from(generated),
+        original: P::from(original),
+        src_idx: I::from(src_idx),
+        name_idx: has_names.then(|| I::from(name_idx)),
     }
 }
 

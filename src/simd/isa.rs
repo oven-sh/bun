@@ -62,7 +62,7 @@ macro_rules! vector_types {
         crate::isa::vector_types!($bytes);
 
         pub mod x128 {
-            pub use super::{Isa, Mask, Vector, prefix_xor};
+            pub use super::{Isa, Mask, Vector, bit_indices, prefix_xor};
             crate::isa::vector_types!(16);
         }
     };

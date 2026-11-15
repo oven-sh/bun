@@ -149,8 +149,16 @@ mod simd {
     #[export]
     pub fn all_maps(alignments: usize) {
         let bytes = || ranges::<u8>(U8::LEN, alignments);
-        maps(bytes(), |from, to| U8::map(from, to, |v| v + 1));
-        maps(bytes(), |from, to| U8::map(shared(from), to, |v| v + 1));
+        maps::<u8>(bytes(), |from, to| {
+            let len = from.len().min(to.len());
+            assert_eq!(U8::map(from, to.into(), |v| v + 1).len(), len);
+        });
+        maps(bytes(), |from, to| {
+            U8::map(shared(from), to.into(), |v| v + 1);
+        });
+        maps(bytes(), |from, to| {
+            U8::zip_in_place(copy(from, to), from, |a, b| a + a - b + 1)
+        });
         maps(bytes(), |from, to| {
             U8::map_in_place(copy(from, to), |v| v + 1)
         });
@@ -162,7 +170,9 @@ mod simd {
             U8::map_to_shared(both, both, |v| v + 1);
         });
         let words = || ranges::<u16>(U16::LEN, alignments);
-        maps(words(), |from, to| U16::map(from, to, |v| v + 1));
+        maps::<u16>(words(), |from, to| {
+            U16::map(from, to.into(), |v| v + 1);
+        });
         maps(words(), |from, to| {
             U16::map_in_place(copy(from, to), |v| v + 1)
         });
@@ -175,18 +185,8 @@ mod simd {
         for (i, from) in from.iter_mut().enumerate() {
             *from = 1 + (i % 251) as u8;
         }
-        for range in ranges::<u8>(U8::LEN, U8::LEN).filter(|it| it.len() < U8::LEN + 2) {
-            let (slice, len) = (black_box(&from[range.clone()]), range.len().min(U8::LEN));
-            let lanes = U8::load_or_default(slice);
-            let want = std::array::from_fn(|i| slice.get(i).copied().unwrap_or(0));
-            assert_eq!(lanes.to_array(), want);
-            to.fill(0);
-            (lanes | U8::iota().simd_ge(len as u8).to_vector()).store_first(&mut to[range.clone()]);
-            assert_eq!(to[range.start..][..len], slice[..len]);
-            assert_eq!(to.iter().filter(|&&byte| byte != 0).count(), len);
-            if len == U8::LEN {
-                continue;
-            }
+        for range in ranges::<u8>(U8::LEN, U8::LEN).filter(|it| it.len() < U8::LEN) {
+            let (slice, len) = (black_box(&from[range.clone()]), range.len());
             let Some(partial) = U8::load_partial(slice) else {
                 assert_eq!(len, 0);
                 continue;
@@ -194,6 +194,11 @@ mod simd {
             for (i, &byte) in slice.iter().enumerate() {
                 assert_eq!(partial.to_bitmask(partial.lanes.simd_eq(byte)), 1 << i);
             }
+            let at = |index: u8| slice.get(usize::from(index)).copied().unwrap_or(0);
+            assert_eq!(
+                partial.indices().to_array().map(at),
+                partial.lanes.to_array()
+            );
             assert_eq!(partial.to_bitmask(partial.lanes.simd_eq(0)), 0);
             assert_eq!(
                 partial.to_bitmask(partial.lanes.simd_lt(255)),
@@ -202,8 +207,8 @@ mod simd {
             if len < U16::LEN {
                 let wide: Vec<u16> = slice.iter().map(|&byte| 0x700 | u16::from(byte)).collect();
                 let lanes = U16::load_partial(black_box(&wide)).unwrap().lanes;
-                U8::narrow(lanes, lanes).store_partial(&mut to[range.clone()]);
-                assert_eq!(to[range], *slice);
+                let to = to[range].as_mut().into();
+                assert_eq!(U8::narrow(lanes, lanes).store_partial(to), slice);
             }
         }
     }
@@ -233,6 +238,18 @@ fn maps() {
 #[test]
 fn short_slices() {
     on_each_target(simd::short_slices);
+}
+
+#[test]
+fn blocks() {
+    let text: Vec<u16> = (1..200).collect();
+    for len in 0..text.len() {
+        let mut want = text[..len].to_vec();
+        want.resize(len.next_multiple_of(64), 7000);
+        let padding = &mut [7000; 64];
+        let got: Vec<_> = bun_simd::blocks(&text[..len], padding).copied().collect();
+        assert_eq!(got.as_flattened(), want);
+    }
 }
 
 #[test]

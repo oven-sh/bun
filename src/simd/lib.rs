@@ -16,6 +16,7 @@
 extern crate self as bun_simd;
 
 mod algo;
+mod bit_indices;
 #[doc(hidden)]
 pub mod dispatch;
 mod interleave;
@@ -33,12 +34,14 @@ mod vector;
 #[cfg(target_arch = "x86_64")]
 mod x86;
 
+pub use algo::blocks;
+pub use bit_indices::BitIndices;
 pub use bun_simd_macros::{foreach_target, foreach_width};
 #[doc(hidden)]
 pub use bun_simd_trusted::AtomicFn;
-pub use bun_simd_trusted::Target;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub use bun_simd_trusted::{Features, detected, if_supported};
+pub use bun_simd_trusted::{Out, Target, Writer, extend_vec};
 pub use dispatch::limit_to;
 pub use isa::Isa;
 pub use mask::Mask;

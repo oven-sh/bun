@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 mod common;
 
-use bun_simd::{Int, Lane};
+use bun_simd::{Int, Lane, Out};
 use common::on_each_target;
 use std::array::from_fn;
 use std::fmt::Debug;
@@ -136,7 +136,6 @@ mod simd {
         assert_eq!(x.shift_elements_right::<1>(zero).to_array(), slid(1));
         assert_eq!(x.shift_elements_right::<2>(zero).to_array(), slid(2));
         assert_eq!(x.swap_pairs().to_array(), from_fn(|i| a[i ^ 1]));
-        assert_eq!(x.splat_last().to_array(), [a[N - 1]; N]);
         assert_eq!(Vector::splat(a[0]).to_array(), [a[0]; N]);
         assert_eq!(Vector::<T, N>::zero().to_array(), [zero; N]);
         let first = from_fn::<T, N, _>(|i| if i == 0 { a[0] } else { zero });
@@ -199,11 +198,6 @@ mod simd {
                     assert_eq!(got.to_array(), want);
                 }
             }
-            for bits in 0..1u64 << U32::LEN {
-                let want: Vec<u32> = (0..32).filter(|i| bits >> i & 1 != 0).collect();
-                let got = U32::iota().compress(black_box(bits | 0b101 << U32::LEN));
-                assert_eq!(got.to_array()[..want.len()], want);
-            }
             for from in (0..=u16::MAX).step_by(N) {
                 let all: [u16; N] = black_box(from_fn(|i| from + i as u16));
                 let (a, b) = (U16::from_slice(&all), U16::from_slice(&all[N / 2..]));
@@ -256,9 +250,6 @@ mod simd {
             let (a, b) = (random.lanes::<i16, _>(), random.lanes::<i16, _>());
             let (x, y) = (I16::load(&a), I16::load(&b));
             assert_eq!((x * y).to_array(), from_fn(|i| a[i].wrapping_mul(b[i])));
-            let product = |i: usize| i32::from(a[i]) * i32::from(b[i]);
-            let dots = from_fn(|i| product(2 * i).wrapping_add(product(2 * i + 1)));
-            assert_eq!(I32::pairwise_dot(x, y).to_array(), dots);
 
             let (a, [p, q]) = (random.lanes::<u16, _>(), random.lanes::<u16, 2>());
             let range = p.min(q)..=p.max(q);
@@ -311,9 +302,44 @@ mod simd {
         }
         Vector::store_interleaved4(planes, &mut back);
         assert_eq!(back, quads);
-        let mut pairs = [[0; 2]; N];
-        Vector::store_interleaved2([planes[0], planes[3]], &mut pairs);
+        let pairs = Vector::to_interleaved2([planes[0], planes[3]]);
         assert_eq!(pairs, quads.map(|[a, .., d]| [a, d]));
+    }
+
+    fn pairwise_dot(random: &mut Random) {
+        use isa::x128::{I16, I32};
+        let (a, b) = (random.lanes::<i16, 8>(), random.lanes::<i16, 8>());
+        let product = |i: usize| i32::from(a[i]) * i32::from(b[i]);
+        let dots = from_fn(|i| product(2 * i).wrapping_add(product(2 * i + 1)));
+        assert_eq!(
+            I32::pairwise_dot(I16::load(&a), I16::load(&b)).to_array(),
+            dots
+        );
+    }
+
+    fn bit_indices(random: &mut Random) {
+        let [a, b, c, d] = random.lanes::<u64, 4>();
+        for bits in [
+            0,
+            a & b & c & d & a >> 7,
+            a & b & c,
+            a & b,
+            a,
+            a | b,
+            a | b | c,
+            !0,
+        ] {
+            let base = u32::MAX - 63;
+            let want: Vec<u32> = (0..64)
+                .filter(|i| bits >> i & 1 != 0)
+                .map(|i| base + i)
+                .collect();
+            let mut room = [0; 65];
+            let mut out = Out::from(&mut room[..]).into_writer();
+            out.push([7]);
+            isa::bit_indices(black_box(bits)).push_to(&mut out, base);
+            assert_eq!(out.finish()[1..], want);
+        }
     }
 
     #[export]
@@ -334,6 +360,8 @@ mod simd {
         for _ in 0..rounds {
             width::full::random_inputs(random);
             width::x128::random_inputs(random);
+            pairwise_dot(random);
+            bit_indices(random);
             any_lanes::<u8, 8>(random);
             any_lanes::<u8, 64>(random);
             any_lanes::<i32, 16>(random);

@@ -1,8 +1,8 @@
 //! Every kernel on every target, against a plain loop or the portable target.
-use bun_simd::{Target, limit_to};
+#![forbid(unsafe_code)]
+use bun_simd::{Out, Target, limit_to};
 use bun_simd_kernels as kernels;
 use core::fmt::Debug;
-use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
 fn targets() -> impl Iterator<Item = Target> {
@@ -53,11 +53,10 @@ fn plain(bytes: Vec<AtomicU8>) -> Vec<u8> {
     bytes.into_iter().map(AtomicU8::into_inner).collect()
 }
 
-fn filled<T>(len: usize, kernel: impl FnOnce(&mut [MaybeUninit<T>]) -> usize) -> Vec<T> {
+/// In an allocation of that size, which is not initialized.
+fn filled<T: Copy>(len: usize, kernel: impl for<'a> FnOnce(Out<'a, T>) -> &'a mut [T]) -> Vec<T> {
     let mut out = Vec::with_capacity(len);
-    let written = kernel(&mut out.spare_capacity_mut()[..len]);
-    // SAFETY: the kernel has initialized that many, which Miri checks.
-    unsafe { out.set_len(written) };
+    bun_simd::extend_vec(&mut out, len, kernel);
     out
 }
 
@@ -156,24 +155,17 @@ fn lines_and_runs() {
 #[test]
 fn conversions() {
     for t in texts(MIXED) {
-        let into = |len: usize, kernel: &dyn Fn(&mut [u8])| {
-            let mut out = vec![0; len];
-            kernel(&mut out);
-            out
-        };
         let len = t.len();
         let wide: Vec<u16> = t.iter().map(|&b| u16::from(b) | 0x100).collect();
-        check(t.clone(), || {
-            into(len, &|out| kernels::copy_u16_to_u8(&wide, out))
-        });
-        check(t[..len / 2].to_vec(), || {
-            into(len / 2, &|out| kernels::copy_u16_to_u8(&wide, out))
-        });
-
         let masked: Vec<u8> = (0..len).map(|i| t[i] ^ [1, 2, 3, 4][i % 4]).collect();
-        check(masked.clone(), || {
-            into(len, &|out| kernels::fill_with_mask([1, 2, 3, 4], out, &t))
-        });
+        for room in [len, len / 2, len + 3] {
+            check(t[..room.min(len)].to_vec(), || {
+                filled(room, |out| kernels::copy_u16_to_u8(&wide, out))
+            });
+            check(masked[..room.min(len)].to_vec(), || {
+                filled(room, |out| kernels::fill_with_mask([1, 2, 3, 4], out, &t))
+            });
+        }
         check(masked, || {
             let out = shared(&vec![0; len]);
             kernels::fill_shared_with_mask([1, 2, 3, 4], &out, &t);
@@ -184,11 +176,11 @@ fn conversions() {
             .iter()
             .flat_map(|b| format!("{b:02x}").into_bytes())
             .collect();
-        check(hex.clone(), || {
-            into(2 * len, &|out| kernels::encode_hex_lower(&t, out))
+        check(hex.as_chunks().0.to_vec(), || {
+            filled(len, |out| kernels::encode_hex_lower(&t, out))
         });
-        check(hex.clone(), || {
-            into(2 * len, &|out| {
+        check(hex.as_chunks().0.to_vec(), || {
+            filled(len, |out| {
                 kernels::encode_hex_lower_shared(&shared(&t), out)
             })
         });
@@ -197,10 +189,7 @@ fn conversions() {
             ([&hex[..len], b"g", &hex[..]].concat(), len / 2),
         ] {
             check(t[..valid].to_vec(), || {
-                let mut out = vec![0; len];
-                let valid = kernels::decode_hex(&hex, &mut out);
-                out.truncate(valid);
-                out
+                filled(len, |out| kernels::decode_hex(hex.as_chunks().0, out))
             });
         }
 
@@ -210,9 +199,7 @@ fn conversions() {
         let lower =
             |&unit: &u16| u8::try_from(unit).map_or(unit, |b| b.to_ascii_lowercase().into());
         check(wide.iter().map(lower).collect(), || {
-            let mut out = vec![0; len];
-            kernels::lower_ascii16(&wide, &mut out);
-            out
+            filled(len, |out| kernels::lower_ascii16(&wide, out))
         });
 
         let mut swapped = t.clone();
@@ -240,19 +227,30 @@ fn words() {
         let word = |b: u8| (i32::from(b as i8) << (b & 24)) as u32;
         let words: Vec<[u32; 4]> = t.as_chunks().0.iter().map(|four| four.map(word)).collect();
         let pack = || {
-            let (mut controls, mut data) = (vec![0; words.len()], vec![0; 16 * words.len()]);
-            let size = kernels::pack_words(&words, &mut controls, &mut data);
-            data.truncate(size);
+            let mut controls = vec![];
+            let data = filled(16 * words.len(), |data| {
+                let into = &mut Box::new_uninit_slice(words.len())[..];
+                let (filled_controls, data) = kernels::pack_words(&words, into.into(), data);
+                controls = filled_controls.to_vec();
+                data
+            });
             (controls, data)
         };
         check_against_portable(pack);
         let (controls, mut data) = pack();
+        let size = |&word: &u32| match (word << 1 ^ (word as i32 >> 31) as u32).leading_zeros() {
+            32 => 0,
+            24.. => 1,
+            16.. => 2,
+            _ => 4,
+        };
+        assert_eq!(data.len(), words.as_flattened().iter().map(size).sum());
         data.extend([0; 16]);
-        check(words.as_flattened().to_vec(), || {
-            filled(4 * words.len(), |out| {
-                4 * kernels::unpack_words(&controls, &data, out.as_chunks_mut().0).0
-            })
-        });
+        for room in [words.len(), words.len() / 2] {
+            check(words[..room].to_vec(), || {
+                filled(room, |out| kernels::unpack_words(&controls, &data, out).0)
+            });
+        }
     }
 }
 
@@ -262,10 +260,10 @@ fn json() {
         check_against_portable(|| {
             let (mut dirty, mut state, mut flags) = (vec![0; t.len().div_ceil(4096)], [0; 3], 0);
             let index = filled(t.len() + 66, |out| {
-                let written;
-                (written, flags) =
+                let index;
+                (index, flags) =
                     kernels::json_structural_index_chunk(&t, 4096, out, &mut dirty, &mut state);
-                written
+                index
             });
             (index, dirty, state, flags)
         });
@@ -280,9 +278,11 @@ fn json() {
 
 #[test]
 fn json_without_room() {
-    let (text, room) = (&[b'['; 64], |len| Box::new_uninit_slice(len));
     let index = |len, dirty: &mut [u64]| {
-        kernels::json_structural_index_chunk(text, 0, &mut room(len), dirty, &mut [0; 3])
+        let (text, room) = (&[b'['; 64], &mut vec![0; len][..]);
+        let (index, flags) =
+            kernels::json_structural_index_chunk(text, 0, room.into(), dirty, &mut [0; 3]);
+        (index.len(), flags)
     };
     check([(64, 0), (0, 8), (0, 8)], || {
         [index(64, &mut [0]), index(63, &mut [0]), index(64, &mut [])]
@@ -301,25 +301,51 @@ fn xxh3() {
     });
 }
 
+/// What the filter subtracts from a byte with these to the left, above, and above to the left.
+fn png_prediction(filter_type: u8, [a, b, c]: [u8; 3]) -> u8 {
+    let [wide_a, wide_b, wide_c] = [a, b, c].map(i32::from);
+    let distance = |&byte: &u8| (wide_a + wide_b - wide_c).abs_diff(byte.into());
+    match filter_type {
+        0 => 0,
+        1 => a,
+        2 => b,
+        3 => a.midpoint(b),
+        _ => [a, b, c].into_iter().min_by_key(distance).unwrap(),
+    }
+}
+
 #[test]
 fn png() {
     for row in texts(MIXED) {
         let flat = (0..row.len()).map(|i| (i / 128) as u8).collect();
         for above in [row.iter().rev().copied().collect::<Vec<u8>>(), flat] {
-            let filter = || {
-                let mut rows = [(); 4].map(|()| vec![0; row.len()]);
-                let into = rows.each_mut().map(|row| &mut row[..]);
-                (kernels::png_filter_rgba(&row, &above, into), rows)
+            let filtered = |filter_type, size: usize| -> Vec<u8> {
+                let byte = |i: usize| {
+                    let left = |row: &[u8]| i.checked_sub(size).map_or(0, |at| row[at]);
+                    let around = [left(&row), above[i], left(&above)];
+                    row[i].wrapping_sub(png_prediction(filter_type, around))
+                };
+                (0..row.len() / size * size).map(byte).collect()
             };
-            check_against_portable(filter);
-            let pixels = ..row.len() & !3;
-            for (filter_type, filtered) in (1..).zip(filter().1) {
-                check(row[pixels].to_vec(), || {
-                    let mut back = filtered[pixels].to_vec();
-                    kernels::png_unfilter4(filter_type, &mut back, &above[pixels]);
-                    back
-                });
+            let sizes: &[_] = if cfg!(miri) { &[4] } else { &[1, 2, 4, 6, 8] };
+            for &size in sizes {
+                for filter_type in 0..5 {
+                    let filtered = filtered(filter_type, size);
+                    check(row[..filtered.len()].to_vec(), || {
+                        let mut back = filtered.clone();
+                        kernels::png_unfilter(filter_type, size, &mut back, &above);
+                        back
+                    });
+                }
             }
+            let distance = |&byte: &u8| u64::from((byte as i8).unsigned_abs());
+            let sums = [0, 1, 2, 3, 4].map(|it| filtered(it, 4).iter().map(distance).sum());
+            check((sums, [1, 2, 3, 4].map(|it| filtered(it, 4))), || {
+                let mut rows = [(); 4].map(|()| vec![0; row.len() & !3]);
+                let into = rows.each_mut().map(|row| row.as_chunks_mut().0);
+                let (row, above) = (row.as_chunks().0, above.as_chunks().0);
+                (kernels::png_filter_rgba(row, above, into), rows)
+            });
         }
     }
 }
@@ -346,28 +372,65 @@ fn mappings() {
                 }
             }
             for target in targets() {
-                let mut original = vec![];
-                let generated = filled(2 * count, |generated| {
-                    original = filled(2 * count, |original| {
-                        let columns = kernels::Columns {
-                            generated: generated.as_chunks_mut().0,
-                            original: original.as_chunks_mut().0,
-                            src_idx: &mut Box::new_uninit_slice(count),
-                            name_idx: Some(&mut Box::new_uninit_slice(count)),
-                        };
-                        let state = &mut Default::default();
-                        let (rows, resume_at) = kernels::parse_mappings(&text, columns, 2, state);
-                        assert!(text.len() - resume_at < 64, "{target:?}");
-                        2 * rows
-                    });
-                    original.len()
-                });
-                let rows = generated.as_chunks().0.iter().zip(original.as_chunks().0);
-                let got: Vec<_> = rows.map(|(&[a, b], &[c, d])| [a, b, c, d]).collect();
+                let mut pairs = [(); 2].map(|()| Box::new_uninit_slice(count));
+                let mut indices = [(); 2].map(|()| Box::new_uninit_slice(count));
+                let ([generated, original], [src_idx, name_idx]) = (&mut pairs, &mut indices);
+                let columns = kernels::Columns {
+                    generated: generated.as_mut().into(),
+                    original: original.as_mut().into(),
+                    src_idx: src_idx.as_mut().into(),
+                    name_idx: Some(name_idx.as_mut().into()),
+                };
+                let state = &mut Default::default();
+                let (rows, resume_at) = kernels::parse_mappings(&text, columns, 2, state);
+                let left = count - rows.src_idx.len();
+                assert!(text.len() - resume_at < 64 || left < 16, "{target:?}");
+                let pairs = rows.generated.iter().zip(rows.original);
+                let got: Vec<_> = pairs.map(|(&[a, b], &mut [c, d])| [a, b, c, d]).collect();
                 assert_eq!(got, want[..got.len()], "{target:?}");
+                assert_eq!(rows.src_idx, vec![0; got.len()], "{target:?}");
             }
         }
     }
+}
+
+#[test]
+fn mappings_without_sources() {
+    let text = b"C,".repeat(100);
+    check((0, 96), || {
+        let (pairs, indices) = (&mut [[[0; 2]; 16]; 2], &mut [0; 16]);
+        let [generated, original] = pairs.each_mut().map(|pairs| pairs[..].as_mut().into());
+        let src_idx = indices[..].as_mut().into();
+        let columns = kernels::Columns {
+            generated,
+            original,
+            src_idx,
+            name_idx: None,
+        };
+        let mut state = kernels::MappingsState::default();
+        let (rows, _) = kernels::parse_mappings(&text, columns, 0, &mut state);
+        (rows.src_idx.len(), state.gen_col)
+    });
+}
+
+#[test]
+#[should_panic]
+fn line_above_is_too_short() {
+    kernels::png_unfilter(1, 4, &mut [0; 8], &[0; 7]);
+}
+
+#[test]
+#[should_panic]
+fn filtered_row_is_too_short() {
+    let [a, b, c] = &mut [[[0; 4]; 2]; 3];
+    kernels::png_filter_rgba(&[[0; 4]; 2], &[[0; 4]; 2], [a, b, c, &mut [[0; 4]]]);
+}
+
+#[test]
+#[should_panic]
+fn plane_is_too_short() {
+    let [a, b] = &mut [[[0; 8]; 2]; 2];
+    kernels::scanner_run_stops(&[0; 65], [a, b, &mut [[0; 8]]]);
 }
 
 #[test]
@@ -396,16 +459,16 @@ fn images() {
             && let height @ 1.. = pixels.len() / 7
         {
             check_against_portable(|| {
-                let mut out = vec![[0; 4]; 19 * 3];
-                kernels::Resizer::default().lanczos3(&pixels[..7 * height], 7, &mut out, 19);
-                out
+                filled(19 * 3, |out| {
+                    kernels::Resizer::default().lanczos3(&pixels[..7 * height], 7, out, 19)
+                })
             });
         }
     }
     check(vec![[77; 4]; 13 * 5], || {
-        let mut out = vec![[0; 4]; 13 * 5];
-        kernels::Resizer::default().lanczos3(&[[77; 4]; 21 * 9], 21, &mut out, 13);
-        out
+        filled(13 * 5, |out| {
+            kernels::Resizer::default().lanczos3(&[[77; 4]; 21 * 9], 21, out, 13)
+        })
     });
 }
 
@@ -422,7 +485,7 @@ fn with_a_concurrent_writer() {
                     &text, 2
                 )));
                 assert!(kernels::count_char_shared(&text, 2) <= 1);
-                kernels::encode_hex_lower_shared(&text, &mut vec![0; 2 * len]);
+                filled(len, |out| kernels::encode_hex_lower_shared(&text, out));
                 kernels::fill_shared_with_mask([0; 4], &text, &vec![0; len]);
             }
         });

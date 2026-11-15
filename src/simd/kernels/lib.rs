@@ -1,4 +1,4 @@
-//! Bun's kernels on `bun_simd`, with the same results as those on Highway.
+//! Bun's kernels on `bun_simd`, checked against those on Highway.
 #![forbid(unsafe_code)]
 // For `#[inline(always)]` in the copies.
 #![recursion_limit = "512"]
@@ -19,9 +19,9 @@ pub use hex::simd::{decode_hex, encode_hex_lower, encode_hex_lower_shared};
 pub use image::Resizer;
 pub use image::simd::{cmyk_to_rgba, modulate};
 pub use json::simd::index_chunk as json_structural_index_chunk;
-pub use png::simd::{filter_rgba as png_filter_rgba, unfilter4 as png_unfilter4};
+pub use png::simd::{filter_rgba as png_filter_rgba, unfilter as png_unfilter};
 pub use sourcemap::simd::parse_mappings;
-pub use sourcemap::{Columns, MappingsState};
+pub use sourcemap::{Columns, ColumnsFilled, ColumnsOut, MappingsState};
 pub use strings::simd::{
     bswap32, bswap32_shared, copy_u16_to_u8, count_char, count_char_shared, fill_shared_with_mask,
     fill_with_mask, first_non_ascii16, index_of_any_char, index_of_char, index_of_char_shared,
@@ -42,9 +42,12 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 pub fn line_starts(text: &[u8]) -> Vec<u32> {
     assert!(u32::try_from(text.len()).is_ok());
-    let mut starts = Vec::with_capacity(1 + count_char(text, b'\n'));
+    let room = count_char(text, b'\n') + 64;
+    let mut starts = Vec::with_capacity(1 + room);
     starts.push(0);
-    strings::simd::line_starts(text, &mut starts);
+    bun_simd::extend_vec(&mut starts, room, |out| {
+        strings::simd::line_starts(text, out)
+    });
     starts
 }
 

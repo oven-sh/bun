@@ -22,7 +22,7 @@ use crate::{EventLoopHandle, IoEvent, Owner};
 use crate::{FilePoll, FilePollFlag, PipeReadScratchGuard};
 #[cfg(windows)]
 use bun_ptr::OptionCellExt as _;
-use bun_ptr::{CellExt as _, RefPtr};
+use bun_ptr::{CellExt as _, RefPtr, VecCellExt as _};
 
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
@@ -89,7 +89,7 @@ impl BufferedReader {
     }
 
     pub fn memory_cost(&self) -> usize {
-        mem::size_of::<Self>() + self.buffer.with_taken(|buffer| buffer.capacity())
+        mem::size_of::<Self>() + self.buffer.capacity()
     }
 
     pub fn set_maxbuf(&mut self, maxbuf: RefPtr<MaxBuf>) {

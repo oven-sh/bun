@@ -20,6 +20,7 @@ use crate::options::Loader;
 
 use crate::CompileResult;
 use crate::LinkerContext;
+use crate::linker_context::convert_stmts_for_chunk_for_dev_server::resolve_import_paths_for_dev_server;
 use crate::linker_context::generate_compile_result_for_css_chunk::{
     generate_compile_result_for_css_chunk, nest_external_imports,
 };
@@ -113,6 +114,10 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
         if let crate::chunk::Content::Css(css) = &mut chunk.content {
             nest_external_imports(c, log, &mut css.imports_in_chunk_in_order);
         }
+    }
+
+    if c.options.output_format == options::Format::InternalBakeDev {
+        resolve_import_paths_for_dev_server(c, chunks);
     }
 
     {

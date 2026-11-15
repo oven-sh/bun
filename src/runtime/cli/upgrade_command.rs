@@ -1,11 +1,9 @@
-use core::ffi::c_char;
 use std::io::Write as _;
 
 use bun_ast::AstArena;
-use bun_core::Global::SyncCStr;
 use bun_core::MutableString;
 use bun_core::{self, Environment, Global, Output, Progress, fmt as bun_fmt};
-use bun_core::{ZStr, strings};
+use bun_core::{CStrRef, ZStr, strings};
 use bun_dotenv as DotEnv;
 use bun_http::{self as HTTP, headers};
 use bun_install::integrity::{Integrity, Tag as IntegrityTag};
@@ -151,11 +149,8 @@ impl Version {
 
 // Exported C symbol — null-terminated
 // Moved out of `impl Version` — Rust impl blocks cannot hold `static` items.
-// `*const c_char` is `!Sync`, so wrap in the `#[repr(transparent)]` `SyncCStr` newtype
-// (same pattern as `Bun__userAgent` in bun_core::Global) so the C++ side still sees a
-// single `const char*`-sized symbol.
 #[unsafe(no_mangle)]
-static Bun__githubURL: SyncCStr = SyncCStr(
+static Bun__githubURL: CStrRef<'static> = CStrRef::from_slice_with_nul(
     const_format::concatcp!(
         "https://github.com/oven-sh/bun/releases/download/bun-v",
         Global::package_json_version,
@@ -163,8 +158,7 @@ static Bun__githubURL: SyncCStr = SyncCStr(
         Version::ZIP_FILENAME,
         "\0"
     )
-    .as_ptr()
-    .cast::<c_char>(),
+    .as_bytes(),
 );
 
 // ──────────────────────────────────────────────────────────────────────────

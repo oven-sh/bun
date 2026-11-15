@@ -44,9 +44,6 @@ pub(crate) struct ShellGlobTask {
     pub err: Option<ShellGlobErr>,
 }
 
-// SAFETY: the walker owns its pattern and buffers; nothing in it is thread-affine.
-unsafe impl Send for ShellGlobTask {}
-
 impl ShellWork for ShellGlobTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellGlobTask;
     fn run_from_thread_pool(&mut self) {

@@ -1595,11 +1595,9 @@ pub struct Utf8WithString {
 }
 
 impl Utf8WithString {
-    /// Wrap `string` (any encoding) only to hand it to JS via `into_parts`;
-    /// `slice()` debug-asserts it is not called on a non-UTF-8 `string`.
     #[inline]
-    pub fn js_only(string: String) -> Self {
-        Self { utf8: None, string }
+    pub fn string(&self) -> &String {
+        &self.string
     }
 
     /// True iff the UTF-8 bytes are read straight out of a WTF-backed
@@ -1630,11 +1628,6 @@ impl Utf8WithString {
             Some(utf8) => Utf8Bytes::Owned(utf8),
             None => self.string.into_utf8(),
         }
-    }
-
-    /// `(transcoded copy, string)`.
-    pub fn into_parts(self) -> (Option<Vec<u8>>, String) {
-        (self.utf8, self.string)
     }
 
     /// For handing the value to one work-pool job that is dropped back on

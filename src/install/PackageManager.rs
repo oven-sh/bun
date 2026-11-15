@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use std::collections::VecDeque;
 use std::sync::{Arc, OnceLock};
@@ -2620,19 +2619,7 @@ pub fn init(
         Global::crash();
     }
 
-    // `InitOpts.ca: Vec<*const c_void>` (erased `[*:0]const u8`). The HTTP
-    // thread reads these asynchronously after `init` returns, so park the
-    // owning `ZBox`es in `holder::CA` for process lifetime (never freed)
-    // and project the pointers from there.
-    let ca_ptrs: Vec<*const c_void> = if ca.is_empty() {
-        Vec::new()
-    } else {
-        let _ = holder::CA.set(ca);
-        holder::CA
-            .get()
-            .map(|v| v.iter().map(|z| z.as_ptr().cast::<c_void>()).collect())
-            .unwrap_or_default()
-    };
+    let ca = holder::CA.get_or_init(|| ca);
     // `InitOpts.abs_ca_file_name: &'static ZStr` — process-lifetime config
     // string. Park it in
     // `holder::ABS_CA_FILE_NAME: OnceLock<ZBox>` per PORTING.md §Forbidden
@@ -2644,7 +2631,7 @@ pub fn init(
         holder::ABS_CA_FILE_NAME.get_or_init(|| abs_ca_file_name)
     };
     http::http_thread::init(&http::http_thread::InitOpts {
-        ca: ca_ptrs,
+        ca,
         abs_ca_file_name: abs_ca_file_name_static,
         on_init_error: http_thread_on_init_error,
         ..Default::default()

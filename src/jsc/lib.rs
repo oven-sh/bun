@@ -187,8 +187,8 @@ pub use self::js_value::{
 // and is wired into `event_loop::tick` directly at link time. No fn-pointer
 // hook is re-exported from the crate root.
 pub use self::array_buffer::{
-    ArrayBuffer, ArrayBufferPin, ArrayBufferViewPins, BinaryType, JSCArrayBuffer,
-    MarkedArrayBuffer, OffThreadBytes, PinnedArrayBuffer, TypedArrayType,
+    ArrayBuffer, ArrayBufferPin, ArrayBufferViewPins, BinaryType, JSCArrayBuffer, OffThreadBytes,
+    PinnedArrayBuffer, TypedArrayType,
 };
 pub use self::console_object as ConsoleObject;
 pub use self::console_object::Formatter;
@@ -467,7 +467,7 @@ pub mod bun_cpu_profiler;
 pub mod bun_heap_profiler;
 #[path = "bun_string_jsc.rs"]
 pub mod bun_string_jsc;
-pub use bun_string_jsc::{ErrorKind, StringJsc, Utf8WithStringJsc};
+pub use bun_string_jsc::{ErrorKind, StringJsc};
 #[path = "comptime_string_map_jsc.rs"]
 pub mod comptime_string_map_jsc;
 #[path = "declared_results_testing.rs"]

@@ -103,6 +103,12 @@ impl<const CAPACITY: usize> SignalRing<CAPACITY> {
         }
     }
 
+    /// Any thread. `Relaxed`: `dequeue` synchronizes with the producer.
+    pub fn is_empty(&self) -> bool {
+        let (head, tail) = unpack(self.state.load(Ordering::Relaxed));
+        head == tail
+    }
+
     /// Starts both indices at `index`, to put the `u16` wrap within reach.
     #[cfg(test)]
     fn starting_at(index: u16) -> Self {
@@ -233,12 +239,14 @@ mod tests {
         for round in 0..4u8 {
             for i in 0..4u8 {
                 assert!(ring.enqueue(round * 4 + i + 1));
+                assert!(!ring.is_empty());
             }
             assert!(!ring.enqueue(99), "full at CAPACITY");
             for i in 0..4u8 {
                 assert_eq!(ring.dequeue(), Some(round * 4 + i + 1));
             }
             assert_eq!(ring.dequeue(), None);
+            assert!(ring.is_empty());
         }
     }
 
@@ -247,6 +255,7 @@ mod tests {
         let ring = SignalRing::<8>::new();
         // A producer between its CAS and its store.
         let (_, claimed) = unpack(ring.state.fetch_add(pack(0, 1), Ordering::AcqRel));
+        assert!(!ring.is_empty());
         assert!(ring.enqueue(2));
         assert!(ring.enqueue(3));
         assert_eq!(ring.dequeue(), None);

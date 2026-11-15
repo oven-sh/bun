@@ -44,6 +44,7 @@ pub(crate) fn build_reactive_function(
             .name_hint
             .map(|s| bun_core::BStr::new(s.slice()).to_string()),
         params: hir.params.to_vec(),
+        first_initializer: hir.first_initializer,
         generator: hir.generator,
         is_async: hir.is_async,
         body,

@@ -203,6 +203,8 @@ pub struct HirFunction {
     pub name_hint: Option<StoreStr>,
     pub fn_type: ReactFunctionType,
     pub params: HirVec<ParamPattern>,
+    /// Not in upstream (facebook/react#30591): the first parameter with a default. Codegen prints `= undefined` there, to keep `length`.
+    pub first_initializer: Option<u32>,
     pub return_type_annotation: Option<StoreStr>,
     pub returns: Place,
     pub context: HirVec<Place>,

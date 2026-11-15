@@ -1,7 +1,9 @@
 use bstr::BStr;
 use bun_ast::runtime::ReactCompilerMode;
 use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
-use bun_sema::hir::{Flags, Func, Keyword, Param, TypeNodeId, TypeNodeKind};
+use bun_sema::hir::{
+    ExprId, ExprKind, Flags, Func, Keyword, Param, TypeNodeId, TypeNodeKind, UnOp,
+};
 use bun_sema::program::{FileId, FileRole};
 use bun_sema_driver::{Diagnostic, check_whole_files, decide_roles};
 
@@ -67,6 +69,8 @@ struct Parameter {
     name: Option<String>,
     record: Param,
     is_any: bool,
+    or_undefined: Option<TypeNodeId>,
+    has_any_default: bool,
 }
 
 fn with_react_package<'a>(files: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
@@ -109,8 +113,37 @@ fn is_any(tree: &Tree<'_>, annotation: TypeNodeId) -> bool {
     })
 }
 
-fn parameters_of(text: &str, function: &str, mode: ReactCompilerMode) -> Vec<Parameter> {
-    with_tree("main.tsx", text, mode, |tree| {
+fn or_undefined(tree: &Tree<'_>, annotation: TypeNodeId) -> Option<TypeNodeId> {
+    let hir = tree.hir();
+    let TypeNodeKind::Union(members) = hir[annotation.some()?].kind else {
+        return None;
+    };
+    let [member, undefined] = hir.ids(members).collect::<Vec<TypeNodeId>>()[..] else {
+        return None;
+    };
+    let undefined = hir[undefined].kind;
+    matches!(undefined, TypeNodeKind::Keyword(Keyword::Undefined)).then_some(member)
+}
+
+fn has_any_default(tree: &Tree<'_>, default: ExprId) -> bool {
+    let hir = tree.hir();
+    default
+        .some()
+        .is_some_and(|default| match hir[default].kind {
+            ExprKind::As { expr, ty } => {
+                matches!(hir[expr].kind, ExprKind::Unary { op: UnOp::Void, .. }) && is_any(tree, ty)
+            }
+            _ => false,
+        })
+}
+
+fn parameters_in(
+    name: &str,
+    text: &str,
+    function: &str,
+    mode: ReactCompilerMode,
+) -> Vec<Parameter> {
+    with_tree(name, text, mode, |tree| {
         let hir = tree.hir();
         let parameters = hir[tree.function_named(function)].params.iter();
         parameters
@@ -118,9 +151,15 @@ fn parameters_of(text: &str, function: &str, mode: ReactCompilerMode) -> Vec<Par
                 name: tree.pattern_name(hir[id].pat),
                 record: hir[id],
                 is_any: is_any(tree, hir[id].ty),
+                or_undefined: or_undefined(tree, hir[id].ty),
+                has_any_default: has_any_default(tree, hir[id].default),
             })
             .collect()
     })
+}
+
+fn parameters_of(text: &str, function: &str, mode: ReactCompilerMode) -> Vec<Parameter> {
+    parameters_in("main.tsx", text, function, mode)
 }
 
 fn function_record(text: &str, function: &str, mode: ReactCompilerMode) -> Func {
@@ -241,9 +280,49 @@ fn parameter_with_default_stays_optional() {
     assert_eq!((written.len(), compiled.len()), (1, 1));
     assert!(written[0].record.default.is_some());
     assert!(!written[0].record.flags.contains(Flags::OPTIONAL));
+    assert!(compiled[0].record.default.is_some());
+    assert!(!compiled[0].has_any_default);
+    assert!(!compiled[0].record.flags.contains(Flags::OPTIONAL));
+    assert!(written[0].record.ty.is_some());
+    assert_eq!(compiled[0].or_undefined, Some(written[0].record.ty));
+}
+
+#[test]
+fn default_after_the_first_is_optional() {
+    let text = "export function useLabel(prefix: string, suffix: string = '!', mark = '?') {\n\
+                useState(prefix);\n\
+                return [prefix, suffix, mark];\n\
+                }\n";
+    let written = parameters_of(text, "useLabel", ReactCompilerMode::Disabled);
+    let compiled = parameters_of(text, "useLabel", ReactCompilerMode::Client);
+    assert_eq!(compiled.len(), 3);
     assert!(compiled[0].record.default.is_none());
-    assert!(compiled[0].record.flags.contains(Flags::OPTIONAL));
+    assert!(!compiled[0].record.flags.contains(Flags::OPTIONAL));
     assert_eq!(compiled[0].record.ty, written[0].record.ty);
+    assert!(compiled[1].record.default.is_some());
+    assert!(!compiled[1].record.flags.contains(Flags::OPTIONAL));
+    assert_eq!(compiled[1].or_undefined, Some(written[1].record.ty));
+    assert!(compiled[2].record.default.is_none());
+    assert!(compiled[2].record.flags.contains(Flags::OPTIONAL));
+    assert!(compiled[2].is_any);
+}
+
+#[test]
+fn unannotated_parameter_with_default_is_any() {
+    let text = "export function useStep(step = 1) {\n\
+                useState(step);\n\
+                return [step];\n\
+                }\n";
+    let typescript = parameters_of(text, "useStep", ReactCompilerMode::Client);
+    assert!(typescript[0].record.default.is_some());
+    assert!(typescript[0].is_any && !typescript[0].has_any_default);
+    let javascript = parameters_in("main.jsx", text, "useStep", ReactCompilerMode::Client);
+    assert!(javascript[0].record.ty.is_none());
+    assert!(javascript[0].has_any_default);
+    for parameters in [typescript, javascript] {
+        assert_eq!(parameters.len(), 1);
+        assert!(!parameters[0].record.flags.contains(Flags::OPTIONAL));
+    }
 }
 
 #[test]
@@ -255,9 +334,9 @@ fn default_before_required_parameter_accepts_undefined() {
     let written = parameters_of(text, "useRange", ReactCompilerMode::Disabled);
     let compiled = parameters_of(text, "useRange", ReactCompilerMode::Client);
     assert_eq!(compiled.len(), 2);
-    assert!(compiled[0].record.default.is_none());
+    assert!(compiled[0].record.default.is_some());
     assert!(!compiled[0].record.flags.contains(Flags::OPTIONAL));
-    assert!(compiled[0].is_any && !written[0].is_any);
+    assert_eq!(compiled[0].or_undefined, Some(written[0].record.ty));
     assert_eq!(compiled[1].record.ty, written[1].record.ty);
     assert!(!compiled[1].is_any);
 }
@@ -379,6 +458,46 @@ fn caller_of_compiled_hook_sees_written_type_arguments() {
                 export const name = item !== null ? item.name : '';\n";
     let files = with_react_package(&[("main.ts", main), ("item.tsx", ITEM_HOOK)]);
     assert_both_modes_report(&files, &[]);
+}
+
+#[test]
+fn caller_of_compiled_hook_passes_or_omits_a_parameter_with_default() {
+    let step = "import { useState } from 'react';\n\
+                export function useStep(step = 1) {\n\
+                useState(step);\n\
+                return [step];\n\
+                }\n";
+    let count = "import { useState } from 'react';\n\
+                 export function useCount(count: number = 1) {\n\
+                 useState(count);\n\
+                 return [count];\n\
+                 }\n\
+                 export function useRange(start: number = 0, end: number) {\n\
+                 useState(start);\n\
+                 return [start, end];\n\
+                 }\n";
+    let check = |main: &str, expected: &[Reported]| {
+        let sources = [("main.ts", main), ("step.jsx", step), ("count.tsx", count)];
+        assert_both_modes_report(&with_react_package(&sources), expected);
+    };
+    check(
+        "import { useStep } from './step';\n\
+         import { useCount, useRange } from './count';\n\
+         export const steps = [useStep(), useStep(2), useStep(undefined)];\n\
+         export const counts = [useCount(), useCount(3), useCount(undefined)];\n\
+         export const ranges = [useRange(undefined, 3), useRange(1, 3)];\n",
+        &[],
+    );
+    check(
+        "import { useCount } from './count';\n\
+         export const counts = useCount('3');\n",
+        &[(2345, "/project/main.ts".to_owned(), 2)],
+    );
+    check(
+        "import { useRange } from './count';\n\
+         export const ranges = useRange('x', 3);\n",
+        &[(2345, "/project/main.ts".to_owned(), 2)],
+    );
 }
 
 #[test]

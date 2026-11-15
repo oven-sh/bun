@@ -29,13 +29,17 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // A comparand held in a variable (`|&b| b == sep`) is invisible to this lint;
 // use the `strings::` form anyway.
 //
-// Highway is also the only SIMD in the Rust sources. `std::simd` and the
+// Highway is also the only SIMD in use in the Rust sources. `std::simd` and the
 // `core::arch` intrinsics are compiled for the baseline CPU, with no runtime
 // dispatch, and would be a second set of kernels to keep correct on every
 // target. clippy.toml bans `Simd`, `Mask` and their constructors, but a `u8x16`
 // made with `.into()` gets past it. Nothing gets past the feature gate, so that
 // is banned here. New kernels go in src/jsc/bindings/highway_strings.cpp or a
 // highway_*.cpp beside it, with a wrapper in src/highway/lib.rs.
+//
+// `bun_simd` (src/simd/) is made of both, and depends on nothing of Bun's. The
+// kernels that are written with it get no exemption, only their tests.
+const isBunSimd = (rel: string) => /^src\/simd\/(?!(?:kernels|conformance)\/(?!tests\/))/.test(rel);
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 // Proc-macro crates and cargo build scripts run on the host at compile time and
@@ -52,7 +56,7 @@ for (const manifest of new Bun.Glob("src/*/Cargo.toml").scanSync({ cwd: root }))
 const rustSources = globAllSources().rust.filter(abs => {
   if (!abs.endsWith(".rs")) return false;
   const rel = path.relative(root, abs).replaceAll(path.sep, "/");
-  return !hostOnly.some(h => (h.endsWith("/") ? rel.startsWith(h) : rel === h));
+  return !isBunSimd(rel) && !hostOnly.some(h => (h.endsWith("/") ? rel.startsWith(h) : rel === h));
 });
 
 // Only scan files tracked in HEAD (a `git stash` round-trip can leave stray

@@ -158,6 +158,7 @@ table, an HWCAP test. Known patterns:
 | ------------------------------------- | ----------------------------------------------------------- | ------------------------------------------ |
 | simdutf                               | `set_best()` — CPUID first call, cached atomic ptr          | `vendor/` or WebKit's bundled copy         |
 | Highway (Bun)                         | `BUN_HWY_DISPATCH` → `hwy::SupportedTargets()`              | `src/jsc/bindings/highway_dispatch.h`      |
+| `bun_simd`                            | `if_supported!` → `bun_simd::detected()`                    | `src/simd/trusted/gate.rs`                 |
 | BoringSSL                             | `OPENSSL_ia32cap_P` global, set at init                     | `vendor/boringssl/crypto/cpu_intel.c`      |
 | zstd                                  | `ZSTD_cpuid()`                                              | `vendor/zstd/lib/common/cpu.h`             |
 | libdeflate                            | `libdeflate_init_x86_cpu_features()` / `HWCAP_ASIMDDP`      | `vendor/libdeflate/lib/x86/cpu_features.c` |
@@ -238,6 +239,10 @@ use `<rust-hash>` in place of the hash:
 
 Either form works (the tool canonicalizes both before comparing), but
 `<rust-hash>` survives toolchain bumps.
+
+**Patterns.** A `*` in an entry stands for any text. Use one only where the name
+of a symbol proves its gate, as the module of a `bun_simd` target does. An exact
+entry wins over a pattern.
 
 **Windows `<lib:NAME.lib>` / `<lib:NAME.obj>`.** When PDB has no per-function
 record for a hit (stripped CRT objects, anonymized staticlib helpers, an asm

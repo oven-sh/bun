@@ -1661,6 +1661,7 @@ dependencies = [
  "bun_semver_jsc",
  "bun_sha_hmac",
  "bun_shell_parser",
+ "bun_simd_conformance",
  "bun_simdutf_sys",
  "bun_sourcemap",
  "bun_sourcemap_jsc",
@@ -1854,6 +1855,45 @@ dependencies = [
  "bun_pod",
  "bun_windows_sys",
 ]
+
+[[package]]
+name = "bun_simd"
+version = "0.0.0"
+dependencies = [
+ "bun_simd",
+ "bun_simd_macros",
+ "bun_simd_trusted",
+]
+
+[[package]]
+name = "bun_simd_conformance"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_highway",
+ "bun_simd",
+ "bun_simd_kernels",
+ "bun_sys",
+ "libc",
+]
+
+[[package]]
+name = "bun_simd_kernels"
+version = "0.0.0"
+dependencies = [
+ "bun_simd",
+]
+
+[[package]]
+name = "bun_simd_macros"
+version = "0.0.0"
+dependencies = [
+ "bun_simd_trusted",
+]
+
+[[package]]
+name = "bun_simd_trusted"
+version = "0.0.0"
 
 [[package]]
 name = "bun_simdutf_sys"

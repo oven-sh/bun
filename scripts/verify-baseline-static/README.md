@@ -127,6 +127,7 @@ placeholder; the tool canonicalizes both sides before comparing.
 # comment
 symbol_name                  # blanket pass — any feature allowed
 symbol_name  [AVX, AVX2]     # feature ceiling — only these allowed
+*::simd::avx2::*  [AVX2]     # pattern — `*` is any text
 ```
 
 A feature outside the brackets is a violation even for an allowlisted symbol.

@@ -646,6 +646,25 @@ fn symbol_for(syms: &[Sym], ip: u64) -> Option<&Sym> {
 /// checkpoint where someone asks "did the gate also get updated?"
 type Allowlist = HashMap<String, Option<HashSet<String>>>;
 
+/// Whether an allowlist entry names `symbol`. A `*` in it stands for any text.
+fn entry_matches(entry: &str, symbol: &str) -> bool {
+    let Some((first, rest)) = entry.split_once('*') else {
+        return entry == symbol;
+    };
+    let (middle, last) = rest.rsplit_once('*').unwrap_or(("", rest));
+    let Some(mut between) = symbol
+        .strip_prefix(first)
+        .and_then(|s| s.strip_suffix(last))
+    else {
+        return false;
+    };
+    middle.split('*').all(|part| {
+        let after = between.split_once(part).map(|(_, after)| after);
+        between = after.unwrap_or("");
+        after.is_some()
+    })
+}
+
 fn load_allowlist_into(path: &Path, out: &mut Allowlist) -> Result<(), String> {
     let text = match fs::read_to_string(path) {
         Ok(t) => t,
@@ -754,11 +773,18 @@ fn record(
     //   in allowlist, ceiling contains this feat   → suppressed
     //   in allowlist, ceiling DOESN'T contain it   → violation (the
     //     "symbol grew past its gate" case — the whole point of ceilings)
-    let bucket = match allowlist.get(&canon) {
-        None => violations,
-        Some(None) => allowlisted,
-        Some(Some(ceiling)) if ceiling.contains(feature) => allowlisted,
-        Some(Some(_)) => violations,
+    let allows =
+        |ceiling: &Option<HashSet<String>>| ceiling.as_ref().is_none_or(|c| c.contains(feature));
+    let is_allowlisted = match allowlist.get(&canon) {
+        Some(ceiling) => allows(ceiling),
+        None => allowlist
+            .iter()
+            .any(|(entry, ceiling)| allows(ceiling) && entry_matches(entry, &canon)),
+    };
+    let bucket = if is_allowlisted {
+        allowlisted
+    } else {
+        violations
     };
     let entry = bucket.entry(raw_sym).or_default();
     entry.features.insert(feature);
@@ -1198,7 +1224,7 @@ fn run() -> Result<bool, String> {
         .collect();
     let mut stale: Vec<_> = allowlist
         .keys()
-        .filter(|k| !hit_canon.contains(*k))
+        .filter(|k| !hit_canon.contains(*k) && !hit_canon.iter().any(|s| entry_matches(k, s)))
         .collect();
     stale.sort();
     if !stale.is_empty() {

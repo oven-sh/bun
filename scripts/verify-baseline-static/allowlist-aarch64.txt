@@ -390,3 +390,8 @@ _ZN3bun9N_SVE_25613OddBlocksImplEPKhmPm           [SVE]
 _ZN3bun10N_SVE2_12819ScannerRunStopsImplEPKhmPhm  [SVE]
 _ZN3bun10N_SVE2_12814LineStartsImplEPKhmPj        [SVE]
 _ZN3bun10N_SVE2_12813OddBlocksImplEPKhmPm         [SVE]
+
+# ----------------------------------------------------------------------------
+# src/simd/conformance/probe.rs: one instruction of each feature. Gate: bun_simd::detected().
+# ----------------------------------------------------------------------------
+_R*20bun_simd_conformance5probe4runs*22instruction_of_feature

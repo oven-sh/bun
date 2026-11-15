@@ -189,8 +189,9 @@ with runtime CPU dispatch). Byte and substring search **must** go through it —
 `bstr::ByteSlice::find*` are denied in `clippy.toml`, and the byte-literal forms
 of `<[u8]>::contains`, `iter().position/rposition/any(|b| b == b'x')` and
 `.split(|b| ..)` are rejected by `test/internal/source-lints/byte-search.test.ts`.
-Highway is the only SIMD in the Rust sources: both also ban `std::simd`, and the
-source lint bans the `core::arch` intrinsics. A new kernel goes in
+Highway is the only SIMD in use in the Rust sources: both also ban `std::simd`, and the
+source lint bans the `core::arch` intrinsics. The exception is `bun_simd` (`src/simd/README.md`),
+which only its tests call so far. A new kernel goes in
 `src/jsc/bindings/highway_strings.cpp`, or in a `highway_*.cpp` of its own beside it, which
 `noUnify` in `scripts/build/unified.ts` has to list. Its safe wrapper goes in `src/highway/lib.rs`.
 

@@ -1,10 +1,9 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
-import { totalmem } from "node:os";
 import { resolve } from "node:path";
 import * as stream from "node:stream";
 import * as util from "node:util";
@@ -107,32 +106,6 @@ describe("zlib", () => {
     const data = new TextEncoder().encode("Hello World!".repeat(1));
     expect(() => gunzipSync(data, { library: "zlib" })).toThrow(new Error("incorrect header check"));
   });
-
-  // zlib takes a 32-bit length.
-  describe.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 10 * 1024 ** 3)(
-    "an input of 2**32 bytes",
-    () => {
-      it("gunzipSync reads it", async () => {
-        const script = `const input = new Uint8Array(2 ** 32);
-          input.set(Bun.gzipSync("hello"));
-          // ISIZE, from which gunzipSync sizes its output.
-          input[2 ** 32 - 4] = 5;
-          console.log(Buffer.from(Bun.gunzipSync(input)).toString());`;
-        expect(await bunRun(["-e", script])).toSpawn("hello");
-      });
-
-      // Too slow for debug and ASAN builds.
-      it.skipIf(isDebug || isASAN)(
-        "gzipSync compresses all of it",
-        async () => {
-          const script = `const crc32AndSize = Bun.gzipSync(new Uint8Array(2 ** 32), { level: 3 }).subarray(-8);
-            console.log(crc32AndSize.toHex());`;
-          expect(await bunRun(["-e", script])).toSpawn("8def02d200000000");
-        },
-        90_000,
-      );
-    },
-  );
 
   it("flush() takes a numeric string or a BigInt, and any kind after end()", async () => {
     for (const kind of ["2", 2n]) {

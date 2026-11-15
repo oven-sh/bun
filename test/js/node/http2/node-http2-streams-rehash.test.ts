@@ -395,4 +395,33 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
     },
     10_000 * ASAN_MULTIPLIER,
   );
+
+  test(
+    "does not leave DATA queued on a stream it aborts",
+    async () => {
+      const result = await run(/* js */ `
+      const { session, duplex } = await connect();
+      const controller = new AbortController();
+      const aborted = session.request({ ":method": "POST", ":path": "/" }, { signal: controller.signal });
+      await until(() => duplex.written.length > 0);
+      duplex.inNextWrite = () => controller.abort();
+      // More than the window: the rest would be queued once the first part is written.
+      aborted.write(Buffer.alloc(65535 + 40000, "a"));
+      await once(aborted, "error");
+      console.log(session.state.outboundQueueSize);
+
+      duplex.push(windowUpdate(0));
+      duplex.written.length = 0;
+      const next = session.request({ ":method": "POST", ":path": "/" });
+      next.on("error", () => {});
+      await until(() => duplex.written.length > 0);
+      next.write("hello");
+      await until(() => Buffer.concat(duplex.written).includes("hello"));
+      console.log("sent");
+      session.destroy();
+    `);
+      expect(result).toEqual({ stdout: "0\nsent", stderr: "", exitCode: 0 });
+    },
+    10_000 * ASAN_MULTIPLIER,
+  );
 });

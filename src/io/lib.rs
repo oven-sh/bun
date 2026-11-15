@@ -1812,15 +1812,15 @@ pub enum FilePollKind {
 }
 
 /// A slot of the event loop's `Store`. Dropping it unregisters the poll and puts the slot back.
-pub struct OwnedFilePoll<const FORCE_UNREGISTER: bool = false>(FilePollRef);
+pub struct OwnedFilePoll<const FORCE_UNREGISTER: bool = false>(core::ptr::NonNull<FilePoll>);
 
 impl<const FORCE_UNREGISTER: bool> OwnedFilePoll<FORCE_UNREGISTER> {
     pub fn new(ev: EventLoopCtx, fd: Fd, owner: Owner) -> Self {
-        Self(FilePollRef(FilePoll::init(ev, fd, owner)))
+        Self(FilePoll::init(ev, fd, owner))
     }
 
-    pub(crate) fn poll_ref(&self) -> FilePollRef {
-        self.0
+    pub(crate) fn poll_ref(&self) -> FilePollRef<'_> {
+        FilePollRef(self.0, core::marker::PhantomData)
     }
 }
 
@@ -1828,31 +1828,34 @@ impl<const FORCE_UNREGISTER: bool> core::ops::Deref for OwnedFilePoll<FORCE_UNRE
     type Target = FilePoll;
     fn deref(&self) -> &FilePoll {
         // SAFETY: as in `FilePollRef::inner`.
-        unsafe { self.0.0.as_ref() }
+        unsafe { self.0.as_ref() }
     }
 }
 
 impl<const FORCE_UNREGISTER: bool> core::ops::DerefMut for OwnedFilePoll<FORCE_UNREGISTER> {
     fn deref_mut(&mut self) -> &mut FilePoll {
-        self.0.inner()
+        self.poll_ref().inner()
     }
 }
 
 impl<const FORCE_UNREGISTER: bool> Drop for OwnedFilePoll<FORCE_UNREGISTER> {
     fn drop(&mut self) {
         let (ev, was_ever_registered) = self.reset(FORCE_UNREGISTER);
-        ev.file_polls_mut().put(self.0.0, ev, was_ever_registered);
+        ev.file_polls_mut().put(self.0, ev, was_ever_registered);
     }
 }
 
-/// Names the slot of an [`OwnedFilePoll`], which it must not outlive.
+/// The slot of an [`OwnedFilePoll`], to change through a shared borrow of the owner.
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-pub struct FilePollRef(core::ptr::NonNull<FilePoll>);
+pub struct FilePollRef<'a>(
+    core::ptr::NonNull<FilePoll>,
+    core::marker::PhantomData<&'a FilePoll>,
+);
 
-impl FilePollRef {
+impl<'a> FilePollRef<'a> {
     #[inline]
-    fn inner(self) -> &'static mut FilePoll {
+    fn inner(self) -> &'a mut FilePoll {
         // SAFETY: the owner is alive, the loop is single-threaded, and no
         // caller runs user code under the borrow.
         unsafe { &mut *self.0.as_ptr() }

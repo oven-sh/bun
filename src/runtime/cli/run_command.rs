@@ -4,7 +4,6 @@
 //! bun-shell / system shell. PATH stitching, `node_modules/.bin` lookup,
 //! markdown rendering, and the Windows bunx fast-path are all handled here.
 
-use ::core::ffi::c_char;
 use ::core::sync::atomic::{AtomicBool, Ordering};
 use std::io::Write as _;
 
@@ -451,8 +450,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bun_spawn::ctrl_c::install();
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
-            argv0: Some(shell_bin.as_ptr().cast::<::core::ffi::c_char>()),
-            envp: Some(envp.as_ptr().cast::<*const ::core::ffi::c_char>()),
+            argv0: Some(shell_bin.into()),
+            envp: Some(envp.as_list()),
             cwd: cwd.to_vec().into_boxed_slice(),
             stderr: sync::SyncStdio::Inherit,
             stdout: sync::SyncStdio::Inherit,
@@ -677,9 +676,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     }
                     // SAFETY: `ctx.log` set in `create_context_data` (single-
                     // threaded CLI startup), process-lifetime.
-                    let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                        Output::error_writer(),
-                    ));
+                    let _ = unsafe { ctx.log() }.print(Output::error_writer());
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>{}<r> loading directory {}",
                         bstr::BStr::new(err.name()),
@@ -692,9 +689,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 }
                 Ok(None) => {
                     // SAFETY: see `Err` arm above.
-                    let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                        Output::error_writer(),
-                    ));
+                    let _ = unsafe { ctx.log() }.print(Output::error_writer());
                     pretty_errorln!("error loading current directory");
                     Output::flush();
                     return Err(crate::Error::CouldntReadCurrentDirectory);
@@ -918,7 +913,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 {
                     continue;
                 }
-                bun_http::async_http::preconnect(url, false);
+                bun_http::async_http::preconnect(url, Vec::new());
             }
         })
     }
@@ -1748,9 +1743,7 @@ fn dump_build_error(vm: &VirtualMachine) {
     if let Some(log) = vm.log.get() {
         // SAFETY: `vm.log` set in `init`; single-threaded CLI.
         let log = unsafe { &mut *log.as_ptr() };
-        let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-            Output::error_writer_buffered(),
-        ));
+        let _ = log.print(Output::error_writer_buffered());
     }
     Output::flush();
 }
@@ -1852,14 +1845,7 @@ impl RunCommand {
     fn boot_failed_exit(ctx: &mut ContextData, display_name: &[u8], err: &crate::Error) -> ! {
         // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
         // CLI startup) and is process-lifetime.
-        //
-        // `Log::print` is generic over `IntoLogWrite`, which is
-        // implemented for `*mut io::Writer` (not `&mut`). `error_writer()`
-        // returns the process-global writer; cast to the raw pointer the
-        // trait expects.
-        let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
-            Output::error_writer(),
-        ));
+        let _ = unsafe { ctx.log() }.print(Output::error_writer());
 
         pretty_errorln!(
             "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
@@ -2208,8 +2194,8 @@ impl RunCommand {
         bun_spawn::ctrl_c::install();
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
-            argv0: Some(executable_z.as_ptr().cast::<c_char>()),
-            envp: Some(envp.as_ptr().cast::<*const c_char>()),
+            argv0: Some(executable_z.into()),
+            envp: Some(envp.as_list()),
             cwd: cwd.to_vec().into_boxed_slice(),
             stderr: sync::SyncStdio::Inherit,
             stdout: sync::SyncStdio::Inherit,
@@ -3233,9 +3219,7 @@ impl RunCommand {
     fn exec_as_if_node_boot_failed(ctx: &mut ContextData, basename: &[u8], err: crate::Error) -> ! {
         // SAFETY: `ctx.log` set in `create_context_data` (single-threaded
         // CLI startup), process-lifetime.
-        let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
-            Output::error_writer(),
-        ));
+        let _ = unsafe { ctx.log() }.print(Output::error_writer());
 
         Output::err(
             err,
@@ -3284,51 +3268,6 @@ pub(crate) enum Filter {
     ScriptAndDescriptions,
 }
 
-type DoneChannel =
-    bun_threading::Channel<u32, bun_collections::linear_fifo::StaticBuffer<u32, 256>>;
-
-/// One pending remote-image download. Lives on the heap so its
-/// `async_http.task` (embedded in ThreadPool.Task) has a stable
-/// address — HTTPThread.schedule does `container_of` on that task,
-/// so moving the struct would break the worker's callback.
-struct RemoteImageDownload<'a> {
-    async_http: bun_http::AsyncHTTP<'a>,
-    response_buffer: bun_core::MutableString,
-    url: &'a [u8],
-    done: &'a DoneChannel,
-}
-
-impl RemoteImageDownload<'_> {
-    fn on_done(
-        this: *mut Self,
-        async_http: *mut bun_http::AsyncHTTP<'static>,
-        mut result: bun_http::HTTPClientResult<'_>,
-    ) {
-        // The worker's
-        // ThreadlocalAsyncHTTP is about to be freed, so copy its
-        // mutated state back into our owned AsyncHTTP before writing
-        // to the channel.
-        // SAFETY: `this` was passed as the callback ctx in `prefetch_remote_images`;
-        // `async_http` is the worker-thread temporary whose `.real` points back at
-        // `this.async_http`.
-        unsafe {
-            let this = &mut *this;
-            let async_http = &mut *async_http;
-            if let Some(real) = async_http.real {
-                // Raw bitwise overwrite with
-                // NO destructor on the old value: `ptr::write` —
-                // `*real.as_ptr() = …` would run Drop on the previous
-                // `this.async_http` (whose state the fresh copy still aliases).
-                real.as_ptr().write(::core::ptr::read(async_http));
-            }
-            result.body_into(&mut this.response_buffer.list);
-            // Channel payload is a placeholder tick — the main thread
-            // walks `downloads[]` to read per-task state after N wakeups.
-            let _ = this.done.write_item(0);
-        }
-    }
-}
-
 impl RunCommand {
     fn unlink_staged_path(path: &[u8]) {
         let mut zbuf = [0u8; MAX_PATH_BYTES + 1];
@@ -3361,7 +3300,7 @@ impl RunCommand {
 
         // Walk the collected URLs once, deduping and picking out the
         // http(s) ones. If there are no remote URLs we never spawn the
-        // HTTP worker or allocate any Download structs.
+        // HTTP worker.
         let mut seen: StringHashMap<()> = StringHashMap::default();
         let mut remote_urls: Vec<&[u8]> = Vec::new();
         for u in collector.urls.iter() {
@@ -3384,99 +3323,42 @@ impl RunCommand {
             return;
         }
 
-        bun_http::http_thread::init(&Default::default());
-
-        let done_channel = DoneChannel::init_static();
-
-        // Heap-allocate each Download so AsyncHTTP.task has a stable
-        // address (see RemoteImageDownload doc comment).
-        let mut downloads: Vec<Box<RemoteImageDownload>> = Vec::new();
-        // Drop frees response_buffer + the Box for each download.
-
-        // Kick off every download in parallel. Accumulate tasks into a
-        // single ThreadPool.Batch, then ship the whole batch to the
-        // HTTP thread in one schedule() call — worker picks up and runs
-        // them concurrently.
-        let mut batch = bun_threading::thread_pool::Batch::default();
-        for raw_url in remote_urls.iter() {
-            let Ok(response_buffer) = bun_core::MutableString::init(8 * 1024) else {
-                continue;
-            };
-            // The callback needs the heap address before there is a value to put there.
-            let mut d: Box<::core::mem::MaybeUninit<RemoteImageDownload>> = Box::new_uninit();
-            let d_ptr: *mut RemoteImageDownload = d.as_mut_ptr();
-            let mut d = Box::write(
-                d,
-                RemoteImageDownload {
-                    async_http: bun_http::AsyncHTTP::init(
-                        bun_http::Method::GET,
-                        bun_url::URL::parse(raw_url),
-                        Default::default(),
-                        b"",
-                        b"",
-                        bun_http::HTTPClientResultCallback::new::<RemoteImageDownload>(
-                            d_ptr,
-                            RemoteImageDownload::on_done,
-                        ),
-                        bun_http::FetchRedirect::Follow,
-                        Default::default(),
-                    ),
-                    response_buffer,
-                    url: raw_url,
-                    done: &done_channel,
-                },
-            );
-            d.async_http.schedule(&mut batch);
-            downloads.push(d);
-        }
-        if downloads.is_empty() {
-            return;
-        }
-        bun_http::HTTPThread::schedule(batch);
-
-        // Block the main thread on the channel until every scheduled
-        // download has reported back. readItem() uses a mutex+condvar,
-        // no busy loop. The payload value is unused — each wakeup just
-        // means "one more task finished".
-        let mut completed: usize = 0;
-        while completed < downloads.len() {
-            if done_channel.read_item().is_err() {
-                break;
-            }
-            completed += 1;
-        }
+        let results = bun_http::AsyncHTTP::send_all_sync(remote_urls.iter().map(|url| {
+            bun_http::AsyncHTTP::init_sync(
+                bun_http::Method::GET,
+                bun_url::URL::parse(url),
+                Default::default(),
+                b"",
+                b"",
+                None,
+                None,
+                bun_http::FetchRedirect::Follow,
+            )
+        }));
 
         // Second pass: walk completed downloads, write successful
         // bodies to temp files, populate out_map. All disk I/O is done
         // AFTER every network request has settled.
         let tmpdir = bun_resolver::fs::RealFS::tmpdir_path();
-        for d in downloads.iter_mut() {
-            if d.async_http.err.is_some() {
+        for (&url, result) in remote_urls.iter().zip(results) {
+            let metadata = result.metadata.as_ref();
+            if !result.is_success() || metadata.is_none_or(|m| m.status_code() != 200) {
                 continue;
             }
-            let status = d
-                .async_http
-                .response
-                .as_ref()
-                .map(|r| r.status_code)
-                .unwrap_or(0);
-            if status != 200 {
-                continue;
-            }
-            let bytes = d.response_buffer.slice();
+            let bytes = result.body_bytes();
             if bytes.is_empty() {
                 continue;
             }
 
             // Extension is best-effort from the URL path; Kitty inspects
             // the file's magic bytes regardless.
-            let ext: &[u8] = if d.url.ends_with(b".png") {
+            let ext: &[u8] = if url.ends_with(b".png") {
                 b".png"
-            } else if d.url.ends_with(b".jpg") || d.url.ends_with(b".jpeg") {
+            } else if url.ends_with(b".jpg") || url.ends_with(b".jpeg") {
                 b".jpg"
-            } else if d.url.ends_with(b".gif") {
+            } else if url.ends_with(b".gif") {
                 b".gif"
-            } else if d.url.ends_with(b".webp") {
+            } else if url.ends_with(b".webp") {
                 b".webp"
             } else {
                 b".bin"
@@ -3525,14 +3407,14 @@ impl RunCommand {
                 Self::unlink_staged_path(&path);
                 continue;
             }
-            // Dupe d.url for the map key — `collector.urls` owns the backing
+            // Dupe url for the map key — `collector.urls` owns the backing
             // bytes. Check capacity first while `path` is still
             // borrowable for `unlink_staged_path`.
             if out_map.try_reserve(1).is_err() {
                 Self::unlink_staged_path(&path);
                 continue;
             }
-            out_map.put_assume_capacity(d.url, path.into_boxed_slice());
+            out_map.put_assume_capacity(url, path.into_boxed_slice());
         }
     }
 
@@ -4190,7 +4072,7 @@ impl BunXFastPath {
         let utf8 = strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath);
         if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
-            let _ = unsafe { &mut *ctx.log }.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = unsafe { &mut *ctx.log }.print(Output::error_writer());
             Output::err(
                 err,
                 "Failed to run bin \"<b>{}<r>\"",

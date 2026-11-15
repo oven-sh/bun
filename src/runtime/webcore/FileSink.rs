@@ -343,7 +343,7 @@ impl FileSink {
             // Release the JS wrapper reference now that the pending operation is complete.
             // This was held to prevent GC from collecting the wrapper while the async
             // operation was in progress.
-            (*this).js_sink_ref.with_mut(|r| r.deinit());
+            (*this).js_sink_ref.set(Default::default());
         }
     }
 
@@ -1080,7 +1080,7 @@ impl FileSink {
 
         // `pending`/`pipe` are left for `deinit` (Box drop) since in-flight IO
         // may still need them.
-        this.js_sink_ref.with_mut(|r| r.deinit());
+        this.js_sink_ref.set(Default::default());
     }
 
     /// A `ReadableSinkController` was collected with this sink still attached. `pipe` roots that cell until

@@ -15,7 +15,6 @@
 
 use core::alloc::Allocator;
 use core::fmt;
-use core::mem::ManuallyDrop;
 
 use bun_alloc::AllocError;
 use bun_core::strings;
@@ -35,11 +34,6 @@ pub trait VecExt<T>: Sized {
         T: Copy;
     /// Moves the elements of `v` into a fresh `A` allocation and frees `v`'s arena buffer.
     fn from_bump_vec(v: bun_alloc::ArenaVec<'_, T>) -> Self;
-    /// Wrap a borrowed slice as a `Vec<T>` that **must not be dropped or
-    /// grown**.  Same hazard as the original — callers wrap in `ManuallyDrop`.
-    /// Kept only for the `StreamResult::Temporary*` pattern; new code should
-    /// take `&[T]` instead.
-    unsafe fn from_borrowed_slice_dangerous(items: &[T]) -> ManuallyDrop<Self>;
 
     // ── accessors ─────────────────────────────────────────────────────────
     fn slice(&self) -> &[T];
@@ -72,34 +66,22 @@ pub trait VecExt<T>: Sized {
     where
         T: Copy;
     fn ordered_remove(&mut self, index: usize) -> T;
-    /// # Safety
-    /// Exposes `self[len..capacity]` as initialized. Every element must be
-    /// overwritten before any read (including Drop). Prefer
-    /// [`reserve_spare`] for `T` with validity invariants.
-    unsafe fn expand_to_capacity(&mut self);
-    /// # Safety
-    /// Returns `&mut [T]` over `additional` uninitialized elements. Caller
-    /// must fully initialize the slice before any read/drop. Prefer
-    /// [`reserve_spare`] + `set_len` for non-POD `T`. Uses `reserve_exact` so the allocation grows
-    /// to *exactly* `len + additional`. Use when the buffer is the final
-    /// single-shot blob (sourcemap finalize, etc.).
-    unsafe fn writable_slice_exact(&mut self, additional: usize) -> &mut [T];
     /// Reserves `additional` and returns the first `additional` slots of
-    /// spare capacity as `MaybeUninit<T>`. Safe sibling of [`writable_slice_exact`]:
+    /// spare capacity as `MaybeUninit<T>`. The
     /// caller writes some prefix then calls `set_len` (or [`uv_commit`] for
     /// `Vec<u8>`) to commit. Unlike `spare_capacity_mut()` the returned slice
     /// is exactly `additional` long, not `capacity - len`.
     fn reserve_spare(&mut self, additional: usize) -> &mut [core::mem::MaybeUninit<T>];
-    /// `reserve(additional)` then [`expand_to_capacity`], returning the
+    /// `reserve(additional)` then `set_len(capacity)`, returning the
     /// freshly-exposed tail as a raw `(ptr, len)` pair — i.e.
     /// `(next_out, avail_out)` for C streaming APIs (zlib, brotli, zstd).
-    /// Unlike [`writable_slice_exact`] this exposes the *full* over-allocated
+    /// This exposes the *full* over-allocated
     /// capacity (`cap - prev_len`), not exactly `additional`, so the FFI
     /// callee can use the allocator's slack. Pass `additional = 0` when the
     /// caller has already reserved.
     ///
     /// # Safety
-    /// Same as [`expand_to_capacity`]: every byte in `[prev_len, cap)` must be
+    /// Every byte in `[prev_len, cap)` must be
     /// written by the FFI callee (or `len` truncated back) before any read.
     unsafe fn reserve_expand_tail(&mut self, additional: usize) -> (*mut T, usize);
 
@@ -107,9 +89,6 @@ pub trait VecExt<T>: Sized {
     fn move_to_list(&mut self) -> Vec<T>;
     fn move_to_list_managed(&mut self) -> Vec<T>;
     fn to_owned_slice(&mut self) -> Box<[T]>;
-    /// Non-owning header alias.  For `Vec` this is `from_raw_parts` into a
-    /// `ManuallyDrop` — same UB-if-dropped contract as before.
-    fn shallow_copy(&self) -> ManuallyDrop<Self>;
 
     fn memory_cost(&self) -> usize;
     fn deep_clone_with<F>(&self, clone_one: F) -> Self
@@ -205,19 +184,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         drop(src);
         out
     }
-    #[inline]
-    unsafe fn from_borrowed_slice_dangerous(items: &[T]) -> ManuallyDrop<Self> {
-        // SAFETY: caller must never drop or grow the returned `Vec` — its
-        // buffer is borrowed.  Same contract as the original.
-        ManuallyDrop::new(unsafe {
-            Vec::from_raw_parts_in(
-                items.as_ptr().cast_mut(),
-                items.len(),
-                items.len(),
-                A::default(),
-            )
-        })
-    }
 
     #[inline]
     fn slice(&self) -> &[T] {
@@ -300,20 +266,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         self.remove(index)
     }
     #[inline]
-    unsafe fn expand_to_capacity(&mut self) {
-        // SAFETY: caller contract — every element in `[len, cap)` is written
-        // before being observed.
-        unsafe { self.set_len(self.capacity()) };
-    }
-    #[inline]
-    unsafe fn writable_slice_exact(&mut self, additional: usize) -> &mut [T] {
-        self.reserve_exact(additional);
-        let prev = self.len();
-        // SAFETY: caller contract — slice fully written before any read.
-        unsafe { self.set_len(prev + additional) };
-        &mut self[prev..]
-    }
-    #[inline]
     fn reserve_spare(&mut self, additional: usize) -> &mut [core::mem::MaybeUninit<T>] {
         self.reserve(additional);
         &mut self.spare_capacity_mut()[..additional]
@@ -358,18 +310,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     #[inline]
     fn to_owned_slice(&mut self) -> Box<[T]> {
         self.move_to_list().into_boxed_slice()
-    }
-    #[inline]
-    fn shallow_copy(&self) -> ManuallyDrop<Self> {
-        // SAFETY: caller must not drop/grow the alias; original stays the owner.
-        ManuallyDrop::new(unsafe {
-            Vec::from_raw_parts_in(
-                self.as_ptr().cast_mut(),
-                self.len(),
-                self.capacity(),
-                A::default(),
-            )
-        })
     }
 
     #[inline]

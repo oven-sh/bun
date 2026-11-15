@@ -416,7 +416,7 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<(Vec<u8>, V
         LoadResult::NotFound => false,
         // A lockfile that exists but will not load is reported as that, not as "package not installed".
         broken @ LoadResult::Err(_) => {
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print(Output::error_writer());
             crate::cli::package_manager_command::PackageManagerCommand::handle_load_lockfile_errors_for(
                 &broken, log_level, "",
             );
@@ -1018,19 +1018,19 @@ fn registry_get(
     }
 
     let mut response_buf = MutableString::init(64 * 1024)?;
-    let display_url = url.href.to_vec();
-    let mut req = pm.registry_request(
+    let display_url = url.href;
+    let req = pm.registry_request(
         http::Method::GET,
         url,
         headers.entries,
         headers.content.written_slice(),
         b"",
     );
-    let res = match pm.send_with_retries(&mut req, &mut response_buf) {
+    let res = match pm.send_with_retries(req, &mut response_buf) {
         Ok(r) => r,
         Err(err) => {
             Status::clear();
-            let url = bun_core::fmt::redacted_npm_url(&display_url);
+            let url = bun_core::fmt::redacted_npm_url(display_url);
             Output::err(
                 err,
                 "GET {} failed",
@@ -1041,7 +1041,7 @@ fn registry_get(
     };
     if res.status_code() >= 400 {
         Status::clear();
-        npm::response_error::<false>(&req, &res, for_error, &mut response_buf)?;
+        npm::response_error::<false>(display_url, &res, for_error, &mut response_buf)?;
     }
     Ok(response_buf)
 }

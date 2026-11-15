@@ -279,10 +279,7 @@ impl DevServer {
     pub(crate) fn on_plugins_rejected(&mut self) -> crate::Result<()> {
         self.plugin_state = PluginState::Err;
         // Completing the last request on a stopped server frees `self`, so count as a pending request until the end.
-        let mut server = self.server;
-        if let Some(server) = server.as_mut() {
-            server.on_pending_request();
-        }
+        let _pending = self.server.map(PendingRequest::new);
         while let Some(item) = self.next_bundle.requests.pop_first() {
             item.take_handler().fail();
         }
@@ -292,9 +289,6 @@ impl DevServer {
                 route_bundle::State::Unqueued;
         }
         self.next_bundle.route_queue.clear_retaining_capacity();
-        if let Some(server) = server.as_mut() {
-            server.on_static_request_complete();
-        }
         // TODO: allow recovery from this state
         Ok(())
     }
@@ -351,10 +345,7 @@ impl DevServer {
 
         self.graphs.incremental_result.reset();
 
-        // Ref server to keep it from closing.
-        if let Some(server) = self.server.as_mut() {
-            server.on_pending_request();
-        }
+        let pending_request = self.server.map(PendingRequest::new);
 
         // Boxed so its address is stable: `bv2.graph.heap: &'static Arena`
         // borrows it (self-ref via `CurrentBundle`, see Note on
@@ -381,14 +372,23 @@ impl DevServer {
         // `CurrentBundle` (which also owns `bv2`); the boxed arena's address
         // is stable for the lifetime of `bv2.graph.heap`'s borrow.
         let heap_ref: &'static bun_alloc::Arena = unsafe { &*heap_ptr };
-        let server_transpiler: *mut Transpiler<'static> = &raw mut *self.server_transpiler;
+        // SAFETY: `self` holds the transpilers at a fixed address and outlives every use of `bv2`.
+        // Until `bv2` is dropped, nothing else uses the client and SSR ones. `self` still uses the
+        // server one on this thread (`watch_directory`, `finalize_bundle`).
+        let (ssr_transpiler, server_transpiler, client_transpiler) = unsafe {
+            use bun_ptr::detach_lifetime_mut as detach;
+            (
+                self.ssr_transpiler_mut().map(|ssr| detach(ssr)),
+                detach(&mut *self.server_transpiler),
+                detach(&mut *self.client_transpiler),
+            )
+        };
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
-            // SAFETY: `server_transpiler` outlives `bv2` (held by `self`).
-            unsafe { &mut *server_transpiler },
+            server_transpiler,
             Some(bundler::bundle_v2::BakeOptions {
                 framework: self.framework.as_bundler_view(),
-                client_transpiler: ::core::ptr::NonNull::from(&mut *self.client_transpiler),
-                ssr_transpiler: ::core::ptr::NonNull::from(&mut self.ssr_transpiler).cast(),
+                client_transpiler,
+                ssr_transpiler,
                 plugins: self.plugins,
             }),
             heap_ref,
@@ -438,6 +438,7 @@ impl DevServer {
             requests: ::core::mem::take(&mut self.next_bundle.requests),
             script_requests: Vec::new(),
             resolution_failure_entries: Default::default(),
+            pending_request,
         });
 
         self.next_bundle.route_queue.clear_retaining_capacity();

@@ -22,7 +22,7 @@ pub use bun_install_types::resolver_hooks::Repository;
 /// The environment of every `git` process that `bun install` spawns.
 pub(crate) struct GitEnv {
     /// `KEY=VALUE\0` array for spawn.
-    pub(crate) envp: bun_dotenv::NullDelimitedEnvMap,
+    pub(crate) envp: bun_core::CStringList,
     /// `git` resolved on the env's `PATH`. `None` when git is not installed.
     pub(crate) git: Option<ZBox>,
     /// False for the provisional environment that only `CONFIG_QUERY` itself runs in.

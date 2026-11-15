@@ -88,7 +88,7 @@ pub(crate) struct JSBundleCompletionTask {
 
     /// The route this build is for, kept alive until `on_complete` hands it
     /// the result.
-    pub(crate) html_build_task: Option<RefPtr<html_bundle::Route>>,
+    pub(crate) html_build_task: Option<html_bundle::PendingBuild>,
 
     pub(crate) result: BundleV2Result,
 

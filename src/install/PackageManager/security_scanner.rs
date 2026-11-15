@@ -29,7 +29,7 @@ use bun_ptr::RefPtr;
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::subprocess::{self, StdioResult};
 use bun_spawn::{
-    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnEnv,
+    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage,
     SpawnOptions, Status, Stdio,
 };
 use bun_sys::{self, Fd, File};
@@ -155,7 +155,7 @@ struct ScannerFinder<'a> {
 
 impl<'a> ScannerFinder<'a> {
     fn find_in_root_dependencies(&self) -> Option<PackageID> {
-        let pkgs = self.manager.lockfile.packages.slice();
+        let pkgs = &self.manager.lockfile.packages;
         let string_buf = self.manager.lockfile.buffers.string_bytes.as_slice();
         let root_deps = pkgs.items_dependencies()[0];
 
@@ -178,7 +178,7 @@ impl<'a> ScannerFinder<'a> {
     }
 
     fn validate_not_in_workspaces(&self) -> Result<(), Error> {
-        let pkgs = self.manager.lockfile.packages.slice();
+        let pkgs = &self.manager.lockfile.packages;
         let pkg_deps = pkgs.items_dependencies();
         let pkg_res = pkgs.items_resolution();
         let string_buf = self.manager.lockfile.buffers.string_bytes.as_slice();
@@ -302,7 +302,7 @@ pub fn print_security_advisories(manager: &PackageManager, results: &SecuritySca
         return;
     }
 
-    let pkgs = manager.lockfile.packages.slice();
+    let pkgs = &manager.lockfile.packages;
     let pkg_names = pkgs.items_name();
     let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
 
@@ -480,7 +480,7 @@ impl<'a> PackageCollector<'a> {
 
     /// The dependencies of the root package, then those of the workspace packages.
     fn collect_all_packages(&mut self) -> Result<(), Error> {
-        let pkgs = self.manager.lockfile.packages.slice();
+        let pkgs = &self.manager.lockfile.packages;
         for (pkg_id, deps) in pkgs.items_dependencies().iter().enumerate() {
             if pkg_id != 0 && pkgs.items_resolution()[pkg_id].tag != ResolutionTag::Workspace {
                 continue;
@@ -494,7 +494,7 @@ impl<'a> PackageCollector<'a> {
 
     fn collect_update_packages(&mut self) -> Result<(), Error> {
         let manager = self.manager;
-        let pkgs = manager.lockfile.packages.slice();
+        let pkgs = &manager.lockfile.packages;
         let resolutions = manager.lockfile.buffers.resolutions.as_slice();
 
         for req in manager.update_requests.iter() {
@@ -525,7 +525,7 @@ impl<'a> PackageCollector<'a> {
             return Ok(());
         }
 
-        let pkgs = self.manager.lockfile.packages.slice();
+        let pkgs = &self.manager.lockfile.packages;
         let resolutions = self.manager.lockfile.buffers.resolutions.as_slice();
 
         let mut wanted = bun_collections::DynamicBitSet::init_empty(pkgs.len())?;
@@ -547,7 +547,7 @@ impl<'a> PackageCollector<'a> {
     }
 
     fn process_queue(&mut self) -> Result<(), Error> {
-        let pkgs = self.manager.lockfile.packages.slice();
+        let pkgs = &self.manager.lockfile.packages;
 
         while let Some(item) = self.queue.pop_front() {
             let pkg_deps = pkgs.items_dependencies()[item.pkg_id as usize];
@@ -575,7 +575,7 @@ fn build_package_json(
 ) -> Result<Box<[u8]>, Error> {
     let mut json_buf: Vec<u8> = Vec::new();
 
-    let pkgs = manager.lockfile.packages.slice();
+    let pkgs = &manager.lockfile.packages;
     let pkg_names = pkgs.items_name();
     let pkg_resolutions = pkgs.items_resolution();
     let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
@@ -885,15 +885,14 @@ impl<'a> SecurityScanSubprocess<'a> {
             env.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1")?;
         }
         let envp = env.map.create_null_delimited_env_map()?;
-        let envp: Vec<&CStr> = envp.iter().collect();
 
         #[cfg(windows)]
         {
-            self.spawn_windows(&argv, &envp, ipc_pipe)?;
+            self.spawn_windows(&argv, envp.as_list(), ipc_pipe)?;
         }
         #[cfg(not(windows))]
         {
-            self.spawn_posix(&argv, &envp, ipc_pipe)?;
+            self.spawn_posix(&argv, envp.as_list(), ipc_pipe)?;
         }
 
         Ok(())
@@ -907,7 +906,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     fn spawn_posix(
         &mut self,
         argv: &[&CStr],
-        envp: &[&CStr],
+        envp: bun_core::CStrList<'_>,
         [ipc_read, ipc_write]: [File; 2],
     ) -> Result<(), Error> {
         let extra_fds: Box<[Stdio]> = Box::new([
@@ -924,7 +923,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, SpawnEnv::Strings(envp))?
+        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, Some(envp))?
             .map_err(|e| e.to_zig_err())?;
 
         drop(ipc_write);
@@ -947,7 +946,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     fn spawn_windows(
         &mut self,
         argv: &[&CStr],
-        envp: &[&CStr],
+        envp: bun_core::CStrList<'_>,
         [ipc_read, ipc_write]: [File; 2],
     ) -> Result<(), Error> {
         use bun_sys::ReturnCodeExt as _;
@@ -982,7 +981,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, SpawnEnv::Strings(envp))?
+        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, Some(envp))?
             .map_err(|e| e.to_zig_err())?;
 
         drop((ipc_write, child_read));
@@ -1471,7 +1470,7 @@ fn parse_security_advisories_from_expr(
 
         // Look up the package path for this advisory
         let mut pkg_path: Option<Box<[PackageID]>> = None;
-        let pkgs = manager.lockfile.packages.slice();
+        let pkgs = &manager.lockfile.packages;
         let pkg_names = pkgs.items_name();
         let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
 

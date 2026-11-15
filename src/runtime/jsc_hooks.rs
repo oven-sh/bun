@@ -94,6 +94,7 @@ pub(crate) struct RuntimeState {
     pub(crate) body_value_pool: Box<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>,
     #[cfg(windows)]
     pub(crate) path_watchers: core::cell::OnceCell<Box<crate::node::win_watcher::PathWatchers>>,
+    pub(crate) request_pools: crate::server::RequestPools,
     /// The resolver's PackageManager wake-handler context (module queue + VM
     /// handle); the resolver holds a raw pointer to it. Freed with the state.
     pub(crate) wake_ctx: Option<Box<bun_jsc::async_module::WakeContext>>,
@@ -102,6 +103,8 @@ pub(crate) struct RuntimeState {
     /// `clear_all_for_vm`.
     pub(crate) cron_jobs: JsCell<Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>>,
     pub(crate) stat_watcher_scheduler: JsCell<Option<bun_ptr::RefPtr<StatWatcherScheduler>>>,
+    /// Set in the VM that runs the files of `bun test`.
+    pub(crate) test_runner: Cell<Option<&'static crate::test_runner::jest::TestRunner>>,
     /// Innermost entered `Pass`, borrowed from a caller's stack frame; `EnteredPass::drop` pops it.
     pub(crate) matcher_pass: Cell<*const crate::test_runner::expect::expect_deferred::Pass>,
     /// For the `node:fs` calls that have no binding object. See [`with_node_fs`].
@@ -197,6 +200,14 @@ pub(crate) fn sql_rare(vm: &VirtualMachine) -> &bun_sql_jsc::jsc::RareData {
 #[cfg(windows)]
 pub(crate) fn path_watchers() -> &'static crate::node::win_watcher::PathWatchers {
     runtime_state().path_watchers.get_or_init(Default::default)
+}
+
+/// [`RuntimeState::request_pools`] of `vm`.
+pub(crate) fn request_pools(vm: &VirtualMachine) -> &crate::server::RequestPools {
+    let state = vm.runtime_state.get().cast::<RuntimeState>();
+    debug_assert!(!state.is_null(), "request_pools before init_runtime_state");
+    // SAFETY: as `timer_all`.
+    unsafe { &(*state).request_pools }
 }
 
 /// [`RuntimeState::lint`] of this thread's VM.
@@ -349,9 +360,11 @@ unsafe fn init_runtime_state(
         },
         #[cfg(windows)]
         path_watchers: Default::default(),
+        request_pools: Default::default(),
         wake_ctx: None,
         cron_jobs: JsCell::default(),
         stat_watcher_scheduler: JsCell::new(None),
+        test_runner: Cell::new(None),
         matcher_pass: Cell::new(ptr::null()),
         node_fs: JsCell::new(None),
         memory_pressure_watcher: Default::default(),
@@ -822,7 +835,7 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
         let _protected = JSValue::from_cell(promise).protected();
 
         // ── wait ────────────────────────────────────────────────────────
-        if vm.is_main_thread.get() && crate::test_runner::jest::Jest::runner_ptr().is_some() {
+        if crate::test_runner::jest::Jest::runner().is_some() {
             let never_loads = vm.wait_for_test_runner_load(format_args!(
                 "preload {}",
                 bun_core::fmt::format_json_string_latin1(preload_slice),
@@ -1108,7 +1121,7 @@ fn print_exception(
     // (the `had_errors` save/restore lives in the low-tier caller). Route via
     // the buffered error writer; `defer writer.flush()` becomes a tail call —
     // no early returns below.
-    let writer = bun_core::Output::error_writer_buffered();
+    let writer = &mut bun_core::Output::error_writer_buffered();
 
     let global = vm_ref.global();
 
@@ -1150,9 +1163,9 @@ unsafe fn timer_insert(
     timer_all_of(vm).insert(t);
 }
 
-/// `vm.timer.remove(timer)` — counterpart to [`timer_insert`].
-fn timer_remove(vm: &VirtualMachine, t: &bun_event_loop::EventLoopTimer::EventLoopTimer) {
-    timer_all_of(vm).remove(t);
+#[unsafe(no_mangle)]
+fn __bun_remove_timer(timer: &bun_event_loop::EventLoopTimer::EventLoopTimer) {
+    timer_all().remove(timer);
 }
 
 /// For `AbortSignal::Timeout`, which turns its delay into a deadline below this tier.
@@ -1349,7 +1362,6 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     run_pending_test_step,
     print_exception,
     timer_insert,
-    timer_remove,
     timer_min_delay_ms,
     abort_signal_timeout_clock,
     timers_left,
@@ -1512,7 +1524,7 @@ fn cancel_timers(vm: &VirtualMachine, only: Option<bun_jsc::ContextId>) {
             return;
         };
         for (&timer, &kind) in timers.iter() {
-            // SAFETY: tracked ⇒ live (each untracks itself in its deinit); a
+            // SAFETY: tracked ⇒ live (each untracks itself when it drops); a
             // cancel may free the one it cancels, never another tracked one.
             unsafe {
                 match kind {
@@ -1578,7 +1590,7 @@ unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
 /// resolver's c-ares channel now so its `ARES_EDESTRUCTION` and socket-state
 /// callbacks run while the JSC VM, `RareData.file_polls`, and `runtime_state`
 /// are all still live. See `Resolver::close_channel_for_terminate`.
-fn stop_dns_for_vm_teardown() -> SweepResult {
+pub(crate) fn stop_dns_for_vm_teardown() -> SweepResult {
     let Some(state) = try_runtime_state() else {
         return SweepResult::Idle;
     };
@@ -1631,82 +1643,55 @@ fn retroactively_report_discovered_tests(
     agent: &mut bun_jsc::debugger::TestReporterHandle,
     next_test_id: i32,
 ) -> i32 {
-    use crate::test_runner::bun_test::{Phase, TestScheduleEntry};
-    use crate::test_runner::jest::Jest;
+    use crate::test_runner::bun_test::{Phase, ScopeId, TestScheduleEntry, clone_active_strong};
+    use crate::test_runner::cells::CellExt as _;
     use bun_jsc::debugger::TestType;
 
-    let Some(runner) = Jest::runner() else {
+    let Some(active_file) = clone_active_strong() else {
         return next_test_id;
     };
-    let Some(active_file) = runner.bun_test_root.active_file.as_ref() else {
-        return next_test_id;
-    };
-    // SAFETY: single-threaded; `active_file` keeps the cell alive for this call.
-    let active_file = unsafe { &mut *active_file.as_ptr() };
 
     // Only report if we're in collection or execution phase (tests have been
     // discovered).
-    match active_file.phase {
+    match active_file.phase.get() {
         Phase::Collection | Phase::Execution => {}
         Phase::Done => return next_test_id,
     }
 
     // Get the file path for source location info.
-    use crate::test_runner::jest::FileColumns as _;
-    let file_path = runner.files.items_source()[active_file.file_id as usize]
-        .path
-        .text();
-    let source_url = bun_core::StringView::from_bytes(file_path);
+    let source_url = bun_core::StringView::from_bytes(active_file.file.path);
 
     let mut max_id: i32 = next_test_id;
 
     // Use an explicit stack because describe() can nest to any depth.
-    let mut open: Vec<(core::slice::IterMut<'_, TestScheduleEntry>, i32)> =
-        vec![(active_file.collection.root_scope.entries.iter_mut(), -1)];
-    while let Some((children, parent_id)) = open.last_mut() {
-        let parent_id = *parent_id;
-        let Some(entry) = children.next() else {
-            open.pop();
-            continue;
+    let mut pending: Vec<(TestScheduleEntry, i32)> = Vec::new();
+    let push_children = |pending: &mut Vec<_>, scope: ScopeId, id: i32| {
+        let entries = &active_file.scope(scope).entries;
+        entries.with_taken(|entries| pending.extend(entries.iter().rev().map(|&it| (it, id))));
+    };
+    push_children(&mut pending, ScopeId::ROOT, -1);
+    while let Some((entry, parent_id)) = pending.pop() {
+        let (base, test_type) = match entry {
+            TestScheduleEntry::Describe(id) => (&active_file.scope(id).base, TestType::Describe),
+            TestScheduleEntry::TestCallback(id) => (&active_file.entry(id).base, TestType::Test),
         };
-        match entry {
-            TestScheduleEntry::Describe(describe) => {
-                if describe.base.test_id_for_debugger == 0 {
-                    max_id += 1;
-                    // Assign the ID so start/end events will fire during execution.
-                    describe.base.test_id_for_debugger = max_id;
-                    let name = bun_core::StringView::from_bytes(
-                        describe.base.name.as_deref().unwrap_or(b"(unnamed)"),
-                    );
-                    agent.report_test_found_with_location(
-                        max_id,
-                        &name,
-                        TestType::Describe,
-                        parent_id,
-                        &source_url,
-                        describe.base.line_no as i32,
-                    );
-                }
-                let describe_id = describe.base.test_id_for_debugger;
-                open.push((describe.entries.iter_mut(), describe_id));
-            }
-            TestScheduleEntry::TestCallback(test_entry) => {
-                if test_entry.base.test_id_for_debugger == 0 {
-                    max_id += 1;
-                    test_entry.base.test_id_for_debugger = max_id;
-                    let name = bun_core::StringView::from_bytes(
-                        test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
-                    );
-                    agent.report_test_found_with_location(
-                        max_id,
-                        &name,
-                        TestType::Test,
-                        parent_id,
-                        &source_url,
-                        test_entry.base.line_no as i32,
-                    );
-                }
-            }
+        if base.test_id_for_debugger.get() == 0 {
+            max_id += 1;
+            // Assign the ID so start/end events will fire during execution.
+            base.test_id_for_debugger.set(max_id);
+            let name =
+                bun_core::StringView::from_bytes(base.name.as_deref().unwrap_or(b"(unnamed)"));
+            agent.report_test_found_with_location(
+                max_id,
+                &name,
+                test_type,
+                parent_id,
+                &source_url,
+                base.line_no as i32,
+            );
+        }
+        if let TestScheduleEntry::Describe(id) = entry {
+            push_children(&mut pending, id, base.test_id_for_debugger.get());
         }
     }
     max_id

@@ -652,6 +652,8 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                             current.code_type = ZigStackFrameCodeConstructor;
                         } else if (frame.isGlobalCode) {
                             current.code_type = ZigStackFrameCodeGlobal;
+                        } else if (frame.isAsync) {
+                            current.code_type = ZigStackFrameCodeFunction;
                         }
 
                         except.stack.frames_len += 1;

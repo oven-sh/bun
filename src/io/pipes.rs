@@ -39,18 +39,15 @@ impl PollOrFd {
         }
     }
 
-    pub fn get_poll(&self) -> Option<FilePollRef> {
+    pub fn get_poll(&self) -> Option<FilePollRef<'_>> {
         match self {
             PollOrFd::Poll(poll) => Some(poll.poll_ref()),
             _ => None,
         }
     }
 
-    pub(crate) fn set_poll(&mut self, ev: EventLoopHandle, fd: Fd, owner: Owner) -> FilePollRef {
-        let poll = OwnedFilePoll::new(ev, fd, owner);
-        let poll_ref = poll.poll_ref();
-        *self = PollOrFd::Poll(poll);
-        poll_ref
+    pub(crate) fn set_poll(&mut self, ev: EventLoopHandle, fd: Fd, owner: Owner) {
+        *self = PollOrFd::Poll(OwnedFilePoll::new(ev, fd, owner));
     }
 
     pub(crate) fn close_impl<F>(

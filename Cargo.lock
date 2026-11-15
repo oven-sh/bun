@@ -1003,7 +1003,6 @@ dependencies = [
  "bun_crash_handler",
  "bun_io",
  "bun_options_types",
- "bun_ptr",
  "bun_sourcemap",
  "bun_wyhash",
  "const_format",
@@ -1956,7 +1955,6 @@ dependencies = [
  "bun_boringssl",
  "bun_collections",
  "bun_core",
- "bun_ptr",
  "bun_sha_hmac",
  "bun_sys",
  "strum",
@@ -2096,7 +2094,6 @@ name = "bun_threading"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
- "bun_collections",
  "bun_core",
  "bun_ptr",
  "bun_safety",

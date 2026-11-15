@@ -670,32 +670,19 @@ macro_rules! from_field_ptr {
 /// Zig's `@fieldParentPtr`).
 ///
 /// ```ignore
-/// bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client;
-///     fn parent;             // (&mut self) -> &JSValkeyClient
-///     fn mut parent_ptr;     // (&mut self) -> *mut JSValkeyClient
-/// }
 /// bun_core::impl_field_parent! { FileReader => Source.context;
 ///     pub fn shared parent_const; // (&self) -> &Source     — only compiles while FileReader: !Freeze
 ///     pub fn raw parent;          // (&self) -> *mut Source — same check
 /// }
 /// ```
 ///
-/// Any subset of the four arms, in any order.
+/// Either arm, or both.
 ///
 /// ## Why the receivers are what they are
 ///
 /// The parent pointer is computed from `self`, so it is only as capable as
 /// the reference it came from:
 ///
-/// - From `&mut self` (the plain and `mut` arms) the whole parent may be read
-///   and written for as long as that `&mut self` is usable. Under Tree Borrows
-///   the locations outside `self` are initialised lazily for the `&mut`'s tag,
-///   and LLVM sees the parent pointer as *based on* the argument, so parent
-///   code that comes back and touches `self`'s bytes (through a `JsCell`, say)
-///   is correctly treated as aliasing. This is what makes the container-of
-///   form preferable to a stored back-pointer for `&mut self` methods: a
-///   pointer loaded from a field is *not* based on the argument, and `&mut
-///   self` is `noalias`.
 /// - From `&self` (the `shared` and `raw` arms) the parent may be read and
 ///   written only because `$Child` is not [`Freeze`](core::marker::Freeze).
 ///   For a `Freeze` child rustc passes `&self` as `noalias readonly` and LLVM
@@ -703,18 +690,18 @@ macro_rules! from_field_ptr {
 ///   flag sets — depending purely on inlining. Both arms therefore fail to
 ///   compile for a `Freeze` `$Child`. If that assertion fires, do not add a
 ///   `Cell` to placate it: move the methods that need the parent onto
-///   `&$Parent`, or take `&mut self`. `shared` gives `&$Parent` (so only its
+///   `&$Parent`. `shared` gives `&$Parent` (so only its
 ///   interior-mutable fields are writable); `raw` gives the pointer for
 ///   `&self` methods that must call `&mut $Parent` methods or set plain
 ///   fields, under the usual no-other-live-reference rule.
 ///
 /// No arm hands out `&mut $Parent`: `self` is inside it, so that would be two
-/// live `&mut` to the same bytes. The pointer-returning arms are dereferenced
+/// live `&mut` to the same bytes. The pointer of the `raw` arm is dereferenced
 /// at the point of use.
 ///
 /// None of this is defined under Stacked Borrows, which is why
-/// `scripts/rust-miri.ts` runs Tree Borrows; `bun_ptr`'s tests exercise both
-/// arms under Miri.
+/// `scripts/rust-miri.ts` runs Tree Borrows; `bun_ptr`'s tests exercise the
+/// `shared` arm under Miri.
 ///
 /// # Safety
 /// Expanding this macro asserts that **every** `$Child` instance lives at
@@ -727,17 +714,6 @@ macro_rules! impl_field_parent {
         $crate::impl_field_parent!(@arm [$Child] [$Parent] [$field] $($arms)+);
     };
     (@arm [$Child:ty] [$Parent:ident] [$field:ident]) => {};
-    // (&mut self) -> *mut $Parent
-    (@arm [$Child:ty] [$Parent:ident] [$field:ident] $v:vis fn mut $name:ident ; $($rest:tt)*) => {
-        impl $Child {
-            #[inline]
-            $v fn $name(&mut self) -> *mut $Parent {
-                // SAFETY: macro contract — `self` is `$Parent.$field`.
-                unsafe { $crate::from_field_ptr!($Parent, $field, ::core::ptr::from_mut(self)) }
-            }
-        }
-        $crate::impl_field_parent!(@arm [$Child] [$Parent] [$field] $($rest)*);
-    };
     // (&self) -> &$Parent, `$Child: !Freeze` enforced
     (@arm [$Child:ty] [$Parent:ident] [$field:ident] $v:vis fn shared $name:ident ; $($rest:tt)*) => {
         $crate::assert_not_freeze!($Child, $Parent);
@@ -764,19 +740,6 @@ macro_rules! impl_field_parent {
                 unsafe {
                     $crate::from_field_ptr!($Parent, $field, ::core::ptr::from_ref(self).cast_mut())
                 }
-            }
-        }
-        $crate::impl_field_parent!(@arm [$Child] [$Parent] [$field] $($rest)*);
-    };
-    // (&mut self) -> &$Parent
-    (@arm [$Child:ty] [$Parent:ident] [$field:ident] $v:vis fn $name:ident ; $($rest:tt)*) => {
-        impl $Child {
-            #[inline]
-            $v fn $name(&mut self) -> &$Parent {
-                // SAFETY: macro contract — `self` is `$Parent.$field`; the
-                // returned borrow keeps `self` mutably borrowed, so no `&mut`
-                // to any part of `$Parent` is usable while it lives.
-                unsafe { &*$crate::from_field_ptr!($Parent, $field, ::core::ptr::from_mut(self)) }
             }
         }
         $crate::impl_field_parent!(@arm [$Child] [$Parent] [$field] $($rest)*);

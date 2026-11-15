@@ -728,7 +728,7 @@ pub(crate) fn run_task(
         )?,
         // A child's stdin pipe and a stream written to a file make a `FileSink` that the program need not name.
         task_tag::FlushPendingFileSinkTask => {
-            feature_arm!([FileSink, Bodies, Spawn, Shell], |sink: FileSink| {
+            feature_arm!([FileSink, Bodies, Spawn], |sink: FileSink| {
                 // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
                 unsafe { RefPtr::from_raw(sink) }.run_pending_if_armed();
             })
@@ -946,7 +946,7 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         }
         // A child's stdin pipe and a stream written to a file make a `FileSink` that the program need not name.
         PollTag::FileSink => io_arm!(
-            [FileSink, Bodies, Spawn, Shell],
+            [FileSink, Bodies, Spawn],
             RefPtr::init_ref,
             FileSink,
             |this, _, event| this.on_writer_io(event)
@@ -1686,7 +1686,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             unreachable!("posix-only tag");
         }
         task_tag::FlushPendingFileSinkTask => {
-            release_in!([FileSink, Bodies, Spawn, Shell], FileSink)
+            release_in!([FileSink, Bodies, Spawn], FileSink)
         }
         task_tag::RuntimeTranspilerStore => {
             release_in!([RuntimeTranspiler], RuntimeTranspilerStore)

@@ -199,10 +199,6 @@ impl Loader {
         self.get(upper)
     }
 
-    pub fn iterator(&mut self) -> <HashTable as ArrayHashMapExt>::Iterator<'_> {
-        self.map.iterator()
-    }
-
     pub fn has(&self, input: &[u8]) -> bool {
         let Some(value) = self.get(input) else {
             return false;
@@ -1367,10 +1363,6 @@ impl Map {
         // Terminator: four trailing NUL u16s (already zero-initialized above).
         result.truncate(i + 4);
         result
-    }
-
-    pub fn iterator(&mut self) -> <HashTable as ArrayHashMapExt>::Iterator<'_> {
-        self.map.iterator()
     }
 
     #[inline]

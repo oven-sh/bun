@@ -73,12 +73,13 @@ pub use crate::strings_impl::{
 // Transcoding helpers from `unicode_draft` — re-exported so downstream
 // `bun_core::strings::*` callers (e.g. runtime/webcore/encoding.rs) resolve.
 pub use unicode_draft::{
-    BOM, UTF16Replacement, allocate_latin1_into_utf8, convert_utf8_to_utf16_exact,
-    copy_cp1252_into_utf16, copy_latin1_into_ascii, copy_latin1_into_utf8_stop_on_non_ascii,
-    copy_latin1_into_utf16, copy_u8_into_u16, copy_u16_into_u8, copy_utf16_into_utf8_impl,
+    BOM, UTF16Replacement, allocate_latin1_into_utf8, copy_cp1252_into_utf16,
+    copy_latin1_into_ascii, copy_latin1_into_utf8_stop_on_non_ascii, copy_latin1_into_utf16,
+    copy_u8_into_u16, copy_u16_into_u8, copy_utf16_into_utf8_impl,
     element_length_cp1252_into_utf16, element_length_utf8_into_utf16, push_codepoint_wtf8,
-    to_utf8_list_with_type_bun, to_utf16_alloc_maybe_buffered, u16_is_lead, u16_is_trail,
-    utf8_codepoint_with_fffd, utf16_codepoint, utf16_codepoint_with_fffd, wtf8_sequence,
+    to_utf8_list_with_type_bun, to_utf16_alloc_maybe_buffered, try_convert_utf8_to_utf16_exact,
+    u16_is_lead, u16_is_trail, utf8_codepoint_with_fffd, utf16_codepoint,
+    utf16_codepoint_with_fffd, wtf8_sequence,
 };
 
 /// `bun.strings.visible` — terminal-visible-width helpers. The implementation
@@ -1273,6 +1274,7 @@ pub fn is_valid_utf8(slice: &[u8]) -> bool {
     simdutf::validate::utf8(slice)
 }
 
+/// Not simdutf's `validate_utf8_with_errors`: it can read before `slice` if `slice` changes.
 pub fn index_of_invalid_utf8(slice: &[u8]) -> Option<usize> {
     if is_valid_utf8(slice) {
         return None;
@@ -2378,12 +2380,12 @@ pub fn try_convert_utf8_to_utf16_in_buffer<'a>(
         return None;
     }
     let mut buf = BorrowedBuf::from(buf);
-    append_wtf8_as_utf16(input, buf.unfilled()).then(|| buf.into_filled_mut())
+    try_write_wtf8_as_utf16(input, buf.unfilled()).then(|| buf.into_filled_mut())
 }
 
 /// Returns false if `out` is too short (invalid byte → U+FFFD; lone surrogates pass through).
-fn append_wtf8_as_utf16(input: &[u8], mut out: BorrowedCursor<'_, u16>) -> bool {
-    let mut rest = unicode_draft::append_valid_utf8_as_utf16(input, out.reborrow());
+fn try_write_wtf8_as_utf16(input: &[u8], mut out: BorrowedCursor<'_, u16>) -> bool {
+    let mut rest = unicode_draft::write_utf8_prefix_as_utf16(input, out.reborrow());
     while let [byte, after @ ..] = rest {
         if byte.is_ascii() && out.capacity() >= 1 {
             out.append(&[u16::from(*byte)]);
@@ -2469,17 +2471,13 @@ pub fn to_utf16_alloc(
     };
 
     let mut out: Vec<u16> = Vec::new();
-    let remaining = unicode_draft::append_valid_utf8_as_utf16_to_list(
-        &mut out,
-        bytes,
-        first,
-        sentinel as usize,
-    )?;
+    let remaining =
+        unicode_draft::append_utf8_prefix_as_utf16(&mut out, bytes, first, sentinel as usize)?;
     if !remaining.is_empty() {
         if fail_if_invalid {
             return Err(ToUTF16Error::InvalidByteSequence);
         }
-        append_utf8_as_utf16_with_replacement(&mut out, remaining, sentinel as usize)?;
+        append_utf8_as_utf16_with_fffd(&mut out, remaining, sentinel as usize)?;
     }
     if sentinel {
         out.push(0);
@@ -2489,18 +2487,18 @@ pub fn to_utf16_alloc(
 
 /// Bytes that no other thread or process writes to. A `&[u8]` into an `ArrayBuffer` does not guarantee that.
 #[derive(Copy, Clone)]
-pub struct ImmutableBytes<'a>(&'a [u8]);
+pub struct StableBytes<'a>(&'a [u8]);
 
-impl<'a> From<&'a Vec<u8>> for ImmutableBytes<'a> {
+impl<'a> From<&'a Vec<u8>> for StableBytes<'a> {
     fn from(bytes: &'a Vec<u8>) -> Self {
         Self(bytes)
     }
 }
 
-impl<'a> ImmutableBytes<'a> {
+impl<'a> StableBytes<'a> {
     /// # Safety
     /// Nothing writes to `bytes` during `'a`.
-    pub unsafe fn new_unchecked(bytes: &'a [u8]) -> Self {
+    pub unsafe fn new(bytes: &'a [u8]) -> Self {
         Self(bytes)
     }
 
@@ -2532,25 +2530,14 @@ impl<'a> ImmutableBytes<'a> {
             if fail_if_invalid {
                 return Err(ToUTF16Error::InvalidByteSequence);
             }
-            append_utf8_as_utf16_with_replacement(&mut out, bytes, 0)?;
+            append_utf8_as_utf16_with_fffd(&mut out, bytes, 0)?;
         }
         Ok(Some(out))
     }
-
-    /// [`convert_utf8_to_utf16_exact`] without chunks or a copy from the stack.
-    ///
-    /// # Safety
-    /// `out.capacity() >= element_length_utf8_into_utf16(self.slice())`.
-    pub unsafe fn convert_to_utf16_exact(self, mut out: BorrowedBuf<'_, u16>) -> bool {
-        // SAFETY: caller contract, and `self` guarantees that the bytes do not change.
-        let result =
-            unsafe { simdutf::convert::utf8::to::utf16::with_errors::le(self.0, out.unfilled()) };
-        result.is_successful() && out.len() == out.capacity()
-    }
 }
 
-/// Slow path: WTF-8 decode with replacement.
-fn append_utf8_as_utf16_with_replacement(
+/// Slow path: invalid sequences and surrogates become U+FFFD.
+fn append_utf8_as_utf16_with_fffd(
     out: &mut Vec<u16>,
     mut remaining: &[u8],
     additional: usize,
@@ -2578,7 +2565,9 @@ pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
     let (ascii, rest) = bytes.split_at(first_non_ascii_usize(bytes)?);
     let mut out: Vec<u16> = Vec::with_capacity(bytes.len());
     out.extend(ascii.iter().map(|&b| u16::from(b)));
-    let fits = crate::vec::append_with(&mut out, usize::MAX, |out| append_wtf8_as_utf16(rest, out));
+    let fits = crate::vec::append_with(&mut out, usize::MAX, |out| {
+        try_write_wtf8_as_utf16(rest, out)
+    });
     debug_assert!(fits);
     Some(out)
 }
@@ -2589,7 +2578,7 @@ pub fn write_wtf8_as_utf16le(wtf8: &[u8], mut out: BorrowedCursor<'_, u8>) {
     unsafe {
         let (unaligned, units, _) = out.as_mut().align_to_mut::<MaybeUninit<u16>>();
         let mut units = BorrowedBuf::from(units);
-        assert!(unaligned.is_empty() && append_wtf8_as_utf16(wtf8, units.unfilled()));
+        assert!(unaligned.is_empty() && try_write_wtf8_as_utf16(wtf8, units.unfilled()));
         let written = 2 * units.len();
         out.advance(written);
     }

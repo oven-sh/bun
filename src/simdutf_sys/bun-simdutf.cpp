@@ -1,7 +1,7 @@
 #include "wtf/SIMDUTF.h"
 
 static_assert(simdutf::SIMDUTF_VERSION_MAJOR == 9 && simdutf::SIMDUTF_VERSION_MINOR == 0 && simdutf::SIMDUTF_VERSION_REVISION == 0,
-    "The SAFETY comments in simdutf.rs describe the kernels of simdutf 9.0.0. Check them against the new version.");
+    "simdutf.rs, helpers.h and AOTTextCoding.cpp rely on the kernels of simdutf 9.0.0. Check them against the new version.");
 
 typedef struct SIMDUTFResult {
     int error;

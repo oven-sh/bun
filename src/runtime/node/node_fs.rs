@@ -7791,12 +7791,10 @@ impl NodeFS {
                     if string_type == ReadFileStringType::Default {
                         // SAFETY: only this call uses `pre_stat_buf`, and its reads have returned.
                         let contents = unsafe {
-                            strings::ImmutableBytes::new_unchecked(
-                                temporary_read_buffer_before_stat_call,
-                            )
+                            strings::StableBytes::new(temporary_read_buffer_before_stat_call)
                         };
                         Ok(ret::ReadFileWithOptions::TranscodedString(
-                            webcore::encoding::to_bun_string_from_immutable_bytes(
+                            webcore::encoding::to_bun_string_from_stable_bytes(
                                 contents,
                                 args.encoding,
                             ),

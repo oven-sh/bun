@@ -79,16 +79,16 @@ pub mod validate {
     }
 }
 
-/// UTF-16 or Latin-1 `input` with an upper bound of the UTF-8 bytes that simdutf writes for it.
+/// UTF-16 or Latin-1 text with an upper bound of the UTF-8 bytes that simdutf writes for it.
 #[derive(Copy, Clone)]
 pub struct WithUtf8Len<'a, T> {
-    input: &'a [T],
+    slice: &'a [T],
     utf8_len: usize,
 }
 
 impl<'a, T> WithUtf8Len<'a, T> {
-    pub fn input(self) -> &'a [T] {
-        self.input
+    pub fn slice(self) -> &'a [T] {
+        self.slice
     }
 
     pub fn utf8_len(self) -> usize {
@@ -97,32 +97,33 @@ impl<'a, T> WithUtf8Len<'a, T> {
 }
 
 impl<'a> WithUtf8Len<'a, u16> {
-    pub fn utf16(input: &'a [u16]) -> Self {
-        let utf8_len = length::utf8::from::utf16::le(input);
-        Self { input, utf8_len }
+    pub fn utf16(slice: &'a [u16]) -> Self {
+        let utf8_len = length::utf8::from::utf16::le(slice);
+        Self { slice, utf8_len }
     }
 
-    pub fn utf16_with_replacement(input: &'a [u16]) -> Self {
-        let utf8_len = length::utf8::from::utf16::le_with_replacement(input);
-        Self { input, utf8_len }
+    pub fn utf16_with_replacement(slice: &'a [u16]) -> Self {
+        let utf8_len = length::utf8::from::utf16::le_with_replacement(slice);
+        Self { slice, utf8_len }
     }
 
-    pub fn utf16_worst_case(input: &'a [u16]) -> Self {
-        let utf8_len = input.len() * 3;
-        Self { input, utf8_len }
+    /// `None` if the worst case does not fit in `capacity` bytes.
+    pub fn utf16_worst_case(slice: &'a [u16], capacity: usize) -> Option<Self> {
+        let utf8_len = slice.len() * 3;
+        (utf8_len <= capacity).then_some(Self { slice, utf8_len })
     }
 }
 
 impl<'a> WithUtf8Len<'a, u8> {
-    pub fn latin1(input: &'a [u8]) -> Self {
-        let utf8_len = length::utf8::from::latin1(input);
-        Self { input, utf8_len }
+    pub fn latin1(slice: &'a [u8]) -> Self {
+        let utf8_len = length::utf8::from::latin1(slice);
+        Self { slice, utf8_len }
     }
 
-    /// The only constructor whose bound holds if another thread or process writes to `input`.
-    pub fn latin1_worst_case(input: &'a [u8]) -> Self {
-        let utf8_len = input.len() * 2;
-        Self { input, utf8_len }
+    /// The only constructor whose bound holds if another thread or process writes to `slice`.
+    pub fn latin1_worst_case(slice: &'a [u8]) -> Self {
+        let utf8_len = slice.len() * 2;
+        Self { slice, utf8_len }
     }
 }
 
@@ -208,8 +209,8 @@ pub mod convert {
                         // caller passes the contents of an `ArrayBuffer`.
                         unsafe {
                             let result = simdutf__convert_utf16le_to_utf8_with_errors(
-                                input.input.as_ptr(),
-                                input.input.len(),
+                                input.slice.as_ptr(),
+                                input.slice.len(),
                                 output.as_mut().as_mut_ptr().cast(),
                             );
                             if result.is_successful() {
@@ -235,8 +236,8 @@ pub mod convert {
                 // `WithUtf8Len::latin1_worst_case` gets the contents of an `ArrayBuffer`.
                 unsafe {
                     let written = simdutf__convert_latin1_to_utf8(
-                        input.input.as_ptr(),
-                        input.input.len(),
+                        input.slice.as_ptr(),
+                        input.slice.len(),
                         output.as_mut().as_mut_ptr().cast(),
                     );
                     output.advance(written);

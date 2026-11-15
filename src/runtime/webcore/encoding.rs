@@ -103,7 +103,7 @@ pub(crate) use dispatch_encoding;
 /// Caller (C++) must guarantee `input[..len]` and `to[..to_len]` are valid for
 /// reading / writing respectively for the duration of the call.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__encoding__convertUTF8ToUTF16Exact(
+unsafe extern "C" fn Bun__encoding__tryConvertUTF8ToUTF16Exact(
     input: *const u8,
     len: usize,
     to: *mut MaybeUninit<u16>,
@@ -116,7 +116,7 @@ unsafe extern "C" fn Bun__encoding__convertUTF8ToUTF16Exact(
             bun_core::ffi::slice_mut(to, to_len),
         )
     };
-    strings::convert_utf8_to_utf16_exact(to.into(), input)
+    strings::try_convert_utf8_to_utf16_exact(to.into(), input)
 }
 
 /// # Safety
@@ -270,17 +270,16 @@ unsafe extern "C" fn Bun__encoding__encodeUTF16(
 /// Caller (C++) must guarantee `input[..len]` is valid for reading, and that
 /// nothing writes to it during the call.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__encoding__toStringImmutableUTF8(
+unsafe extern "C" fn Bun__encoding__toStringStableUTF8(
     input: *const u8,
     len: usize,
     global_object: &JSGlobalObject,
 ) -> JSValue {
     // SAFETY: forwarded from this fn's contract.
-    let input = unsafe { strings::ImmutableBytes::new_unchecked(bun_core::ffi::slice(input, len)) };
-    match to_bun_string_from_immutable_bytes(input, Encoding::Utf8).into_js(global_object) {
-        Ok(v) => v,
-        Err(_) => JSValue::ZERO,
-    }
+    let input = unsafe { strings::StableBytes::new(bun_core::ffi::slice(input, len)) };
+    bun_jsc::HostReturn::or_pending_exception(
+        to_bun_string_from_stable_bytes(input, Encoding::Utf8).into_js(global_object),
+    )
 }
 
 /// # Safety
@@ -415,8 +414,8 @@ pub(crate) fn to_bun_string(input: &[u8], encoding: impl Into<Encoding>) -> BunS
     dispatch_encoding!(encoding.into(), |E| to_bun_string_comptime::<E>(input))
 }
 
-pub(crate) fn to_bun_string_from_immutable_bytes(
-    input: strings::ImmutableBytes<'_>,
+pub(crate) fn to_bun_string_from_stable_bytes(
+    input: strings::StableBytes<'_>,
     encoding: Encoding,
 ) -> BunString {
     match encoding {
@@ -433,7 +432,6 @@ fn to_bun_string_from_converted_utf8(
 ) -> BunString {
     match converted {
         Ok(Some(utf16)) => create_external_globally_allocated_utf16(utf16),
-        // The string is 100% ASCII characters. For this, we rely on WebKit to manage the memory.
         Ok(None) => BunString::clone_latin1(input),
         Err(_) => BunString::utf16_transcode_failure(input),
     }

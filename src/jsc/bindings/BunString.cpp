@@ -106,7 +106,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
     }
 
     std::span bytes { reinterpret_cast<const unsigned char*>(ptr), length };
-    auto str = length <= Zig::maxStackConvertedBytes ? Zig::convertUTF8ToStringOnStack(bytes) : Zig::convertUTF8ToString(bytes);
+    auto str = length <= Zig::maxStackConvertedBytes ? Zig::convertShortUTF8ToString(bytes) : Zig::convertUTF8ToString(bytes);
     if (str.isNull()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
@@ -460,7 +460,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
     ASSERT(length > 0);
     std::span utf8 { reinterpret_cast<const unsigned char*>(bytes), length };
     if (length <= Zig::maxStackConvertedBytes) {
-        auto str = Zig::convertUTF8ToStringOnStack(utf8);
+        auto str = Zig::convertShortUTF8ToString(utf8);
         if (str.isNull()) [[unlikely]] {
             return uninitializedStringFailure<char16_t>(length);
         }
@@ -474,12 +474,12 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
         if (!impl) [[unlikely]] {
             return uninitializedStringFailure<char16_t>(u16Length);
         }
-        if (Bun__encoding__convertUTF8ToUTF16Exact(utf8.data(), utf8.size(), ptr.data(), ptr.size())) [[likely]] {
+        if (Bun__encoding__tryConvertUTF8ToUTF16Exact(utf8.data(), utf8.size(), ptr.data(), ptr.size())) [[likely]] {
             return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
         }
     }
 
-    auto str = Zig::convertInvalidUTF8ToString(utf8);
+    auto str = Zig::convertUTF8ToStringSlow(utf8);
     if (str.isNull()) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
     }

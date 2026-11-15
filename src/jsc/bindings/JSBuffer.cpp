@@ -415,19 +415,6 @@ bool Bun::rejectBytesNoCopyAboveArrayBufferLimit(JSC::JSGlobalObject* globalObje
     return true;
 }
 
-WTF::MallocSpan<uint8_t> Bun::copySharedBytes(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, std::span<const uint8_t> bytes)
-{
-    if (bytes.empty())
-        return {};
-    auto copy = WTF::MallocSpan<uint8_t>::tryMalloc(bytes.size());
-    if (!copy) [[unlikely]] {
-        JSC::throwOutOfMemoryError(globalObject, scope);
-        return {};
-    }
-    memcpySpan(copy.mutableSpan(), bytes);
-    return copy;
-}
-
 JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, size_t length, void* ctx, JSTypedArrayBytesDeallocator bytesDeallocator)
 {
     JSC::JSUint8Array* uint8Array = nullptr;

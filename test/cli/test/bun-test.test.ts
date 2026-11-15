@@ -3012,15 +3012,19 @@ describe.concurrent("a test file that can never finish loading", () => {
         vi.mock("./unrelated.ts", () => ({}));
       `;
     }
-    const { errors } = await runFiles(files);
-    expect(errors).toEqual([
-      'error: "a.test.ts" never finished loading',
-      nothingLeft,
-      'note: unsettled top-level await in "a.test.ts"',
-      ...[0, 1, 2, 3].map(i => `note: unsettled top-level await in "importer${i}.ts"`),
-      'note: an onLoad() plugin or a mock.module() factory never settled for "mod.ts"',
-      "note: and 1 more",
-    ]);
+    const { errors, counts, exitCode } = await runFiles(files);
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: "a.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "a.test.ts"',
+        ...[0, 1, 2, 3].map(i => `note: unsettled top-level await in "importer${i}.ts"`),
+        'note: an onLoad() plugin or a mock.module() factory never settled for "mod.ts"',
+        "note: and 1 more",
+      ],
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
   });
 
   test("doesn't name a mock factory whose import() no module awaits", async () => {

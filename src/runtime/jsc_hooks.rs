@@ -15,6 +15,7 @@
 
 use bun_core::WTFStringImplExt as _;
 use bun_options_types::LoaderExt as _;
+use bun_ptr::{CellExt as _, OptionCellExt as _, VecCellExt as _};
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
@@ -101,8 +102,8 @@ pub(crate) struct RuntimeState {
     /// In-process `Bun.cron()` jobs that `--hot` reload / worker teardown must
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
     /// `clear_all_for_vm`.
-    pub(crate) cron_jobs: JsCell<Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>>,
-    pub(crate) stat_watcher_scheduler: JsCell<Option<bun_ptr::RefPtr<StatWatcherScheduler>>>,
+    pub(crate) cron_jobs: Cell<Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>>,
+    pub(crate) stat_watcher_scheduler: Cell<Option<bun_ptr::RefPtr<StatWatcherScheduler>>>,
     /// Set in the VM that runs the files of `bun test`.
     pub(crate) test_runner: Cell<Option<&'static crate::test_runner::jest::TestRunner>>,
     /// Innermost entered `Pass`, borrowed from a caller's stack frame; `EnteredPass::drop` pops it.
@@ -179,7 +180,7 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
 /// [`RuntimeState::stat_watcher_scheduler`] of `vm`.
 pub(crate) fn stat_watcher_scheduler(
     vm: &VirtualMachine,
-) -> &JsCell<Option<bun_ptr::RefPtr<StatWatcherScheduler>>> {
+) -> &Cell<Option<bun_ptr::RefPtr<StatWatcherScheduler>>> {
     &runtime_state_of(vm).stat_watcher_scheduler
 }
 
@@ -245,7 +246,7 @@ pub(crate) unsafe fn runtime_state_ptr_of(vm: *mut VirtualMachine) -> *mut Runti
 /// until `tls.DEFAULT_CIPHERS` is assigned so the weak-cache entry never tombstones.
 pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCtx {
     let slot = &vm.rare_data().default_client_ssl_ctx;
-    if slot.get().is_none() {
+    if slot.is_none() {
         let mut err = bun_uws::create_bun_socket_error_t::none;
         let cache = ssl_ctx_cache();
         // Mode-neutral CTX (VERIFY_NONE). `us_internal_ssl_attach` overrides
@@ -255,7 +256,7 @@ pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCt
         // weak cache so a `tls.connect()` with default options later resolves
         // to the same CTX rather than building a second one with the same
         // digest. The +1 ref returned here is held, so the entry never tombstones.
-        let ctx = if vm.tls_default_ciphers().is_some() {
+        let ctx = if vm.has_tls_default_ciphers() {
             cache.get_or_create(&crate::socket::tls_true_defaults(vm, false), &mut err)
         } else {
             cache.get_or_create_opts(&Default::default(), &mut err)
@@ -268,7 +269,8 @@ pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCt
             )),
         }
     }
-    slot.get().as_ref().unwrap().as_ptr().cast()
+    slot.with_taken(|ctx| ctx.as_ref().map(|ctx| ctx.as_ptr().cast()))
+        .unwrap()
 }
 
 /// The `RuntimeHooks` slot, which the WebSocket client alone calls.
@@ -356,8 +358,8 @@ unsafe fn init_runtime_state(
         #[cfg(windows)]
         path_watchers: Default::default(),
         request_pools: Default::default(),
-        cron_jobs: JsCell::default(),
-        stat_watcher_scheduler: JsCell::new(None),
+        cron_jobs: Cell::default(),
+        stat_watcher_scheduler: Cell::new(None),
         test_runner: Cell::new(None),
         matcher_pass: Cell::new(ptr::null()),
         node_fs: JsCell::new(None),
@@ -645,7 +647,7 @@ unsafe fn deinit_runtime_state(state: OpaqueRuntimeState) {
         // from `init_runtime_state`; the TLS was just cleared so no other live
         // alias exists on this thread.
         let state = unsafe { bun_core::heap::take(state.cast::<RuntimeState>()) };
-        debug_assert!(state.cron_jobs.get().is_empty());
+        debug_assert!(state.cron_jobs.is_empty());
         drop(state);
     }
 }
@@ -690,8 +692,9 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
         GlobalCache::disable
     };
 
-    // Nothing writes `vm.preload` meanwhile: `reload()` defers while `is_in_preload`.
-    for preload_slice in vm.preload.get() {
+    // Nothing uses `vm.preload` meanwhile: `reload()` defers while `is_in_preload`.
+    let mut preload = scopeguard::guard(vm.preload.take(), |preload| vm.preload.set(preload));
+    for preload_slice in preload.iter() {
         // Strip "file://".
         let normalized: &[u8] = preload_slice
             .strip_prefix(b"file://".as_slice())
@@ -806,7 +809,7 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
     if !vm.test_isolation_enabled.get() && !vm.preloads_kept_for_reload.get() {
         // `Vec::clear` drops the `Box<[u8]>`
         // payloads but keeps capacity.
-        vm.preload.with_mut(Vec::clear);
+        preload.clear();
     }
 
     // SAFETY: nothing up the stack borrows the options; each access ends within its statement.
@@ -1551,7 +1554,6 @@ fn retroactively_report_discovered_tests(
 ) -> i32 {
     use crate::test_runner::bun_test::{Phase, ScopeId, TestScheduleEntry, clone_active_strong};
     use bun_jsc::debugger::TestType;
-    use bun_ptr::CellExt as _;
 
     let Some(active_file) = clone_active_strong() else {
         return next_test_id;
@@ -1975,7 +1977,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         slot.set(Some(arena));
                         return;
                     }
-                    if slot.get().is_none() {
+                    if slot.is_none() {
                         if flags != FetchFlags::PrintSource {
                             if jsc_vm.smol {
                                 arena.reset();
@@ -2797,10 +2799,7 @@ fn maybe_watch_file(
     path: &Fs::Path,
     hash: u32,
 ) {
-    let Some(watcher) = jsc_vm.bun_watcher.get() else {
-        return;
-    };
-    if input_file.is_none() {
+    if !jsc_vm.is_watcher_enabled() || input_file.is_none() {
         return;
     }
     if is_node_override
@@ -2809,14 +2808,15 @@ fn maybe_watch_file(
     {
         return;
     }
-    let _ = watcher.add_owned_file(input_file.take(), path.text, hash);
+    let _ =
+        jsc_vm.with_watcher(|watcher| watcher.add_owned_file(input_file.take(), path.text, hash));
 }
 
 /// Like `maybe_watch_file`, for a file the transpiler didn't open itself.
 fn auto_watch_file(jsc_vm: &VirtualMachine, path_text: &[u8]) {
-    let Some(watcher) = jsc_vm.bun_watcher.get() else {
+    if !jsc_vm.is_watcher_enabled() {
         return;
-    };
+    }
     if !bun_paths::is_absolute(path_text) || bun_core::strings::contains(path_text, b"node_modules")
     {
         return;
@@ -2836,7 +2836,7 @@ fn auto_watch_file(jsc_vm: &VirtualMachine, path_text: &[u8]) {
         None
     };
     let hash = bun_watcher::Watcher::get_hash(path_text);
-    let _ = watcher.add_owned_file(file, path_text, hash);
+    let _ = jsc_vm.with_watcher(|watcher| watcher.add_owned_file(file, path_text, hash));
 }
 
 struct CssModuleHost<'a>(&'a VirtualMachine);
@@ -2954,15 +2954,14 @@ fn get_hardcoded_module(
     match hardcoded {
         HardcodedModule::BunMain => {
             let vm = VirtualMachine::get();
-            let ep = vm.entry_point.get();
             // A compiled entry point runs without the wrapper: the text is empty.
             let is_compiled = vm.main_entry_point.get() == MainEntryPoint::Compiled;
-            if !ep.generated && !is_compiled {
-                return None;
-            }
+            let source_code = vm.entry_point.with_taken(|ep| {
+                (ep.generated || is_compiled).then(|| bun_core::String::clone_utf8(&ep.contents))
+            })?;
             use bun_jsc::resolved_source::Tag;
             Some(ResolvedSource {
-                source_code: bun_core::String::clone_utf8(&ep.contents),
+                source_code,
                 source_url: specifier.clone(),
                 tag: Tag::Esm,
                 is_static: true,

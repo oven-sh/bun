@@ -14,7 +14,7 @@ use bun_core::{ZStr, strings};
 
 /// BoringSSL's translated C API
 pub use boring as c;
-pub use boring::rand_bytes;
+pub use boring::{rand_bytes, rand_bytes_into_cells};
 
 pub fn load() {
     // Callers are expected to invoke this on a single thread during startup

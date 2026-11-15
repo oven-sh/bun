@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 it("shadow realm works", () => {
   const red = new ShadowRealm();
@@ -77,68 +77,87 @@ it.concurrent("rejected promises are collected", async () => {
   ).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
 });
 
-describe.concurrent("realms that nothing points to", () => {
-  // The memory of the first few globals of a thread is never given back.
+describe.concurrent("an unreachable ShadowRealm", () => {
+  // JSC never frees the memory of the first 8 global objects of a VM, so ASAN needs more than that.
   const prelude = `
     const REALMS = 20;
-    const inRealms = (source, ...args) => {
-      const realms = Array.from({ length: REALMS }, () => new ShadowRealm().evaluate(source));
-      for (const f of realms) f(...args);
-      return realms;
+    const runInRealms = (source, ...args) => {
+      const functions = Array.from({ length: REALMS }, () => new ShadowRealm().evaluate(source));
+      for (const f of functions) f(...args);
+      return functions;
     };
-    const turn = () => new Promise(resolve => setImmediate(resolve));
-    const collectUntil = async done => {
-      while ((Bun.gc(true), !done())) await turn();
+    const onceForEachRealm = () => {
+      const { promise, resolve } = Promise.withResolvers();
+      let calls = 0;
+      return { promise, call: () => void (++calls === REALMS && resolve()) };
     };
-    const mostRealmsAreGone = () => require("bun:jsc").heapStats().objectTypeCounts.GlobalObject < REALMS / 2;`;
+    const gcUntil = async condition => {
+      const deadline = performance.now() + ${isDebug || isASAN ? 20_000 : 4_000};
+      while ((Bun.gc(true), !condition())) {
+        if (performance.now() > deadline) throw new Error("timed out: " + condition);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+    };
+    const mostRealmsAreCollected = () => require("bun:jsc").heapStats().objectTypeCounts.GlobalObject < REALMS / 2;`;
+  const fetchThen = then => `(url, done) => void fetch(url).then(response => done(void (${then})))`;
+  const s3Stream = `(endpoint, done) => {
+    const options = { endpoint, bucket: "bucket", accessKeyId: "id", secretAccessKey: "secret" };
+    globalThis.kept = Bun.S3Client.file("key", options).stream();
+    done();
+  }`;
 
-  it("outlive the fetch() whose response they dropped", async () => {
+  it.each([
+    ["a fetch() Response that it dropped", fetchThen("response")],
+    ["a fetch() Response on globalThis", fetchThen("globalThis.kept = response")],
+    ["a fetch() Response.body on globalThis", fetchThen("globalThis.kept = response.body")],
+    ["an S3File.stream() on globalThis", s3Stream],
+  ])("is collected, and its request is aborted, when it has not read %s", async (_, source) => {
     expect(
       await run(`${prelude}
+        const [requested, started] = [onceForEachRealm(), onceForEachRealm()];
         let aborted = 0;
         const server = Bun.serve({
           port: 0,
+          idleTimeout: 0,
           fetch(request) {
             request.signal.onabort = () => aborted++;
-            return new Response(new ReadableStream({ start: controller => controller.enqueue(new Uint8Array(1)) }));
+            requested.call();
+            return new Response(new ReadableStream({ start: controller => controller.enqueue(new Uint8Array(1 << 20)) }));
           },
         });
-        let responses = 0;
-        inRealms("(url, done) => void fetch(url).then(() => done())", server.url.href, () => void responses++);
-        while (responses < REALMS) await turn();
-        await collectUntil(() => aborted > REALMS / 2);
-        await collectUntil(mostRealmsAreGone);
+        runInRealms(${JSON.stringify(source)}, server.url.href, started.call);
+        await Promise.all([requested.promise, started.promise]);
+        await gcUntil(mostRealmsAreCollected);
+        await gcUntil(() => aborted > REALMS / 2);
         await server.stop(true);
         console.log("done");`),
     ).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
   });
 
   it.each([
-    ["fetch()", "(url, done) => void fetch(url).then(response => done(void (globalThis.body = response.body)))"],
-    [
-      "S3 download",
-      "(endpoint, done) => done(void (globalThis.body = Bun.S3Client.file('key', { endpoint, bucket: 'b', accessKeyId: 'a', secretAccessKey: 's' }).stream()))",
-    ],
-  ])("outlive the %s whose body fails", async (_, start) => {
+    ["a fetch() Response.body", fetchThen("globalThis.kept = response.body")],
+    ["an S3File.stream()", s3Stream],
+  ])("does not crash when the connection of %s closes after a GC", async (_, source) => {
     expect(
       await run(`${prelude}
-        let requests = 0;
+        const [requested, started] = [onceForEachRealm(), onceForEachRealm()];
         const server = Bun.listen({
           hostname: "127.0.0.1",
           port: 0,
           socket: {
             data(socket) {
-              requests++;
+              if (socket.data) return;
+              socket.data = true;
               socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nx");
+              requested.call();
             },
           },
         });
-        let bodies = 0;
-        const realms = inRealms(${JSON.stringify(start)}, "http://127.0.0.1:" + server.port, () => void bodies++);
-        while (bodies < REALMS || requests < REALMS) await turn();
-        realms.length = 0;
+        const functions = runInRealms(${JSON.stringify(source)}, "http://127.0.0.1:" + server.port, started.call);
+        await Promise.all([requested.promise, started.promise]);
+        functions.length = 0;
         server.stop(true);
-        // A collection that allocating starts finalizes nothing yet, and what it found dead is used again.
+        // Unlike Bun.gc(true), a GC triggered by allocation runs no finalizer yet, and reuses the dead structures.
         for (let round = 0, keep; round < 20; round++) {
           keep = [new Uint8Array(1 << 23)];
           for (let i = 0; i < 100; i++) keep.push(class extends Error {}, Object.create({ i }));
@@ -150,24 +169,24 @@ describe.concurrent("realms that nothing points to", () => {
     ).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
   });
 
-  it("get no message on a BroadcastChannel once they are collected", async () => {
+  it("does not crash when its BroadcastChannel gets a message after a GC", async () => {
     expect(
       await run(`${prelude}
-        inRealms("() => void new BroadcastChannel('name')");
+        runInRealms("() => void new BroadcastChannel('name')");
         const [sender, last] = [new BroadcastChannel("name"), new BroadcastChannel("name")];
         let received = 0;
         last.onmessage = () => ++received === 40 && (console.log("done"), process.exit(0));
-        // The copies start a collection, which finalizes nothing yet.
+        // Deserializing these triggers a GC, which runs no finalizer yet.
         for (let i = 0; i < 40; i++) sender.postMessage(new Uint8Array(1 << 18));`),
     ).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
   });
 
-  it("take their Bun.ModuleGraph along", async () => {
+  it("does not crash when it is collected with its Bun.ModuleGraph", async () => {
     expect(
       await run(`${prelude}
-        inRealms("() => void new Bun.ModuleGraph()");
-        await collectUntil(mostRealmsAreGone);
-        await turn();
+        runInRealms("() => void new Bun.ModuleGraph()");
+        await gcUntil(mostRealmsAreCollected);
+        await new Promise(resolve => setImmediate(resolve));
         console.log("done");`),
     ).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
   });

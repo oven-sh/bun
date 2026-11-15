@@ -29,6 +29,7 @@ mod native;
 pub mod neon;
 mod partial;
 pub mod portable;
+mod sink;
 mod source;
 mod swizzle;
 mod vector;
@@ -40,9 +41,10 @@ pub use bit_indices::BitIndices;
 pub use bun_simd_macros::{foreach_target, foreach_width};
 #[doc(hidden)]
 pub use bun_simd_trusted::AtomicFn;
+pub use bun_simd_trusted::{Append, Out, Writer, extend_vec, spare_capacity};
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub use bun_simd_trusted::{Features, detected, if_supported};
-pub use bun_simd_trusted::{Out, Target, Writer, extend_vec, opaque};
+pub use bun_simd_trusted::{SharedU8, Target, opaque};
 pub use dispatch::limit_to;
 pub use isa::Isa;
 pub use mask::Mask;
@@ -50,6 +52,7 @@ pub use matches::Matches;
 pub use partial::Partial;
 #[cfg(any(feature = "test_support", not(target_arch = "x86_64")))]
 pub use portable::{portable32, portable64};
+pub use sink::{SharedWriter, Sink};
 pub use source::Source;
 pub use vector::{Int, Lane, Vector};
 #[cfg(target_arch = "x86_64")]

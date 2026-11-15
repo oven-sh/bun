@@ -2,6 +2,7 @@
 use crate::highway as h;
 use bun_simd::Out;
 use bun_simd_kernels as r;
+use core::sync::atomic::AtomicU8;
 
 pub(crate) trait Pairs<T> {
     fn pair<R: PartialEq>(&mut self, highway: impl Fn(&[T]) -> R, rust: impl Fn(&[T]) -> R);
@@ -57,4 +58,12 @@ pub(crate) const MOVES: [Move; 5] = [
     ("rotate_270", h::rotate_270, r::rotate_270),
     ("flip_horizontally", h::flip_horizontally, r::flip_horizontally),
     ("flip_vertically", h::flip_vertically, r::flip_vertically),
+];
+
+type Swap = (&'static str, fn(&mut [u8]), fn(&[AtomicU8]));
+
+pub(crate) const SWAPS: [Swap; 3] = [
+    ("bswap16", h::bswap16, r::bswap16_shared),
+    ("bswap32", h::bswap32, r::bswap32_shared),
+    ("bswap64", h::bswap64, r::bswap64_shared),
 ];

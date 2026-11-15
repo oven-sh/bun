@@ -2,6 +2,7 @@
 use crate::source::Memory;
 use crate::swizzle::Repeat;
 use crate::{Int, Isa, Lane, Mask, Out, Source, Vector, portable};
+use core::array::from_ref;
 use core::simd::{Simd, Swizzle, ToBytes, u8x16, u8x32, u16x8, u32x8};
 use core::sync::atomic::AtomicU8;
 
@@ -200,9 +201,9 @@ mod simd {
                     Memory::Shared(bytes)
                         if is_slow_with_mask::<_, 64>(bytes.as_ptr(), bytes.len()) =>
                     {
-                        Vector::new(portable::load_shared_masked(bytes)).cast()
+                        Self::from_shared(portable::load_shared_masked(bytes))
                     }
-                    Memory::Shared(bytes) => Vector::new(shared::load_shared_masked(bytes)).cast(),
+                    Memory::Shared(bytes) => Self::from_shared(shared::load_shared_masked(bytes)),
                 };
                 (lanes, 0)
             } else if N > 8 && len >= 8 {
@@ -224,7 +225,8 @@ mod simd {
         #[inline(always)]
         fn load_ends<S: Source<Lane = T>, const HALF: usize>(from: &[S]) -> Option<Self> {
             let (first, last) = ends::<S, HALF>(from)?;
-            let bytes = |end| Self::new(Vector::load(end).0.resize(T::default())).first_bytes();
+            let load = |end| Vector::load_nth_of_any_width::<S, 1, 0>(from_ref(end));
+            let bytes = |end| Self::new(load(end).0.resize(T::default())).first_bytes();
             let both = alternate(bytes(first), bytes(last), size_of_val(first));
             Some(Self::from_first_bytes(both))
         }

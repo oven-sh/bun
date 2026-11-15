@@ -1,6 +1,5 @@
 //! Ports of highway_strings.cpp: where a character is, and how many there are.
-use bun_simd::Int;
-use core::sync::atomic::AtomicU8;
+use bun_simd::{Int, SharedU8};
 
 /// For each low half of a byte, a bit for each high half: 0 to 7, and 8 to 15.
 #[inline(always)]
@@ -36,13 +35,13 @@ pub(crate) mod simd {
     }
 
     #[export]
-    pub fn index_of_char_within(text: &[u8], len: usize, needle: u8) -> Option<usize> {
-        U8::position_within(text, len, |v| v.simd_eq(needle))
+    pub fn index_of_char_shared(text: &[SharedU8], needle: u8) -> Option<usize> {
+        U8::position(text, |v| v.simd_eq(needle))
     }
 
     #[export]
-    pub fn index_of_char_shared(text: &[AtomicU8], needle: u8) -> Option<usize> {
-        U8::position(text, |v| v.simd_eq(needle))
+    pub fn index_of_char16(text: &[u16], needle: u16) -> Option<usize> {
+        U16::position(text, |v| v.simd_eq(needle))
     }
 
     #[export]
@@ -56,8 +55,13 @@ pub(crate) mod simd {
     }
 
     #[export]
-    pub fn last_index_of_char_shared(text: &[AtomicU8], needle: u8) -> Option<usize> {
+    pub fn last_index_of_char_shared(text: &[SharedU8], needle: u8) -> Option<usize> {
         U8::rposition(text, |v| v.simd_eq(needle))
+    }
+
+    #[export]
+    pub fn last_index_of_char16(text: &[u16], needle: u16) -> Option<usize> {
+        U16::rposition(text, |v| v.simd_eq(needle))
     }
 
     #[export]
@@ -229,11 +233,6 @@ pub(crate) mod simd {
 
     #[export]
     pub fn count_char(text: &[u8], needle: u8) -> usize {
-        U8::count(text, |v| v.simd_eq(needle))
-    }
-
-    #[export]
-    pub fn count_char_shared(text: &[AtomicU8], needle: u8) -> usize {
         U8::count(text, |v| v.simd_eq(needle))
     }
 }

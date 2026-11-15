@@ -2,6 +2,7 @@
 //!
 //! SAFETY: each function behaves like a relaxed atomic access to each of its bytes. Rust has no
 //! wider access that may race. To the CPU it is an ordinary access, which never tears a byte.
+use crate::SharedU8;
 use core::arch::asm;
 use core::simd::u8x16;
 #[cfg(target_arch = "x86_64")]
@@ -18,7 +19,7 @@ macro_rules! load_and_store {
         #[inline]
         #[target_feature(enable = $feature)]
         pub fn $load<const K: usize, const AT: usize>(
-            from: &[[AtomicU8; size_of::<$T>()]; K],
+            from: &[[SharedU8; size_of::<$T>()]; K],
         ) -> $T {
             const { assert!(AT < K) };
             let v;
@@ -95,7 +96,7 @@ fn low_bits(count: usize) -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[target_feature(enable = "avx512bw")]
-pub fn load64_masked(from: &[AtomicU8]) -> u8x64 {
+pub fn load64_masked(from: &[SharedU8]) -> u8x64 {
     let v;
     // SAFETY: reads the bytes of `from` that the mask has a bit for, and touches no others.
     unsafe {

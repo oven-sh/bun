@@ -1,5 +1,5 @@
 //! Ports of highway_strings.cpp: hexadecimal.
-use bun_simd::{Isa, Out, Source};
+use bun_simd::{Isa, Out, SharedU8, SharedWriter, Sink, Source};
 use core::sync::atomic::AtomicU8;
 
 const DIGITS: [u8; 16] = *b"0123456789abcdef";
@@ -14,8 +14,8 @@ fn nibble(digit: u8) -> Option<u8> {
 }
 
 #[inline(always)]
-fn decode_pair([high, low]: [u8; 2]) -> Option<[u8; 1]> {
-    Some([nibble(high)? << 4 | nibble(low)?])
+fn decode_pair([high, low]: [u8; 2]) -> Option<u8> {
+    Some(nibble(high)? << 4 | nibble(low)?)
 }
 
 #[bun_simd::foreach_target]
@@ -29,7 +29,7 @@ pub(crate) mod simd {
 
     #[export]
     pub fn encode_hex_lower_shared<'a>(
-        src: &[AtomicU8],
+        src: &[SharedU8],
         dst: Out<'a, [u8; 2]>,
     ) -> &'a mut [[u8; 2]] {
         encode(src, dst)
@@ -50,32 +50,54 @@ pub(crate) mod simd {
         })
     }
 
+    #[inline(always)]
+    fn decode(src: &[[u8; 2]], dst: &mut impl Sink) {
+        let done = match src.len().min(dst.remaining()) >= U8::LEN {
+            true => width::full::decode(src, dst),
+            false => width::x128::decode(src, dst),
+        };
+        dst.extend_with(&src[done..], |&digits| decode_pair(digits));
+    }
+
+    #[inline(always)]
+    fn decode16(src: &[[u16; 2]], dst: &mut impl Sink) {
+        let done = match src.len().min(dst.remaining()) >= U8::LEN {
+            true => width::full::decode16(src, dst),
+            false => width::x128::decode16(src, dst),
+        };
+        dst.extend_with(&src[done..], |&[high, low]| {
+            decode_pair([high as u8, low as u8])
+        });
+    }
+
     /// Stops before the first pair with a byte that is no digit.
     #[export]
     pub fn decode_hex<'a>(src: &[[u8; 2]], dst: Out<'a, u8>) -> &'a mut [u8] {
-        let dst = dst.take(src.len());
-        let (is_wide, mut dst) = (dst.len() >= U8::LEN, dst.into_writer());
-        dst.append(|dst| match is_wide {
-            true => width::full::decode(src, dst),
-            false => width::x128::decode(src, dst),
-        });
-        dst.extend_with(&src[dst.len()..], |&digits| decode_pair(digits));
+        let mut dst = dst.into_writer();
+        decode(src, &mut dst);
         dst.finish()
+    }
+
+    #[export]
+    pub fn decode_hex_to_shared(src: &[[u8; 2]], dst: &[AtomicU8]) -> usize {
+        let mut dst = SharedWriter::new(dst);
+        decode(src, &mut dst);
+        dst.len()
     }
 
     /// The same for the low byte of each unit.
     #[export]
     pub fn decode_hex16<'a>(src: &[[u16; 2]], dst: Out<'a, u8>) -> &'a mut [u8] {
-        let dst = dst.take(src.len());
-        let (is_wide, mut dst) = (dst.len() >= U8::LEN, dst.into_writer());
-        dst.append(|dst| match is_wide {
-            true => width::full::decode16(src, dst),
-            false => width::x128::decode16(src, dst),
-        });
-        dst.extend_with(&src[dst.len()..], |&[high, low]| {
-            decode_pair([high as u8, low as u8])
-        });
+        let mut dst = dst.into_writer();
+        decode16(src, &mut dst);
         dst.finish()
+    }
+
+    #[export]
+    pub fn decode_hex16_to_shared(src: &[[u16; 2]], dst: &[AtomicU8]) -> usize {
+        let mut dst = SharedWriter::new(dst);
+        decode16(src, &mut dst);
+        dst.len()
     }
 
     #[bun_simd::foreach_width]
@@ -110,31 +132,30 @@ pub(crate) mod simd {
         }
 
         #[inline(always)]
-        fn decode_digits(first: U8, second: U8) -> Option<[u8; U8::LEN]> {
+        fn decode_digits(first: U8, second: U8) -> Option<U8> {
             let ((a, sign_a), (b, sign_b)) = (nibbles(first), nibbles(second));
             if (sign_a | sign_b).simd_lt(0).any() {
                 return None;
             }
-            let bytes = if isa::Isa::HAS_INTERLEAVED_MEMORY {
+            Some(if isa::Isa::HAS_INTERLEAVED_MEMORY {
                 let (high, low) = a.deinterleave(b);
                 high << 4 | low
             } else {
                 let weights = U16::splat(0x0110).bitcast();
                 let join = |v| I16::saturating_pairwise_dot(v, weights);
                 U8::saturating_narrow(join(a), join(b))
-            };
-            Some(bytes.to_array())
+            })
         }
 
-        pub fn decode<'a>(src: &[[u8; 2]], dst: Out<'a, u8>) -> &'a mut [u8] {
-            dst.fill_chunks(src, |_, from: &[_; U8::LEN]| {
+        pub fn decode(src: &[[u8; 2]], dst: &mut impl Sink) -> usize {
+            U8::append_chunks(dst, src, |_, from| {
                 let (first, second) = from.as_flattened().split_at(U8::LEN);
                 decode_digits(U8::from_slice(first), U8::from_slice(second))
             })
         }
 
-        pub fn decode16<'a>(src: &[[u16; 2]], dst: Out<'a, u8>) -> &'a mut [u8] {
-            dst.fill_chunks(src, |_, from: &[_; U8::LEN]| {
+        pub fn decode16(src: &[[u16; 2]], dst: &mut impl Sink) -> usize {
+            U8::append_chunks(dst, src, |_, from| {
                 let load = |i: usize| U16::from_slice(&from.as_flattened()[i * U16::LEN..]);
                 decode_digits(U8::narrow(load(0), load(1)), U8::narrow(load(2), load(3)))
             })

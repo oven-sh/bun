@@ -1,7 +1,7 @@
 //! Each allocation has its exact size and is not initialized, for Miri.
 #![feature(portable_simd)]
 #![forbid(unsafe_code)]
-use bun_simd_trusted::{Out, extend_vec};
+use bun_simd_trusted::{Out, extend_vec, spare_capacity};
 use core::simd::Simd;
 use core::sync::atomic::{AtomicPtr, Ordering::Relaxed};
 
@@ -104,6 +104,43 @@ fn extend_vec_keeps_the_start() {
 }
 
 #[test]
+fn into_chunks() {
+    let got = filled(5, |out| {
+        let pairs = out.into_chunks().fill_ends([[1, 2]], [[3, 4]]);
+        pairs.unwrap_or_default().as_flattened_mut()
+    });
+    assert_eq!(got, [1, 2, 3, 4]);
+}
+
+#[test]
+fn spare_capacity_of_two() {
+    let (mut a, mut b) = (Vec::with_capacity(3), Vec::with_capacity(2));
+    a.push(1);
+    let ((out_a, rest_a), (out_b, rest_b)) = (spare_capacity(&mut a), spare_capacity(&mut b));
+    let filled_a = out_a.fill_ends([2], [3]).unwrap_or_default();
+    rest_b.append(out_b.take(1).fill_ends([4], [4]).unwrap_or_default());
+    rest_a.append(filled_a);
+    spare_capacity(&mut b).1.append(&mut []);
+    assert_eq!((a, b), (vec![1, 2, 3], vec![4]));
+}
+
+#[test]
+#[should_panic]
+fn spare_capacity_of_another() {
+    let (mut a, mut b) = (Vec::with_capacity(1), Vec::with_capacity(1));
+    let filled = spare_capacity(&mut a).0.fill_ends([1], [1]);
+    spare_capacity(&mut b).1.append(filled.unwrap_or_default());
+}
+
+#[test]
+#[should_panic]
+fn spare_capacity_not_from_the_start() {
+    let mut vec = Vec::with_capacity(2);
+    let (out, rest) = spare_capacity(&mut vec);
+    rest.append(&mut out.fill_ends([1], [2]).unwrap_or_default()[1..]);
+}
+
+#[test]
 #[should_panic]
 fn push_without_room() {
     filled(1, |out| {
@@ -142,5 +179,22 @@ fn not_from_the_start() {
 #[test]
 #[should_panic]
 fn more_than_there_was_room_for() {
-    filled(2, |_| vec![(); 3].leak());
+    Out::from(&mut [(); 2][..])
+        .into_writer()
+        .append(|_| vec![(); 3].leak());
+}
+
+#[test]
+#[should_panic]
+fn more_than_the_spare_capacity() {
+    let mut vec = vec![(); usize::MAX - 1];
+    spare_capacity(&mut vec).1.append(&mut [(); 2]);
+}
+
+#[test]
+#[should_panic]
+fn not_from_the_start_of_a_writer() {
+    Out::from(&mut [0; 2][..])
+        .into_writer()
+        .append(|rest| &mut rest.fill_ends([1], [2]).unwrap_or_default()[1..]);
 }

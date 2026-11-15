@@ -1,7 +1,7 @@
 //! Each access touches its bytes and no others.
 #![cfg(all(unix, not(miri), any(target_arch = "x86_64", target_arch = "aarch64")))]
 #![feature(portable_simd)]
-use bun_simd_trusted::{Features, detected, shared::*};
+use bun_simd_trusted::{Features, SharedU8, detected, shared::*};
 use core::simd::Simd;
 use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
@@ -41,25 +41,32 @@ fn changed(room: &[AtomicU8]) -> Vec<usize> {
         .collect()
 }
 
-type Group<const N: usize> = [[AtomicU8; N]; 3];
+type Group<B, const N: usize> = [[B; N]; 3];
+
+fn group<B, const N: usize>(bytes: &[B]) -> &Group<B, N> {
+    bytes.as_chunks().0.first_chunk().unwrap()
+}
 
 fn whole<T: AsBytes<N>, const N: usize>(
     feature: &str,
-    loads: [unsafe fn(&Group<N>) -> T; 3],
-    stores: [unsafe fn(T, &Group<N>); 2],
+    loads: [unsafe fn(&Group<SharedU8, N>) -> T; 3],
+    stores: [unsafe fn(T, &Group<AtomicU8, N>); 2],
 ) {
     if !detected().contains(Features::named(&[feature])) {
         return;
     }
     let room = fenced();
     for start in [0, 1, 77, ROOM - 3 * N - 1, ROOM - 3 * N] {
-        let group = room[start..].as_chunks().0.first_chunk().unwrap();
+        let (from, to) = (
+            group(SharedU8::from_slice(&room[start..])),
+            group(&room[start..]),
+        );
         reset(room);
         // SAFETY: the CPU has the feature.
-        let loaded = loads.map(|load| unsafe { load(group) }.to_bytes());
+        let loaded = loads.map(|load| unsafe { load(from) }.to_bytes());
         for store in stores {
             // SAFETY: the CPU has the feature.
-            unsafe { store(T::from_bytes([255; N]), group) };
+            unsafe { store(T::from_bytes([255; N]), to) };
         }
         let before: Vec<_> = (start..start + 3 * N).map(|i| (i % 251) as u8).collect();
         assert_eq!(loaded.as_flattened(), before);
@@ -154,7 +161,8 @@ fn masked() {
     let room = fenced();
     for len in 0..70 {
         for start in [0, 77, ROOM - len] {
-            let text = &room[start..start + len];
+            let to = &room[start..start + len];
+            let text = SharedU8::from_slice(to);
             reset(room);
             let want: [u8; 64] = core::array::from_fn(|i| {
                 if i < len {
@@ -166,7 +174,7 @@ fn masked() {
             // SAFETY: the CPU has the feature.
             unsafe {
                 assert_eq!(load64_masked(text).to_array(), want);
-                store64_masked(Simd::splat(255), text);
+                store64_masked(Simd::splat(255), to);
                 // With what was stored still in a register.
                 assert!(
                     load64_masked(text)[len.min(64)..]

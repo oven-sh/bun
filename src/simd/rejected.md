@@ -180,16 +180,18 @@ let f: fn() = bun_simd::AtomicFn::<unsafe fn()>::new(simd::avx2::kernel).get();
 From plain code:
 
 ```rust,compile_fail,E0133
-# use {bun_simd_trusted::shared::*, std::sync::atomic::*};
-load32::<1, 0>(&[[const { AtomicU8::new(0) }; 32]]);
+# use bun_simd_trusted::{SharedU8, shared::*};
+fn f(bytes: &[[SharedU8; 32]; 1]) {
+    load32::<1, 0>(bytes);
+}
 ```
 
 A load past the group:
 
 ```rust,compile_fail,E0080
-# use {bun_simd_trusted::shared::*, std::sync::atomic::*};
+# use bun_simd_trusted::{SharedU8, shared::*};
 #[target_feature(enable = "sse2")]
-fn f(bytes: &[[AtomicU8; 8]; 1]) {
+fn f(bytes: &[[SharedU8; 8]; 1]) {
     load8::<1, 1>(bytes);
 }
 # let keep: unsafe fn(_) = f;
@@ -209,9 +211,9 @@ fn f(bytes: &[[AtomicU8; 8]; 1]) {
 Too few bytes:
 
 ```rust,compile_fail,E0308
-# use {bun_simd_trusted::shared::*, std::sync::atomic::*};
+# use bun_simd_trusted::{SharedU8, shared::*};
 #[target_feature(enable = "sse2")]
-fn f(bytes: &[[AtomicU8; 7]; 1]) {
+fn f(bytes: &[[SharedU8; 7]; 1]) {
     load8::<1, 0>(bytes);
 }
 ```
@@ -226,6 +228,22 @@ fn f(bytes: &[[u8; 8]; 1]) {
 }
 ```
 
+A store to what can only be read:
+
+```rust,compile_fail,E0308
+# use bun_simd_trusted::{SharedU8, shared::*};
+#[target_feature(enable = "sse2")]
+fn f(bytes: &[[SharedU8; 8]; 1]) {
+    store8::<1, 0>(0, bytes);
+}
+```
+
+```rust,compile_fail,E0616
+fn f(byte: &bun_simd::SharedU8) {
+    byte.0.store(0, std::sync::atomic::Ordering::Relaxed);
+}
+```
+
 A store to wider atomics:
 
 ```rust,compile_fail,E0308
@@ -237,6 +255,26 @@ fn f(bytes: &[[AtomicU64; 1]; 1]) {
 ```
 
 ## `Out`
+
+A vector that moves while its spare capacity is lent:
+
+```rust,compile_fail,E0499
+let mut vec = Vec::with_capacity(1);
+let (out, _) = bun_simd::spare_capacity(&mut vec);
+vec.reserve(100);
+out.into_writer().push([1]);
+```
+
+Two ways to what was appended:
+
+```rust,compile_fail,E0499
+let mut vec = Vec::with_capacity(1);
+let (out, rest) = bun_simd::spare_capacity(&mut vec);
+let filled = out.fill_ends([1], [1]).unwrap_or_default();
+rest.append(filled);
+let first = &mut vec[0];
+filled[0] = *first;
+```
 
 A read:
 

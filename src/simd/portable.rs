@@ -1,5 +1,5 @@
 //! The definition of the ops that have intrinsics. Debug builds panic on input for which targets differ.
-use crate::BitIndices;
+use crate::{BitIndices, SharedU8};
 use core::array;
 use core::simd::{ToBytes, prelude::*};
 use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
@@ -120,10 +120,10 @@ pub fn bit_indices(bits: u64) -> BitIndices {
 
 /// Pads with zeros if `from` is too short.
 #[inline(always)]
-pub(crate) fn load_shared_masked<const N: usize>(from: &[AtomicU8]) -> Simd<u8, N> {
-    let mut bytes = [0; N];
+pub(crate) fn load_shared_masked(from: &[SharedU8]) -> u8x64 {
+    let mut bytes = [0; 64];
     for (to, from) in bytes.iter_mut().zip(from) {
-        *to = from.load(Relaxed);
+        *to = from.get();
     }
     Simd::from_array(bytes)
 }
@@ -136,11 +136,10 @@ pub(crate) fn store_shared_masked<const N: usize>(v: Simd<u8, N>, to: &[AtomicU8
     }
 }
 
+/// The `A` at index `AT`, followed by zeros.
 #[inline(always)]
-pub(crate) fn load_shared<const N: usize, const K: usize, const AT: usize>(
-    from: &[AtomicU8],
-) -> Simd<u8, N> {
-    load_shared_masked(&from[AT * N..])
+pub(crate) fn load_shared<A, const K: usize, const AT: usize>(from: &[SharedU8]) -> u8x64 {
+    load_shared_masked(&from[AT * size_of::<A>()..][..size_of::<A>()])
 }
 
 #[inline(always)]

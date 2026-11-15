@@ -2,7 +2,7 @@ use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, ParseFlagResult,
-    PoolTask, ShellTask, ShellWork, parse_flags,
+    PoolTask, ShellWork, parse_flags,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -232,7 +232,7 @@ impl ShellWork for ShellTouchTask {
 
     /// utimes() the path; on ENOENT
     /// fall back to `open(O_CREAT|O_WRONLY, 0o664)`.
-    fn run_from_thread_pool(&mut self, _: &ShellTask) {
+    fn run_from_thread_pool(&mut self) {
         use bun_paths::resolve_path::{self, Platform, platform};
         // We have to give an absolute path. An operand that does not fit the
         // path buffer is still passed on whole, so the OS reports ENAMETOOLONG

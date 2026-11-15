@@ -2188,8 +2188,8 @@ mod _async_tasks {
     pub(crate) struct NewAsyncCpTask<const IS_SHELL: bool> {
         pub(crate) promise: JSPromiseStrong,
         pub args: ThreadIsolated<args::Cp<'static>>,
-        /// Owning-thread uses (global object).
-        pub(crate) evtloop: EventLoopHandle,
+        /// Owning-thread uses (global object). `None` iff `IS_SHELL`.
+        pub(crate) evtloop: Option<EventLoopHandle>,
         /// How the last subtask's thread delivers the completion (moved out
         /// by it: the loop may free `self` once the completion is queued). For
         /// a JS loop this is the ticket its VM waits for — the arguments may
@@ -2406,7 +2406,7 @@ mod _async_tasks {
             Self::schedule_new(
                 promise,
                 cp_args,
-                EventLoopHandle::init(vm.event_loop_ptr()),
+                Some(EventLoopHandle::init(vm.event_loop_ptr())),
                 bun_jsc::ConcurrentPoster::Js(vm.ticket()),
                 tracker,
                 cx.context().id(),
@@ -2416,18 +2416,17 @@ mod _async_tasks {
         }
 
         /// The shell's `cp` builtin, from its pool task (any thread): no VM or
-        /// global is touched — the loop and poster are the ones the shell task
+        /// global is touched — the poster is the one the shell task
         /// already captured on its own thread.
         pub(crate) fn create_for_shell(
             cp_args: ThreadIsolated<args::Cp<'static>>,
-            poster: bun_jsc::ConcurrentPoster,
-            shelltask: Box<ShellCpTask>,
+            mut shelltask: Box<ShellCpTask>,
         ) {
             Self::schedule_new(
                 JSPromiseStrong::default(),
                 cp_args,
-                shelltask.task.event_loop,
-                poster,
+                None,
+                shelltask.task.take_poster(),
                 AsyncTaskTracker { id: 0 },
                 // As `ShellCpTask`, which is waiting for this.
                 bun_event_loop::ContextId::NONE,
@@ -2438,7 +2437,7 @@ mod _async_tasks {
         fn schedule_new(
             promise: JSPromiseStrong,
             cp_args: ThreadIsolated<args::Cp<'static>>,
-            evtloop: EventLoopHandle,
+            evtloop: Option<EventLoopHandle>,
             poster: bun_jsc::ConcurrentPoster,
             tracker: AsyncTaskTracker,
             context: bun_event_loop::ContextId,
@@ -2551,10 +2550,11 @@ mod _async_tasks {
                 let src = core::mem::take(&mut self.args.src);
                 let dest = core::mem::take(&mut self.args.dest);
                 let shelltask = self.shelltask.take().expect("IS_SHELL ⇒ shelltask");
-                shelltask.cp_on_finish(src, dest, result);
+                // SAFETY: `on_subtask_done` posted this with the poster of `shelltask`.
+                unsafe { shelltask.cp_on_finish(src, dest, result) };
                 return Ok(());
             }
-            let go_ptr = self.evtloop.global_object();
+            let go_ptr = self.evtloop.expect("!IS_SHELL ⇒ evtloop").global_object();
             if go_ptr.is_null() {
                 panic!(
                     "No global object, this indicates a bug in Bun. Please file a GitHub issue."

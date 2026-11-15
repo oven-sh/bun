@@ -64,7 +64,7 @@ pub(crate) struct Result<'a> {
 #[optimize(size)]
 pub(crate) fn filter<'a>(
     ctx: &Command::Context,
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     test_files: &'a mut [Interned],
     changed_since: &[u8],
 ) -> core::result::Result<Result<'a>, crate::Error> {
@@ -133,7 +133,7 @@ pub(crate) fn filter<'a>(
     let log: &'static mut bun_ast::Log = arena.alloc(bun_ast::Log::new());
 
     let scan_transpiler: &'static mut Transpiler<'static> = arena.alloc(
-        match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.env)) {
+        match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.get().env)) {
             Ok(t) => t,
             Err(err) => {
                 Output::err_generic(
@@ -164,12 +164,12 @@ pub(crate) fn filter<'a>(
 
     // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at
     // scope exit; the arena bulk-free skips Drop.
-    let mut event_loop = bun_event_loop::AnyEventLoop::init();
+    let event_loop = bun_event_loop::AnyEventLoop::init();
 
-    let mut bundle = match BundleV2::scan_module_graph_from_cli(
+    let bundle = match BundleV2::scan_module_graph_from_cli(
         scan_transpiler,
         arena,
-        Some(core::ptr::NonNull::from(&mut event_loop)),
+        Some(core::ptr::NonNull::from(&event_loop)),
         &entry_points,
     ) {
         Ok(b) => b,
@@ -302,11 +302,12 @@ pub(crate) fn filter<'a>(
     // everything needed has been copied out above. The scan transpiler itself
     // is in the CLI arena (the `&'a mut Transpiler<'a>` invariant forces a
     // `'static` borrow), so its Drop never runs either; free its heap-backed
-    // options through the borrow `bundle` still holds.
-    bundle.deinit_without_freeing_arena();
-    // SAFETY: `bundle.transpiler` is the arena-backed `&'static mut` noted
-    // above — its `Drop` never runs, so `deinit` cannot lead to a double-drop.
-    unsafe { bundle.transpiler.deinit() };
+    // options through the borrow `bundle` held.
+    let scan_transpiler = &raw mut *bundle.transpiler;
+    drop(bundle);
+    // SAFETY: the arena-backed `&'static mut` noted above — its `Drop` never
+    // runs, so `deinit` cannot lead to a double-drop.
+    unsafe { (*scan_transpiler).deinit() };
 
     Ok(Result {
         test_files: &mut test_files[0..write],
@@ -593,7 +594,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
         windows: spawn_sync::WindowsOptions {
             // `init` takes the erased `*mut ()` event-loop pointer
             // directly, so unwrap it here.
-            loop_: EventLoopHandle::init(VirtualMachine::get().event_loop().cast()),
+            loop_: EventLoopHandle::init(VirtualMachine::get().event_loop_ptr()),
             ..Default::default()
         },
         ..Default::default()

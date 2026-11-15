@@ -29,7 +29,7 @@ impl Time {
     // css.implementDeepClone / css.implementEql / css.implementHash — provided
     // by `#[derive(DeepClone, CssEql, CssHash)]` above (POD f32 payload).
 
-    pub fn parse(input: &mut css::Parser) -> Result<Time> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, Time> {
         match input.try_parse(Calc::<Time>::parse) {
             Ok(vv) => match vv {
                 Calc::Value(v) => {

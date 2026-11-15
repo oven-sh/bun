@@ -38,7 +38,7 @@ function call(label, start) {
 }
 `;
 
-function textOfModule(tag: string, imports: string[], body: Body) {
+function moduleSourceText(tag: string, imports: string[], body: Body) {
   if (body === "only hands on") return imports.map(target => `export * from "./${target}";\n`).join("");
   const thrown = `throw new Error("${tag}");`;
   const code: Record<Body, string[]> = {
@@ -81,7 +81,7 @@ function program(name: string, says: string, graphs: Record<string, [Modules, St
   const outcome = (graph: string, module: string) => `outcome("import(${module})", () => import("./${graph}/${module}"))`;
   for (const [graph, [modules, steps]] of Object.entries(graphs)) {
     for (const [module, [imports, body]] of Object.entries(modules))
-      files[`${name}/${graph}/${module}`] = (module.endsWith(".cjs") ? textOfFile : textOfModule)(`${graph}/${module}`, imports, body);
+      files[`${name}/${graph}/${module}`] = (module.endsWith(".cjs") ? textOfFile : moduleSourceText)(`${graph}/${module}`, imports, body);
     main.push(`errors = [];`, `console.log("== ${graph}");`);
     for (const [kind, ...names] of steps) {
       if (kind === "import") main.push(`console.log(await ${outcome(graph, names[0])});`);

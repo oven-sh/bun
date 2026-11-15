@@ -1,0 +1,36 @@
+# The scope that only the closure of one way holds is born on that way. What the other way stores into it, and its ReleaseEnvironment, go: there is no scope there.
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: NewObject
+# CHECK: Branch
+# CHECK-NOT: PutEnvironmentField
+# CHECK: = NewObject -, {{*}} layout=
+# CHECK: ReleaseEnvironment
+# CHECK-NOT: ReleaseEnvironment
+# -- source: main.cjs
+# function List(size, origin) { this.size = size; this.origin = origin; this.tail = []; }
+# List.prototype.withMutations = function (f) { f(this); return this; };
+# List.prototype.grow = function (a, b) { this.size += a + b; return this; };
+# function wrap(list, index) {
+#   if (typeof index !== "number") index = index >>> 0;
+#   return index < 0 ? list.size + index : index;
+# }
+# function update(list, index, value) {
+#   index = wrap(list, index);
+#   if (index !== index) return list;
+#   if (index >= list.size || index < 0)
+#     return list.withMutations(function (l) { index < 0 ? l.grow(index, value) : l.grow(0, index + 1); });
+#   index += list.origin;
+#   list.tail[index] = value;
+#   return list;
+# }
+# function updateOnce(list, index, value) {
+#   if (index >= list.size)
+#     return list.withMutations(function (l) { l.grow(index, value); });
+#   list.tail[index] = value;
+#   return list;
+# }
+# let list = new List(20, 0);
+# for (let k = 0; k < 40; k++) { list = update(list, k, k); list = updateOnce(list, k, k + 1); }
+# console.log(list.size, list.tail.length);
+# -- end of source

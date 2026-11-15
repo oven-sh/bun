@@ -1,0 +1,20 @@
+# `{ a, ...more }` in a loop, where more is an object or undefined: the ways part in front of the literal. Where there is nothing to copy nothing is copied and nothing is asked of a shape; where there is, the source
+# is an object for sure. Each way walks what is left of its block, so the read of `a` is answered on both and no object is made. A source that is surely an object parts no ways.
+# f1 = pick, f2 = surely
+# -- source: main.ts
+# declare function print(value: any): void;
+# function pick(a: number, more: { p: number } | undefined) { const o: any = { a, ...more }; return o.a; }
+# function surely(a: number, more: { p: number }) { const o: any = { a, ...more }; return o.a; }
+# const one = { p: 1 };
+# let s = 0;
+# for (let i = 0; i < 10; i++) s += pick(i & 7, i & 1 ? one : undefined);
+# let t = 0;
+# for (let i = 0; i < 10; i++) t += surely(i & 7, one);
+# print(s + " " + t);
+# -- end of source
+# RUN(APART): walk f0 mechanisms=all
+# APART: testedType=undefined
+# APART-NOT: CopyDataProperties
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 29 29
+# ANSWERS-NEXT: exited with 0

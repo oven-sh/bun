@@ -1,0 +1,26 @@
+# -- source: one-read-off-a-written-list-calls-the-stub-that-looks-for-an-element-first.ts
+# class Holder { items: string[] = []; names: Record<string, string> = {}; }
+# function lone(h: Holder) { const l = h.items; sink(); return l[0]; }
+# function under(h: Holder, at: number) { const l = h.items; sink(); return l[at]; }
+# function named(h: Holder, name: string) { const l = h.items; sink(); return (l as any)[name]; }
+# declare function sink(...all: unknown[]): void;
+# sink(lone, under, named, new Holder());
+# -- end of source
+# f1 = lone, f2 = under, f3 = named
+# None stands in a loop, nothing else leans on the list, and no more is known of it than what is written. No test is built and no arm: the read is one operation, which is emitted as the call of a stub.
+# RUN(LONE): walk f1 mechanisms=all
+# LONE-LABEL: code f1:Body
+# LONE-NOT: testedType=Array
+# LONE: : anything{{*}} = GetArrayElement {{*}}level=Expected
+# LONE-NOT: = ElemGet
+# RUN(UNDER): walk f2 mechanisms=all
+# UNDER-LABEL: code f2:Body
+# UNDER: : anything{{*}} = GetArrayElement {{*}}level=Expected
+# UNDER-NOT: = ElemGet
+# A key that is written a text is looked for as a name.
+# RUN(NAMED): walk f3 mechanisms=all
+# NAMED-LABEL: code f3:Body
+# NAMED-NOT: = GetArrayElement
+# NAMED: = ElemGet
+# RUN(WITHHELD): walk f1 mechanisms=all-Guesses
+# WITHHELD: = ElemGet

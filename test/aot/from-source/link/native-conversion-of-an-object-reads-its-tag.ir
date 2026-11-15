@@ -1,0 +1,23 @@
+# `String(k)`: native code converts the object. The program has laid none of Symbol.toPrimitive, valueOf and toString, so Object.prototype.toString answers, and that reads Symbol.toStringTag off the object.
+# What an object finds on Object.prototype counted as native code that asks nothing of anybody: the getter of the tag was unreached, the text was "[object Object]", and what the getter stores into `this` was no store into the layout
+# RUN: link fields functions mechanisms=all
+# CHECK-NOT: field L0.0 "n" proven=i32
+# CHECK-NOT: function f3 unreached
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 2
+# NONE-NEXT: [object K]
+# NONE-NEXT: text1
+# NONE-NEXT: exited with 0
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 2
+# ALL-NEXT: [object K]
+# ALL-NEXT: text1
+# ALL-NEXT: exited with 0
+# -- source: main.mjs
+# class K { constructor(n) { this.n = n; } get [Symbol.toStringTag]() { this.n = "text"; return "K"; } }
+# function read(o) { return o.n + 1; }
+# const k = new K(1);
+# print(read(k));
+# print(String(k));
+# print(read(k));
+# -- end of source

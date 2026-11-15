@@ -1,0 +1,31 @@
+# -- source: main.js
+# function Base() { this.count = 0; }
+# Base.prototype.on = function on(ev) { this.count += ev; return "base"; };
+# Base.prototype.later = async function later(ev) { this.count += ev; return "later " + this.count; };
+# function Heir() { Base.call(this); }
+# Object.setPrototypeOf(Heir.prototype, Base.prototype);
+# Heir.prototype.on = function heirOn(ev) { return Base.prototype.on.call(this, ev); };
+# Heir.prototype.later = function heirLater(ev) { return Base.prototype.later.call(this, ev); };
+# class Kind { constructor() { this.count = 0; } on(ev) { this.count += ev; return "kind"; } }
+# class Below extends Kind { on(ev) { return Kind.prototype.on.call(this, ev); } }
+# register(Base, Kind);
+# var h = new Heir(), b = new Below();
+# function turn(label) { var out = []; for (var i = 0; i < 3; i++) out.push(h.on(1), b.on(1)); print(label + ": " + out.join() + " " + h.count + " " + b.count); }
+# turn("as written");
+# for (var step = 1; step <= 8; step++) turn(change(step));
+# h.later(5).then(print);
+# -- end of source
+# The method that `F.prototype.m.call(x, ..)` reads is a constant behind its guards. Code that nobody sees replaces the member, lays an accessor under the name, a bound function, a `call` of its own on the function, a whole new prototype object,
+# deletes the member and lays another object above; a class beside the constructor function; an async callee. As plain.
+# RUN(ANSWERS): run-in-shell globalThis.register = (B, K) => { const first = B.prototype.on, kind = K.prototype.on, whole = B.prototype; globalThis.change = step => { switch (step) { case 1: B.prototype.on = function other(ev) { this.count += 10; return "replaced"; }; K.prototype.on = function otherKind(ev) { this.count += 10; return "replaced kind"; }; return "a member replaced late"; case 2: Object.defineProperty(B.prototype, "on", { get() { return function got(ev) { this.count += 100; return "got"; }; }, configurable: true }); return "an accessor under the name"; case 3: delete B.prototype.on; B.prototype.on = first.bind({ count: 0 }); K.prototype.on = kind; return "a bound function under the name"; case 4: B.prototype.on = first; first.call = function () { return "own call"; }; return "call overridden on the function"; case 5: delete first.call; return "call as it was"; case 6: B.prototype = { on(ev) { this.count += 1000; return "whole"; } }; return "prototype laid anew, whole"; case 7: B.prototype = whole; delete B.prototype.on; Object.setPrototypeOf(B.prototype, { on(ev) { this.count += 7; return "from above"; } }); return "the member deleted, another object laid above"; default: Object.setPrototypeOf(B.prototype, Object.prototype); B.prototype.on = first; return "as written again"; } }; };
+# ANSWERS: as written: base,kind,base,kind,base,kind 3 3
+# ANSWERS-NEXT: a member replaced late: replaced,replaced kind,replaced,replaced kind,replaced,replaced kind 33 33
+# ANSWERS-NEXT: an accessor under the name: got,replaced kind,got,replaced kind,got,replaced kind 333 63
+# ANSWERS-NEXT: a bound function under the name: base,kind,base,kind,base,kind 333 66
+# ANSWERS-NEXT: call overridden on the function: own call,kind,own call,kind,own call,kind 333 69
+# ANSWERS-NEXT: call as it was: base,kind,base,kind,base,kind 336 72
+# ANSWERS-NEXT: prototype laid anew, whole: whole,kind,whole,kind,whole,kind 3336 75
+# ANSWERS-NEXT: the member deleted, another object laid above: from above,kind,from above,kind,from above,kind 3357 78
+# ANSWERS-NEXT: as written again: base,kind,base,kind,base,kind 3360 81
+# ANSWERS-NEXT: later 3365
+# ANSWERS-NEXT: exited with 0

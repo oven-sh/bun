@@ -1,0 +1,23 @@
+# The head of a generator's typed loop asks in every turn whether the view is as it was made, because the turn of the consumer runs code that nobody knows.
+# Where the answer is no, the turn leaves for the entry of the closed copy, and hands over the counter of the generator AND the sum that the consumer carries round.
+# If the entry took the counter alone, the closed copy would go on with the sum as it stood in front of the loop: `3 11` for `6 11`.
+# f1 = items, f2 = total
+# -- source: the-closed-copy-of-the-loop-of-a-generator-takes-what-the-turn-of-the-consumer-brings-round.ts
+# declare function sink(...values: unknown[]): number;
+# function* items(view: Float64Array): Generator<number> { for (let i = 0; i < view.length; i++) yield view[i]; }
+# const marks: ((view: any, x: number) => void)[] = [(view, x) => { if (x === 2) Object.defineProperty(view, "length", { value: 3 }); }];
+# const mark = marks[JSON.parse("0")];
+# function total(view: Float64Array): number { let sum = 0; for (const x of items(view)) { mark(view, x); sum += x; } return sum; }
+# sink(total(new Float64Array([1, 2, 3, 4])), total(new Float64Array([5, 6])));
+# -- end of source
+# RUN: walk f2:Body mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: frame 1 callee=f1
+# CHECK: isLoopHead=true
+# CHECK: isLoopHead=true
+# CHECK: = IsPristine {{*}}builtinClass=Float64Array
+# CHECK-NEXT: Branch
+# CHECK: = GetTypedArrayLength
+# CHECK: frequency=Rare isInLoop=true:
+# CHECK-NEXT: = WidenInteger
+# CHECK-NEXT: Jump -> next b{{*}}(v{{*}}, v{{*}})

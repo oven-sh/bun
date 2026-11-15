@@ -201,7 +201,7 @@ impl PmVersionCommand {
 
         // Bun's shell runs the scripts with the global `MiniEventLoop`'s environment, which only
         // the first `init_global` call sets. On Windows, spawning git would otherwise be that call.
-        bun_event_loop::MiniEventLoop::init_global(Some(pm.env_mut()), Some(&package_json_dir));
+        bun_event_loop::MiniEventLoop::init_global(Some(pm.env_mut()));
 
         Self::verify_git(&package_json_dir, pm);
 
@@ -710,7 +710,7 @@ fn fmt_bytes(args: core::fmt::Arguments<'_>) -> Vec<u8> {
 fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
     crate::api::bun::process::WindowsOptions {
         loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-            None, None,
+            None,
         )),
         ..Default::default()
     }

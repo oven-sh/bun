@@ -25,3 +25,6 @@ export class Outer {
     }
   };
 }
+
+// A method has its body once reached code reads its name.
+export function readsTheNames(o: any) { return [o.readInner, o.readOuter]; }

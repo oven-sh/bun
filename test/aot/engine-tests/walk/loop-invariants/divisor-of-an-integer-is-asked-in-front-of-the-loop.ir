@@ -1,0 +1,61 @@
+# `i % n`: beside a number the remainder is made on numbers: every turn asks the divisor again for an int32 that is neither negative nor zero, and what comes out is a double whatever came in, so that the sum is made on doubles too.
+# No turn changes the divisor. In front of the loop, which is built twice, it is asked once for an int32 of at least 1: under that type the remainder of an integer that is not negative is an integer by the rule of forms,
+# and the sum follows it. Whatever else the divisor is (zero, negative, a fraction, NaN) takes the other copy, which is as it was.
+# function sum(n: number) { let s = 0; for (let i = 0; i < 1000; i++) s = (s + i % n) | 0; return s; }
+# (globalThis as any).kept = sum;
+# console.log(sum(7));
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[test]]: boolean @Boolean = TypeTest {{*}}testedType=int[1, 2147483647]
+# CHECK-NEXT: Branch [[test]] ->
+# CHECK: frequency=Rare isLoopHead=true
+# CHECK: = Mod {{*}}form=Numbers
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: int[0, 999] @Int32 = RemainderByReciprocal 
+# CHECK: @Int64 = Add {{*}}form=Integers
+
+module m0 path="divisor-of-an-integer-is-asked-in-front-of-the-loop.ts" displayPath="divisor-of-an-integer-is-asked-in-front-of-the-loop.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @102
+    v3 = PropGet v2 key="globalThis" [isFreeName] @102
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]} @102
+    PropSet v4, v1 key="kept" @102
+    v6 = Builtin builtin=GlobalThis @133
+    v7 = PropGet v6 key="console" [isFreeName] @133
+    v8 = Convert v7 declared={type=builtin(Console) flags=[IsExpected]} @133
+    v9 = PropGet v8 key="log" @133
+    v10 = Convert v9 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @133
+    v11 = Integer integer=7 @149
+    v12 = Call v1, -, v11 calleeName="sum" @145
+    v13 = Call v10, v8, v12 calleeKey="log" calleeName="console.log" @141
+    v14 = Undefined @133
+    Return v14 @133
+}
+function f1 name="sum" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer @34
+    v2 = Convert v1 declared={type=number} @34
+    v3 = Integer @50
+    v4 = Convert v3 declared={type=number} @50
+    Jump -> next b1(v2, v4) @46
+  b1(v5: number, v6: number):
+    LoopHint @46
+    v8 = Integer integer=1000 @57
+    v9 = Less v6, v8 @57
+    Branch v9 -> taken b2(), notTaken b3() @57
+  b2():
+    v10 = Mod v6, v0 @81
+    v11 = Add v5, v10 @81
+    v12 = Integer @86
+    v13 = BitOr v11, v12 @86
+    v14 = Convert v13 declared={type=number} @68
+    v15 = Increment v6 @63
+    v16 = Convert v15 declared={type=number} @63
+    Jump -> next b1(v14, v16) @63
+  b3():
+    Return v5 @96
+}

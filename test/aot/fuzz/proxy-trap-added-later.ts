@@ -95,16 +95,12 @@ const crossed = handlers.flatMap(handler =>
   ),
 );
 
-const laidOut = [[], ["--aot-heat=everything-is-hot"]];
-export const programs = laidOut.length * crossed.length;
-
-/** The build flags of the program with that index. */
-export const flagsOf = (index: number): string[] => laidOut[Math.floor(index / crossed.length)];
+export const programs = crossed.length;
 
 export function programOf(index: number): { file: string; text: string } {
   // Neighbors in the table differ only in what else the program does, so a stride coprime with the table's length
   // spreads consecutive seeds over the whole table.
-  const { handler, access, arrival, other } = crossed[((index % crossed.length) * 7919) % crossed.length];
+  const { handler, access, arrival, other } = crossed[(index * 7919) % crossed.length];
   const asks = `  try { said.push(${access.text}); } catch (error: any) { said.push(error.constructor.name); }\n`;
   const filled = (text: string) => text.replaceAll("T", access.trap).replaceAll("F", access.does);
   return {

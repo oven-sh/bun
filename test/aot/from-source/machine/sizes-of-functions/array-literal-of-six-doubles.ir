@@ -1,0 +1,14 @@
+# f1 = six
+# -- source: array-literal-of-six-doubles.ts
+# function six(x: number): number[] {
+#   return [x + 0.5, x + 1.5, x + 2.5, x + 3.5, x + 4.5, 0.25];
+# }
+# declare const input: any;
+# (globalThis as any).answer = six(input | 0);
+# -- end of source
+# The compiler before this one: 22 instructions, 2 of them patches.
+# When the bound was taken: steps: operations 74, patches 6, moves 15, unlikely or rare 6.
+# RUN(X64): steps most:89 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 89

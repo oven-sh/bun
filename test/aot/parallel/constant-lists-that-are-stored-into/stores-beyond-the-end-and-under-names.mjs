@@ -1,0 +1,1 @@
+function stores(k) { const list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]; for (let i = 0; i < 2; i++) { list[k + i] = 'in'; list[20 + i] = 'beyond'; list[-1 - i] = 'minus'; list['name' + i] = 'named'; list[1.5 + i] = 'fraction'; } return JSON.stringify(list) + list.length + Object.keys(list).slice(-3).join(); } console.log(stores(3)); console.log(stores(3));

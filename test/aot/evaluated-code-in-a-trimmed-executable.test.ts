@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { slot, unsupported } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const program = `const make = (async function () {}).constructor;
@@ -26,7 +27,12 @@ const snippets: [name: string, code: string, untrimmed: string, trimmed: string]
     "answer: 1,2",
     "answer: 1,2",
   ],
-  ["that imports a file: module not found", `return (await import("./late.ts")).default`, notFound, notFound],
+  [
+    "that imports a file: module not found",
+    `return (await import("./late.ts")).default`,
+    "caught: ResolveMessage ERR_MODULE_NOT_FOUND",
+    "caught: ResolveMessage ERR_MODULE_NOT_FOUND",
+  ],
   [
     "that imports a built-in module that the program also imports",
     `return typeof (await import("node:path")).join`,

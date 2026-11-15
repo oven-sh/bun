@@ -4,6 +4,7 @@ import {
   bunExe,
   gc,
   getMaxFD,
+  isASAN,
   isBroken,
   isDebug,
   isFreeBSD,
@@ -1756,6 +1757,18 @@ it("readdirSync works on directories with under 32 files", () => {
   const results = readdirSync(path);
   expect(results.length).toBe(1);
   expect(results[0]).toBe("a");
+});
+
+// NTFS counts UTF-16 units, so a name can be three times as long in UTF-8.
+it.if(isWindows).each([180, 255])("lists and removes a name of %d three-byte characters", async length => {
+  const name = Buffer.alloc(3 * length, "あ").toString();
+  using dir = tempDir("long-name", { tree: { [name]: { [name]: "" } } });
+  const tree = join(String(dir), "tree");
+  expect(readdirSync(tree, { recursive: true })).toEqual([name, join(name, name)]);
+  expect((await promises.readdir(tree, { recursive: true })).sort()).toEqual([name, join(name, name)]);
+  expect(readdirSync(tree, { encoding: "buffer" })).toEqual([Buffer.from(name)]);
+  rmSync(tree, { recursive: true });
+  expect(existsSync(tree)).toBe(false);
 });
 
 it("readdirSync throws when given a file path", () => {
@@ -5163,6 +5176,8 @@ describe("fs/promises", () => {
   for (let withFileTypes of [false, true] as const) {
     const warmup = 1;
     const iterCount = isDebug ? 4 : 200;
+    // Sorting the 200 lists of some 7,000 names takes 12 of 14 seconds where ASAN sees the allocations of strings.
+    const timeout = isASAN ? 30_000 : 10_000;
     const full = resolve(import.meta.dir, "../");
 
     const doIt = async () => {
@@ -5196,9 +5211,9 @@ describe("fs/promises", () => {
     };
 
     if (withFileTypes) {
-      it("readdirSync(path, {recursive: true, withFileTypes: true} should work x 100", doIt, 10_000);
+      it("readdirSync(path, {recursive: true, withFileTypes: true} should work x 100", doIt, timeout);
     } else {
-      it("readdirSync(path, {recursive: true} should work x 100", doIt, 10_000);
+      it("readdirSync(path, {recursive: true} should work x 100", doIt, timeout);
     }
   }
 

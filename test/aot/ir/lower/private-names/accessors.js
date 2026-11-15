@@ -34,3 +34,6 @@ export class C {
     this.#b = 1;
   }
 }
+
+// A method has its body once reached code reads its name.
+export function readsTheNames(o) { return [o.readA, o.readB, o.writeA, o.writeB]; }

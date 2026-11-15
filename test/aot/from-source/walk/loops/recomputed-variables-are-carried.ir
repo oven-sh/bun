@@ -1,0 +1,24 @@
+# f1 = run, f2 = runPrivate
+# -- source: main.js
+# let next = 1;
+# class R { static #next = 1; static step() { return (next = (next * 5 + 1) & 1023); } static private() { return (R.#next = (R.#next * 5 + 1) & 1023); } }
+# function run(turns) { let n = 0; for (let k = 0; k < turns; k++) n += R.step(); return n; }
+# function runPrivate(turns) { let n = 0; for (let k = 0; k < turns; k++) n += R.private(); return n; }
+# print(run(1000), run(0), run(3), runPrivate(1000), runPrivate(0), runPrivate(3));
+# -- end of source
+# The method computes the variable anew from what it holds. The loop asks in front whether it is out of its dead zone, and carries it in a header parameter: it was read out of memory in every turn.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetModuleVariable variable=g0
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = GetModuleVariable variable=g0
+# CHECK: PutModuleVariable {{*}}variable=g0
+# CHECK-NOT: = GetModuleVariable variable=g0
+# RUN(PRIVATE): walk f2:Body mechanisms=all
+# PRIVATE-LABEL: code f2:Body
+# PRIVATE: = GetModuleVariable variable=g4
+# PRIVATE: isInLoop=true isLoopHead=true
+# PRIVATE-NOT: = GetModuleVariable variable=g4
+# PRIVATE: PutModuleVariable {{*}}variable=g4
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 510716 0 2025 510716 0 2025

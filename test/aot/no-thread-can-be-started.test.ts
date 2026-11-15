@@ -3,6 +3,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { join } from "node:path";
+import { locksEnvironment } from "./hardened";
 import { withoutCoreDump } from "./harness/commands";
 import { run as runCommand } from "./harness/run";
 import { describe, test, unsupported } from "./supported";
@@ -64,7 +65,7 @@ const executable = join(String(folder), "program");
 const ask = async (what: string) => {
   const { stdout, stderr, exitCode } = await runCommand(withoutCoreDump(underLimit(executable)), String(folder), {
     ...bunEnv,
-    BUN_CRASH_REPORT_URL: "",
+    ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }),
     WHAT: what,
   });
   return { stdout, exitCode, lines: stderr.split("\n").filter(line => /^(error|note|FATAL|panic)/.test(line)) };

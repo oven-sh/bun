@@ -1,0 +1,17 @@
+# -- source: a-buffer-has-a-copy-of-its-own-beside-the-list-that-use-alone-says.cjs
+# const hold = JSON.parse('{"v":null}');
+# function half(t) { let p = hold.v; if (t < 0) p = null; let c = 0; for (let i = 0; i < p.length; i++) c = c + 0.5 * p[i]; return c; }
+# class Below extends Uint8Array { get length() { return 1; } }
+# const found = [];
+# for (const v of [[1.5, 2.5], Uint8Array.of(4, 5), new Below(3).fill(9), Float64Array.of(1.5), Int16Array.of(-3, 1), Uint8ClampedArray.of(7), "12", [1, , 3], { length: 2, 0: 4, 1: 6 }]) { hold.v = v; found.push(half(1)); }
+# sink(found.join(" "));
+# -- end of source
+# Use alone says that `p` is a list of numbers, and the loop is built for the list and for views. With a Buffer and the nine views in ONE member a Buffer passed the test of the kind of its cell and then
+# failed the copy's own front, which asks for the structure of one of the nine: the whole loop ran closed, 47,004 instructions a call beside 1,920 for a Uint8Array. A Uint8Array and what stands below it
+# have a copy of their own, whose front asks as the front of lists and bytes does.
+# f1 = half
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsPristine {{*}}builtinClass=Uint8Array
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 2 4.5 4.5 0.75 -1 3.5 1.5 NaN 5

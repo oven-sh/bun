@@ -1,4 +1,4 @@
-// Turns the JavaScript that Fuzzilli writes into TypeScript. README.md beside this file describes the settings.
+// Turns the JavaScript that Fuzzilli writes into TypeScript. README.md beside this file says how to turn it on, and `TypeScriptSettings` below has the settings.
 //
 // Fuzzilli's typer knows a type for every variable. A plan is made from it before a program is lifted: which
 // declarations get an annotation and which one, which types are declared, and where a value has to pass through a
@@ -34,6 +34,12 @@ struct TypeScriptSettings {
     var tested = 12
     /// How often what follows a declaration is a scene without a cast.
     var withoutCasts = 25
+    /// How often what follows a declaration is a scene of a place that is given what its type doesn't allow.
+    var places = 20
+    /// How often what follows a declaration is a scene of objects that share fields with classes.
+    var sharedFields = 0
+    /// How often what follows a declaration is a scene of a list of objects of several classes and a primitive.
+    var mixedLayouts = 0
     /// How often a program is its scenes without a cast and nothing else.
     var scenesAlone = 0
     /// Added to what is computed from a program to seed its choices.
@@ -69,6 +75,9 @@ struct TypeScriptSettings {
             case "files": settings.files = value
             case "tested": settings.tested = value
             case "without-casts": settings.withoutCasts = value
+            case "places": settings.places = value
+            case "shared-fields": settings.sharedFields = value
+            case "mixed-layouts": settings.mixedLayouts = value
             case "scenes-alone": settings.scenesAlone = value
             case "seed": settings.seed = UInt64(value)
             default: fatalError("BUN_FUZZILLI_TYPES: unknown setting \(part)")
@@ -2145,8 +2154,16 @@ final class TypeScriptPlan {
     }
 
     func convert(_ expression: Expression, producing v: Variable) -> Expression {
-        guard let conversion = outputConversions[v] else { return expression }
-        return apply(conversion, to: expression)
+        let converted = outputConversions[v].map { apply($0, to: expression) } ?? expression
+        guard isUnusedLiteral(v) else { return converted }
+        // Of a literal that nothing uses, `bun run` keeps `key + ""` for a computed key, and that throws for a symbol. An argument of a call stays as it is written.
+        return Expression(type: EffectfulBracketedExpression, text: "Object(\(converted.text))", numSubexpressions: 0)
+    }
+
+    private lazy var usedVariables: Set<Variable> = Set(code.flatMap { Array($0.inputs) })
+    private func isUnusedLiteral(_ v: Variable) -> Bool {
+        guard let definition = definition(of: v), definition.op is EndObjectLiteral else { return false }
+        return !usedVariables.contains(v)
     }
 
     private func apply(_ conversion: Conversion, to expression: Expression) -> Expression {
@@ -3439,7 +3456,10 @@ extension TypeScriptPlan {
                 sitesWithTests += 1
                 let (helpersOfTheRest, variablesOfTheRest) = (helpers, moduleVariables)
                 (helpers, moduleVariables) = (helpersOfTheScenes, variablesOfTheScenes)
-                scenesOfTheProgram += withTwin(choices.percent(settings.withoutCasts) ? sceneWithoutCasts(of: v, named: name) : sceneBehindDeclaration(of: v, named: name, at: index), site: v.number)
+                scenesOfTheProgram +=
+                    choices.percent(settings.places)
+                    ? sceneOfATypedPlace(site: v.number)
+                    : withTwin(choices.percent(settings.withoutCasts) ? sceneWithoutCasts(of: v, named: name) : sceneBehindDeclaration(of: v, named: name, at: index), site: v.number)
                 (helpersOfTheScenes, variablesOfTheScenes) = (helpers, moduleVariables)
                 (helpers, moduleVariables) = (helpersOfTheRest, variablesOfTheRest)
             }
@@ -3447,6 +3467,9 @@ extension TypeScriptPlan {
         }
         guard choices.percent(settings.tested) else { return [] }
         sitesWithTests += 1
+        if settings.sharedFields > 0, choices.percent(settings.sharedFields) { return sceneOfSharedFields(site: v.number) }
+        if settings.mixedLayouts > 0, choices.percent(settings.mixedLayouts) { return sceneOfMixedLayouts(site: v.number) }
+        if choices.percent(settings.places) { return sceneOfATypedPlace(site: v.number) }
         if choices.percent(settings.withoutCasts) { return withTwin(sceneWithoutCasts(of: v, named: name), site: v.number) }
         if choices.percent(30), let lines = disturb(v, named: name) { return lines }
         if !isStore, let type = annotations[v], type != .int32, !type.arms.contains(.int32), choices.percent(60) {
@@ -4214,6 +4237,324 @@ extension TypeScriptPlan {
         var lines = ["function \(function)(\(parameters)) {"] + indented(inner) + ["}"]
         lines += isGuardedInside ? calls : ["try {"] + indented(calls) + caught
         helpers.insert("note")
+        return ["{"] + indented(lines) + ["}"]
+    }
+
+    /// A place has a declared type: a field, a variable, a captured variable, an element, a parameter, a result. A value that the type doesn't allow enters it by a road that the checker accepts,
+    /// and the place is read behind a join, at the head of a loop, behind a call or through a second name. One place, one road, one way: the tables of write-typed-places.ts.
+    fileprivate func sceneOfATypedPlace(site n: Int) -> [String] {
+        struct Kind { var type: String, declared: [String] = [], honest: String, constant: String, json: String? = nil, uses: [String] }
+        struct Place { var declared: [String] = [], make: String? = nil, inTurn: [String] = [], store: (String) -> String, read: String, member: String? = nil, key: String? = nil, isWeighed = false }
+        let (E, L, C) = ("Tint\(n)", "Lid\(n)", "Crate\(n)")
+        let ofNumbers = ["X + 1", "X | 0", "X * 2", "-X", "X === 4 ? 1 : 0", "X > 2", "`${X}`"]
+        let members = "{ None = 0, Red = 1, Blue = 2, Gold = 4 }"
+        let constantEnum = Kind(type: E, declared: ["const enum \(E) \(members)"], honest: "(turn & 7) as \(E)", constant: "\(E).Red", json: "4", uses: ofNumbers)
+        let plainEnum = Kind(type: E, declared: ["enum \(E) \(members)"], honest: "(turn & 7) as \(E)", constant: "\(E).Red", json: "4", uses: ofNumbers)
+        let whole = Kind(type: "number", honest: "turn & 7", constant: "3", json: "3", uses: ofNumbers)
+        let fraction = Kind(type: "number", honest: "(turn & 3) + 0.5", constant: "1.25", json: "1.25", uses: ofNumbers)
+        let flag = Kind(type: "boolean", honest: "(turn & 4) === 4", constant: "true", json: "true", uses: ["X ? 1 : 2", "!X", "X === true"])
+        let text = Kind(type: "string", honest: "\"t\" + (turn & 3)", constant: "\"text\"", json: "\"text\"", uses: ["X.length", "X + \"!\"", "X === \"t1\""])
+        let literals = Kind(type: "1 | 2 | 4", honest: "(turn & 4) ? 1 : 4", constant: "2", json: "2", uses: ofNumbers)
+        let instance = Kind(
+            type: L, declared: ["class \(L) { weight: number; constructor(weight: number) { this.weight = weight; } }"], honest: "new \(L)(turn & 3)", constant: "new \(L)(1)",
+            uses: ["X.weight", "X.weight + 1"])
+        let list = Kind(type: "number[]", honest: "[turn & 3, 1]", constant: "[1, 2]", json: "[1,2]", uses: ["X.length", "X[0]", "X[0] + 1"])
+        let callee = Kind(type: "() => number", honest: "(() => turn & 3)", constant: "() => 1", uses: ["X()"])
+        let kind = choices.pick([constantEnum, constantEnum, plainEnum, plainEnum, whole, whole, whole, fraction, fraction, flag, flag, text, literals, instance, instance, list, callee])
+        let (T, H, K) = (kind.type, kind.honest, kind.constant)
+        let inUnion = T.contains("=>") ? "(\(T))" : T
+        var liar = choices.pick([
+            "undefined", "undefined", "undefined", "undefined", "null", "null", "null", "1.5", "NaN", "-0", "2147483648", "-2147483649", "\"4\"", "\"\"", "true", "false", "0", "{}", "[]", "7n",
+            "{ weight: \"w\" }",
+        ])
+        let (count, weigh) = ("count\(n)", "weigh\(n)")
+        var top =
+            kind.declared + [
+                "const counts\(n): Record<string, number> = {};",
+                "function \(count)(text: unknown): void { const key = String(text); counts\(n)[key] = (counts\(n)[key] ?? 0) + 1; }",
+                "function \(weigh)(value: unknown): string { return value === undefined ? \"U\" : value === null ? \"N\" : typeof value === \"function\" ? \"function\" : typeof value === \"object\" ? JSON.stringify(value) : Object.is(value, -0) ? \"-0\" : typeof value + \" \" + String(value); }",
+            ]
+
+        // The road: an expression that the checker takes for a T. While `honestly` holds it is one.
+        let roadName = choices.pick(["cast", "cast", "cast", "cast", "any", "any", "unknown", "asserted", "parsed", "generic", "pastTheEnd", "unseen", "optional", "late"])
+        if ["pastTheEnd", "optional", "late"].contains(roadName) || (roadName == "asserted" && liar != "null") { liar = "undefined" }
+        let lie = liar
+        let canBeParsed = kind.json != nil && !["NaN", "7n", "{ weight: \"w\" }"].contains(lie)
+        func road(_ honestly: String) -> (before: [String], value: String, raw: String) {
+            let raw = "(\(honestly) ? \(H) : \(lie))"
+            switch roadName {
+            case "cast": return (["const next = \(honestly) ? \(H) : \(lie);"], "next as \(T)", raw)
+            case "unknown": return ([], "\(raw) as unknown as \(T)", raw)
+            case "asserted": return (["const next: \(inUnion) | undefined | null = \(honestly) ? \(H) : \(lie);"], "next!", raw)
+            case "parsed" where canBeParsed: return ([], "JSON.parse(\(honestly) ? '[\(kind.json!)]' : '\(lie == "undefined" ? "[]" : "[\(lie)]")')[0]", raw)
+            case "generic": return ([], "pass\(n)<\(T)>(\(raw))", raw)
+            case "pastTheEnd": return (["const spare: \(inUnion)[] = [\(H)];"], "spare[\(honestly) ? 0 : 1]", raw)
+            case "unseen": return ([], "unseen\(n)(\(raw))", raw)
+            case "optional": return (["const loose: { tint?: \(T) } = \(honestly) ? { tint: \(H) } : {};"], "loose.tint!", raw)
+            case "late": return (["let late!: \(T);"], "\(honestly) ? \(H) : late", raw)
+            default: return ([], "\(raw) as any", raw)
+            }
+        }
+        if roadName == "generic" { top.append("function pass\(n)<T>(value: unknown): T { return value as T; }") }
+        if roadName == "unseen" { top.append("const unseen\(n) = (value: any): any => [value][JSON.parse(\"0\")];") }
+
+        // What is done with what is read. `X` is the read.
+        let seen = "{ const seen: unknown = X; if (seen === undefined || seen === null) holes++; else \(count)(\(weigh)(seen)); }"
+        let drawnUse =
+            choices.percent(75)
+            ? choices.pick([
+                "\(count)(\(weigh)(X));", "\(count)(\(weigh)(X));", seen, seen, "if (X === undefined) holes++; else if (X === null) holes += 1000; else \(count)(\(weigh)(X));", "\(count)(typeof X);",
+                "kept\(n) = X; \(count)(\(weigh)(kept\(n)));", "\(count)(\(weigh)(echo\(n)(X)));",
+            ]) : "\(count)(\(weigh)(\(choices.pick(kind.uses))));"
+
+        // The place.
+        func classWith(_ body: String) -> String { "class \(C) { \(body) }" }
+        func property(_ declared: [String], _ make: String, member: String = ".tint", key: String = "\"tint\"") -> Place {
+            Place(declared: declared, make: make, store: { "crate\(member) = \($0)" }, read: "crate\(member)", member: member, key: key)
+        }
+        let placeName = choices.pick([
+            "field", "field", "field", "field", "field", "parameterProperty", "initializer", "record", "record", "underASymbol", "privateName", "staticField", "variable", "variable", "captured", "captured",
+            "local", "element", "tuple", "valueOfAMap", "parameter", "parameter", "result", "result",
+        ])
+        let place: Place
+        switch placeName {
+        case "field": place = property([classWith("tint: \(T); other: number; constructor(turn: number) { this.tint = \(H); this.other = turn; }")], "new \(C)(turn)")
+        case "parameterProperty": place = property([classWith("constructor(public tint: \(T), public other: number) {}")], "new \(C)(\(H), turn)")
+        case "initializer": place = property([classWith("tint: \(T) = \(K); other = 0;")], "new \(C)()")
+        case "record": place = property(["interface \(C) { tint: \(T); other: number }"], "{ tint: \(H), other: turn }")
+        case "underASymbol":
+            place = property(
+                ["const key\(n) = Symbol(\"tint\");", classWith("[key\(n)]: \(T); constructor(turn: number) { this[key\(n)] = \(H); }")], "new \(C)(turn)", member: "[key\(n)]", key: "key\(n)")
+        case "privateName":
+            place = Place(
+                declared: [classWith("#tint: \(T); constructor(turn: number) { this.#tint = \(H); } put(value: \(T)): void { this.#tint = value; } get(): \(T) { return this.#tint; }")],
+                make: "new \(C)(turn)", store: { "crate.put(\($0))" }, read: "crate.get()")
+        case "staticField": place = Place(declared: [classWith("static tint: \(T) = \(K);")], store: { "\(C).tint = \($0)" }, read: "\(C).tint")
+        case "variable": place = Place(declared: ["let held\(n): \(T) = \(K);"], store: { "held\(n) = \($0)" }, read: "held\(n)")
+        case "captured":
+            let isPut = choices.percent(50)
+            place = Place(
+                inTurn: ["let held: \(T) = \(H);", "const put = (value: \(T)): void => { held = value; };", "const get = (): \(T) => held;"], store: { isPut ? "put(\($0))" : "held = \($0)" }, read: "get()")
+        case "local": place = Place(inTurn: ["let held: \(T) = \(H);"], store: { "held = \($0)" }, read: "held")
+        case "element": place = Place(inTurn: ["const list: \(inUnion)[] = [\(H), \(K)];"], store: { "list[1] = \($0)" }, read: "list[1]")
+        case "tuple": place = Place(inTurn: ["const pair: [\(T), number] = [\(H), turn];"], store: { "pair[0] = \($0)" }, read: "pair[0]")
+        case "valueOfAMap": place = Place(inTurn: ["const map = new Map<number, \(T)>([[1, \(H)]]);"], store: { "map.set(1, \($0))" }, read: "(map.get(1) as \(T))")
+        case "parameter":
+            let looked = choices.percent(60) ? "value" : choices.pick(kind.uses).replacingOccurrences(of: "X", with: "value")
+            place = Place(
+                declared: ["function take\(n)(value: \(T)): string { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return \(weigh)(\(looked)); }"], inTurn: ["let taken = \"\";"],
+                store: { "taken = take\(n)(\($0))" }, read: "taken", isWeighed: true)
+        default:
+            let given = road("honestly")
+            place = Place(
+                declared: ["function give\(n)(turn: number, honestly: boolean): \(T) { \(given.before.joined(separator: " ")) return \(given.value); }"], inTurn: ["let got: \(T) = \(H);"], store: { _ in "" },
+                read: "got")
+        }
+        top += place.declared
+        func use(_ read: String) -> String { (place.isWeighed ? "\(count)(X);" : drawnUse).replacingOccurrences(of: "X", with: read) }
+        if !place.isWeighed, drawnUse.contains("kept\(n)") { top.append("let kept\(n): \(T) = \(K);") }
+        if !place.isWeighed, drawnUse.contains("echo\(n)") { top.append("function echo\(n)(value: \(T)): \(T) { return value; }") }
+
+        // How the store is spelled. Most are assignments that the checker has seen.
+        let spelling =
+            place.member == nil
+            ? "typed" : choices.pick(["typed", "typed", "typed", "typed", "typed", "typed", "byAnyName", "reflect", "define", "assign", "proxy", "pattern", "deleted", "byAFunction"])
+        func storeOf(_ honestly: String, holder: String = "crate") -> (before: [String], store: String) {
+            let (before, value, raw) = road(honestly)
+            let (member, key) = (place.member ?? "", place.key ?? "")
+            switch placeName == "result" ? "given" : spelling {
+            case "given": return ([], "got = give\(n)(turn, \(honestly))")
+            case "byAnyName": return ([], "(\(holder) as any)\(member) = \(raw)")
+            case "reflect": return ([], "Reflect.set(\(holder), \(key), \(raw))")
+            case "define": return ([], "Object.defineProperty(\(holder), \(key), { value: \(raw), writable: true, enumerable: true, configurable: true })")
+            case "assign": return ([], "Object.assign(\(holder), { [\(key)]: \(raw) })")
+            case "proxy": return (before, "new Proxy(\(holder), {})\(member) = \(value)")
+            case "pattern": return (before, "[\(holder)\(member)] = [\(value)]")
+            case "deleted": return ([], "\(honestly) ? (\(holder)\(member) = \(H)) : delete (\(holder) as any)\(member)")
+            case "byAFunction": return ([], "smear\(n)(\(holder), \(raw))")
+            default: return (before, place.store(value).replacingOccurrences(of: "crate", with: holder))
+            }
+        }
+        if spelling == "byAFunction" { top.append("function smear\(n)(holder: \(C), value: any): void { holder\(place.member!) = value; }") }
+
+        // Where the holder comes from.
+        let origin = place.make == nil ? "none" : choices.pick(["fresh", "fresh", "fresh", "once", "parameter", "outside"])
+        let annotated = placeName == "record" ? ": \(C)" : ""
+        func made(with turn: String) -> String { place.make!.replacingOccurrences(of: "\\bturn\\b", with: turn, options: .regularExpression) }
+        if origin == "outside" { top.append("const crate\(n)\(annotated) = \(made(with: "1"));") }
+
+        // The way from the store to the read.
+        let honestly = choices.pick(["(turn & 2) !== 0", "(turn & 2) !== 0", "turn % 3 !== 0", "turn < turns - 1", "turn !== 1", "false"])
+        let hasHolder = place.make != nil
+        let way = choices.pick(
+            ["straight", "join", "join", "join", "headOfALoop", "headOfALoop", "reload", "call", "closure", "callback", "handler", "cases", "shortCircuit", "awaited"]
+                + (hasHolder ? ["secondName", "secondName", "twoParameters"] : []))
+        let (before, store) = storeOf(honestly)
+        let read = place.read
+        let throughOther = read.replacingOccurrences(of: "crate", with: "other")
+        var body = [String]()
+        switch way {
+        case "join": body = before + ["if (turn & 1) { \(store); }", use(read)]
+        case "headOfALoop":
+            let inner = storeOf("(k & 1) !== 0")
+            body = ["for (let k = 0; k < 4; k++) {", "    \(use(read))"] + indented(inner.before) + ["    \(inner.store);", "}"]
+        case "reload": body = [use(read)] + before + ["\(store);", use(read)]
+        case "call":
+            if hasHolder, spelling == "typed", let member = place.member {
+                top.append("function paint\(n)(holder: \(C), value: \(T)): void { holder\(member) = value; }")
+                body = before + ["paint\(n)(crate, \(road(honestly).value));", use(read)]
+            } else {
+                top.append("function idle\(n)(): void { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; }")
+                body = before + ["\(store);", "idle\(n)();", use(read)]
+            }
+        case "closure": body = before + ["const paint = (): void => { \(store); };", "if (turn & 1) paint();", use(read)]
+        case "callback": body = before + ["[turn].forEach(() => { \(store); });", use(read)]
+        case "handler": body = before + ["try { \(store); if (turn & 4) throw new Error(\"left\"); holes += 0; } catch { holes += 0; }", use(read)]
+        case "cases": body = before + ["switch (turn & 3) { case 1: \(store); break; case 2: holes += 0; break; default: }", use(read)]
+        case "shortCircuit": body = before + ["(turn & 1) !== 0 && (\(store), true);", use(read)]
+        case "secondName":
+            top.append("const shelf\(n): \(C)[] = [];")
+            body = ["shelf\(n)[0] = crate;", "const other = shelf\(n)[0];", use(throughOther)] + before + ["\(store);", use(throughOther)]
+        case "twoParameters":
+            let inner = storeOf(honestly, holder: "mine")
+            top.append(
+                "function both\(n)(mine: \(C), other: \(C), turn: number, turns: number): number { let holes = 0; \(use(throughOther)) \(inner.before.joined(separator: " ")) \(inner.store); \(use(throughOther)) return holes; }")
+            body = ["holes += both\(n)(crate, crate, turn, turns);"]
+        case "awaited": body = before + ["\(store);", "await null;", use(read)]
+        default: body = before + ["\(store);", use(read)]
+        }
+
+        let isAsync = way == "awaited"
+        let name = "tally\(n)"
+        var lines = top
+        lines.append("\(isAsync ? "async " : "")function \(name)(turns: number\(origin == "parameter" ? ", crate: \(C)" : "")): \(isAsync ? "Promise<string>" : "string") {")
+        lines.append("    let holes = 0;")
+        if origin == "once" { lines.append("    const crate\(annotated) = \(made(with: "turns"));") }
+        if origin == "outside" { lines.append("    const crate = crate\(n);") }
+        lines.append("    for (let turn = 0; turn < turns; turn++) {")
+        if origin == "fresh" { lines.append("        const crate\(annotated) = \(place.make!);") }
+        lines += indented(indented(place.inTurn + body))
+        lines += ["    }", "    return holes + \" holes \" + JSON.stringify(counts\(n));", "}"]
+        // What else the program does with objects of the class decides what the compiler may take for granted of them.
+        if hasHolder, let member = place.member {
+            switch choices.below(4) {
+            case 2:
+                lines += [
+                    "function strip\(n)(one: \(C)): void { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; delete (one as any)\(member); }", "strip\(n)(\(made(with: "1")));",
+                ]
+            case 3: lines.append("(globalThis as any)[JSON.parse('\"kept\(n)\"')] = [\(made(with: "0"))];")
+            default: break
+            }
+        }
+        for turns in choices.pick([[4, 400], [4, 400], [300], [3], [1, 2, 64]]) {
+            let call = "\(name)(\(turns)\(origin == "parameter" ? ", \(made(with: "1"))" : ""))"
+            lines.append(
+                isAsync
+                    ? "\(call).then(note, () => note(\"rejected\"));" : "try { note(\(call)); } catch (error) { note((error as any)?.name); \(Self.messageToStderr) }")
+        }
+        helpers.insert("note")
+        return ["{"] + indented(lines) + ["}"]
+    }
+
+    /// Loops read and store number fields of an object while classes with some of the same fields exist beside it, constructed or not, and start them at other kinds of values.
+    fileprivate func sceneOfSharedFields(site n: Int) -> [String] {
+        let names = ["n", "sum", "last"]
+        let numbers = ["0", "0", "1", "7", "0.5", "2.5", "-1"]
+        let values = numbers + ["true", "\"7\"", "null", "-0", "2147483648"]
+        let field = choices.pick(names)
+        let other = choices.pick(names.filter { $0 != field })
+        var lines = [String]()
+        var fieldsOfFirst = [String]()
+        for index in 0..<choices.pick([1, 2, 4, 4, 4, 4]) {
+            let own = names.filter { _ in choices.percent(index == 0 ? 65 : 4) }
+            if index == 0 { fieldsOfFirst = own }
+            let keyword = choices.percent(50) ? "declare " : ""
+            let declared = (["list"] + own).map { "\(keyword)\($0): any; " }.joined()
+            let stores = own.map { " this.\($0) = \(choices.pick(numbers));" }.joined()
+            lines.append("class Shared\(n)_\(index) { \(declared)constructor(list: any) { this.list = list;\(stores) } }")
+        }
+        lines.append("const revive\(n) = (value: any): any => JSON.parse(\"0\", () => value);")
+        // A type with the fields of a class lets an object stand for one of its instances.
+        let parameter = choices.percent(75) ? "{ \((["list"] + fieldsOfFirst).map { "\($0): any; " }.joined())[name: string]: any }" : "any"
+        let step = choices.pick(["+= 0.5", "+= 0.5", "+= 0.5", "/= 2", "+= 1", "+= 2 ** 40", "+= \"x\""])
+        let store = choices.pick(["(o.\(other) + 1) | 0", "i", "i", "o.\(other) + 0.5", "o.\(field)"])
+        let computed = choices.pick(["(o.\(field) * 31 + o.list[i >> 1]) | 0", "(o.\(field) + o.list[i >> 1]) | 0", "(o.\(field) * 31 + i) | 0", "Math.floor(o.\(field) * 31 + o.list[i >> 1])"])
+        var body = ["        o.\(other) = \(store);", "        o.\(field) = \(computed);"]
+        if choices.percent(10) { body.reverse() }
+        lines += ["function tally\(n)(o: \(parameter)): string {", "    for (let j = 0; j < \(choices.pick([1, 3, 3, 3, 4])); j++) o.\(field) \(step);", "    for (let i = 0; i < \(choices.pick([1, 8, 8, 8])); i++) {"] + body
+        lines += ["    }", "    return o.\(field) + \"/\" + o.\(other);", "}"]
+        switch choices.below(4) {
+        case 0, 1: lines += ["const rows\(n): any[] = [];", "for (const row of rows\(n)) printValue(\"made\", typeof new Shared\(n)_0(row));"]
+        case 2: lines.append("printValue(\"made\", typeof new Shared\(n)_0([1]));")
+        default: break
+        }
+        let order = choices.percent(80) ? ["list"] + names : ["sum", "n", "list", "last"]
+        let members = order.map { name -> String in
+            if name == "list" { return "list: [1, 2, 3, 4]" }
+            return "\(name): \(name == other && choices.percent(50) ? choices.pick(["0.5", "2.5", "true"]) : choices.percent(70) ? choices.pick(numbers) : choices.pick(values))"
+        }
+        let object = "{ \(members.joined(separator: ", ")) }"
+        let made = choices.pick(["revive\(n)(\(object))", "revive\(n)(\(object))", "revive\(n)(\(object))", object, "{ ...\(object) }", "JSON.parse(JSON.stringify(\(object)))", "[\(object)][JSON.parse(\"0\")]"])
+        lines.append("try { printValue(\"fields\", tally\(n)(\(made) as any)); } catch (error) { printValue(\"threw\", (error as any)?.name); \(Self.messageToStderr) }")
+        return ["{"] + indented(lines) + ["}"]
+    }
+
+    /// A list holds objects of several classes and a primitive, and one object is changed. Functions read fields of each element more than once and behind tests of what it is.
+    fileprivate func sceneOfMixedLayouts(site n: Int) -> [String] {
+        let (primitive, kind) = choices.pick([("4", "number"), ("4", "number"), ("2.5", "number"), ("\"word\"", "string"), ("true", "boolean"), ("5n", "bigint")])
+        let classCount = choices.pick([2, 3, 3, 3, 4])
+        var lines = [String]()
+        for index in 0..<classCount {
+            let own = index == 0 ? ["size", "lid"] : choices.percent(75) ? ["own\(index)"] : ["own\(index)", choices.pick(["size", "lid"])]
+            let type = choices.pick(["number", "number", "any"])
+            let declared = own.map { "\($0): \(type); " }.joined()
+            let stores = own.map { " this.\($0) = value;" }.joined()
+            lines.append("class Mixed\(n)_\(index) { \(declared)constructor(value: \(type)) {\(stores) } }")
+        }
+        let classes = (0..<classCount).map { "Mixed\(n)_\($0)" }
+        let union = (classes + [kind]).joined(separator: " | ")
+        let parameter = choices.percent(60) ? union : "any"
+        let object = parameter == "any" ? "value" : "(value as Mixed\(n)_0)"
+        let tests = [
+            "typeof value !== \"\(kind)\"", "typeof value !== \"\(kind)\"", "typeof value !== \"\(kind)\"", "typeof value === \"object\"",
+            "value instanceof Mixed\(n)_0", "!(value instanceof Mixed\(n)_1)", "value != null", "typeof value !== \"\(kind)\" && value instanceof Mixed\(n)_0",
+        ]
+        for reader in 0..<choices.pick([1, 2, 3]) {
+            var body = [String]()
+            func use() -> String {
+                let read = "\(object).\(choices.percent(75) ? "size" : "lid")"
+                return choices.pick(["text += \(read);", "text += \"/\" + \(read);", "text += `${\(read)}`;", "total += (\(read) as any) | 0;", "text += String(\(read));", "if ((\(read) as any) === 5) total += 100;"])
+            }
+            body.append(use())
+            for _ in 0..<choices.pick([1, 2, 3]) {
+                let test = choices.pick(tests)
+                switch choices.below(5) {
+                case 0: body += ["if (\(test)) {", "    \(use())", "} else {", "    total += 1000;", "}"]
+                case 1: body += ["if (!(\(test))) return text + total;", use()]
+                case 2: body.append(use())
+                default: body.append("if (\(test)) \(use())")
+                }
+            }
+            if choices.percent(40) { body = ["for (let turn = 0; turn < \(choices.pick([1, 2, 3])); turn++) {"] + indented(body) + ["}"] }
+            lines += ["function describe\(n)_\(reader)(value: \(parameter)): string {", "    let text = \"\";", "    let total = 0;"] + indented(body) + ["    return text + total;", "}"]
+            lines.append("const read\(n)_\(reader) = describe\(n)_\(reader);")
+            if reader == 0 {
+                lines.append("const changed\(n) = new Mixed\(n)_0(5);")
+                lines.append(
+                    choices.pick([
+                        "delete (changed\(n) as any).lid;", "delete (changed\(n) as any).lid;", "delete (changed\(n) as any).lid;", "delete (changed\(n) as any).size;", "(changed\(n) as any).more = 1;", "Object.freeze(changed\(n));",
+                        "Object.defineProperty(changed\(n), \"lid\", { get: () => 8, enumerable: true, configurable: true });", "Object.setPrototypeOf(changed\(n), { own1: 6 });", "(changed\(n) as any).size = \"another\";",
+                    ]))
+                let elements = classes.enumerated().map { "new \($1)(\($0 + 1))" } + ["changed\(n)", primitive]
+                lines.append("const mixed\(n): (\(parameter))[] = [\(elements.joined(separator: ", "))];")
+            }
+            let name = choices.percent(85) ? "describe\(n)_\(reader)" : "read\(n)_\(reader)"
+            switch choices.below(5) {
+            case 0: lines.append("for (const each of mixed\(n)) printValue(\"mixed\", \(name)(each));")
+            case 1: lines += (0..<(classCount + 2)).map { "printValue(\"mixed\", \(name)(mixed\(n)[\($0)]!));" }
+            default: lines.append("for (let i = 0; i < mixed\(n).length; i++) printValue(\"mixed\", \(name)(mixed\(n)[i]!));")
+            }
+        }
         return ["{"] + indented(lines) + ["}"]
     }
 

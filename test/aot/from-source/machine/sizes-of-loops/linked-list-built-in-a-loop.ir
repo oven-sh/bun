@@ -1,0 +1,18 @@
+# f1 = build
+# -- source: linked-list-built-in-a-loop.ts
+# type Cell = { value: number; next: Cell | null };
+# function build(limit: number): Cell | null {
+#   let head: Cell | null = null;
+#   for (let k = 0; k < limit; k++) head = { value: k, next: head };
+#   return head;
+# }
+# declare const input: any;
+# const list = build(input | 0);
+# (globalThis as any).answer = [list, list!.value, list!.next];
+# -- end of source
+# The compiler before this one: 9 instructions, 2 of them patches.
+# When the bound was taken: loop: operations 11, patches 2, moves 2, unlikely 0.
+# RUN(X64): loops most:13 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 13

@@ -1,0 +1,15 @@
+# -- source: helper-handed-a-closure-is-called-where-the-unit-runs-once.js
+# function some(list, test) { for (let i = 0; i < list.length; i++) { if (test(list[i])) return true; } return false; }
+# function has(list, k) { return some(list, x => x === k); }
+# const list = [1, 2, 3];
+# print(some(list, x => x === 2), has(list, 3), has(list, 4));
+# -- end of source
+# If a helper were copied wherever it is handed a closure, the body of a module, which runs once, would hold a copy for each such line of the file
+# in a function that may run again the helper and its callback are copied, and the closure is not made. In the body of the module, outside of loops, the helper is called
+# RUN: walk f2 mechanisms=all
+# CHECK: frame 1 callee=f1
+# CHECK: frame 2 callee=f4 {{*}}parent=1
+# RUN(ONCE): walk f0 mechanisms=all
+# ONCE-NOT: callee=f1
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

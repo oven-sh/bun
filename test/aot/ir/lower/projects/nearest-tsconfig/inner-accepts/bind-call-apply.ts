@@ -1,4 +1,6 @@
-// RUN: lower
+// RUN: link
+// STATISTIC: SourceFilesDemoted = 1
+// CHECK: function {{*}}name="f" {{*}}parameters=[{type=number flags=[IsExpected]}]
 
 // FILE: main.ts
 import "./inner/lib.ts";

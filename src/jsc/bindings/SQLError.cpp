@@ -30,11 +30,9 @@ static Structure* sqlErrorStructure(VM& vm, Zig::GlobalObject* realm, SQLErrorCl
         return structure;
 
     // The adapter that makes the error has loaded this module, so no JavaScript runs here.
-    JSValue classes = BUN_REQUIRE_INTERNAL_MODULE(realm, InternalSqlErrors, "bun:sql", "MySQLError"_s, "PostgresError"_s);
+    JSValue constructor = isMySQL ? BUN_REQUIRE_INTERNAL_MODULE(realm, InternalSqlErrors, "bun:sql", "MySQLError"_s) : BUN_REQUIRE_INTERNAL_MODULE(realm, InternalSqlErrors, "bun:sql", "PostgresError"_s);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_ASSERT(classes.isObject());
-    JSValue constructor = classes.getObject()->getDirect(vm, Identifier::fromString(vm, isMySQL ? "MySQLError"_s : "PostgresError"_s));
-    RELEASE_ASSERT(constructor && constructor.isObject());
+    RELEASE_ASSERT(constructor.isObject());
     // `prototype` of a class is an own data property that user code cannot change. A compiled class makes it when it is first read.
     JSValue prototype = constructor.getObject()->get(realm, vm.propertyNames->prototype);
     RETURN_IF_EXCEPTION(scope, nullptr);

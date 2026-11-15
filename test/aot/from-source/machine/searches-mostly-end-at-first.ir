@@ -1,0 +1,12 @@
+# -- source: main.cjs
+# class Entry { constructor(k, v, next) { this.k = k; this.v = v; this.next = next; } }
+# class Table { constructor() { this.slots = [null, null, null, null]; } put(k, v) { this.slots[k & 3] = new Entry(k, v, this.slots[k & 3]); } total(n) { let t = 0; for (let i = 0; i < n; i++) { let e = this.slots[i & 3]; while (e && e.k !== i) e = e.next; if (e) t += e.v; } return t; } }
+# const table = new Table(); for (let i = 0; i < 9; i++) table.put(i, i * 3);
+# print(table.total(2), table.total(9), table.total(20));
+# -- end of source
+# The entry that a link led to is mostly the one that is sought: the way to the next one is unlikely. f4 = total
+# RUN: emit f4:Body mechanisms=all
+# CHECK-LABEL: unit f4:Body
+# CHECK: Branch(@{{*}}) -> #{{*}}, unlikely #
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 3 108 108

@@ -88,6 +88,9 @@ public:
     Bun::JSModuleGraph* moduleGraph() const { return m_moduleGraph.get(); }
     void setModuleGraph(JSC::VM&, Bun::JSModuleGraph*);
 
+    // The engine made it for a module of the executable, so its require() is a loader of the executable, whoever calls it.
+    bool isOfCompiledModule { false };
+
 private:
     static ImportMetaObject* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url);
 

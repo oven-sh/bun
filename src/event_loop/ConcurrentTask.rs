@@ -112,6 +112,7 @@ pub mod task_tag {
         RuntimeTranspilerStore,
         S3HttpDownloadStreamingTask,
         S3HttpSimpleTask,
+        S3RefusedRequest,
         S3UploadWriterCollected,  // MultiPartUpload (its `writer()` was collected before `end()`)
         SendQueueDeferred,        // bun_runtime::ipc::SendQueue (close / after-close hop)
         ServerAllConnectionsClosedTask,
@@ -298,9 +299,8 @@ pub struct ConcurrentTask {
 impl Default for ConcurrentTask {
     fn default() -> Self {
         Self {
-            // SAFETY: all-zero is a valid bit pattern for `Task` (plain tag
-            // byte + raw pointer); caller must set a real task before use.
-            task: unsafe { bun_core::ffi::zeroed_unchecked() },
+            // A placeholder: the caller must set a real task before use.
+            task: Task::new(TaskTag(0), core::ptr::null_mut(), ContextId::NONE),
             next: Link::new(),
             auto_delete: false,
         }

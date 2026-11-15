@@ -1,0 +1,21 @@
+# -- source: a-row-with-an-iterator-of-its-own-among-rows-of-numbers-is-taken-apart-by-that-iterator.cjs
+# "use strict";
+# const rows = [[0.5, 2, 1], [1.5, 4, 3], Object.assign([2.5, 6, 1], { *[Symbol.iterator]() { yield 10; yield 20; yield 3; } }), [3.5, 8, 3]];
+# function total(list, t) { let s = t & 1; for (let i = 0; i < list.length; i++) { const [x, y, z] = list[i]; s += x * 2 + y - z; } return s; }
+# print(total(rows, 3));
+# -- end of source
+# In an iteration of a specialized version, an iteration guard checks that the operand of a pattern is a pristine array. If it is not, the iteration restarts in the generic version.
+# The third row has an iterator method of its own assigned to it.
+# So the pattern takes what that iterator yields (10, 20, 3, which adds 37), not the elements of the row (2.5, 6, 1, which would add 10).
+# Fault injection, testing=AssumePristineDestructuring: the guard tests the type alone and assumes that the array is pristine.
+# The elements are read in place of what the iterator yields, and nothing catches it: the iteration guard is the only safeguard.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 56
+# CHECK-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=AssumePristineDestructuring
+# LIE: 29
+# LIE-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=AssumePristineDestructuring,CheckProofsAtRunTime
+# HELD: bun: internal AOT error: redundancy elimination check failed
+# HELD-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# HELD: crashed with

@@ -1,0 +1,22 @@
+# `function workshop(label) { function Leaf(kind, pos) { this.kind = kind; .. } function make(kind) { return new Leaf(kind, -1); } .. }`: whoever gets `workshop` may call it again, and each call makes a function object `Leaf` with a prototype object of its own.
+# The run time takes the first that makes an object for the class. So the allocation lists the stores as for a function that is evaluated once: the guards of the names are asked in front of it, where the new cell stands is looked at behind it,
+# and on either failing way the construction stays as written.
+# f1 = workshop, f2 = Leaf, f3 = make
+# -- source: allocation-lists-the-stores-of-a-constructor-function-whose-holder-may-run-again.ts
+# declare function sink(...values: unknown[]): void;
+# function workshop(label: string) {
+#   function Leaf(this: any, kind: number, pos: number) { this.kind = kind; this.pos = pos; this.id = 0; this.parent = undefined; }
+#   function make(kind: number) { return new (Leaf as any)(kind, -1); }
+#   return { make, label };
+# }
+# sink(workshop);
+# -- end of source
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: = AreMembersUnchanged
+# CHECK: [[made]]: {{*}} = NewObject {{*}}fields=[0, 1, 2, 3]
+# CHECK: = HasLayoutPrototype [[made]]
+# CHECK: = Construct
+# RUN(NEVER): walk f3 mechanisms=all
+# NEVER-NOT: PropSet
+# NEVER-NOT: PutSlot

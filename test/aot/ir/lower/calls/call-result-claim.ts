@@ -2,12 +2,11 @@
 // CHECK-LABEL: function {{*}}name="anyResult"
 // CHECK-NOT: Convert
 // CHECK: [[untypedResult]] = Call {{*}}calleeName="untyped"
-// CHECK-NEXT: [[expected]] = Convert [[untypedResult]] declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: [[n]] = Convert [[expected]] declared={type=number site=w{{*}}} illTypedCause=FromLooseType
+// CHECK-NEXT: [[n]] = Convert [[untypedResult]] declared={type=number} @
 // CHECK-NEXT: = Negate [[n]]
 // CHECK-LABEL: function {{*}}name="writtenResult"
 // CHECK: [[result]] = Call [[callee]], {{*}}calleeName="parse"
-// CHECK-NEXT: [[config]] = Convert [[result]] declared={type=undefined|null|L{{*}} site=w{{*}}} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: [[config]] = Convert [[result]] declared={type=undefined|null|L{{*}}} illTypedCause=DeclarationWithoutBody
 // CHECK-NEXT: = PropGet [[config]] key="port"
 
 interface Config {

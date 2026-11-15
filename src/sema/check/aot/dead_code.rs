@@ -1,8 +1,9 @@
-use crate::bind::Decl;
+use crate::bind::{Bound, Decl, Parent};
 use crate::check::Checker;
 use crate::check::errors_aliases::Directives;
 use crate::check::sink::Reported;
-use crate::hir::{ExprId, Flags, FnId, StmtId, StmtKind};
+use crate::fold::Decisions;
+use crate::hir::{ExprKind, File, Flags, FnId, StmtKind};
 use crate::node::{Node, NodeData};
 use crate::program::FileId;
 use crate::util::SharedSort;
@@ -17,25 +18,56 @@ fn is_in_ranges(ranges: &[(u32, u32)], position: u32) -> bool {
     (ranges.iter()).any(|&(start, end)| (start..end).contains(&position))
 }
 
+fn keep_outermost(ranges: &mut Vec<(u32, u32)>) {
+    ranges.shared_sort_unstable();
+    let mut max_end = 0;
+    ranges.retain(|&(_, end)| {
+        let is_nested = end <= max_end;
+        max_end = max_end.max(end);
+        !is_nested
+    });
+}
+
+fn is_in_outermost(ranges: &[(u32, u32)], position: u32) -> bool {
+    let after = ranges.partition_point(|&(start, _)| start <= position);
+    after != 0 && position < ranges[after - 1].1
+}
+
+/// Whether the statement or expression right above `node` is dead.
+fn is_in_dead_node(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    node: Node,
+) -> bool {
+    let known = match hir.data(node) {
+        NodeData::Expr(e) => bound.parent_of_expr(e),
+        NodeData::Stmt(s) if !bound.is_head_of_for(hir, s) => bound.parent_of_stmt(s),
+        _ => Parent::None,
+    };
+    // The binder knows most of them, and the parents of the whole file aren't asked for.
+    match known {
+        Parent::File => return false,
+        Parent::Expr(e) if !matches!(hir[e].kind, ExprKind::Assign { .. }) => {
+            return decisions.is_dead_expr(e);
+        }
+        Parent::Stmt(s) if s.is_some() && !bound.is_head_of_for(hir, s) => {
+            return decisions.is_dead_stmt(s);
+        }
+        _ => {}
+    }
+    let mut above = hir.parent(node);
+    while above.is_some() {
+        match hir.data(above) {
+            NodeData::Stmt(statement) => return decisions.is_dead_stmt(statement),
+            NodeData::Expr(expression) => return decisions.is_dead_expr(expression),
+            _ => above = hir.parent(above),
+        }
+    }
+    false
+}
+
 impl Checker<'_, '_> {
-    fn is_dead_node(&self, file: FileId, node: Node) -> bool {
-        let data = self.hir(file).data(node);
-        if let NodeData::Stmt(statement) = data {
-            return self.is_dead_statement(file, statement);
-        }
-        if let NodeData::Expr(expression) = data {
-            return self.is_dead_expression(file, expression);
-        }
-        false
-    }
-
-    fn is_outermost_dead_node(&self, file: FileId, node: Node) -> bool {
-        let hir = self.hir(file);
-        let can_be_dead =
-            |ancestor: Node| matches!(hir.data(ancestor), NodeData::Stmt(_) | NodeData::Expr(_));
-        !self.is_dead_node(file, hir.find_ancestor(hir.parent(node), can_be_dead))
-    }
-
     pub(in crate::check) fn compute_dead_code_ranges(&mut self, file: FileId) {
         let mut ranges = std::mem::take(&mut self.dead_code.ranges);
         let mut sorted_ranges = std::mem::take(&mut self.dead_code.sorted_ranges);
@@ -43,13 +75,7 @@ impl Checker<'_, '_> {
             self.collect_dead_code_ranges(file, &mut ranges);
         }
         sorted_ranges.extend_from_slice(&ranges);
-        sorted_ranges.shared_sort_unstable();
-        let mut max_end = 0;
-        sorted_ranges.retain(|&(_, end)| {
-            let is_nested = end <= max_end;
-            max_end = max_end.max(end);
-            !is_nested
-        });
+        keep_outermost(&mut sorted_ranges);
         self.dead_code = DeadCodeRanges {
             ranges,
             sorted_ranges,
@@ -62,27 +88,27 @@ impl Checker<'_, '_> {
     }
 
     pub(in crate::check) fn is_in_dead_code(&self, position: u32) -> bool {
-        let ranges = &self.dead_code.sorted_ranges;
-        let after = ranges.partition_point(|&(start, _)| start <= position);
-        after != 0 && position < ranges[after - 1].1
+        is_in_outermost(&self.dead_code.sorted_ranges, position)
     }
 
     fn collect_dead_code_ranges(&self, file: FileId, dead_code: &mut Vec<(u32, u32)>) {
-        let hir = self.hir(file);
-        for (index, statement) in hir.stmts.iter().enumerate() {
-            let id = StmtId(index as u32);
-            if self.is_dead_statement(file, id)
-                && !matches!(statement.kind, StmtKind::Empty)
-                && self.is_outermost_dead_node(file, hir.node(id))
+        let Some(compiled) = self.files.compiled(file) else {
+            return;
+        };
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let decisions = &compiled.analysis.decisions;
+        for id in decisions.dead_stmts() {
+            let statement = &hir[id];
+            if !matches!(statement.kind, StmtKind::Empty)
+                && !is_in_dead_node(hir, bound, decisions, hir.node(id))
             {
                 dead_code.push((statement.start, statement.loc.end));
             }
         }
-        for id in (0..hir.exprs.len() as u32).map(ExprId) {
-            let is_never_evaluated = self.is_short_circuited_link(file, id)
-                || self.is_dead_expression(file, id)
-                    && self.is_outermost_dead_node(file, hir.node(id));
-            if is_never_evaluated {
+        for id in decisions.dead_exprs_and_short_circuited_links() {
+            if decisions.is_short_circuited_link(id)
+                || !is_in_dead_node(hir, bound, decisions, hir.node(id))
+            {
                 dead_code.push((self.start_of(file, id), self.end_of_expr(file, id)));
             }
         }

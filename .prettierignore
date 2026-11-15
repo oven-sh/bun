@@ -45,6 +45,9 @@ src/js/internal/repl/await.ts
 src/js/internal/repl/acorn.ts
 src/js/internal/repl/acorn-walk.ts
 
+# one statement a line: test/aot/tools/answers-test-from-source.ts erases the types line by line and joins the lines
+test/aot/answers
+
 # each line is a constructor as somebody may write it, and where its tokens stand is what is tested
 test/aot/parallel/errors/error-out-of-making-this-*
 test/aot/parallel/errors/error-at-shorthand-property-names-the-property.js

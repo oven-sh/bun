@@ -1,6 +1,5 @@
 // None of these reads a member of Object, String.prototype or Promise: a literal without a prototype, an import() and a require() of a name made at run time.
 // Number.isSafeInteger is read in front of its operand, whatever the operand is.
-// Alone: the order of the keys of a built-in object follows from which members were read first, and the other entry points of a joined executable read some
 function list(holder) {
   Object.entries(holder);
   console.log(Reflect.ownKeys(holder).map(String).join());

@@ -4,8 +4,10 @@ import { family } from "../family";
 
 //   bun -e 'const p = require("./test/aot/fuzz/generators/mixed-module-graphs").program(7); console.log(p.notes, p.files, p.text)'    prints the graph of a seed
 
-// Plain Bun transpiles on one thread here, so files are read in request order. An executable reads no files.
+// Plain Bun transpiles on one thread here, so files are read in request order. Without the variable it reads them on
+// several threads and a file that `import()` asks for runs in a later turn, as it does in an executable.
 const plainEnv = { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" };
+const unstablePlainOutput = "as plain Bun where it reads files on several threads";
 
 // `bun run` does not finish these in forty seconds.
 const nothingToCompareWith = new Set<number>([72, 143, 147, 286, 327, 387, 399, 447]);
@@ -37,11 +39,13 @@ export default family("mixed module graphs", [
       name: `seed ${seed}`,
       linesDepartToday: howItDeparts.get(seed),
       plainEnv,
+      unstablePlainOutput,
       make: () => program(seed),
     })),
   ...firstImportIsMadeLong.map(seed => ({
     name: `seed ${seed}, the file that is imported first is long`,
     plainEnv,
+    unstablePlainOutput,
     make: () => withALongFirstImport(seed),
   })),
 ]);

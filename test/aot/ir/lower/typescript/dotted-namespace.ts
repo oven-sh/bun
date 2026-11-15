@@ -2,10 +2,14 @@
 // CHECK-LABEL: function {{*}}kind=Module
 // CHECK: [[outerHead]] = NewObject
 // CHECK: [[outer]] = FinishObject [[outerHead]]
+// CHECK: PutModuleVariable
+// CHECK: [[outerName]] = Convert [[outer]]
+// CHECK: [[found]] = PropGet [[outerName]] key="B"
+// CHECK: ToBoolean [[found]]
 // CHECK: [[innerHead]] = NewObject
 // CHECK: [[inner]] = FinishObject [[innerHead]]
-// CHECK: PropSet [[outer]], [[inner]] key="B"
-// CHECK: PropSet [[inner]], {{*}}key="c"
+// CHECK: PropSet [[outerName]], {{*}} key="B"
+// CHECK: PropSet {{*}}key="c"
 
 // RUN(CONTAINERS): lower
 // CONTAINERS-COUNT-2: = NewObject

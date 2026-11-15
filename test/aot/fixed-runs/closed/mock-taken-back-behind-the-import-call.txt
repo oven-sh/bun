@@ -1,0 +1,26 @@
+A mock that is taken back right behind the import() call is gone when the load comes to its module: the factory is never called and the importer gets the module itself. A compiled run had called the factory inside the call, and the importer kept the mock.
+#### back.test.js
+import { test, vi } from "bun:test";
+test("taken back", async () => {
+  vi.doMock("./k.js", () => { console.log("| CASE the factory runs"); return { x: "mock" }; });
+  const user = import("./user.js");
+  vi.doUnmock("./k.js");
+  console.log("| CASE", (await user).seen);
+});
+test("replaced", async () => {
+  vi.doMock("./k2.js", () => { console.log("| CASE the first factory runs"); return { x: "first" }; });
+  const user = import("./user2.js");
+  vi.doMock("./k2.js", () => { console.log("| CASE the second factory runs"); return { x: "second" }; });
+  console.log("| CASE", (await user).seen);
+});
+#### k.js
+console.log("| CASE k runs");
+export const x = "real";
+#### k2.js
+export const x = "real";
+#### user.js
+import { x } from "./k.js";
+export const seen = x;
+#### user2.js
+import { x } from "./k2.js";
+export const seen = x;

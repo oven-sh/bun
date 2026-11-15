@@ -1,0 +1,19 @@
+# `kept = { ...first, ...second }`, both records typed, every name listed by the literal's layout: the run time copies between two layouts by a plan that it keeps: cheaper than closed definitions one by one.
+# The copy becomes definitions only where it brings a name that the target's layout does not list.
+# f1 = run
+# -- source: main.ts
+# declare function print(value: any): void;
+# interface Half { left: number; label: string; open: boolean; size: number }
+# interface Both extends Half { depth: number }
+# let kept: Both = { left: 1, label: "b", open: true, size: 2, depth: 4 };
+# let first: Half = { left: 1, label: "b", open: true, size: 2 };
+# const second = { size: 3, depth: 4 };
+# function run(n: number): number { let s = 0; for (let i = 0, end = n | 0; i < end; i++) s = (s + ((kept = { ...first, ...second }).depth)) | 0; first = kept; return s; }
+# print(run(JSON.parse("3")) + " " + Object.keys(kept).join());
+# -- end of source
+# RUN(WALK): walk f1:Body mechanisms=all
+# WALK: CopyDataProperties
+# WALK-NOT: PropDefine {{*}} key="depth"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 12 left,label,open,size,depth
+# ANSWERS-NEXT: exited with 0

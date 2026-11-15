@@ -1,0 +1,32 @@
+# process.stdin.isTTY
+# The whole stream for input queues a tick when it is made, so a program that has stored a function of its own under process.nextTick can tell it from the light stream: the function that makes the whole stream
+# hangs on process.stdin under the condition that the program stores that member. Nobody stores it here: the member is taken for a constant, and is locked when the program starts.
+# If Link took the condition for one that may hold, one question to process.stdin would bring the whole stream.
+# The controls stand beside this file: the-input-stream-is-the-whole-one-where-*.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1 unreached
+# CHECK-NOT: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/ProcessObjectInternals.ts" displayPath="/$bun/js/builtins/ProcessObjectInternals.ts" flags=[IsLibrary]
+module m2 path="/$bun/js/builtins/stdio.ts" displayPath="/$bun/js/builtins/stdio.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ProcessObjectInternalsGetStdinStream function=f1
+runtimefunction id=StdioGetLightStdinStream function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="stdin"
+    v2 = Convert v1 declared={type=builtin(ProcessStdin) flags=[IsExpected]}
+    v3 = PropGet v2 key="isTTY"
+    Return v3
+}
+function f1 name="getStdinStream" module=m1 kind=Method role=Library flags=[HasExplicitName] length=4 enclosingRuntimeFunction=ProcessObjectInternalsGetStdinStream thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}
+function f2 name="getLightStdinStream" module=m2 kind=Method role=Library flags=[HasExplicitName] length=2 enclosingRuntimeFunction=StdioGetLightStdinStream thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}

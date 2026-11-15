@@ -1,0 +1,25 @@
+# -- source: main.cjs
+# const given = JSON.parse('["level",["a",7,"a"],"ab",[1,2],[],"",{"length":3,"0":"q","1":"r","2":"q"},{"length":2,"0":1,"1":2},[null,null],["x",[1],"x"]]');
+# given.push(new Uint8Array([5, 6, 5]), new String("noon"), Object.assign(["a", "b"], { length: 1 }));
+# function isMirroredHeld(held) {
+#     let i = 0, j = held.length - 1;
+#     while (i < j && held[i] === held[j]) { i++; j--; }
+#     return i >= j;
+# }
+# function mirroredByHelper(from) { let said = ""; for (const held of given) { said += isMirroredHeld(held) ? "y" : "n"; } return said + from; }
+# globalThis.kept = mirroredByHelper;
+# for (let turn = 0; turn < 3; turn++) print(mirroredByHelper(turn));
+# -- end of source
+# Where proofs are checked, the row of a copy that was found under a key is held in the turn against the operation that finds an own value of a plain object under a TEXT (holdRowRememberedAgainstReadInTurn()).
+# An ELEMENT remembered of a list under a counter lies under the same kind of note. Held against that operation it reads "absent": this right program stopped under testing=CheckProofsAtRunTime and --aot-harden=proof-checks
+# The check is built for the row of the copy alone; every other remembered answer is walked a second time, as before.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: yynnyyynyyyyy0
+# RIGHT-NEXT: yynnyyynyyyyy1
+# RIGHT-NEXT: yynnyyynyyyyy2
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: yynnyyynyyyyy0
+# HELD-NEXT: yynnyyynyyyyy1
+# HELD-NEXT: yynnyyynyyyyy2
+# HELD-NEXT: exited with 0

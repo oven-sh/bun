@@ -43,7 +43,7 @@ impl JSUint8Array {
 }
 
 unsafe extern "C" {
-    fn JSUint8Array__fromDefaultAllocator(
+    pub(crate) fn JSUint8Array__fromDefaultAllocator(
         global: *const JSGlobalObject,
         ptr: *mut u8,
         len: usize,

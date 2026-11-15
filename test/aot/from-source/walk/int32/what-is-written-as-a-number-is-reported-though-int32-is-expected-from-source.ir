@@ -1,0 +1,12 @@
+# the twin from source of what-is-written-as-a-number-is-reported-though-int32-is-expected.ir: what is read out of a place that is written as a number asks for a proof, whatever a guess would ask it for
+# the body takes the read into a bit operator, so int32 is expected of it, and a test stands behind every guess. None stands behind the report, so the build reports
+# f1 = lineOf
+# -- source: what-is-written-as-a-number-is-reported-though-int32-is-expected-from-source.ts
+# declare function sink(...values: unknown[]): void;
+# function lineOf(c: { line: number }): Bun.int32 { const line = c.line; sink(line & 255); return line; }
+# sink(lineOf);
+# -- end of source
+# DIAGNOSTIC: UnprovenInt32
+# what is written of a parameter comes by Link, so the run has every mechanism. The build has an error, so no unit is printed
+# RUN: walk f1 mechanisms=all
+# CHECK: the walk of f1:Body failed

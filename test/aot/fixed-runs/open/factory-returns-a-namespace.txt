@@ -1,0 +1,34 @@
+A factory returns a namespace that exports again from another file; the names are computed.
+#### a.ts
+export const a = "real-a";
+#### b.ts
+export const b = "real-b";
+#### named.ts
+export { a } from "./a";
+#### re-exports.test.ts
+
+          import { expect, mock, test, vi } from "bun:test";
+          const message = "mock(module, fn): the factory can't return the namespace object of a module that re-exports the mocked module";
+
+          test.each(["./star", "./named", "./star-of-star"])("%s", async specifier => {
+            mock.module("./a", () => ({ a: "first" }));
+            const [ns, reexports] = [await import("./a"), await import(specifier)];
+            expect(() => mock.module("./a", () => reexports)).toThrow(new TypeError(message));
+            expect(ns.a).toBe("first");
+            await expect(mock.module("./a", async () => (await 0, reexports))).rejects.toThrow(new TypeError(message));
+            vi.resetModules();
+          });
+
+          test("through another mock", async () => {
+            mock.module("./a", () => ({ a: "first" }));
+            const star = await import("./star");
+            mock.module("./b", () => star);
+            const b = await import("./b");
+            expect(b.a).toBe("first");
+            expect(() => mock.module("./a", () => b)).toThrow(new TypeError(message));
+          });
+        
+#### star-of-star.ts
+export * from "./star";
+#### star.ts
+export * from "./a";

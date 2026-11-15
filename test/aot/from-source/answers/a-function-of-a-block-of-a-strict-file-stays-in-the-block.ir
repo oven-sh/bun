@@ -1,0 +1,8 @@
+# -- source: main.js
+# { function inner() { return 1; } }
+# print(typeof inner);
+# -- end of source
+# A file that says nothing of modules or of CommonJS is an ES module, so it is strict: a function of a block stays in the block.
+# RUN: run-in-shell
+# CHECK: undefined
+# CHECK-NEXT: exited with 0

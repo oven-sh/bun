@@ -1,0 +1,18 @@
+# Base has a function of its own under Symbol.hasInstance. The lookup from A finds it, and it changes what it is handed: what is tested may not stay typed as its constructor left it.
+# -- source: main.js
+# function Base(v) { this.held = v; }
+# class A extends Base { constructor(v) { super(v); this.y = 2; } }
+# Object.defineProperty(Base, Symbol.hasInstance, { value: function (object) { object.held = "changed"; return true; } });
+# const b = new Base(1);
+# print(b instanceof A, b.held);
+# -- end of source
+# RUN: link fields mechanisms=all
+# CHECK: field L0.0 "held"
+# CHECK-NOT: proven=i32 writers-known
+# CHECK: field L
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: true changed
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: true changed
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: true changed

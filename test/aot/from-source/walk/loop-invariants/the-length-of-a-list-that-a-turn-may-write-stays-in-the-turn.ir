@@ -1,0 +1,15 @@
+# -- source: the-length-of-a-list-that-a-turn-may-write-stays-in-the-turn.ts
+# declare function sink(value: unknown): void;
+# function grown(t: number): number { const list: number[] = [0.5, 1.5]; let s = 0; for (let k = 0; k < 12; k++) { if (k & 1) s += list[k] * 2; else list.push(k + t + 0.25, k + 0.75); } return s; }
+# function cut(t: number): number { const list: number[] = []; for (let i = 0; i < 12; i++) list.push(i + 0.5); let s = 0; for (let k = 0; k < 12; k++) { if (k & 1) s += (list[k] === undefined ? 1000 : list[k]); else if (k === t) list.length = 4; } return s; }
+# function turned(t: number): number { const list: number[] = []; for (let i = 0; i < 12; i++) list.push(i); let s = 0; for (let k = 0; k < 12; k++) { if (k & 1) s += list[k] * 2; else if (k === t) list[k + 1] = 0.5; } return s; }
+# const grows: number[] = [0.5], shrinks: number[] = [];
+# for (let i = 0; i < 40; i++) shrinks.push(i + 0.5);
+# function lengths(n: number): number { let s = 0; for (let k = 0; k < n; k++) { if (k & 1) s += grows.length; else grows.push(k + 0.5); } return s; }
+# function fewer(n: number): number { let s = 0; for (let k = 0; k < n; k++) { if (k & 1) s += shrinks.length; else shrinks.pop(); } return s; }
+# sink([grown(0), grown(3), cut(4), cut(0), cut(13), turned(4), turned(0), turned(13), lengths(12), lengths(5), fewer(12), fewer(5)]);
+# -- end of source
+# A read of an element or of the length under a condition, and on the other way the turn lengthens the list, cuts it short, or turns its whole numbers into fractions. What the turns may write is not read in front of them, whether
+# every turn asks for it or not: the answers are the witness.
+# RUN(SHELL): run-in-shell globalThis.sink = answers => print(answers.join(" "));
+# SHELL: 50.5 50.5 4005 4005 39 63 71 72 27 17 219 65

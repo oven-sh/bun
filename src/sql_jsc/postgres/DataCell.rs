@@ -1,15 +1,15 @@
 use crate::jsc::{JSGlobalObject, JSValue};
+use bun_collections::smallvec::SmallVec;
 use bun_core::strings;
 
 use crate::shared::cached_structure::CachedStructure as PostgresCachedStructure;
 use bun_sql::postgres::postgres_protocol as protocol;
 use bun_sql::postgres::postgres_types as types;
 use bun_sql::postgres::postgres_types::AnyPostgresError;
-use bun_sql::shared::data::Data;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
+use crate::shared::sql_data_cell::Flags;
 pub(crate) use crate::shared::sql_data_cell::SQLDataCell;
-use crate::shared::sql_data_cell::{Flags, Tag, Value};
 
 type Result<T, E = AnyPostgresError> = core::result::Result<T, E>;
 
@@ -29,47 +29,25 @@ fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
     buf.try_reserve_exact(len)
         .map_err(|_| AnyPostgresError::OutOfMemory)?;
     // SAFETY: the decoder only writes into the spare bytes and returns how many it filled.
-    let written = unsafe {
+    unsafe {
         bun_core::vec::fill_spare(&mut buf, 0, |spare| {
             match bun_core::decode_hex_to_bytes(&mut spare[..len], hex) {
-                Ok(written) => (written, Ok(written)),
+                Ok(written) => (written, Ok(())),
                 Err(_) => (0, Err(AnyPostgresError::InvalidByteSequence)),
             }
         })
     }?;
-    // `SQLDataCell::deinit` frees this as a `Box<[u8]>` of exactly `written` bytes.
-    let ptr = bun_core::heap::into_raw(buf.into_boxed_slice()).cast::<u8>();
-
-    Ok(SQLDataCell {
-        tag: Tag::Bytea,
-        value: Value {
-            bytea: [ptr as usize, written],
-        },
-        free_value: 1,
-        ..Default::default()
-    })
+    Ok(SQLDataCell::bytea(buf))
 }
 
 /// `MAXDIM` of the server.
 const MAX_ARRAY_DIMENSIONS: usize = 6;
 
-struct ArrayCells(Vec<SQLDataCell>);
-
-impl ArrayCells {
-    fn into_cell(mut self) -> Result<SQLDataCell> {
-        if self.0.capacity() > u32::MAX as usize {
-            return Err(AnyPostgresError::UnsupportedArrayFormat);
-        }
-        Ok(SQLDataCell::array(core::mem::take(&mut self.0)))
+fn array(cells: Vec<SQLDataCell>) -> Result<SQLDataCell> {
+    if cells.capacity() > u32::MAX as usize {
+        return Err(AnyPostgresError::UnsupportedArrayFormat);
     }
-}
-
-impl Drop for ArrayCells {
-    fn drop(&mut self) {
-        for cell in &mut self.0 {
-            cell.deinit();
-        }
-    }
+    Ok(SQLDataCell::array(cells))
 }
 
 /// Appends the digits at the start of `bytes` to `value`. Returns what follows them.
@@ -136,11 +114,11 @@ impl<'a> ArrayParser<'a> {
         if depth > MAX_ARRAY_DIMENSIONS || self.next_byte()? != b'{' {
             return Err(AnyPostgresError::UnsupportedArrayFormat);
         }
-        let mut cells = ArrayCells(Vec::new());
+        let mut cells = Vec::new();
         match (self.rest.first(), self.element) {
             (Some(b'}'), _) => {
                 self.rest = &self.rest[1..];
-                return cells.into_cell();
+                return array(cells);
             }
             (Some(b'{'), _) => {}
             (_, T::int2 | T::int4) => return self.numbers(false),
@@ -153,9 +131,9 @@ impl<'a> ArrayParser<'a> {
                 Some(b'"') => self.quoted()?,
                 _ => self.bare()?,
             };
-            cells.0.push(cell);
+            cells.push(cell);
             match self.next_byte()? {
-                b'}' => return cells.into_cell(),
+                b'}' => return array(cells),
                 byte if byte == self.delimiter => {}
                 _ => return Err(AnyPostgresError::UnsupportedArrayFormat),
             }
@@ -269,9 +247,8 @@ fn parse_array(
         global_object,
         unescaped: Vec::new(),
     };
-    let mut cell = parser.level(1)?;
+    let cell = parser.level(1)?;
     if !parser.rest.is_empty() {
-        cell.deinit();
         return Err(AnyPostgresError::UnsupportedArrayFormat);
     }
     Ok(cell)
@@ -312,18 +289,18 @@ fn binary_numbers<const SIZE: usize>(
 fn binary_level(element: types::Tag, lengths: &[usize], rest: &mut &[u8]) -> Result<SQLDataCell> {
     use types::Tag as T;
     let [length, inner @ ..] = lengths else {
-        return ArrayCells(Vec::new()).into_cell();
+        return array(Vec::new());
     };
     // An element takes 4 bytes or more: a length that the message cannot hold reserves nothing.
     if *length > rest.len() / 4 {
         return Err(AnyPostgresError::InvalidBinaryData);
     }
     if !inner.is_empty() {
-        let mut cells = ArrayCells(Vec::with_capacity(*length));
+        let mut cells = Vec::with_capacity(*length);
         for _ in 0..*length {
-            cells.0.push(binary_level(element, inner, rest)?);
+            cells.push(binary_level(element, inner, rest)?);
         }
-        return cells.into_cell();
+        return array(cells);
     }
     match element {
         T::int2 => binary_numbers(*length, rest, |bytes| {
@@ -360,22 +337,20 @@ fn binary_array(element: types::Tag, mut rest: &[u8]) -> Result<SQLDataCell> {
         let _lower_bound: [u8; 4] = take(&mut rest)?;
     }
     // A typed array has one dimension and no place for a NULL.
-    let typed = match element {
-        types::Tag::int4 => Some(Tag::Int32Array),
-        types::Tag::float4 => Some(Tag::Float32Array),
-        _ => None,
-    };
-    if let Some(tag) = typed
+    if matches!(element, types::Tag::int4 | types::Tag::float4)
         && dimensions <= 1
         && let (elements, []) = rest.as_chunks::<8>()
         && elements.len() == lengths[0]
         && elements.iter().all(|wire| wire[..4] == [0, 0, 0, 4])
     {
-        return Ok(SQLDataCell::typed_array(tag, elements));
+        return Ok(if element == types::Tag::int4 {
+            SQLDataCell::int32_array(elements)
+        } else {
+            SQLDataCell::float32_array(elements)
+        });
     }
-    let mut cell = binary_level(element, &lengths[..dimensions], &mut rest)?;
+    let cell = binary_level(element, &lengths[..dimensions], &mut rest)?;
     if !rest.is_empty() {
-        cell.deinit();
         return Err(AnyPostgresError::InvalidBinaryData);
     }
     Ok(cell)
@@ -416,13 +391,7 @@ fn from_binary(tag: types::Tag, bytes: &[u8]) -> Result<SQLDataCell> {
                 crate::postgres::types::date::from_binary(bytes),
             ))
         }
-        T::bytea => Ok(SQLDataCell {
-            tag: Tag::Bytea,
-            value: Value {
-                bytea: [bytes.as_ptr() as usize, bytes.len()],
-            },
-            ..Default::default()
-        }),
+        T::bytea => Ok(SQLDataCell::raw(bytes)),
         T::text | T::varchar | T::bpchar | T::name | T::char => Ok(SQLDataCell::string(bytes)),
         T::json => Ok(SQLDataCell::json(bytes)),
         _ => Err(AnyPostgresError::UnknownFormatCode),
@@ -474,7 +443,7 @@ fn from_text(
 }
 
 pub(crate) struct Putter<'a> {
-    pub list: &'a mut [SQLDataCell],
+    pub list: SmallVec<[SQLDataCell; 70]>,
     pub fields: &'a [protocol::FieldDescription],
     /// What Bind asked for; the `fields` of the Describe before it always say text.
     pub formats: types::ResultFormats,
@@ -491,11 +460,16 @@ impl<'a> Putter<'a> {
         result_mode: PostgresSQLQueryResultMode,
         cached_structure: Option<&PostgresCachedStructure>,
     ) -> Result<JSValue, AnyPostgresError> {
+        // A short DataRow still has to match the Structure built from these fields.
+        for (i, field) in self.fields.iter().enumerate().skip(self.list.len()) {
+            self.list
+                .push(SQLDataCell::null_for_column(i as u32, &field.name_or_index));
+        }
         SQLDataCell::to_js_object(
             self.global_object,
             array,
             structure,
-            self.list,
+            &mut self.list,
             flags,
             result_mode as u8,
             cached_structure,
@@ -506,9 +480,9 @@ impl<'a> Putter<'a> {
     fn put_impl<const IS_RAW: bool>(
         &mut self,
         index: u32,
-        optional_bytes: Option<&mut Data>,
+        optional_bytes: Option<&[u8]>,
     ) -> Result<bool> {
-        // Bounds check to prevent crash when fields/list arrays are empty
+        // Bounds check to prevent crash when there are no fields
         if (index as usize) >= self.fields.len() {
             bun_core::scoped_log!(
                 Postgres,
@@ -518,47 +492,30 @@ impl<'a> Putter<'a> {
             );
             return Ok(false);
         }
-        if (index as usize) >= self.list.len() {
-            bun_core::scoped_log!(
-                Postgres,
-                "putImpl: index {} >= list.len {}, ignoring extra field",
-                index,
-                self.list.len()
-            );
-            return Ok(false);
-        }
+        debug_assert_eq!(index as usize, self.list.len());
 
         let field = &self.fields[index as usize];
         bun_core::scoped_log!(Postgres, "index: {}, oid: {}", index, field.type_oid);
-        let cell: &mut SQLDataCell = &mut self.list[index as usize];
-        if IS_RAW {
-            *cell = SQLDataCell::raw(optional_bytes);
-        } else {
-            let tag = types::Tag::from_oid(field.type_oid);
-            *cell = match optional_bytes {
-                None => SQLDataCell::null(),
-                Some(data) if field.binary || tag.is_binary_in(self.formats) => {
-                    from_binary(tag, data.slice())?
-                }
-                Some(data) => from_text(self.bigint, tag, data.slice(), self.global_object)?,
-            };
-        }
+        let tag = types::Tag::from_oid(field.type_oid);
+        let mut cell = match optional_bytes {
+            None => SQLDataCell::null(),
+            Some(data) if IS_RAW => SQLDataCell::raw(data),
+            Some(data) if field.binary || tag.is_binary_in(self.formats) => from_binary(tag, data)?,
+            Some(data) => from_text(self.bigint, tag, data, self.global_object)?,
+        };
         // TODO: when duplicate and we know the result will be an object
         // and not a .values() array, we can discard the data
         // immediately.
         cell.set_column(index, &field.name_or_index);
+        self.list.push(cell);
         Ok(true)
     }
 
-    pub(crate) fn put_raw(
-        &mut self,
-        index: u32,
-        optional_bytes: Option<&mut Data>,
-    ) -> Result<bool> {
+    pub(crate) fn put_raw(&mut self, index: u32, optional_bytes: Option<&[u8]>) -> Result<bool> {
         self.put_impl::<true>(index, optional_bytes)
     }
 
-    pub(crate) fn put(&mut self, index: u32, optional_bytes: Option<&mut Data>) -> Result<bool> {
+    pub(crate) fn put(&mut self, index: u32, optional_bytes: Option<&[u8]>) -> Result<bool> {
         self.put_impl::<false>(index, optional_bytes)
     }
 }

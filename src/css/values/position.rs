@@ -15,7 +15,7 @@ pub struct Position {
 }
 
 impl Position {
-    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Position> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Position> {
         // Try parsing a horizontal position first
         if let Ok(horizontal_pos) = input.try_parse(HorizontalPosition::parse) {
             match horizontal_pos {
@@ -339,7 +339,7 @@ pub enum PositionComponent<S> {
     Side(PositionComponentSide<S>),
 }
 
-impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent<S> {
+impl<S: protocol::ToCss + Clone + PartialEq> PositionComponent<S> {
     fn is_zero(&self) -> bool {
         if let PositionComponent::Length(l) = self {
             if l.is_zero() {
@@ -349,7 +349,10 @@ impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent
         false
     }
 
-    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Self>
+    where
+        S: protocol::Parse<'bump>,
+    {
         if input
             .try_parse(|i: &mut css::Parser| i.expect_ident_matching(b"center"))
             .is_ok()

@@ -1,0 +1,74 @@
+Two `export *` of a barrel bring the same name and a mock stands for one of the files: what a mock gives makes no name ambiguous, the first star that has the name keeps it.
+#### other-first-has/clash.js
+export const x = "clash x";
+export const other = "other";
+#### other-first-has/dep.js
+export const x = "real x";
+export const f = "real f";
+#### other-first-has/barrel.js
+export * from "./clash.js";
+export * from "./dep.js";
+#### other-first-has/user.js
+import * as barrel from "./barrel.js";
+export const seen = () => "x=" + barrel.x + " f=" + barrel.f + " keys=" + Object.keys(barrel).join("+");
+#### other-first-has/a.test.js
+import { test, vi } from "bun:test";
+vi.mock("./dep.js", () => ({ x: "mock x", f: "mock f" }));
+import { seen } from "./user.js";
+test("t", () => console.log("| CASE other-first-has:", seen()));
+#### mocked-first-has/clash.js
+export const x = "clash x";
+export const other = "other";
+#### mocked-first-has/dep.js
+export const x = "real x";
+export const f = "real f";
+#### mocked-first-has/barrel.js
+export * from "./dep.js";
+export * from "./clash.js";
+#### mocked-first-has/user.js
+import * as barrel from "./barrel.js";
+export const seen = () => "x=" + barrel.x + " f=" + barrel.f + " keys=" + Object.keys(barrel).join("+");
+#### mocked-first-has/a.test.js
+import { test, vi } from "bun:test";
+vi.mock("./dep.js", () => ({ x: "mock x", f: "mock f" }));
+import { seen } from "./user.js";
+test("t", () => console.log("| CASE mocked-first-has:", seen()));
+#### both-mocked/clash.js
+export const x = "clash x";
+export const other = "other";
+#### both-mocked/dep.js
+export const x = "real x";
+export const f = "real f";
+#### both-mocked/barrel.js
+export * from "./clash.js";
+export * from "./dep.js";
+#### both-mocked/user.js
+import * as barrel from "./barrel.js";
+export const seen = () => "x=" + barrel.x + " f=" + barrel.f + " keys=" + Object.keys(barrel).join("+");
+#### both-mocked/a.test.js
+import { test, vi } from "bun:test";
+vi.mock("./dep.js", () => ({ x: "mock x", f: "mock f" }));
+vi.mock("./clash.js", () => ({ x: "mock clash" }));
+import { seen } from "./user.js";
+test("t", () => console.log("| CASE both-mocked:", seen()));
+#### late-and-ends/clash.js
+export const x = "clash x";
+export const other = "other";
+#### late-and-ends/dep.js
+export const x = "real x";
+export const f = "real f";
+#### late-and-ends/barrel.js
+export * from "./clash.js";
+export * from "./dep.js";
+#### late-and-ends/user.js
+import * as barrel from "./barrel.js";
+export const seen = () => "x=" + barrel.x + " f=" + barrel.f + " keys=" + Object.keys(barrel).join("+");
+#### late-and-ends/a.test.js
+import { test, vi } from "bun:test";
+test("t", async () => {
+      vi.doMock("./dep.js", () => ({ x: "mock x", f: "mock f" }));
+      const { seen } = await import("./user.js");
+      console.log("| CASE late-and-ends:", seen());
+      vi.doUnmock("./dep.js");
+      console.log("| CASE late-and-ends:", seen());
+    });

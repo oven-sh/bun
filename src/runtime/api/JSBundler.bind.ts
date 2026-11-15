@@ -23,8 +23,8 @@ export const BuildArtifact = b.class({
       returns: b.any.returning("Blob"),
       length: 2,
     },
-    /** `Bun.build` fills the field of an output that has a source map. */
-    sourcemap: { getter: b.any.returning("BuildArtifact", "null"), cache: true, capability: "heap" },
+    /** `Bun.build` fills the field of an output that has a source map, with `undefined` if nothing was written for the map. */
+    sourcemap: { getter: b.any.returning("BuildArtifact", "null", "undefined"), cache: true, capability: "heap" },
     stream: { ...js, args: { chunkSize: b.any }, returns: b.any.returning("ReadableStream"), passThis: true },
     text: read,
     type: { getter: b.any.returning("string"), cache: true, capability: "js" },

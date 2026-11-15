@@ -240,8 +240,8 @@ describe("the reader and the writer compose on Windows", () => {
   });
 });
 
-// Each output was compared with libarchive's, byte for byte, when it was recorded. A compressed or a
-// long one is kept as its hash.
+// Each output was compared with libarchive's, byte for byte, when it was recorded. Names that npm does
+// not find in a pax header have got a GNU one since. A compressed or a long one is kept as its hash.
 describe("the tar writer writes what libarchive did", async () => {
   const cases = (await loadCases<WriterCase>(join(import.meta.dir, "writer.json.gz"))).map((c, index) => ({
     ...c,

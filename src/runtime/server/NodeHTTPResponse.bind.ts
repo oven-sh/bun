@@ -30,7 +30,7 @@ export const NodeHTTPResponse = b.class({
   refCounted: true,
   finalize: true,
   types: [table.exactType("$Node.NodeHTTPResponse"), table.exactType("$Bindgen.NodeHTTPResponse")],
-  lockedObjects: ["prototype"],
+  lockedMembers: ["prototype"],
   internalFields: ["onAborted", "onWritable", "onData", "pendingWriteBuffer"],
   proto: {
     abort: { capability: "js" },

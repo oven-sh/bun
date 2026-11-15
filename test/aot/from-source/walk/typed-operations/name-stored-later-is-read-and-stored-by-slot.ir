@@ -1,0 +1,18 @@
+# a name that is only ever stored behind the construction is a field like any other where the receiver is proven: the read is a load that takes an empty slot for undefined, the store creates the property or overwrites it, and Link knows what it holds.
+# No store lays `never` on such an object, so `in` finds nothing and the arm is gone.
+# -- source: read-and-store-go-to-the-slot.ts
+# class M { id = 0; }
+# function bump(m: M) { const o = m as any; o.hits = (o.hits === undefined ? 0 : o.hits) + 1; return "never" in o ? o.never : o.hits; }
+# const m1 = new M();
+# const m2 = new M();
+# let hits = 0;
+# for (let i = 0; i < 100; i++) hits += bump(i % 3 ? m1 : m2);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: : undefined|number {{*}} = GetSlotOrUndefined {{*}}key="hits" receivers=[L0] level=Proven
+# CHECK: = PutSlotOrAdd {{*}}key="hits" receivers=[L0] level=Proven
+# CHECK-NOT: key="never"
+# RUN(LINK): link fields layouts mechanisms=all
+# LINK: field L0.1 "hits" appended proven=int|whole writers-known
+# LINK: layout L0 changes=[]

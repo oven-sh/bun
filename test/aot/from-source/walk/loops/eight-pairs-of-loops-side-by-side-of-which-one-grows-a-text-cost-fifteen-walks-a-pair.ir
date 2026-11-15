@@ -1,0 +1,117 @@
+# -- source: eight-pairs-of-loops-side-by-side-of-which-one-grows-a-text-cost-fifteen-walks-a-pair.js
+# function nest(count) {
+#   const n = count | 0;
+#   const list = [3, 1, 4, 1, 5, 9, 2, 6];
+#   const words = ["w", "x", "y", "z"];
+#   let s = 0;
+#   let text = "";
+#   for (let i1 = 0; i1 < n; i1++) {
+#     s = (s + list[(i1) & 7]) | 0;
+#     for (let j0 = 0; j0 < n; j0++) {
+#       text += "a";
+#       for (let m0 = 0; m0 < n; m0++) {
+#         text += words[(j0 + m0) & 3];
+#       }
+#     }
+#     for (let k0 = 0; k0 < n; k0++) {
+#       s = (s + list[(i1 + k0 + 0) & 7]) | 0;
+#       for (let q0 = 0; q0 < n; q0++) {
+#         s = (s + list[(k0 + q0) & 7]) | 0;
+#       }
+#     }
+#     for (let j1 = 0; j1 < n; j1++) {
+#       text += "a";
+#       for (let m1 = 0; m1 < n; m1++) {
+#         text += words[(j1 + m1) & 3];
+#       }
+#     }
+#     for (let k1 = 0; k1 < n; k1++) {
+#       s = (s + list[(i1 + k1 + 1) & 7]) | 0;
+#       for (let q1 = 0; q1 < n; q1++) {
+#         s = (s + list[(k1 + q1) & 7]) | 0;
+#       }
+#     }
+#     for (let j2 = 0; j2 < n; j2++) {
+#       text += "a";
+#       for (let m2 = 0; m2 < n; m2++) {
+#         text += words[(j2 + m2) & 3];
+#       }
+#     }
+#     for (let k2 = 0; k2 < n; k2++) {
+#       s = (s + list[(i1 + k2 + 2) & 7]) | 0;
+#       for (let q2 = 0; q2 < n; q2++) {
+#         s = (s + list[(k2 + q2) & 7]) | 0;
+#       }
+#     }
+#     for (let j3 = 0; j3 < n; j3++) {
+#       text += "a";
+#       for (let m3 = 0; m3 < n; m3++) {
+#         text += words[(j3 + m3) & 3];
+#       }
+#     }
+#     for (let k3 = 0; k3 < n; k3++) {
+#       s = (s + list[(i1 + k3 + 3) & 7]) | 0;
+#       for (let q3 = 0; q3 < n; q3++) {
+#         s = (s + list[(k3 + q3) & 7]) | 0;
+#       }
+#     }
+#     for (let j4 = 0; j4 < n; j4++) {
+#       text += "a";
+#       for (let m4 = 0; m4 < n; m4++) {
+#         text += words[(j4 + m4) & 3];
+#       }
+#     }
+#     for (let k4 = 0; k4 < n; k4++) {
+#       s = (s + list[(i1 + k4 + 4) & 7]) | 0;
+#       for (let q4 = 0; q4 < n; q4++) {
+#         s = (s + list[(k4 + q4) & 7]) | 0;
+#       }
+#     }
+#     for (let j5 = 0; j5 < n; j5++) {
+#       text += "a";
+#       for (let m5 = 0; m5 < n; m5++) {
+#         text += words[(j5 + m5) & 3];
+#       }
+#     }
+#     for (let k5 = 0; k5 < n; k5++) {
+#       s = (s + list[(i1 + k5 + 5) & 7]) | 0;
+#       for (let q5 = 0; q5 < n; q5++) {
+#         s = (s + list[(k5 + q5) & 7]) | 0;
+#       }
+#     }
+#     for (let j6 = 0; j6 < n; j6++) {
+#       text += "a";
+#       for (let m6 = 0; m6 < n; m6++) {
+#         text += words[(j6 + m6) & 3];
+#       }
+#     }
+#     for (let k6 = 0; k6 < n; k6++) {
+#       s = (s + list[(i1 + k6 + 6) & 7]) | 0;
+#       for (let q6 = 0; q6 < n; q6++) {
+#         s = (s + list[(k6 + q6) & 7]) | 0;
+#       }
+#     }
+#     for (let j7 = 0; j7 < n; j7++) {
+#       text += "a";
+#       for (let m7 = 0; m7 < n; m7++) {
+#         text += words[(j7 + m7) & 3];
+#       }
+#     }
+#     for (let k7 = 0; k7 < n; k7++) {
+#       s = (s + list[(i1 + k7 + 7) & 7]) | 0;
+#       for (let q7 = 0; q7 < n; q7++) {
+#         s = (s + list[(k7 + q7) & 7]) | 0;
+#       }
+#     }
+#   }
+#   return s + " " + text.length + " " + text.slice(0, 9);
+# }
+# print(nest(JSON.parse("3")));
+# -- end of source
+# The twin of the four pairs: twice the width, and the walks are fifteen a pair and three.
+# RUN: compile LoopVisits mechanisms=all
+# CHECK: statistic LoopVisits 123
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: 863 288 awxyaxyza
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same

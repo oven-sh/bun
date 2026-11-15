@@ -1,0 +1,27 @@
+# -- source: derived-fields-defined-with-values.ts
+# abstract class Shape { abstract area(): number; }
+# class Square extends Shape { constructor(readonly side: number) { super(); } area(): number { return this.side * this.side; } }
+# class Box extends Shape {
+#   width: number;
+#   height: number;
+#   constructor(width: number, height: number) { super(); this.width = width; this.height = height; }
+#   area(): number { return this.width * this.height; }
+# }
+# declare function print(...values: unknown[]): void;
+# function measure(shape: Shape): number { return shape.area(); }
+# print(measure(new Square(3)) + measure(new Box(2, 2.5)));
+# -- end of source
+# A derived class defines its parameter properties, and the fields that plain stores fill right after super(), with their values: no field ever holds undefined, and the reads give numbers.
+# RUN: walk f4 mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK: : int[0, 2147483647] {{*}}= GetSlot {{*}}key="side"
+# RUN(BOX): walk f6 mechanisms=all
+# BOX-LABEL: code f6:Body
+# BOX: : int[0, 2147483647] {{*}}= GetSlot {{*}}key="width"
+# BOX: : number {{*}}= GetSlot {{*}}key="height"
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 14
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 14
+# NONE-NEXT: exited with 0

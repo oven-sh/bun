@@ -1,0 +1,22 @@
+# `{ check: "least", ...params, least: value }`: with its fields "filled at birth" the cell was born with the mark (`least` is not in the allocation), and behind the copy no store could finish the birth: the object bore the mark for life:
+# every guess's test refused it and the stubs took their slower forms. A record that gains names in sight takes no part in that protocol: no mark, nothing to finish; a read asks the slot. f1 = least
+# -- source: main.ts
+# declare function print(value: any): void;
+# declare function pick(make: unknown): any[];
+# interface Options { abort?: boolean; error?: string }
+# function least(value: number, params: Options) { return { check: "least", ...params, least: value }; }
+# function sum(defs: any[]) { let n = 0; for (const d of defs) n += d.least + (d.abort ? 100 : 0); return n; }
+# print(sum(pick(least)));
+# -- end of source
+# RUN(PLAN): plan layouts
+# PLAN: layout L
+# PLAN-NOT: "check"{{*}}filled-at-birth
+# PLAN-NOT: "least"{{*}}filled-at-birth
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: CopyDataProperties
+# WALK-NOT: FinishBirth
+# WALK: FinishObject
+# RUN(ANSWERS): run-in-shell globalThis.pick = least => [least(1, {}), least(2, { abort: true }), least(3, { error: "e" })];
+# ANSWERS: 106
+# ANSWERS-NEXT: exited with 0

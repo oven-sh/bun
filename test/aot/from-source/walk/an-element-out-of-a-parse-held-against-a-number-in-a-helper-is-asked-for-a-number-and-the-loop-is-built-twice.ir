@@ -1,0 +1,14 @@
+# `s = s + fold(store.rows[i])`, fold(x) = `x > 16 ? x - 16 : x`, the rows out of JSON.parse: nothing is known of an element. The helper is copied in line; in the typed copy of the loop the relation stands between such a value and a number: it would be built in the form number-and-value, which may run other code, on the usual way of a turn that has done nothing: the turn left without a test, every turn left, and the typed build was dropped: one head, the sum number|string. Now the value is asked for a number, and where it is none the turn begins again in the other copy.
+# f1 = fold, f2 = all
+# -- source: an-element-out-of-a-parse-held-against-a-number-in-a-helper-is-asked-for-a-number-and-the-loop-is-built-twice.js
+# function fold(x) { return x > 16 ? x - 16 : x; }
+# const store = JSON.parse('{"rows":[3,20,7,31,16,17,2,40],"more":[1]}');
+# function all(t) { let s = t & 1; for (let i = 0; i < store.rows.length; i++) s = s + fold(store.rows[i]); return s; }
+# let sum = 0; for (let t = 0; t < 3; t++) sum = (sum + all(t)) % 1000003; print(sum);
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 217
+# RUN(FORM): walk f2 mechanisms=all
+# FORM-LABEL: code f2:Body
+# FORM: = Greater {{*}} form=Numbers
+# FORM: = Sub {{*}} form=Numbers

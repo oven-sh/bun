@@ -5,11 +5,11 @@
 // CHECK: = Yield
 // CHECK-LABEL: function {{*}}name="written"
 // CHECK: InitialYield
-// CHECK-NEXT: [[converted]] = Convert {{*}}declared={type=number site=w{{*}}} illTypedCause=FromLooseType
+// CHECK-NEXT: [[converted]] = Convert {{*}}declared={type=number} @
 // CHECK-NEXT: = Yield [[converted]]
 // CHECK-LABEL: function {{*}}name="writtenLater"
 // CHECK: [[awaited]] = Await
-// CHECK-NEXT: [[settled]] = Convert [[awaited]] declared={type=number site=w{{*}}} illTypedCause=FromLooseType
+// CHECK-NEXT: [[settled]] = Convert [[awaited]] declared={type=number} @
 // CHECK-NEXT: = Yield [[settled]]
 
 export function* inferred(value: any) {

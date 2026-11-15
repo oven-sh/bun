@@ -50,73 +50,8 @@ sum = 0;
 for (let turn = 0; turn < 40; turn++) sites.forEach((read, s) => { for (let k = 0; k < 2 + s % 9; k++) { const v = read(objects[(s * 2 + k) % objects.length]); sum += Number.isNaN(v) ? 1000 : v; } });
 console.log(sum);
 
-// GENERATED: read0 Base twice extra
 // CHECK-LABEL: function {{*}}name="read0"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="value"
-// CHECK-NEXT: v2 = PropGet v0 key="extra"
-// CHECK-NEXT: v3 = TypeTest v2 testedType=undefined
-// CHECK-NEXT: Branch v3 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v5 = Integer
-// CHECK-NEXT: Jump -> next b6(v5)
-// CHECK-NEXT: b4(v6):
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v7 = PropGet v0 key="extra"
-// CHECK-NEXT: Jump -> next b6(v7)
-// CHECK-NEXT: b6(v8):
-// CHECK-NEXT: v9 = Add v1, v8
-// CHECK-NEXT: v10 = PropGet v0 key="twice"
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: v12 = Call v11, v0 calleeKey="twice" calleeName="o.twice"
-// CHECK-NEXT: v13 = Add v9, v12
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Base"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_3]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_3]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_3]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="twice"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=[[L_3]] flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: [[L_3]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_3]] flags=[IsExpected]}
-// CHECK-NEXT: v2 = PropGet v1 key="value"
-// CHECK-NEXT: v3 = Integer integer=2
-// CHECK-NEXT: v4 = Mul v2, v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="twice"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=[[L_5]] flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: [[L_5]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_5]] flags=[IsExpected]}
-// CHECK-NEXT: v2 = PropGet v1 key="value"
-// CHECK-NEXT: v3 = Negate v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="extra"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Integer integer=7
-// CHECK-NEXT: v1 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

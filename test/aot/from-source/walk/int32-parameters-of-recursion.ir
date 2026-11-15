@@ -1,0 +1,13 @@
+# -- source: main.js
+# function fib(n, memo) { if (n < 2) return n; if (memo[n] !== undefined) return memo[n]; memo[n] = fib(n - 1, memo) + fib(n - 2, memo); return memo[n]; }
+# print(fib(30, []), fib(7.5, []), fib(-3, []));
+# -- end of source
+# LIBRARY: own
+# A function that calls itself is a loop. What arrives may be a fraction, but it indexes elements: the function's guard asks for an int32.
+# RUN: walk f1 mechanisms=all
+# CHECK: code f1:Body
+# CHECK: b0(v0: i32 @Int32
+# CHECK: CallDirect {{*}} function=f1
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 832040 23.5 -3
+# ANSWERS-NEXT: exited with 0

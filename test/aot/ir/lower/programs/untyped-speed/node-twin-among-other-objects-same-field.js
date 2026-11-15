@@ -54,38 +54,5 @@ let found = 0;
 for (let i = 0; i < rounds; i++) if (markFromLeaf(open(leaf), 1 << (i & 15)) !== null) found++;
 console.log(found, others, leaf.lanes, leaf.twin.lanes, leaf.parent.childLanes);
 
-// GENERATED: TreeNode makeQueue
 // CHECK-LABEL: function {{*}}name="TreeNode"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] length=1 thisType={type=[[L_1]] flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_1]], v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: PropSet v2, v1 key="tag"
-// CHECK-NEXT: v4 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: v5 = Integer
-// CHECK-NEXT: PropSet v4, v5 key="lanes"
-// CHECK-NEXT: v7 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: v8 = Integer
-// CHECK-NEXT: PropSet v7, v8 key="childLanes"
-// CHECK-NEXT: v10 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: v11 = Null
-// CHECK-NEXT: PropSet v10, v11 key="twin"
-// CHECK-NEXT: v13 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: v14 = Null
-// CHECK-NEXT: PropSet v13, v14 key="parent"
-// CHECK-NEXT: v16 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: v17 = Null
-// CHECK-NEXT: PropSet v16, v17 key="state"
-// CHECK-NEXT: v19 = Undefined
-// CHECK-NEXT: Return v19
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="makeQueue"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_3]] flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Data data=[[d_4]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_3]] flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

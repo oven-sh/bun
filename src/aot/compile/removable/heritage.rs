@@ -12,28 +12,43 @@ fn is_locked_constructor(path: BuiltinPath) -> bool {
         && table::members(constructor).iter().any(is_prototype)
 }
 
-// Defining a class throws unless it extends `null` or a constructor whose `prototype` is an object or `null`.
 impl Removable<'_, '_> {
     pub(crate) fn has_valid_heritage(&self, class: ClassId) -> bool {
         let node = &self.hir[class];
         node.flags.contains(Flags::AMBIENT) || self.is_valid_heritage(node.extends)
     }
 
-    fn is_valid_heritage(&self, heritage: ExprId) -> bool {
+    fn is_valid_heritage(&self, mut heritage: ExprId) -> bool {
         let hir = self.hir;
-        if heritage.is_none() || self.analysis.decisions.is_dead_expr(heritage) {
-            return true;
+        loop {
+            if heritage.is_none() || self.analysis.decisions.is_dead_expr(heritage) {
+                return true;
+            }
+            heritage = hir.skip_type_assertions(heritage);
+            if let Some(constant) = self.find_constant(heritage) {
+                return matches!(constant, Constant::Null);
+            }
+            if let Some(Resolved::Builtin(path)) = self.builtins.of_pure_expr(heritage) {
+                return is_locked_constructor(path);
+            }
+            heritage = match hir[heritage].kind {
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    right,
+                    ..
+                } => right,
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                    left,
+                    right,
+                } if self.is_valid_heritage(right) => left,
+                _ => return self.is_valid_heritage_operand(heritage),
+            };
         }
-        let heritage = hir.skip_type_assertions(heritage);
-        if let Some(constant) = self.find_constant(heritage) {
-            return matches!(constant, Constant::Null);
-        }
-        if let Some(Resolved::Builtin(path)) = self.builtins.of_pure_expr(heritage) {
-            return is_locked_constructor(path);
-        }
-        if !self.stack.is_safe_to_recurse() {
-            return false;
-        }
+    }
+
+    fn is_valid_heritage_operand(&self, heritage: ExprId) -> bool {
+        let hir = self.hir;
         match hir[heritage].kind {
             ExprKind::Null | ExprKind::Class(_) => true,
             ExprKind::Fn(function) => {
@@ -57,24 +72,15 @@ impl Removable<'_, '_> {
                     export.is_some_and(|export| self.imports_class(export))
                 })
             }
-            // `/* @__PURE__ */` promises that the call can go when nothing uses the class.
             ExprKind::Call(call) => hir[call].is_pure && !self.options.ignores_pure_annotations,
             ExprKind::Cond { branches, .. } => {
                 let branches = hir.branches(branches);
                 self.is_valid_heritage(branches.yes) && self.is_valid_heritage(branches.no)
             }
-            ExprKind::Binary { op, left, right } => match op {
-                BinOp::Comma => self.is_valid_heritage(right),
-                BinOp::And | BinOp::Or | BinOp::Nullish => {
-                    self.is_valid_heritage(left) && self.is_valid_heritage(right)
-                }
-                _ => false,
-            },
             _ => false,
         }
     }
 
-    // A function's `prototype` can be assigned, a class's can't.
     fn is_bound_to_class(&self, symbol: SymbolId) -> bool {
         let hir = self.hir;
         let class = match self.bound.binding_initializer(hir, symbol) {
@@ -114,7 +120,7 @@ impl Removable<'_, '_> {
         let Some((modules, file)) = self.modules else {
             return false;
         };
-        !modules.may_run_before(ModuleRef::File(file), ModuleRef::File(export.file))
+        !self.may_run_before(modules, file, export.file)
             && Removable::new(self.files, export.file, self.options)
                 .is_some_and(|exporter| exporter.holds_class_once_file_has_run(export.id))
     }

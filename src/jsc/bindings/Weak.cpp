@@ -27,7 +27,7 @@ FOR_EACH_WEAK_REF_TYPE(DECLARE_WEAK_REF_OWNER);
 template<WeakRefType T>
 class WeakRefOwner : public JSC::WeakHandleOwner {
 public:
-    void finalize(JSC::Handle<JSC::Unknown> handle, void* context) final
+    FinalizeResult finalize(JSC::Handle<JSC::Unknown> handle, void* context) final
     {
         if (context) [[likely]] {
             switch (T) {
@@ -41,6 +41,7 @@ public:
                 break;
             }
         }
+        return FinalizeResult::KeepImpl;
     }
 };
 

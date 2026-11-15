@@ -1,0 +1,41 @@
+# `if (knot.part)`: a read that tests its receiver for itself, at the end of its block, outside of loops, and nothing but the truth of what it reads is asked.
+# The slot is held to a type, and whoever stores goes by it: so on the way on which the receiver passes, the word in the slot and that type say the answer, and the way leads to the targets of the branch at once.
+# Nothing is boxed there, no type is tested and no stub is asked: the read has no value in which ways could meet. Only what is read by name is a value, and it goes by the tests that stand behind the read.
+# `open` lies in the Extension, which is read in line: where the Extension has no room for the slot the way leads on as from an empty slot, so there too no two ways meet in a value.
+# The cast lays Leaf above what the constructor function makes: by it the slots of the fields that are stored behind the making are held to what Leaf writes.
+# What such readers answer under every lie from out of sight: answers/slot-answers-for-the-truth-of-what-it-holds.ts.
+# f6 = asksPart, f7 = asksOpen
+# -- source: knots.ts
+# declare function sink(...values: unknown[]): void;
+# class Part { rank: number; constructor(rank: number) { this.rank = rank; } }
+# interface Knot { kind: number; flags: number }
+# interface Leaf extends Knot { part?: Part; open?: boolean }
+# interface Stem extends Knot { part?: Part; more: number }
+# interface Twig extends Knot { other: number }
+# function KnotObject(this: Knot, kind: number) { this.kind = kind; this.flags = 0; }
+# function make<T extends Knot>(kind: number): T { return new (KnotObject as any)(kind); }
+# function makeLeaf(part: Part | undefined, open: boolean | undefined): Leaf { const leaf = make<Leaf>(1); leaf.part = part; leaf.open = open; return leaf; }
+# function makeStem(part: Part | undefined): Stem { const stem = make<Stem>(2); stem.part = part; stem.more = 1; return stem; }
+# function makeTwig(): Twig { const twig = make<Twig>(3); twig.other = 1; return twig; }
+# function asksPart(knot: Leaf | Stem): string { if (knot.part) return "part"; return "none"; }
+# function asksOpen(knot: Leaf): string { if (knot.open) return "open"; return "shut"; }
+# function asLeaf(knot: Knot): Leaf | undefined { return knot.kind === 1 ? knot as Leaf : undefined; }
+# sink(asksPart, asksOpen, asLeaf);
+# for (let turn = 0; turn < 4; turn++) sink(makeLeaf(new Part(turn), true), makeLeaf(undefined, undefined), makeStem(undefined), makeTwig());
+# -- end of source
+# RUN(HELD): facts enforced mechanisms=all
+# HELD: "part" {{*}} held=undefined|null|L0
+# HELD: "open" {{*}} held=undefined|null|boolean
+# RUN(WALK): walk f6 mechanisms=all
+# WALK-LABEL: code f6:Body
+# WALK: [[read]]: {{*}} = GetSlotOrUndefined {{*}} key="part" {{*}} level=Expected
+# WALK-NEXT: = ToBoolean [[read]] form=Generic [expectsObjectOrNothing]
+# RUN(PART): emit f6:Body mechanisms=all
+# PART: = ArgumentReg(
+# PART-NEXT: = BitAnd({{*}}origin = [[read]])
+# PART-NOT: = Phi(origin = [[read]])
+# RUN(OPEN): emit f7:Body mechanisms=all
+# OPEN: = ArgumentReg(
+# OPEN-NEXT: = BitAnd({{*}}origin = [[read]])
+# OPEN: = Load({{*}}AOTExtension_granuleBits, origin = [[read]])
+# OPEN-NOT: = Phi(origin = [[read]])

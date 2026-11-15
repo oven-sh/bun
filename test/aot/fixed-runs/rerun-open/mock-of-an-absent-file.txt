@@ -1,0 +1,20 @@
+Mock.module of a file that does not exist.
+#### absent.test.js
+import { expect, mock, test } from "bun:test";
+const tried = (label, act) => { try { console.log("| CASE", label, String(act()).replace(import.meta.dir, "<dir>")); } catch (error) { console.log("| CASE", label, "threw", error.name, error.code); } };
+test("a relative path", async () => {
+  tried("require.resolve before", () => require.resolve("./absent.ts"));
+  tried("import.meta.resolveSync before", () => import.meta.resolveSync("./absent.ts"));
+  mock.module("./absent.ts", () => ({ bar: 42 }));
+  console.log("| CASE", "loaded", (await import("./absent.ts")).bar, require("./absent.ts").bar);
+  tried("require.resolve after", () => require.resolve("./absent.ts"));
+  tried("import.meta.resolveSync after", () => import.meta.resolveSync("./absent.ts"));
+});
+test("a file URL", async () => {
+  tried("require.resolve before", () => require.resolve("./absent-too.ts"));
+  mock.module("file:./absent-too.ts", () => ({ bar: 43 }));
+  console.log("| CASE", "loaded", (await import("./absent-too.ts")).bar, require("./absent-too.ts").bar);
+  tried("require.resolve after", () => require.resolve("./absent-too.ts"));
+});
+#### tsconfig.json
+{ "compilerOptions": { "allowJs": true } }

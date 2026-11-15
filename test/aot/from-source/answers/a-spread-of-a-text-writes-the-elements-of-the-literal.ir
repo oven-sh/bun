@@ -1,0 +1,20 @@
+# -- source: main.ts
+# declare function print(value: any): void; // @ts-expect-error
+# function between(wide: boolean): string { const made: any = { 0: 2.5, 1: 6.5, ...(wide ? "h" : null), 2: 7.5 }; return typeof made[0] + made[1] + made[2]; } // @ts-expect-error
+# function joined(first: string, second: string): string { const both = first + second; const made: any = { 0: 2.5, ...both }; return made[0] + made[1] + both.length; }
+# print(between(true));
+# print(between(false));
+# print(joined("left and right and ", "up and down and back"));
+# print("went on");
+# -- end of source
+# A spread whose source is a text runs no code of the program, so the call is held to its row: the row says that it writes the elements of the literal and resolves a rope.
+# RUN(NET): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# NET: string6.57.5
+# NET-NEXT: number6.57.5
+# NET-NEXT: le39
+# NET-NEXT: went on
+# RUN(LIE): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Operation/CopyDataProperties/Elements mechanisms=all
+# LIE: the declared effects of operation:CopyDataProperties and of stub:CopyAllDataProperties say that the call does not write Elements, but operand 0 changed there
+# LIE-NOT: went on
+# LIE: crashed
+# LIE: with

@@ -1,0 +1,29 @@
+# const options = { fetch(request) { return request.method; } }; globalThis.kept = options; Bun.serve(options)
+# Somebody else holds the options: whoever finds them there may call the handler with anything.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 callers-known
+# RUN(BODY): walk f1:Body mechanisms=all
+# BODY: b0(v0: anything
+
+layout L0 fields=[{key="fetch" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = PropGet v0 key="serve"
+    v2 = Convert v1 declared={type=builtin(BunServe) flags=[IsExpected]}
+    v3 = NewClosure function=f1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = Builtin builtin=GlobalThis
+    PropSet v6, v5 key="kept"
+    v8 = Call v2, v0, v5 calleeKey="serve" calleeName="Bun.serve"
+    Return v8
+}
+function f1 name="fetch" module=m0 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="method"
+    Return v1
+}

@@ -1,0 +1,29 @@
+# THE LYING CONTROLS of variable-of-a-loop-is-judged-as-it-is-written-from-source.ir: the test of the loop leaves no room for the step, and EACH IS REPORTED, WHOEVER CALLS
+# f1 .. f4 are called once, with 1: the walk knows `to` and with it the variable: UNTIL 0-int32-promises-3 NONE OF THE FOUR WAS REPORTED. f5 .. f8 are the same four, and nobody knows who calls them
+# inclusive: `i <= to` lets 2147483647 in . byTwo: room for one is not room for two . testedAfter: the step comes in front of the test, and what enters the loop has passed none . reassigned: what is stored in the body has passed no test
+# f9 .. f16: where the climb for relations may not find one: f9 afterTheLoop: the loop is left with the limit reached . f10 siblingArm, f14 testInOneArm: the test stands in an arm that the step is not below . f11 testBehindTheStep
+# f12 stepWithoutTest: a way leads round the test . f13 testOfTheOldValue: the variable was stored into since . f15 otherVariable . f16 widerLimit: below a number is not below an int32
+# -- source: step-of-a-loop-is-reported-whoever-calls-from-source.ts
+# declare function sink(...values: unknown[]): void;
+# function inclusive(to: Bun.int32): Bun.int32 { let last: Bun.int32 = 0; for (let i: Bun.int32 = 0; i <= to; i++) last = i; return last; }
+# function byTwo(to: Bun.int32): Bun.int32 { let last: Bun.int32 = 0; for (let i: Bun.int32 = 0; i < to; i += 2) last = i; return last; }
+# function testedAfter(to: Bun.int32, from: Bun.int32): Bun.int32 { let i: Bun.int32 = from; do i++; while (i < to); return i; }
+# function reassigned(to: Bun.int32, jump: Bun.int32): Bun.int32 { let last: Bun.int32 = 0; for (let i: Bun.int32 = 0; i < to; i++) { if (i === 2) i = jump; last = i; } return last; }
+# function inclusiveOpen(to: Bun.int32): Bun.int32 { let last: Bun.int32 = 0; for (let i: Bun.int32 = 0; i <= to; i++) last = i; return last; }
+# function byTwoOpen(to: Bun.int32): Bun.int32 { let last: Bun.int32 = 0; for (let i: Bun.int32 = 0; i < to; i += 2) last = i; return last; }
+# function testedAfterOpen(to: Bun.int32, from: Bun.int32): Bun.int32 { let i: Bun.int32 = from; do i++; while (i < to); return i; }
+# function reassignedOpen(to: Bun.int32, jump: Bun.int32): Bun.int32 { let last: Bun.int32 = 0; for (let i: Bun.int32 = 0; i < to; i++) { if (i === 2) i = jump; last = i; } return last; }
+# function afterTheLoop(to: Bun.int32): Bun.int32 { let i: Bun.int32 = 0; while (i < to) i++; return i + 1; }
+# function siblingArm(a: Bun.int32, c: boolean): Bun.int32 { let r: Bun.int32 = 0; if (c) { if (a < 100) r = 1; } else { r = a + 1; } return r; }
+# function testBehindTheStep(a: Bun.int32): Bun.int32 { const b: Bun.int32 = a + 1; if (a < 100) return b; return 0; }
+# function stepWithoutTest(to: Bun.int32, c: boolean): Bun.int32 { let n: Bun.int32 = 0; for (let i: Bun.int32 = 0; ; i++) { if (i >= to) { if (c) break; } n = i; } return n; }
+# function testOfTheOldValue(to: Bun.int32, jump: Bun.int32): Bun.int32 { let i: Bun.int32 = 0; while (i < to) { i = jump; i++; } return i; }
+# function testInOneArm(a: Bun.int32, c: boolean): Bun.int32 { let r: Bun.int32 = a; if (c) { if (r >= 100) return 0; } return r + 1; }
+# function otherVariable(to: Bun.int32): Bun.int32 { let j: Bun.int32 = 0; for (let i: Bun.int32 = 0; i < to; i++) j += 2; return j; }
+# function widerLimit(to: number): Bun.int32 { let n: Bun.int32 = 0; for (let i: Bun.int32 = 0; i < to; i++) n = i; return n; }
+# sink(inclusive(1), byTwo(1), testedAfter(1, 0), reassigned(1, 1));
+# sink(inclusiveOpen, byTwoOpen, testedAfterOpen, reassignedOpen, afterTheLoop, siblingArm, testBehindTheStep, stepWithoutTest, testOfTheOldValue, testInOneArm, otherVariable, widerLimit);
+# -- end of source
+# DIAGNOSTIC: UnprovenInt32 16
+# RUN: walk f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 mechanisms=all
+# CHECK: the walk of f1:Body failed

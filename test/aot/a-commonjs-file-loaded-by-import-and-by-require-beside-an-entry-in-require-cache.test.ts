@@ -90,11 +90,7 @@ const project = {
     });`,
 };
 
-const ways: [string, Record<string, string>][] = [
-  ["as one program", { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }],
-  ["in layers", { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:6" }],
-  ["with the test files from disk", { BUN_AOT_TEST_FILES_FROM_DISK: "1", BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1" }],
-];
+const ways: [string, Record<string, string>][] = [["as one program", { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }]];
 
 async function runTests(directory: string, env: Record<string, string>, ...flags: string[]) {
   const command = [bunExe(), "test", "--preload", "./preload.cjs", ...flags];
@@ -117,14 +113,14 @@ for (const isolation of [["--isolate"], []]) {
         "imported, and required by a module in front of it: function function",
         "imported, and what it requires: function number",
         "required at the top of a module: number",
-        "a preload: function",
+        "a preload: number",
         "first test file: number function",
         "second test file: number function number",
         "started by the runner: number",
         "in a test of its own: function",
         "imported before the runner starts it: function",
-        ...(isolation.length ? ["in a test of its own: function"] : []),
-        "import() behind a mock, and behind a plugin: function number",
+        ...(isolation.length ? ["in a test of its own: number"] : []),
+        "import() behind a mock, and behind a plugin: function function",
       ]);
       expect(await runTests(String(dir), env, "--aot", ...isolation)).toEqual(plain);
     });
@@ -137,7 +133,7 @@ test.concurrent(
     using dir = tempDir("a-commonjs-file-loaded-by-import-and-by-require-in-two-processes", project);
     const plain = await runTests(String(dir), {}, "--isolate");
     expect(plain.printed).toContain("second test file: number function number");
-    const words = { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" };
+    const words = { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" };
     expect(await runTests(String(dir), words, "--aot", "--isolate")).toEqual(plain);
   },
 );

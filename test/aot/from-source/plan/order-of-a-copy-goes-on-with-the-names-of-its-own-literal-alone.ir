@@ -1,0 +1,22 @@
+# Three functions make objects of one layout, each out of a copy of what another function gives and the rest of the names. The order of a copy goes on with the names that ITS OWN literal writes:
+# what s1() gives is never followed by the names that m2 or m3 write. Laid for every pair, the orders of a layout of n names were n times n and their words n times n times n.
+# -- source: main.ts
+# declare function print(value: any): void;
+# interface Whole { z: number; a0: number; a1: number; a2: number; a3: number }
+# function s1(k: number) { return { a0: k }; }
+# function s2(k: number) { return { a0: k, a1: k }; }
+# function s3(k: number) { return { a0: k, a1: k, a2: k }; }
+# function m1(k: number): Whole { return { ...s1(k), a1: k, a2: k, a3: k, z: k }; }
+# function m2(k: number): Whole { return { ...s2(k), a2: k, a3: k, z: k }; }
+# function m3(k: number): Whole { return { ...s3(k), a3: k, z: k }; }
+# print(Object.keys(m1(1)).join() + " " + Object.keys(m2(1)).join() + " " + Object.keys(m3(1)).join());
+# -- end of source
+# RUN(WHOLE): plan orders mechanisms=all
+# WHOLE: order {{*}}: "a0" "a1" "a2" "a3" "z"
+# RUN(OWN): plan orders mechanisms=all
+# OWN-NOT: "a0" "a2" "a3" "z"
+# OWN-NOT: "a0" "a3" "z"
+# OWN-NOT: "a0" "a1" "a3" "z"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: a0,a1,a2,a3,z a0,a1,a2,a3,z a0,a1,a2,a3,z
+# ANSWERS-NEXT: exited with 0

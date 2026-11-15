@@ -1,0 +1,13 @@
+# the constructor goes through a field, so the body that constructs names nothing. Link brings it to the construction, and the operand there is a parameter
+# -- source: formatter-stored-in-a-record-and-constructed-by-value.ts
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# const kit = { make: Intl.NumberFormat };
+# function build(locale: string) { return new kit.make(locale); }
+# build(input);
+# -- end of source
+# RUN: locales
+# CHECK: locale unknown IntlNumberFormat
+# RUN(NEVER): locales
+# NEVER-NOT: locale constant
+# NEVER-NOT: efault

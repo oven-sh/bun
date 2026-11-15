@@ -1,0 +1,14 @@
+# The members of a family agree on the form of a field. `name` of Arrow has the type never, of which nothing is said; what the others are held to holds it too.
+# Without it every member would hold any value under that name, and no cell would be smaller.
+# -- source: expected-fields-of-families.ts
+# declare function sink(...values: unknown[]): void;
+# class Mark { tag: string; constructor(tag: string) { this.tag = tag; } }
+# class Call { kind: "call"; name: Mark; constructor(mark: Mark) { this.kind = "call"; this.name = mark; } }
+# class Arrow { kind: "arrow"; name: never; constructor() { this.kind = "arrow"; this.name = undefined as never; } }
+# function nameOf(node: Call | Arrow): Mark | undefined { return node.name; }
+# function rename(node: Call | Arrow, name: Mark) { node.name = name as never; }
+# sink(nameOf, rename, new Call(new Mark("a")), new Arrow(), Call, Arrow);
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: "name" OptionalCell32 Inline
+# CHECK: "name" OptionalCell32 Inline

@@ -7,7 +7,7 @@
 
 // RUN(HOISTED): lower
 // HOISTED-LABEL: function {{*}}name="keepsHoistedFunction"
-// HOISTED: NewClosure
+// HOISTED: CallDirect
 // HOISTED: Return
 // HOISTED-NOT: "dropped"
 // HOISTED: function {{*}}name="later"
@@ -24,7 +24,7 @@
 // REACHED-LABEL: function {{*}}name="afterUnknownTest"
 // REACHED: "kept"
 
-// What follows, in its list, a statement that always leaves the list is not lowered. A function declaration there is created where the list is entered.
+// What follows, in its list, a statement that always leaves the list is not lowered. A function declaration there is lowered all the same: it is there from where the list is entered.
 declare function use(text: string): void;
 
 export function afterFoldedReturn(): number {

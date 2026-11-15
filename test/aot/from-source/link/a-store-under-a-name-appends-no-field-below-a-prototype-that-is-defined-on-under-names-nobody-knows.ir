@@ -1,0 +1,25 @@
+# -- source: main.js
+# function defineModel(columns) {
+#   const Model = class { constructor(row) { this.values = { ...row }; this.changed = 0; } };
+#   for (const column of columns) Object.defineProperty(Model.prototype, column, { get() { return this.values[column]; }, set(v) { this.values[column] = v; this.changed++; } });
+#   return Model;
+# }
+# const Product = defineModel(['price', 'stock']);
+# class Plain { constructor(first) { this.first = first; } }
+# function turn(t) { let out = 0; for (let i = 0; i < 30; i++) { const p = new Product({ price: i, stock: t }); p.price = p.price + 1; p.stock = p.stock + 2; const q = new Plain(i); q.late = t; out += p.price + p.stock + p.changed + q.first + q.late; } return out; }
+# print(turn(1)); print(turn(2));
+# -- end of source
+# Accessors are defined on the prototype under names that nobody knows. A store under a name that the class does not declare may meet one of them, so it appends no field to the objects: they would carry a slot that is never filled, and every store and read under the name would first look above it. The name is booked as stored beside the fields.
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS-NOT: "price" appended
+# FIELDS-NOT: "stock" appended
+# The twin: nothing is defined on the prototype of the other class: its late name is an appended field as before.
+# FIELDS: "late" appended
+# FIELDS-NOT: "price" appended
+# FIELDS-NOT: "stock" appended
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 1080
+# ALL: 1140
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 1080
+# NONE: 1140

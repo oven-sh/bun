@@ -1,6 +1,7 @@
 use crate::atom::Atom;
 use crate::hir::{File, FileKind, ImportEqualsTarget, ModuleName, StmtKind};
 use crate::util::FxHashSet;
+use bun_sort_by_number::SortByNumber;
 
 pub fn specifiers_of_closed_module(file: &File) -> Option<Vec<Atom>> {
     let is_typescript = matches!(file.kind, FileKind::Ts | FileKind::Tsx) && !file.is_js;
@@ -41,7 +42,7 @@ pub fn specifiers_of_closed_module(file: &File) -> Option<Vec<Atom>> {
     let uses = file.specifier_uses.iter();
     let dynamic = uses.filter(|it| it.kind.is_dynamic() && it.spec.is_some());
     let mut dynamic: Vec<(u32, Atom)> = dynamic.map(|it| (it.pos, it.spec)).collect();
-    dynamic.sort_by_key(|it| it.0);
+    dynamic.sort_by_u32(|it| it.0);
     specifiers.extend(dynamic.iter().map(|it| it.1));
     let mut seen = FxHashSet::default();
     specifiers.retain(|&specifier| seen.insert(specifier));

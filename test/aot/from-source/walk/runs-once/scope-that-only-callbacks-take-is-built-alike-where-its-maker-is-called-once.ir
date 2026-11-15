@@ -1,0 +1,17 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const list = [1, 2, 3, 4];
+# function total(rounds: number): number { let sum = 0; for (let round = 0; round < rounds; round++) list.forEach(value => { sum += value; }); return sum; }
+# print(total(3));
+# -- end of source
+# The one closure over the scope of `total` is written as an argument of a call. Such a scope is not promoted though its maker runs once: among the variables of the module `sum` would be loaded, tested, boxed and
+# stored in every turn of the copied callback; as a scope that the unit makes it rides in a register, and neither the scope nor a store into it is left. The twin, ..-is-called-twice.ir, is this program and one call
+# more: the check lines are the same. f1 = total
+# RUN(PROMOTED): compile EnvironmentsPromotedToVariables mechanisms=all
+# PROMOTED: statistic EnvironmentsPromotedToVariables 0
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: EnterBodyThatRunsOnce
+# CHECK-NOT: PutEnvironmentField
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 30

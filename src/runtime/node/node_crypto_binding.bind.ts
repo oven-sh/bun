@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { randomIntCallbackCell } from "../../codegen/builtins/host/native-cells.ts";
 import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::node::crypto" });
@@ -8,7 +9,23 @@ const UINT32_MAX = 2 ** 32 - 1;
 
 const js = { capability: "js", throws: true } as const;
 /** The bytes of the view are written once the operation has ended, and then the callback is called. */
-const fillsLater = { buf: [...table.handedOver, table.writesContents()], callback: table.handedOver };
+const fillsLater = {
+  buf: [...table.retainedByNativeCode, table.writesContents()],
+  callback: table.retainedByNativeCode,
+};
+/** The callback goes to `process.nextTick` with `undefined` and the number, and nowhere else. */
+const queuesCallback = {
+  callback: [
+    table.storedIn(table.nativeCell(randomIntCallbackCell)),
+    table.called({
+      afterwards: "TouchesOnlyWhatRowNames",
+      times: "Later",
+      this: table.undefined,
+      args: [table.undefined, table.f64],
+      result: "Ignored",
+    }),
+  ],
+};
 
 const stringOrBufferNames = ["string", "ArrayBuffer", "Buffer", "TypedArray", "DataView"];
 const passwordAndSaltNames = { password: stringOrBufferNames, salt: stringOrBufferNames };
@@ -94,6 +111,7 @@ export const crypto = b.namespace({
       expected: { min: ["a safe integer"], max: ["a safe integer"], callback: ["function"] },
       returns: b.f64.optional,
       rustPath: "crate::node::crypto::random_int_between",
+      uses: queuesCallback,
       length: 2,
       ...js,
     },
@@ -102,6 +120,7 @@ export const crypto = b.namespace({
       expected: { max: ["a safe integer"], callback: ["function"] },
       returns: b.f64.optional,
       rustPath: "crate::node::crypto::random_int_below",
+      uses: queuesCallback,
       ...js,
     },
   ],
@@ -151,7 +170,6 @@ export const crypto = b.namespace({
   getFips: { returns: b.i32 },
   setFips: { length: 1 },
   setEngine: { length: 2, capability: "heap", throws: true },
-  getHashes: { returns: b.array(b.string.utf8) },
   scrypt: [
     {
       args: { ...passwordAndSaltHandles, keylen, options: ScryptOptions, callback: b.callable },

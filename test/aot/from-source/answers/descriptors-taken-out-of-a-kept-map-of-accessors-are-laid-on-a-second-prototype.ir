@@ -1,0 +1,24 @@
+# -- source: descriptors-taken-out-of-a-kept-map-of-accessors-are-laid-on-a-second-prototype.js
+# const accessors = { first: { __proto__: null, get() { return 1; } }, second: { __proto__: null, get() { return 2; } } };
+# const internals = { kept: undefined, other: 1 };
+# function Writer() {}
+# Object.defineProperties(Writer.prototype, accessors);
+# internals.kept = accessors;
+# function Both() {}
+# const kept = internals.kept;
+# Object.defineProperties(Both.prototype, { first: kept.first, second: kept.second });
+# print(new Writer().first, new Both().second);
+# -- end of source
+# Object.defineProperties() only looks into the map and its descriptors: it keeps neither; what it keeps are the getters, and Link has laid those by name. The scan let the map go all the same, so a
+# record that kept the map read "some object that unseen code may hold", and descriptors read out of it and laid on a second prototype gave a name without its getter: the class record did not list
+# the member and the run time ended its guard where the guards begin. This is how the library's Duplex takes nine accessors out of the map of Writable. A literal map that was taken apart whole, each
+# entry an accessor as written, stays in sight.
+# RUN(LINK): link members mechanisms=all
+# LINK: on-prototype L0 "first" getter=f
+# LINK: on-prototype L0 "second" getter=f
+# LINK: on-prototype L1 "first" getter=f
+# LINK: on-prototype L1 "second" getter=f
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS: "kept" proven=undefined|L
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1 2

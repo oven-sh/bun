@@ -1,0 +1,21 @@
+# -- source: a-caller-asks-what-is-not-shown-and-hands-on-its-own-parameter-unasked.ts
+# declare function print(...values: unknown[]): void;
+# function take(x: { n: number }) { let w = 0; for (let k = 0; k < 2; k++) w = (w + k) | 0; return x.n + w; }
+# function pass(x: { n: number }) { let w = 0; for (let k = 0; k < 3; k++) w = (w + k) | 0; return take(x) + w; }
+# function hand(from: { v: { n: number } }) { let w = 0; for (let k = 0; k < 4; k++) w = (w + k) | 0; return take(from.v) + w; }
+# print(pass({ n: 1 }), pass({ n: 2 }), hand({ v: { n: 3 } }), hand({ v: { n: 4 } }));
+# -- end of source
+# f1 = take, f2 = pass, f3 = hand
+# isEnforced(ProofSource::EntryParameter): every road into a parameter asks, so a parameter SHOWS its type. `pass` hands its own parameter on: nothing is asked.
+# RUN(PASS): walk f2 mechanisms=all-Inlining
+# PASS-LABEL: code f2:Body
+# PASS-NOT: CheckProof
+# PASS: = CallDirect {{*}}function=f1
+# What a field gives is believed and not shown: the caller holds it to what `take` believes, in front of the call.
+# RUN(HAND): walk f3 mechanisms=all-Inlining
+# HAND-LABEL: code f3:Body
+# HAND: [[read]]: {{*}} = GetSlot
+# HAND: CheckProof [[read]] checkedType=
+# HAND: = CallDirect [[read]] function=f1
+# RUN: run-in-shell mechanisms=all-Inlining
+# CHECK: 5 6 10 11

@@ -1,0 +1,29 @@
+# const server = Bun.serve({ fetch(request, second) { return second; } }); server.fetch("made up")
+# The server keeps the handler, and its own fetch calls what it kept with a Request and nothing behind it: the second parameter may be undefined, and nothing else comes in.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known
+# RUN(BODY): walk f1:Body mechanisms=all
+# BODY-NOT: b0({{*}}anything
+
+layout L0 fields=[{key="fetch" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = PropGet v0 key="serve"
+    v2 = Convert v1 declared={type=builtin(BunServe) flags=[IsExpected]}
+    v3 = NewClosure function=f1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    v6 = Call v2, v0, v5 calleeKey="serve" calleeName="Bun.serve"
+    v7 = PropGet v6 key="fetch"
+    v8 = String string="made up"
+    v9 = Call v7, v6, v8 calleeKey="fetch" calleeName="server.fetch"
+    Return v9
+}
+function f1 name="fetch" module=m0 kind=Method flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}

@@ -1,0 +1,1 @@
+const util = require("node:util"); for (const bad of [["a"], ["b", 1]]) { const r = util.format(...bad); console.log(r); } for (const bad of [["a"], ["b", 1]]) { util.format(...bad); console.log("x"); }

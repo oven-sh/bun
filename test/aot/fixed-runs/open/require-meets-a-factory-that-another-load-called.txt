@@ -1,0 +1,18 @@
+The original of an automock is loaded by a require(), which comes to a module whose factory another load has called.
+#### copy.test.js
+import { expect, test, vi } from "bun:test";
+test("loads", async () => {
+  vi.doMock("./two.js");
+  vi.doMock("./one.js");
+  vi.doMock("./zero.js", async importOriginal => (await importOriginal().catch(() => {}), { ...(await importOriginal()) }));
+  expect(() => require("./one.js")).toThrow("require() async module");
+  const importing = import("./one.js");
+  vi.resetModules();
+  console.log("| CASE " + Object.keys(await vi.importMock("./two.js")) + " | " + Object.keys(await importing).length);
+});
+#### one.js
+import "./zero.js";
+#### two.js
+import "./zero.js"; export const d = "real";
+#### zero.js
+export * from "./two.js";

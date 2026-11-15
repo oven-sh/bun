@@ -598,11 +598,12 @@ bool JSEventOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, 
     return false;
 }
 
-void JSEventOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSEventOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsEvent = static_cast<JSEvent*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, &jsEvent->wrapped(), jsEvent);
+    return FinalizeResult::KeepImpl;
 }
 
 Event* JSEvent::toWrapped(JSC::VM& vm, JSC::JSValue value)

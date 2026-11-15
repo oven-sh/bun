@@ -380,6 +380,15 @@ mod mutability {
             let predicted = Mutability::ConstantUnlessWritten;
             assert_mutability(case, "$Array.prototype[key]", predicted);
         });
+        let text = "Array.prototype[Symbol.iterator]";
+        with_case(PROGRAM, "Array.prototype[Symbol.iterator];", |case| {
+            assert_mutability(case, text, Mutability::AlwaysLocked);
+        });
+        with_case(TEST_RUN, "Array.prototype[Symbol.iterator];", |case| {
+            assert_builtin(case, text, BuiltinId::ArrayPrototypeValues);
+            assert_mutability(case, text, Mutability::ConstantUnlessWritten);
+            assert!(case.is_pure(text));
+        });
     }
 
     #[test]

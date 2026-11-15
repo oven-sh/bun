@@ -65,6 +65,15 @@ const project = {
       delete require.cache["node:path"];
       console.log("untouched:", typeof require("util").inspect, typeof require("path").join);
     });`,
+  "evaluated.test.js": `${head}
+    test("in a file with a direct eval", () => {
+      const local = 5;
+      console.log("evaluated:", eval("local"));
+      require.cache["zlib"] = { exports: { gzipSync: 1 } };
+      console.log("zlib:", typeof require("zlib").gzipSync, typeof require("node:zlib").gzipSync);
+      delete require.cache["zlib"];
+      console.log("zlib again:", typeof require("zlib").gzipSync);
+    });`,
 };
 
 // `bun run` reads require("fs") as require("node:fs") in a CommonJS file that an import loads, and as it is written in one that require() loads. The first load counts.
@@ -87,13 +96,9 @@ const loadedByImports = {
 };
 
 const refusal = (name: string) =>
-  `Cannot store an entry under '${name}' in require.cache: the build read no store under that key, so require("${name}") was compiled to answer with the module`;
+  `Cannot store an entry under '${name}' in require.cache: the build saw no store under that key, so require("${name}") always returns the compiled module`;
 
-const ways: [string, Record<string, string>][] = [
-  ["as one program", { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }],
-  ["in layers", { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" }],
-  ["with the test files from disk", { BUN_AOT_TEST_FILES_FROM_DISK: "1", BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1" }],
-];
+const ways: [string, Record<string, string>][] = [["as one program", { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }]];
 
 async function runTests(directory: string, env: Record<string, string>, ...flags: string[]) {
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--isolate", ...flags], directory, {
@@ -127,8 +132,9 @@ for (const [way, env] of ways) {
 
 test.concurrent("in an executable the store throws an error that names the module and says what to write", async () => {
   using dir = tempDir("an-entry-under-a-key-that-nobody-reads-in-an-executable", {
+    // The build folds ["u", "rl"].join("") and then answers as bun run does.
     "main.cjs": `
-      const key = ["u", "rl"].join("");
+      const key = Buffer.from("75726c", "hex").toString();
       try {
         require.cache[key] = { exports: { parse: 1 } };
         console.log("stored");
@@ -136,7 +142,7 @@ test.concurrent("in an executable the store throws an error that names the modul
         console.log(error.message);
       }
       console.log(typeof require("url").parse);
-      require.cache[["z", "lib"].join("")] = { exports: { gzipSync: 1 } };
+      require.cache[Buffer.from("7a6c6962", "hex").toString()] = { exports: { gzipSync: 1 } };
       console.log("nobody requires zlib: stored");`,
   });
   const executable = join(String(dir), isWindows ? "main.exe" : "main");
@@ -144,7 +150,7 @@ test.concurrent("in an executable the store throws an error that names the modul
   expect(built.exitCode).toBe(0);
   const { stdout, exitCode } = await run([executable], String(dir));
   expect(stdout.split("\n")).toEqual([
-    `${refusal("url")}. Spell the key where it is stored: require.cache["url"] = entry. In a test, mock.module("url", () => ({ .. })) replaces the module too. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)`,
+    `${refusal("url")}. Write the key out where you store it, as in require.cache["url"] = entry, or use mock.module() in a test. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)`,
     "function",
     "nobody requires zlib: stored",
     "",

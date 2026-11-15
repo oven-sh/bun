@@ -1,0 +1,9 @@
+# a construction is reported at its callee. What it leaves out is left out of the whole expression, so the report names where the construction starts: the front end writes that position behind the operation
+# -- source: construction-without-a-locale.ts
+# new Intl.DateTimeFormat();
+# -- end of source
+# RUN: locales
+# CHECK: locale host-default IntlDateTimeFormat at f0
+# RUN(NEVER): locales
+# NEVER-NOT: locale constant
+# NEVER-NOT: locale unknown

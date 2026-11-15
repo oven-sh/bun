@@ -1,0 +1,12 @@
+# f2 = Row, f3 = seal, f1 = fill
+# `mark` is listed read-only and hidden by a definition that nothing reaches; a plain store makes it, so it leaves its slot: the layout needs the word that holds what has left.
+# -- source: a-layout-with-a-field-under-attributes-has-the-word-for-extra-properties.ts
+# class Row { size: number; constructor(n: number) { this.size = n + 1; } seal() { Object.defineProperty(this, "mark", { value: 7 }); } }
+# function fill(count: number) { let sum = 0; for (let i = 0; i < count; i++) { const row: any = new Row(i); row.mark = i; sum += row.mark + row.size; } return sum; }
+# console.log(fill(10));
+# -- end of source
+# RUN(WIRE): print
+# WIRE: name="Row" {{*}}key="mark" {{*}}form=[IsReadOnly, IsNotEnumerable, IsNotConfigurable]
+# RUN: plan layouts mechanisms=all
+# CHECK: "mark" JSValue Inline
+# CHECK-NEXT: extra-properties

@@ -1,0 +1,19 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# let kept: ((more: number) => void) | null = null;
+# function keep(callback: (more: number) => void): void { kept = callback; }
+# function make(start: number): number { let total = start; keep((more: number) => { total = more; }); return total; }
+# print(make(3));
+# print(make(4));
+# kept!(7);
+# print("went on");
+# -- end of source
+# The store's half of a-scope-that-is-handed-back-under-a-closure-that-a-callee-keeps-is-overwritten.ir: in a build of a program this store would go into a cell that the next call of make() has taken.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeCalleesRetainNothing
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: 3
+# CALL: 4
+# CALL: bun: internal AOT error: lifetime check failed
+# CALL-NEXT: an object that this function allocated was used after the compiler ended its lifetime
+# CALL-NOT: went on
+# CALL: crashed with

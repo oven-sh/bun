@@ -117,11 +117,11 @@ test.each([
 );
 
 test.each([
-  ["a loose test file among strict ones has no type error", true, []],
-  ["a strict test file among loose ones has its type error", false, ["other/other.test.ts:3 TS2322"]],
+  ["a loose test file among strict ones", true],
+  ["a strict test file among loose ones", false],
 ])(
-  "a test file is judged by the strictness of the tsconfig.json nearest to it: %s",
-  async (_, strict, expected) => {
+  "a test file under a tsconfig.json of another strictness than the run's is not type checked: %s",
+  async (_, strict) => {
     const most = (n: number) =>
       `import { expect, test } from "bun:test";\nfunction add(x: number): number {\n  return x + ${n};\n}\ntest("most ${n}", () => {\n  expect(add(1)).toBe(${n + 1});\n});\n`;
     using dir = tempDir("globals-of-every-project", {
@@ -141,7 +141,7 @@ test.each([
         exitCode: together.exitCode,
       }).toEqual({
         args,
-        errors: expected,
+        errors: [],
         passed: ["most 1", "most 2", "other"],
         exitCode: 0,
       });

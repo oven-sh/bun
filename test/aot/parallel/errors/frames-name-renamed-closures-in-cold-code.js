@@ -1,4 +1,3 @@
-// Flags: --aot-limit=MaxWarmCodeValues:1
 // A function whose function objects are renamed records the object it is entered with, and a stack trace names each frame by that object. Code that is not warm records by a call.
 function make(next) {
   return function step(depth, a, b, c, d, e) {

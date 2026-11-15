@@ -4,6 +4,7 @@
 #include "helpers.h"
 #include "root.h"
 #include "headers-handwritten.h"
+#include <JavaScriptCore/ErrorInstanceInlines.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #if ENABLE(AOT)
 #include <JavaScriptCore/AOTPropertyWalk.h>
@@ -211,7 +212,7 @@ namespace Bun {
 
 static UniquedStringImpl* nameOfProgram(JSC::VM& vm, const EncodedSlice& text)
 {
-    if (!text.ptr || Zig::isTaggedUTF16Ptr(text.ptr) || Zig::isTaggedUTF8Ptr(text.ptr))
+    if (!vm.hasCompiledCode() || !text.ptr || Zig::isTaggedUTF16Ptr(text.ptr) || Zig::isTaggedUTF8Ptr(text.ptr))
         return nullptr;
     return JSC::AOT::PropertyWalk::tryFindName(vm, { byteCast<Latin1Character>(Zig::untag(text.ptr)), text.len });
 }

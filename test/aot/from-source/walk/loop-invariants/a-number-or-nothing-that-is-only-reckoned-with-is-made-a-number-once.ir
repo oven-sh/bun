@@ -1,0 +1,18 @@
+# -- source: a-number-or-nothing-that-is-only-reckoned-with-is-made-a-number-once.ts
+# declare function sink(value: unknown): void;
+# const rows: number[][] = [];
+# for (let i = 0; i < 30; i++) { const row: number[] = []; for (let j = 0; j < (i === 11 ? 2 : 3); j++) row.push(i * 2.25 + j / 4); rows.push(row); }
+# function moments(d: number[][], a: number, b: number): number { let sa = 0, sb = 0, ab = 0, aa = 0, bb = 0; for (let i = 0; i < d.length; i++) { const x = d[i][a], y = d[i][b]; sa += x; sb += y; ab += x * y; aa += x * x; bb += y * y; } return sa + sb * 3 + ab * 5 + aa * 7 + bb * 11; }
+# sink([moments(rows, 0, 1), moments(rows, 1, 0), moments(rows, 1, 1), moments(rows, 0, 2), moments(rows, 2, 0), moments(rows, 0, 3), moments(rows, 3, 3)]);
+# -- end of source
+# The row is found in the turn, so nothing was asked of it in front of the loop and its read cannot take NaN for a hole: it gives a number or undefined. Each of the four mentions of `x` adds or
+# multiplies, and each asked anew which of the two it held: a quarter of what a correlation over rows of fractions executed. Where every user only reckons the value is made a number once, behind the read.
+# f1 = moments
+# RUN: walk f1 mechanisms=all
+# REQUIRES: as-written
+# CHECK-LABEL: code f1:Body
+# CHECK: undefined|number @OptionalDouble = GetArrayElement
+# CHECK: number @Double = ToNumber
+# CHECK: number @Double = ToNumber
+# RUN(SHELL): run-in-shell globalThis.sink = answers => print(answers.join(" "));
+# SHELL: 1006687.5 1004707.5 1011366.5625 NaN NaN NaN NaN

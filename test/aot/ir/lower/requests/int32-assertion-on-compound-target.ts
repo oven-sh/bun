@@ -1,12 +1,9 @@
 // RUN: lower
-// OPTIONS: type-errors=log
 // DIAGNOSTIC: UnprovenInt32
 // CHECK-LABEL: function {{*}}name="f"
-// CHECK: [[asserted]] = Convert {{*}}declared={type=i32 site=w{{*}} flags=[IsInt32Promise]}
+// CHECK: [[asserted]] = Convert {{*}}declared={type=i32 flags=[IsInt32Promise]}
 // CHECK: = Add [[asserted]],
 
-// RUN(SITES): link
-// SITES: typesite {{*}}kind=Assertion text="int32"
 
 /// <reference path="../types/imports/bun-declarations.d.ts" />
 

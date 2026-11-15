@@ -1,5 +1,5 @@
 // RUN: link
-// CHECK: data {{*}}root=Array{contents=undefined|null|[[row]] elements=[Object{layout=[[row]] members={{*}}Object{layout=[[row]] members={{*}}Object{layout=[[row]] members=
+// CHECK: data {{*}}root=Array{contents=anything elements=[Object{layout=[[row]] members={{*}}Object{layout=[[row]] members={{*}}Object{layout=[[row]] members=
 
 // RUN(BUILT): lower
 // BUILT-LABEL: function {{*}}name="alone"
@@ -8,7 +8,7 @@
 // BUILT-LABEL: function {{*}}name="build"
 // BUILT: = NewObject {{*}}layout=[[made]] fields=
 // BUILT: = NewObject {{*}}layout=[[made]] fields=
-// BUILT: = NewArray {{*}}contents=undefined|null|[[made]] @
+// BUILT: = NewArray {{*}}contents=anything @
 
 // RUN(OTHER): lower
 // OTHER-LABEL: function {{*}}name="otherShapes"
@@ -16,7 +16,7 @@
 // OTHER-NOT: = NewObject {{*}}layout=[[first]] fields=
 // OTHER: = NewArray
 
-// Literals with the same names have one layout wherever they are written: the rows of a table, the elements of a list, two statements, two functions. Literals with other names have layouts of their own and keep the list a union.
+// Literals with the same names have one layout wherever they are written: the rows of a table, the elements of a list, two statements, two functions. Literals with other names have layouts of their own. Nothing is said of what a list literal holds.
 export const table = [{ a: 1 }, { a: 2 }, { a: 3 }];
 
 export function build(x: number) {

@@ -1,11 +1,11 @@
 use bun_sema::bind::SymbolId;
 use bun_sema::check::aot::ShapeKind;
 use bun_sema::fold::Constant;
-use bun_sema::hir::{ExprId, MemberKey};
+use bun_sema::hir::{ExprId, ExprKind, MemberKey};
 
 use crate::ir::generated::NameClass;
 use crate::ir::{PropertyKeyId, ValueId};
-use crate::lower::expression::find_constant;
+use crate::lower::expression::{AssignmentTarget, find_constant};
 use crate::lower::{FileLowering, FunctionLowering, scope};
 
 #[derive(Copy, Clone)]
@@ -16,7 +16,6 @@ pub(in crate::lower) struct TestedField {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // Call right after lowering `expression`: reading the holder can rebind it to a converted value.
     pub(in crate::lower) fn find_tested_field(
         &mut self,
         expression: ExprId,
@@ -26,7 +25,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if self.file.is_chain_root(access) {
             return None;
         }
-        let identifier = self.file.tested_identifier(object)?;
+        let identifier = self.file.find_holder_identifier(object)?;
         let holder = scope::find_tested_local(self, identifier)?;
         if !self.file.is_runtime_property_read(expression, access) {
             return None;
@@ -39,11 +38,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         })
     }
 
+    pub(in crate::lower) fn find_field_of_union(
+        &mut self,
+        expression: ExprId,
+    ) -> Option<TestedField> {
+        let access = self.file.skip_type_syntax(expression);
+        let (object, _) = self.file.hir.member_key(access)?;
+        if !self.file.has_union_type(object) {
+            return None;
+        }
+        self.find_tested_field(expression)
+    }
+
     pub(in crate::lower) fn is_holder_unchanged(&mut self, field: TestedField) -> bool {
         self.read_local(field.holder) == field.holder_value
     }
 
-    // The store to the holder can split the current block, so continue in `builder.current_block()`.
     pub(in crate::lower) fn narrow_holder(
         &mut self,
         field: TestedField,
@@ -81,7 +91,30 @@ impl FileLowering<'_, '_, '_, '_> {
         )
     }
 
-    // NarrowByField removes null and undefined from the holder, so the read must really run.
+    fn has_union_type(&mut self, expression: ExprId) -> bool {
+        let Ok(ty) = self.queries.expression_type(expression) else {
+            return false;
+        };
+        let Ok(shape) = self.queries.type_shape(ty) else {
+            return false;
+        };
+        matches!(shape.kind, ShapeKind::Union(_))
+    }
+
+    fn find_holder_identifier(&self, object: ExprId) -> Option<ExprId> {
+        let inner = self.skip_type_syntax(object);
+        match self.hir[inner].kind {
+            ExprKind::Ident(_) => Some(inner),
+            ExprKind::Assign {
+                op: None, target, ..
+            } => match self.classify_assignment_target(target) {
+                AssignmentTarget::Identifier { identifier, .. } => Some(identifier),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn is_runtime_property_read(&mut self, expression: ExprId, access: ExprId) -> bool {
         let mut layer = Some(expression);
         while let Some(current) = layer {
@@ -91,14 +124,14 @@ impl FileLowering<'_, '_, '_, '_> {
             layer = self.hir.type_assertion_operand(current);
         }
         let modules = self.inputs.modules;
-        if modules.member_binding(self.file, access).is_some() {
+        if modules.member_binding(self.file, access).is_some()
+            || modules.member(self.file, access).is_some()
+            || modules.answer_member(self.file, access).is_some()
+        {
             return false;
         }
         if self.find_data_member_read(access).is_some() {
             return false;
-        }
-        if !self.hir.has_typescript_semantics() {
-            return true;
         }
         self.find_enum_member_read(access).is_none()
     }
@@ -126,4 +159,60 @@ fn find_field_key(
     let key = file.name_key(name);
     let text = file.find_key_text(key)?;
     (file.fragment.strings.name_class(text) != NameClass::Index).then_some(key)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::compile::testing::{default_settings, lower_program_with_settings};
+    use crate::ir::Opcode;
+
+    fn count_narrowed_holders(body: &str) -> usize {
+        let source = format!("export function probe(s: any, t: any) {{ {body} }}\n");
+        let files = [("main.ts", source.as_str())];
+        let lowered = lower_program_with_settings(&files, &default_settings());
+        let fragments = lowered.iter().map(|(_, lowered)| &lowered.fragment);
+        let functions = fragments.flat_map(|fragment| &fragment.functions);
+        let blocks = functions.flat_map(|(_, function)| function.body.blocks());
+        let values = blocks.flat_map(|block| block.values());
+        values
+            .filter(|value| value.opcode == Opcode::NarrowByField)
+            .count()
+    }
+
+    #[test]
+    fn holder_has_a_value_of_its_own_behind_each_test_of_its_field() {
+        let cases = [
+            (
+                "switch (s.kind) { case \"a\": return [s]; case \"b\": return s; } return t;",
+                2,
+            ),
+            (
+                "switch (s[\"kind\"]) { case 1: return [s]; default: return s; }",
+                1,
+            ),
+            ("if (s.kind === \"a\") return [s]; return s;", 2),
+            ("if (1 !== s.kind) return [s]; return s;", 2),
+            ("return (s = t).kind === true ? [s] : s;", 2),
+        ];
+        for (body, expected) in cases {
+            assert_eq!(count_narrowed_holders(body), expected, "{body}");
+        }
+    }
+
+    #[test]
+    fn holder_stays_as_it_is_where_the_test_says_nothing_of_it() {
+        let bodies = [
+            "if (s?.kind === \"a\") return [s]; return s;",
+            "if (s.kind === t.kind) return [s]; return s;",
+            "if (s.kind == \"a\") return [s]; return s;",
+            "if (s[0] === \"a\") return [s]; return s;",
+            "if (s.inner.kind === \"a\") return [s]; return s;",
+            "if (s.kind === (s = t, \"a\")) return [s]; return s;",
+            "switch (s.kind) { case (s = t): return [s]; } return s;",
+            "const set = () => { s = t; }; if (s.kind === \"a\") return [s, set]; return s;",
+        ];
+        for body in bodies {
+            assert_eq!(count_narrowed_holders(body), 0, "{body}");
+        }
+    }
 }

@@ -326,23 +326,21 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
         }
         HTTPRequestBody::Stream(body) => {
             let ended = body.ended;
-            let Some(sb) = body.buffer_mut() else {
+            let Some(sb) = body.buffer.as_deref() else {
                 return;
             };
-            let buffer = sb.acquire();
+            let mut locked = sb.lock();
+            let buffer = &mut locked.buffer;
             let data_ptr = buffer.list.as_ptr();
             let data_len = buffer.size();
             let cursor = buffer.cursor;
             if data_len == 0 && !ended {
-                sb.release();
+                drop(locked);
                 return;
             }
             // SAFETY: data_ptr[cursor..cursor+data_len] is the readable slice.
             let data = unsafe { bun_core::ffi::slice(data_ptr.add(cursor), data_len) };
             let sent = write_data_windowed(session, stream, data, ended, cap);
-            // We still hold the lock from `acquire()` above; `sb` is the sole
-            // live borrow, so reborrowing `&mut sb.buffer` is a child access.
-            let buffer = &mut sb.buffer;
             buffer.cursor += sent;
             let drained = buffer.is_empty();
             if drained {
@@ -352,11 +350,11 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
                 stream.sent_end_stream();
                 client.state.request_stage = HTTPStage::Done;
             } else if drained && data_len > 0 {
-                sb.report_drain();
+                locked.report_drain();
             }
-            sb.release();
+            drop(locked);
             if stream.local_closed() {
-                body.detach();
+                body.buffer = None;
             }
         }
         HTTPRequestBody::Sendfile(_) => unreachable!(),
@@ -382,7 +380,7 @@ pub(crate) fn drain_send_bodies(session: &mut ClientSession) -> bool {
         // and re-borrow each pass.
         let mut i = 0usize;
         while i < session.streams.count() {
-            let stream = session.streams.values()[i];
+            let stream = session.streams.values()[i].as_ptr();
             let s = super::client_session::stream_mut(stream);
             i += 1;
             if s.local_closed() || s.send_window <= 0 {

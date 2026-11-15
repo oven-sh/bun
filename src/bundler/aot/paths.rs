@@ -24,6 +24,33 @@ pub(super) fn report_long_path(log: &mut Log, kind: &str, path: &[u8]) {
     );
 }
 
+/// Two spellings of one file have the same identity.
+pub struct FileIdentity {
+    device: u64,
+    inode: u64,
+    /// Of a file without an inode number: some file systems report 0 for every file.
+    path: Option<Vec<u8>>,
+}
+
+impl FileIdentity {
+    pub fn new(
+        device: u64,
+        inode: u64,
+        find_path: impl FnOnce() -> Option<Vec<u8>>,
+    ) -> FileIdentity {
+        FileIdentity {
+            device,
+            inode,
+            path: if inode == 0 { find_path() } else { None },
+        }
+    }
+
+    pub fn is_same_file(&self, other: &FileIdentity) -> bool {
+        self.device == other.device
+            && self.inode == other.inode
+            && (self.inode != 0 || (self.path.is_some() && self.path == other.path))
+    }
+}
 fn segments(path: &[u8]) -> impl Iterator<Item = &[u8]> {
     path.split(|&byte| is_sep_native(byte))
         .filter(|segment| !segment.is_empty())
@@ -50,6 +77,29 @@ mod tests {
 
     fn relative(from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
         relative_path(WORKING_DIRECTORY, from, to)
+    }
+
+    #[test]
+    fn files_are_compared_by_inode_number() {
+        let file =
+            |device, inode| FileIdentity::new(device, inode, || panic!("asked for the path"));
+        assert!(file(1, 7).is_same_file(&file(1, 7)));
+        assert!(!file(1, 7).is_same_file(&file(1, 8)));
+        assert!(!file(1, 7).is_same_file(&file(2, 7)));
+    }
+
+    #[test]
+    fn files_without_inode_number_are_compared_by_path() {
+        let file = |device, path: &[u8]| FileIdentity::new(device, 0, || Some(path.to_vec()));
+        let app = file(1, b"/project/app.ts");
+        assert!(app.is_same_file(&file(1, b"/project/app.ts")));
+        assert!(!app.is_same_file(&file(1, b"/project/app")));
+        assert!(!app.is_same_file(&file(2, b"/project/app.ts")));
+
+        let without_path = || FileIdentity::new(1, 0, || None);
+        assert!(!without_path().is_same_file(&without_path()));
+        assert!(!app.is_same_file(&without_path()));
+        assert!(!app.is_same_file(&FileIdentity::new(1, 7, || None)));
     }
 
     #[test]

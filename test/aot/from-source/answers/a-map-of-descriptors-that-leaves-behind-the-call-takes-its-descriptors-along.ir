@@ -1,0 +1,24 @@
+# -- source: main.cjs
+# "use strict";
+# function join(a, b) { return a + b; }
+# const names = {};
+# function fill() { let map; Object.defineProperties(names, (map = { join: { value: join } })); keep(map); }
+# fill();
+# function called(t) { let s = 0; for (let i = 0; i < t; i++) s = names.join(s, i); return s; }
+# print(called(5));
+# -- end of source
+# f1 = join, f2 = fill, f3 = called
+# The other side of a-map-of-descriptors-written-at-the-site-that-lays-values-is-read-entry-by-entry.ir: the map written at the site is also kept under a name and handed to the shell behind the call:
+# the shell reads the descriptor out of it and calls the function with texts. The stores of the entries into the map bring nothing to an unknown object ONLY where the map leaves at that one call: here join is not known by its callers.
+# RUN(FUNCTION): link functions mechanisms=all
+# FUNCTION: function f3 callers-known
+# RUN(JOIN): link functions mechanisms=all
+# JOIN-NOT: function f1 callers-known
+# RUN(ANSWER): run-in-shell keep = function (map) { print(map.join.value("a", "b"), Object.keys(map).join()); };
+# ANSWER: ab join
+# ANSWER-NEXT: 10
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime keep = function (map) { print(map.join.value("a", "b"), Object.keys(map).join()); };
+# CHECKED: ab join
+# CHECKED-NEXT: 10
+# CHECKED-NEXT: exited with 0

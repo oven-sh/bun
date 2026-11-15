@@ -1,14 +1,20 @@
-import { expect, test } from "bun:test";
+// The project is built at half its size and at its whole size, and the instructions of the two builds are compared, so the answer is the same on a busy machine.
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunExe, isASAN, isDebug, tempDir } from "harness";
+import { countsInstructions, measureCommand } from "./analysis-scaling/measure-check";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
-import { run } from "./harness/run";
 
 raiseDefaultTimeout(120_000);
 
-const modules = 3000;
+const sizes = countsInstructions() ? [1500, 3000] : [3000];
 const exportsOfEach = 10;
+/**
+ * Twice the modules may cost this many times the instructions: it is 1.90. Work that grows as n log n costs 2.19 times as many, with the square four times:
+ * a square that makes the whole build a third dearer passes this.
+ */
+const mostGrowth = 2.2;
 
-function files(): Record<string, string> {
+function files(modules: number): Record<string, string> {
   const made: Record<string, string> = {};
   for (let i = 0; i < modules; i++) {
     const lines: string[] = [];
@@ -31,21 +37,37 @@ function files(): Record<string, string> {
 }
 
 async function seen(cwd: string, args: string[]) {
-  const { stdout, stderr, exitCode } = await run([bunExe(), ...args], cwd);
-  return { seen: (stdout + stderr).split("\n").filter(line => line.startsWith("see:")), exitCode };
+  const { stdout, stderr, instructions } = await measureCommand(cwd, [bunExe(), ...args], 120_000);
+  return { seen: (stdout + stderr).split("\n").filter(line => line.startsWith("see:")), instructions };
 }
 
-test.skipIf(isDebug || isASAN)(
+describe.skipIf(isDebug || isASAN)(
   "the work of a test build grows with the number of its modules, not with the square of it",
-  async () => {
-    using dir = tempDir("many-modules-in-place", files());
-    // The limit is on the builds. A busy disk takes 20 s to write the modules.
-    const began = performance.now();
-    const plain = await seen(String(dir), ["test", "./main.test.ts"]);
-    expect(plain.seen.length).toBe(1);
-    // From the sources, and as compiled code.
-    for (const flag of ["--aot", "--debug-aot"])
-      expect({ flag, ...(await seen(String(dir), ["test", flag, "./main.test.ts"])) }).toEqual({ flag, ...plain });
-    expect(performance.now() - began).toBeLessThan(40_000);
+  () => {
+    let folders: ReturnType<typeof tempDir>[] = [];
+    const plain: string[][] = [];
+    beforeAll(async () => {
+      folders = sizes.map(size => tempDir("many-modules-in-place", files(size)));
+      for (const folder of folders) plain.push((await seen(String(folder), ["test", "./main.test.ts"])).seen);
+    });
+    afterAll(() => folders.forEach(folder => folder[Symbol.dispose]()));
+
+    test("plain Bun", () => {
+      expect(plain.map(lines => lines.length)).toEqual(sizes.map(() => 1));
+    });
+
+    test("--aot", async () => {
+      const counted: (number | undefined)[] = [];
+      for (const [index, folder] of folders.entries()) {
+        const compiled = await seen(String(folder), ["test", "--aot", "./main.test.ts"]);
+        expect({ modules: sizes[index], seen: compiled.seen }).toEqual({ modules: sizes[index], seen: plain[index] });
+        counted.push(compiled.instructions);
+      }
+      const [half, whole] = counted;
+      if (half === undefined || whole === undefined) return;
+      const told = `${sizes[0]} modules take ${half} instructions, ${sizes[1]} modules take ${(whole / half).toFixed(2)} times as many`;
+      console.log(`GROWTH --aot: ${told}`);
+      expect(whole / half < mostGrowth ? "" : told).toBe("");
+    });
   },
 );

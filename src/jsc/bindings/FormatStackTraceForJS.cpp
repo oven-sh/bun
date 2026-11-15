@@ -347,12 +347,12 @@ WTF::String formatStackTrace(
         if (frame.isCompiledFrame()) [[unlikely]] {
             if (auto position = frame.compiledPosition()) {
                 originalLineColumns[i] = position->lineColumn;
-                if (position->source) {
-                    sourceURLs[i] = position->source == previousCompiledModule ? sourceURLs[previousCompiledFrame] : JSC::AOT::sourceURLOf(position->source);
+                if (position->source && !position->isInEvaluatedString) {
+                    sourceURLs[i] = position->source == previousCompiledModule ? sourceURLs[previousCompiledFrame] : JSC::AOT::displayPathOf(position->source);
                     previousCompiledModule = position->source;
                     previousCompiledFrame = i;
                 } else
-                    sourceURLs[i] = Zig::sourceURL(frame.compiledFrame(), *position);
+                    sourceURLs[i] = Zig::displayPath(frame.compiledFrame(), *position);
             }
             continue;
         }

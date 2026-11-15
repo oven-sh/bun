@@ -3,7 +3,6 @@ use bstr::ByteSlice;
 use super::testing::{default_settings, with_loaded_build};
 use crate::load::ProjectId;
 
-// Whether `main.ts`, which loads `./loaded` behind a test, brings the file into the program.
 fn loads(files: &[(&str, &str)]) -> bool {
     let mut all = files.to_vec();
     all.push(("loaded.ts", "console.log('loaded');"));

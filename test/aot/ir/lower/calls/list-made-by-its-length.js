@@ -2,6 +2,27 @@
 // CHECK-LABEL: function {{*}}name="anotherArray"
 // CHECK-NOT: CompilerHelpers
 // CHECK: = Call {{*}}calleeKey="from"
+// CHECK-LABEL: function {{*}}name="copy"
+// CHECK: b0([[copied]]: {{*}}):
+// CHECK: [[isPristine]] = IsPristineArray [[copied]]
+// CHECK-NEXT: Branch [[isPristine]]
+// CHECK: [[copyOfList]] = NewArray
+// CHECK-NEXT: AppendSpread [[copyOfList]], [[copied]]
+// CHECK: [[isText]] = TypeTest [[copied]] testedType=string
+// CHECK-NEXT: Branch [[isText]]
+// CHECK: [[copyOfText]] = NewArray
+// CHECK-NEXT: AppendSpread [[copyOfText]], {{*}}
+// CHECK: [[arrayFrom]] = Builtin builtin=ArrayFrom [isNotReadFromHolder]
+// CHECK-NEXT: = Call [[arrayFrom]], {{*}}, {{*}}
+// CHECK-LABEL: function {{*}}name="copyOfNewSet"
+// CHECK: = Construct {{*}}calleeName="Set"
+// CHECK-NOT: IsPristineArray
+// CHECK: [[copyOfSet]] = NewArray
+// CHECK-NEXT: AppendSpread [[copyOfSet]], {{*}}
+// CHECK-NOT: = Call
+// CHECK-LABEL: function {{*}}name="copyWithMapper"
+// CHECK-NOT: IsPristineArray
+// CHECK: = Call {{*}}calleeName="Array.from"
 // CHECK-LABEL: function {{*}}name="elementsBesideTheLength"
 // CHECK-NOT: CompilerHelpers
 // CHECK: = Builtin builtin=ArrayFrom
@@ -12,6 +33,9 @@
 // CHECK-NEXT: [[checked]] = Call [[check]], -, [[filledLength]]
 // CHECK: [[fill]] = Builtin builtin=CompilerHelpersFilledArray
 // CHECK-NEXT: = Call [[fill]], -, [[checked]], [[filledValue]]
+// CHECK-LABEL: function {{*}}name="filledByAnotherArray"
+// CHECK-NOT: CompilerHelpers
+// CHECK: = Call {{*}}calleeKey="fill"
 // CHECK-LABEL: function {{*}}name="filledFromAnIndex"
 // CHECK-NOT: CompilerHelpers
 // CHECK: = Call {{*}}calleeKey="fill"
@@ -69,6 +93,18 @@ export function anotherArray(Array, length) {
   return Array.from({ length });
 }
 
+export function copy(list) {
+  return Array.from(list);
+}
+
+export function copyOfNewSet(list) {
+  return Array.from(new Set(list));
+}
+
+export function copyWithMapper(list, mapper) {
+  return Array.from(list, mapper);
+}
+
 export function elementsBesideTheLength(length) {
   return Array.from({ length, 0: "a" });
 }
@@ -77,10 +113,15 @@ export function filled(length, value) {
   return Array(length).fill(value);
 }
 
+export function filledByAnotherArray(Array, length) {
+  return Array(length).fill(0);
+}
+
 export function filledFromAnIndex(length) {
   return Array(length).fill(0, 1);
 }
 
+// A program may write `globalThis`, so no path through it is locked.
 export function filledUnderAnotherName(length) {
   return globalThis.Array(length).fill(0);
 }

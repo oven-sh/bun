@@ -1,0 +1,11 @@
+# `for (..; place < this.rows.length; ..) this.rows[place] = 32 - this.rows[place]`: the front of the loop tells the slot's list apart, but the look at the lists that a loop reads knew names for variables alone: a list that the turn reads out of a slot was skipped, the store asked for writable storage of doubles in front of the typed copy, and a list of whole numbers failed that test at every call.
+# What the state holds in the slot of a holder that enters the loop is the list's name, where the loop's text stores nothing under that name. The list is then asked, and converted, in front of the typed copy as a list that stands in front is.
+# -- source: a-list-that-the-turn-reads-out-of-a-slot-has-a-name-that-enters-the-loop.cjs
+# class Store { constructor(rows) { this.rows = rows; } flip() { for (let place = 0; place < this.rows.length; place++) this.rows[place] = 32 - this.rows[place]; return this.rows.join(); } }
+# const store = new Store(JSON.parse("[1, 2, 3, 4]"));
+# print(store.flip(), store.flip());
+# -- end of source
+# RUN(COUNT): compile ArraysConvertedToDoubleStorage mechanisms=all
+# COUNT: statistic ArraysConvertedToDoubleStorage 1
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 31,30,29,28 1,2,3,4

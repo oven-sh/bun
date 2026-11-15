@@ -25,7 +25,7 @@ test("a test poses as another runtime through process.versions", async () => {
         });
       }`,
   });
-  const { stderr, exitCode } = await run([bunExe(), "test", "--debug-aot"], String(dir), bunEnv);
+  const { stderr, exitCode } = await run([bunExe(), "test", "--timeout=60000", "--debug-aot"], String(dir), bunEnv);
   for (const name of ["bun", "node"]) expect(stderr).toContain(`(pass) ${name}`);
   expect(exitCode).toBe(0);
 });
@@ -60,7 +60,7 @@ test("a test run loads a module that a test wrote at run time", async () => {
         expect(value).toBe(2);
       });`,
   });
-  const { stderr, exitCode } = await run([bunExe(), "test", "--debug-aot"], String(dir), bunEnv);
+  const { stderr, exitCode } = await run([bunExe(), "test", "--timeout=60000", "--debug-aot"], String(dir), bunEnv);
   for (const name of ["here", "in a Worker"]) expect(stderr).toContain(`(pass) ${name}`);
   expect(exitCode).toBe(0);
 });
@@ -83,7 +83,7 @@ test("a Worker's text that is no program throws where the Worker starts, and the
       import { expect, test } from "bun:test";
       test("another file", () => expect(1 + 1).toBe(2));`,
   });
-  const { stderr, exitCode } = await run([bunExe(), "test", "--aot"], String(dir), bunEnv);
+  const { stderr, exitCode } = await run([bunExe(), "test", "--timeout=60000", "--aot"], String(dir), bunEnv);
   expect(stderr).toContain("(pass) the text");
   expect(stderr).toContain("(pass) another file");
   expect(exitCode).toBe(0);

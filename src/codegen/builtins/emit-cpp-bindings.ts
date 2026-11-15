@@ -6,4 +6,4 @@ export type * from "../../../vendor/WebKit/Source/JavaScriptCore/aot/builtins/ge
 const engineModule: typeof import("../../../vendor/WebKit/Source/JavaScriptCore/aot/builtins/generator/emit-cpp-bindings.ts") =
   await import(engineFile("builtins/generator/emit-cpp-bindings.ts"));
 
-export const { emitEngineBindings, emitHostBindings } = engineModule;
+export const { emitEngineBindings, emitHostBindings, hashOfHostBindings } = engineModule;

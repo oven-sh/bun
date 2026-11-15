@@ -1,0 +1,15 @@
+# What arrives is held against what the node holds without being closed first: a written text counts as a text, a written symbol as a symbol, a whole number brings the small ones with it. Each kind comes alone and comes twice: the second time it brings nothing, the first time it must not be dropped.
+# -- source: a-text-a-symbol-and-whole-numbers-that-come-one-by-one-are-all-held-where-they-arrive.js
+# let held = 1;
+# function take(x) { held = x; return held; }
+# const own = Symbol("own");
+# take("text"); take("text"); take(own); take(own); take(4294967296); take(4294967296); take(2.5); take(2.5); take("other" + take(1)); take(true);
+# print(typeof held, typeof take(own), typeof take("text"), take(3) + 1);
+# -- end of source
+# OPTIONS: check=FlowFixpoint
+# RUN: link variables functions mechanisms=all
+# CHECK-NOT: FlowEndedTooEarly
+# CHECK: variable g0 proven=true|int|fractional|string|symbol|absent writers-known
+# CHECK: parameter 0 {{*}} proven=true|int|fractional|string|symbol
+# RUN(ANSWERS): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# ANSWERS: boolean symbol string 4

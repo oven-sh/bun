@@ -1,0 +1,9 @@
+// A comparator clears, cuts, fills, freezes and sorts the list that is being sorted.
+const z = JSON.parse("[0]")[0], out = [], say = (f) => { try { return String(f()); } catch (e) { return e.name + ":" + e.message; } };
+const mk = (n, g) => { const l = []; for (let i = 0; i < n; i++) l.push(g(i)); return l; }, show = (l) => l.length + "[" + Array.from({ length: Math.min(l.length, 40) }, (_, i) => (i in l ? (Object.is(l[i], -0) ? "-0" : typeof l[i] === "object" && l[i] ? l[i].k + "#" + l[i].id : String(l[i])) : "_")).join() + "]";
+const table = { up: (a, b) => a - b, down: (a, b) => b - a, k: (a, b) => a.k - b.k, none: () => 0 }, name = (s) => JSON.parse('["' + s + '"]')[0];
+const sizes = [2, 7, 11, 12, 13, 24, 63, 64, 65, 130];
+const deeds = { none() {}, clear(l) { l.length = 0; }, cut(l) { l.length = 3; }, push(l) { if (l.length < 60) l.push(99); }, box(l) { l[1] = "t"; }, dbl(l) { l[1] = 0.5; }, hole(l) { delete l[2]; }, name(l) { l.x = 1; }, far(l) { l[500] = 1; }, freeze(l) { Object.freeze(l); }, proto(l) { Object.setPrototypeOf(l, Object.create(Array.prototype)); }, resort(l, f) { if (!l.busy) { l.busy = true; l.sort(f); } }, get(l) { Object.defineProperty(l, 1, { get: () => 7, configurable: true }); } };
+for (const n of [4, 12, 30]) for (const [w, g] of [["i", (i) => i * 7 % 31], ["d", (i) => i * 7 % 31 / 4], ["b", (i) => "s" + i * 7 % 31]]) for (const d of Object.keys(deeds)) { const l = mk(n, g); let c = 0; const f = (a, b) => { if (++c === 2) deeds[d](l, f); return a < b ? -1 : a > b ? 1 : 0; }; out.push(w + n + d + say(() => show(l.sort(f))) + c + show(l) + Object.keys(l).length); }
+const written = () => [5, 3, 9, 1, 7, 2, 8, 6, 4, 0, 11, 10, 12]; for (let r = 0; r < 3; r++) out.push(show(written().sort(table[name("up")]))); const shared = written(); out.push(show(shared.slice().sort(table[name("down")])), show(shared));
+console.log(out.join("\n"));

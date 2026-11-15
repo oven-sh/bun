@@ -12,8 +12,8 @@
 // `KEPT h<helper> parameter <index>: <how many>` for those that are still alive a turn and two collections later (100 + index: the
 // object that the parameter holds in its field `a`). Run by plain Bun that
 // is the truth about each parameter: whoever says of such a parameter that the helper keeps it nowhere is wrong. And
-// `ANSWERED h<helper> <null | parameter <index> | what a parameter holds (when it is handed over) | a new object | an object it has answered before>: <how often>`. (The collector scans
-// the stack conservatively: a count of one or two may be chance. Such programs are no tests: the counts are not the same every time.)
+// `ANSWERED h<helper> <null | parameter <index> | what a parameter holds (when it is handed over) | a new object | an object it has answered before>: <how often>`.
+// (Such programs are no tests: the counts are not the same every time.)
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import type { WrittenProgram } from "./generate";

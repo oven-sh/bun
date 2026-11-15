@@ -1,0 +1,17 @@
+# -- source: main.js
+# function maker() {
+#     function early(n) { let sum = 0; for (let i = 0; i < n; i++) sum += late(); return sum; }
+#     const first = early(0);
+#     const v = { x: 1, y: { z: 2 } };
+#     const w = first + 4;
+#     const late = function () { return v.x + v.y.z + w; };
+#     return first + early(3);
+# }
+# print(maker());
+# -- end of source
+# late() is copied into the loop of early(), which runs with no turn before v and w are there. w is a number and lies in a word: its read takes no operand, so nothing but the entry of late() says that the word is filled,
+# and it stays in the loop. v is an object: it stays a capture, read off the closure, behind the check that late is there.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 21
+# RUN(CAPTURED): run-in-shell mechanisms=all-PromotedEnvironments
+# CAPTURED: 21

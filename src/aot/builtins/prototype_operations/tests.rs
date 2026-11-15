@@ -13,6 +13,11 @@ fn operands_are_positions_of_arguments() {
         parent: 1,
     };
     let call_function = PrototypeOperation::CallFunction { receiver: 0 };
+    let define_property = PrototypeOperation::DefineProperty {
+        object: 0,
+        key: 1,
+        descriptor: 2,
+    };
     let cases = [
         (BuiltinId::ObjectSetPrototypeOf, set_prototype),
         (BuiltinId::ReflectSetPrototypeOf, set_prototype),
@@ -38,6 +43,15 @@ fn operands_are_positions_of_arguments() {
             BuiltinId::ObjectAssign,
             PrototypeOperation::CopyProperties { target: 0 },
         ),
+        (BuiltinId::ObjectDefineProperty, define_property),
+        (BuiltinId::ReflectDefineProperty, define_property),
+        (
+            BuiltinId::ObjectDefineProperties,
+            PrototypeOperation::DefineProperties {
+                object: 0,
+                descriptors: 1,
+            },
+        ),
         (BuiltinId::FunctionPrototypeCall, call_function),
         (BuiltinId::FunctionPrototypeApply, call_function),
     ];
@@ -52,7 +66,6 @@ fn other_builtins_are_no_operations() {
     let builtins = [
         BuiltinId::Object,
         BuiltinId::ObjectPrototype,
-        BuiltinId::ObjectDefineProperty,
         BuiltinId::ObjectKeys,
         BuiltinId::ReflectGet,
         BuiltinId::FunctionPrototypeToString,

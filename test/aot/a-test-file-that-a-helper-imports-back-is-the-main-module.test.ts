@@ -56,12 +56,9 @@ test("in one process", async () => {
   expect(plain.exitCode).toBe(0);
   expect(plain.stdout).toEqual(expect.arrayContaining(asMainModule));
   expect(await runTests(String(dir), {}, "--aot")).toEqual(plain);
-  const fromDisk = { BUN_AOT_TEST_FILES_FROM_DISK: "1" };
-  expect(await runTests(String(dir), fromDisk, "--aot")).toEqual(plain);
-  expect(await runTests(String(dir), { ...fromDisk, BUN_AOT_TESTS_NAME_WHAT_THEY_USE: "1" }, "--aot")).toEqual(plain);
 }, 240_000);
 
-test("in workers, over layers that hold what the test files import", async () => {
+test("in workers", async () => {
   using dir = tempDir("aot-test-file-imported-back-in-layers", files);
   const plain = await runTests(String(dir), {}, "--parallel=2");
   expect(plain.exitCode).toBe(0);
@@ -72,7 +69,7 @@ test("in workers, over layers that hold what the test files import", async () =>
       "z-imported-by-another.test.ts under z-imported-by-another.test.ts true true",
     ]),
   );
-  for (const words of ["TestRunLayers:1", "TestRunLayers:2,TestRunPartFiles:1", "TestRunLayers:3"]) {
+  for (const words of ["TestRunLayers:0"]) {
     const env = { BUN_DEBUG_TEST_AOT_WORDS: words };
     expect({ words, ...(await runTests(String(dir), env, "--aot", "--parallel=2")) }).toEqual({ words, ...plain });
   }

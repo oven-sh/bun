@@ -1,0 +1,11 @@
+# a text may import the entry by its path: what the entry exports is the program's own text and what it names counts
+# -- source: an-export-of-the-entry-that-only-a-text-can-import-counts-with-what-it-names.ts
+# declare const input: any;
+# export const paint = () => Bun.color("red", "hex");
+# new Function(input)();
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by BunColor named at f
+# RUN(NEVER): features
+# NEVER-NOT: by BunColor named-at-run-time

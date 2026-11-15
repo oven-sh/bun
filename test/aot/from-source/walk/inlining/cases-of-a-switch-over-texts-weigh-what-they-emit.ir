@@ -1,0 +1,14 @@
+# f1 = shortOf, f2 = show
+# -- source: cases-of-a-switch-over-texts-weigh-what-they-emit.js
+# function shortOf(name) { switch (name) { case "north": return "n"; case "south": return "s"; case "east": return "e"; case "west": return "w"; case "above": return "a"; case "below": return "b"; case "inside": return "i"; case "outside": return "o"; } return "?"; }
+# function show(name) { return shortOf(name) + "!"; }
+# print(show("north"), show("outside"), show("up"));
+# -- end of source
+# A switch over texts emits a comparison and a text for each case: each target weighs two operations in a copy. Weighed as a quarter of one, this leaf would be copied wherever it is called, at many times its call.
+# RUN: walk f2 mechanisms=all
+# CHECK-NOT: frame 1
+# CHECK: CallDirect {{*}} function=f1
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 {{*}} leaf=18
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

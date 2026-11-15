@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { isASAN, isDebug, isLinux } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
 
 function expectedBytes(text: string): Uint8Array {
   const bytes: number[] = [];
@@ -38,20 +38,36 @@ test("a Latin-1 text leaves as UTF-8, whatever its length and wherever its chara
 
 test.skipIf(!isLinux || process.arch !== "x64" || isDebug || isASAN)(
   "a text with accents leaves about as fast as one without",
-  () => {
-    const fastestOf = (send: (text: string) => unknown, text: string) => {
-      let fastest = Infinity;
-      for (let run = 0; run < 15; run++) {
-        const began = performance.now();
-        send(text);
-        fastest = Math.min(fastest, performance.now() - began);
-      }
-      return fastest;
-    };
-    const plain = "voila un cafe tres serre, ".repeat(300000);
-    const accented = "voil@ un caf@ tr@s serr@, ".replaceAll("@", String.fromCharCode(0xe9)).repeat(300000);
-    const encoder = new TextEncoder();
-    for (const send of [(text: string) => Response.json(text), (text: string) => encoder.encode(text)])
-      expect(fastestOf(send, accented)).toBeLessThan(fastestOf(send, plain) * 4);
+  async () => {
+    const program = `
+      const fastestOf = (send, text) => {
+        let fastest = Infinity;
+        for (let run = 0; run < 15; run++) {
+          const began = performance.now();
+          send(text);
+          fastest = Math.min(fastest, performance.now() - began);
+        }
+        return fastest;
+      };
+      const plain = "voila un cafe tres serre, ".repeat(300000);
+      const accented = "voil@ un caf@ tr@s serr@, ".replaceAll("@", String.fromCharCode(0xe9)).repeat(300000);
+      const encoder = new TextEncoder();
+      const times = [text => Response.json(text), text => encoder.encode(text)].map(send => ({
+        accented: fastestOf(send, accented),
+        plain: fastestOf(send, plain),
+      }));
+      console.log(JSON.stringify(times));
+    `;
+    // Pages that are given back to the system between two runs take several times as long as the encoding.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", program],
+      env: { ...bunEnv, MIMALLOC_PURGE_DELAY: "100000" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    for (const { accented, plain } of JSON.parse(stdout)) expect(accented).toBeLessThan(plain * 4);
+    expect(exitCode).toBe(0);
   },
 );

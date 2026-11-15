@@ -1,0 +1,16 @@
+# `__proto__` is a name like any other until the lookup comes to the engine's accessor: a method of that name in the class answers the read, on an instance and on a class object, so nothing is proven of what hangs on the answer.
+# f1 = helloOf, f2 = makeOf
+# -- source: member-named-proto-answers-in-front-of-the-prototype-link.js
+# class Tagged { __proto__() { return 1; } hello() { return 2; } }
+# class Base { static make() { return 3; } }
+# class Below extends Base { static __proto__() { return 4; } }
+# function helloOf(o) { return o.__proto__.hello; }
+# function makeOf(c) { return c.__proto__.make; }
+# helloOf(new Tagged()); makeOf(Below);
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1
+# LINK-NOT: result=
+# LINK: function f2
+# LINK-NOT: result=
+# LINK: function f3

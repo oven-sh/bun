@@ -1,0 +1,18 @@
+# -- source: main.js
+# function mixin(target, source) { Object.getOwnPropertyNames(source).forEach(function (name) { if (name !== "constructor") Object.defineProperty(target, name, Object.getOwnPropertyDescriptor(source, name)); }); return target; }
+# var Sized = { get size() { return this.items ? this.items.length : -1; }, first: function () { return this.items[0]; } };
+# function Bag(a, b) { this.items = [a, b]; }
+# function Sack(a, b) { this.items = [a, b]; }
+# mixin(Bag.prototype, Sized);
+# Object.assign(Sack.prototype, Sized);
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) { var bag = new Bag(i & 7, 1), sack = new Sack(i & 7, 1); total += bag.size * 100 + bag.first() + sack.size * 10 + sack.first(); } return total; }
+# print(run(10));
+# -- end of source
+# A copy by descriptors lays the getter itself: it runs on each bag. An assignment reads the literal: the getter runs once, on the literal, and what it gave lies on the prototype object as a value.
+# Neither is taken for a method, and `first` beside it is copied either way.
+# RUN: run-in-shell
+# CHECK: 1958
+# CHECK-NEXT: exited with 0
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: 1958
+# CALLED-NEXT: exited with 0

@@ -1,10 +1,12 @@
+mod stored_by_calls;
 mod walk;
 
 use super::{BindingStability, Bound, SymbolId};
 use crate::atom::Atom;
 use crate::check::aot::{ClassRef, FunctionRef};
-use crate::hir::{ExprId, File};
+use crate::hir::{CallId, ExprId, File, FnId};
 use crate::program::{FileId, Sym};
+use smallvec::SmallVec;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum ReferentCertainty {
@@ -50,6 +52,7 @@ pub struct ResolvedReferent<B, M> {
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum LinkedBinding<B, M> {
+    ExportOfCommonJs { file: FileId, name: Option<Atom> },
     Binding(Sym),
     Namespace(M),
     Builtin(B),
@@ -61,6 +64,27 @@ pub enum LoadedValue<M> {
     Namespace(M),
     DefaultExport(FileId),
     ModuleExports(FileId),
+    /// The exports of a module whose body is a function of the file.
+    InnerExports {
+        file: FileId,
+        body: FnId,
+    },
+}
+
+#[derive(Copy, Clone)]
+pub(super) struct MemberAssignment {
+    pub(super) holder: SymbolId,
+    pub(super) name: Atom,
+    pub(super) target: ExprId,
+    pub(super) value: ExprId,
+}
+
+#[derive(Default)]
+pub struct MemberStores {
+    pub(super) assignments: Vec<MemberAssignment>,
+    pub(super) copies: Vec<(SymbolId, CallId)>,
+    pub(super) holds_long_literals: bool,
+    pub(super) values_in_long_literals: Vec<(u64, Option<ExprId>)>,
 }
 
 pub trait ReferentContext<'s> {
@@ -89,11 +113,43 @@ pub trait ReferentContext<'s> {
 
     fn loaded_value(&self, file: FileId, call: ExprId) -> Option<LoadedValue<Self::Module>>;
 
+    /// What the body stores as its exports, or under `name` of them.
+    fn inner_export(&self, _file: FileId, _body: FnId, _name: Option<Atom>) -> Option<ExprId> {
+        None
+    }
+
+    /// What a helper of module interop takes: `interopRequireDefault(require("./x"))`.
+    fn interop_argument(&self, _file: FileId, _call: ExprId) -> Option<ExprId> {
+        None
+    }
+
+    /// The binding of a name that the CommonJS file defines by a getter, or takes over from another file.
+    fn forwarded_export(
+        &self,
+        _file: FileId,
+        _name: Atom,
+    ) -> Option<LinkedBinding<Self::Builtin, Self::Module>> {
+        None
+    }
+
+    /// The files whose names the CommonJS file takes over: `__exportStar(require("./x"), exports)`.
+    fn star_sources(&self, _file: FileId) -> SmallVec<[FileId; 4]> {
+        SmallVec::new()
+    }
+
     fn is_dead_store(&self, file: FileId, target: ExprId) -> bool;
 
     fn find_target_of_copied_properties(&self, _: Self::Builtin) -> Option<u32> {
         None
     }
+
+    fn member_stores(&self, _: FileId) -> Option<&MemberStores> {
+        None
+    }
+}
+
+pub fn index_member_stores<'s, C: ReferentContext<'s>>(context: &C, file: FileId) -> MemberStores {
+    walk::index_member_stores(context, file)
 }
 
 pub fn static_referent<'s, C: ReferentContext<'s>>(

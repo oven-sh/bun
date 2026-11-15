@@ -1,0 +1,9 @@
+# a method is called by its name off a value that nobody knows: the name is written, so it names
+# -- source: a-name-that-the-program-spells-off-a-value-nobody-knows-names-what-it-finds.ts
+# declare const input: any;
+# declare const table: any;
+# new Function(input)();
+# table.localeCompare("a");
+# -- end of source
+# RUN: features
+# CHECK: by StringPrototypeLocaleCompare named

@@ -1,0 +1,14 @@
+# -- source: what-many-reads-of-one-function-throw-comes-to-its-catch-once-and-for-all.js
+# const hide = x => [x][JSON.parse("0")];
+# const plain = { a: 1, b: 2 };
+# const trap = { get a() { throw new RangeError("a"); }, b: 3 };
+# function all(x, y) { try { return x.a + x.b + y.a + hide(y).b; } catch (caught) { return caught; } }
+# print(all(plain, plain), all(plain, trap).message, String(all(plain, null)).slice(0, 9));
+# -- end of source
+# Four reads stand in one try: each may throw, and each sends what it may throw to the one node that takes it, the name of the catch. A read asks first whether that node holds it already, in the words that the arrival itself would be asked: the node ends as it ended before, and the flow is closed.
+# OPTIONS: check=FlowFixpoint
+# RUN: link functions mechanisms=all
+# CHECK-NOT: FlowEndedTooEarly
+# CHECK: function f1 
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 6 a TypeError

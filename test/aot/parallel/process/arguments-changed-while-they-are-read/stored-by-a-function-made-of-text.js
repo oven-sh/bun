@@ -1,4 +1,4 @@
-// process.argv is overwritten by a function that is made of text at run time.
+// process.argv is overwritten by a function that is made of text, which the build reads: the function is compiled and its store is seen.
 function attempt(read) {
   try {
     return String(read());

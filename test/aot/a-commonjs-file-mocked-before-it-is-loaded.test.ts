@@ -31,6 +31,7 @@ test("every line is as in plain bun test", async () => {
   };
   const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
   expect(plain.lines.length).toBe(32);
-  expect(plain.lines).toContain("04 require is the namespace | true");
+  expect(plain.lines).toContain("03 require is the mock's object | true");
+  expect(plain.lines).toContain("04 require is the namespace | false");
   expect(compiled).toEqual(plain);
 }, 120_000);

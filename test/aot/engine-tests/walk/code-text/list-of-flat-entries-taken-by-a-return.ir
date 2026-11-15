@@ -1,0 +1,16 @@
+# what the compiler's own helper lists, each key with its value behind it, leaves the code that made it by no road: nothing but GetArrayLength, GetArrayElement and what gives the same cell takes it
+# RUN: verify-code
+# CHECK: OpcodeNotInForm: {{*}}an operand is a list of keys and values in a row
+# -- code
+# code f0:Body {
+#   b0(v0: object @JSValue) entry=0:
+#     v1: Array @JSValue = CallBuiltin -, v0 overload=CompilerHelpersOwnEntriesFlat/0 traits=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+#     Return v1
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="listed" parameters=[{type=object}] results=[{type=anything}] {
+    Return v0
+}
+entry module=m0

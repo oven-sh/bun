@@ -106,12 +106,10 @@ impl ParsedShellScript {
             let keyslice = env_bytes(global, "env key", &key)?;
             // errdefer free(keyslice) — Drop on early-return handles this.
             let slice = env_bytes(global, "env value", &value.to_bun_string(global)?)?;
-            let keyref = EnvStr::init_ref_counted(keyslice);
-            let valueref = EnvStr::init_ref_counted(slice);
-
-            env.insert(keyref, valueref);
-            keyref.deref();
-            valueref.deref();
+            env.insert(
+                EnvStr::init_ref_counted(keyslice),
+                EnvStr::init_ref_counted(slice),
+            );
         }
         // Dropping the previous Option<EnvMap> deinits it.
         self.export_env.set(Some(env));

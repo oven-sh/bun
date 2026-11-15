@@ -1,0 +1,60 @@
+# f1 = touch, f2 = look
+# -- source: a-key-held-as-a-raw-number-goes-as-it-is-into-reads-and-stores-of-a-list.ts
+# // A key read off a field that holds a number: every kind of number, read and stored, on lists in each kind of storage.
+# class Cursor {
+#   at = 0;
+#   cells: number[] = [0];
+#   read(): number | undefined { return this.cells[this.at]; }
+#   write(value: number): void { this.cells[this.at] = value; }
+#   bump(by: number): void { this.cells[this.at] += by; }
+#   go(by: number): void { this.at += by; }
+#   seat(at: number): void { this.at = at; }
+#   halve(): void { this.at /= 2; }
+# }
+# function touch(cursor: Cursor, value: number, by: number): string {
+#   const before = cursor.read();
+#   cursor.write(value);
+#   const between = cursor.read();
+#   cursor.bump(by);
+#   return String(before) + " " + String(between) + " " + String(cursor.read());
+# }
+# function look(cursor: Cursor): string {
+#   return String(cursor.read());
+# }
+# const keys = [0, 1, 2, 3, -0, -1, 0.5, 1.5, NaN, Infinity, -Infinity, 4294967294, 4294967295, 4294967296, 2147483647, 2147483648, -2147483648, 9007199254740992, 9223372036854775808, -9223372036854775808, 1e21, 1e300, 5e-324, 7];
+# function describe(list: number[]): string {
+#   let first = "";
+#   for (let at = 0; at < 9; at++) first += (at in list ? String(list[at]) : "hole") + ",";
+#   return first + " length " + list.length + " names " + Object.keys(list).join("|");
+# }
+# const said: string[] = [];
+# const makers = [() => [1, 2, 3], () => [1.5, 2.5, 3.5], () => [1, 2.5, 3], () => [1, , 3] as number[], () => [] as number[], () => Object.freeze([1, 2, 3]) as number[]];
+# for (let maker = 0; maker < makers.length; maker++) {
+#   for (let round = 0; round < 3; round++) {
+#     for (let which = 0; which < keys.length; which++) {
+#       const key = keys[which];
+#       const cursor = new Cursor();
+#       cursor.cells = makers[maker]();
+#       if (round === 0) cursor.go(key); else cursor.seat(round === 1 ? key * 1 : key * 2);
+#       if (round === 2) cursor.halve();
+#       let line = String(key) + (Object.is(cursor.at, -0) ? " (minus zero)" : "") + ": " + look(cursor) + " ";
+#       try { line += touch(cursor, round === 1 ? 9.25 : 9, round === 2 ? 0.5 : 1); } catch (error) { line += "threw " + (error as Error).constructor.name; }
+#       said.push(line + " " + look(cursor) + " " + describe(cursor.cells));
+#     }
+#   }
+# }
+# function digest(text: string): number { let hash = 2166136261; for (let at = 0; at < text.length; at++) { hash ^= text.charCodeAt(at); hash = Math.imul(hash, 16777619); } return hash >>> 0; }
+# const say: (...values: unknown[]) => void = (globalThis as any).print ?? console.log;
+# say(said.length + " lines " + digest(said.join("\n")));
+# -- end of source
+# `at` is a slot held as a raw double. The read and the store of an element of a proven list take it as it is: the code turns it into an index once (truncate, back, compare); a fraction, NaN, what is too large or below zero go out of line.
+# The slot stays a raw double only while every store into it is proven a number and nothing of the class escapes: so `seat` is handed a product, never an element of `keys` as it was read.
+# RUN(READ): walk f2 mechanisms=all
+# READ: [[key]]: number @Double = GetSlot {{*}}key="at"
+# READ: = GetArrayElement {{*}}, [[key]] level=Expected
+# RUN(STORE): walk f1 mechanisms=all
+# STORE: = PutArrayElement
+# STORE-NOT: number @JSValue = Box
+# Twenty-four keys (whole, minus zero, fractions, NaN, the infinities, the ends of the indices, of int32, of the whole doubles and of int64) on six kinds of list; added to zero, seated, and made by arithmetic on the field. Zero plus minus zero is zero: minus zero is seated.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 432 lines 1074867060

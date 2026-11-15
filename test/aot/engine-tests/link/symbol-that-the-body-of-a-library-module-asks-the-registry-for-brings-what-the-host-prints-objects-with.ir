@@ -1,0 +1,46 @@
+# internal/process/tick_ring: export default { ring: Symbol.for("nodejs.util.inspect.custom") } . main.js: print({ [require("internal/process/tick_ring").ring]() { return "mine"; } });
+# A read off a library module that the program holds raises nothing by itself: what lies there, its code laid there. This is the sentence that the rule stands on: had that code the symbol, the built-in that gave it says so. It has, and Symbol.for does.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:process/tick_ring" displayPath="internal:process/tick_ring" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalProcessTick_ring body=f1
+module m2 path="/$bun/js/builtins/UtilInspect.ts" displayPath="/$bun/js/builtins/UtilInspect.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0
+layout L1 module=m1 fields=[{key="ring" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+runtimefunction id=UtilInspectStylizeWithNoColor function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="internal/process/tick_ring"
+    v1 = PropGet v0 key="ring"
+    v2 = ToPropertyKey v1
+    v3 = NewClosure function=f3
+    v4 = NewObject layout=L0
+    ElemDefine v4, v2, v3
+    v6 = FinishObject v4
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="print" [isFreeName]
+    v9 = Call v8, -, v6 calleeName="print"
+    v10 = Undefined
+    Return v10
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=SymbolFor
+    v1 = String string="nodejs.util.inspect.custom"
+    v2 = Call v0, -, v1
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    Return v4
+}
+function f2 module=m2 kind=Method role=Library length=1 enclosingRuntimeFunction=UtilInspectStylizeWithNoColor thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 module=m0 kind=Method thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="mine"
+    Return v0
+}

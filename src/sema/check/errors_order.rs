@@ -213,7 +213,7 @@ impl Checker<'_, '_> {
         usage: Node,
     ) -> bool {
         let hir = self.hir(file);
-        let emits_standard_class_fields = self.module_options(file).emit_standard_class_fields;
+        let emits_standard_class_fields = self.module_options(file).reports_standard_class_fields;
         let has_legacy_decorators = self.module_options(file).experimental_decorators;
         let container = hir.get_enclosing_block_scope_container(declaration);
         if hir.is_in_jsdoc(hir.start(usage))
@@ -527,7 +527,7 @@ impl Checker<'_, '_> {
         let code = if is_in_initializer
             && !is_optional
             && !(kind == Kind::MethodDeclaration && flags.contains(Flags::STATIC))
-            && (self.module_options(file).use_define_for_class_fields
+            && (self.module_options(file).reports_define_for_class_fields
                 || !self.is_property_declared_in_ancestor_class(file, declaration, name))
         {
             2729

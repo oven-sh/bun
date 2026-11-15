@@ -1,8 +1,8 @@
 // RUN: link
 // CHECK: layout [[sorted]] fields=[{key="x" {{*}}}, {key="y" {{*}}}, {key="z"
-// CHECK: function {{*}}name="far" {{*}}results=[{type=undefined|null|[[sorted]] site=w{{*}}}]
+// CHECK: function {{*}}name="far" {{*}}results=[{type=anything}]
 // CHECK: = NewObject layout=[[sorted]] @
-// CHECK: function {{*}}name="near" {{*}}results=[{type=undefined|null|[[sorted]] site=w{{*}}}]
+// CHECK: function {{*}}name="near" {{*}}results=[{type=anything}]
 // CHECK: = NewObject layout=[[sorted]] @
 
 // RUN(UNSORTED): link

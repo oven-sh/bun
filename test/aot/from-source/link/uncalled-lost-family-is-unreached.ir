@@ -1,0 +1,38 @@
+# -- source: uncalled-lost-family-is-unreached.ts
+# class Inner { count: number; constructor() { this.count = 0; } bump(): void { this.count += 1; } }
+# class Box { inner: Inner; note: number; constructor() { this.inner = new Inner(); this.note = 0; } touch(): void { this.note += 1; this.inner.count += 2; } }
+# function first0(box: Box, n: number): void { box.inner.count = 0; box.inner.bump(); box.note = 0; }
+# function first1(box: Box, n: number): void { box.inner.count = 1; box.inner.bump(); box.note = 1; }
+# function first2(box: Box, n: number): void { box.inner.count = 2; box.inner.bump(); box.note = 2; }
+# function first3(box: Box, n: number): void { box.inner.count = 3; box.inner.bump(); box.note = 3; }
+# function first4(box: Box, n: number): void { box.inner.count = 4; box.inner.bump(); box.note = 4; }
+# function first5(box: Box, n: number): void { box.inner.count = 5; box.inner.bump(); box.note = 5; }
+# function first6(box: Box, n: number): void { box.inner.count = 6; box.inner.bump(); box.note = 6; }
+# function first7(box: Box, n: number): void { box.inner.count = 7; box.inner.bump(); box.note = 7; }
+# function first8(box: Box, n: number): void { box.inner.count = 8; box.inner.bump(); box.note = 8; }
+# function second0(n: number): number { return n + 0; }
+# function second1(n: number): number { return n + 1; }
+# function second2(n: number): number { return n + 2; }
+# function second3(n: number): number { return n + 3; }
+# function second4(n: number): number { return n + 4; }
+# function second5(n: number): number { return n + 5; }
+# function second6(n: number): number { return n + 6; }
+# function second7(n: number): number { return n + 7; }
+# function second8(n: number): number { return n + 8; }
+# function pickFirst(i: number): Function { if (i === 0) return first0; if (i === 1) return first1; if (i === 2) return first2; if (i === 3) return first3; if (i === 4) return first4; if (i === 5) return first5; if (i === 6) return first6; if (i === 7) return first7; return first8; }
+# function pickSecond(i: number): (n: number) => number { if (i === 0) return second0; if (i === 1) return second1; if (i === 2) return second2; if (i === 3) return second3; if (i === 4) return second4; if (i === 5) return second5; if (i === 6) return second6; if (i === 7) return second7; return second8; }
+# declare function print(...values: unknown[]): void;
+# let kinds = "", sum = 0;
+# for (let i = 0; i < 9; i++) { kinds += typeof pickFirst(i) + ","; sum += pickSecond(i)(i); }
+# const shared = new Box();
+# shared.touch();
+# print(kinds.length, sum, shared.note, shared.inner.count);
+# -- end of source
+# Two families of nine functions, more than a set holds. The program calls the second and never the first. The functions of the first stay unreached: no unit is compiled whose effects name no write.
+# OPTIONS: check=Validate
+# RUN: compile mechanisms=all
+# CHECK-NOT: EffectsNotCounted
+# RUN(FUNCTIONS): link functions mechanisms=all
+# FUNCTIONS: function f3 unreached
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 81 72 1 2

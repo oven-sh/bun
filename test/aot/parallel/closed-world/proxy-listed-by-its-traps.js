@@ -1,6 +1,6 @@
 // A proxy is spread, copied, enumerated and listed by built-ins. Each of them asks the handler for the keys, for the property under each key and for its value, and does nothing else
 // to the proxy: what the traps are handed stays known, and nothing of the library is compiled for it.
-// STATISTIC: ImageFunctionsEmitted <= 30
+// STATISTIC: ImageFunctionsEmitted <= 30 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
 const names = ["first", "second"];
 const asked = [];
 const proxy = new Proxy({ FIRST: 1, SECOND: 2 }, {

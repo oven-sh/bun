@@ -1,9 +1,9 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="start"
 // CHECK: [[port]] = Convert {{*}}declared={type=number flags=[IsExpected]}
+// CHECK: [[host]] = Convert {{*}}declared={type=undefined|null|string flags=[IsExpected]}
 // CHECK-NEXT: [[head]] = NewObject layout=[[layout]] @
 // CHECK-NEXT: PropDefine [[head]], [[port]] key="port"
-// CHECK: [[host]] = Convert {{*}}declared={type=undefined|null|string flags=[IsExpected]}
 // CHECK-NEXT: PropDefine [[head]], [[host]] key="host"
 // CHECK-NEXT: = FinishObject [[head]]
 

@@ -1,0 +1,18 @@
+# The descriptor is one record that a constant holds: its `value` is stored anew before each call and emptied behind it. The built-in reads `value` off it: all that the flow holds in that field lies under the name, never "the last store". Descriptor and object stay in sight. L0 = what is laid, L1 = the object, L2 = the descriptor.
+# RUN: link fields mechanisms=all
+# CHECK: field L0.2 "run" appended proven=f2 writers-known
+# CHECK: field L1.0 "inner" proven=undefined|L0 writers-known
+# CHECK: field L2.1 "value" proven=undefined|L0 writers-known
+# -- source: what-a-descriptor-that-a-constant-holds-has-under-value-lies-under-the-name.js
+# const shared = { value: undefined, enumerable: false };
+# function make(kind) {
+#   const made = {};
+#   shared.value = { kind, seen: 0 };
+#   Object.defineProperty(made, "inner", shared);
+#   shared.value = undefined;
+#   made.inner.run = payload => { made.inner.seen++; return payload.value + 1; };
+#   return made;
+# }
+# const one = make("first");
+# console.log(one.inner.run({ value: 1 }), one.inner.seen);
+# -- end of source

@@ -1,0 +1,676 @@
+=== project
++++ tsconfig.json
+{ "compilerOptions": { "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "strict": true, "paths": { "@lib/*": ["./src/*"] } } }
++++ src/index.ts
+export * from "./money";
+export * from "./cart";
+export { default as Inventory } from "./inventory";
+export { discount, type Rule } from "./rules";
+export * as events from "./events";
+export { VERSION } from "./version";
++++ src/money.ts
+export class Money {
+  constructor(readonly cents: number) {}
+  static of(text: string) { const m = /^\$?(\d+)(?:\.(\d\d))?$/.exec(text); if (!m) throw new SyntaxError("bad money " + text); return new Money(+m[1] * 100 + +(m[2] ?? 0)); }
+  plus(other: Money) { return new Money(this.cents + other.cents); }
+  times(n: number) { return new Money(Math.round(this.cents * n)); }
+  toString() { return "$" + (this.cents / 100).toFixed(2); }
+  toJSON() { return String(this); }
+}
+export const zero = new Money(0);
++++ src/cart.ts
+import { Money, zero } from "./money";
+import { discount } from "./rules";
+import { emit } from "./events";
+export interface Line { sku: string; price: Money; count: number }
+export class Cart {
+  #lines = new Map<string, Line>();
+  static made = 0;
+  readonly id = ++Cart.made;
+  add(sku: string, price: string, count = 1) { const line = this.#lines.get(sku); if (line) line.count += count; else this.#lines.set(sku, { sku, price: Money.of(price), count }); emit("added", sku, this.id); return this; }
+  remove(sku: string) { if (!this.#lines.delete(sku)) throw new Error("no line " + sku); emit("removed", sku, this.id); return this; }
+  get total() { let sum = zero; for (const line of this.#lines.values()) sum = sum.plus(line.price.times(line.count)); return discount(sum, this.count); }
+  get count() { return [...this.#lines.values()].reduce((n, line) => n + line.count, 0); }
+  *[Symbol.iterator]() { yield* this.#lines.values(); }
+}
++++ src/rules.ts
+import { Money } from "./money";
+export type Rule = (sum: Money, count: number) => Money;
+export const rules: Rule[] = [(sum, count) => (count >= 10 ? sum.times(0.9) : sum), sum => (sum.cents > 100000 ? sum.times(0.95) : sum)];
+export function discount(sum: Money, count: number) { return rules.reduce((all, rule) => rule(all, count), sum); }
++++ src/events.ts
+type Handler = (...all: any[]) => void;
+const handlers: Record<string, Handler[]> = {};
+export let emitted = 0;
+export function on(name: string, call: Handler) { (handlers[name] ??= []).push(call); return () => { handlers[name] = handlers[name].filter(other => other !== call); }; }
+export function emit(name: string, ...all: unknown[]) { emitted++; for (const call of handlers[name] ?? []) call(...all); }
++++ src/inventory.ts
+import { emit, on } from "./events";
+export default class Inventory {
+  stock: Record<string, number> = Object.create(null);
+  readonly stop = on("added", (sku: string) => { if (this.stock[sku]) this.stock[sku]--; });
+  set(sku: string, n: number) { this.stock[sku] = n; if (n === 0) emit("empty", sku); return this; }
+  async load(rows: AsyncIterable<[string, number]>) { for await (const [sku, n] of rows) this.set(sku, n); return Object.keys(this.stock).length; }
+}
++++ src/version.ts
+import info from "../package.json";
+export const VERSION = `${info.name}@${info.version}`;
++++ src/store.ts
+import { Cart } from "./index";
+const carts = new Map<string, Cart>();
+export const cartOf = (user: string) => carts.get(user) ?? (carts.set(user, new Cart()), carts.get(user)!);
+export const users = () => [...carts.keys()];
+console.log("store is loaded");
++++ src/cli.ts
+import { cartOf } from "@lib/store";
+import { events } from "@lib/index";
+export function run(words: string[]) { const [command, user, ...rest] = words; const cart = cartOf(user); switch (command) { case "add": cart.add(rest[0], rest[1], rest[2] ? +rest[2] : undefined); return String(cart.total); case "remove": return cart.remove(rest[0]).count; case "show": return JSON.stringify([...cart]); case "events": return events.emitted; default: throw new TypeError("unknown command " + command); } }
++++ package.json
+{ "name": "made-up-shop", "version": "2.3.4", "private": true }
++++ tests/money.test.ts
+import { describe, expect, test } from "bun:test";
+import { Money, zero } from "../src";
+describe("Money", () => { test.each([["$1.50", 150], ["20", 2000], ["$0.05", 5]])("of %s", (text, cents) => { expect(Money.of(text).cents).toBe(cents); expect(`${Money.of(text)}`).toBe("$" + (cents / 100).toFixed(2)); }); test("bad", () => { expect(() => Money.of("x")).toThrow(SyntaxError); }); test("sums", () => { expect(zero.plus(new Money(5)).times(1.5).cents).toBe(8); expect(JSON.stringify({ m: new Money(1) })).toBe('{"m":"$0.01"}'); }); });
++++ tests/cart.test.ts
+import { beforeEach, describe, expect, test } from "bun:test";
+import { Cart } from "../src";
+let cart: Cart;
+beforeEach(() => { cart = new Cart(); });
+describe("Cart", () => { test("adds", () => { cart.add("a", "$1.00").add("a", "$1.00", 2).add("b", "2.50"); expect(String(cart.total)).toBe("$5.50"); expect([...cart].map(line => line.sku + line.count)).toEqual(["a3", "b1"]); }); test("discounts", () => { cart.add("c", "10", 10); expect(cart.total.cents).toBe(9000); cart.add("d", "2000"); expect(cart.total.cents).toBe(179550); }); test("removes", () => { expect(() => cart.remove("none")).toThrow("no line none"); expect(cart.add("a", "1").remove("a").count).toBe(0); }); test("ids", () => { expect(cart.id).toBe(Cart.made); }); });
++++ tests/events.test.ts
+import { afterEach, expect, mock, test } from "bun:test";
+import { Cart, events, Inventory } from "../src";
+const stops: (() => void)[] = [];
+afterEach(() => { stops.splice(0).forEach(stop => stop()); });
+test("are emitted", () => { const call = mock((sku: string, id: number) => {}); stops.push(events.on("added", call)); const cart = new Cart().add("x", "1"); expect(call).toHaveBeenCalledWith("x", cart.id); });
+test("change the inventory", () => { const inventory = new Inventory().set("x", 2); stops.push(inventory.stop); new Cart().add("x", "1").add("x", "1").add("y", "1"); expect(inventory.stock).toEqual({ x: 0 }); });
+test("are counted", () => { const before = events.emitted; new Inventory().set("q", 0); expect(events.emitted).toBe(before + 1); });
++++ tests/inventory.test.ts
+import { expect, spyOn, test } from "bun:test";
+import { Inventory } from "../src";
+import * as events from "../src/events";
+async function* rows(): AsyncGenerator<[string, number]> { yield ["a", 1]; await null; yield ["b", 0]; }
+test("loads", async () => { const emit = spyOn(events, "emit"); expect(await new Inventory().load(rows())).toBe(2); const calls = emit.mock.calls.length; emit.mockRestore(); expect(calls).toBe(1); });
+test("is its own", () => { expect(Object.keys(new Inventory().stock)).toEqual([]); expect(Inventory.name).toBe("Inventory"); });
++++ tests/rules.test.ts
+import { afterAll, expect, test } from "bun:test";
+import { discount, Money, type Rule } from "../src";
+import { rules } from "../src/rules";
+const kept = [...rules];
+afterAll(() => { rules.splice(0, rules.length, ...kept); });
+test("as they are", () => { expect(discount(new Money(1000), 1).cents).toBe(1000); expect(discount(new Money(200000), 20).cents).toBe(171000); });
+test("one more", () => { const half: Rule = sum => sum.times(0.5); rules.push(half); expect(discount(new Money(1000), 1).cents).toBe(500); });
+test("none", () => { rules.length = 0; expect(discount(new Money(7), 100).cents).toBe(7); });
++++ tests/store.test.ts
+import { expect, test } from "bun:test";
+import { cartOf, users } from "@lib/store";
+test("one cart a user", () => { expect(cartOf("ann")).toBe(cartOf("ann")); expect(cartOf("ann")).not.toBe(cartOf("bob")); expect(users()).toEqual(["ann", "bob"]); });
+test("is kept between tests", () => { expect(users().length).toBe(2); cartOf("ann").add("k", "1"); expect(cartOf("ann").count).toBe(1); });
++++ tests/cli.test.ts
+import { expect, test } from "bun:test";
+import { run } from "@lib/cli";
+import { users } from "@lib/store";
+test("commands", () => { expect(run(["add", "ann", "a", "$2.00", "3"])).toBe("$6.00"); expect(run(["add", "ann", "b", "1"])).toBe("$7.00"); expect(run(["show", "ann"])).toBe('[{"sku":"a","price":"$2.00","count":3},{"sku":"b","price":"$1.00","count":1}]'); expect(run(["remove", "ann", "a"])).toBe(1); });
+test("errors", () => { expect(() => run(["fly", "x"])).toThrow(new TypeError("unknown command fly")); expect(() => run(["remove", "new", "a"])).toThrow("no line a"); });
+test("what has happened", () => { console.log("events", run(["events", "ann"]), users().join()); });
++++ tests/version.test.ts
+import { expect, test } from "bun:test";
+import * as all from "../src";
+test("version", () => { expect(all.VERSION).toBe("made-up-shop@2.3.4"); });
+test("the barrel", () => { expect(Object.keys(all).sort()).toEqual(["Cart", "Inventory", "Money", "VERSION", "discount", "events", "zero"]); expect(Object.keys(all.events).sort()).toEqual(["emit", "emitted", "on"]); });
++++ tests/mocked.test.ts
+import { afterAll, expect, mock, test } from "bun:test";
+import { Cart } from "../src";
+import * as rules from "../src/rules";
+const real = { ...rules };
+afterAll(() => { mock.module("../src/rules", () => real); });
+test("rules are mocked below the cart", () => { mock.module("../src/rules", () => ({ ...real, discount: (sum: any) => sum.times(0) })); expect(new Cart().add("a", "5").total.cents).toBe(0); });
+test("and put back", () => { mock.module("../src/rules", () => real); expect(new Cart().add("a", "5").total.cents).toBe(500); });
++++ tests/after-mocked.test.ts
+import { expect, test } from "bun:test";
+import { Cart, discount, Money } from "../src";
+test("rules are real in the next file", () => { expect(new Cart().add("a", "5", 10).total.cents).toBe(4500); expect(discount(new Money(10), 10).cents).toBe(9); });
+=== state-in-modules
++++ counter.ts
+console.log("counter is loaded");
+let n = 0;
+export const next = () => ++n;
+export const state = { list: [] as number[], at: 0 };
+export default { get n() { return n; } };
++++ a.test.ts
+import { test, expect } from "bun:test";
+import counter, { next, state } from "./counter";
+test("a counts", () => { expect(next()).toBe(1); state.list.push(next()); expect(state.list).toEqual([2]); console.log("a", counter.n); });
++++ b.test.ts
+import { test, expect } from "bun:test";
+import counter, { next, state } from "./counter";
+test("b sees", () => { console.log("b", next(), state.list.join(), counter.n); expect(state.list.length).toBeLessThan(2); });
++++ c.test.ts
+import { test, expect } from "bun:test";
+test("c imports later", async () => { const { next, state, default: counter } = await import("./counter"); console.log("c", next(), state.list.join(), counter.n); expect(next()).toBeGreaterThan(1); });
+=== globals-between-files
++++ a.test.js
+import { test, expect } from "bun:test";
+globalThis.madeUpGlobal = (globalThis.madeUpGlobal ?? 0) + 1;
+test("a sets", () => { expect(globalThis.madeUpGlobal).toBe(1); process.env.MADE_UP_A = "a"; });
++++ b.test.js
+import { test, expect } from "bun:test";
+globalThis.madeUpGlobal = (globalThis.madeUpGlobal ?? 0) + 10;
+test("b sees", () => { console.log("global", globalThis.madeUpGlobal, process.env.MADE_UP_A); expect(typeof globalThis.madeUpGlobal).toBe("number"); });
+=== errors-at-load
++++ broken.ts
+export const before = 1;
+if (Number(before) === 1) throw new RangeError("broken at load");
+export const after = 2;
++++ a.test.ts
+import { test, expect } from "bun:test";
+import { before } from "./broken";
+test("never", () => { expect(before).toBe(1); });
++++ b.test.ts
+import { test, expect } from "bun:test";
+test("caught", async () => { await expect(import("./broken")).rejects.toThrow("broken at load"); });
+test("again", async () => { const error = await import("./broken").catch(error => error); expect(String(error)).toBe("RangeError: broken at load"); });
++++ c.test.ts
+import { test, expect } from "bun:test";
+test("runs", () => { expect(1).toBe(1); });
+throw new TypeError("at the end of the file");
+=== missing-imports
++++ a.test.js
+import { test, expect } from "bun:test";
+test("not found", async () => { const name = "./no-such-" + "file"; await expect(import(name)).rejects.toThrow(/no-such-file/); expect(() => require(name)).toThrow(); });
++++ b.test.js
+const { test, expect } = require("bun:test");
+test("optional", () => { let found; try { found = require("made-up-optional"); } catch (error) { found = error.code; } expect(found).toBe("MODULE_NOT_FOUND"); });
+=== cycles
++++ a.ts
+import { b, callB } from "./b";
+export const a = "a";
+export const callA = () => "A" + b;
+export const viaB = () => callB();
++++ b.ts
+import { a, callA } from "./a";
+export const b = "b";
+export const callB = () => "B" + a + callA();
++++ node.cjs
+exports.early = 1; const leaf = require("./leaf.cjs"); exports.late = leaf.seen; exports.leaf = leaf;
++++ leaf.cjs
+const node = require("./node.cjs"); exports.seen = Object.keys(node).join(); exports.late = () => node.late;
++++ cycles.test.ts
+import { test, expect } from "bun:test";
+import { viaB } from "./a";
+import node from "./node.cjs";
+test("ES modules", () => { expect(viaB()).toBe("BaAb"); });
+test("CommonJS", () => { expect(node.late).toBe("early"); expect(node.leaf.late()).toBe("early"); });
+=== es-and-commonjs-mixed
++++ old.cjs
+module.exports = function make(n) { return { n, self: module.exports === make }; };
+module.exports.version = 3;
+module.exports.default = "not it";
++++ new.mjs
+export default class Thing { name = "thing"; }
+export const list = [1, 2];
+export function f() { return this === undefined; }
++++ flagged.cjs
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.default = "the default"; exports.named = "named";
++++ mixed.test.mjs
+import { test, expect } from "bun:test";
+import { createRequire } from "node:module";
+import old, { version } from "./old.cjs";
+import flagged, { named } from "./flagged.cjs";
+import * as fresh from "./new.mjs";
+const require2 = createRequire(import.meta.url);
+test("import of CommonJS", () => { expect(old(2).self).toBe(true); expect(version).toBe(3); expect([typeof flagged, named]).toEqual([typeof flagged, "named"]); console.log(JSON.stringify(flagged)); });
+test("require of an ES module", () => { const got = require2("./new.mjs"); expect(new got.default().name).toBe("thing"); expect(got.list).toBe(fresh.list); expect((0, got.f)()).toBe(true); });
+test("same instances", () => { expect(require2("./old.cjs")).toBe(old); expect(import.meta.filename.endsWith("mixed.test.mjs")).toBe(true); });
+=== top-level-await
++++ data.ts
+export const rows = await Promise.all([1, 2, 3].map(async n => n * 10));
+export const total = await (async () => rows.reduce((a, b) => a + b, 0))();
++++ await.test.ts
+import { test, expect } from "bun:test";
+import { rows, total } from "./data";
+const extra = await Promise.resolve(5);
+test("values", () => { expect(rows).toEqual([10, 20, 30]); expect(total + extra).toBe(65); });
+for await (const n of rows) test("row " + n, () => { expect(n % 10).toBe(0); });
+=== generated-tests
++++ cases.json
+[{ "in": "1+2", "out": 3 }, { "in": "2*3", "out": 6 }, { "in": "9-10", "out": -1 }, { "in": "x", "out": null }]
++++ generated.test.ts
+import { describe, test, expect } from "bun:test";
+import cases from "./cases.json";
+const ops: Record<string, (a: number, b: number) => number> = { "+": (a, b) => a + b, "*": (a, b) => a * b, "-": (a, b) => a - b };
+const evaluate = (text: string) => { const m = /^(\d+)([-+*])(\d+)$/.exec(text); return m ? ops[m[2]](+m[1], +m[3]) : null; };
+for (const [i, { in: input, out }] of cases.entries()) test(`case ${i}: ${input}`, () => { expect(evaluate(input)).toBe(out); });
+for (const op of Object.keys(ops)) describe("operator " + op, () => { for (let a = 0; a < 2; a++) test(`${a}${op}1`, () => { expect(evaluate(a + op + "1")).toBe(ops[op](a, 1)); }); });
+=== preload-and-config
++++ bunfig.toml
+[test]
+preload = ["./setup.ts"]
++++ setup.ts
+import { afterEach, beforeAll, expect } from "bun:test";
+console.log("setup is loaded");
+(globalThis as any).fixtures = { users: ["ann", "bob"] };
+expect.extend({ toBeUser(name: string) { return { pass: (globalThis as any).fixtures.users.includes(name), message: () => name + " is no user" }; } });
+beforeAll(() => { console.log("before all"); });
+afterEach(() => { (globalThis as any).fixtures.users.length = 2; });
++++ a.test.ts
+import { test, expect } from "bun:test";
+test("fixtures", () => { (expect("ann") as any).toBeUser(); fixtures.users.push("zed"); (expect("zed") as any).toBeUser(); });
+test("are cleaned", () => { (expect("zed") as any).not.toBeUser(); });
+declare const fixtures: { users: string[] };
++++ b.test.ts
+import { test, expect } from "bun:test";
+test("in the next file too", () => { (expect("bob") as any).toBeUser(); (expect("none") as any).toBeUser(); });
+=== globals-without-imports
++++ globals.test.js
+let log = [];
+beforeEach(() => { log = ["start"]; });
+describe("globals", () => {
+  it("are there", () => { log.push(1); expect(log).toEqual(["start", 1]); expect(typeof jest.fn).toBe("function"); });
+  test("mocks", () => { const f = jest.fn(x => x * 2); expect([1, 2].map(x => f(x))).toEqual([2, 4]); expect(f).toHaveBeenCalledTimes(2); });
+  xit?.("skipped", () => { throw new Error("no"); });
+});
+=== concurrent-tests
++++ concurrent.test.ts
+import { describe, test, expect } from "bun:test";
+let running = 0, most = 0;
+const work = async (n: number) => { most = Math.max(most, ++running); for (let i = 0; i < 5 + n; i++) await null; running--; return n; };
+describe.concurrent("together", () => { for (const n of [1, 2, 3]) test("work " + n, async () => { expect(await work(n)).toBe(n); }); });
+test("after them", () => { expect(running).toBe(0); console.log("most", most > 0); });
+=== lifecycle-of-objects
++++ pool.ts
+export class Pool<T extends { close(): void }> {
+  #free: T[] = []; #used = new Set<T>();
+  constructor(private make: () => T, readonly size: number) {}
+  take() { const one = this.#free.pop() ?? (this.#used.size < this.size ? this.make() : undefined); if (!one) throw new Error("pool is empty"); this.#used.add(one); return { value: one, [Symbol.dispose]: () => this.give(one) }; }
+  give(one: T) { if (!this.#used.delete(one)) throw new TypeError("not taken"); this.#free.push(one); }
+  async drain() { for (const one of this.#free.splice(0)) { await null; one.close(); } return this.#used.size; }
+}
++++ pool.test.ts
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { Pool } from "./pool";
+describe("a pool", () => {
+  const close = mock(() => {}); let made = 0; let pool: Pool<{ id: number; close(): void }>;
+  beforeEach(() => { made = 0; pool = new Pool(() => ({ id: ++made, close }), 2); });
+  afterEach(async () => { await pool.drain(); close.mockClear(); });
+  test("makes and reuses", () => { { using a = pool.take(); using b = pool.take(); expect([a.value.id, b.value.id]).toEqual([1, 2]); expect(() => pool.take()).toThrow("empty"); } expect(pool.take().value.id).toBeLessThan(3); expect(made).toBe(2); });
+  test("drains", async () => { const a = pool.take(); pool.give(a.value); expect(await pool.drain()).toBe(0); expect(close).toHaveBeenCalledTimes(1); expect(() => pool.give(a.value)).toThrow(TypeError); });
+  test.each([1, 2, 3])("of size %d", n => { const p = new Pool(() => ({ close }), n); for (let i = 0; i < n; i++) p.take(); expect(() => p.take()).toThrow(); });
+});
+=== parser-tests
++++ ini.ts
+export type Ini = Record<string, Record<string, string | string[]>>;
+export function parse(text: string): Ini {
+  const out: Ini = { "": {} }; let section = "";
+  text.split(/\r?\n/).forEach((line, i) => {
+    let m: RegExpExecArray | null;
+    if (/^\s*([;#].*)?$/.test(line)) return;
+    if ((m = /^\s*\[([^\]]+)\]\s*$/.exec(line))) { out[(section = m[1])] ??= {}; return; }
+    if (!(m = /^\s*(\w+)(\[\])?\s*=\s*(?:"([^"]*)"|(.*?))\s*$/.exec(line))) throw new SyntaxError(`line ${i + 1}: ${line}`);
+    const value = m[3] ?? m[4];
+    if (m[2]) ((out[section][m[1]] ??= []) as string[]).push(value); else out[section][m[1]] = value;
+  });
+  return out;
+}
++++ ini.test.ts
+import { describe, expect, it } from "bun:test";
+import { parse } from "./ini";
+describe("parse", () => {
+  it.each([["a=1", { "": { a: "1" } }], ["[s]\nb = \"x y\"", { "": {}, s: { b: "x y" } }], ["; note\n\nl[]=1\nl[]=2", { "": { l: ["1", "2"] } }], ["", { "": {} }]])("%j", (text, value) => { expect(parse(text)).toEqual(value as any); });
+  it("names the line", () => { expect(() => parse("a=1\n??")).toThrow("line 2: ??"); });
+  it("is kept as a snapshot", () => { expect(parse("[a]\nx=1\n[b]\ny[]=2\n[a]\nz=3")).toMatchInlineSnapshot(`
+{
+  "": {},
+  "a": {
+    "x": "1",
+    "z": "3",
+  },
+  "b": {
+    "y": [
+      "2",
+    ],
+  },
+}
+`); });
+});
+=== async-queues
++++ queue.ts
+export class Queue<T> {
+  #items: T[] = []; #waiting: ((item: IteratorResult<T>) => void)[] = []; #closed = false;
+  push(item: T) { if (this.#closed) throw new Error("closed"); const next = this.#waiting.shift(); if (next) next({ done: false, value: item }); else this.#items.push(item); }
+  close() { this.#closed = true; for (const next of this.#waiting.splice(0)) next({ done: true, value: undefined }); }
+  async next(): Promise<IteratorResult<T>> { if (this.#items.length) return { done: false, value: this.#items.shift()! }; if (this.#closed) return { done: true, value: undefined }; return new Promise(done => this.#waiting.push(done)); }
+  [Symbol.asyncIterator]() { return this; }
+}
+export async function pool<T, R>(items: T[], limit: number, work: (item: T) => Promise<R>) { const out: R[] = new Array(items.length); let at = 0; await Promise.all(Array.from({ length: limit }, async () => { while (at < items.length) { const i = at++; out[i] = await work(items[i]); } })); return out; }
++++ queue.test.ts
+import { expect, test } from "bun:test";
+import { pool, Queue } from "./queue";
+test("in order", async () => { const queue = new Queue<number>(); queue.push(1); const second = queue.next().then(() => queue.next()); queue.push(2); queue.close(); expect(await second).toEqual({ done: false, value: 2 }); expect(await queue.next()).toEqual({ done: true, value: undefined }); expect(() => queue.push(3)).toThrow("closed"); });
+test("for await", async () => { const queue = new Queue<string>(); const got: string[] = []; const reader = (async () => { for await (const text of queue) got.push(text); return got.length; })(); for (const text of "abc") { queue.push(text); await null; } queue.close(); expect(await reader).toBe(3); expect(got.join("")).toBe("abc"); });
+test("a pool", async () => { let running = 0, most = 0; const out = await pool([3, 1, 2, 0], 2, async n => { most = Math.max(most, ++running); for (let i = 0; i < n; i++) await null; running--; return n * n; }); expect(out).toEqual([9, 1, 4, 0]); expect(most).toBe(2); await expect(pool([1], 1, async () => { throw new RangeError("work"); })).rejects.toThrow("work"); });
+=== server-in-tests
++++ server.ts
+export function start() { const hits: string[] = []; const server = Bun.serve({ port: 0, hostname: "127.0.0.1", routes: { "/users/:id": req => { hits.push(req.params.id); return Response.json({ id: +req.params.id }); } }, async fetch(req) { const url = new URL(req.url); if (req.method === "POST") return new Response((await req.text()).toUpperCase(), { status: 201, headers: { "x-made-up": url.searchParams.get("k") ?? "none" } }); if (url.pathname === "/fail") throw new Error("handler failed"); return new Response("not found", { status: 404 }); }, error(error) { return new Response(error.message, { status: 500 }); } }); return { server, hits, url: server.url }; }
++++ server.test.ts
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { start } from "./server";
+let app: ReturnType<typeof start>;
+beforeAll(() => { app = start(); });
+afterAll(() => app.server.stop(true));
+test("routes", async () => { expect(await (await fetch(new URL("/users/5", app.url))).json()).toEqual({ id: 5 }); expect(app.hits).toEqual(["5"]); });
+test("posts", async () => { const res = await fetch(new URL("/x?k=v", app.url), { method: "POST", body: "text" }); expect([res.status, res.headers.get("x-made-up"), await res.text()]).toEqual([201, "v", "TEXT"]); });
+test("errors", async () => { const res = await fetch(new URL("/fail", app.url)); expect(res.status).toBe(500); expect(await res.text()).toBe("handler failed"); expect((await fetch(new URL("/none", app.url))).status).toBe(404); });
+test("many", async () => { const all = await Promise.all(Array.from({ length: 50 }, (_, i) => fetch(new URL("/users/" + i, app.url)).then(r => r.json()))); expect(all.reduce((sum, { id }) => sum + id, 0)).toBe(1225); });
+=== files-in-tests
++++ notes.ts
+import { mkdtempSync, rmSync } from "node:fs";
+import { readFile, writeFile, readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+export class Notes { readonly dir = mkdtempSync(join(tmpdir(), "notes-")); async add(name: string, text: string) { await writeFile(join(this.dir, name + ".md"), text); return (await stat(join(this.dir, name + ".md"))).size; } async all() { const names = (await readdir(this.dir)).sort(); return Object.fromEntries(await Promise.all(names.map(async name => [name, await readFile(join(this.dir, name), "utf8")]))); } clear() { rmSync(this.dir, { recursive: true }); } }
++++ notes.test.ts
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
+import { Notes } from "./notes";
+let notes: Notes;
+beforeEach(() => { notes = new Notes(); });
+afterEach(() => { notes.clear(); expect(existsSync(notes.dir)).toBe(false); });
+test("adds", async () => { expect(await notes.add("a", "hé")).toBe(3); expect(await notes.all()).toEqual({ "a.md": "hé" }); });
+test("is empty again", async () => { expect(await notes.all()).toEqual({}); expect(await Bun.file(notes.dir + "/none").exists()).toBe(false); await expect(Bun.file(notes.dir + "/none").text()).rejects.toThrow(); });
+=== sqlite-in-tests
++++ users.ts
+import { Database } from "bun:sqlite";
+export class Users { readonly db = new Database(":memory:"); #insert; constructor() { this.db.run("create table users (id integer primary key, name text unique, age int)"); this.#insert = this.db.prepare("insert into users (name, age) values ($name, $age) returning id"); } add(name: string, age: number | null) { return (this.#insert.get({ $name: name, $age: age }) as { id: number }).id; } older(n: number) { return this.db.query("select name from users where age > ? order by name").all(n) as { name: string }[]; } addAll(list: [string, number][]) { return this.db.transaction(() => list.map(([name, age]) => this.add(name, age)))(); } }
++++ users.test.ts
+import { beforeEach, expect, test } from "bun:test";
+import { Users } from "./users";
+let users: Users;
+beforeEach(() => { users = new Users(); });
+test("adds", () => { expect([users.add("a", 1), users.add("b", null)]).toEqual([1, 2]); expect(() => users.add("a", 5)).toThrow(/UNIQUE/); });
+test("finds", () => { users.addAll([["z", 30], ["y", 20], ["x", 40]]); expect(users.older(25).map(u => u.name)).toEqual(["x", "z"]); });
+test("rolls back", () => { expect(() => users.addAll([["p", 1], ["p", 2]])).toThrow(); expect(users.db.query("select count(*) as n from users").get()).toEqual({ n: 0 }); });
+=== classes-under-test
++++ bank.ts
+export class InsufficientFunds extends Error { constructor(readonly missing: number) { super("missing " + missing); this.name = "InsufficientFunds"; } }
+export abstract class Account { protected constructor(protected balance: number) {} get sum() { return this.balance; } abstract fee(n: number): number; withdraw(n: number) { const all = n + this.fee(n); if (all > this.balance) throw new InsufficientFunds(all - this.balance); this.balance -= all; return this; } static open(kind: "plain" | "gold", n: number): Account { return new { plain: Plain, gold: Gold }[kind](n); } }
+class Plain extends Account { constructor(n: number) { super(n); } fee(n: number) { return Math.ceil(n * 0.01); } }
+class Gold extends Account { #free = 2; constructor(n: number) { super(n + 10); } fee() { return this.#free-- > 0 ? 0 : 1; } }
++++ bank.test.ts
+import { describe, expect, spyOn, test } from "bun:test";
+import { Account, InsufficientFunds } from "./bank";
+describe.each(["plain", "gold"] as const)("%s", kind => {
+  test("withdraws", () => { const account = Account.open(kind, 100); account.withdraw(50).withdraw(10); expect(account.sum).toBe(kind === "plain" ? 38 : 50); });
+  test("refuses", () => { let error: any; try { Account.open(kind, 5).withdraw(50); } catch (e) { error = e; } expect(error).toBeInstanceOf(InsufficientFunds); expect(error).toMatchObject({ name: "InsufficientFunds", missing: kind === "plain" ? 46 : 35 }); });
+  test("fees are asked", () => { const account = Account.open(kind, 1000); const fee = spyOn(account, "fee"); account.withdraw(1).withdraw(2).withdraw(3); expect(fee.mock.calls.map(c => c[0])).toEqual([1, 2, 3]); expect(fee.mock.results.map(r => r.value)).toEqual(kind === "plain" ? [1, 1, 1] : [0, 0, 1]); });
+});
+=== errors-printed
++++ thrower.ts
+export function outer(n: number) { return inner(n - 1); }
+function inner(n: number): number { if (n < 0) throw new TypeError("too small: " + n, { cause: new RangeError("the cause") }); return n; }
+export class Late extends AggregateError { constructor() { super([new Error("one"), "two"], "both failed"); } }
++++ printed.test.ts
+import { test, expect } from "bun:test";
+import { Late, outer } from "./thrower";
+test("a stack", () => { outer(0); });
+test("a cause", async () => { await null; throw new Error("top", { cause: "text" }); });
+test("several", () => { throw new Late(); });
+test("not an error", () => { throw { code: 5, list: [1] }; });
+test("null", () => { throw null; });
+test("a message over lines", () => { throw new Error("first\nsecond"); });
+test("caught", () => { expect(() => outer(0)).toThrow("too small: -1"); });
+=== console-in-tests
++++ console.test.ts
+import { test, expect, beforeAll } from "bun:test";
+class Point { constructor(public x: number, private y = [1]) {} get sum() { return this.x; } }
+beforeAll(() => { console.log("start"); });
+test("prints", () => { console.log("text", 1, -0, null, undefined, true, 10n, Symbol("s")); console.log([1, [2, [3, [4, [5]]]]], { a: { b: { c: { d: 1 } } } }); console.log(new Point(1), new Map([["k", new Set([1])]]), new Date(0), /x/g, () => 1, class A {}); console.error("to stderr %s %d %j", "a", 5, { b: 1 }); console.table([{ a: 1, b: 2 }, { a: 3 }]); console.group("group"); console.log("inside"); console.groupEnd(); console.assert(1 === (2 as number), "asserted"); expect(1).toBe(1); });
+test("inspects", () => { expect(Bun.inspect(new Point(2))).toContain("Point"); expect(Bun.inspect({ [Symbol("k")]: 1, "a-b": [,] })).toBe(Bun.inspect({ [Symbol("k")]: 1, "a-b": [,] })); });
+=== type-only-imports
++++ types.ts
+export type Id = `${string}-${number}`;
+export interface Shape { area(): number }
+export enum Kind { A = 1, B, C = "c" as any }
+export const enum Fast { One = 1, Two = One << 1 }
+export namespace Geo { export const unit = "cm"; export namespace Deep { export function scale(n: number) { return n + unit; } } }
+export declare const missing: string;
++++ types.test.ts
+import { test, expect } from "bun:test";
+import type { Id, Shape } from "./types";
+import { Fast, Geo, Kind, type Id as Other } from "./types";
+test("enums", () => { expect([Kind.A, Kind[2], Kind.B, Fast.Two]).toEqual([1, "B", 2, 2]); expect(Object.keys(Kind).length).toBeGreaterThan(3); });
+test("namespaces", () => { expect(Geo.Deep.scale(5)).toBe("5cm"); });
+test("satisfies and as", () => { const shape = { area: () => 4, extra: 1 } satisfies Shape & { extra: number }; const id = "a-1" as Id satisfies Other; expect(shape.area() + id!.length).toBe(7); const tuple = [1, "a"] as const; expect(tuple[1]).toBe("a"); });
+=== jsx-in-tests
++++ tsconfig.json
+{ "compilerOptions": { "jsx": "react", "jsxFactory": "h", "jsxFragmentFactory": "Fragment" } }
++++ h.ts
+export type Child = string | number | null | false | Child[];
+export const Fragment = "";
+export function h(tag: string | ((props: any) => string), props: Record<string, unknown> | null, ...children: any[]): string { if (typeof tag === "function") return tag({ ...props, children }); const inner = children.flat(9).filter(c => c !== null && c !== false).join(""); if (!tag) return inner; const attrs = Object.entries(props ?? {}).map(([k, v]) => (v === true ? " " + k : ` ${k}="${v}"`)).join(""); return `<${tag}${attrs}>${inner}</${tag}>`; }
++++ page.test.tsx
+import { test, expect } from "bun:test";
+import { h, Fragment } from "./h";
+const Item = ({ name, children }: { name: string; children?: any }) => <li id={name}>{name}{children}</li>;
+test("elements", () => { expect(<ul class="x" hidden>{["a", "b"].map(name => <Item name={name}>!</Item>)}{null}{false}</ul>).toBe('<ul class="x" hidden><li id="a">a!</li><li id="b">b!</li></ul>'); });
+test("fragments and spread", () => { const props = { title: "t" }; expect(<><p {...props}>{1}</p>text</>).toBe('<p title="t">1</p>text'); });
+=== spec-files
++++ deep/inner/one.spec.js
+test("a spec in a folder", () => { expect(__filename.endsWith("one.spec.js")).toBe(true); expect(require("path").basename(__dirname)).toBe("inner"); });
++++ deep/two_test.ts
+import { test, expect } from "bun:test";
+test("an underscore", () => { expect(import.meta.file).toBe("two_test.ts"); expect(import.meta.dir.endsWith("deep")).toBe(true); });
++++ three.spec.mts
+import { test, expect } from "bun:test";
+test("mts", () => { expect(new URL("./x", import.meta.url).pathname.endsWith("/x")).toBe(true); expect(import.meta.main).toBe(import.meta.main); });
++++ four_spec.cjs
+const { test, expect } = require("bun:test");
+test("cjs", () => { expect(module.exports).toEqual({}); expect(this === module.exports || true).toBe(true); });
+=== spies-between-files
++++ clock.ts
+export const clock = { now: () => 1000, format(n = clock.now()) { return "at " + n; } };
++++ a.test.ts
+import { test, expect, spyOn } from "bun:test";
+import { clock } from "./clock";
+test("left spied", () => { spyOn(clock, "now").mockReturnValue(5); expect(clock.format()).toBe("at 5"); });
++++ b.test.ts
+import { test, expect } from "bun:test";
+import { clock } from "./clock";
+test("in the next file", () => { console.log(clock.format()); expect(clock.format()).toMatch(/^at /); });
+=== mocks-between-files
++++ lib.ts
+export const load = () => "real";
+export const name = "lib";
++++ user.ts
+import { load } from "./lib";
+export const use = () => "use " + load();
++++ a.test.ts
+import { test, expect, mock } from "bun:test";
+mock.module("./lib", () => ({ load: () => "mock a", name: "a" }));
+import { use } from "./user";
+test("a", () => { expect(use()).toBe("use mock a"); });
++++ b.test.ts
+import { test, expect } from "bun:test";
+import { use } from "./user";
+import { name } from "./lib";
+test("b", () => { console.log(use(), name); expect(use()).toMatch(/^use /); });
++++ c.test.ts
+import { test, expect, mock } from "bun:test";
+test("c", async () => { mock.module("./lib", () => ({ load: () => "mock c", name: "c" })); const { use } = await import("./user"); expect(use()).toBe("use mock c"); });
+=== restore-all
++++ restore.test.ts
+import { test, expect, mock, spyOn, jest, afterEach } from "bun:test";
+const tool = { a: () => 1, b: () => 2 };
+afterEach(() => { mock.restore(); });
+test("two spies", () => { spyOn(tool, "a").mockReturnValue(10); spyOn(tool, "b").mockReturnValue(20); expect(tool.a() + tool.b()).toBe(30); });
+test("restored", () => { expect(tool.a() + tool.b()).toBe(3); });
+test("cleared", () => { const a = spyOn(tool, "a"), f = jest.fn(() => 5); tool.a(); f(); jest.clearAllMocks(); expect(a).not.toHaveBeenCalled(); expect(f.mock.calls).toEqual([]); expect(f()).toBe(5); });
+test("a spy of a spy", () => { const first = spyOn(tool, "b"); const second = spyOn(tool, "b"); expect(first).toBe(second); tool.b(); expect(second).toHaveBeenCalledTimes(1); });
+=== retry-and-repeat
++++ retry.test.ts
+import { test, expect } from "bun:test";
+let tries = 0, runs = 0;
+test("in the third try", () => { expect(++tries).toBe(3); }, { retry: 5 });
+test("repeated", () => { runs++; expect(runs).toBeLessThan(10); }, { repeats: 3 });
+test("what happened", () => { expect(tries).toBe(3); console.log("runs", runs); });
+=== expect-type-and-unreachable
++++ more.test.ts
+import { test, expect, expectTypeOf } from "bun:test";
+test("types", () => { expectTypeOf<string>().toEqualTypeOf<string>(); expectTypeOf({ a: 1 }).toMatchTypeOf<{ a: number }>(); });
+test("unreachable", () => { try { expect.unreachable("should not be here"); } catch (error) { expect((error as Error).message).toContain("should not be here"); } });
+test("pass and fail", () => { expect(1).pass("fine"); expect(() => expect(1).fail("failed")).toThrow("failed"); });
+test("one of", () => { expect(2).toBeOneOf([1, 2]); expect([3, 1, 2]).toBeArrayOfSize(3); expect({ a: 1, b: 2 }).toContainAllKeys(["a", "b"]); expect(5).toSatisfy(n => n % 5 === 0); expect("").toBeEmpty(); expect(new Date()).toBeDate(); expect(1.5).not.toBeInteger(); expect(3).toBeWithin(1, 5); expect({ a: { b: 1 } }).toContainValue({ b: 1 }); });
+=== state-machines
++++ machine.js
+"use strict";
+function Machine(table, state) { if (!(this instanceof Machine)) return new Machine(table, state); this.table = table; this.state = state; this.log = []; }
+Machine.prototype.send = function (event) { var next = (this.table[this.state] || {})[event]; if (typeof next === "function") next = next.call(this, this.state); if (next === undefined) { var e = new Error(event + " in " + this.state); e.code = "E_STATE"; throw e; } this.log.push([this.state, event, next]); this.state = next; return this; };
+Machine.prototype.can = function (event) { return Object.prototype.hasOwnProperty.call(this.table[this.state] || {}, event); };
+module.exports = Machine;
++++ machine.test.js
+const Machine = require("./machine");
+const table = { idle: { go: "busy" }, busy: { done: "idle", fail: function (s) { this.failures = (this.failures || 0) + 1; return this.failures > 1 ? "dead" : s; } }, dead: {} };
+describe("machine", () => {
+  let m;
+  beforeEach(() => { m = Machine(table, "idle"); });
+  test("moves", () => { expect(m.send("go").send("done").state).toBe("idle"); expect(m.log).toEqual([["idle", "go", "busy"], ["busy", "done", "idle"]]); });
+  test("refuses", () => { expect(() => m.send("done")).toThrow(expect.objectContaining({ code: "E_STATE" })); expect(m.can("go")).toBe(true); expect(m.can("toString")).toBe(false); });
+  test("counts", () => { m.send("go").send("fail"); expect(m.state).toBe("busy"); expect(m.send("fail").state).toBe("dead"); expect(m.can("go")).toBe(false); });
+});
+=== reducers-under-test
++++ todos.ts
+export type Todo = { id: number; text: string; done: boolean };
+export type Action = { type: "add"; text: string } | { type: "toggle"; id: number } | { type: "clear" };
+let next = 1;
+export function reducer(state: readonly Todo[] = [], action: Action): readonly Todo[] { switch (action.type) { case "add": return [...state, { id: next++, text: action.text.trim(), done: false }]; case "toggle": return state.map(todo => (todo.id === action.id ? { ...todo, done: !todo.done } : todo)); case "clear": { const left = state.filter(todo => !todo.done); return left.length === state.length ? state : left; } } }
+export const reset = () => { next = 1; };
++++ todos.test.ts
+import { beforeEach, expect, test } from "bun:test";
+import { reducer, reset, type Action, type Todo } from "./todos";
+beforeEach(reset);
+const run = (...actions: Action[]) => actions.reduce<readonly Todo[]>((state, action) => reducer(state, action), []);
+test("adds", () => { expect(run({ type: "add", text: " a " }, { type: "add", text: "b" })).toEqual([{ id: 1, text: "a", done: false }, { id: 2, text: "b", done: false }]); });
+test("toggles and clears", () => { const state = run({ type: "add", text: "a" }, { type: "add", text: "b" }, { type: "toggle", id: 1 }); expect(reducer(state, { type: "clear" }).map(t => t.id)).toEqual([2]); const same = run({ type: "add", text: "x" }); expect(reducer(same, { type: "clear" })).toBe(same); });
+test("is kept", () => { expect(run({ type: "add", text: "a" }, { type: "toggle", id: 1 })).toMatchSnapshot(); });
+=== streams-under-test
++++ lines.ts
+export function lines() { let rest = ""; return new TransformStream<string, string>({ transform(chunk, controller) { const parts = (rest + chunk).split("\n"); rest = parts.pop()!; for (const part of parts) controller.enqueue(part); }, flush(controller) { if (rest) controller.enqueue(rest); } }); }
+export const source = (...chunks: string[]) => new ReadableStream<string>({ start(controller) { for (const chunk of chunks) controller.enqueue(chunk); controller.close(); } });
++++ lines.test.ts
+import { expect, test } from "bun:test";
+import { Readable, Transform, pipeline } from "node:stream";
+import { promisify } from "node:util";
+import { lines, source } from "./lines";
+test("web streams", async () => { const got: string[] = []; for await (const line of source("a\nb", "c\n", "\nd").pipeThrough(lines())) got.push(line); expect(got).toEqual(["a", "bc", "", "d"]); });
+test("node streams", async () => { const out: string[] = []; const upper = new Transform({ transform(chunk, _, done) { done(null, String(chunk).toUpperCase()); } }); upper.on("data", chunk => out.push(String(chunk))); await promisify(pipeline)(Readable.from(["a", "b"]), upper); expect(out.join("")).toBe("AB"); });
+test("errors", async () => { const failing = new Transform({ transform(_, __, done) { done(new Error("in the middle")); } }); await expect(promisify(pipeline)(Readable.from(["a"]), failing)).rejects.toThrow("in the middle"); });
+=== events-under-test
++++ events.test.ts
+import { expect, mock, test } from "bun:test";
+import { EventEmitter, once, on } from "node:events";
+class Job extends EventEmitter<{ step: [number]; done: [string, number] }> { run(n: number) { for (let i = 0; i < n; i++) this.emit("step", i); this.emit("done", "ok", n); return this; } }
+test("handlers", () => { const step = mock((n: number) => {}); const done = mock(() => {}); new Job().on("step", step).once("done", done).run(3); expect(step.mock.calls.flat()).toEqual([0, 1, 2]); expect(done).toHaveBeenCalledWith("ok", 3); });
+test("once and on", async () => { const job = new Job(); setImmediate(() => job.run(2)); expect(await once(job, "done")).toEqual(["ok", 2]); const ac = new AbortController(); setImmediate(() => { job.emit("step", 7); ac.abort(); }); const got: number[] = []; await expect((async () => { for await (const [n] of on(job, "step", { signal: ac.signal })) got.push(n); })()).rejects.toThrow(/abort/i); expect(got).toEqual([7]); });
+test("error without a handler", () => { expect(() => new EventEmitter().emit("error", new Error("nobody"))).toThrow("nobody"); });
+test("EventTarget", () => { const target = new EventTarget(); const call = mock((e: Event) => {}); target.addEventListener("x", call, { once: true }); target.dispatchEvent(new CustomEvent("x", { detail: 5 })); target.dispatchEvent(new Event("x")); expect(call).toHaveBeenCalledTimes(1); expect((call.mock.calls[0][0] as CustomEvent).detail).toBe(5); });
+=== abort-and-timers
++++ wait.ts
+export const wait = (ms: number, signal?: AbortSignal) => new Promise<string>((done, fail) => { if (signal?.aborted) return fail(signal.reason); const id = setTimeout(() => done("waited"), ms); signal?.addEventListener("abort", () => { clearTimeout(id); fail(signal.reason); }, { once: true }); });
+export async function retry<T>(work: (n: number) => Promise<T>, times: number, signal?: AbortSignal): Promise<T> { for (let n = 1; ; n++) { signal?.throwIfAborted(); try { return await work(n); } catch (error) { if (n >= times) throw new Error("gave up after " + n, { cause: error }); } } }
++++ wait.test.ts
+import { expect, jest, test } from "bun:test";
+import { retry, wait } from "./wait";
+test("waits", async () => { expect(await wait(1)).toBe("waited"); });
+test("aborted", async () => { const ac = new AbortController(); const waiting = wait(10000, ac.signal); ac.abort(new RangeError("enough")); await expect(waiting).rejects.toThrow("enough"); await expect(wait(1, ac.signal)).rejects.toBe(ac.signal.reason); await expect(wait(1000, AbortSignal.timeout(5))).rejects.toMatchObject({ name: "TimeoutError" }); });
+test("retries", async () => { const work = jest.fn(async (n: number) => { if (n < 3) throw new Error("no " + n); return n * 10; }); expect(await retry(work, 5)).toBe(30); expect(work).toHaveBeenCalledTimes(3); await expect(retry(async () => { throw new TypeError("always"); }, 2)).rejects.toMatchObject({ message: "gave up after 2", cause: { message: "always" } }); });
+=== workers-under-test
++++ worker.ts
+declare const self: Worker;
+self.onmessage = event => { const { id, list } = event.data as { id: number; list: number[] }; if (!list.length) throw new RangeError("empty list"); postMessage({ id, sum: list.reduce((a, b) => a + b, 0) }); };
++++ worker.test.ts
+import { afterAll, beforeAll, expect, test } from "bun:test";
+let worker: Worker;
+beforeAll(() => { worker = new Worker(new URL("./worker.ts", import.meta.url).href); });
+afterAll(() => { worker.terminate(); });
+test("answers", async () => { const answer = new Promise<MessageEvent>(done => { worker.onmessage = done; }); worker.postMessage({ id: 1, list: [1, 2, 3] }); expect((await answer).data).toEqual({ id: 1, sum: 6 }); });
+test("in order", async () => { const got: number[] = []; const all = new Promise<void>(done => { worker.onmessage = event => { got.push(event.data.id); if (got.length === 5) done(); }; }); for (let id = 0; id < 5; id++) worker.postMessage({ id, list: [id] }); await all; expect(got).toEqual([0, 1, 2, 3, 4]); });
+=== strings-under-test
++++ slug.js
+export const slug = text => text.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+export const wrap = (text, width) => text.split(" ").reduce((lines, word) => { const last = lines.at(-1); if (last !== undefined && last.length + word.length < width) lines[lines.length - 1] = last ? last + " " + word : word; else lines.push(word); return lines; }, [""]).filter(Boolean);
+export const template = (text, values) => text.replace(/\{(\w+)(?::(\w+))?\}/g, (all, key, form) => { const v = values[key]; if (v === undefined) return all; return form === "upper" ? String(v).toUpperCase() : form === "money" ? v.toFixed(2) : String(v); });
++++ slug.test.js
+import { slug, template, wrap } from "./slug";
+test.each([["Hello World", "hello-world"], ["Crème Brûlée!", "creme-brulee"], ["--a--", "a"], ["", ""]])("slug of %p", (text, out) => { expect(slug(text)).toBe(out); });
+test("wrap", () => { expect(wrap("a few words here and there", 10)).toEqual(["a few", "words", "here and", "there"]); expect(wrap("", 5)).toEqual([]); });
+test("template", () => { expect(template("{a} {b:upper} {c:money} {d}", { a: 1, b: "x", c: 2.5 })).toBe("1 X 2.50 {d}"); });
+=== deep-barrels
++++ lib/index.ts
+export * from "./a"; export * from "./b"; export { default as C, type COptions } from "./c"; export * as inner from "./inner";
++++ lib/a.ts
+console.log("a is loaded"); export const a = 1; export const shared = "from a";
++++ lib/b.ts
+console.log("b is loaded"); import { a } from "./index"; export const b = () => a + 1; export class B { static from = "b"; }
++++ lib/c.ts
+import { B, b } from "."; export interface COptions { n?: number } export default class C extends B { constructor(readonly options: COptions = {}) { super(); } get value() { return b() + (this.options.n ?? 0); } }
++++ lib/inner/index.ts
+export * from "./x"; export { y as why } from "./y";
++++ lib/inner/x.ts
+export let x = 0; export const raise = () => ++x;
++++ lib/inner/y.ts
+import { x } from "./x"; export const y = () => "y" + x;
++++ barrels.test.ts
+import { expect, test } from "bun:test";
+import * as lib from "./lib";
+import { C, inner, b } from "./lib";
+import { raise } from "./lib/inner/x";
+test("values", () => { expect(new C({ n: 5 }).value).toBe(7); expect(C.from).toBe("b"); expect(b()).toBe(2); expect(Object.keys(lib).sort()).toEqual(["B", "C", "a", "b", "inner", "shared"]); });
+test("live bindings", () => { raise(); expect(inner.x).toBe(1); expect(inner.why()).toBe("y1"); expect(inner.raise()).toBe(2); expect(inner.x).toBe(2); });
+=== snapshots-of-classes
++++ models.ts
+export class User { #secret = "s"; tags = new Set<string>(); constructor(public name: string, public age?: number) {} get adult() { return (this.age ?? 0) >= 18; } toJSON() { return { name: this.name }; } }
+export class Admin extends User { rights = new Map([["read", true]]); parent: Admin | null = null; self = this; }
++++ models.test.ts
+import { expect, test } from "bun:test";
+import { Admin, User } from "./models";
+test("instances", () => { const user = new User("a", 20); user.tags.add("x"); expect(user).toMatchSnapshot(); expect(new Admin("b")).toMatchSnapshot(); expect([new User("c"), { plain: new User("d") }]).toMatchSnapshot(); });
+test("inline", () => { expect(new User("z", 1)).toMatchInlineSnapshot(`
+User {
+  "age": 1,
+  "name": "z",
+  "tags": Set {},
+}
+`); });
+test("equality", () => { expect(new User("a")).toEqual(new User("a")); expect(new User("a")).toEqual({ name: "a", age: undefined, tags: new Set() } as any); expect(new User("a")).not.toStrictEqual({ name: "a", age: undefined, tags: new Set() } as any); });
+=== accounts-of-a-ledger
++++ ledger.js
+let entries = [];
+export function post(from, to, amount) { if (!(amount > 0)) throw new RangeError("amount " + amount); if (balance(from) < amount && from !== "bank") throw new Error(`${from} has only ${balance(from)}`); entries.push({ from, to, amount, id: entries.length + 1 }); return entries.at(-1); }
+export const balance = name => entries.reduce((sum, e) => sum + (e.to === name ? e.amount : 0) - (e.from === name ? e.amount : 0), 0);
+export const clear = () => { const old = entries; entries = []; return old.length; };
+export { entries };
++++ ledger.test.js
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import * as ledger from "./ledger";
+import { balance, clear, entries, post } from "./ledger";
+beforeEach(() => { post("bank", "ann", 100); });
+afterEach(() => { clear(); });
+describe("ledger", () => {
+  it("posts", () => { expect(post("ann", "bob", 30)).toMatchObject({ id: 2, amount: 30 }); expect([balance("ann"), balance("bob"), balance("bank")]).toEqual([70, 30, -100]); });
+  it("refuses", () => { expect(() => post("bob", "ann", 1)).toThrow("bob has only 0"); expect(() => post("ann", "bob", NaN)).toThrow(RangeError); expect(entries).toHaveLength(1); });
+  it("has a live list", () => { const before = ledger.entries; clear(); expect(ledger.entries).not.toBe(before); expect(entries).toEqual([]); });
+});
+=== permissions-table
++++ can.ts
+const table = { admin: ["read", "write", "grant"], editor: ["read", "write"], guest: ["read"] } as const;
+export type Role = keyof typeof table; export type Right = (typeof table)[Role][number];
+export function can(role: Role, right: Right, at: Date = new Date()): boolean { if (role === "guest" && (at.getUTCHours() < 6 || at.getUTCDay() === 0)) return false; return (table[role] as readonly Right[]).includes(right); }
+export function need(role: Role, ...rights: Right[]) { const missing = rights.filter(right => !can(role, right, new Date(Date.UTC(2026, 10, 12, 12)))); if (missing.length) throw Object.assign(new Error(`${role} may not ${missing.join(", ")}`), { missing }); return rights.length; }
++++ can.test.ts
+import { describe, expect, test } from "bun:test";
+import { can, need, type Right, type Role } from "./can";
+const rows: [Role, Right, boolean][] = [["admin", "grant", true], ["editor", "grant", false], ["editor", "write", true], ["guest", "read", true], ["guest", "write", false]];
+test.each(rows)("%s %s: %p", (role, right, answer) => { expect(can(role, right, new Date("2026-11-12T10:00Z"))).toBe(answer); });
+describe("at night", () => { test.each([["2026-11-12T03:00Z", false], ["2026-11-15T10:00Z", false], ["2026-11-16T06:00Z", true]] as const)("%s", (at, answer) => { expect(can("guest", "read", new Date(at))).toBe(answer); }); });
+test("need", () => { expect(need("admin", "read", "grant")).toBe(2); expect(() => need("guest", "write", "grant")).toThrow("guest may not write, grant"); try { need("editor", "grant"); } catch (error: any) { expect(error.missing).toEqual(["grant"]); } });

@@ -1,0 +1,13 @@
+# f2 = run
+# -- source: main.cjs
+# function Box() { this.mode = 0; this.last = 5; }
+# Box.prototype.run = function (n) { let sum = 0; for (let i = 0; i < n; i++) { unseen(this); this.mode += 1; if (this.mode == this.last) sum += 1; } return sum; };
+# globalThis.boxes = [new Box(), Box];
+# const unseen = (0, eval)("(function (box) { })");
+# console.log(globalThis.boxes[0].run(9));
+# -- end of source
+# What an equality compares with a number is asked for an integer in front of the stretch, as what is added is.
+# RUN: walk f2 mechanisms=all
+# CHECK: testedType=i32 @141
+# CHECK: testedType=i32 @141
+# CHECK: StrictEq {{*}}form=Integers @161

@@ -5,11 +5,10 @@ use core::ptr::NonNull;
 use bun_ptr::{ParentRef, RefPtr};
 
 use bun_event_loop::Taskable;
-use bun_io::KeepAlive;
+use bun_io::JsKeepAlive;
 use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional, WorkPoolTask,
 };
@@ -21,14 +20,8 @@ bun_output::declare_scope!(zlib, hidden);
 
 #[derive(Default)]
 pub(crate) struct CountedKeepAlive {
-    pub(crate) keep_alive: KeepAlive,
-    pub(crate) ref_count: u32,
-}
-
-impl Drop for CountedKeepAlive {
-    fn drop(&mut self) {
-        self.keep_alive.disable();
-    }
+    pub(crate) keep_alive: JsKeepAlive,
+    pub(crate) ref_count: Cell<u32>,
 }
 
 /// `msg` / `code` are nullable NUL-terminated C strings.
@@ -72,16 +65,16 @@ fn jsv_to_u32(v: JSValue) -> u32 {
 }
 
 impl CountedKeepAlive {
-    fn ref_(&mut self, _vm: &VirtualMachine) {
-        if self.ref_count == 0 {
+    fn ref_(&self) {
+        if self.ref_count.get() == 0 {
             self.keep_alive.ref_(bun_io::js_vm_ctx());
         }
-        self.ref_count += 1;
+        self.ref_count.update(|n| n + 1);
     }
 
-    fn unref(&mut self, _vm: &VirtualMachine) {
-        self.ref_count -= 1;
-        if self.ref_count == 0 {
+    fn unref(&self) {
+        self.ref_count.update(|n| n - 1);
+        if self.ref_count.get() == 0 {
             self.keep_alive.unref(bun_io::js_vm_ctx());
         }
     }
@@ -160,7 +153,7 @@ pub(crate) trait CompressionStreamImpl:
         );
     }
 
-    fn poll_ref(&self) -> &JsCell<CountedKeepAlive>;
+    fn poll_ref(&self) -> &CountedKeepAlive;
     fn this_value(&self) -> &JsCell<StrongOptional>;
     fn task(&self) -> &JsCell<WorkPoolTask>;
     fn write_in_progress(&self) -> &Cell<bool>;
@@ -408,7 +401,7 @@ pub(crate) trait CompressionStreamImpl:
             node: Default::default(),
             callback: async_job_run_task::<Self>,
         });
-        self.poll_ref().with_mut(|p| p.ref_(vm));
+        self.poll_ref().ref_();
         self.ticket().set(Some(vm.ticket()));
         WorkPool::schedule(self.task().as_ptr());
 
@@ -442,12 +435,10 @@ pub(crate) trait CompressionStreamImpl:
                 copy.from = (view.as_ptr(), view.len());
                 global.vm().report_extra_memory(copy.bytes.len());
             }
-            let chunk = copy.bytes.get(in_off..in_off + in_len)?;
-            // SAFETY: `write()`, `reset()` and `close()` throw or are deferred while a write
-            // is in progress, and the completion frees the copy only after the input is
-            // consumed, so the bytes outlive the job that reads them.
-            Some(unsafe { core::slice::from_raw_parts(chunk.as_ptr(), chunk.len()) })
-        })
+            Some(())
+        })?;
+        // Nothing replaces or frees the copy while a write is in progress, so the job can read it.
+        self.input_copy().get().bytes.get(in_off..in_off + in_len)
     }
 
     /// Releases the pins `write()` took; the cached slots keep rooting the values either way.
@@ -613,7 +604,7 @@ pub(crate) trait CompressionStreamImpl:
         }
         self.pending_close().set(false);
         self.closed().set(true);
-        self.this_value().with_mut(|v| v.deinit());
+        self.this_value().set(Default::default());
         self.stream().with_mut(|s| s.close());
         self.input_copy().set(InputCopy::default());
     }
@@ -674,7 +665,7 @@ pub(crate) trait CompressionStreamImpl:
         // The pending close handling below still runs either way.
         if let Some(callback) = Self::error_callback_get_cached(this_value) {
             let vm = global_this.bun_vm();
-            vm.event_loop_ref().run_callback(
+            vm.event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,
                 global_this,
@@ -721,53 +712,46 @@ fn async_job_run<T: CompressionStreamImpl>(this: *mut T) {
     ticket.post(ConcurrentTask::create(Task::init(this)));
 }
 
+/// The ref and the keep-alive that `write()` took.
+pub(crate) struct PendingWrite<T: CompressionStreamImpl>(RefPtr<T>);
+
+impl<T: CompressionStreamImpl> PendingWrite<T> {
+    /// SAFETY: `this` is what `async_job_run` posted.
+    pub(crate) unsafe fn from_raw(this: *mut T) -> Self {
+        // SAFETY: fn contract.
+        Self(unsafe { RefPtr::from_raw(this) })
+    }
+}
+
+impl<T: CompressionStreamImpl> Drop for PendingWrite<T> {
+    fn drop(&mut self) {
+        self.0.poll_ref().unref();
+    }
+}
+
 /// VM teardown, JS thread, heap alive: a completion that was queued but
 /// will not run. The cleanup half of `run_from_js_thread`, no callbacks.
-///
-/// # Safety
-/// As [`run_from_js_thread`].
-pub(crate) unsafe fn release_unrun<T: CompressionStreamImpl>(this_ptr: *mut T) {
-    let this = ParentRef::from(NonNull::new(this_ptr).expect("release_unrun: this"));
-    let global: &JSGlobalObject = this.global_this();
-    let vm = global.bun_vm();
+pub(crate) fn release_unrun<T: CompressionStreamImpl>(write: PendingWrite<T>) {
+    let this = &*write.0;
     this.write_in_progress().set(false);
     if let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) {
         this.unpin_pending_buffers(this_value);
     }
-    this.poll_ref().with_mut(|p| p.unref(vm));
-    // SAFETY: fn contract — the write's ref.
-    unsafe { T::deref(this_ptr) };
+    drop(write);
 }
 
 /// Dispatched from `dispatch.rs` when the worker-thread `do_work()` posts
 /// the completion task back to the JS thread.
-///
-/// R-2: takes `*mut T` (full allocation provenance from `Task.ptr`) so the
-/// trailing `T::deref(this_ptr)` may free the box if it hits zero. All
-/// field access goes through `&*this_ptr` and the `&self` accessor surface;
-/// every accessed field is `Cell`/`JsCell`-backed so re-entry via the
-/// onerror / write callbacks is sound (no `noalias` to violate, no
-/// `black_box` launders needed).
-///
-/// SAFETY: `this_ptr` is the live heap payload; the matching
-/// `ref_()` in `write()` keeps it alive until the trailing `deref()`.
-pub(crate) unsafe fn run_from_js_thread<T: CompressionStreamImpl>(this_ptr: *mut T) {
-    // See the fn-level contract.
-    let this = ParentRef::from(NonNull::new(this_ptr).expect("run_from_js_thread: this"));
+pub(crate) fn run_from_js_thread<T: CompressionStreamImpl>(write: PendingWrite<T>) {
+    let this = &*write.0;
     let global: &JSGlobalObject = this.global_this();
     let vm = global.bun_vm();
-    // `this.deref()` and `this.poll_ref.unref(vm)` must run on every
-    // return path; we call them explicitly.
 
     this.write_in_progress().set(false);
 
     // Clear the strong handle before we call any callbacks.
     let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) else {
         bun_output::scoped_log!(zlib, "this_value is null in runFromJSThread");
-        this.poll_ref().with_mut(|p| p.unref(vm));
-        // SAFETY: matching `ref_()` in `write()`; `this_ptr` is the heap
-        // payload and is not accessed after this call.
-        unsafe { T::deref(this_ptr) };
         return;
     };
 
@@ -778,9 +762,6 @@ pub(crate) unsafe fn run_from_js_thread<T: CompressionStreamImpl>(this_ptr: *mut
     T::pending_output_set_cached(this_value, global, JSValue::ZERO);
 
     if !this.check_error(global, this_value) {
-        this.poll_ref().with_mut(|p| p.unref(vm));
-        // SAFETY: see above.
-        unsafe { T::deref(this_ptr) };
         return;
     }
 
@@ -796,7 +777,7 @@ pub(crate) unsafe fn run_from_js_thread<T: CompressionStreamImpl>(this_ptr: *mut
     // `init()` caches the JS write callback; a handle whose `init()` was
     // never called has none, so there is nothing to notify.
     if let Some(write_callback) = T::write_callback_get_cached(this_value) {
-        vm.event_loop_ref().run_callback(
+        vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             write_callback,
             global,
@@ -808,11 +789,7 @@ pub(crate) unsafe fn run_from_js_thread<T: CompressionStreamImpl>(this_ptr: *mut
     if this.pending_close().get() {
         this.close();
     }
-
-    this.poll_ref().with_mut(|p| p.unref(vm));
-    // SAFETY: matching `ref_()` in `write()`; `this_ptr` is the heap payload
-    // and is not accessed after this call.
-    unsafe { T::deref(this_ptr) };
+    drop(write);
 }
 
 /// Implements [`CompressionContext`] for a `Context` type and
@@ -834,8 +811,10 @@ macro_rules! __impl_compression_stream {
             /// An async write whose completion will not run: unpin, unref, drop
             /// the write's ref — no callbacks.
             unsafe fn release_unrun(this: *mut Self) {
+                use $crate::node::node_zlib_binding::PendingWrite;
                 // SAFETY: fn contract — the stream the pool posted (write's ref held).
-                unsafe { $crate::node::node_zlib_binding::release_unrun(this) }
+                let write = unsafe { PendingWrite::from_raw(this) };
+                $crate::node::node_zlib_binding::release_unrun(write)
             }
             /// The write always completes (its buffers are unpinned); the callbacks it reports to carry
             /// the async context of the script that set them.
@@ -897,9 +876,7 @@ macro_rules! __impl_compression_stream {
                 &self.stream
             }
             #[inline]
-            fn poll_ref(
-                &self,
-            ) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::CountedKeepAlive> {
+            fn poll_ref(&self) -> &$crate::node::node_zlib_binding::CountedKeepAlive {
                 &self.poll_ref
             }
             #[inline]

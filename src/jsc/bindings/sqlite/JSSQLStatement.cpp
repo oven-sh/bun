@@ -275,7 +275,8 @@ extern "C" void Bun__sqliteCheckpointForTermination(sqlite3* db)
 
 // Called from the exiting VM's teardown once script is forbidden and its child workers are
 // joined: closes the connections that VM opened and never touches another VM's entries.
-extern "C" void Bun__closeAllSQLiteDatabasesForTermination(JSC::JSGlobalObject* globalObject)
+// Not inlined: the link cuts the Sqlite feature at this call, and link-time optimization would copy the body into the caller's guard.
+extern "C" NEVER_INLINE void Bun__closeAllSQLiteDatabasesForTermination(JSC::JSGlobalObject* globalObject)
 {
     for (auto* record : WebCore::clientData(globalObject->vm())->sqliteDatabases()) {
         if (record->inCallback)

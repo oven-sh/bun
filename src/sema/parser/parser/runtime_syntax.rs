@@ -1,7 +1,7 @@
 use super::{Parser, ctx};
 use crate::Options;
 use crate::token::T;
-use bun_sema::atom::known;
+use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
 use bun_sema::util::SharedSort;
 
@@ -114,47 +114,52 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     pub(super) fn take_directive(&mut self, statement: StmtId) -> bool {
+        let is_of_file = self.has_context(ctx::TOP_LEVEL);
         let Some(&Stmt {
             kind: StmtKind::Expr(expr),
             ..
         }) = self.f.stmts.get(statement.idx())
         else {
-            return !self.f.is_js && self.f.is_erased_statement(statement);
+            return is_of_file && !self.f.is_js && self.f.is_erased_statement(statement);
         };
-        let Some(&Expr {
-            kind: ExprKind::String(_),
-            pos,
-            end,
-        }) = self.f.exprs.get(expr.idx())
-        else {
+        let is_transpiled = self.options.compiles && find_transpiled_mark(self.lx.src).is_none();
+        let raw = match is_of_file && is_transpiled {
+            true => self.f.value_read_as_directive(expr),
+            false => self.text_of_directive(expr),
+        };
+        let Some(raw) = raw else {
             return false;
         };
-        let not_directive = ExprFlags::PARENTHESIZED | ExprFlags::TEMPLATE_LITERAL;
-        if self.f.expr_flags(expr).intersects(not_directive) {
-            return false;
-        }
-        let src = self.lx.src;
-        let text = src.get(pos as usize + 1..end.saturating_sub(1) as usize);
-        let raw = self.atom(text.unwrap_or_default());
         if let Some(it) = self.f.stmts.get_mut(statement.idx()) {
             it.kind = StmtKind::Directive { expr, raw };
         }
-        if raw == known::use_strict {
-            match self.has_context(ctx::TOP_LEVEL) {
-                true => self.context |= ctx::STRICT,
-                false if self.options.keeps_function_directives => {
-                    self.context |= ctx::STRICT;
-                    self.f.rare_syntax |= rare::DIRECTIVE_IN_FUNCTION;
-                }
-                false => self.f.rare_syntax |= rare::DROPPED_STRICT_DIRECTIVE,
-            }
+        if raw == known::use_strict && (is_of_file || self.options.compiles) {
+            self.context |= ctx::STRICT;
         }
         true
     }
 
+    fn text_of_directive(&mut self, expr: ExprId) -> Option<Atom> {
+        let &Expr {
+            kind: ExprKind::String(_),
+            pos,
+            end,
+        } = self.f.exprs.get(expr.idx())?
+        else {
+            return None;
+        };
+        let not_directive = ExprFlags::PARENTHESIZED | ExprFlags::TEMPLATE_LITERAL;
+        if self.f.expr_flags(expr).intersects(not_directive) {
+            return None;
+        }
+        let src = self.lx.src;
+        let text = src.get(pos as usize + 1..end.saturating_sub(1) as usize);
+        Some(self.atom(text.unwrap_or_default()))
+    }
+
     pub(super) fn is_strict_body(&self, body: FnBody) -> bool {
         self.has_context(ctx::STRICT)
-            || self.options.keeps_function_directives
+            || self.options.compiles
                 && self.f.rare_syntax & rare::DIRECTIVE_IN_FUNCTION != 0
                 && self.f.has_use_strict_directive(body)
     }

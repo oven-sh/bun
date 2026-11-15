@@ -1,0 +1,19 @@
+# -- source: a-list-of-numbers-that-use-alone-says-is-asked-beside-every-view-of-numbers.mjs
+# const hold = JSON.parse('{"v":null}');
+# function sumOf(t) { let p = hold.v; if (t < 0) p = []; let sum = 0; for (let i = 0; i < p.length; i++) sum = sum + 0.5 * p[i]; return sum; }
+# function tried(t) { try { return sumOf(t); } catch (thrown) { return thrown instanceof TypeError; } }
+# const seen = [], grows = new ArrayBuffer(2, { maxByteLength: 8 }), follows = new Uint8Array(grows), gone = Float64Array.of(7, 8);
+# follows.set([1, 2]); grows.resize(3); follows[2] = 5; gone.buffer.transfer();
+# for (const held of [Float64Array.of(1, 2, 3.5), Float32Array.of(1, 2, 3.5), [1, 2, 3.5], [1, , 3], Uint8Array.of(1, 2, 3), Int16Array.of(-1, 2), Uint8ClampedArray.of(300, 2), Uint32Array.of(4294967295), follows, gone, BigInt64Array.of(1n), JSON.parse('{"0":4,"1":6,"length":2}'), "12", null]) { hold.v = held; seen.push(tried(1)); }
+# seen.push(tried(-1));
+# sink(seen.join(" "));
+# -- end of source
+# In a file without written types the front end draws "a list of numbers" from `p.length` and `0.5 * p[i]`. Bytes and views answer that use as a list does, and nobody wrote the word: where the value stands
+# in front of the loop (ways meet, a call answers) the loop asked for a list alone, a view failed it at every entry, and every turn ran closed: 128 instructions an element. The front asks for the list and,
+# beside it, for every view of numbers, read by the kind of its cell: one copy more.
+# f1 = sumOf
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetTypedArrayElement
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 3.25 3.25 3.25 NaN 3 0.5 128.5 2147483647.5 4 0 true 5 1.5 true 0

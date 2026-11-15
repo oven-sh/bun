@@ -74,12 +74,12 @@ describe.concurrent("locales", () => {
     [
       "an argument of the program",
       `console.log((1).toLocaleString(process.argv[2]));`,
-      `${notConstant} (Number.prototype.toLocaleString) at main.ts:2:32`,
+      `${notConstant} (Number.prototype.toLocaleString) at main.ts:2:40`,
     ],
     [
       "one constant and one that is none",
       `console.log((1).toLocaleString("de"));\nconsole.log((1).toLocaleString(process.argv[2]));`,
-      `${notConstant} (Number.prototype.toLocaleString) at main.ts:3:32`,
+      `${notConstant} (Number.prototype.toLocaleString) at main.ts:3:40`,
     ],
     [
       "a variable that is assigned twice",

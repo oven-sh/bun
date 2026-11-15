@@ -65,7 +65,6 @@ function inspector(depth, options, inspect) {
 const inspected = querystring.decode("a=b", null, null, { decodeURIComponent: text => (text === "a" ? Bun.inspect.custom : inspector) });
 tell(() => Bun.inspect(inspected, { colors: true }));
 //// spyOn-of-bun-test
-//@ todo --trim removes the method that spyOn finds under a name made at run time: ERR_FEATURE_REMOVED
 import { spyOn } from "bun:test";
 tell(() => spyOn(Object.create(Object.getPrototypeOf("a")), "isWell" + given + "Formed").call("a"));
 tell(() => spyOn(Object(1.005), "to" + given + "Fixed").call(1.5, 1));

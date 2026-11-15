@@ -1,0 +1,26 @@
+# `const A = B => class extends B { .. }`, `class M extends A(R) {}`, `new M(r)`: the object is born in the constructor of R, taken in line behind the tests of the two parents, and new.target is known to be M.
+# The birth was given the class of new.target only where a row of WRITTEN bases led from it up to the class whose constructor allocates. Past a parent that is a value it stayed an object of no known layout, made out of
+# line below the prototype that new.target names, and was asked for its shape at the first store.
+# The run itself makes an instance of the class that the prototype names wherever that class has a parent that is no proven layout (ClassTable::instanceWithPrototype()). The walk says the same where the parents that the
+# class records name lead up to the class of the allocation.
+# f1 = f, f2 = g . L0 = the class in A, L1 = R, L2 = M
+# -- source: an-object-born-above-a-mixin-is-of-the-class-that-new-target-names.cjs
+# "use strict";
+# const D = JSON.parse('[{"b":1},{"b":2},{"b":3}]');
+# const A = B => class extends B { a() { return this.v + 1; } };
+# class R { constructor(r) { this.v = r.b; } }
+# class M extends A(R) {}
+# function f(list) { let s = 0; for (const r of list) { const m = new M(r); s += m.a() + (Object.getPrototypeOf(m) === M.prototype ? 100 : 0) + Object.keys(m).length; } return s; }
+# function g(list) { let s = 0; for (const r of list) s += Reflect.construct(R, [r], M).a(); return s; }
+# print(f(D), f(D), g(D), new M(D[1]) instanceof R, Object.keys(new M(D[1])).join());
+# M.prototype.a = function () { return -this.v; };
+# print(f(D), g(D));
+# Object.setPrototypeOf(M.prototype, null);
+# print(f(D), new M(D[1]) instanceof R, new M(D[1]) instanceof M);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK: = NewObject layout=L2
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 312 312 9 true v
+# ANSWERS: 297 -6
+# ANSWERS: 297 false true

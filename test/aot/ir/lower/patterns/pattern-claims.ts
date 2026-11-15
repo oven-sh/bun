@@ -1,37 +1,33 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="assignment"
-// CHECK: = Convert {{*}}declared={type=undefined|number site=[[target]]}
+// CHECK: = Convert {{*}}declared={type=undefined|number}
 // CHECK: Branch {{*}}notTaken [[assigned]](| 0)
 // CHECK: [[assigned]]([[source]]):
 // CHECK-NEXT: [[t]] = PropGet [[source]] key="x"
-// CHECK-NEXT: = Convert [[t]] declared={type=undefined|number site=[[target]]} illTypedCause=FromLooseType
+// CHECK-NEXT: [[convertedT]] = Convert [[t]] declared={type=undefined|number} @
+// CHECK-NEXT: Return [[convertedT]]
 // CHECK-LABEL: function {{*}}name="declaration"
 // CHECK: Branch {{*}}notTaken [[declared]](| 0)
 // CHECK: [[declared]]([[p]]):
 // CHECK-NEXT: [[x]] = PropGet [[p]] key="x"
-// CHECK-NEXT: [[convertedX]] = Convert [[x]] declared={type=number} illTypedCause=Assertion
-// CHECK-NEXT: Return [[convertedX]]
+// CHECK-NEXT: Return [[x]]
 // CHECK-LABEL: function {{*}}name="element"
 // CHECK: = IteratorOpen [[xs]]
 // CHECK: [[n]] = ResultAt {{*}}index=1
-// CHECK-NEXT: [[convertedN]] = Convert [[n]] declared={type=number} illTypedCause=Assertion
 // CHECK-NOT: Convert
-// CHECK: Return [[convertedN]]
+// CHECK: Return [[n]]
 // CHECK-LABEL: function {{*}}name="inferred"
 // CHECK-NOT: flags=[IsExpected]
 // CHECK: [[unwritten]] = PropGet {{*}}key="x"
-// CHECK-NEXT: [[convertedUnwritten]] = Convert [[unwritten]] declared={type=number} illTypedCause=Assertion
-// CHECK-NEXT: Return [[convertedUnwritten]]
+// CHECK-NEXT: Return [[unwritten]]
 // CHECK-LABEL: function {{*}}name="parameter"
 // CHECK: Branch {{*}}notTaken [[bound]](| 0)
 // CHECK: [[bound]]([[o]]):
 // CHECK-NEXT: [[first]] = PropGet [[o]] key="x"
-// CHECK-NEXT: [[convertedFirst]] = Convert [[first]] declared={type=number} illTypedCause=Assertion
 // CHECK-NEXT: [[second]] = PropGet [[o]] key="y"
-// CHECK-NEXT: [[convertedSecond]] = Convert [[second]] declared={type=number} illTypedCause=Assertion
-// CHECK-NEXT: = Add [[convertedFirst]], [[convertedSecond]]
+// CHECK-NEXT: = Add [[first]], [[second]]
 
-// What a binding pattern takes out is converted to the checker's type of the name that receives it, written or inferred. That conversion has no site, and the name holds the converted value: nothing converts it again. What an assignment pattern takes out is converted to the position of its target, with the target's site.
+// What a binding pattern takes out is not converted: a name in a pattern has no annotation of its own. What an assignment pattern takes out is converted to the position of its target, which is annotated here.
 interface P {
   x: number;
   y: number;

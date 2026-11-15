@@ -24,6 +24,7 @@
 // CHECK: = Call [[createField]], -, [[field]],
 // CHECK: builtin=CompilerHelpersApplyFieldDecorators
 // CHECK: builtin=CompilerHelpersSetDecoratorMetadata
+// CHECK: builtin=CompilerHelpersKeepInitializerLists
 // CHECK-NOT: CompilerHelpers
 // CHECK: Return
 

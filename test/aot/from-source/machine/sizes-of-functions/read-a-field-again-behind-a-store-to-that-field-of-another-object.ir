@@ -1,0 +1,19 @@
+# f1 = copyX
+# -- source: read-a-field-again-behind-a-store-to-that-field-of-another-object.ts
+# type Point = { x: number; y: number };
+# function copyX(from: Point, to: Point): number {
+#   const before = from.x;
+#   to.x = before + 1;
+#   return before + from.x;
+# }
+# declare const input: any;
+# const a: Point = { x: +input, y: +input };
+# const b: Point = { x: +input, y: +input };
+# (globalThis as any).answer = copyX(a, input ? a : b) + b.x;
+# -- end of source
+# The compiler before this one: 5 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 7, patches 0, moves 1, unlikely or rare 0.
+# RUN(X64): steps most:8 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 8

@@ -52,6 +52,19 @@ describe("node:http client timeout", () => {
     }
   });
 
+  it("should emit timeout event while the connection is being made", async () => {
+    const neverAnswers = () => {};
+    const req = request({ host: "localhost", port: 1, lookup: neverAnswers, timeout: 1 });
+    req.on("error", () => {});
+    try {
+      req.end();
+      await once(req, "timeout");
+      expect(req.socket?.connecting).toBe(true);
+    } finally {
+      req.destroy();
+    }
+  });
+
   it("should clear timeout when explicitly set to 0", async () => {
     const server = createServer((req, res) => {
       res.end("OK");

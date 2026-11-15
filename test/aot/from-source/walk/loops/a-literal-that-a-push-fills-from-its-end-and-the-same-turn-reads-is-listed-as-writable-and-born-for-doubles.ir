@@ -1,0 +1,27 @@
+# -- source: main.ts
+# declare function print(value: unknown): void;
+# function distance(a: any, b: any) {
+#   let row: any = [];
+#   for (let j = 0; j <= b.length; j++) row.push(j);
+#   for (let i = 1; i <= a.length; i++) {
+#     const next: any = [i];
+#     for (let j = 1; j <= b.length; j++) {
+#       const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+#       next.push(Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + cost));
+#     }
+#     row = next;
+#   }
+#   return row[b.length];
+# }
+# const table: any = { distance };
+# print(table[JSON.parse('"distance"')](JSON.parse('"kitten"'), JSON.parse('"sitting"')));
+# -- end of source
+# A literal that a push fills from its end (`[i]`, the counter enters as 1) and that the same turn reads one place behind the push. The read listed the literal in front of the push, as a list that is read, for doubles or int32s; the
+# push then found it listed and left it so, and a store behind the row takes no writable list of two kinds: the push went as written and the typed copy of the inner loop fell. Now the entry becomes writable and asks for the one kind
+# of what is pushed, the literal is born for that kind, and the push is a store under the counter. f1 = distance.
+# RUN: walk f1 mechanisms=all
+# CHECK: NewArray {{*}}arrayStorage=Double
+# CHECK: PutDoubleIndex
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 3
+# RIGHT-NEXT: exited with 0

@@ -117,6 +117,40 @@ var V: any = /*#__PURE__*/ (function () {
 function turn(i: number): number {
   return new V(i & 7).get();
 }
+//// class.babel-create-class-returned
+function _defineProperties(target: any, props: any) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
+function _createClass(Constructor: any, protoProps: any, staticProps?: any) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
+function _classCallCheck(instance: any, Constructor: any) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+var V: any = /*#__PURE__*/ (function () {
+  function V(this: any, x: number) { _classCallCheck(this, V); this.x = x; }
+  return _createClass(V, [{ key: "get", value: function get(this: any) { return this.x + 1; } }]);
+})();
+function turn(i: number): number {
+  return new V(i & 7).get();
+}
+//// class.babel-create-class-that-makes-the-prototype-read-only
+function _defineProperties(target: any, props: any) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
+function _createClass(Constructor: any, protoProps: any, staticProps?: any) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); Object.defineProperty(Constructor, "prototype", { writable: false }); return Constructor; }
+function _classCallCheck(instance: any, Constructor: any) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+var V: any = /*#__PURE__*/ (function () {
+  function V(this: any, x: number) { _classCallCheck(this, V); this.x = x; }
+  _createClass(V, [{ key: "get", value: function get(this: any) { return this.x + 1; } }, { key: "twice", get: function get(this: any) { return this.x * 2; } }]);
+  return V;
+})();
+function turn(i: number): number {
+  var v = new V(i & 7);
+  return v.get() + v.twice;
+}
+//// class.new-or-throw-and-a-read-only-prototype
+function V(this: any, x: number): any {
+  if (!(this instanceof V)) throw new TypeError("Cannot call a class as a function");
+  (this as any).x = x;
+}
+V.prototype.get = function () { return this.x + 1; };
+Object.defineProperty(V, "prototype", { writable: false });
+function turn(i: number): number {
+  return new (V as any)(i & 7).get();
+}
 //// class.new-or-call
 function V(this: any, x: number): any {
   if (!(this instanceof V)) return new (V as any)(x);
@@ -764,6 +798,43 @@ C.prototype.constructor = C;
 C.prototype.area = function () { return this.a + this.c; };
 function D(this: any, a: number) { B.call(this, a); this.d = 4; }
 D.prototype = Object.create(B.prototype);
+D.prototype.constructor = D;
+D.prototype.area = function () { return this.a + this.d; };
+function turn(i: number): number {
+  return new (B as any)(i & 7).area() + new (C as any)(i & 3).area() + new (D as any)(i & 1).area();
+}
+//// three-derived.inherits-helper-instance-of-the-base
+function inherits(ctor: any, superCtor: any) {
+  ctor.prototype = new superCtor(0);
+  ctor.prototype.constructor = ctor;
+}
+function A(this: any, a: number) { this.a = a; }
+A.prototype.area = function () { return this.a + 1; };
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+inherits(B, A);
+B.prototype.area = function () { return this.a + this.b; };
+function C(this: any, a: number) { A.call(this, a); this.c = 3; }
+inherits(C, A);
+C.prototype.area = function () { return this.a + this.c; };
+function D(this: any, a: number) { B.call(this, a); this.d = 4; }
+inherits(D, B);
+D.prototype.area = function () { return this.a + this.d; };
+function turn(i: number): number {
+  return new (B as any)(i & 7).area() + new (C as any)(i & 3).area() + new (D as any)(i & 1).area();
+}
+//// three-derived.instance-of-the-base
+function A(this: any, a: number) { this.a = a; }
+A.prototype.area = function () { return this.a + 1; };
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+B.prototype = new (A as any)(0);
+B.prototype.constructor = B;
+B.prototype.area = function () { return this.a + this.b; };
+function C(this: any, a: number) { A.call(this, a); this.c = 3; }
+C.prototype = new (A as any)(0);
+C.prototype.constructor = C;
+C.prototype.area = function () { return this.a + this.c; };
+function D(this: any, a: number) { B.call(this, a); this.d = 4; }
+D.prototype = new (B as any)(0);
 D.prototype.constructor = D;
 D.prototype.area = function () { return this.a + this.d; };
 function turn(i: number): number {

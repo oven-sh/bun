@@ -34,8 +34,8 @@ describe.concurrent("the built-in code that is part of every program", () => {
       `import("node:util").then((util: any) => console.log(util.inspect({}, JSON.parse(process.argv[2]))));`,
     ],
     [
-      "defines properties by unknown descriptors",
-      `console.log(Object.defineProperties({}, JSON.parse(process.argv[2])));`,
+      "defines a property under a registered symbol that nobody knows",
+      `console.log(Object.defineProperties({}, { [Symbol.for(process.argv[3])]: { value: function ${inspector} } }));`,
     ],
     [
       "has a built-in module install its inspector under the symbol that Bun.inspect holds",
@@ -43,6 +43,20 @@ describe.concurrent("the built-in code that is part of every program", () => {
     ],
   ])("util.inspect may read any member where the program %s", async (_, text) => {
     expect(usesEveryMember(await closedReport(text))).toBe(true);
+  });
+
+  // A key that nobody knows is the symbol that the host looks under only if the program can come by that symbol.
+  eachRow([
+    [
+      "defines properties by unknown descriptors",
+      `console.log(Object.defineProperties({}, JSON.parse(process.argv[2])));`,
+    ],
+    [
+      "stores under an unknown key",
+      `const holder: any = {}; holder[JSON.parse(process.argv[2])] = function () {}; console.log(holder);`,
+    ],
+  ])("util.inspect is not reached where the program has no way to the symbol and %s", async (_, text) => {
+    expect(usesEveryMember(await closedReport(text))).toBe(false);
   });
 
   const replacing = `(depth: any, options: any, inspect: any) { inspect.styles = function () {};`;

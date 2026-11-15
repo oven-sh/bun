@@ -131,10 +131,10 @@ pub(crate) fn view(
 
     let mut response_buf = MutableString::init(2048)?;
     let header_buf: &[u8] = headers.content.written_slice();
-    let mut req =
-        manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"");
+    let href = url.href;
+    let req = manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"");
 
-    let res = match manager.send_with_retries(&mut req, &mut response_buf) {
+    let res = match manager.send_with_retries(req, &mut response_buf) {
         Ok(r) => r,
         Err(err) => {
             Output::err(err, "view request failed to send", ());
@@ -143,7 +143,7 @@ pub(crate) fn view(
     };
 
     if res.status_code() >= 400 {
-        npm::response_error::<false>(&req, &res, Some((name, version)), &mut response_buf)?;
+        npm::response_error::<false>(href, &res, Some((name, version)), &mut response_buf)?;
     }
 
     let mut log = bun_ast::Log::init();
@@ -156,7 +156,7 @@ pub(crate) fn view(
         }
     };
     if log.errors > 0 {
-        log.print(std::ptr::from_mut(Output::error_writer()))?;
+        log.print(Output::error_writer())?;
         Global::crash();
     }
 

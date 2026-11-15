@@ -1,0 +1,15 @@
+# -- source: main.ts
+# function ifs(list: { type: string }[]): number { let r = 0; for (const t of list) { if (t.type === "add") r += 1; r = r * 3 % 1003; if (t.type === "remove") r += 2; } return r; }
+# function either(list: string[]): number { let r = 0; for (const k of list) if (k === "x" || k === "insert") r++; return r; }
+# function switched(list: string[]): number { let r = 0; for (const k of list) { switch (k) { case "add": r += 1; break; case "remove": r += 2; break; case "x": r += 3; } r = r * 3 % 1003; } return r; }
+# function empty(list: string[]): number { let r = 0; for (const k of list) if (k === "" || k === "12") r++; return r; }
+# function outside(k: string): number { if (k === "add") return 1; return k === "remove" ? 2 : 3; }
+# const kinds = "add remove insert x 12".split(" ");
+# print(ifs(kinds.map(type => ({ type }))), either(kinds), switched(kinds), empty(kinds), outside(kinds[1]!));
+# -- end of source
+# In loops a switch compares a text with its literals by the header that the cell holds: three cases of switched(), in two versions of the loop. A single comparison asks for no header unless a literal is written of the place (headers-of-written-literals.ir). An empty text and a text that is an index are no names. Outside of loops nothing changes.
+# RUN: compile LiteralHeadersCompared mechanisms=all
+# CHECK: statistic LiteralHeadersCompared 6
+# RUN(ANSWER): run-in-shell
+# ANSWER: 297 2 432 1 2
+# ANSWER-NEXT: exited with 0

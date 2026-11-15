@@ -423,6 +423,69 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent.each([
+    ["uv_queue_work", "testDefaultLoopWork"],
+    ["uv_timer_t", "testDefaultLoopTimer"],
+  ])("%s on uv_default_loop calls back in the Worker that started it", async (_, name) => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      const { Worker } = require("node:worker_threads");
+      new Worker(${JSON.stringify(`require(${JSON.stringify(addonPath)}).${name}();`)}, { eval: true });
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("on the calling thread: 1\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // Node makes these calls and races with its loop.
+  const refused = -constants.errno.EINVAL;
+  const mainLoopFromAnotherThread = [
+    refused, // uv_check_stop on the main thread's handle
+    1, // uv_has_ref after uv_unref
+    0, // uv_has_ref after uv_ref
+    0, // uv_is_closing after uv_close on an async handle
+    0, // uv_is_closing after uv_close on a check handle
+    refused, // uv_async_init
+    refused, // uv_idle_start
+    refused, // uv_prepare_start
+    refused, // uv_check_start
+  ];
+
+  test.concurrent("a Worker cannot change the main thread's loop, and closes what is not started", async () => {
+    const worker = `require("node:worker_threads").parentPort.postMessage(require(${JSON.stringify(addonPath)}).useMainLoopHere());`;
+    const { stdout, stderr, exitCode } = await runInChild(`
+      const { Worker } = require("node:worker_threads");
+      addon.startMainHandles();
+      let results;
+      new Worker(${JSON.stringify(worker)}, { eval: true })
+        .on("message", message => (results = message))
+        .on("exit", () => {
+          console.log(JSON.stringify(results));
+          addon.closeMainHandles();
+        });
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      [...Array(5).fill("on the calling thread: 1"), JSON.stringify(mainLoopFromAnotherThread), ""].join("\n"),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an addon thread cannot change the main thread's loop", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      addon.startMainHandles();
+      console.log(JSON.stringify(addon.useMainLoopFromThread()));
+      addon.closeMainHandles();
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      ...mainLoopFromAnotherThread,
+      refused, // uv_timer_start
+      refused, // uv_timer_again
+      refused, // uv_queue_work
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   // The handle tests below print the addon's returned state as one JSON line,
   // then one line per event.
   function stateAndEvents(stdout: string) {

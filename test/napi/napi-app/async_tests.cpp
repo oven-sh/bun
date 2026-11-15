@@ -916,7 +916,65 @@ napi_value threadsafe_function_with_queued_items_finalized(
   return Napi::Boolean::New(info.Env(), queued_items_tsfn_finalized);
 }
 
+static napi_value
+unref_threadsafe_function_with_queued_items(const Napi::CallbackInfo &info) {
+  napi_status status =
+      napi_unref_threadsafe_function(info.Env(), queued_items_tsfn);
+  return Napi::Number::New(info.Env(), static_cast<double>(status));
+}
+
+static napi_value unref_and_ref_threadsafe_function_from_addon_thread(
+    const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  std::thread([env] {
+    napi_status unref = napi_unref_threadsafe_function(env, queued_items_tsfn);
+    napi_status ref = napi_ref_threadsafe_function(env, queued_items_tsfn);
+    printf("unref: %d, ref: %d\n", static_cast<int>(unref),
+           static_cast<int>(ref));
+    fflush(stdout);
+  }).join();
+  return info.Env().Undefined();
+}
+
+static napi_async_work held_work = nullptr;
+static std::atomic<bool> held_work_released{false};
+static int held_work_delete_status = -1;
+
+// Queues work whose execute() returns once release_held_async_work() is called.
+static napi_value queue_held_async_work(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  NODE_API_CALL(env, napi_create_async_work(
+                         env, nullptr, Napi::String::New(env, "held"),
+                         [](napi_env, void *) {
+                           const auto deadline =
+                               std::chrono::steady_clock::now() +
+                               std::chrono::seconds(30);
+                           while (!held_work_released &&
+                                  std::chrono::steady_clock::now() < deadline) {
+                             std::this_thread::yield();
+                           }
+                         },
+                         [](napi_env env, napi_status, void *) {
+                           held_work_delete_status =
+                               napi_delete_async_work(env, held_work);
+                         },
+                         nullptr, &held_work));
+  NODE_API_CALL(env, napi_queue_async_work(env, held_work));
+  return info.Env().Undefined();
+}
+
+// Returns what napi_delete_async_work returned in complete(), or -1 before it.
+static napi_value release_held_async_work(const Napi::CallbackInfo &info) {
+  held_work_released = true;
+  return Napi::Number::New(info.Env(), held_work_delete_status);
+}
+
 void register_async_tests(Napi::Env env, Napi::Object exports) {
+  REGISTER_FUNCTION(env, exports, unref_threadsafe_function_with_queued_items);
+  REGISTER_FUNCTION(env, exports,
+                    unref_and_ref_threadsafe_function_from_addon_thread);
+  REGISTER_FUNCTION(env, exports, queue_held_async_work);
+  REGISTER_FUNCTION(env, exports, release_held_async_work);
   REGISTER_FUNCTION(env, exports, async_work_with_external_buffer);
   REGISTER_FUNCTION(env, exports, queue_threadsafe_function_items);
   REGISTER_FUNCTION(env, exports, abort_threadsafe_function_with_queued_items);

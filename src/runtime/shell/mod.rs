@@ -123,8 +123,7 @@ pub(crate) use yield_::Yield;
 pub(crate) mod dispatch_tasks;
 
 /// `bun.shell.subproc` — `ShellSubprocess` + its `StaticPipeWriter`. Exposed so
-/// `runtime::dispatch::__bun_run_io` can name `StaticPipeWriter<ShellSubprocess>`
-/// for the `SHELL_STATIC_PIPE_WRITER` poll arm.
+/// `runtime::dispatch::__bun_run_io` can name `StaticPipeWriter<ShellSubprocess>`.
 #[path = "subproc.rs"]
 pub(crate) mod subproc;
 

@@ -376,6 +376,9 @@ impl IOWriter {
             // Set before the fallible `__start` so a later enqueue does not
             // retry it.
             s.started = true;
+            // A first write that libuv refuses runs the children, which may drop every other `Rc`.
+            #[cfg(windows)]
+            let _keepalive = self.keepalive();
             if let Err(e) = self.__start() {
                 return WriteOutcome::Failed(e);
             }

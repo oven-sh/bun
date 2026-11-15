@@ -2215,15 +2215,24 @@ impl LinePosition {
     #[cold]
     #[inline(never)]
     pub fn utf8(contents: &[u8], offset: usize) -> LinePosition {
-        // The end of the input can be inside its last character.
-        let mut offset = offset.min(contents.len().saturating_sub(1));
-        while offset > 0 && !bun_core::strings::is_utf8_char_boundary(contents[offset]) {
-            offset -= 1;
-        }
-        Self::scan(contents, offset, |rest| {
+        let decode = |rest: &[u8]| {
             let (cp, size) = bun_core::strings::wtf8_codepoint_at(rest, 0);
             (cp, size.max(1))
-        })
+        };
+        // The end of the input can be inside its last character. A stray
+        // continuation byte is a character of its own.
+        let mut offset = offset.min(contents.len().saturating_sub(1));
+        let mut start = offset;
+        while start > 0
+            && offset - start < 3
+            && !bun_core::strings::is_utf8_char_boundary(contents[start])
+        {
+            start -= 1;
+        }
+        if start + decode(&contents[start..]).1 > offset {
+            offset = start;
+        }
+        Self::scan(contents, offset, decode)
     }
 
     /// Over ISO-8859-1 bytes, one character each. `offset` is a byte index.

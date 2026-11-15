@@ -577,6 +577,10 @@ describe("error position", () => {
     // The input ends inside its last character: the place is that character.
     expect(position(Buffer.from("<a>\u00e9"))).toEqual({ line: 1, column: 4, offset: 5, lineText: "<a>é" });
     expect(position("<a>\u{1F600}")).toEqual({ line: 1, column: 4, offset: 5, lineText: "<a>😀" });
+    // A stray byte is not part of the character before it.
+    const stray = Buffer.from([0x3c, 0x61, 0x3e, 0x0a, 0x80]);
+    expect(syntaxError(stray).message).toBe("XML Parse error: Invalid UTF-8");
+    expect(position(stray)).toEqual({ line: 2, column: 1, offset: 4, lineText: "\ufffd" });
   });
 
   test("\\r and \\r\\n are line ends", () => {

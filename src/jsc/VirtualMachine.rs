@@ -99,7 +99,7 @@ pub struct InitOptions {
     /// Overrides `env_loader`. The VM owns it and frees it with its runtime state.
     pub owned_env_loader: Option<Box<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
-    /// `--install=...`; the resolver needs it before `configure_linker()` caches package.json.
+    /// `--install=...`; the resolver needs it before `configure_from_tsconfig()` caches package.json.
     pub global_cache: bun_options_types::global_cache::GlobalCache,
     pub smol: bool,
     pub eval_mode: bool,
@@ -4526,7 +4526,7 @@ impl VirtualMachine {
             // Without it `/$bunfs/...` specifiers resolve against the real filesystem.
             t.resolver.standalone_module_graph = opts.graph;
             if opts.graph.is_none() {
-                t.configure_linker();
+                t.configure_from_tsconfig();
             }
         });
         Ok(vm)

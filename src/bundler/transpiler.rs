@@ -466,7 +466,7 @@ impl<'a> Transpiler<'a> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// `configure_linker` / `run_env_loader` — used by
+// `configure_from_tsconfig` / `run_env_loader` — used by
 // `RunCommand::configure_env_for_run` (runtime/cli/run_command.rs:527),
 // `JSBundleCompletionTask`,
 // `JSTranspiler`, and `bun.js.rs:: bun_main_shell_entry`.
@@ -493,7 +493,7 @@ fn merge_tsconfig_jsx_into(tsconfig: &TSConfigJSON, out: &mut crate::options_imp
 
 impl<'a> Transpiler<'a> {
     /// Configures JSX and decorators from the nearest `tsconfig.json`.
-    pub fn configure_linker(&mut self) {
+    pub fn configure_from_tsconfig(&mut self) {
         // Most of the time, this will already be cached
         let top_level_dir = Fs::FileSystem::get().top_level_dir();
         if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {

@@ -372,15 +372,13 @@ bool moduleMockImportsByKey(Zig::GlobalObject*, const String& key);
 String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 String packageImportKey(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
-// An export that a module takes from a module mock: the object that the factory returned, and the name that the export has there.
-// A module may re-export it under another name. The object can be a namespace object, whose module may take the export from a mock too.
-// `mock` answers importers, also for a name that the object lacks: the default export of a Jest factory's object is the object itself.
+// The object that a module mock's factory returned, the name that the export has there, and the mock, which importers read the export from.
 struct ExportOfModuleMock {
     JSC::JSObject* object { nullptr };
     JSC::Identifier name;
     JSC::JSObject* mock { nullptr };
 };
-// For `name` of the namespace object of a loaded or a compiled module. No object if the module does not take that export from a module mock.
+// For `name` of the namespace object of a loaded or a compiled module. No object for any other object, or if the module does not take that export from a module mock.
 ExportOfModuleMock exportOfModuleMock(JSC::JSGlobalObject*, JSC::JSObject* moduleNamespace, const JSC::Identifier& name);
 // Flushes modulesToEvictOnceLoaded after a synchronous load. Does nothing inside an outer synchronous load.
 void evictModulesThatHaveLoaded(Zig::GlobalObject*);

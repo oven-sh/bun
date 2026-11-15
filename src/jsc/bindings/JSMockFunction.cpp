@@ -2952,8 +2952,7 @@ __attribute__((minsize)) static void wrapFunction(Zig::GlobalObject* globalObjec
     mock->setInitialImplementation(globalObject, function);
 }
 
-// A message names the key as the caller wrote it. `key` is the name that the spy is stored under: behind a module mock that is the name
-// of the export in the mocked module, whatever name another module re-exports it under.
+// A message names the key as the caller wrote it. Behind a module mock, `key` is the name that the export has in the mocked module.
 static StringImpl* writtenName(JSValue written)
 {
     return written.isString() ? asString(written)->tryGetValueImpl() : nullptr;
@@ -3058,12 +3057,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
 
     JSC::JSObject* object = objectValue.getObject();
 
-    // A module mock's exports are read live from the object its factory returned, so spy on that object, under the name the export has there.
-    // That object can be a namespace object too, or an object that the steps below are for, such as globalThis.
+    // A module mock's exports are read live from the object its factory returned, so the steps below spy on that object, under the name the export has there.
     JSObject* mockOfObject = nullptr;
     if (isNamespaceObjectOfModule(globalObject, object)) {
-        // Mocks can read each other's namespace objects in a circle, and then no object holds the export. The remembered hop
-        // moves ahead at each power of two, so a circle of any length comes back to it. Nearly every walk ends after one hop.
+        // Module mocks can read each other's namespace objects in a circle. The remembered hop moves ahead at each power of two, so a circle of any length comes back to it.
         JSObject* rememberedObject = nullptr;
         Identifier rememberedKey;
         for (unsigned hops = 0;; ++hops) {

@@ -722,9 +722,8 @@ impl fmt::Display for Raw<'_> {
 }
 
 // Canonical `SliceCursor` / `buf_print` / `buf_print_len` live in T0
-// `bun_alloc` so that crate can use them too; re-exported here for the
-// `bun_core::fmt::` callers and extended with an `io::Write` face so the same
-// struct also serves as a fixed-buffer write sink for write-only sites.
+// `bun_alloc`; re-exported here for the `bun_core::fmt::` callers and extended with an `io::Write`
+// face so the same struct also serves as a fixed-buffer write sink for write-only sites.
 pub use bun_alloc::{SliceCursor, buf_print, buf_print_len};
 
 impl crate::io::Write for SliceCursor<'_> {

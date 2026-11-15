@@ -555,7 +555,7 @@ impl FrameworkRouter {
             return Ok(());
         };
         let mut arena_state = Arena::new();
-        self.scan_inner(ty, r, &root_info, &mut arena_state, ctx)
+        self.scan_inner(ty, r, root_info, &mut arena_state, ctx)
     }
 
     fn scan_inner(
@@ -579,7 +579,7 @@ impl FrameworkRouter {
             // re-insertion order is irrelevant.
             let mut zig_order: bun_collections::zig_hash_map::HashMap<
                 Box<[u8]>,
-                *mut bun_resolver::fs::Entry,
+                &bun_resolver::fs::Entry,
                 ZigStringHashContext,
             > = Default::default();
             {
@@ -595,11 +595,7 @@ impl FrameworkRouter {
             }
             let mut it = zig_order.iter();
             'outer: while let Some(entry) = it.next() {
-                let file_ptr: *mut bun_resolver::fs::Entry = *entry.1;
-                // SAFETY: EntryMap stores `*mut Entry` into the EntryStore singleton
-                // (process lifetime); the lazy-stat rewrite in `kind()` below is
-                // serialized on the per-entry `Entry.mutex`.
-                let file = unsafe { &*file_ptr };
+                let file = *entry.1;
                 let base = file.base();
                 // Note: reshaped for borrowck — fetch type fields fresh each iteration.
                 match file.kind(&fs_ref.fs, false) {
@@ -618,7 +614,7 @@ impl FrameworkRouter {
                         if let Some(child_info) =
                             r.read_dir_info_ignore_error(fs_ref.abs(&[file.dir, file.base()]))
                         {
-                            self.scan_inner(t_index, r, &child_info, arena_state, ctx)?;
+                            self.scan_inner(t_index, r, child_info, arena_state, ctx)?;
                         }
                     }
                     bun_resolver::fs::EntryKind::File => {

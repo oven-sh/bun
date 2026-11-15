@@ -8,13 +8,12 @@ use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult, LogJsc};
 use bun_paths::{self as path, MAX_PATH_BYTES};
-use bun_ptr::BackRef;
 
 use bun_http_types::URLPath;
 use bun_resolver::Resolver;
 use bun_resolver::fs as Fs;
 use bun_router::{self as Router, RouteConfig};
-use bun_url::{CombinedScanner, QueryStringMap, URL, route_param};
+use bun_url::{QueryStringMap, URL, route_param};
 
 use crate::api::bun_object;
 use crate::generated_bindgen::filesystem_router::{
@@ -39,7 +38,10 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
         Fs::FileSystem::get()
     }
     #[inline]
-    fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<bun_resolver::DirInfoRef> {
+    fn read_dir_info_ignore_error(
+        &mut self,
+        path: &[u8],
+    ) -> Option<&'static bun_resolver::DirInfo> {
         self.0.read_dir_info_ignore_error(path)
     }
 }
@@ -64,7 +66,7 @@ fn load_router(
     global: &JSGlobalObject,
     config: RouteConfig,
     load: Load,
-) -> JsResult<Option<(Router::Router, bun_resolver::DirInfoRef)>> {
+) -> JsResult<Option<(Router::Router, &'static bun_resolver::DirInfo)>> {
     let transpiler = &VirtualMachine::get().transpiler;
     let mut log = Log::Log::new();
     // SAFETY: the VM and its resolver outlive this call, and this is dropped before `log`.
@@ -94,7 +96,7 @@ fn load_router(
     let loaded = transpiler.with_mut(|t| {
         router.load_routes(
             &mut log,
-            &root_dir_info,
+            root_dir_info,
             &mut RouterResolver(&mut t.resolver),
             &config_dir,
         )
@@ -130,10 +132,10 @@ impl FileSystemRouter {
         };
 
         if let Some(dir_ref) = root_dir_info {
-            // Snapshot the cached `DirEntry`'s entry pointers under `entries_mutex`
+            // Snapshot the cached `DirEntry`'s entries under `entries_mutex`
             // (other threads rewrite the map in place under that lock), then drop
             // the guard: `bust_dir_cache` / the recursion below re-acquire it.
-            let entry_ptrs: Vec<*mut Fs::Entry> = {
+            let entries: Vec<&Fs::Entry> = {
                 let _entries_lock = Fs::FileSystem::get().fs.entries_mutex.lock_guard();
                 match dir_ref.get_entries_const() {
                     Some(entries) => entries.data.values().copied().collect(),
@@ -141,13 +143,7 @@ impl FileSystemRouter {
                 }
             };
             {
-                'outer: for entry_ptr in entry_ptrs {
-                    // BACKREF: `entry_ptr` is a `*mut Entry` into the process-static
-                    // EntryStore; the store outlives this loop. Wrap once so the
-                    // shared-only reads below are safe `Deref`s.
-                    let entry = BackRef::from(
-                        core::ptr::NonNull::new(entry_ptr).expect("EntryStore entry"),
-                    );
+                'outer: for entry in entries {
                     if entry.base().first() == Some(&b'.') {
                         continue 'outer;
                     }
@@ -306,9 +302,9 @@ impl FileSystemRouter {
             return Ok(None);
         }
 
-        // `url_path`, `route` and `params_list` borrow `path`, or the decoded buffer that takes its place below.
-        let mut url_path = match URLPath::parse(path.slice()) {
-            Ok(v) => v,
+        match URLPath::decode(path.slice()) {
+            Ok(Some(decoded)) => path = Utf8Bytes::Owned(decoded),
+            Ok(None) => {}
             Err(err) => {
                 return Err(heap.error(format_args!(
                     "{} parsing path: {}",
@@ -316,33 +312,22 @@ impl FileSystemRouter {
                     bstr::BStr::new(path.slice())
                 )));
             }
-        };
+        }
+        let url_path = URLPath::parse(path.slice());
         let mut params_list = route_param::List::default();
         let Some(route) = self
             .router
             .get()
             .routes
-            .match_page_with_allocator(&url_path, &mut params_list)
+            .match_page_with_allocator(url_path.path, &mut params_list)
         else {
             return Ok(None);
         };
 
-        // If `URLPath::parse` had to percent-decode, `route.pathname`/`query_string` and
-        // the param values borrow the decode buffer — not `path` — and that buffer would
-        // be freed when `url_path` drops at the end of this call. Take ownership of it and
-        // make it the backing allocation instead. (`Box<[u8]>` -> `Vec<u8>` ->
-        // `Utf8Bytes::Owned` reuses the same heap allocation, so the borrowed slices
-        // stay valid; nothing in `route` points into the original encoded `path` once a
-        // decode happened.)
-        if let Some(decoded) = url_path.take_decoded_storage() {
-            path = Utf8Bytes::Owned(decoded.into_vec());
-        }
-
-        debug_assert!(core::ptr::eq(route.pathname, path.slice()));
         let matched = MatchedRoute {
             name: route.name,
             file_path: route.file_path,
-            query_start: route.pathname.len() - route.query_string.len(),
+            query_start: path.slice().len() - url_path.query_string.len(),
             pathname: path,
             params_list,
             param_map: JsCell::new(None),
@@ -394,10 +379,9 @@ pub(crate) struct MatchedRoute {
     pathname: Utf8Bytes<'static>,
     /// Where the query string starts in `pathname`.
     query_start: usize,
-    /// Its values borrow `pathname`.
     params_list: route_param::List<'static>,
     /// Made by the first of `params` and `query` to need it.
-    param_map: JsCell<Option<QueryStringMap>>,
+    param_map: JsCell<Option<QueryStringMap<'static>>>,
     origin: Option<WTFString>,
     asset_prefix: Option<WTFString>,
     base_dir: WTFString,
@@ -411,7 +395,7 @@ impl MatchedRoute {
     /// A name that comes once has a string, and one that comes again has an array of them.
     fn create_query_object<'a>(
         heap: &JsHeap<'a>,
-        map: Option<&QueryStringMap>,
+        map: Option<&QueryStringMap<'_>>,
     ) -> bindgen::Result<'a, JsLocal<'a>> {
         let Some(map) = map else {
             return Ok(heap.create_empty_object().as_value());
@@ -460,14 +444,11 @@ impl MatchedRoute {
         }
 
         if self.param_map.get().is_none() {
-            let scanner = CombinedScanner::init(
+            self.param_map.set(QueryStringMap::init_with_route_params(
                 b"",
                 self.pathname_without_leading_slash(),
-                self.name,
                 &self.params_list,
-            );
-            self.param_map
-                .set(QueryStringMap::init_with_scanner(scanner)?);
+            )?);
         }
 
         Self::create_query_object(heap, self.param_map.get().as_ref())
@@ -486,12 +467,11 @@ impl MatchedRoute {
         let map = if self.params_list.is_empty() {
             QueryStringMap::init(query_string)?
         } else {
-            QueryStringMap::init_with_scanner(CombinedScanner::init(
+            QueryStringMap::init_with_route_params(
                 query_string,
                 self.pathname_without_leading_slash(),
-                self.name,
                 &self.params_list,
-            ))?
+            )?
         };
         Self::create_query_object(heap, map.as_ref())
     }

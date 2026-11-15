@@ -1566,7 +1566,6 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_errno",
- "bun_http_types",
  "bun_paths",
  "bun_ptr",
  "bun_resolver",

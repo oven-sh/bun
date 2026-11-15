@@ -11,7 +11,7 @@
 
 // Submodules. `fs.rs` (full RealFS readdir/stat/kind path) is mounted as
 // `fs_full`; the inline `pub mod fs` below remains the canonical type surface
-// (FileSystem, RealFS, Path, PathName, Entry, DirEntry, EntryLookup,
+// (FileSystem, RealFS, Path, PathName, Entry, DirEntry,
 // EntriesOption, Implementation) and re-exports from `fs_full`.
 pub mod data_url;
 pub mod dir_info;
@@ -37,7 +37,6 @@ pub use bun_options_types::global_cache::GlobalCache;
 pub use data_url::DataURL;
 /// Re-export real `DirInfo`.
 pub use dir_info::DirInfo;
-pub use dir_info::DirInfoRef;
 /// Re-export real filesystem `Path`.
 pub use fs::Path;
 /// Re-export real `PackageJSON`.
@@ -67,24 +66,25 @@ pub mod fs {
     use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::io::Write as _;
 
+    use bun_alloc::BSSStringList;
     use bun_core::ZStr;
+
+    use crate::fs_full::filename_store;
 
     // ── DirnameStore / FilenameStore ─────────────────────────────────────
     // The resolver body interns paths via `dirname_store.append_slice` /
-    // `append_parts`. Backed by `bun_alloc::BSSStringList` singletons emitted
-    // via `bss_string_list!` (per-monomorphization static + first-call init).
+    // `append_parts`.
 
-    // `BSSStringList(2048, 128)` → `<{2048*2}, {128+1}>`
-    bun_alloc::bss_string_list! { pub dirname_store_backing : 4096, 129 }
-    // `bss_singleton!` emits one private `STORAGE` per declare site, so the
-    // filename store is declared once, in `fs_full`, and shared with the
-    // `readdir` appender (`FilenameStoreAppender`). A second declaration here
-    // would be a separate store that `exists`/`as_interned` cannot see into.
-    pub use crate::fs_full::filename_store_backing;
+    static DIRNAME_STORE: bun_core::Once<BSSStringList> = bun_core::Once::new();
 
-    /// Port of `FileSystem.DirnameStore` (`BSSStringList<2048,128>`).
+    #[inline]
+    fn dirname_store() -> &'static BSSStringList {
+        DIRNAME_STORE.get_or_init(|| BSSStringList::new(4096 * 129))
+    }
+
+    /// Port of `FileSystem.DirnameStore`.
     pub struct DirnameStore(());
-    /// Port of `FileSystem.FilenameStore` (`BSSStringList<4096,64>`).
+    /// Port of `FileSystem.FilenameStore`.
     pub struct FilenameStore(());
 
     static DIRNAME_STORE_ZST: DirnameStore = DirnameStore(());
@@ -98,44 +98,28 @@ pub mod fs {
                     &$zst
                 }
                 pub fn append_slice(&self, value: &[u8]) -> crate::CrateResult<&'static [u8]> {
-                    // SAFETY: `$backing()` returns the raw `*mut` process-lifetime singleton;
-                    // `BSSStringList::append` takes `*mut Self` and serializes
-                    // all mutation through its internal `mutex` (no aliased `&mut` is ever
-                    // formed). The returned slice borrows its never-freed backing storage
-                    // (heap-owned by a `'static` `BSSStringList` or a leaked mi_malloc), so
-                    // widening to `'static` is sound.
-                    unsafe { bun_alloc::BSSStringList::append($backing(), &value) }
-                        .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
+                    $backing().append(value).map_err(crate::Error::Alloc)
                 }
                 pub fn append_parts(&self, parts: &[&[u8]]) -> crate::CrateResult<&'static [u8]> {
-                    // SAFETY: see `append_slice`.
-                    unsafe { bun_alloc::BSSStringList::append($backing(), &parts) }
-                        .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))
+                    $backing().append_parts(parts).map_err(crate::Error::Alloc)
                 }
                 /// Format directly into the store's tail; no intermediate `String`.
                 pub fn print(
                     &self,
                     args: core::fmt::Arguments<'_>,
                 ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-                    // SAFETY: see `append_slice`.
-                    unsafe { bun_alloc::BSSStringList::print($backing(), args) }
-                }
-                #[inline]
-                pub fn exists(&self, value: &[u8]) -> bool {
-                    // SAFETY: see `append_slice`.
-                    unsafe { &*$backing() }.exists(value)
+                    $backing().print(args)
                 }
                 /// `value` with the store's lifetime, if it already points into the store.
                 #[inline]
                 pub fn as_interned(&self, value: &[u8]) -> Option<&'static [u8]> {
-                    // SAFETY: see `append_slice`; the singleton is `'static`.
-                    unsafe { &*$backing() }.as_interned(value)
+                    $backing().as_interned(value)
                 }
             }
         };
     }
-    string_store_impl!(DirnameStore, DIRNAME_STORE_ZST, dirname_store_backing);
-    string_store_impl!(FilenameStore, FILENAME_STORE_ZST, filename_store_backing);
+    string_store_impl!(DirnameStore, DIRNAME_STORE_ZST, dirname_store);
+    string_store_impl!(FilenameStore, FILENAME_STORE_ZST, filename_store);
 
     macro_rules! string_store_append_impl {
         ($t:ty, $backing:ident) => {
@@ -147,12 +131,7 @@ pub mod fs {
                     &self,
                     value: &[u8],
                 ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-                    // SAFETY: `$backing()` returns the raw `*mut` process-lifetime singleton;
-                    // `BSSStringList::append` takes `*mut Self` and serializes all mutation
-                    // through its internal `mutex`. Returned slice borrows its never-freed
-                    // storage, so widening to `'static` is sound.
-                    unsafe { bun_alloc::BSSStringList::append($backing(), &value) }
-                        .map_err(|_| bun_alloc::AllocError)
+                    $backing().append(value)
                 }
                 /// Like `append`, but ASCII-lowercases `value` while copying
                 /// it into the store.
@@ -161,15 +140,13 @@ pub mod fs {
                     &self,
                     value: &[u8],
                 ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-                    // SAFETY: see `append`.
-                    unsafe { bun_alloc::BSSStringList::append_lower_case($backing(), value) }
-                        .map_err(|_| bun_alloc::AllocError)
+                    $backing().append_lower_case(value)
                 }
             }
         };
     }
-    string_store_append_impl!(DirnameStore, dirname_store_backing);
-    string_store_append_impl!(FilenameStore, filename_store_backing);
+    string_store_append_impl!(DirnameStore, dirname_store);
+    string_store_append_impl!(FilenameStore, filename_store);
 
     // ── FileSystem ───────────────────────────────────────────────────────
 
@@ -304,10 +281,6 @@ pub mod fs {
                     filename_store: FilenameStore::instance(),
                 });
                 INSTANCE_LOADED.store(true, Ordering::Release);
-                // Spec `Implementation.init` calls `DirEntry.EntryStore.init`;
-                // touch the singleton so it's initialized before any resolver
-                // worker hits it.
-                let _ = dir_entry::EntryStore::instance();
                 Ok((*INSTANCE.get()).as_mut_ptr())
             }
         }
@@ -516,8 +489,7 @@ pub mod fs {
         /// (`FilenameStore` or `DirnameStore`), the slices are already `'static`
         /// and we return the path unchanged instead of appending a duplicate.
         /// Skipping this check makes the append-only `FilenameStore` grow without
-        /// bound across repeated in-process `Bun.build()` calls, eventually
-        /// tripping the overflow-block cap (index-out-of-bounds panic).
+        /// bound across repeated in-process `Bun.build()` calls.
         fn dupe_alloc<'b>(
             &self,
             alloc: &'b bun_alloc::MimallocArena,
@@ -691,7 +663,7 @@ pub mod fs {
     // Canonical definitions live in `fs.rs` (mounted as `crate::fs_full`).
     // Re-exported here so the public path `bun_resolver::fs::*` is preserved.
     pub use crate::fs_full::{
-        DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver, EntryLookup,
+        DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver,
         FilenameStoreAppender, dir_entry,
     };
 
@@ -755,10 +727,9 @@ pub mod fs {
         /// listing fd, in one `entries_mutex` critical section. A
         /// stale-generation re-read rewrites the slot's `DirEntry` (and frees
         /// the old map's buckets) in place under that lock, so the map must
-        /// not be walked after unlock; the returned entry pointer is
-        /// EntryStore-owned and stays valid. The caller must NOT already hold
+        /// not be walked after unlock. The caller must NOT already hold
         /// `entries_mutex` (it is non-recursive).
-        pub(crate) fn lookup(&self, query: &[u8]) -> (Option<crate::fs_full::EntryLookup>, Fd) {
+        pub(crate) fn lookup(&self, query: &[u8]) -> (Option<&'static Entry>, Fd) {
             let _lock = FileSystem::get().fs.entries_mutex.lock_guard();
             match self {
                 EntriesOption::Entries(entries) => (entries.get(query), entries.fd),
@@ -776,15 +747,6 @@ pub mod fs {
             }
         }
     }
-
-    // SAFETY: ARENA — `EntriesOption` holds an unbounded `&mut DirEntry` (whose `data`
-    // map stores `*mut Entry` into the BSSMap singleton). All access is serialized
-    // through `RealFS.entries_mutex`. The
-    // raw-pointer fields are the only thing blocking auto-Sync.
-    unsafe impl Sync for EntriesOption {}
-    // SAFETY: the `&'static mut DirEntry` points into the process-lifetime BSSMap
-    // singleton; ownership may cross threads under the same `entries_mutex` serialization.
-    unsafe impl Send for EntriesOption {}
 
     /// Fixed-capacity (2048-entry) BSS-backed hash map for the directory-entry
     /// cache. Keys are not stored — only their hashes — so lookups cannot
@@ -1653,12 +1615,10 @@ pub mod dir_entry_accessor {
         }
     }
 
-    // `dir_entry::EntryMap` = `StringHashMap<*mut Entry>` which derefs to
-    // `std::collections::HashMap<Box<[u8]>, *mut Entry>`; iterate that directly.
     type EntryMapIter = bun_collections::hashbrown::hash_map::Iter<
         'static,
         bun_collections::StringHashMapKey,
-        *mut Entry,
+        &'static Entry,
     >;
 
     pub struct DirEntryDirIter {
@@ -1671,18 +1631,13 @@ pub mod dir_entry_accessor {
         #[inline]
         fn next(&mut self) -> Maybe<Option<walk::AccessorDirEntry<'_>>> {
             if let Some(value) = &mut self.value {
-                let Some((key, val)) = value.next() else {
+                let Some((key, entry)) = value.next() else {
                     return Ok(None);
                 };
-                // BACKREF: ARENA — `*mut Entry` points into the EntryStore
-                // BSSList singleton ('static lifetime). This iterator holds a
-                // live `.data` iterator across calls, which `entries_mutex`
+                // This iterator holds a live `.data` iterator across calls, which `entries_mutex`
                 // cannot cover; it is only sound on the single-threaded CLI
                 // glob walk (`bun run --filter`), before any concurrent
                 // resolver exists to rewrite the map.
-                let entry = bun_ptr::BackRef::<Entry>::from(
-                    core::ptr::NonNull::new(*val).expect("EntryStore slot"),
-                );
                 let kind = entry.kind(&FS::get().fs, true);
                 let fskind = match kind {
                     EntryKind::File => bun_sys::FileKind::File,

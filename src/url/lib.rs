@@ -4,18 +4,18 @@
 pub mod error;
 pub use error::{Error, Result};
 
-use core::cell::RefCell;
 use core::mem::MaybeUninit;
+use std::borrow::Cow;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_core::{self, fmt as bun_fmt};
-use bun_core::{String as BunString, Tag as BunStringTag, strings};
+use bun_core::{String as BunString, Tag as BunStringTag, range_of_slice_in_buffer, strings};
 use bun_paths::resolve_path::{self, platform};
 use bun_wyhash::hash as wyhash;
 
 // `bun.schema.api.StringPointer` — canonical definition lives in `bun_core`
 // (T0, already a dep). Re-exported under `api::` so `QueryStringMap` /
-// `CombinedScanner` field types keep resolving.
+// `route_param` field types keep resolving.
 pub mod api {
     pub use bun_core::StringPointer;
 }
@@ -24,20 +24,16 @@ use bun_core::io::Write as _;
 
 // ── route_param (moved from bun_router) ───────────────────────────────────
 pub mod route_param {
-    // name/value borrow from the route template + the live request
-    // path; lifetime-generic so `bun_router` (the only producer) can fill them
-    // from non-'static buffers. Downstream that only stores literals can use
-    // `Param<'static>`.
     #[derive(Clone, Copy)]
     pub struct Param<'a> {
         pub name: &'a [u8],
-        pub value: &'a [u8],
+        /// Offset and length in the matched path, after its leading slashes.
+        pub value: super::api::StringPointer,
     }
     // SoA (`MultiArrayList`) layout would be a perf optimization only; a plain
     // Vec is semantically identical.
     pub type List<'a> = Vec<Param<'a>>;
 }
-use route_param::List as ParamsList;
 
 // ── whatwg (WTF::URL FFI shim, MOVE_DOWN from bun_jsc) ────────────────────
 // The JS-value entry points (`hrefFromJS`, `fromJS`)
@@ -210,7 +206,6 @@ pub struct URL<'a> {
     pub port: &'a [u8],
     pub protocol: &'a [u8],
     pub(crate) search: &'a [u8],
-    pub(crate) search_params: Option<QueryStringMap>,
     pub username: &'a [u8],
     pub(crate) port_was_automatically_set: bool,
     /// The rule `parse` used, so `href_without_userinfo` cuts the same bytes.
@@ -231,7 +226,6 @@ impl<'a> Default for URL<'a> {
             port: b"",
             protocol: b"",
             search: b"",
-            search_params: None,
             username: b"",
             port_was_automatically_set: false,
             authority_end: AuthorityEnd::LikeNewURL,
@@ -322,7 +316,6 @@ impl<'a> URL<'a> {
             port: d(self.port),
             protocol: d(self.protocol),
             search: d(self.search),
-            search_params: self.search_params,
             username: d(self.username),
             port_was_automatically_set: self.port_was_automatically_set,
             authority_end: self.authority_end,
@@ -337,21 +330,11 @@ impl<'a> URL<'a> {
     pub fn host_with_path(&self) -> &'a [u8] {
         if !self.host.is_empty() {
             if self.path.len() > 1
-                && bun_alloc::is_slice_in_buffer(self.path, self.href)
-                && bun_alloc::is_slice_in_buffer(self.host, self.href)
+                && let Some([path_start, path_len]) = range_of_slice_in_buffer(self.path, self.href)
+                && let Some([host_start, _]) = range_of_slice_in_buffer(self.host, self.href)
             {
-                let end = self.path.as_ptr() as usize + self.path.len();
-                let start = self.host.as_ptr() as usize;
-                let len: usize = end
-                    - start
-                    - (if self.path.ends_with(b"/") {
-                        1usize
-                    } else {
-                        0usize
-                    });
-                let ptr = start as *const u8;
-                // SAFETY: start..end is a subrange of self.href (both slices verified above)
-                return unsafe { core::slice::from_raw_parts(ptr, len) };
+                let end = path_start + path_len - u32::from(self.path.ends_with(b"/"));
+                return &self.href[host_start as usize..end as usize];
             }
             return self.host;
         }
@@ -520,8 +503,7 @@ impl<'a> URL<'a> {
     }
 
     /// `href` with `user:password@` cut out of its authority.
-    pub fn href_without_userinfo(&self) -> std::borrow::Cow<'a, [u8]> {
-        use std::borrow::Cow;
+    pub fn href_without_userinfo(&self) -> Cow<'a, [u8]> {
         if self.username.is_empty() && self.password.is_empty() {
             return Cow::Borrowed(self.href);
         }
@@ -979,60 +961,15 @@ pub struct Param {
 pub(crate) type ParamList = Vec<Param>;
 
 /// QueryString array-backed hash table that does few allocations and preserves the original order
-pub struct QueryStringMap {
-    // Allocator field dropped — global mimalloc per PORTING.md.
-    // `slice` is self-referential (points into `buffer`) when decoding
-    // happened, otherwise borrows the caller's query_string. Stored as raw fat ptr.
-    slice: *const [u8],
-    pub(crate) buffer: Vec<u8>,
+pub struct QueryStringMap<'a> {
+    /// The query string itself if nothing in it needs decoding.
+    bytes: Cow<'a, [u8]>,
     pub(crate) list: ParamList,
-    pub(crate) name_count: Option<usize>,
 }
 
-impl Clone for QueryStringMap {
-    fn clone(&self) -> Self {
-        let buffer = self.buffer.clone();
-        // Re-derive `slice` so the clone doesn't dangle into the original buffer.
-        // If the original `slice` did NOT point into our own buffer (the
-        // nothing-needs-decoding fast path borrows the caller's query_string),
-        // keep it as-is — both clones borrow the same external slice.
-        // SAFETY: `self.slice` is valid for the lifetime of `self` — it either points
-        // into `self.buffer` (decoding path) or borrows an external query_string the
-        // caller keeps alive (nothing-needs-decoding fast path).
-        let self_slice = unsafe { &*self.slice };
-        let slice =
-            if !self.buffer.is_empty() && bun_alloc::is_slice_in_buffer(self_slice, &self.buffer) {
-                let len = self_slice.len();
-                &raw const buffer[..len]
-            } else {
-                self.slice
-            };
-        Self {
-            slice,
-            buffer,
-            list: self.list.clone(),
-            name_count: self.name_count,
-        }
-    }
-}
-
-thread_local! {
-    // Unused in current code (commented-out path in get_name_count).
-    static NAME_COUNT_BUF: RefCell<[*const [u8]; 8]> = const { RefCell::new([std::ptr::from_ref::<[u8]>(&[]); 8]) };
-}
-
-impl QueryStringMap {
+impl<'a> QueryStringMap<'a> {
     pub fn get_name_count(&self) -> usize {
         self.list.len()
-        // if (this.name_count == null) {
-        //     var count: usize = 0;
-        //     var iterate = this.iter();
-        //     while (iterate.next(&_name_count) != null) {
-        //         count += 1;
-        //     }
-        //     this.name_count = count;
-        // }
-        // return this.name_count.?;
     }
 
     pub fn iter(&self) -> Iterator<'_> {
@@ -1040,45 +977,31 @@ impl QueryStringMap {
     }
 
     pub(crate) fn str(&self, ptr: api::StringPointer) -> &[u8] {
-        // SAFETY: `slice` is valid for the lifetime of `self` (either borrows
-        // `self.buffer` or an external query_string the caller keeps alive).
-        let slice = unsafe { &*self.slice };
-        &slice[ptr.offset as usize..ptr.offset as usize + ptr.length as usize]
+        ptr.slice(&self.bytes)
     }
 
-    pub fn init_with_scanner(
-        mut scanner: CombinedScanner<'_>,
-    ) -> Result<Option<QueryStringMap>, bun_alloc::AllocError> {
+    /// `route_params` were matched in `pathname`.
+    pub fn init_with_route_params(
+        query_string: &[u8],
+        pathname: &[u8],
+        route_params: &[route_param::Param<'_>],
+    ) -> Result<Option<Self>, bun_alloc::AllocError> {
+        debug_assert!(!route_params.is_empty());
         let mut list = ParamList::default();
+        let mut scanner = Scanner::init(query_string);
 
-        let mut estimated_str_len: usize = 0;
-        let mut count: usize = 0;
-
-        let mut nothing_needs_decoding = true;
-
-        while let Some(result) = scanner.pathname.next() {
-            if result.name_needs_decoding || result.value_needs_decoding {
-                nothing_needs_decoding = false;
-            }
-            estimated_str_len += result.name.length as usize + result.value.length as usize;
-            count += 1;
-        }
-
-        debug_assert!(count > 0); // We should not call initWithScanner when there are no path params
+        let mut count = route_params.len();
+        let mut estimated_str_len: usize = route_params
+            .iter()
+            .map(|param| param.name.len() + param.value.length as usize)
+            .sum();
 
         while count < MAX_QUERY_STRING_PARAMS {
-            let Some(result) = scanner.query.next() else {
+            let Some(result) = scanner.next() else {
                 break;
             };
-            if result.name_needs_decoding || result.value_needs_decoding {
-                nothing_needs_decoding = false;
-            }
             estimated_str_len += result.name.length as usize + result.value.length as usize;
             count += 1;
-        }
-
-        if count == 0 {
-            return Ok(None);
         }
 
         list.reserve(count.min(MAX_QUERY_STRING_PARAMS));
@@ -1089,37 +1012,31 @@ impl QueryStringMap {
         let mut buf: Vec<u8> = Vec::with_capacity(estimated_str_len);
         let mut buf_writer_pos: u32 = 0;
 
-        while let Some(result) = scanner.pathname.next() {
-            if list.len() >= MAX_QUERY_STRING_PARAMS {
-                break;
-            }
-            let mut name = result.name;
-            let mut value = result.value;
-            let name_slice = result.raw_name(scanner.pathname.routename);
+        for param in route_params.iter().take(MAX_QUERY_STRING_PARAMS) {
+            let name = api::StringPointer {
+                offset: buf_writer_pos,
+                length: u32::try_from(param.name.len()).unwrap(),
+            };
+            buf.extend_from_slice(param.name);
+            buf_writer_pos += name.length;
 
-            name.length = u32::try_from(name_slice.len()).unwrap();
-            name.offset = buf_writer_pos;
-            buf.extend_from_slice(name_slice);
-            buf_writer_pos += u32::try_from(name_slice.len()).unwrap();
-
-            let name_hash: u64 = wyhash(name_slice);
-
-            let value_slice = result.raw_value(scanner.pathname.pathname);
-            value.length = u32::try_from(value_slice.len()).unwrap();
-            value.offset = buf_writer_pos;
-            buf.extend_from_slice(value_slice);
+            let value = api::StringPointer {
+                offset: buf_writer_pos,
+                length: param.value.length,
+            };
+            buf.extend_from_slice(param.value.slice(pathname));
             buf_writer_pos += value.length;
 
             list.push(Param {
                 name,
                 value,
-                name_hash,
+                name_hash: wyhash(param.name),
             });
         }
 
         let route_parameter_begin = list.len();
 
-        while let Some(result) = scanner.query.next() {
+        while let Some(result) = scanner.next() {
             if list.len() >= MAX_QUERY_STRING_PARAMS {
                 break;
             }
@@ -1127,10 +1044,7 @@ impl QueryStringMap {
             let mut value = result.value;
             let name_hash: u64;
             if result.name_needs_decoding {
-                name.length = match PercentEncoding::decode(
-                    &mut buf,
-                    &scanner.query.query_string[name.offset as usize..][..name.length as usize],
-                ) {
+                name.length = match PercentEncoding::decode(&mut buf, name.slice(query_string)) {
                     Ok(n) => n,
                     Err(_) => {
                         buf.truncate(buf_writer_pos as usize);
@@ -1148,7 +1062,7 @@ impl QueryStringMap {
                     name = list[index].name;
                 }
             } else {
-                name_hash = wyhash(result.raw_name(scanner.query.query_string));
+                name_hash = wyhash(result.raw_name(query_string));
                 if let Some(index) = list.iter().position(|p| p.name_hash == name_hash) {
                     // query string parameters should not override route parameters
                     // see https://nextjs.org/docs/routing/dynamic-routes
@@ -1158,10 +1072,8 @@ impl QueryStringMap {
 
                     name = list[index].name;
                 } else {
-                    name.length = match PercentEncoding::decode(
-                        &mut buf,
-                        &scanner.query.query_string[name.offset as usize..][..name.length as usize],
-                    ) {
+                    name.length = match PercentEncoding::decode(&mut buf, name.slice(query_string))
+                    {
                         Ok(n) => n,
                         Err(_) => {
                             buf.truncate(buf_writer_pos as usize);
@@ -1173,10 +1085,7 @@ impl QueryStringMap {
                 }
             }
 
-            value.length = match PercentEncoding::decode(
-                &mut buf,
-                &scanner.query.query_string[value.offset as usize..][..value.length as usize],
-            ) {
+            value.length = match PercentEncoding::decode(&mut buf, value.slice(query_string)) {
                 Ok(n) => n,
                 Err(_) => {
                     buf.truncate(buf_writer_pos as usize);
@@ -1193,18 +1102,13 @@ impl QueryStringMap {
             });
         }
 
-        // buf.expandToCapacity() — Vec doesn't expose this; not needed since we slice by buf_writer_pos
-        let _ = nothing_needs_decoding;
-        let slice_ptr: *const [u8] = &raw const buf[0..buf_writer_pos as usize];
         Ok(Some(QueryStringMap {
             list,
-            buffer: buf,
-            slice: slice_ptr,
-            name_count: None,
+            bytes: Cow::Owned(buf),
         }))
     }
 
-    pub fn init(query_string: &[u8]) -> Result<Option<QueryStringMap>, bun_alloc::AllocError> {
+    pub fn init(query_string: &'a [u8]) -> Result<Option<Self>, bun_alloc::AllocError> {
         let mut list = ParamList::default();
 
         let mut scanner = Scanner::init(query_string);
@@ -1251,10 +1155,7 @@ impl QueryStringMap {
 
             return Ok(Some(QueryStringMap {
                 list,
-                buffer: Vec::new(),
-                // `slice` borrows the caller's query_string; lifetime not tracked here
-                slice: std::ptr::from_ref::<[u8]>(query_string),
-                name_count: None,
+                bytes: Cow::Borrowed(query_string),
             }));
         }
 
@@ -1323,12 +1224,9 @@ impl QueryStringMap {
             });
         }
 
-        let slice_ptr: *const [u8] = &raw const buf[0..buf_writer_pos as usize];
         Ok(Some(QueryStringMap {
             list,
-            buffer: buf,
-            slice: slice_ptr,
-            name_count: None,
+            bytes: Cow::Owned(buf),
         }))
     }
 }
@@ -1336,14 +1234,14 @@ impl QueryStringMap {
 // Browsers typically limit URL lengths to around 64k.
 // IntegerBitSet caps at ≤64 bits, so pick ArrayBitSet directly. 2048 / 64 == 32 masks.
 /// Hard cap on parsed query-string parameters, enforced in `init` /
-/// `init_with_scanner` so the fixed-size `VisitedMap` bitset is never indexed
+/// `init_with_route_params` so the fixed-size `VisitedMap` bitset is never indexed
 /// out of bounds.
 const MAX_QUERY_STRING_PARAMS: usize = 2048;
 type VisitedMap = ArrayBitSet<MAX_QUERY_STRING_PARAMS, { num_masks_for(MAX_QUERY_STRING_PARAMS) }>;
 
 pub struct Iterator<'a> {
     pub(crate) i: usize,
-    pub(crate) map: &'a QueryStringMap,
+    pub(crate) map: &'a QueryStringMap<'a>,
     pub(crate) visited: VisitedMap,
 }
 
@@ -1353,7 +1251,7 @@ pub struct IteratorResult<'a, 't> {
 }
 
 impl<'a> Iterator<'a> {
-    pub(crate) fn init(map: &'a QueryStringMap) -> Iterator<'a> {
+    pub(crate) fn init(map: &'a QueryStringMap<'a>) -> Iterator<'a> {
         debug_assert!(map.list.len() <= MAX_QUERY_STRING_PARAMS);
         Iterator {
             i: 0,
@@ -1362,7 +1260,7 @@ impl<'a> Iterator<'a> {
         }
     }
 
-    // Lifetimes: values borrow `target` ('t), name borrows `map.slice` ('a).
+    // Lifetimes: values borrow `target` ('t), name borrows `map.bytes` ('a).
     pub fn next<'t>(&mut self, target: &'t mut [&'a [u8]]) -> Option<IteratorResult<'a, 't>>
     where
         'a: 't,
@@ -1584,109 +1482,6 @@ impl ScannerResult {
         } else {
             b""
         }
-    }
-
-    #[inline]
-    fn raw_value<'a>(&self, query_string: &'a [u8]) -> &'a [u8] {
-        if self.value.length > 0 {
-            &query_string[self.value.offset as usize..][..self.value.length as usize]
-        } else {
-            b""
-        }
-    }
-}
-
-pub struct CombinedScanner<'a> {
-    pub(crate) query: Scanner<'a>,
-    pub(crate) pathname: PathnameScanner<'a>,
-}
-
-impl<'a> CombinedScanner<'a> {
-    pub fn init(
-        query_string: &'a [u8],
-        pathname: &'a [u8],
-        routename: &'a [u8],
-        url_params: &'a ParamsList<'a>,
-    ) -> CombinedScanner<'a> {
-        CombinedScanner {
-            query: Scanner::init(query_string),
-            pathname: PathnameScanner::init(pathname, routename, url_params),
-        }
-    }
-
-    pub(crate) fn reset(&mut self) {
-        self.query.reset();
-        self.pathname.reset();
-    }
-}
-
-fn string_pointer_from_strings(parent: &[u8], in_: &[u8]) -> api::StringPointer {
-    if in_.is_empty() || parent.is_empty() {
-        return api::StringPointer::default();
-    }
-
-    if let Some([offset, length]) = bun_core::range_of_slice_in_buffer(in_, parent) {
-        return api::StringPointer { offset, length };
-    } else {
-        if let Some(i) = strings::index_of(parent, in_) {
-            debug_assert!(strings::eql_long(&parent[i..][..in_.len()], in_, false));
-
-            return api::StringPointer {
-                offset: u32::try_from(i).unwrap(),
-                length: u32::try_from(in_.len()).unwrap(),
-            };
-        }
-    }
-
-    api::StringPointer::default()
-}
-
-pub struct PathnameScanner<'a> {
-    pub(crate) params: &'a ParamsList<'a>,
-    pub(crate) pathname: &'a [u8],
-    pub(crate) routename: &'a [u8],
-    pub(crate) i: usize,
-}
-
-impl<'a> PathnameScanner<'a> {
-    #[inline]
-    pub(crate) fn is_done(&self) -> bool {
-        self.params.len() <= self.i
-    }
-
-    pub(crate) fn reset(&mut self) {
-        self.i = 0;
-    }
-
-    pub(crate) fn init(
-        pathname: &'a [u8],
-        routename: &'a [u8],
-        params: &'a ParamsList<'a>,
-    ) -> PathnameScanner<'a> {
-        PathnameScanner {
-            pathname,
-            routename,
-            params,
-            i: 0,
-        }
-    }
-
-    pub(crate) fn next(&mut self) -> Option<ScannerResult> {
-        if self.is_done() {
-            return None;
-        }
-
-        let param = self.params[self.i];
-        self.i += 1;
-
-        Some(ScannerResult {
-            // TODO: fix this technical debt
-            name: string_pointer_from_strings(self.routename, param.name),
-            name_needs_decoding: false,
-            // TODO: fix this technical debt
-            value: string_pointer_from_strings(self.pathname, param.value),
-            value_needs_decoding: false,
-        })
     }
 }
 

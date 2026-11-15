@@ -14,9 +14,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
-use crate::webcore::blob::store as blob_store;
 use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
-use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::ZBox;
 use bun_core::base64;
 use bun_core::zstr;
@@ -382,7 +380,7 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<So
         // through ITS OWN `.bytes()` at terminal time, so we inherit whatever
         // that store type does (file → ReadFile, S3 → fetch, etc.) without
         // knowing about it here.
-        if blob.store.get().is_some() {
+        if blob.store.is_some() {
             return Ok(None);
         }
     }
@@ -1116,23 +1114,10 @@ impl Image {
             let Some(blob) = blob_js.as_class_ref::<Blob>() else {
                 return Err(global.throw(format_args!("{REFUSE}")));
             };
-            // Braced so the `else` can't dangle onto the inner `if` — a null
-            // store would otherwise fall through to `pin_for_task` with no
-            // source. (The Strong-held wrapper makes that nominally
-            // unreachable, but this path should throw, not abort, when it isn't.)
-            if let Some(store) = blob.store.get() {
-                if let blob_store::Data::File(file) = &store.data {
-                    if let PathOrFileDescriptor::Path(path) = &file.pathlike {
-                        self.set_source(Source::Path(ZBox::from_bytes(path.slice())));
-                    } else {
-                        return Err(global.throw(format_args!("{REFUSE}")));
-                    }
-                } else {
-                    return Err(global.throw(format_args!("{REFUSE}")));
-                }
-            } else {
+            let Some(path) = blob.file().and_then(|file| file.path()) else {
                 return Err(global.throw(format_args!("{REFUSE}")));
-            }
+            };
+            self.set_source(Source::Path(ZBox::from_bytes(path)));
         }
         let (input, _pin) = match self.pin_for_task(this_value, global) {
             Ok(i) => i,

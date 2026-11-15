@@ -711,7 +711,11 @@ describe.concurrent("backoff", () => {
     let tunnels = 0;
     await using proxy = createServer(client => {
       client.on("error", () => {});
-      client.once("data", () => {
+      let head = "";
+      client.on("data", function onHead(chunk) {
+        head += chunk;
+        if (!head.endsWith("\r\n\r\n")) return;
+        client.off("data", onHead);
         if (++tunnels === 1) return client.end("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n");
         const upstream = connect(registry.port!, "127.0.0.1", () => {
           client.write("HTTP/1.1 200 Connection Established\r\n\r\n");

@@ -167,6 +167,106 @@ fn the_job_of_an_import_call_may_ask_for_the_running_file_behind_its_throw() {
 }
 
 #[test]
+fn a_file_of_a_required_graph_may_run_again_for_one_behind_it() {
+    let graph = ("graph.mjs", "import './first.cjs';\nimport './second.cjs';");
+    let first = ("first.cjs", "exports.value = 1;");
+    let second = ("second.cjs", "exports.first = require('./first.cjs');");
+    let run_again = |main| files_that_run_again(&[main, graph, first, second]);
+    for required in [
+        "require('./graph.mjs');",
+        "exports.graph = require('./graph.mjs');",
+    ] {
+        assert_eq!(
+            run_again(("main.cjs", required)),
+            ["first.cjs"],
+            "{required}"
+        );
+    }
+    assert_eq!(
+        run_again(("main.mjs", "require('./graph.mjs');")),
+        ["first.cjs"]
+    );
+    for imported in ["import './graph.mjs';", "await import('./graph.mjs');"] {
+        assert!(run_again(("main.mjs", imported)).is_empty(), "{imported}");
+    }
+    let conditional = (
+        "second.cjs",
+        "if (globalThis.late) exports.first = require('./first.cjs');",
+    );
+    let main = ("main.cjs", "require('./graph.mjs');");
+    assert_eq!(
+        files_that_run_again(&[main, graph, first, conditional]),
+        ["first.cjs"]
+    );
+    let by_a_name = ("second.cjs", "require(globalThis.name);");
+    let spells = ("spells.cjs", "globalThis.name = './first.cjs';");
+    let graph = (
+        "graph.mjs",
+        "import './spells.cjs';\nimport './first.cjs';\nimport './second.cjs';",
+    );
+    assert_eq!(
+        files_that_run_again(&[main, graph, spells, first, by_a_name]),
+        ["first.cjs"]
+    );
+}
+
+#[test]
+fn what_files_of_a_required_graph_share_may_run_again() {
+    let files = [
+        ("main.cjs", "require('./graph.mjs');"),
+        ("graph.mjs", "import './first.cjs';\nimport './second.cjs';"),
+        ("first.cjs", "exports.shared = require('./shared.cjs');"),
+        ("second.cjs", "exports.shared = require('./shared.cjs');"),
+        ("shared.cjs", "exports.part = require('./part.cjs');"),
+        ("part.cjs", "exports.value = 1;"),
+    ];
+    assert_eq!(files_that_run_again(&files), ["shared.cjs", "part.cjs"]);
+    let mut within_one = files;
+    within_one[2].1 =
+        "exports.shared = require('./shared.cjs');\nexports.part = require('./part.cjs');";
+    within_one[3].1 = "exports.value = 1;";
+    assert!(files_that_run_again(&within_one).is_empty());
+    let mut ended_ahead = files;
+    ended_ahead[0].1 = "require('./shared.cjs');\nrequire('./graph.mjs');";
+    assert!(files_that_run_again(&ended_ahead).is_empty());
+}
+
+#[test]
+fn the_loader_may_run_a_file_of_a_required_graph_behind_a_file_that_required_it() {
+    let files = [
+        ("main.cjs", "require('./graph.mjs');"),
+        ("graph.mjs", "import './first.cjs';\nimport './below.mjs';"),
+        ("below.mjs", "import './second.cjs';"),
+        ("first.cjs", "exports.second = require('./second.cjs');"),
+        ("second.cjs", "exports.value = 1;"),
+    ];
+    assert_eq!(files_that_run_again(&files), ["second.cjs"]);
+    let mut required_by_nobody = files;
+    required_by_nobody[3].1 = "exports.value = 1;";
+    assert!(files_that_run_again(&required_by_nobody).is_empty());
+}
+
+#[test]
+fn a_graph_that_a_file_of_a_required_graph_requires_leaves_what_it_shares() {
+    let files = [
+        ("main.mjs", "import './legacy.cjs';"),
+        ("legacy.cjs", "require('./outer.mjs');"),
+        ("outer.mjs", "import './first.cjs';\nimport './second.cjs';"),
+        (
+            "first.cjs",
+            "require('./inner.mjs');\nrequire('./third.cjs');",
+        ),
+        ("inner.mjs", "import './third.cjs';"),
+        ("second.cjs", "exports.third = require('./third.cjs');"),
+        ("third.cjs", "exports.value = 1;"),
+    ];
+    assert_eq!(files_that_run_again(&files), ["third.cjs"]);
+    let mut without_second = files;
+    without_second[5].1 = "exports.value = 1;";
+    assert!(files_that_run_again(&without_second).is_empty());
+}
+
+#[test]
 fn what_the_loader_runs_keeps_its_error_and_runs_once() {
     let asks_for_entry =
         "globalThis.retry = () => require('./main.cjs');\nif (globalThis.first) throw 0;";

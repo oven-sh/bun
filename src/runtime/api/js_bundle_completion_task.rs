@@ -197,7 +197,7 @@ impl JSBundleCompletionTask {
         bundle_thread::enqueue(task, vm.ticket());
     }
 
-    fn fail_to_start(mut self: Box<Self>, err: &std::io::Error, ticket: &jsc::Ticket) {
+    fn fail_to_start(self: Box<Self>, err: &std::io::Error, ticket: &jsc::Ticket) {
         self.log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,

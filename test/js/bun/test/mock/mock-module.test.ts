@@ -2612,6 +2612,14 @@ describe.concurrent("a name that import and require() resolve to two files", () 
         "node_modules/reverse/esm.mjs": `export const which = "real esm"; export const fn = () => "real esm";`,
         "node_modules/reverse/cjs/index.cjs": `const load = require("./load.cjs"); module.exports = { which: "real cjs", fn: () => "real cjs", viaLoad: () => load.get().which };`,
         "node_modules/reverse/cjs/load.cjs": `exports.get = () => require("../esm.mjs");`,
+        // The CommonJS file requires a helper, which requires that file again while it loads.
+        "node_modules/again/package.json": JSON.stringify({
+          name: "again",
+          exports: { ".": { import: "./esm.mjs", require: "./index.cjs" } },
+        }),
+        "node_modules/again/esm.mjs": esm("again"),
+        "node_modules/again/index.cjs": `(globalThis.loaded ??= []).push("again cjs"); exports.which = "real cjs"; exports.fn = () => "real cjs"; exports.viaHelper = require("./helper.cjs");`,
+        "node_modules/again/helper.cjs": `const index = require("./index.cjs"); module.exports = () => index.fn();`,
         // The CommonJS file of these two throws.
         "node_modules/broken/package.json": JSON.stringify({
           name: "broken",
@@ -2630,6 +2638,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           import * as dual from "dual";
           import * as awaits from "awaits";
           import * as reverse from "reverse";
+          import * as again from "again";
           import * as broken from "broken";
           import * as throws from "throws";
           test("a file of __mocks__ is loaded at the call, and require() gets its exports", () => {
@@ -2660,6 +2669,12 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             jest.doMock("reverse", { spy: true });
             expect([reverse.which, require("reverse").viaLoad()]).toEqual(["real cjs", "real esm"]);
           });
+          test("a file whose helper requires it again while it loads runs once", () => {
+            jest.doMock("again");
+            expect([jest.isMockFunction(again.fn), again.which]).toEqual([true, "real cjs"]);
+            expect(require("again").fn).toBe(again.fn);
+            expect(globalThis.loaded.filter(name => name.startsWith("again "))).toEqual(["again esm", "again cjs"]);
+          });
           test("a file that throws is no mock", async () => {
             expect(() => jest.doMock("broken")).toThrow("cjs failed");
             expect(() => require("broken")).toThrow("cjs failed");
@@ -2672,7 +2687,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           });
         `,
       },
-      6,
+      7,
     );
   });
 

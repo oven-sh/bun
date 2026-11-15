@@ -4,7 +4,7 @@ mod _impl {
     use core::cell::Cell;
     use core::ffi::{c_int, c_uint};
 
-    use bun_core::vec::BorrowedBuf;
+    use bun_core::compress::Ranges;
     use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
     use bun_jsc::{self as jsc, JsResult};
     use bun_zstd::{OwnedCCtx, OwnedDCtx, c};
@@ -271,12 +271,13 @@ mod _impl {
         const ZSTD_MAGICNUMBER: [u8; 4] = 0xFD2FB528u32.to_le_bytes();
         const ZSTD_MAGIC_SKIPPABLE: [u8; 4] = 0x184D2A50u32.to_le_bytes();
 
-        /// True when `input` begins a zstd/skippable frame magic (or a prefix of one).
-        fn starts_with_frame(input: &[u8]) -> bool {
-            let n = input.len().min(4);
+        /// True when the input begins a zstd/skippable frame magic (or a prefix of one).
+        fn starts_with_frame(ranges: &Ranges<'_>) -> bool {
+            let n = ranges.input_len().min(4);
             if n == 0 {
                 return false;
             }
+            let input: [u8; 4] = core::array::from_fn(|i| ranges.input_byte(i).unwrap_or(0));
             input[..n] == Self::ZSTD_MAGICNUMBER[..n]
                 || (input[0] & 0xF0 == Self::ZSTD_MAGIC_SKIPPABLE[0]
                     && input[1..n] == Self::ZSTD_MAGIC_SKIPPABLE[1..n])
@@ -299,31 +300,25 @@ mod _impl {
             self.flush = flush;
         }
 
-        fn do_work(&mut self, mut input: &[u8], out: &mut [u8]) {
-            let mut out = BorrowedBuf::from(out);
+        fn do_work(&mut self, mut ranges: Ranges<'_>) {
             match &mut self.state {
                 // Driven before `init()`.
                 None => {}
                 Some(State::Compress(cctx)) => {
-                    let (consumed, result) = cctx.step(input, out.unfilled(), self.flush as c_uint);
-                    input = &input[consumed..];
-                    self.error = result.err();
+                    self.error = cctx.step(&mut ranges, self.flush as c_uint).1.err();
                 }
                 Some(State::Decompress(dctx)) => loop {
-                    let (consumed, result) = dctx.step(input, out.unfilled());
-                    input = &input[consumed..];
+                    let (_, result) = dctx.step(&mut ranges);
                     // 0 is frame-complete; mirrors the GUNZIP loop in NativeZlib.
-                    if result != Ok(0)
-                        || out.len() == out.capacity()
-                        || !Self::starts_with_frame(input)
+                    if result != Ok(0) || ranges.out_len() == 0 || !Self::starts_with_frame(&ranges)
                     {
                         self.error = result.err();
                         break;
                     }
                 },
             }
-            self.avail_in = input.len();
-            self.avail_out = out.capacity() - out.len();
+            self.avail_in = ranges.input_len();
+            self.avail_out = ranges.out_len();
         }
 
         fn write_result(&mut self) -> Result<[u32; 2], Error> {

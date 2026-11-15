@@ -31,7 +31,7 @@ mod _impl {
     use core::cell::Cell;
     use core::ffi::{CStr, c_uint};
 
-    use bun_core::vec::BorrowedBuf;
+    use bun_core::compress::Ranges;
     use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
     use bun_jsc::{ErrorCode, JsResult};
 
@@ -294,27 +294,24 @@ mod _impl {
             };
         }
 
-        fn do_work(&mut self, input: &[u8], out: &mut [u8]) {
-            let mut out = BorrowedBuf::from(out);
-            let consumed = match &mut self.state {
+        fn do_work(&mut self, mut ranges: Ranges<'_>) {
+            match &mut self.state {
                 // Driven before `init()`.
-                None => 0,
+                None => {}
                 Some(State::Encoder(encoder)) => {
-                    let (consumed, ok) = encoder.step(input, out.unfilled(), self.flush);
+                    let (_, ok) = encoder.step(&mut ranges, self.flush);
                     self.last_result = c_int::from(ok);
-                    consumed
                 }
                 Some(State::Decoder(decoder)) => {
-                    let (consumed, result) = decoder.step(input, out.unfilled());
+                    let (_, result) = decoder.step(&mut ranges);
                     self.last_result = result as c_int;
                     if result == c::BrotliDecoderResult::err {
                         self.error = decoder.error_code();
                     }
-                    consumed
                 }
-            };
-            self.avail_in = input.len() - consumed;
-            self.avail_out = out.capacity() - out.len();
+            }
+            self.avail_in = ranges.input_len();
+            self.avail_out = ranges.out_len();
         }
 
         fn write_result(&mut self) -> Result<[u32; 2], Error> {

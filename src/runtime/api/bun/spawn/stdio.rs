@@ -614,11 +614,11 @@ impl Stdio {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl Stdio {
     /// Move the memfd out (ownership passes to the caller); `self` becomes `Ignore`.
-    pub(crate) fn take_memfd(&mut self) -> Option<Fd> {
+    pub(crate) fn take_memfd(&mut self) -> Option<sys::File> {
         let Stdio::Memfd(fd) = *self else { return None };
         // Don't run Drop on the old value: it would close `fd`.
         let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Stdio::Ignore));
-        Some(fd)
+        Some(sys::File::from_fd(fd))
     }
 }
 

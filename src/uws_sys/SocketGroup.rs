@@ -33,7 +33,7 @@ pub struct SocketGroup {
     pub global_tick: Cell<u32>,
     /// Sockets currently parked in `loop.data.low_prio_head` with
     /// `s->group == this`. They are NOT in `head_sockets` while queued, so
-    /// `close_all`/`destroy` must account for them separately.
+    /// `close_all`/`drop` must account for them separately.
     pub low_prio_count: Cell<u16>,
     pub timestamp: Cell<u8>,
     pub long_timestamp: Cell<u8>,
@@ -82,6 +82,13 @@ impl Default for SocketGroup {
     }
 }
 
+impl Drop for SocketGroup {
+    fn drop(&mut self) {
+        // SAFETY: C reads the loop only while the group is linked, which an empty one is not.
+        unsafe { us_socket_group_deinit(self) };
+    }
+}
+
 pub enum ConnectResult {
     Socket(*mut us_socket_t),
     Connecting(*mut ConnectingSocket),
@@ -109,18 +116,11 @@ impl SocketGroup {
         }
     }
 
-    // Not `impl Drop`. SocketGroup is `#[repr(C)]`, embedded
-    // by-value in its owner, and its lifecycle is FFI-managed (C unlinks it
-    // from the loop). PORTING.md's #[repr(C)]-across-FFI exception applies:
-    // expose `unsafe fn destroy(*const Self)` and have the owner call it
-    // explicitly during its own teardown.
-    ///
-    /// # Safety
-    /// `this` must point to a group previously passed to `init`; not called
-    /// concurrently with the loop walking this group.
-    pub unsafe fn destroy(this: *const Self) {
-        // SAFETY: caller upholds the contract above.
-        unsafe { us_socket_group_deinit(this) }
+    /// SAFETY: `self` is empty, and its loop is not dispatching one of its sockets.
+    pub unsafe fn detach_from_loop(&self) {
+        // SAFETY: fn contract.
+        unsafe { us_socket_group_deinit(self) };
+        self.loop_.set(ptr::null_mut());
     }
 
     pub fn close_all(&self) {

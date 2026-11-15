@@ -60,6 +60,10 @@ pub(crate) type OnUnhandledRejection = fn(&VirtualMachine, &JSGlobalObject, JSVa
 pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, JSValue>;
 pub type ExceptionList = Vec<crate::exception_list::JsException>;
 
+/// Error for bytes that aren't interned yet and are longer than [`bun_core::String::max_length`].
+#[derive(Debug)]
+pub struct StringTooLong;
+
 // ──────────────────────────────────────────────────────────────────────────
 // VirtualMachine struct (file-level @This())
 // ──────────────────────────────────────────────────────────────────────────
@@ -337,8 +341,10 @@ pub struct VirtualMachine {
     pub(crate) regular_event_loop: EventLoop,
     event_loop: Cell<*const EventLoop>, // BORROW_FIELD — points at sibling regular_event_loop/macro_event_loop
 
-    pub(crate) ref_strings: JsCell<crate::ref_string::Map>,
-    pub(crate) ref_strings_mutex: bun_threading::Mutex,
+    /// See [`Self::ref_counted_string`]. By hash.
+    ref_strings: JsCell<
+        bun_collections::HashMap<u32, bun_core::WTFString, bun_collections::IdentityContext<u32>>,
+    >,
 
     pub(crate) active_tasks: Cell<usize>,
 
@@ -420,7 +426,10 @@ pub struct VirtualMachine {
     /// The contexts made for `Bun.ModuleGraph`s, by id, stopped or not. Empty:
     /// every context question has the root context for an answer.
     pub(crate) graph_contexts: JsCell<
-        bun_collections::ArrayHashMap<crate::ContextId, NonNull<crate::ScriptExecutionContext>>,
+        bun_collections::ArrayHashMap<
+            crate::ContextId,
+            bun_ptr::AliasableBox<crate::ScriptExecutionContext>,
+        >,
     >,
     /// The context native code has entered ([`enter_context`](Self::enter_context)) and not yet
     /// left: whose script the native code that is running continues. `None` when nothing is
@@ -1142,11 +1151,7 @@ impl VirtualMachine {
         if self.graph_contexts.get().count() == 0 || id == self.root_context.id() {
             return None;
         }
-        // SAFETY: registered ⇒ not freed.
-        self.graph_contexts
-            .get()
-            .get(&id)
-            .map(|context| unsafe { context.as_ref() })
+        self.graph_contexts.get().get(&id).map(|context| &**context)
     }
 
     /// Whether a timer or pool job made for `context` under `generation` (the
@@ -1190,8 +1195,6 @@ impl VirtualMachine {
             return scope;
         }
         let entered = self.graph_contexts.get().get(&context).and_then(|context| {
-            // SAFETY: registered ⇒ not freed.
-            let context = unsafe { context.as_ref() };
             let dom_context = context.dom_context();
             if dom_context.is_null() || !self.script_allowed() {
                 return None;
@@ -1278,7 +1281,8 @@ impl VirtualMachine {
         result = result.and(self.dead_context.stop_handles(reason));
         // By index: an owner's callback may create or free a context.
         let mut i = 0;
-        while let Some(&context) = self.graph_contexts.get().values().get(i) {
+        while let Some(context) = self.graph_contexts.get().values().get(i) {
+            let context = context.as_non_null();
             // SAFETY: registered ⇒ not freed.
             result = result.and(unsafe { self.stop_graph_context(context, reason) });
             // SAFETY: as above.
@@ -1295,12 +1299,12 @@ impl VirtualMachine {
         dom_context: *mut c_void,
         id: crate::ContextId,
     ) -> NonNull<crate::ScriptExecutionContext> {
-        let context = NonNull::from(Box::leak(Box::new(
-            crate::ScriptExecutionContext::for_graph(id, dom_context),
-        )));
+        let owned =
+            bun_ptr::AliasableBox::new(crate::ScriptExecutionContext::for_graph(id, dom_context));
+        let context = owned.as_non_null();
         bun_core::handle_oom(
             self.graph_contexts
-                .with_mut(|contexts| contexts.put(id, context)),
+                .with_mut(|contexts| contexts.put(id, owned)),
         );
         context
     }
@@ -1341,11 +1345,11 @@ impl VirtualMachine {
     /// not use `context` again.
     pub unsafe fn release_graph_context(&self, context: NonNull<crate::ScriptExecutionContext>) {
         // SAFETY: fn contract.
-        unsafe { context.as_ref() }.dom_context_released();
-        // SAFETY: fn contract.
-        if unsafe { context.as_ref() }.owns_nothing() {
+        let released = unsafe { context.as_ref() };
+        released.dom_context_released();
+        if released.owns_nothing() {
             // SAFETY: fn contract.
-            unsafe { self.free_graph_context(context) };
+            unsafe { self.free_graph_context(released.id()) };
             return;
         }
         self.enqueue_task(bun_event_loop::Task::init(
@@ -1354,15 +1358,12 @@ impl VirtualMachine {
     }
 
     /// # Safety
-    /// `context` is registered and owns nothing.
-    unsafe fn free_graph_context(&self, context: NonNull<crate::ScriptExecutionContext>) {
-        // SAFETY: fn contract.
-        unsafe {
-            let id = context.as_ref().id();
+    /// The context owns nothing, and nothing borrows it.
+    unsafe fn free_graph_context(&self, id: crate::ContextId) {
+        drop(
             self.graph_contexts
-                .with_mut(|contexts| contexts.swap_remove(&id));
-            drop(Box::from_raw(context.as_ptr()));
-        }
+                .with_mut(|contexts| contexts.fetch_swap_remove(&id)),
+        );
     }
 
     /// From here no script runs on this VM: JS entry is refused at the
@@ -1729,8 +1730,7 @@ impl VirtualMachine {
         !self.child_workers.get().is_empty()
             || !self.root_context.owns_nothing_that_runs_script()
             || (self.graph_contexts.get().values().iter())
-                // SAFETY: registered ⇒ not freed.
-                .any(|context| !unsafe { context.as_ref() }.owns_nothing_that_runs_script())
+                .any(|context| !context.owns_nothing_that_runs_script())
     }
 
     /// `num_polls` also counts plain loop refs, so subtract the entries that can't settle anything a test waits on.
@@ -2680,7 +2680,7 @@ impl GraphContextStopAndFree {
         unsafe {
             let context = NonNull::new_unchecked(this.cast::<crate::ScriptExecutionContext>());
             let _ = vm.stop_graph_context(context, crate::StopReason::Disposed);
-            vm.free_graph_context(context);
+            vm.free_graph_context(context.as_ref().id());
         }
     }
 }
@@ -3263,7 +3263,6 @@ impl VirtualMachine {
             // Mutex fields: zeroed atomics ARE valid-unlocked, but write the
             // canonical value so the invariant is explicit.
             addr_of_mut!((*vm).remap_stack_frames_mutex).write(bun_threading::Mutex::new());
-            addr_of_mut!((*vm).ref_strings_mutex).write(bun_threading::Mutex::new());
 
             addr_of_mut!((*vm).transpiler_store)
                 .write(crate::runtime_transpiler_store::RuntimeTranspilerStore::init());
@@ -4144,12 +4143,6 @@ unsafe extern "C" {
     safe fn BakeCreateProdGlobal(console_ptr: *mut c_void) -> *mut JSGlobalObject;
 }
 
-extern "C" fn free_ref_string(str_: *mut crate::ref_string::RefString, _: *mut c_void, _: usize) {
-    // SAFETY: `str_` is the `ctx` we passed to `String::create_external` in
-    // `ref_counted_string`; it points at a heap `RefString`.
-    unsafe { crate::ref_string::RefString::destroy(str_) };
-}
-
 impl VirtualMachine {
     /// Whether native addons (`process.dlopen`) are allowed (`--no-addons` disables them).
     #[unsafe(export_name = "Bun__VM__allowAddons")]
@@ -4923,17 +4916,6 @@ impl VirtualMachine {
         Ok(vm)
     }
 
-    /// Stored as [`RefString::on_before_deinit`] (an unsafe-fn-ptr slot) in
-    /// [`Self::ref_counted_string`]; only ever invoked from
-    /// `RefString::destroy` with the live `*mut RefString` being torn down.
-    fn clear_ref_string(_: *mut c_void, ref_string: *mut crate::ref_string::RefString) {
-        // SAFETY: only reachable via `RefString::destroy`, which passes the
-        // live heap `RefString` allocated in `ref_counted_string`;
-        // safe-fn coerces to the unsafe-fn-ptr `Callback` slot type.
-        let hash = unsafe { &*ref_string }.hash;
-        (VirtualMachine::get().ref_strings).with_mut(|ref_strings| ref_strings.remove(&hash));
-    }
-
     /// Whether what is made of a file on disk is static code (`ResolvedSource::is_static`). A standalone executable is
     /// stored in itself, so to it a file on disk is not part of the program. A test run is compiled in place from such files.
     pub fn is_file_on_disk_static(in_standalone_executable: bool, path: &[u8]) -> bool {
@@ -4951,8 +4933,7 @@ impl VirtualMachine {
         code: &[u8],
         specifier: &bun_core::String,
         source_url: &[u8],
-        hash_: Option<u32>,
-    ) -> Result<ResolvedSource, crate::ref_string::StringTooLong> {
+    ) -> Result<ResolvedSource, StringTooLong> {
         // refCountedString will panic if the code is empty
         if code.is_empty() {
             return Ok(ResolvedSource {
@@ -4960,75 +4941,29 @@ impl VirtualMachine {
                 ..ResolvedSource::printed(ast, Default::default())
             });
         }
-        let source = self.ref_counted_string(code, hash_)?;
-        // SAFETY: `ref_counted_string` returns a live `RefString` held in
-        // `self.ref_strings` until JSC calls the external-string finalizer.
-        let source_ref = unsafe { source.as_ref() };
-
+        let source = bun_core::String::adopt_wtf_impl(self.ref_counted_string(code)?.into_raw());
         Ok(ResolvedSource {
             source_url: specifier.create_if_different(source_url),
-            ..ResolvedSource::printed(ast, bun_core::String::retain_wtf_impl(source_ref.impl_))
+            ..ResolvedSource::printed(ast, source)
         })
     }
 
-    /// Interns `input_` in the VM's ref-string map and returns the ref-counted entry.
-    pub fn ref_counted_string(
-        &self,
-        input_: &[u8],
-        hash_: Option<u32>,
-    ) -> Result<NonNull<crate::ref_string::RefString>, crate::ref_string::StringTooLong> {
-        use crate::ref_string::{RefString, StringTooLong};
+    /// Interns `input` as Latin-1 for as long as the VM lives.
+    pub fn ref_counted_string(&self, input: &[u8]) -> Result<bun_core::WTFString, StringTooLong> {
         use bun_collections::zig_hash_map::MapEntry as Entry;
         jsc::mark_binding();
-        debug_assert!(!input_.is_empty());
-        let hash = hash_.unwrap_or_else(|| RefString::compute_hash(input_));
-        let _unlock = self.ref_strings_mutex.lock_guard();
-        let self_ctx = Some(NonNull::from(self).cast::<c_void>());
-
+        debug_assert!(!input.is_empty());
+        let hash = bun_hash::XxHash32::hash(0, input);
         self.ref_strings
             .with_mut(|ref_strings| match ref_strings.entry(hash) {
-                Entry::Occupied(o) => Ok(*o.get()),
+                Entry::Occupied(o) => Ok(o.get().clone()),
+                Entry::Vacant(_) if input.len() > bun_core::String::max_length() => {
+                    Err(StringTooLong)
+                }
                 Entry::Vacant(v) => {
-                    if input_.len() > bun_core::String::max_length() {
-                        return Err(StringTooLong);
-                    }
-                    let buf = Box::<[u8]>::from(input_);
-                    let len = buf.len();
-                    let ptr = bun_core::heap::into_raw(buf).cast::<u8>().cast_const();
-                    let ref_ = bun_core::heap::into_raw_nn(Box::new(RefString {
-                        ptr,
-                        len,
-                        hash,
-                        // Filled in below: `create_external` needs this pointer first.
-                        impl_: core::ptr::null_mut(),
-                        ctx: self_ctx,
-                        // Set after `create_external` succeeds. If it fails, it runs `free_ref_string` while `v` still borrows the map.
-                        on_before_deinit: None,
-                    }));
-                    // SAFETY: `ref_` is the unique live `*mut RefString` (just
-                    // boxed); `(ptr, len)` is its owned latin-1 buffer. The
-                    // external-string finalizer (`free_ref_string`) is called by
-                    // WTF on the JS thread when the impl refcount hits zero, with
-                    // `ref_` as ctx.
-                    let s = unsafe {
-                        bun_core::String::create_external::<*mut RefString>(
-                            bun_core::ffi::slice(ptr, len),
-                            ref_.as_ptr(),
-                            free_ref_string,
-                        )
-                    };
-                    if s.tag() == bun_core::Tag::Dead {
-                        // `create_external` already freed `ref_`.
-                        return Err(StringTooLong);
-                    }
-                    // SAFETY: `s` owns the impl, so `free_ref_string` has not run
-                    // and `ref_` is still the unique live `RefString`.
-                    unsafe {
-                        (*ref_.as_ptr()).impl_ = s.leak_wtf_impl();
-                        (*ref_.as_ptr()).on_before_deinit = Some(VirtualMachine::clear_ref_string);
-                    }
-                    v.insert(ref_);
-                    Ok(ref_)
+                    let string = bun_core::String::clone_latin1(input).into_wtf();
+                    let string = string.unwrap_or_else(|| bun_core::out_of_memory());
+                    Ok(v.insert(string).clone())
                 }
             })
     }
@@ -5731,9 +5666,7 @@ impl VirtualMachine {
             drop(core::mem::take(&mut (*this).auto_killer));
 
             // A graph context whose release was still queued: teardown stopped what it owned.
-            for (_, context) in (*this).graph_contexts.take().iter() {
-                drop(Box::from_raw(context.as_ptr()));
-            }
+            drop((*this).graph_contexts.take());
             drop_source_code_printer();
 
             drop(core::mem::take(&mut (*this).source_mappings));
@@ -5760,6 +5693,7 @@ impl VirtualMachine {
             (*this).transpiler.as_mut().deinit();
 
             drop((*this).main_resolved_path.take());
+            drop((*this).ref_strings.take());
             drop((*this).sampling_profiler_directory.take());
 
             (*this).overridden_main.as_mut().deinit();

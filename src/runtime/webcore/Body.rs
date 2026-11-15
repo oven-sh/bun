@@ -710,9 +710,8 @@ impl Value {
             }
             Value::InternalBlob(_) | Value::WTFStringImpl(_) => {
                 let mut blob = self.use_as_any_blob_allow_non_utf8_string();
-                let string = blob.to_string(cx, Lifetime::Transfer);
-                blob.detach();
-                ReadableStream::from_decoded_text(cx.global(), string?)
+                let string = blob.to_string(cx, Lifetime::Transfer)?;
+                ReadableStream::from_decoded_text(cx.global(), string)
             }
             Value::Blob(_) => {
                 let stream = {
@@ -940,11 +939,10 @@ impl Value {
                     .map(|bytes| {
                         // BACKREF: `Source::bytes()` payload is live for the
                         // ReadableStream JS wrapper's lifetime.
-                        let mut blob = new.use_as_any_blob_allow_non_utf8_string();
+                        let blob = new.use_as_any_blob_allow_non_utf8_string();
                         bytes.on_data(streams::Result::TemporaryAndDone(bun_ptr::RawSlice::new(
                             blob.slice(),
                         )));
-                        blob.detach();
                     });
 
                 if fed.is_some() {
@@ -969,9 +967,7 @@ impl Value {
                     Action::GetText => match new {
                         Value::WTFStringImpl(_) | Value::InternalBlob(_) => {
                             let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                            let result = promise.wrap(cx.global(), |_| blob.to_string_transfer(cx));
-                            blob.detach();
-                            result?;
+                            promise.wrap(cx.global(), |_| blob.to_string_transfer(cx))?;
                         }
                         _ => {
                             let blob = new.use_();
@@ -980,44 +976,30 @@ impl Value {
                     },
                     Action::GetJSON => {
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                        let result = promise.wrap(cx.global(), |_| blob.to_json_share(cx));
-                        blob.detach();
-                        result?;
+                        promise.wrap(cx.global(), |_| blob.to_json(cx))?;
                     }
                     Action::GetArrayBuffer => {
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                        let result =
-                            promise.wrap(cx.global(), |_| blob.to_array_buffer_transfer(cx));
-                        blob.detach();
-                        result?;
+                        promise.wrap(cx.global(), |_| blob.to_array_buffer_transfer(cx))?;
                     }
                     Action::GetBytes => {
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                        let result =
-                            promise.wrap(cx.global(), |_| blob.to_uint8_array_transfer(cx));
-                        blob.detach();
-                        result?;
+                        promise.wrap(cx.global(), |_| blob.to_uint8_array_transfer(cx))?;
                     }
                     Action::GetFormData(form_data_slot) => 'inner: {
-                        let mut blob = new.use_as_any_blob();
+                        let blob = new.use_as_any_blob();
                         let Some(async_form_data) = form_data_slot.take() else {
-                            // `blob.detach()` below covers the reject error path too.
-                            let r = promise.reject(
+                            promise.reject(
                                 cx.global(),
                                 cx.global().create_error_instance(format_args!(
                                     "Internal error: task for FormData must not be null"
                                 )),
-                            );
-                            blob.detach();
-                            r?;
+                            )?;
                             break 'inner;
                         };
                         // `webcore::form_data::AsyncFormData` re-exports `bun_core::form_data::AsyncFormData`;
                         // `to_js` is provided via the `AsyncFormDataExt` extension trait.
-                        let result = async_form_data.to_js(cx.global(), blob.slice(), promise);
-                        blob.detach();
-                        // async_form_data dropped (Box<AsyncFormData> -> Drop replaces deinit)
-                        result?;
+                        async_form_data.to_js(cx.global(), blob.slice(), promise)?;
                     }
                     Action::None | Action::GetBlob => {
                         let blob = new.use_();
@@ -1562,9 +1544,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         let value = self.get_body_value();
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |_| blob.to_string(&cx, Lifetime::Transfer));
-        blob.detach();
-        result
+        JSPromise::wrap(global_object, |_| blob.to_string(&cx, Lifetime::Transfer))
     }
 
     fn get_body(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -1705,9 +1685,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         let value = self.get_body_value();
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |_| blob.to_json(&cx, Lifetime::Share));
-        blob.detach();
-        result
+        JSPromise::wrap(global_object, |_| blob.to_json(&cx))
     }
 
     fn array_buffer(
@@ -1760,11 +1738,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         // toArrayBuffer in AnyBlob checks for non-UTF8 strings
         let value = self.get_body_value();
         let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |_| {
+        JSPromise::wrap(global_object, |_| {
             blob.to_array_buffer(&cx, Lifetime::Transfer)
-        });
-        blob.detach();
-        result
+        })
     }
 
     fn bytes(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -1808,11 +1784,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         // toArrayBuffer in AnyBlob checks for non-UTF8 strings
         let value = self.get_body_value();
         let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |_| {
+        JSPromise::wrap(global_object, |_| {
             blob.to_uint8_array(&cx, Lifetime::Transfer)
-        });
-        blob.detach();
-        result
+        })
     }
 
     fn form_data(
@@ -1871,7 +1845,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             );
         }
 
-        let mut blob: AnyBlob = value.use_as_any_blob();
+        let blob: AnyBlob = value.use_as_any_blob();
         // `encoder.encoding` is `bun_core::form_data::Encoding`; convert
         // to the `webcore::form_data::Encoding` shape FormData::to_js expects.
         let encoding = match encoder.encoding {
@@ -1886,12 +1860,10 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             match webcore::form_data::FormData::to_js(global_object, blob.slice(), &encoding) {
                 Ok(v) => v,
                 Err(crate::Error::JSError) => {
-                    blob.detach();
                     let error = global_object.take_error(jsc::JsError::Thrown);
                     return Ok(JSPromise::rejected_promise(global_object, error).to_js());
                 }
                 Err(err) => {
-                    blob.detach();
                     return Ok(global_object
                         .err(
                             jsc::ErrorCode::FORMDATA_PARSE_ERROR,
@@ -1900,7 +1872,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                         .reject());
                 }
             };
-        blob.detach();
 
         Ok(JSPromise::wrap_value(global_object, js_value))
     }

@@ -1286,10 +1286,6 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
             // Force-close any remaining sockets before unlinking the group so
             // the loop never dereferences a freed `*Context` via `group->ext`.
             self.group.close_all();
-            // Note: SocketGroup deinit must run before the embedding struct
-            // is freed (it unlinks from the loop's group list).
-            // SAFETY: group was init()'d in `init`/`init_with_opts`; HTTP-thread-only.
-            unsafe { uws::SocketGroup::destroy(&raw const self.group) };
         }
     }
 }

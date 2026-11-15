@@ -34,8 +34,6 @@ use super::uuid::UUID;
 //
 //   - `mysql_context` / `postgresql_context` / `ssl_ctx_cache` / `editor_context`
 //     → moved to `bun_runtime::jsc_hooks::RuntimeState` (already there).
-//   - `node_fs_stat_watcher_scheduler`
-//     → erased `*mut c_void` slot; high tier lazy-inits.
 //   - the `bun test --isolate` watcher/server registries → each owner embeds
 //     a `bun_jsc::AbortHandle` armed in its `ScriptExecutionContext`.
 //   - `stdin/stdout/stderr_store` → erased `*mut blob::Store` constructed via
@@ -228,10 +226,6 @@ pub struct RareData {
     /// Held until `tls.DEFAULT_CIPHERS` is assigned so the weak-cache entry never tombstones.
     pub default_client_ssl_ctx: JsCell<Option<boring::OwnedSslCtx>>,
 
-    /// `bun_runtime::node::StatWatcherScheduler` — erased `RefPtr` payload;
-    /// lazy-init in `bun_runtime::node::node_fs_stat_watcher`.
-    pub node_fs_stat_watcher_scheduler: Cell<Option<NonNull<c_void>>>,
-
     /// `bun_runtime::node::memory_pressure::MemoryPressureWatcher` — erased
     /// `Box`; lazy-init on the first `process.on("memoryPressure", ...)` listener.
     pub memory_pressure_watcher: Cell<Option<NonNull<c_void>>>,
@@ -294,7 +288,6 @@ impl Default for RareData {
             test_parallel_ipc_group: SocketGroup::default(),
             socket_groups: SocketGroups::default(),
             default_client_ssl_ctx: JsCell::new(None),
-            node_fs_stat_watcher_scheduler: Cell::new(None),
             memory_pressure_watcher: Cell::new(None),
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             pipe_read_scratch: Box::new(bun_event_loop::PipeReadScratch::new()),
@@ -633,33 +626,6 @@ impl SocketGroups {
             && g.head_connecting_sockets.get().is_null()
             && g.head_listen_sockets.get().is_null()
             && g.low_prio_count.get() == 0
-    }
-
-    /// Detach every group from the thread's uSockets loop (each is empty). Idempotent.
-    fn detach_from_loop(&self) {
-        for g in self.each() {
-            detach_group_from_loop(g);
-        }
-    }
-}
-
-/// Detach an embedded, emptied group from its loop. Idempotent.
-fn detach_group_from_loop(g: &SocketGroup) {
-    // Groups whose lazy accessor was never called are still zero-initialised
-    // (`loop_ == null`, never `init`'d). The C `us_socket_group_deinit` happens
-    // to no-op on those, but `SocketGroup::destroy`'s safety contract requires a
-    // prior `init`, so honour it explicitly.
-    if !g.loop_.get().is_null() {
-        // SAFETY: embedded by-value group, previously `init`'d and emptied by
-        // its owner, so destroy reduces to the empty-list debug asserts.
-        unsafe { SocketGroup::destroy(g) };
-        g.loop_.set(core::ptr::null_mut());
-    }
-}
-
-impl Drop for SocketGroups {
-    fn drop(&mut self) {
-        self.detach_from_loop();
     }
 }
 
@@ -1057,20 +1023,18 @@ impl Drop for RareData {
         {
             __bun_stdio_blob_store_deinit(store.as_ptr().cast());
         }
-
-        self.detach_socket_groups_from_loop();
     }
 }
 
 impl RareData {
     /// Detach every embedded socket group from the thread's uSockets loop
     /// (asserting each is empty). A thread teardown calls this before it frees
-    /// that loop; `Drop` calls it for every other owner. Idempotent.
+    /// that loop.
     pub(crate) fn detach_socket_groups_from_loop(&self) {
-        // closeAllSocketGroups() must have already run (before JSC teardown) so
-        // these are empty; deinit() asserts that in debug.
-        self.socket_groups.detach_from_loop();
-        detach_group_from_loop(&self.spawn_ipc_group);
-        detach_group_from_loop(&self.test_parallel_ipc_group);
+        let ipc = [&self.spawn_ipc_group, &self.test_parallel_ipc_group];
+        for group in self.socket_groups.each().into_iter().chain(ipc) {
+            // SAFETY: closeAllSocketGroups() ran before JSC teardown, and the loop no longer ticks.
+            unsafe { group.detach_from_loop() };
+        }
     }
 }

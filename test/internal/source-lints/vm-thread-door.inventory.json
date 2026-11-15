@@ -121,6 +121,9 @@
     ]
   },
   "src/runtime/napi/napi_body.rs": {
+    "VmBound<": [
+      "TsfnJsSide"
+    ],
     "WorkPool::schedule*": 1,
     "intrusive_work_task!": [
       "AsyncWorkOffThread"

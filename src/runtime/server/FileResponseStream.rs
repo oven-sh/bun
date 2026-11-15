@@ -12,11 +12,11 @@ use core::cell::Cell;
 use core::ffi::c_void;
 
 use bun_io::Closer;
+#[cfg(unix)]
+use bun_io::PosixFlags as ReaderFlags;
 #[cfg(windows)]
 use bun_io::pipe_reader::WindowsFlags as ReaderFlags;
 use bun_io::{BufferedReader, FileType, ReadState};
-#[cfg(unix)]
-use bun_io::{FilePollFlag, PosixFlags as ReaderFlags};
 use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd, File};
@@ -282,23 +282,6 @@ impl FileResponseStream {
 
         // SAFETY: as above — `update_ref` re-enters `event_loop` through the parent pointer.
         this_ref.reader_mut().update_ref(true);
-
-        #[cfg(unix)]
-        if let Some(poll) = this_ref.reader.get().handle.get_poll() {
-            if this_ref
-                .reader
-                .get()
-                .flags
-                .contains(ReaderFlags::NONBLOCKING)
-            {
-                poll.set_flag(FilePollFlag::Nonblocking);
-            }
-            match opts.file_type {
-                FileType::Socket => poll.set_flag(FilePollFlag::Socket),
-                FileType::NonblockingPipe | FileType::Pipe => poll.set_flag(FilePollFlag::Fifo),
-                FileType::File => {}
-            }
-        }
 
         #[cfg(windows)]
         this_ref.hold_read_ref();

@@ -65,6 +65,7 @@ export const FileInternalReadableStreamSource = b.class({
     isClosed: members.isClosed,
     pull: members.pull,
     setFlowing: { args: { flag: b.any }, capability: "js" },
+    setPollOnly: {},
     setRawMode: { args: { flag: b.any }, returns: b.any.returning("object", "undefined"), capability: "js" },
     start: members.start,
     updateRef: members.updateRef,

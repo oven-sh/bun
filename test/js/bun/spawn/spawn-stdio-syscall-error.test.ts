@@ -7,8 +7,9 @@
 // An LD_PRELOAD shim fails the Nth recv()/send() on each AF_UNIX socket (the
 // parent's end of a stdio socketpair) with EIO/ENOBUFS. The children write
 // with write(2), so only bun's side of the pair is affected.
+import { dlopen, ptr } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -22,6 +23,12 @@ const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 // With SPAWN_FAULT_RECV_AT, two more settings shape the reads before the failing one:
 // SPAWN_FAULT_RECV_EAGAIN_AT=N  the Nth recv() reads nothing and fails with EAGAIN.
 // SPAWN_FAULT_RECV_CAP=N  every recv() returns at most N bytes, as when the reader outpaces the writer.
+// A reader's poll is armed with syscall(SYS_epoll_ctl, ...). These fail an arm that waits for EPOLLIN on an AF_UNIX socket:
+// SPAWN_FAULT_ARM_AFTER_DATA=K  the first arm after that socket's Kth recv() with bytes fails with ENOMEM.
+// SPAWN_FAULT_ARM_SKIP=N  with the setting above, N arms pass before the one that fails.
+// SPAWN_FAULT_ARM_PERSIST=1  with the setting above, every later arm fails too.
+// This one fails nothing:
+// SPAWN_SNDBUF=N  each AF_UNIX socket pair asks for a send buffer of N bytes, and gets at most the limit of the system.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -29,6 +36,7 @@ const SHIM_C = /* c */ `
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -38,6 +46,7 @@ const SHIM_C = /* c */ `
 #define MAX_FD 65536
 
 static ssize_t (*real_recv)(int, void *, size_t, int);
+static int (*real_socketpair)(int, int, int, int[2]);
 static ssize_t (*real_send)(int, const void *, size_t, int);
 static int (*real_close)(int);
 static long (*real_syscall)(long, long, long, long, long, long, long);
@@ -52,9 +61,23 @@ static unsigned long recv_bytes[MAX_FD];
 static unsigned char recv_had_bytes[MAX_FD];
 static unsigned char recv_failed[MAX_FD];
 static unsigned long recv_after_failure[MAX_FD];
+static int arm_after_data = -1;
+static int arm_skip;
+static int arm_persist;
+static unsigned int data_recvs[MAX_FD];
+static unsigned int arms_to_skip[MAX_FD];
+static unsigned char arm_fault_set[MAX_FD];
+static unsigned char arm_fault_done[MAX_FD];
 
 static void init_modes(void) {
   const char *s;
+  if (arm_after_data < 0) {
+    s = getenv("SPAWN_FAULT_ARM_AFTER_DATA");
+    arm_after_data = s ? atoi(s) : 0;
+    s = getenv("SPAWN_FAULT_ARM_SKIP");
+    arm_skip = s ? atoi(s) : 0;
+    arm_persist = getenv("SPAWN_FAULT_ARM_PERSIST") != NULL;
+  }
   if (fail_recv_at < 0) {
     s = getenv("SPAWN_FAULT_RECV_AT");
     fail_recv_at = s ? atoi(s) : 0;
@@ -95,6 +118,18 @@ static void write_number(const char *env, unsigned long value) {
   }
 }
 
+int socketpair(int domain, int type, int protocol, int fds[2]) {
+  if (!real_socketpair) real_socketpair = (int (*)(int, int, int, int[2]))dlsym(RTLD_NEXT, "socketpair");
+  int result = real_socketpair(domain, type, protocol, fds);
+  const char *s = getenv("SPAWN_SNDBUF");
+  if (result == 0 && domain == AF_UNIX && s) {
+    int size = atoi(s);
+    setsockopt(fds[0], SOL_SOCKET, SO_SNDBUF, &size, sizeof(size));
+    setsockopt(fds[1], SOL_SOCKET, SO_SNDBUF, &size, sizeof(size));
+  }
+  return result;
+}
+
 ssize_t recv(int fd, void *buf, size_t len, int flags) {
   if (!real_recv) {
     real_recv = (ssize_t (*)(int, void *, size_t, int))dlsym(RTLD_NEXT, "recv");
@@ -119,7 +154,16 @@ ssize_t recv(int fd, void *buf, size_t len, int flags) {
     recv_had_bytes[fd] = n > 0;
     return n;
   }
-  return real_recv(fd, buf, len, flags);
+  ssize_t n = real_recv(fd, buf, len, flags);
+  if (n > 0 && arm_after_data > 0) {
+    int saved = errno;
+    if (is_unix_sock(fd) && ++data_recvs[fd] == (unsigned)arm_after_data && !arm_fault_done[fd]) {
+      arm_fault_set[fd] = 1;
+      arms_to_skip[fd] = (unsigned)arm_skip;
+    }
+    errno = saved;
+  }
+  return n;
 }
 
 ssize_t send(int fd, const void *buf, size_t len, int flags) {
@@ -145,6 +189,10 @@ static void reset_fd(int fd) {
     recv_had_bytes[fd] = 0;
     recv_failed[fd] = 0;
     recv_after_failure[fd] = 0;
+    data_recvs[fd] = 0;
+    arms_to_skip[fd] = 0;
+    arm_fault_set[fd] = 0;
+    arm_fault_done[fd] = 0;
   }
 }
 
@@ -169,6 +217,21 @@ long syscall(long number, ...) {
     real_syscall = (long (*)(long, long, long, long, long, long, long))dlsym(RTLD_NEXT, "syscall");
   }
   if (number == SYS_close) reset_fd((int)a);
+  if (number == SYS_epoll_ctl && (b == EPOLL_CTL_ADD || b == EPOLL_CTL_MOD)) {
+    init_modes();
+    struct epoll_event *ev = (struct epoll_event *)d;
+    int fd = (int)c;
+    if (ev && (ev->events & EPOLLIN) && !(ev->events & EPOLLOUT) && is_unix_sock(fd) && arm_fault_set[fd]) {
+      if (arms_to_skip[fd] > 0) {
+        arms_to_skip[fd]--;
+        return real_syscall(number, a, b, c, d, e, f);
+      }
+      arm_fault_done[fd] = 1;
+      if (!arm_persist) arm_fault_set[fd] = 0;
+      errno = ENOMEM;
+      return -1;
+    }
+  }
   return real_syscall(number, a, b, c, d, e, f);
 }
 `;
@@ -373,6 +436,89 @@ try {
 console.log(JSON.stringify(out));
 `;
 
+// For the arm failures. The writer sends item i+1 once item i is acknowledged, and each consumer waits inside
+// the delivery of item i until item i+1 is in the socket. So the reader always has a consumer that waits for more.
+const HANDSHAKE_WRITER = join(import.meta.dir, "../../node/child_process/fixtures/stdio-handshake-writer-fixture.js");
+const HANDSHAKE_READER = join(import.meta.dir, "../../node/child_process/fixtures/stdio-handshake-reader-fixture.js");
+const HANDSHAKE_PRELUDE = /* js */ `
+import fs from "node:fs";
+const dir = process.argv[2];
+// With a size, the writer sends blocks of it, after a first block of 4096 bytes.
+const BLOCK = Number(process.argv[3] ?? 0);
+const COUNT = 4;
+const nap = new Int32Array(new SharedArrayBuffer(4));
+delete process.env.LD_PRELOAD;
+let pid;
+function writerGone() {
+  try {
+    const stat = fs.readFileSync("/proc/" + pid + "/stat", "utf8");
+    return stat[stat.lastIndexOf(")") + 2] === "Z";
+  } catch {
+    return true;
+  }
+}
+function acknowledge(i) {
+  fs.writeFileSync(dir + "/got" + i, "");
+  if (i + 1 === COUNT) return;
+  while (!fs.existsSync(dir + "/wrote" + (i + 1)) && !writerGone()) Atomics.wait(nap, 0, 0, 1);
+}
+const items = chunk => String(chunk).split("\\n").filter(Boolean);
+const writerOptions = BLOCK ? ["block=" + BLOCK] : [];
+`;
+
+const CHILD_PROCESS_ARM_FIXTURE =
+  HANDSHAKE_PRELUDE +
+  /* js */ `
+import { spawn } from "node:child_process";
+const events = [];
+const child = spawn(process.execPath, [${JSON.stringify(HANDSHAKE_WRITER)}, dir, String(COUNT), "1", ...writerOptions], { stdio: ["ignore", "pipe", "ignore"] });
+pid = child.pid;
+let received = 0;
+child.stdout.on("data", chunk => {
+  // The handshake sends one block at a time, and one read takes it whole.
+  for (const item of BLOCK ? [chunk.length] : items(chunk)) {
+    events.push(item);
+    acknowledge(received++);
+  }
+});
+child.stdout.on("error", e => {
+  events.push("stdout.error:" + e.code);
+  child.kill("SIGKILL");
+});
+child.stdout.on("end", () => events.push("stdout.end"));
+child.stdout.on("close", () => events.push("stdout.close"));
+child.on("close", () => console.log(JSON.stringify({ events })));
+`;
+
+// Each item is as long as the highWaterMark, so each push() returns false and stops the native reader, and each
+// read() starts it again.
+const RESTART_ARM_FIXTURE =
+  HANDSHAKE_PRELUDE +
+  /* js */ `
+import { Readable } from "node:stream";
+const proc = Bun.spawn({ cmd: [process.execPath, ${JSON.stringify(HANDSHAKE_WRITER)}, dir, String(COUNT), "1", ...writerOptions], stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+pid = proc.pid;
+const events = [];
+const stream = Readable.fromWeb(proc.stdout, { highWaterMark: 6 });
+let received = 0;
+stream.on("readable", () => {
+  for (let chunk; (chunk = stream.read()) !== null; ) {
+    for (const item of items(chunk)) {
+      events.push(item);
+      acknowledge(received++);
+    }
+  }
+});
+stream.on("error", e => {
+  events.push("error:" + e.code);
+  proc.kill("SIGKILL");
+});
+stream.on("close", async () => {
+  await proc.exited;
+  console.log(JSON.stringify({ events }));
+});
+`;
+
 let shimPath: string;
 let dir: ReturnType<typeof tempDir> | undefined;
 
@@ -390,6 +536,8 @@ beforeAll(async () => {
     "child-process-readable.mjs": CHILD_PROCESS_READABLE_FIXTURE,
     "stdout-stream-mid-fill.mjs": STDOUT_STREAM_MID_FILL_FIXTURE,
     "spawn-sync.mjs": SPAWN_SYNC_FIXTURE,
+    "child-process-arm.mjs": CHILD_PROCESS_ARM_FIXTURE,
+    "restart-arm.mjs": RESTART_ARM_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
   await using ccProc = Bun.spawn({
@@ -408,10 +556,13 @@ afterAll(() => {
   dir?.[Symbol.dispose]();
 });
 
-async function runWithFault(fixture: string, fault: Record<string, string>) {
+async function runWithFault(fixture: string, fault: Record<string, string>, args: string[] = []) {
   const env: Record<string, string | undefined> = {
     ...bunEnv,
     LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shimPath}:${bunEnv.LD_PRELOAD}` : shimPath,
+    SPAWN_FAULT_ARM_AFTER_DATA: undefined,
+    SPAWN_FAULT_ARM_SKIP: undefined,
+    SPAWN_FAULT_ARM_PERSIST: undefined,
     SPAWN_FAULT_RECV_AT: undefined,
     SPAWN_FAULT_RECV_MID_FILL: undefined,
     SPAWN_FAULT_SEND_AT: undefined,
@@ -419,10 +570,12 @@ async function runWithFault(fixture: string, fault: Record<string, string>) {
     SPAWN_FAULT_READS_AFTER: undefined,
     SPAWN_FAULT_RECV_EAGAIN_AT: undefined,
     SPAWN_FAULT_RECV_CAP: undefined,
+    SPAWN_SNDBUF: undefined,
+    BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: undefined,
     ...fault,
   };
   await using proc = Bun.spawn({
-    cmd: [bunExe(), fixture],
+    cmd: [bunExe(), fixture, ...args],
     cwd: String(dir),
     env,
     stdout: "pipe",
@@ -501,8 +654,8 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
     });
   });
 
-  // child.stdout reads one chunk ahead of its 'data' listener, so once the stream flows a chunk is still buffered
-  // when a later read fails. The stream is destroyed with the error, and that chunk has to reach 'data' first.
+  // A read of child.stdout fails after earlier reads got bytes. The stream is destroyed with the error, and every
+  // byte that was read before it has to reach 'data' first.
   test.concurrent("node:child_process: stdout delivers every byte read before the error", async () => {
     const report = join(String(dir), "recv-report.txt");
     expect(
@@ -595,4 +748,108 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
       });
     });
   });
+});
+
+// A Node stream leaves every read to the poll callback: its pull and its restart after push() returned false only
+// arm the poll. The shim makes such an arm fail.
+describe.skipIf(!isLinux || !cc)("a Node stream over subprocess stdio whose poll fails to arm", () => {
+  async function runHandshake(fixture: string, fault: Record<string, string>, block?: number) {
+    using handshake = tempDir("spawn-stdio-arm-error", {});
+    return await runWithFault(fixture, fault, block ? [String(handshake), String(block)] : [String(handshake)]);
+  }
+
+  // A read that left the socket empty arms the poll again before its chunk is delivered. The chunk still
+  // arrives, then the error, once. A failure that repeats also fails the arms of the pull and of the end of
+  // that wakeup.
+  describe.each([
+    ["once", {}],
+    ["from then on", { SPAWN_FAULT_ARM_PERSIST: "1" }],
+  ])("before the delivery of a chunk, %s", (_label, persist) => {
+    test.concurrent.each([
+      ["the first chunk", "1", ["item0"]],
+      ["the second chunk", "2", ["item0", "item1"]],
+    ] as const)("node:child_process, %s: 'data', then 'error', then 'close'", async (_, at, delivered) => {
+      expect(await runHandshake("child-process-arm.mjs", { SPAWN_FAULT_ARM_AFTER_DATA: at, ...persist })).toEqual({
+        parsed: { events: [...delivered, "stdout.error:ENOMEM", "stdout.close"] },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // One read takes a block of 131072 bytes and does not find the socket empty behind it. So no arm comes before
+  // its delivery, and the pull that the stream makes inside that delivery arms the poll.
+  test.concurrent("node:child_process: in the pull inside the delivery of a chunk", async () => {
+    expect(await runHandshake("child-process-arm.mjs", { SPAWN_FAULT_ARM_AFTER_DATA: "2" }, 131072)).toEqual({
+      parsed: { events: [4096, 131072, "stdout.error:ENOMEM", "stdout.close"] },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The arm before the delivery of item1 passes. push() then stops the reader, and the next read() starts it again.
+  test.concurrent("Readable.fromWeb(Bun.spawn().stdout): in the restart of a stopped reader", async () => {
+    expect(
+      await runHandshake("restart-arm.mjs", { SPAWN_FAULT_ARM_AFTER_DATA: "2", SPAWN_FAULT_ARM_SKIP: "1" }),
+    ).toEqual({
+      parsed: { events: ["item0", "item1", "error:ENOMEM"] },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// Without a pidfd a thread of Bun waits for the child and reports its exit in a task, ahead of the poll. A Node
+// stream then gets what its socket holds from the read before that report, one chunk per pass. The child leaves
+// more than the 256 KiB of one read, which a socket takes only with the largest send buffer that the system gives.
+describe.skipIf(!isLinux || !cc)("the read before the report of an exit", () => {
+  const lastBlock = 300000;
+  const sendBuffer = 1 << 20;
+
+  // Whether a socket pair that asks for `sendBuffer` queues the last block in one write. The system caps the
+  // request at net.core.wmem_max. Under too small a cap the writer would wait for a reader that waits for the writer.
+  function socketTakesTheBlock() {
+    const [AF_UNIX, SOCK_STREAM, SOL_SOCKET, SO_SNDBUF, MSG_DONTWAIT] = [1, 1, 1, 7, 0x40];
+    let libc;
+    try {
+      libc = dlopen(libcPathForDlopen(), {
+        socketpair: { args: ["i32", "i32", "i32", "ptr"], returns: "i32" },
+        setsockopt: { args: ["i32", "i32", "i32", "ptr", "u32"], returns: "i32" },
+        send: { args: ["i32", "ptr", "usize", "i32"], returns: "i64" },
+        close: { args: ["i32"], returns: "i32" },
+      });
+    } catch {
+      return false;
+    }
+    try {
+      const fds = new Int32Array(2);
+      if (libc.symbols.socketpair(AF_UNIX, SOCK_STREAM, 0, ptr(fds)) !== 0) return false;
+      const size = new Int32Array([sendBuffer]);
+      for (const fd of fds) libc.symbols.setsockopt(fd, SOL_SOCKET, SO_SNDBUF, ptr(size), size.byteLength);
+      const queued = libc.symbols.send(fds[0], ptr(new Uint8Array(lastBlock)), lastBlock, MSG_DONTWAIT);
+      for (const fd of fds) libc.symbols.close(fd);
+      return Number(queued) === lastBlock;
+    } finally {
+      libc.close();
+    }
+  }
+
+  test.skipIf(!isLinux || !socketTakesTheBlock())(
+    "node:child_process: 'exit' comes behind more bytes than one read takes",
+    async () => {
+      using handshake = tempDir("spawn-stdio-exit-read", {});
+      const total = 4096 + lastBlock;
+      expect(
+        await runWithFault(
+          HANDSHAKE_READER,
+          { SPAWN_SNDBUF: String(sendBuffer), BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+          ["child.stdout", "exit-bytes", String(handshake), "2", `block=${lastBlock}`],
+        ),
+      ).toEqual({
+        parsed: { all: total, atExit: total },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 });

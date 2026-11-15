@@ -728,6 +728,29 @@ impl Subprocess<'_> {
             + self.stderr.get().memory_cost()
     }
 
+    /// `FileReader::read_before_exit` for the stdout and stderr streams that JS took, while each has bytes left of its budget. Returns whether a chunk was delivered.
+    fn read_streams_before_exit(this_jsvalue: JSValue, budgets: &mut [usize; 2]) -> bool {
+        let mut delivered = false;
+        let streams = [
+            js::stdout_get_cached(this_jsvalue),
+            js::stderr_get_cached(this_jsvalue),
+        ];
+        for (cached, budget) in streams.into_iter().zip(budgets) {
+            if *budget == 0 {
+                continue;
+            }
+            if let Some(reader) = cached
+                .and_then(webcore::ReadableStream::from_js_direct)
+                .and_then(|stream| stream.ptr.file())
+            {
+                let bytes = reader.read_before_exit();
+                *budget = budget.saturating_sub(bytes);
+                delivered |= bytes > 0;
+            }
+        }
+        delivered
+    }
+
     pub(crate) fn on_process_exit(&self, status: &Status, rusage: &Rusage) {
         bun_output::scoped_log!(Subprocess, "onProcessExit()");
         let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
@@ -763,6 +786,17 @@ impl Subprocess<'_> {
                 term.drain_and_close_slave_fd();
                 #[cfg(windows)]
                 term.unref_after_inline_child_exit();
+            }
+        }
+
+        // A Node stream over a pipe that JS took gets its bytes from the poll callback, and the exit can be first in the poll. Such a stream gets what its pipe holds before the exit is reported, up to what libuv reads of a stream in one poll: 32 reads of 64 KiB (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1033-L1036). The pipes that JS did not take are read below.
+        if !this_jsvalue.is_empty() {
+            let mut budgets = [32 * 64 * 1024; 2];
+            while Self::read_streams_before_exit(this_jsvalue, &mut budgets) {
+                // In a task (a thread waited for the child) the reaction of the settled pull has not run yet. It runs here, ahead of the exit, and a stream that pulls again is read again.
+                if jsc_vm.event_loop().drain_microtasks().is_err() {
+                    break;
+                }
             }
         }
 

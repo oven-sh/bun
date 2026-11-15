@@ -961,6 +961,32 @@ impl PosixBufferedReader {
             }
         }
     }
+
+    /// Whether a consumer can leave every read of this fd to the poll callback. Not for an fd that is never waited on (a regular file, a used-up limit: see `start`). Outside Linux only for a socket: kqueue does not report the last writer's close on an empty named pipe, and this reader cannot tell a `pipe(2)` pipe from one, so there only a read finds that EOF.
+    pub fn is_poll_driven(&self) -> bool {
+        self.flags.contains(PosixFlags::POLLABLE)
+            && !self.limit.reached()
+            && (cfg!(any(target_os = "linux", target_os = "android"))
+                || self.flags.contains(PosixFlags::SOCKET))
+    }
+
+    /// Arms the poll for a consumer that leaves every read to the poll callback, and reads nothing, as `uv__read_start` only starts the watcher (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1447-L1470). A stopped or failed reader, and a poll that already watches the fd, are left as they are.
+    pub fn try_arm(&mut self) -> Result<(), sys::Error> {
+        if self.begin_read().is_none() || self.has_pending_read() {
+            return Ok(());
+        }
+        self.try_register_poll()
+    }
+
+    /// [`Self::try_arm`], with a failure reported to the parent. Same contract as [`Self::read`]: that dispatch may free the parent.
+    pub unsafe fn arm(this: *mut Self) {
+        // SAFETY: caller contract — `this` is live; the borrow ends before the dispatch.
+        if let Err(err) = unsafe { (*this).try_arm() } {
+            // SAFETY: caller contract; the (Copy) vtable is copied out, so no borrow of `*this` spans the callback.
+            let vtable = unsafe { (*this).vtable };
+            vtable.on_reader_error(err);
+        }
+    }
 }
 
 enum Stop {

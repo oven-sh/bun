@@ -54,6 +54,10 @@ pub struct FileReader {
     /// Read-only after construction.
     pub(crate) highwater_mark: usize,
     pub(crate) flowing: Cell<bool>,
+    /// The consumer is a Node stream (`setPollOnly`). See `waits_for_poll`.
+    pub(crate) poll_only: Cell<bool>,
+    /// `Some` while `read_before_exit` reads: the bytes that it delivered. The read loop then stops after one delivery.
+    pub(crate) delivered_before_exit: Cell<Option<usize>>,
     /// Native sink attached by a hookup site (e.g. fetch request body). When
     /// set, `on_read_chunk` writes directly to it instead of the JS `pending`
     /// path; `pull_into_sink` is the drain-ack resume.
@@ -80,6 +84,8 @@ impl Default for FileReader {
             read_error: JsCell::new(None),
             highwater_mark: 16384,
             flowing: Cell::new(true),
+            poll_only: Cell::new(false),
+            delivered_before_exit: Cell::new(None),
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
         }
@@ -612,7 +618,7 @@ impl FileReader {
             if chunk.is_empty() && state == ReadState::Drained {
                 true
             } else {
-                self.resolve_pending_read(chunk, has_more)
+                self.resolve_pending_read(chunk, state)
             }
         } else {
             if self.buffered.get().is_empty() && chunk.is_owned() {
@@ -667,7 +673,10 @@ impl FileReader {
     }
 
     /// Settles the parked JS read with `chunk` (invariant: a parked read means `buffered` was already drained into it).
-    fn resolve_pending_read(&self, chunk: Chunk<'_>, has_more: bool) -> bool {
+    fn resolve_pending_read(&self, chunk: Chunk<'_>, state: ReadState) -> bool {
+        let has_more = state != ReadState::Eof;
+        let node_stream = self.waits_for_poll();
+        let len = if node_stream { chunk.len() } else { 0 };
         let was_done = self.reader().is_done();
         let global = self.parent_const().global_this();
         let mut pending_array_buffer = self
@@ -722,9 +731,94 @@ impl FileReader {
             .with_mut(|p| p.clear_without_deallocation());
         // A re-entrant cancel() inside `run()` reaches on_reader_done, which drops the across-read ref and lets a GC free this box while the io caller still holds `&mut` into it.
         let _pin = self.ref_guard();
+        if node_stream {
+            return self.deliver_to_node_stream(state == ReadState::Drained, len, ret);
+        }
         self.pending.with_mut(|p| p.run());
         // Re-entrant cancel or a nested pull that read to EOF closed the reader; tell the io caller to stop so it does not re-read the captured fd.
         ret && !self.done.get() && !self.reader().is_done()
+    }
+
+    /// The delivery of `resolve_pending_read` for a consumer that `waits_for_poll`. `drained`: the read left the fd empty. `keep_reading`: what the io caller would get for any other consumer.
+    fn deliver_to_node_stream(&self, drained: bool, len: usize, keep_reading: bool) -> bool {
+        // The listeners of a Node stream run inside `run()`. The poll is armed before them, so bytes that arrive while they run keep their place ahead of the fds that become ready later (the child's other stream, its IPC channel, its exit).
+        let mut armed = if drained { self.arm_poll() } else { Ok(()) };
+        self.pending.with_mut(|p| p.run());
+        if let Some(delivered) = self.delivered_before_exit.get() {
+            self.delivered_before_exit.set(Some(delivered + len));
+        }
+        // As for any consumer: a re-entrant cancel or an EOF closed the reader.
+        let mut keep_reading = keep_reading && !self.done.get() && !self.reader().is_done();
+        if keep_reading && armed.is_ok() {
+            if self.pending.get().state == streams::PendingState::Pending {
+                keep_reading = self.delivered_before_exit.get().is_none();
+            } else {
+                // A Node stream takes bytes into a parked pull, so with none the read loop stops. The poll stays armed, as after a read that drained the fd: a reader that no pull starts again still finds the end of its pipe.
+                keep_reading = false;
+                armed = self.arm_poll();
+            }
+        }
+        if let Err(err) = armed {
+            // The consumer has the chunk, and the error follows it.
+            if !self.done.get() {
+                self.on_reader_error(err);
+            }
+            return false;
+        }
+        keep_reading
+    }
+
+    /// Whether the poll callback alone feeds the consumer: a Node stream (`setPollOnly`) over an fd that the reader polls. A pull and a restart then only arm the poll, as `Socket.prototype._read` only starts the handle (https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L769-L792), and each chunk settles a parked pull. Never on Windows, where no pull reads.
+    fn waits_for_poll(&self) -> bool {
+        #[cfg(unix)]
+        {
+            self.poll_only.get() && self.reader().is_poll_driven()
+        }
+        #[cfg(windows)]
+        {
+            false
+        }
+    }
+
+    /// Arms the poll for a consumer that `waits_for_poll`, and returns the error of that arm. A reader that the consumer stopped stays as it is.
+    fn arm_poll(&self) -> Result<(), sys::Error> {
+        #[cfg(unix)]
+        {
+            self.reader().try_arm()
+        }
+        #[cfg(windows)]
+        {
+            Ok(())
+        }
+    }
+
+    /// For a consumer that `waits_for_poll`, arms the poll in place of a read. Returns whether it did.
+    fn arm_in_place_of_read(&self) -> bool {
+        if !self.waits_for_poll() {
+            return false;
+        }
+        // SAFETY: the reader cell is live for `self`'s lifetime; `arm` is the raw re-entrancy-safe entry (its error dispatch runs user JS).
+        #[cfg(unix)]
+        unsafe {
+            IOReader::arm(self.reader.get())
+        };
+        true
+    }
+
+    /// The child that wrote this pipe has exited. A parked pull of a Node stream gets one chunk of what the pipe holds before the exit is reported. libuv holds that order in its loop, where the child watchers run after the I/O of the same poll (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/linux.c#L1539-L1547), and this read stands in for it. Returns the bytes that it delivered.
+    pub(crate) fn read_before_exit(&self) -> usize {
+        if !self.waits_for_poll()
+            || self.pending.get().state != streams::PendingState::Pending
+            || self.reader().is_done()
+        {
+            return 0;
+        }
+        // The read runs user JS, which can cancel the stream and drop the across-read ref.
+        let _pin = self.ref_guard();
+        self.delivered_before_exit.set(Some(0));
+        // SAFETY: the reader cell is live for `self`'s lifetime; `read` is the raw re-entrancy-safe entry (its dispatch runs user JS).
+        unsafe { IOReader::read(self.reader.get()) };
+        self.delivered_before_exit.take().unwrap_or(0)
     }
 
     pub(crate) fn drain(&self) -> Vec<u8> {
@@ -871,7 +965,10 @@ impl FileReader {
 
         if flag {
             self.reader().unpause();
-            if !self.reader().is_done() && !self.reader().has_pending_read() {
+            if !self.reader().is_done()
+                && !self.reader().has_pending_read()
+                && !self.arm_in_place_of_read()
+            {
                 // Kick off a new read if needed
                 // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
                 // the raw re-entrancy-safe entry (its dispatch runs user JS).
@@ -944,8 +1041,12 @@ impl readable_stream::SourceContext for FileReader {
         if !self.reader().has_pending_read() && self.flowing.get() {
             // A consumer is pulling again: undo the highwater pause from `on_read_chunk`.
             self.reader().unpause();
-            // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
-            let (amount_read, state) = unsafe { IOReader::read_into(self.reader.get(), buffer) };
+            let (amount_read, state) = if self.arm_in_place_of_read() {
+                (0, ReadState::Progress)
+            } else {
+                // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
+                unsafe { IOReader::read_into(self.reader.get(), buffer) }
+            };
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);
             let done = state == ReadState::Eof || self.reader_finished();
             if amount_read > 0 {
@@ -1034,6 +1135,10 @@ impl Source {
         let flag = flag.to_js();
         debug_assert!(flag.is_boolean());
         self.context.set_flowing(flag == JSValue::TRUE);
+    }
+
+    pub fn set_poll_only(&self) {
+        self.context.poll_only.set(true);
     }
 }
 

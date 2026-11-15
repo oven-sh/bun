@@ -1570,12 +1570,14 @@ it("child.stdout.pause() after flowing stops native reads and blocks the child",
   }
 });
 
-// child.stdout and child.stderr read ahead: `_read()` pushes each native pull
-// result synchronously, so while the stream flows Readable holds the next chunk
-// in its buffer when a 'data' listener runs. destroy() left that chunk there and
-// flow() emitted it after destroy() returned, with `destroyed === true`. Node's
-// child stdio is a net.Socket that pushes asynchronously, so no 'data' follows
-// destroy() there.
+// A stream that gets a pull result inside `_read()` reads ahead: while it flows,
+// Readable holds the next chunk in its buffer when a 'data' listener runs.
+// destroy() left that chunk there and flow() emitted it after destroy()
+// returned, with `destroyed === true`. child.stdout and child.stderr got most
+// chunks that way. On POSIX a chunk now reaches them inside `_read()` only when
+// the native reader had it before that call: at the first read, or after a
+// hang-up. Node's child stdio is a net.Socket that pushes asynchronously, so no
+// 'data' follows destroy() there.
 it.concurrent.each(["stdout", "stderr"] as const)(
   "child.%s.destroy() inside a 'data' listener stops 'data' and 'end'",
   async name => {
@@ -1708,12 +1710,13 @@ describe("spawn/execFile({signal}) does not leak abort listeners on spawn failur
 });
 
 // A 'data' handler runs inside the native read loop that delivered its chunk,
-// and node streams pull again from there, so that pull reads synchronously,
-// nested in the outer loop, and can run all the way to EOF. The reader used to
+// and node streams pull again from there. That pull used to read synchronously,
+// nested in the outer loop, and could run all the way to EOF. The reader used to
 // collect a nested read in a heap buffer it freed as soon as the chunk was
 // handed over, while FileReader kept pointing at a tail that did not fit the
 // pull buffer (heap-use-after-free under ASAN, corrupt or short output
-// otherwise).
+// otherwise). The pull of a Node stream over a socket now only arms the poll,
+// and the outer loop reads the tail.
 //
 // Pinned down with two markers: the head is bigger than half of the reader's
 // 256 KiB scratch, so it is flushed to JS from the middle of the outer loop,

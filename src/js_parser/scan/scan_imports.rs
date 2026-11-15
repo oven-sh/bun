@@ -2,12 +2,9 @@
 use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
 use crate::p::P;
 use crate::parser::{ImportItemForNamespaceMap, Ref};
-use bun_ast::{self as js_ast, Expr, G, LocRef, S, Stmt, Symbol};
+use bun_ast::{self as js_ast, AstBox, AstVec, Expr, G, LocRef, S, Stmt, Symbol};
 use bun_ast::{ImportRecord, import_record};
-use bun_collections::VecExt;
 use bun_core::strings;
-use bun_crash_handler::handle_oom::handle_oom;
-
 // `stmts` is a sub-slice of the input `stmts` argument (in-place compacted),
 // so it borrows from the caller.
 #[derive(Default)]
@@ -391,7 +388,7 @@ impl<'a> ImportScanner<'a> {
                                 sorted.push(arena.alloc_slice_copy(alias));
                             }
                             strings::sort_desc(&mut sorted);
-                            handle_oom(p.named_imports.ensure_unused_capacity(sorted.len()));
+                            p.named_imports.reserve(p.ast_arena, sorted.len());
 
                             // Create named imports for these property accesses. This will
                             // cause missing imports to generate useful warnings.
@@ -401,18 +398,19 @@ impl<'a> ImportScanner<'a> {
                             // bare identifiers even if the namespace is still needed.
                             for alias in &sorted {
                                 let item: LocRef = *existing.get(alias).unwrap();
-                                handle_oom(p.named_imports.put(
+                                p.named_imports.put(
+                                    p.ast_arena,
                                     item.ref_,
                                     js_ast::NamedImport {
                                         alias: Some(js_ast::StoreStr::new(*alias)),
                                         alias_loc: item.loc,
                                         namespace_ref,
                                         import_record_index: st.import_record_index,
-                                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                        local_parts_with_uses: AstVec::new(),
                                         alias_is_star: false,
                                         is_exported: false,
                                     },
-                                ));
+                                );
 
                                 let name: LocRef = item;
                                 let name_ref = name.ref_;
@@ -423,8 +421,8 @@ impl<'a> ImportScanner<'a> {
                                 // SAFETY: `original_name` is an arena-owned slice valid for 'p.
                                 let original_name = symbol.original_name.slice();
 
-                                symbol.namespace_alias =
-                                    Some(bun_alloc::ast_box(G::NamespaceAlias {
+                                symbol.namespace_alias = Some(AstBox::new_in(
+                                    G::NamespaceAlias {
                                         namespace_ref,
                                         alias: js_ast::StoreStr::new(*alias),
                                         import_record_index: st.import_record_index,
@@ -432,29 +430,34 @@ impl<'a> ImportScanner<'a> {
                                             .star_name_loc
                                             .is_empty()
                                             && existing.contains(original_name),
-                                    }));
+                                    },
+                                    p.ast_arena,
+                                ));
 
                                 // Also record these automatically-generated top-level namespace alias symbols
-                                p.declared_symbols
-                                    .append(js_ast::DeclaredSymbol {
+                                p.declared_symbols.append(
+                                    p.ast_arena,
+                                    js_ast::DeclaredSymbol {
                                         ref_: name_ref,
                                         is_top_level: true,
-                                    })
-                                    .expect("unreachable");
+                                    },
+                                );
                             }
                         }
 
-                        handle_oom(p.named_imports.ensure_unused_capacity(
+                        p.named_imports.reserve(
+                            p.ast_arena,
                             st_items.len()
                                 + usize::from(st.default_name.is_some())
                                 + usize::from(!st.star_name_loc.is_empty()),
-                        ));
+                        );
 
                         if let Some(loc) = st.star_name_loc.to_nullable() {
                             record!()
                                 .flags
                                 .insert(import_record::Flags::CONTAINS_IMPORT_STAR);
-                            p.named_imports.put_assume_capacity(
+                            p.named_imports.put(
+                                p.ast_arena,
                                 namespace_ref,
                                 js_ast::NamedImport {
                                     alias_is_star: true,
@@ -462,7 +465,7 @@ impl<'a> ImportScanner<'a> {
                                     alias_loc: loc,
                                     namespace_ref: Ref::NONE,
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                    local_parts_with_uses: AstVec::new(),
                                     is_exported: false,
                                 },
                             );
@@ -472,14 +475,15 @@ impl<'a> ImportScanner<'a> {
                             record!()
                                 .flags
                                 .insert(import_record::Flags::CONTAINS_DEFAULT_ALIAS);
-                            p.named_imports.put_assume_capacity(
+                            p.named_imports.put(
+                                p.ast_arena,
                                 default.ref_,
                                 js_ast::NamedImport {
                                     alias: Some(raw_str(b"default")),
                                     alias_loc: default.loc,
                                     namespace_ref,
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                    local_parts_with_uses: AstVec::new(),
                                     alias_is_star: false,
                                     is_exported: false,
                                 },
@@ -490,14 +494,15 @@ impl<'a> ImportScanner<'a> {
                             let name: LocRef = item.name;
                             let name_ref = name.ref_;
 
-                            p.named_imports.put_assume_capacity(
+                            p.named_imports.put(
+                                p.ast_arena,
                                 name_ref,
                                 js_ast::NamedImport {
                                     alias: Some(item.alias),
                                     alias_loc: name.loc,
                                     namespace_ref,
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                    local_parts_with_uses: AstVec::new(),
                                     alias_is_star: false,
                                     is_exported: false,
                                 },
@@ -522,17 +527,18 @@ impl<'a> ImportScanner<'a> {
                             let name_ref = name.ref_;
 
                             p.named_imports.put(
+                                p.ast_arena,
                                 name_ref,
                                 js_ast::NamedImport {
                                     alias: Some(item.alias),
                                     alias_loc: name.loc,
                                     namespace_ref,
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                    local_parts_with_uses: AstVec::new(),
                                     alias_is_star: false,
                                     is_exported: false,
                                 },
-                            )?;
+                            );
 
                             // Make sure the printer prints this as a property access
                             let symbol: &mut Symbol =
@@ -544,8 +550,8 @@ impl<'a> ImportScanner<'a> {
                             {
                                 // SAFETY: arena-owned slice valid for 'p.
                                 let original_name = symbol.original_name.slice();
-                                symbol.namespace_alias =
-                                    Some(bun_alloc::ast_box(G::NamespaceAlias {
+                                symbol.namespace_alias = Some(AstBox::new_in(
+                                    G::NamespaceAlias {
                                         namespace_ref,
                                         alias: item.alias,
                                         import_record_index: st.import_record_index,
@@ -555,7 +561,9 @@ impl<'a> ImportScanner<'a> {
                                             && existing_items
                                                 .map(|m| m.contains(original_name))
                                                 .unwrap_or(false),
-                                    }));
+                                    },
+                                    p.ast_arena,
+                                ));
                             }
                         }
 
@@ -564,12 +572,15 @@ impl<'a> ImportScanner<'a> {
                             .contains(import_record::Flags::WAS_ORIGINALLY_REQUIRE)
                         {
                             let symbol = &mut p.symbols[namespace_ref.inner_index() as usize];
-                            symbol.namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
-                                namespace_ref,
-                                alias: js_ast::StoreStr::EMPTY,
-                                import_record_index: st.import_record_index,
-                                was_originally_property_access: false,
-                            }));
+                            symbol.namespace_alias = Some(AstBox::new_in(
+                                G::NamespaceAlias {
+                                    namespace_ref,
+                                    alias: js_ast::StoreStr::EMPTY,
+                                    import_record_index: st.import_record_index,
+                                    was_originally_property_access: false,
+                                },
+                                p.ast_arena,
+                            ));
                         }
                     }
 
@@ -711,12 +722,13 @@ impl<'a> ImportScanner<'a> {
                     // But only if it's anonymous
                     // This monomorphization is the parser `P` only (see fn-level TODO).
                     if !HOT_MODULE_RELOADING_TRANSFORMATIONS && will_transform_to_common_js {
-                        let expr = core::mem::take(&mut st.value).to_expr();
+                        let expr = core::mem::take(&mut st.value).to_expr(p.ast_arena);
                         // Arena allocation that persists in the AST.
                         let export_default_args = p.arena.alloc_slice_fill_default::<Expr>(2);
                         export_default_args[0] = p.module_exports(expr.loc);
                         export_default_args[1] = expr;
-                        let args = js_ast::ExprNodeList::from_arena_slice(export_default_args);
+                        let args =
+                            js_ast::ExprNodeList::from_slice_in(export_default_args, p.ast_arena);
                         let value = p.call_runtime(expr.loc, b"__exportDefault", args);
                         stmt = p.s(
                             S::SExpr {
@@ -751,6 +763,7 @@ impl<'a> ImportScanner<'a> {
                     if let Some(alias) = &st.alias {
                         // "export * as ns from 'path'"
                         p.named_imports.put(
+                            p.ast_arena,
                             st.namespace_ref,
                             js_ast::NamedImport {
                                 alias: None,
@@ -759,9 +772,9 @@ impl<'a> ImportScanner<'a> {
                                 namespace_ref: Ref::NONE,
                                 import_record_index: st.import_record_index,
                                 is_exported: true,
-                                local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                local_parts_with_uses: AstVec::new(),
                             },
-                        )?;
+                        );
                         let original: &'p [u8] = alias.original_name.slice();
                         p.record_export(alias.loc, original, st.namespace_ref)?;
                         p.import_records.items_mut()[st.import_record_index as usize]
@@ -778,15 +791,14 @@ impl<'a> ImportScanner<'a> {
                         .push(st.import_record_index);
                     // SAFETY: arena-owned slice valid for 'p.
                     let items = st.items.slice();
-                    p.named_imports
-                        .ensure_unused_capacity(items.len())
-                        .expect("unreachable");
+                    p.named_imports.reserve(p.ast_arena, items.len());
                     for item in items.iter() {
                         let ref_ = item.name.ref_;
                         // Note that the imported alias is not item.Alias, which is the
                         // exported alias. This is somewhat confusing because each
                         // SExportFrom statement is basically SImport + SExportClause in one.
                         p.named_imports.put(
+                            p.ast_arena,
                             ref_,
                             js_ast::NamedImport {
                                 alias_is_star: false,
@@ -795,9 +807,9 @@ impl<'a> ImportScanner<'a> {
                                 namespace_ref: st.namespace_ref,
                                 import_record_index: st.import_record_index,
                                 is_exported: true,
-                                local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                local_parts_with_uses: AstVec::new(),
                             },
-                        )?;
+                        );
                         // SAFETY: arena-owned alias slice valid for 'p.
                         let alias: &'p [u8] = item.alias.slice();
                         p.record_export(item.name.loc, alias, ref_)?;

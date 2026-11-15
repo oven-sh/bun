@@ -11,7 +11,7 @@ use bun_core::strings;
 
 use crate::options::ModuleType;
 use bun_ast::ast_result::Ast;
-use bun_ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreStr, TlaCheck};
+use bun_ast::{AstBox, AstVec, CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreStr, TlaCheck};
 use bun_ast::{part, symbol};
 
 pub(crate) type CommonJSNamedExports = bun_ast::ast_result::CommonJSNamedExports;
@@ -45,7 +45,7 @@ pub struct BundledAst<'arena> {
     pub(crate) url_for_css: &'arena [u8],
     pub(crate) symbols: symbol::List<'arena>,
     pub(crate) module_scope: Scope,
-    pub(crate) char_freq: Option<bun_alloc::AstBox<CharFreq>>,
+    pub(crate) char_freq: Option<AstBox<CharFreq>>,
     pub(crate) exports_ref: Ref,
     pub(crate) module_ref: Ref,
     pub(crate) wrapper_ref: Ref,
@@ -57,7 +57,7 @@ pub struct BundledAst<'arena> {
     // is conveniently fully parallelized.
     pub(crate) named_imports: NamedImports,
     pub(crate) named_exports: NamedExports,
-    pub(crate) export_star_import_records: bun_alloc::AstVec<u32>,
+    pub(crate) export_star_import_records: AstVec<u32>,
     pub(crate) dynamic_import_aliases: bun_ast::ast_result::DynamicImportAliases,
 
     pub(crate) top_level_symbols_to_parts: TopLevelSymbolToParts,
@@ -91,7 +91,7 @@ bun_collections::multi_array_columns! {
         url_for_css: &'arena [u8],
         symbols: symbol::List<'arena>,
         module_scope: Scope,
-        char_freq: Option<bun_alloc::AstBox<CharFreq>>,
+        char_freq: Option<AstBox<CharFreq>>,
         exports_ref: Ref,
         module_ref: Ref,
         wrapper_ref: Ref,
@@ -99,7 +99,7 @@ bun_collections::multi_array_columns! {
         tla_check: TlaCheck,
         named_imports: NamedImports,
         named_exports: NamedExports,
-        export_star_import_records: bun_alloc::AstVec<u32>,
+        export_star_import_records: AstVec<u32>,
         dynamic_import_aliases: bun_ast::ast_result::DynamicImportAliases,
         top_level_symbols_to_parts: TopLevelSymbolToParts,
         scope_uses: bun_ast::ast_result::ScopeUseList,
@@ -156,7 +156,7 @@ impl<'arena> BundledAst<'arena> {
             tla_check: TlaCheck::default(),
             named_imports: NamedImports::default(),
             named_exports: NamedExports::default(),
-            export_star_import_records: bun_alloc::AstAlloc::vec(),
+            export_star_import_records: AstVec::new(),
             dynamic_import_aliases: Default::default(),
             top_level_symbols_to_parts: TopLevelSymbolToParts::default(),
             scope_uses: Default::default(),

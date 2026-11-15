@@ -8,7 +8,6 @@
 // `#[thread_local]` (vs the `thread_local!` macro) compiles to a bare
 // `__thread` slot — single `mov reg, fs:[OFFSET]` access, no `LocalKey`
 // `__getit()` wrapper, no lazy-init flag check, no dtor-registration probe.
-// Used for the per-allocation hot-path TLS in `ast_alloc::AST_ALLOC`.
 #![feature(thread_local)]
 
 use core::io::{BorrowedBuf, BorrowedCursor};
@@ -164,12 +163,9 @@ pub use stack_fallback::ArenaPtr;
 #[path = "MimallocArena.rs"]
 pub mod mimalloc_arena;
 
-pub mod ast_alloc;
-pub use ast_alloc::{AstAlloc, AstBox, AstVec, ast_box};
 mod hashbrown_bridge;
 /// Re-export so `bun_collections` can name the polyfill trait in
-/// `StringHashMap`'s `A` bound without taking its own direct dep on
-/// `allocator-api2`.
+/// `HashIndex`'s `A` bound.
 pub use allocator_api2::alloc::Allocator as HashbrownAllocator;
 
 // ── tier-0 local primitives ───────────────────────────────────────────────

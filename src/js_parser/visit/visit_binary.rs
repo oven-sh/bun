@@ -1,5 +1,4 @@
 #![warn(unused_must_use)]
-use bun_collections::VecExt;
 use core::cmp::Ordering;
 
 use crate::p::P;
@@ -369,6 +368,7 @@ impl BinaryExpressionVisitor {
                                     data: ExprData::ENumber(E::Number::new(0.0)),
                                     loc: e_.left.loc,
                                 },
+                                p.ast_arena,
                                 e_.right,
                             );
                         }
@@ -391,6 +391,7 @@ impl BinaryExpressionVisitor {
                                     data: prefill::data::ZERO,
                                     loc: e_.left.loc,
                                 },
+                                p.ast_arena,
                                 e_.right,
                             );
                         }
@@ -413,6 +414,7 @@ impl BinaryExpressionVisitor {
                                     data: prefill::data::ZERO,
                                     loc: e_.left.loc,
                                 },
+                                p.ast_arena,
                                 e_.right,
                             );
                         }
@@ -432,7 +434,7 @@ impl BinaryExpressionVisitor {
                     if let Some(res) = fold_string_addition(
                         e_.left,
                         e_.right,
-                        p.arena,
+                        p.ast_arena,
                         FoldStringAdditionKind::Normal,
                     ) {
                         return res;
@@ -444,7 +446,7 @@ impl BinaryExpressionVisitor {
                             if let Some(result) = fold_string_addition(
                                 left.right,
                                 e_.right,
-                                p.arena,
+                                p.ast_arena,
                                 FoldStringAdditionKind::NestedLeft,
                             ) {
                                 return p.new_expr(

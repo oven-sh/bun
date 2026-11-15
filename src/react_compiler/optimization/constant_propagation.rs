@@ -33,9 +33,9 @@ use crate::hir::cfg_utils::{
 };
 use crate::hir::environment::Environment;
 use crate::hir::{
-    BinaryOperator, BlockKind, FloatValue, FunctionId, GotoVariant, HirFunction, IdentifierId,
-    Instruction, InstructionValue, NonLocalBinding, Phi, Place, PrimitiveValue, PropertyLiteral,
-    SourceLocation, Terminal, UnaryOperator, UpdateOperator,
+    BinaryOperator, BlockKind, FloatValue, FunctionId, GotoVariant, HirAlloc, HirFunction,
+    IdentifierId, Instruction, InstructionValue, NonLocalBinding, Phi, Place, PrimitiveValue,
+    PropertyLiteral, SourceLocation, Terminal, UnaryOperator, UpdateOperator,
 };
 use crate::ssa::enter_ssa::placeholder_function;
 
@@ -304,8 +304,8 @@ fn evaluate_instruction(
                     PrimitiveValue::String(s) if s.as_bytes().is_some_and(is_valid_identifier) => {
                         let object = object.clone();
                         let loc = *loc;
-                        let new_property = PropertyLiteral::String(crate::hir::StoreStr::new(
-                            bun_ast::data_store_dupe_str(s.as_bytes().expect("guarded")),
+                        let new_property = PropertyLiteral::String(HirAlloc::dupe_str(
+                            s.as_bytes().expect("guarded"),
                         ));
                         instr.value = InstructionValue::PropertyLoad {
                             object,
@@ -344,8 +344,8 @@ fn evaluate_instruction(
                         let object = object.clone();
                         let store_value = value.clone();
                         let loc = *loc;
-                        let new_property = PropertyLiteral::String(crate::hir::StoreStr::new(
-                            bun_ast::data_store_dupe_str(s.as_bytes().expect("guarded")),
+                        let new_property = PropertyLiteral::String(HirAlloc::dupe_str(
+                            s.as_bytes().expect("guarded"),
                         ));
                         instr.value = InstructionValue::PropertyStore {
                             object,

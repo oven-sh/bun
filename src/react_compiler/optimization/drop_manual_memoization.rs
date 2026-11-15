@@ -17,10 +17,10 @@ use crate::diagnostics::CompilerDiagnostic;
 use crate::diagnostics::CompilerDiagnosticDetail;
 use crate::diagnostics::ErrorCategory;
 use crate::hir::ArrayElement;
-use crate::hir::AstAlloc;
 use crate::hir::DependencyPathEntry;
 use crate::hir::Effect;
 use crate::hir::EvaluationOrder;
+use crate::hir::HirAlloc;
 use crate::hir::HirFunction;
 use crate::hir::HirVec;
 use crate::hir::IdentifierId;
@@ -162,7 +162,7 @@ pub(crate) fn drop_manual_memoization(
                 if let Some(insert_instr) = queued_inserts.swap_remove(instr_id) {
                     if next_instructions.is_none() {
                         next_instructions =
-                            Some(AstAlloc::vec_from_slice(&block.instructions[..i]));
+                            Some(HirAlloc::vec_from_slice(&block.instructions[..i]));
                     }
                     let ni = next_instructions.as_mut().unwrap();
                     ni.push(instr_id);
@@ -635,7 +635,7 @@ fn extract_manual_memoization_args(
     }
 
     let deps_info = maybe_deps_list.unwrap();
-    let mut deps_list: HirVec<ManualMemoDependency> = AstAlloc::vec();
+    let mut deps_list: HirVec<ManualMemoDependency> = HirAlloc::vec();
     for dep in &deps_info.deps {
         let maybe_dep = sidemap.maybe_deps.get(dep.identifier);
         if let Some(d) = maybe_dep {

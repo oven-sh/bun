@@ -326,7 +326,7 @@ pub mod defines {
         }
     }
 
-    /// Threads share it only through the read-only `Box<Define>`, and the `StoreRef`s in `value` point into immutable, process-lifetime AST stores.
+    /// Threads share it only through the read-only `Box<Define>`, and the `StoreRef`s in `value` point at statics or into the arena of the transpiler that loaded it.
     #[derive(Clone)]
     pub struct DefineData {
         pub value: ExprData,
@@ -679,7 +679,6 @@ pub mod renamer {
     use bun_ast::SlotCounts;
     use bun_ast::scope::Scope;
     use bun_ast::symbol::{INVALID_NESTED_SCOPE_SLOT, SlotNamespace, Symbol};
-    use bun_collections::VecExt;
 
     pub(crate) fn assign_nested_scope_slots(
         _arena: &bun_alloc::Arena,

@@ -734,7 +734,7 @@ impl<'a> JSON5Parser<'a> {
         Ok(Expr::allocate(
             arena,
             E::Object {
-                properties: bun_alloc::AstAlloc::vec_from_iter(properties),
+                properties: G::PropertyList::from_slice_in(&properties, arena),
                 ..Default::default()
             },
             loc,
@@ -794,7 +794,7 @@ impl<'a> JSON5Parser<'a> {
         Ok(Expr::allocate(
             arena,
             E::Array {
-                items: bun_alloc::AstAlloc::vec_from_iter(items),
+                items: bun_ast::ExprNodeList::from_slice_in(&items, arena),
                 ..Default::default()
             },
             loc,

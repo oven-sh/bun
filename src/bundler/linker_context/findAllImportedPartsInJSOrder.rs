@@ -1,6 +1,6 @@
 use crate::mal_prelude::*;
 use bun_ast::{ImportKind, ImportRecord, StmtData, StmtOrExpr};
-use bun_collections::{AutoBitSet, HashMap, StringHashMap, VecExt};
+use bun_collections::{AutoBitSet, HashMap, StringHashMap};
 
 use crate::linker_context::merge_small_chunks::part_has_no_side_effects;
 use crate::options::Loader;

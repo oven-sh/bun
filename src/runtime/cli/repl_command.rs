@@ -57,8 +57,6 @@ impl ReplCommand {
             ..Default::default()
         });
 
-        bun_ast::initialize_store();
-
         // Validate DNS result order before VM init; wired onto the VM
         // post-init below, like run_command.rs.
         let dns_order = DnsOrder::from_string(&ctx.runtime_options.dns_result_order)

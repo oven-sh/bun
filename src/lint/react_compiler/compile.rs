@@ -3,7 +3,7 @@
 use crate::convert::{ConvertError, Converted, Recorded, Root, WrappedDefault, convert};
 use crate::finding::{Detail, Finding, Suggestion};
 use crate::host::LintHost;
-use bun_ast::ASTMemoryAllocator;
+use bun_ast::AstArena;
 use bun_core::strings;
 use bun_lint::ast::{BinOp, File, Func};
 use bun_lint::span::Span;
@@ -33,7 +33,7 @@ pub(crate) struct Compiler<'a> {
     wanted: Categories,
     config: EnvironmentConfig,
     /// Memory for the converted trees and the compiler.
-    arena: bun_alloc::Arena,
+    arena: AstArena,
 }
 
 /// oxlint's `react_compiler_plugin_options`, or the plugin's `COMPILER_OPTIONS`. With `has_no_foreign_config` we don't
@@ -82,7 +82,7 @@ impl<'a> Compiler<'a> {
             flavor,
             wanted,
             config: config_of(flavor, file.language().has_no_foreign_config),
-            arena: bun_alloc::Arena::new(),
+            arena: AstArena::new(),
         }
     }
 
@@ -96,17 +96,15 @@ impl<'a> Compiler<'a> {
     ) -> Result<(), Vec<Finding>> {
         // Nothing from the previous function is still in use. Most functions are small, so a new heap for each would
         // cost more than it's worth.
-        let _ = self.arena.reset_retain_with_limit(8 * 1024 * 1024);
+        self.arena.reset_retain_with_limit(8 * 1024 * 1024);
         let arena = &self.arena;
-        let mut allocator = ASTMemoryAllocator::borrowing(arena);
-        let _scope = allocator.enter();
         let converted = match convert(self.file, arena, func, self.flavor) {
             Ok(converted) => converted,
             Err(ConvertError::Using) => return Ok(()),
             Err(ConvertError::ThisParameter) => return Err(Vec::new()),
             Err(ConvertError::TooDeep) => return Err(vec![too_deep()]),
         };
-        let host = LintHost::new(&converted, arena, self.file.text());
+        let host = LintHost::new(&converted, self.file.text());
         let node = match &converted.root {
             Root::Function(function) => FunctionNode::Function(function),
             Root::Arrow(arrow) => FunctionNode::Arrow(arrow),
@@ -122,6 +120,7 @@ impl<'a> Compiler<'a> {
                 })
         };
         let linted = bun_react_compiler::lint_function(
+            arena,
             &node,
             &host,
             fn_type,

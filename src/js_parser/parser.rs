@@ -1373,7 +1373,6 @@ impl Default for PropertyOpts {
 
 pub struct ScanPassResult<'a> {
     pub import_records: Vec<ImportRecord<'a>>,
-    pub(crate) named_imports: bun_ast::ast_result::NamedImports,
     pub(crate) used_symbols: ParsePassSymbolUsageMap,
 }
 
@@ -1389,18 +1388,15 @@ impl<'a> ScanPassResult<'a> {
     pub fn init() -> ScanPassResult<'a> {
         ScanPassResult {
             import_records: Vec::new(),
-            named_imports: Default::default(),
             used_symbols: ParsePassSymbolUsageMap::default(),
         }
     }
 
     /// Empties it, keeping capacity. Being empty it borrows nothing, so any lifetime fits.
     pub fn recycle<'b>(mut self) -> ScanPassResult<'b> {
-        self.named_imports.clear_retaining_capacity();
         self.used_symbols.clear_retaining_capacity();
         ScanPassResult {
             import_records: bun_collections::recycle_vec(self.import_records),
-            named_imports: self.named_imports,
             used_symbols: self.used_symbols,
         }
     }

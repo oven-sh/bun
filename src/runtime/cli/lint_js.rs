@@ -206,7 +206,6 @@ fn start_vm() -> Result<(), Vec<u8>> {
         ]
         .concat()
     };
-    bun_ast::initialize_store();
     static ARGV: std::sync::LazyLock<Vec<Box<[u8]>>> =
         std::sync::LazyLock::new(|| bun_core::argv().iter().skip(1).map(Box::from).collect());
     let vm = VirtualMachine::init(jsc::VirtualMachineInitOptions {

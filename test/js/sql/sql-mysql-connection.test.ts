@@ -1061,6 +1061,38 @@ describe("scripted server", () => {
     }
   });
 
+  test.each([0, 3])("the column transform runs the event loop with %p bytes left of its read", async behind => {
+    const reply = mysqlTextResultSet(1, [{ name: "owner", type: 0xfd }], [["A"], ["B"]]);
+    const firstRow = 5 + 4 + reply.readUIntLE(5, 3);
+    const asked = Promise.withResolvers<net.Socket>();
+    const { port, server } = await mysqlServer({ onCommand: socket => asked.resolve(socket) });
+    const write = (socket: net.Socket, bytes: Buffer) => (socket.write(bytes), loopbackFence());
+    try {
+      let socket: net.Socket;
+      let built: Promise<unknown> | undefined;
+      await using sql = new SQL({
+        url: `mysql://root@127.0.0.1:${port}/db`,
+        max: 1,
+        transform: {
+          column: name => {
+            // Bun.build() runs the event loop until an async setup() settles.
+            const setup = () => write(socket, reply.subarray(firstRow + behind));
+            built = Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup }] });
+            return name.toUpperCase();
+          },
+        },
+      });
+      const rows = outcome(sql.unsafe("A").simple());
+      socket = await asked.promise;
+      await write(socket, reply.subarray(0, 7));
+      await write(socket, reply.subarray(7, firstRow + behind));
+      expect(await rows).toEqual([{ OWNER: "A" }, { OWNER: "B" }]);
+      await built;
+    } finally {
+      server.close();
+    }
+  });
+
   test("a packet that is not the next one of the reply fails the connection, and nobody gets its rows", async () => {
     const { port, server } = await mysqlServer({
       onCommand(socket, payload) {

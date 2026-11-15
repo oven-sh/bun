@@ -243,25 +243,41 @@ describe.concurrent("in a subprocess", () => {
     expect(result).toEqual(clean("subscribed\ngot wake\nunlistened\n"));
   });
 
-  test.each([1, 2])("a listener runs the event loop while part of a message comes in (%p reads)", async reads => {
-    const result = await run(`
-      const write = bytes => { for (const socket of sockets) socket.write(bytes); return loopbackFence(); };
-      const [first, second] = ["first", "second"].map(payload => pgNotificationResponse(1, "ch", payload));
-      let waited = false;
-      await sql.listen("ch", payload => {
-        console.log(payload);
-        if (waited) return;
-        waited = true;
-        // Bun.build() runs the event loop until an async setup() settles.
-        const setup = () => write(second.subarray(0, 7));
-        Bun.build({ entrypoints: [import.meta.path], target: "bun", plugins: [{ name: "wait", setup }] });
-      });
-      if (${reads} === 2) await write(first.subarray(0, 7));
-      await write(first.subarray(${reads} === 2 ? 7 : 0));
-      await write(second.subarray(7));
+  // Bun.build() runs the event loop until an async setup() settles.
+  const once = (setup: string) => `
+    const write = bytes => { for (const socket of sockets) socket.write(bytes); return loopbackFence(); };
+    const [a, b, c, d] = ["a", "b", "c".repeat(200), "d"].map(payload => pgNotificationResponse(1, "ch", payload));
+    let waited = false;
+    await sql.listen("ch", payload => {
+      console.log(payload[0]);
+      if (waited) return;
+      waited = true;
+      Bun.build({ entrypoints: [import.meta.path], target: "bun", plugins: [{ name: "wait", setup: ${setup} }] });
+    });
+  `;
+
+  test.each([0, 7].flatMap(split => ["0", "7", "b.length"].map(behind => ({ split, behind }))))(
+    "a listener runs the event loop while more comes in: %j",
+    async ({ split, behind }) => {
+      const result = await run(`
+      ${once(`() => write(stream.subarray(a.length + ${behind}, -d.length + 7))`)}
+      const stream = Buffer.concat([a, b, c, d]);
+      if (${split}) await write(stream.subarray(0, ${split}));
+      await write(stream.subarray(${split}, a.length + ${behind}));
+      await write(d.subarray(7));
       await sql.close();
     `);
-    expect(result).toEqual(clean("first\nsecond\n"));
+      expect(result).toEqual(clean("a\nb\nc\nd\n"));
+    },
+  );
+
+  test("a listener runs the event loop until its own connection answers", async () => {
+    const result = await run(`
+      ${once(`async () => { await sql.listen("other", () => {}); console.log("listening"); }`)}
+      await write(Buffer.concat([a, b]));
+      await sql.close();
+    `);
+    expect(result).toEqual(clean("a\nb\nlistening\n"));
   });
 
   test("a dropped connection keeps the process alive through the backoff and reconnects", async () => {

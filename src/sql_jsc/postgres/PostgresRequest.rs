@@ -17,6 +17,7 @@ use crate::postgres::PostgresSQLConnection;
 use crate::postgres::PostgresSQLQuery;
 use crate::postgres::PostgresSQLStatement;
 use crate::postgres::Signature;
+use crate::postgres::postgres_sql_connection::ListenerCall;
 use crate::postgres::types::{date, tag_jsc};
 
 bun_core::declare_scope!(Postgres, visible);
@@ -47,7 +48,6 @@ pub enum MessageType {
     CopyOutResponse,
     CopyDone,
     CopyBothResponse,
-    NotificationResponse,
 }
 
 /// A value past the described parameters goes as text: the server reports the count (08P01).
@@ -410,15 +410,16 @@ fn on_ssl_request_reply(
     }
 }
 
+/// Stops behind a notification: a listener can run the event loop, which reuses the receive buffer.
 pub(crate) fn on_data(
     connection: &PostgresSQLConnection,
     reader: &protocol::NewReader<'_>,
-) -> Result<(), AnyPostgresError> {
+) -> Result<Option<ListenerCall>, AnyPostgresError> {
     use MessageType as M;
     loop {
         // A handler can `fail()` and user code can close: the rest of the read is dropped.
         if connection.status.get().is_closed() {
-            return Ok(());
+            return Ok(None);
         }
         reader.mark_message_start();
         let c = reader.int::<u8>()?;
@@ -428,7 +429,7 @@ pub(crate) fn on_data(
         // it is the only unframed backend byte and must be handled before the
         // frame peek below.
         if let TLSStatus::MessageSent(n) = connection.tls_status.get() {
-            return on_ssl_request_reply(connection, c, n);
+            return on_ssl_request_reply(connection, c, n).map(|()| None);
         }
 
         // Every other backend message is Byte1(type) Int32(length) body[length-4].
@@ -440,6 +441,8 @@ pub(crate) fn on_data(
         // with length in message").
         let (before, length) = reader.peek_length()?;
         let after = before - length;
+        // The column transform runs before the rows can be read.
+        connection.reads_wait.set(after != 0 || c == b'T');
 
         match c {
             b'D' => connection.on(M::DataRow, reader)?,
@@ -463,7 +466,15 @@ pub(crate) fn on_data(
             b'H' => connection.on(M::CopyOutResponse, reader)?,
             b'c' => connection.on(M::CopyDone, reader)?,
             b'W' => connection.on(M::CopyBothResponse, reader)?,
-            b'A' => connection.on(M::NotificationResponse, reader)?,
+            b'A' => {
+                let notification = protocol::NotificationResponse::decode_internal(reader)?;
+                if reader.peek().len() == after
+                    && let Some(call) = connection.listener_call(&notification)?
+                {
+                    reader.mark_message_start();
+                    return Ok(Some(call));
+                }
+            }
 
             _ => {
                 bun_core::scoped_log!(Postgres, "Unknown message: {}", c as char);
@@ -472,7 +483,7 @@ pub(crate) fn on_data(
         }
 
         if connection.status.get().is_closed() {
-            return Ok(());
+            return Ok(None);
         }
         if reader.peek().len() != after {
             bun_core::scoped_log!(

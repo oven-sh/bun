@@ -53,6 +53,8 @@ pub struct MySQLConnection {
 
     write_buffer: OffsetByteList,
     read_buffer: OffsetByteList,
+    /// The parser is not done: what is read while a handler runs the event loop is left to it.
+    reads_wait: bool,
     /// The one behind the last packet that was read.
     sequence_id: u8,
     /// The reply to the head of the queue has begun: its next packet has `sequence_id`. The first
@@ -96,6 +98,7 @@ impl Default for MySQLConnection {
             status: ConnectionState::Connecting,
             write_buffer: OffsetByteList::default(),
             read_buffer: OffsetByteList::default(),
+            reads_wait: false,
             sequence_id: 0,
             in_reply: false,
             queue: MySQLRequestQueue::init(),
@@ -396,29 +399,39 @@ impl MySQLConnection {
         false
     }
 
-    pub(crate) fn read_and_process_data(&mut self, data: &[u8]) -> Result<(), AnyMySQLError> {
-        self.flags.insert(ConnectionFlags::IS_PROCESSING_DATA);
+    pub(crate) fn read_and_process_data(&mut self, mut data: &[u8]) -> Result<(), AnyMySQLError> {
         SocketMonitor::read(data);
+        if self.reads_wait {
+            bun_core::handle_oom(self.read_buffer.write(data));
+            return Ok(());
+        }
+        self.flags.insert(ConnectionFlags::IS_PROCESSING_DATA);
 
-        let cursor = core::cell::Cell::new(0usize);
-        let message_start = core::cell::Cell::new(0usize);
-        let result = if self.read_buffer.remaining().is_empty() {
-            let result = self.process_packets(PacketReader::new(data, &cursor, &message_start));
-            if result == Err(AnyMySQLError::ShortRead) {
-                bun_core::handle_oom(self.read_buffer.write(&data[message_start.get()..]));
+        let mut buffer = core::mem::take(&mut self.read_buffer);
+        let result = loop {
+            let cursor = core::cell::Cell::new(0usize);
+            let message_start = core::cell::Cell::new(0usize);
+            let result;
+            if buffer.remaining().is_empty() {
+                result = self.process_packets(PacketReader::new(data, &cursor, &message_start));
+                if result == Err(AnyMySQLError::ShortRead) {
+                    bun_core::handle_oom(buffer.write(&data[message_start.get()..]));
+                }
+            } else {
+                bun_core::handle_oom(buffer.write(data));
+                let reader = PacketReader::new(buffer.remaining(), &cursor, &message_start);
+                result = self.process_packets(reader);
+                buffer.consume(message_start.get());
             }
-            result
-        } else {
-            let mut buffer = core::mem::take(&mut self.read_buffer);
-            bun_core::handle_oom(buffer.write(data));
-            let reader = PacketReader::new(buffer.remaining(), &cursor, &message_start);
-            let result = self.process_packets(reader);
-            buffer.consume(message_start.get());
-            // A handler can run the event loop, and with it a read of this socket.
-            bun_core::handle_oom(buffer.write(self.read_buffer.remaining()));
-            self.read_buffer = buffer;
-            result
+            let read_meanwhile = core::mem::take(&mut self.read_buffer);
+            if read_meanwhile.len() == 0 || result != Err(AnyMySQLError::ShortRead) {
+                break result;
+            }
+            bun_core::handle_oom(buffer.write(read_meanwhile.remaining()));
+            data = b"";
         };
+        self.read_buffer = buffer;
+        self.reads_wait = false;
 
         self.flags.remove(ConnectionFlags::IS_PROCESSING_DATA);
         match result {
@@ -452,6 +465,7 @@ impl MySQLConnection {
             }
             let payload = &reader.peek()[PacketHeader::SIZE..packet_length];
             reader.set_offset_from_start(packet_length);
+            self.reads_wait = !reader.peek().is_empty();
             self.handle_packet(
                 payload,
                 header.sequence_id,
@@ -938,6 +952,7 @@ impl MySQLConnection {
         }
 
         reader.set_offset_from_start(wire_length);
+        self.reads_wait = !reader.peek().is_empty();
         self.handle_packet(&payload, first_sequence_id, sequence_id)
     }
 
@@ -1292,6 +1307,8 @@ impl MySQLConnection {
                             statement
                                 .execution_flags
                                 .insert(mysql_statement::ExecutionFlags::NEEDS_DUPLICATE_CHECK);
+                            // The column transform runs before the rows can be read.
+                            self.reads_wait = true;
                             self.js_connection_ref().on_column_name(request, index)?;
                         }
                     }

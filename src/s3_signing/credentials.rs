@@ -6,7 +6,6 @@ use bstr::BStr;
 use bun_core::strings;
 use bun_http_types::Method::Method;
 use bun_picohttp::Header as PicoHeader;
-use bun_ptr::{RefCount, RefPtr};
 
 use super::acl::ACL;
 use super::storage_class::StorageClass;
@@ -154,88 +153,21 @@ fn aws_cache_set(day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN]) {
 // S3Credentials
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(bun_ptr::RefCounted)]
+#[derive(Clone, Default)]
 pub struct S3Credentials {
-    ref_count: RefCount,
     pub access_key_id: Box<[u8]>,
     pub secret_access_key: Box<[u8]>,
     pub region: Box<[u8]>,
     pub endpoint: Box<[u8]>,
     pub bucket: Box<[u8]>,
     pub session_token: Box<[u8]>,
-    pub(crate) storage_class: Option<StorageClass>,
     /// Important for MinIO support.
     pub insecure_http: bool,
     /// indicates if the endpoint is a virtual hosted style bucket
     pub virtual_hosted_style: bool,
 }
 
-// `S3Credentials` owns its bytes via
-// `Box<[u8]>`, so a manual `Clone` deep-copies them and resets `ref_count` — the
-// intrusive count only applies to heap (`RefPtr`) instances; a fresh value
-// must start at 1.
-impl Clone for S3Credentials {
-    fn clone(&self) -> Self {
-        Self {
-            ref_count: RefCount::init(),
-            access_key_id: self.access_key_id.clone(),
-            secret_access_key: self.secret_access_key.clone(),
-            region: self.region.clone(),
-            endpoint: self.endpoint.clone(),
-            bucket: self.bucket.clone(),
-            session_token: self.session_token.clone(),
-            storage_class: self.storage_class,
-            insecure_http: self.insecure_http,
-            virtual_hosted_style: self.virtual_hosted_style,
-        }
-    }
-}
-
-impl Default for S3Credentials {
-    fn default() -> Self {
-        Self {
-            ref_count: RefCount::init(),
-            access_key_id: Box::default(),
-            secret_access_key: Box::default(),
-            region: Box::default(),
-            endpoint: Box::default(),
-            bucket: Box::default(),
-            session_token: Box::default(),
-            storage_class: None,
-            insecure_http: false,
-            virtual_hosted_style: false,
-        }
-    }
-}
-
 impl S3Credentials {
-    /// Construct a value (refcount = 1) from owned field data. Exists so
-    /// higher-tier callers (e.g. `bun_runtime`) can build the refcounted
-    /// signing credentials from the lower-tier `bun_dotenv::S3Credentials`
-    /// POD mirror without naming the private `ref_count` field.
-    pub fn new_value(
-        access_key_id: Box<[u8]>,
-        secret_access_key: Box<[u8]>,
-        region: Box<[u8]>,
-        endpoint: Box<[u8]>,
-        bucket: Box<[u8]>,
-        session_token: Box<[u8]>,
-        insecure_http: bool,
-    ) -> Self {
-        Self {
-            ref_count: RefCount::init(),
-            access_key_id,
-            secret_access_key,
-            region,
-            endpoint,
-            bucket,
-            session_token,
-            storage_class: None,
-            insecure_http,
-            virtual_hosted_style: false,
-        }
-    }
-
     pub fn estimated_size(&self) -> usize {
         size_of::<S3Credentials>()
             + self.access_key_id.len()
@@ -243,21 +175,6 @@ impl S3Credentials {
             + self.secret_access_key.len()
             + self.endpoint.len()
             + self.bucket.len()
-    }
-
-    pub fn dupe(&self) -> RefPtr<S3Credentials> {
-        RefPtr::new(S3Credentials {
-            ref_count: RefCount::init(),
-            access_key_id: self.access_key_id.clone(),
-            secret_access_key: self.secret_access_key.clone(),
-            region: self.region.clone(),
-            endpoint: self.endpoint.clone(),
-            bucket: self.bucket.clone(),
-            session_token: self.session_token.clone(),
-            storage_class: None,
-            insecure_http: self.insecure_http,
-            virtual_hosted_style: self.virtual_hosted_style,
-        })
     }
 
     pub fn sign_request<const ALLOW_EMPTY_PATH: bool>(
@@ -1230,8 +1147,6 @@ pub struct S3CredentialsWithOptions {
     pub content_encoding: Option<bun_core::Utf8Bytes<'static>>,
     /// indicates if requester pays for the request (for requester pays buckets)
     pub request_payer: bool,
-    /// indicates if the credentials have changed
-    pub changed_credentials: bool,
 }
 
 // ──────────────────────────────────────────────────────────────────────────

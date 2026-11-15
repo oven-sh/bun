@@ -3148,6 +3148,45 @@ impl<'a> HTTPClient<'a> {
         self.flush_stream::<IS_SSL>(socket);
     }
 
+    /// The tunnel's half of [`Self::write_to_stream_using_buffer`].
+    fn write_to_tunnel(
+        proxy: &mut ProxyTunnel,
+        request_sent_len: &mut usize,
+        buffer: &mut bun_io::StreamBuffer,
+        data: &[u8],
+    ) -> bool {
+        // Any Err is backpressure: WantRead/WantWrite retry on the next
+        // on_writable, and a fatal SSL error already ran on_close (and
+        // may have freed *self), so bail via `true` without touching
+        // self — same as the other ProxyTunnel::write callers.
+        let pending = buffer.slice().len();
+        if pending > 0 {
+            let Ok(n) = ProxyTunnel::write(proxy, buffer.slice()) else {
+                let _ = buffer.write(data);
+                return true;
+            };
+            *request_sent_len += n;
+            buffer.cursor += n;
+            if n < pending {
+                let _ = buffer.write(data);
+                return true;
+            }
+            buffer.reset();
+        }
+        if !data.is_empty() {
+            let Ok(n) = ProxyTunnel::write(proxy, data) else {
+                let _ = buffer.write(data);
+                return true;
+            };
+            *request_sent_len += n;
+            if n < data.len() {
+                let _ = buffer.write(&data[n..]);
+                return true;
+            }
+        }
+        false
+    }
+
     /// Write buffered data to the socket returning true if there is backpressure
     fn write_to_stream_using_buffer<const IS_SSL: bool>(
         proxy_tunnel: Option<*mut ProxyTunnel>,
@@ -3163,36 +3202,7 @@ impl<'a> HTTPClient<'a> {
                 return Err(crate::Error::ConnectionClosed);
             }
             let proxy = proxy_tunnel::raw_as_mut(proxy_ptr);
-            // Any Err is backpressure: WantRead/WantWrite retry on the next
-            // on_writable, and a fatal SSL error already ran on_close (and
-            // may have freed *self), so bail via Ok(true) without touching
-            // self — same as the other ProxyTunnel::write callers.
-            let pending = buffer.slice().len();
-            if pending > 0 {
-                let Ok(n) = ProxyTunnel::write(proxy, buffer.slice()) else {
-                    let _ = buffer.write(data);
-                    return Ok(true);
-                };
-                *request_sent_len += n;
-                buffer.cursor += n;
-                if n < pending {
-                    let _ = buffer.write(data);
-                    return Ok(true);
-                }
-                buffer.reset();
-            }
-            if !data.is_empty() {
-                let Ok(n) = ProxyTunnel::write(proxy, data) else {
-                    let _ = buffer.write(data);
-                    return Ok(true);
-                };
-                *request_sent_len += n;
-                if n < data.len() {
-                    let _ = buffer.write(&data[n..]);
-                    return Ok(true);
-                }
-            }
-            return Ok(false);
+            return Ok(Self::write_to_tunnel(proxy, request_sent_len, buffer, data));
         }
 
         let to_send_len = buffer.slice().len();

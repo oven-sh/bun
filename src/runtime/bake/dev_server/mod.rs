@@ -10,6 +10,7 @@
 //! For questions about its core philosophy, email `devserver@paperclover.net`
 
 use ::core::ffi::c_void;
+use ::core::pin::Pin;
 use bun_bundler::mal_prelude::*;
 use std::io::Write as _;
 use std::sync::Arc;
@@ -20,7 +21,7 @@ use bun_ast::Log;
 use bun_bundler::options_impl::TargetExt as _;
 use bun_collections::{ArrayHashMap, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap};
 use bun_core::{self as str, String as BunString, ZStr, strings};
-use bun_core::{Environment, Output};
+use bun_core::{Environment, Output, Timespec, TimespecMockMode};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
@@ -37,7 +38,6 @@ use crate::bake;
 use crate::bake::router::{self, FrameworkRouter, OpaqueFileId};
 use crate::server::html_bundle::HTMLBundleRoute;
 use crate::server::{PendingRequest, Served};
-use crate::timer::{EventLoopTimerState, EventLoopTimerTag};
 use bun_ast::Loader;
 use bun_bundler::{self as bundler, BundleV2, Transpiler};
 use bun_http::{Method, MimeType};
@@ -134,7 +134,32 @@ pub(crate) enum TraceImportGoal {
 // ──────────────────────────────────────────────────────────────────────────
 // EventLoopTimer
 // ──────────────────────────────────────────────────────────────────────────
-pub(crate) use bun_event_loop::EventLoopTimer::{EventLoopTimer, OwnedTimer, Tag as TimerTag};
+use bun_event_loop::EventLoopTimer::{OwnedTimer, Tag as TimerTag, TimerRef};
+
+/// Boxed: a `&mut DevServer` could move a timer that is armed.
+pub(crate) struct DevServerTimers {
+    pub(crate) dev: *mut DevServer,
+    memory_visualizer_timer: OwnedTimer<{ TimerTag::DevServerMemoryVisualizerTick }>,
+    weak_ref_sweep_timer: OwnedTimer<{ TimerTag::DevServerSweepSourceMaps }>,
+}
+
+bun_event_loop::impl_timer_owner!(DevServerTimers;
+    memory_visualizer_timer: OwnedTimer<DevServerMemoryVisualizerTick>,
+    weak_ref_sweep_timer: OwnedTimer<DevServerSweepSourceMaps>,
+);
+
+impl DevServerTimers {
+    fn arm_memory_visualizer_timer(self: Pin<&Self>) {
+        let timer = TimerRef::from_pin::<{ TimerTag::DevServerMemoryVisualizerTick }, _>(self);
+        let next = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, 1000);
+        crate::jsc_hooks::timer_all().update(timer, &next);
+    }
+
+    fn arm_weak_ref_sweep_timer(self: Pin<&Self>, next: &Timespec) {
+        let timer = TimerRef::from_pin::<{ TimerTag::DevServerSweepSourceMaps }, _>(self);
+        crate::jsc_hooks::timer_all().update(timer, next);
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // IncrementalResult / GraphTraceState
@@ -538,15 +563,13 @@ pub(crate) struct DevServer {
     pub(crate) emit_incremental_visualizer_events: u32,
     /// Reference count to number of active sockets with the memory_visualizer enabled.
     pub(crate) emit_memory_visualizer_events: u32,
-    pub(crate) memory_visualizer_timer: OwnedTimer,
+    pub(crate) timers: bun_ptr::AliasableBox<DevServerTimers>,
 
     pub(crate) assume_perfect_incremental_bundling: bool,
 
     /// If true, console logs from the browser will be echoed to the server console.
     pub(crate) broadcast_console_log_from_browser_to_server: bool,
 }
-
-bun_event_loop::impl_timer_owner!(DevServer; from_timer_ptr => memory_visualizer_timer);
 
 const INTERNAL_PREFIX: &str = "/_bun";
 

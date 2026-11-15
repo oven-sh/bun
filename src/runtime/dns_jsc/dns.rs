@@ -40,7 +40,7 @@ use super::cares_jsc::error_to_deferred;
 use crate::generated_bindgen::dns::LookupOptions;
 use crate::generated_bindgen::dns_internals::ResolverOptions;
 use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimerTag, RefCountedTimer, TimerRef};
 use bun_cares_sys::c_ares_draft as c_ares;
 
 // `sockaddr_storage` / `addrinfo` / `AF_*` / `AI_*` are absent from `libc` on
@@ -70,17 +70,17 @@ type Sockaddr = netc::sockaddr;
 
 /// Helper: fetch the per-VM global DNS resolver (port of
 /// `RareData::globalDNSResolver`). The storage is
-/// [`crate::jsc_hooks::RuntimeState::global_dns_data`] — concrete
-/// `Option<Box<GlobalData>>`, freed by `deinit_runtime_state` on VM teardown.
+/// [`crate::jsc_hooks::RuntimeState::global_dns_resolver`], released by
+/// `deinit_runtime_state` on VM teardown.
 ///
 /// R-2: returns `&Resolver` (shared). All Resolver mutation routes through
 /// `Cell` / `JsCell` fields, so a shared borrow is sufficient and avoids the
 /// `noalias` hazard when c-ares callbacks re-enter on the same global resolver.
 #[inline]
 fn global_resolver(global_this: &JSGlobalObject) -> &'static Resolver {
-    &crate::jsc_hooks::global_dns_data()
-        .get_or_init(|| GlobalData::init(global_this.bun_vm()))
-        .resolver
+    // No context: the VM-global resolver serves every context of the realm.
+    crate::jsc_hooks::global_dns_resolver()
+        .get_or_init(|| RefPtr::new(Resolver::setup(global_this.bun_vm(), None)))
 }
 
 bun_output::declare_scope!(DNSLookup, visible);
@@ -711,24 +711,6 @@ impl Outcome {
             Outcome::Error(e) => promise.reject(global, Ok(e)),
             Outcome::Stopped => return,
         });
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// GlobalData
-// ──────────────────────────────────────────────────────────────────────────
-
-pub(crate) struct GlobalData {
-    /// Its first ref is never released, so it drops with this struct.
-    pub(crate) resolver: Resolver,
-}
-
-impl GlobalData {
-    pub(crate) fn init(vm: &VirtualMachine) -> Box<Self> {
-        Box::new(Self {
-            // The VM-global resolver serves every context of the realm.
-            resolver: Resolver::setup(vm, None),
-        })
     }
 }
 
@@ -1952,9 +1934,7 @@ pub(crate) struct Resolver {
     pub(crate) polls: JsCell<PollsMap>,
     pub(crate) options: Cell<c_ares::ChannelOptions>,
 
-    pub(crate) event_loop_timer: EventLoopTimer,
-    /// Held while the timer is armed.
-    timer_ref: JsCell<Option<RefPtr<Resolver>>>,
+    event_loop_timer: RefCountedTimer<{ EventLoopTimerTag::DNSResolver }>,
 
     pending: enum_map::EnumMap<QueryKind, PendingCache>,
     /// Indexed by the slot in `pending[QueryKind::HostNative]`.
@@ -1967,7 +1947,7 @@ pub(crate) struct Resolver {
     pub(crate) abort_handle: bun_jsc::AbortHandle,
 }
 
-bun_event_loop::impl_timer_owner!(Resolver; from_timer_ptr => event_loop_timer);
+bun_event_loop::impl_timer_owner!(Resolver; event_loop_timer: RefCountedTimer<DNSResolver>);
 
 bun_jsc::impl_abort_handle_owner!(Resolver, abort_handle, |this, _cause| {
     // SAFETY: trait contract — `this` is live (armed ⇒ `destroy_channel` has
@@ -2161,8 +2141,7 @@ impl Resolver {
             vm: bun_ptr::BackRef::new(vm),
             polls: JsCell::new(PollsMap::new()),
             options: Cell::new(c_ares::ChannelOptions::default()),
-            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DNSResolver),
-            timer_ref: JsCell::new(None),
+            event_loop_timer: RefCountedTimer::init_paused(),
             pending: Default::default(),
             #[cfg(windows)]
             pending_uv_requests: [const { Cell::new(ptr::null_mut()) }; PENDING_CACHE_SLOTS],
@@ -2195,12 +2174,6 @@ impl Resolver {
         // UnsafeCell-backed, so the re-entrant `ares_process_fd` callbacks
         // (`request_completed`, `PendingQuery::resolve`) may freely re-derive
         // `&Resolver` from their stored ctx without aliasing UB.
-        let _timer_ref = self.timer_ref.take();
-
-        self.event_loop_timer
-            .state
-            .set(EventLoopTimerState::PENDING);
-
         if let Ok(channel) = self.get_channel_or_error(vm.global()) {
             if self.any_requests_pending() {
                 c_ares::ares_process_fd(&channel, c_ares::ARES_SOCKET_BAD, c_ares::ARES_SOCKET_BAD);
@@ -2252,33 +2225,28 @@ impl Resolver {
     }
 
     fn add_timer(&self, now: Option<&bun::timespec>, delay_ms: i64) -> bool {
-        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
+        if self.event_loop_timer.is_active() {
             return false;
         }
 
-        self.timer_ref.set(Some(self.ref_guard()));
         let now_ts = now
             .copied()
             .unwrap_or_else(|| bun::timespec::now(bun::TimespecMockMode::ForceRealTime));
         let next = now_ts.add_ms(delay_ms);
-        self.event_loop_timer.next.set(next);
         let uws_loop = self.vm().uws_loop();
         let timers = crate::jsc_hooks::timer_all();
         timers.increment_timer_ref(1, uws_loop);
-        timers.insert(&raw const self.event_loop_timer);
+        timers.update(TimerRef::from_ref_ptr(self.ref_guard()), &next);
         true
     }
 
     fn remove_timer(&self) {
-        if self.event_loop_timer.state.get() != EventLoopTimerState::ACTIVE {
+        let Some(_timer_ref) = self.event_loop_timer.disarm() else {
             return;
-        }
+        };
 
-        let timers = crate::jsc_hooks::timer_all();
-        timers.remove(&self.event_loop_timer);
         // Normally checkTimeouts does this, so we have to be sure to do it ourself if we cancel the timer
-        timers.increment_timer_ref(-1, self.vm().uws_loop());
-        self.timer_ref.set(None);
+        crate::jsc_hooks::timer_all().increment_timer_ref(-1, self.vm().uws_loop());
     }
 
     fn channel(&self) -> Option<ChannelGuard<'_>> {

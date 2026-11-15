@@ -1,19 +1,20 @@
 use core::cell::{Cell, OnceCell, RefCell};
 use core::ffi::c_void;
 
+use crate::jsc_hooks::timer_all;
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use crate::webcore::AutoFlusher;
 use bun_boringssl as boringssl;
 use bun_collections::OffsetByteList;
 use bun_core::{Utf8Bytes, strings};
-use bun_event_loop::EventLoopTimer as Timer;
+use bun_event_loop::EventLoopTimer::{OwnedBy, RefCountedTimer, Tag as TimerTag, TimerRef};
 use bun_io::JsKeepAlive;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsRef, JsResult,
 };
-use bun_ptr::{AsCtxPtr, CellExt as _, OptionCellExt as _, RefPtr, VecDequeCellExt as _};
+use bun_ptr::{AsCtxPtr, CellExt as _, RefPtr, VecDequeCellExt as _};
 use bun_uws as uws;
 
 use super::protocol_jsc;
@@ -312,97 +313,22 @@ pub(crate) struct JSValkeyClient {
     /// `RareData.defaultClientSslCtx()` instead; `tls: false` leaves this empty.
     pub(crate) _secure: OnceCell<boringssl::c::OwnedSslCtx>,
 
-    pub(crate) timer: RefCountedTimer,
-    pub(crate) reconnect_timer: RefCountedTimer,
+    timer: RefCountedTimer<{ TimerTag::ValkeyConnectionTimeout }>,
+    reconnect_timer: RefCountedTimer<{ TimerTag::ValkeyConnectionReconnect }>,
     pub(crate) ref_count: bun_ptr::RefCount,
     /// The context whose script created the client: every dial, the retries
     /// its own timer starts included, joins that context's sockets.
     pub(crate) context: bun_jsc::ContextId,
 }
 
-/// Intrusive [`EventLoopTimer`] slot that owns one strong ref on
-/// [`JSValkeyClient`] (`held_ref`) while armed, so [`disarm`] and
-/// [`take_fire_ref`] release it exactly once even when the
-/// fire/close/reconnect paths re-enter each other.
-///
-/// [`EventLoopTimer`]: Timer::EventLoopTimer
-/// [`disarm`]: Self::disarm
-/// [`take_fire_ref`]: Self::take_fire_ref
-#[repr(C)]
-pub(crate) struct RefCountedTimer {
-    // Must be first (offset 0): `dispatch.rs` recovers `*mut JSValkeyClient`
-    // from the fired `*const EventLoopTimer` via `offset_of!(.., timer)`.
-    event_loop_timer: Timer::OwnedTimer,
-    held_ref: Cell<Option<RefPtr<JSValkeyClient>>>,
-}
-
-const _: () = assert!(core::mem::offset_of!(RefCountedTimer, event_loop_timer) == 0);
-
-impl RefCountedTimer {
-    fn new(tag: Timer::Tag) -> Self {
-        Self {
-            event_loop_timer: Timer::OwnedTimer::init_paused(tag),
-            held_ref: Cell::new(None),
-        }
-    }
-
-    #[inline]
-    fn state(&self) -> Timer::State {
-        self.event_loop_timer.state.get()
-    }
-
-    /// Insert into the VM timer heap to fire after `ms`, taking the keep-alive
-    /// ref if not already held. Disarms first if currently active.
-    fn arm(&self, owner: &JSValkeyClient, ms: u32) {
-        let _guard = owner.ref_guard();
-        if self.state() == Timer::State::ACTIVE {
-            self.disarm();
-        }
-        if ms == 0 {
-            return;
-        }
-        let now = bun_core::Timespec::ms_from_now(
-            bun_core::TimespecMockMode::ForceRealTime,
-            i64::from(ms),
-        );
-        self.event_loop_timer.next.set(now);
-        // SAFETY: the timer is an unlinked field of the boxed `JSValkeyClient`
-        // (stable address until disarmed).
-        unsafe {
-            owner
-                .vm
-                .timer_insert(Timer::OwnedTimer::node(&raw const self.event_loop_timer))
-        };
-        if self.held_ref.is_none() {
-            self.held_ref.set(Some(owner.ref_guard()));
-        }
-    }
-
-    /// Remove from the VM timer heap and release the keep-alive ref if held.
-    fn disarm(&self) {
-        self.event_loop_timer.disarm();
-        // The caller's ref keeps the client live past this call.
-        self.held_ref.set(None);
-    }
-
-    /// Mark fired and hand the keep-alive ref (if held) to the callback scope.
-    /// Returns `None` when no ref was held, so a stray fire cannot over-release.
-    fn take_fire_ref(&self) -> Option<RefPtr<JSValkeyClient>> {
-        self.event_loop_timer.state.set(Timer::State::FIRED);
-        self.held_ref.take()
-    }
-}
-
 bun_event_loop::impl_timer_owner!(JSValkeyClient;
-    from_timer_ptr => timer,
-    from_reconnect_timer_ptr => reconnect_timer,
+    timer: RefCountedTimer<ValkeyConnectionTimeout>,
+    reconnect_timer: RefCountedTimer<ValkeyConnectionReconnect>,
 );
 
 impl Drop for JSValkeyClient {
     fn drop(&mut self) {
         debug_assert!(self.socket.get().is_closed());
-        debug_assert!(self.timer.held_ref.is_none());
-        debug_assert!(self.reconnect_timer.held_ref.is_none());
         self.unregister_auto_flusher();
     }
 }
@@ -680,8 +606,8 @@ impl JSValkeyClient {
             this_value: JsRef::empty(),
             poll_ref: JsKeepAlive::default(),
             _secure: OnceCell::new(),
-            timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
-            reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
+            timer: RefCountedTimer::init_paused(),
+            reconnect_timer: RefCountedTimer::init_paused(),
             context: cx.context().id(),
         }
     }
@@ -875,7 +801,7 @@ impl JSValkeyClient {
         // to give back (`connect()` forgets it only once it has a socket) and
         // `on_valkey_close` adopts none. The caller's scoped ref covers the
         // call.
-        self.reconnect_timer.disarm();
+        drop(self.reconnect_timer.disarm());
         self.on_close()
     }
 
@@ -916,15 +842,30 @@ impl JSValkeyClient {
         );
     }
 
+    /// Only disarms `timer` if `ms` is 0.
+    fn arm<const TAG: TimerTag>(&self, timer: &RefCountedTimer<TAG>, ms: u32)
+    where
+        RefCountedTimer<TAG>: OwnedBy<Self>,
+    {
+        let timer_ref = timer.disarm();
+        if ms == 0 {
+            return;
+        }
+        let this = timer_ref.unwrap_or_else(|| self.ref_guard());
+        let next = bun_core::Timespec::ms_from_now(
+            bun_core::TimespecMockMode::ForceRealTime,
+            i64::from(ms),
+        );
+        timer_all().update(TimerRef::from_ref_ptr::<TAG, _>(this), &next);
+    }
+
     fn reset_connection_timeout(&self) {
-        self.timer.arm(self, self.get_timeout_interval());
+        self.arm(&self.timer, self.get_timeout_interval());
     }
 
     pub(crate) fn on_connection_timeout(&self) -> JsResult<()> {
         debug!("onConnectionTimeout");
 
-        let _guard = self.ref_guard();
-        let _timer_ref = self.timer.take_fire_ref();
         if self.flags.failed.get() {
             return Ok(());
         }
@@ -999,9 +940,6 @@ impl JSValkeyClient {
     pub(crate) fn on_reconnect_timer(&self) -> JsResult<()> {
         debug!("Reconnect timer fired, attempting to reconnect");
 
-        let _guard = self.ref_guard();
-        let _timer_ref = self.reconnect_timer.take_fire_ref();
-
         // Execute reconnection logic
         self.reconnect()
     }
@@ -1014,7 +952,7 @@ impl JSValkeyClient {
     pub(crate) fn reconnect(&self) -> JsResult<()> {
         // Whether the retry timer fired or connect() got here first, this is
         // the one dial: a retry still armed would open a second socket.
-        self.reconnect_timer.disarm();
+        drop(self.reconnect_timer.disarm());
         if !self.flags.is_reconnecting.get() {
             return Ok(());
         }
@@ -1209,8 +1147,8 @@ impl JSValkeyClient {
         // This timer was bounding the attempt that just ended; left armed it
         // fires during the retry delay, and `fail()` then has no socket to
         // close and nothing settles connect(). `reconnect()` arms a new one.
-        self.timer.disarm();
-        self.reconnect_timer.arm(self, self.get_reconnect_delay());
+        drop(self.timer.disarm());
+        self.arm(&self.reconnect_timer, self.get_reconnect_delay());
     }
 
     // Callback for when Valkey client closes
@@ -1220,7 +1158,7 @@ impl JSValkeyClient {
 
         // Bounded the attempt that just ended; a dial that fails outright
         // arms no timer of its own, so left armed this one would fire into it.
-        self.timer.disarm();
+        drop(self.timer.disarm());
 
         let Some(this_jsvalue) = self.this_value.try_get() else {
             return Ok(());
@@ -1270,8 +1208,8 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn finalize(&self) {
-        self.timer.disarm();
-        self.reconnect_timer.disarm();
+        drop(self.timer.disarm());
+        drop(self.reconnect_timer.disarm());
         self.this_value.finalize();
         self.flags.finalized.set(true);
         self.close_socket_next_tick();

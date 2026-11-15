@@ -4047,9 +4047,7 @@ impl TestCommand {
                     if buntest.wants_wakeup.take() {
                         vm.wakeup();
                     }
-                    if buntest.timer.state.get() != crate::timer::EventLoopTimerState::ACTIVE
-                        && !vm.has_work_left()
-                    {
+                    if !bun_test_root.timer.is_active() && !vm.has_work_left() {
                         let (what, waits_for) = Self::what_runner_waits_for(&buntest);
                         let p = jsc::JSPromise::opaque_mut(Self::never_settled(
                             global, what, file_path,

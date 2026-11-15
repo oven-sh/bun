@@ -163,17 +163,15 @@ impl<'a> TestRunner<'a> {
         // Per-entry deadline, not the (only-advances-sooner) file timer.
         // `on_stack` pins the caller when still synchronously on stack;
         // else take the latest running entry so a sibling never terminates early.
-        if let Some(on_stack) = active_file.execution.on_stack.get() {
-            // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
-            return unsafe { &*on_stack.entry.cast::<bun_test::ExecutionEntry>() }.timespec;
+        if let Some(on_stack) = active_file.execution.on_stack.get().and_then(|on_stack| on_stack.entry) {
+            return active_file.step(on_stack).timespec.get();
         }
         if active_file.phase == bun_test::Phase::Execution {
-            if let Some(group) = active_file.execution.active_group_ref() {
+            if let Some(group) = active_file.execution.active_group() {
                 let mut latest: Option<bun_core::Timespec> = None;
-                for seq in group.sequences_const(&active_file.execution) {
-                    let Some(entry) = seq.active_entry else { continue };
-                    // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
-                    let ts = unsafe { entry.as_ref() }.timespec;
+                for seq in group.sequences(&active_file.execution) {
+                    let Some(entry) = seq.active_entry.get() else { continue };
+                    let ts = active_file.step(entry).timespec.get();
                     if latest.is_none_or(|l| ts.order(&l) == core::cmp::Ordering::Greater) {
                         latest = Some(ts);
                     }
@@ -630,31 +628,24 @@ pub(crate) fn file_generation() -> u32 {
 
 /// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides
 /// the running sequence's result so bun:test reports skip/todo instead of pass.
-/// `done`'s bound `DoneCallback.entry` names the intended sequence so a
+/// `done`'s bound `DoneCallback` names the intended sequence so a
 /// late call after the watchdog moved on cannot mark the currently-running one.
 pub(crate) fn node_test_mark_result(todo: bool, done: JsLocal<'_>) {
     use super::execution::Result as ExecResult;
-    let Some(buntest_strong) = bun_test::clone_active_strong() else {
+    let Some(buntest) = bun_test::clone_active_strong() else {
         return;
     };
-    // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
-    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
     // `done` is a JSBoundFunction whose bound-this is the DoneCallback wrapper.
     let wrapper = bun_jsc::cpp::Bun__JSBoundFunction__boundThis(done.to_js());
     let Some(dcb) = wrapper.as_class_ref::<bun_test::DoneCallback>() else {
         return;
     };
-    let bound = dcb.entry;
     if dcb.called.get() {
         // done() already ran and reported — nothing left to mark.
         return;
     }
-    let Some((sequence, _)) = buntest.execution.get_current_and_valid_execution_sequence(&bound)
-    else {
-        return;
-    };
-    if sequence.result == ExecResult::Pending {
-        sequence.result = if todo { ExecResult::Todo } else { ExecResult::Skip };
+    if let Some(sequence) = dcb.running_sequence(&buntest) {
+        sequence.set_result_if_pending(if todo { ExecResult::Todo } else { ExecResult::Skip });
     }
 }
 
@@ -678,15 +669,10 @@ pub(crate) mod on_unhandled_rejection {
             }
             // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
             let mut current_state_data = buntest.get_current_state_data();
-            // split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
-            let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data
-                .entry(buntest)
-                .map(std::ptr::from_mut::<bun_test::ExecutionEntry>);
-            if let Some(entry) = entry_ptr {
-                // SAFETY: `entry` belongs to the running file.
-                let mode = unsafe { (*entry).base.mode };
+            if let Some(entry) = current_state_data.entry(buntest) {
+                let mode = buntest.entry_of(entry).base.mode;
                 if let Some(sequence) = current_state_data.sequence(buntest) {
-                    if sequence.test_entry.map(|p| p.as_ptr()) != Some(entry)
+                    if sequence.test_entry != Some(entry)
                         // An expected failure has to come from the test's own callback, not from a stray rejection.
                         || matches!(mode, ScopeMode::Failing | ScopeMode::Fails)
                     {

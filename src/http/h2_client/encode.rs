@@ -183,12 +183,10 @@ pub(crate) fn write_request(
         encode_header(session, &mut encoded, name, h.value(), never_index)?;
     }
 
-    // request_body points into original_request_body.bytes (lives in client.state).
-    let body = client.state.request_body;
     let has_inline_body = matches!(
         client.state.original_request_body,
         HTTPRequestBody::Bytes(_)
-    ) && !body.is_empty();
+    ) && !client.request_body().is_empty();
     let is_streaming = matches!(
         client.state.original_request_body,
         HTTPRequestBody::Stream(_)
@@ -209,7 +207,6 @@ pub(crate) fn write_request(
     }
     session.encode_scratch = encoded;
     if has_inline_body {
-        stream.pending_body = body;
         write_body(&mut session.writer, client, stream, usize::MAX);
     } else if !is_streaming {
         stream.sent_end_stream();
@@ -322,11 +319,10 @@ fn write_body(writer: &mut FrameWriter, client: &mut HTTPClient, stream: &mut St
     }
     match &mut client.state.original_request_body {
         HTTPRequestBody::Bytes(_) => {
-            let pending = stream.pending_body;
-            let sent = write_data_windowed(writer, stream, pending.slice(), true, cap);
-            // pending_body[sent..] is a suffix of the original slice.
-            stream.pending_body = bun_ptr::RawSlice::new(&pending.slice()[sent..]);
-            if stream.pending_body.is_empty() {
+            let pending = &client.request_body()[stream.body_sent..];
+            let sent = write_data_windowed(writer, stream, pending, true, cap);
+            stream.body_sent += sent;
+            if sent == pending.len() {
                 stream.sent_end_stream();
                 client.state.request_stage = HTTPStage::Done;
             }

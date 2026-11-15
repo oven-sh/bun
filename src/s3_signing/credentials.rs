@@ -3,6 +3,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
+use bun_core::BoundedArray;
 use bun_core::strings;
 use bun_http_types::Method::Method;
 use bun_picohttp::Header as PicoHeader;
@@ -24,16 +25,6 @@ macro_rules! alloc_print {
 }
 
 use bun_core::fmt::hex_lower as HexLower;
-
-#[inline]
-fn pico_header_empty() -> PicoHeader {
-    PicoHeader::ZERO
-}
-
-#[inline]
-fn pico_header_new(name: &[u8], value: &[u8]) -> PicoHeader {
-    PicoHeader::new(name, value)
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // MultiPartUploadOptions
@@ -378,7 +369,7 @@ impl S3Credentials {
 
         let service_name: &str = "s3";
 
-        let aws_content_hash: &[u8] = content_hash.unwrap_or(b"UNSIGNED-PAYLOAD");
+        let aws_content_hash: &'static [u8] = content_hash.unwrap_or(b"UNSIGNED-PAYLOAD");
         let mut tmp_buffer = [0u8; 4096];
 
         let authorization: Box<[u8]> = 'brk: {
@@ -737,64 +728,11 @@ impl S3Credentials {
         result.storage_class = sign_options.storage_class;
         result.request_payer = request_payer;
         result.url = url;
-        result._headers_len = 4;
-        // Self-referential: _headers borrows from owned Box<[u8]> fields on SignResult.
-        // bun_picohttp::Header stores raw `*const u8, len` (verified), so the heap pointers stay
-        // valid across SignResult moves. SAFETY relies on the Box<[u8]> fields not being mutated
-        // after the corresponding header is written.
-        result._headers[0] = pico_header_new(b"x-amz-content-sha256", aws_content_hash);
-        result._headers[1] = pico_header_new(b"x-amz-date", &result.amz_date);
-        result._headers[2] = pico_header_new(b"Host", &result.host);
-        result._headers[3] = pico_header_new(b"Authorization", &result.authorization);
-
-        if let Some(acl_value) = acl {
-            result._headers[result._headers_len as usize] =
-                pico_header_new(b"x-amz-acl", acl_value);
-            result._headers_len += 1;
-        }
-
-        if let Some(token) = session_token {
-            let session_token_value = Box::<[u8]>::from(token);
-            result._headers[result._headers_len as usize] =
-                pico_header_new(b"x-amz-security-token", &session_token_value);
-            result.session_token = session_token_value;
-            result._headers_len += 1;
-        }
-        if let Some(storage_class_value) = storage_class {
-            result._headers[result._headers_len as usize] =
-                pico_header_new(b"x-amz-storage-class", storage_class_value);
-            result._headers_len += 1;
-        }
-
-        if let Some(cd) = content_disposition {
-            let content_disposition_value = Box::<[u8]>::from(cd);
-            result._headers[result._headers_len as usize] =
-                pico_header_new(b"content-disposition", &content_disposition_value);
-            result.content_disposition = content_disposition_value;
-            result._headers_len += 1;
-        }
-
-        if let Some(ce) = content_encoding {
-            let content_encoding_value = Box::<[u8]>::from(ce);
-            result._headers[result._headers_len as usize] =
-                pico_header_new(b"content-encoding", &content_encoding_value);
-            result.content_encoding = content_encoding_value;
-            result._headers_len += 1;
-        }
-
-        if let Some(c_md5) = content_md5.as_deref() {
-            let content_md5_value = Box::<[u8]>::from(c_md5);
-            result._headers[result._headers_len as usize] =
-                pico_header_new(b"content-md5", &content_md5_value);
-            result.content_md5 = content_md5_value;
-            result._headers_len += 1;
-        }
-
-        if request_payer {
-            result._headers[result._headers_len as usize] =
-                pico_header_new(b"x-amz-request-payer", b"requester");
-            result._headers_len += 1;
-        }
+        result.content_hash = aws_content_hash;
+        result.session_token = session_token.unwrap_or_default().into();
+        result.content_disposition = content_disposition.unwrap_or_default().into();
+        result.content_encoding = content_encoding.unwrap_or_default().into();
+        result.content_md5 = content_md5;
 
         Ok(result)
     }
@@ -867,6 +805,7 @@ const DIGESTED_HMAC_256_LEN: usize = 32;
 // SignResult
 // ──────────────────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct SignResult {
     pub(crate) amz_date: Box<[u8]>,
     pub(crate) host: Box<[u8]>,
@@ -875,56 +814,48 @@ pub struct SignResult {
 
     pub(crate) content_disposition: Box<[u8]>,
     pub(crate) content_encoding: Box<[u8]>,
-    pub(crate) content_md5: Box<[u8]>,
+    pub(crate) content_hash: &'static [u8],
+    pub(crate) content_md5: Option<Box<[u8]>>,
     pub(crate) session_token: Box<[u8]>,
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
-    // Self-referential: entries borrow from the Box<[u8]> fields above. PicoHeader
-    // must be a raw (ptr,len) pair; see note in sign_request.
-    pub(crate) _headers: [PicoHeader; Self::MAX_HEADERS],
-    pub(crate) _headers_len: u8,
 }
 
 impl SignResult {
-    pub const MAX_HEADERS: usize = 11;
+    const MAX_HEADERS: usize = 11;
 
-    pub fn headers(&self) -> &[PicoHeader] {
-        &self._headers[0..self._headers_len as usize]
-    }
-
-    pub fn mix_with_header<'b>(
-        &self,
-        headers_buffer: &'b mut [PicoHeader],
-        header: PicoHeader,
-    ) -> &'b [PicoHeader] {
-        // copy the headers to buffer
-        let len = self._headers_len as usize;
-        for (i, existing_header) in self._headers[0..len].iter().enumerate() {
-            headers_buffer[i] = *existing_header;
+    /// Leaves room for `range` or `Content-Type`.
+    pub fn headers(&self) -> BoundedArray<PicoHeader<'_>, { Self::MAX_HEADERS + 1 }> {
+        fn non_empty(value: &[u8]) -> Option<&[u8]> {
+            (!value.is_empty()).then_some(value)
         }
-        headers_buffer[len] = header;
-        &headers_buffer[0..len + 1]
-    }
-}
-
-impl Default for SignResult {
-    fn default() -> Self {
-        Self {
-            amz_date: Box::default(),
-            host: Box::default(),
-            authorization: Box::default(),
-            url: Box::default(),
-            content_disposition: Box::default(),
-            content_encoding: Box::default(),
-            content_md5: Box::default(),
-            session_token: Box::default(),
-            acl: None,
-            storage_class: None,
-            request_payer: false,
-            _headers: [pico_header_empty(); Self::MAX_HEADERS],
-            _headers_len: 0,
+        let all: [(&[u8], Option<&[u8]>); Self::MAX_HEADERS] = [
+            (b"x-amz-content-sha256", Some(self.content_hash)),
+            (b"x-amz-date", Some(&self.amz_date)),
+            (b"Host", Some(&self.host)),
+            (b"Authorization", Some(&self.authorization)),
+            (b"x-amz-acl", self.acl.map(ACL::to_string)),
+            (b"x-amz-security-token", non_empty(&self.session_token)),
+            (
+                b"x-amz-storage-class",
+                self.storage_class.map(StorageClass::to_string),
+            ),
+            (b"content-disposition", non_empty(&self.content_disposition)),
+            (b"content-encoding", non_empty(&self.content_encoding)),
+            (b"content-md5", self.content_md5.as_deref()),
+            (
+                b"x-amz-request-payer",
+                self.request_payer.then_some(b"requester"),
+            ),
+        ];
+        let mut headers = BoundedArray::new();
+        for (name, value) in all {
+            if let Some(value) = value {
+                headers.append_assume_capacity(PicoHeader::new(name, value));
+            }
         }
+        headers
     }
 }
 
@@ -962,7 +893,7 @@ pub struct SignQueryOptions {
 pub struct SignOptions<'a> {
     pub path: &'a [u8],
     pub method: Method,
-    pub content_hash: Option<&'a [u8]>,
+    pub content_hash: Option<&'static [u8]>,
     pub content_md5: Option<&'a [u8]>,
     pub search_params: Option<&'a [u8]>,
     pub content_disposition: Option<&'a [u8]>,

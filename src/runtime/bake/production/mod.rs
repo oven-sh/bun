@@ -4,7 +4,6 @@
 
 use bun_paths::strings;
 use core::cell::UnsafeCell;
-use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use std::io::Write as _;
 use std::sync::OnceLock;
@@ -389,17 +388,14 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let vm_log = vm.log_mut().unwrap();
     let unresolved_view = framework.as_bundler_view();
     let mut init_transpiler = |renderer, bundler_options| {
-        framework
-            .init_transpiler(
-                &options.arena,
-                vm_log,
-                bake::Mode::ProductionStatic,
-                renderer,
-                &unresolved_view,
-                bundler_options,
-            )
-            // `BundleV2` takes `&'a mut Transpiler<'a>`, which cannot be dropped after that borrow.
-            .map(ManuallyDrop::new)
+        framework.init_transpiler(
+            &options.arena,
+            vm_log,
+            bake::Mode::ProductionStatic,
+            renderer,
+            &unresolved_view,
+            bundler_options,
+        )
     };
     let mut server_transpiler =
         init_transpiler(bake::Graph::Server, &options.bundler_options.server)?;
@@ -411,8 +407,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
     if ctx.bundler_options.bake_debug_disable_minify {
         let mut targets: Vec<&mut Transpiler> =
-            vec![&mut *client_transpiler, &mut *server_transpiler];
-        if let Some(ssr_transpiler) = ssr_transpiler.as_deref_mut() {
+            vec![&mut client_transpiler, &mut server_transpiler];
+        if let Some(ssr_transpiler) = ssr_transpiler.as_mut() {
             targets.push(ssr_transpiler);
         }
         for transpiler in targets {
@@ -564,7 +560,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             bun_bundler::bundle_v2::BakeOptions {
                 framework: bundler_framework,
                 client_transpiler: &mut client_transpiler,
-                ssr_transpiler: ssr_transpiler.as_deref_mut(),
+                ssr_transpiler: ssr_transpiler.as_mut(),
                 plugins: (options.bundler_options.plugin.as_ref())
                     .map(|plugin| plugin.as_non_null()),
             },

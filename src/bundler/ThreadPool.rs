@@ -329,7 +329,7 @@ impl Drop for WorkerGuard {
 impl Drop for Worker {
     fn drop(&mut self) {
         bun_core::scoped_log!(ThreadPool, "Worker.drop()");
-        // It is in `heap`, which drops nothing.
+        // The log is in the arena, which does not run `Drop`.
         self.transpiler.log().clear_and_free();
         // `collect_vm_garbage` needs the macros released first.
         drop(core::mem::take(&mut self.macro_load_states));

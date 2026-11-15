@@ -17,7 +17,7 @@ use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, MainEntryPoint, VirtualMachine};
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_md::root as md;
-use bun_options_types::context::SILENT;
+use bun_options_types::context::IS_SILENT;
 use bun_options_types::schema::api;
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
@@ -586,7 +586,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, true)
     }
 
-    /// Like [`Self::configure_env_for_run`] but does **not** read `tsconfig.json` — for callers that only
+    /// Like [`Self::configure_env_for_run`], without [`Transpiler::configure_from_tsconfig`]: for callers that only
     /// use the returned `Transpiler` for module resolution / env / `$PATH`
     /// lookup (the `bun run <script>` dispatch path), never for transpiling.
     pub(crate) fn configure_env_for_run_without_tsconfig<'t>(
@@ -2105,7 +2105,7 @@ impl RunCommand {
             && let Some(arg) =
                 (passthrough.iter()).find(|arg| bun_which::batch_arg_has_cmd_metachars(arg))
         {
-            if !SILENT.load(Ordering::Relaxed) {
+            if !IS_SILENT.load(Ordering::Relaxed) {
                 pretty_errorln!(
                     "<r><red>error<r>: Failed to run \"<b>{}<r>\": argument {} contains a cmd.exe special character and cannot be passed to a .bat/.cmd file",
                     bstr::BStr::new(Self::basename_or_bun(executable)),
@@ -2121,7 +2121,7 @@ impl RunCommand {
             argv.push(p.clone());
         }
 
-        let silent = SILENT.load(Ordering::Relaxed);
+        let silent = IS_SILENT.load(Ordering::Relaxed);
 
         // TODO: remember to free this when we add --filter or --concurrent
         // in the meantime we don't need to free it.
@@ -2476,7 +2476,7 @@ impl RunCommand {
                         // field of `ctx` but `run_package_script_foreground`
                         // takes `&mut ContextData`; clone the slice up-front.
                         let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
-                        let silent = SILENT.load(Ordering::Relaxed);
+                        let silent = IS_SILENT.load(Ordering::Relaxed);
                         let use_system_shell = ctx.debug.use_system_shell;
 
                         crate::cli::run_compiled::reject(

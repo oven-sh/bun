@@ -2074,7 +2074,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
 
             let mut cache = RuntimeTranspilerCache::default();
 
-            // The caller makes the error of the import from `log`.
+            // The caller turns `log` into the import's error.
             let redirect = jsc_vm.log.redirect(log);
             let transpiler = jsc_vm.transpiler.as_ptr();
 

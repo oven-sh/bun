@@ -376,7 +376,7 @@ pub struct Resolver<'a> {
     pub opts: options::BundleOptions,
     // Every thread's `Resolver` shares the process-wide `FileSystem`, so this cannot be `&'a mut`.
     pub(crate) fs: *mut Fs::FileSystem,
-    /// `None` while nobody reads what the resolver has to say. Bundler threads share `&Resolver`, which must not lead to it.
+    /// `None` discards diagnostics. `SyncView`: other threads share `&Self`, and `Log` is not `Sync`.
     pub(crate) log: SyncView<Option<&'a bun_ast::Log>>,
     // allocator dropped — global mimalloc
     /// NOTE: saved/restored across nested resolves.

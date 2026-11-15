@@ -273,7 +273,7 @@ fn init_macro_vm(
 
     let vm = VirtualMachine::init(VirtualMachineInitOptions {
         transform_options,
-        own_log_level: bun_ast::DEFAULT_LOG_LEVEL.load(),
+        owned_log: Log::init(),
         owned_env_loader,
         is_main_thread: false,
         ..Default::default()

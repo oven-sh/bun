@@ -20,8 +20,8 @@ use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{
-    CONSOLE_DEPTH, MacroImportReplacementMap, MacroMap, MacroOptions, RESETS_BEFORE_EACH_TEST,
-    ReactCompilerScope, SILENT, TestEnvironment, TestGlobals,
+    CONSOLE_DEPTH, IS_SILENT, MacroImportReplacementMap, MacroMap, MacroOptions,
+    RESETS_BEFORE_EACH_TEST, ReactCompilerScope, TestEnvironment, TestGlobals,
 };
 use bun_options_types::global_cache::GlobalCache;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
@@ -955,7 +955,7 @@ impl<'a> Parser<'a, '_> {
             if let Some(run_expr) = json.get(b"run") {
                 if let Some(silent) = run_expr.get(b"silent") {
                     if let Some(value) = silent.as_bool() {
-                        SILENT.store(value, Ordering::Relaxed);
+                        IS_SILENT.store(value, Ordering::Relaxed);
                     } else {
                         self.add_error(silent.loc, b"Expected boolean")?;
                     }

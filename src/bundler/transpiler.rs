@@ -38,7 +38,7 @@ pub const fn default_macro_js_value() -> MacroJSCtx {
 /// on every VM so that the options can be used for transpilation.
 pub struct Transpiler<'a> {
     pub options: options::BundleOptions<'a>,
-    /// Bundler threads share `&Transpiler`, which must not lead to it.
+    /// `SyncView`: other threads share `&Self`, and `Log` is not `Sync`.
     log: SyncView<&'a bun_ast::Log>,
     // Bundler is an AST crate per PORTING.md, so an arena is threaded even
     // though callers usually pass `bun.default_allocator`.

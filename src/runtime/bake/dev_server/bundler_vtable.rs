@@ -9,8 +9,8 @@ use super::*;
 bun_bundler::link_impl_DevServerHandle! {
     Bake for DevServer => |this| {
         barrel_needed_exports() => &raw mut (*this).barrel_needed_exports,
-        mark_resolution_failure(abs_path, graph) => {
-            bun_core::handle_oom((*this).mark_resolution_failure(abs_path, graph)).0
+        insert_stale_owner(abs_path, graph) => {
+            bun_core::handle_oom((*this).insert_stale_owner(abs_path, graph)).0
         },
         finalize_bundle(bv2, result) => {
             // `bv2` borrows the `Transpiler`s stored inline in `DevServer`

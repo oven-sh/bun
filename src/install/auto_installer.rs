@@ -173,7 +173,11 @@ impl Drop for Parked {
 
 impl PackageManager {
     /// When the guard drops, what the manager has logged moves to `log`.
-    pub(crate) fn report_to<'l>(&mut self, log: Option<&'l bun_ast::Log>) -> impl Drop + use<'l> {
+    #[must_use]
+    pub(crate) fn drain_log_on_drop<'a>(
+        &mut self,
+        log: Option<&'a bun_ast::Log>,
+    ) -> impl Drop + use<'a> {
         let own_log = self.log();
         if let Some(log) = log {
             own_log.level.set(log.level.get());
@@ -292,7 +296,7 @@ impl hooks::AutoInstaller for PackageManager {
         path_buf: &'b mut bun_paths::PathBuffer,
         log: Option<&bun_ast::Log>,
     ) -> Result<&'b [u8], bun_core::Error> {
-        let _report = self.report_to(log);
+        let _drain = self.drain_log_on_drop(log);
         if let Err(why) = directories::try_get_cache_directory(self) {
             self.exit_or_log(&why);
             return Err(bun_core::Error::WriteFailed);
@@ -344,7 +348,7 @@ impl hooks::AutoInstaller for PackageManager {
         behavior: hooks::Behavior,
         log: Option<&bun_ast::Log>,
     ) -> hooks::EnqueueResult {
-        let _report = self.report_to(log);
+        let _drain = self.drain_log_on_drop(log);
         // The package manager resolves a relative tarball path against the working directory,
         // which is the project only for `bun install`. Here the path is made absolute first.
         let mut absolute: Vec<u8> = Vec::new();

@@ -18,7 +18,7 @@ use bun_jsc::RegularExpression;
 use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{
-    CONSOLE_DEPTH, Debugger, DebuggerEnable, HotReload, MacroOptions, SILENT, Shard,
+    CONSOLE_DEPTH, Debugger, DebuggerEnable, HotReload, IS_SILENT, MacroOptions, Shard,
     TestEnvironment, TestGlobals,
 };
 use bun_options_types::schema::api;
@@ -1305,7 +1305,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.no_exit_on_error = args.flag(b"--no-exit-on-error");
         // Set before bunfig.toml is loaded so that `--silent` hides the warning about an unreadable
         // bunfig.toml. It is set again below so that the flag overrides `run.silent`.
-        SILENT.store(
+        IS_SILENT.store(
             args.flag(b"--silent"),
             core::sync::atomic::Ordering::Relaxed,
         );
@@ -1962,7 +1962,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     if matches!(cmd, CommandTag::AutoCommand | CommandTag::RunCommand) {
         // "run.silent" in bunfig.toml
         if args.flag(b"--silent") {
-            SILENT.store(true, core::sync::atomic::Ordering::Relaxed);
+            IS_SILENT.store(true, core::sync::atomic::Ordering::Relaxed);
         }
 
         if let Some(elide_lines) = args.option(b"--elide-lines") {

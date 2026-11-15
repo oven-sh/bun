@@ -9,6 +9,7 @@
 // with write(2), so only bun's side of the pair is affected.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -802,19 +803,34 @@ describe.skipIf(!isLinux || !cc)("a Node stream over subprocess stdio whose poll
 // stream then gets what its socket holds from the read before that report, one chunk per pass. The child leaves
 // more than the 256 KiB of one read, which a socket takes only with the largest send buffer that the system gives.
 describe.skipIf(!isLinux || !cc)("the read before the report of an exit", () => {
-  test.concurrent("node:child_process: 'exit' comes behind more bytes than one read takes", async () => {
-    using handshake = tempDir("spawn-stdio-exit-read", {});
-    const total = 4096 + 300000;
-    expect(
-      await runWithFault(
-        HANDSHAKE_READER,
-        { SPAWN_SNDBUF: String(1 << 20), BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
-        ["child.stdout", "exit-bytes", String(handshake), "2", "block=300000"],
-      ),
-    ).toEqual({
-      parsed: { all: total, atExit: total },
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+  const lastBlock = 300000;
+  // A send buffer is at most twice net.core.wmem_max, and one write queues two buffers of half that size less 64
+  // bytes. On a host with a smaller limit the writer would wait for a reader that waits for the writer.
+  const socketTakesTheBlock = (() => {
+    try {
+      return 2 * (Number(readFileSync("/proc/sys/net/core/wmem_max", "utf8")) - 64) >= lastBlock;
+    } catch {
+      // The host does not show the limit. The default of 212992 is enough.
+      return true;
+    }
+  })();
+
+  test.skipIf(!socketTakesTheBlock)(
+    "node:child_process: 'exit' comes behind more bytes than one read takes",
+    async () => {
+      using handshake = tempDir("spawn-stdio-exit-read", {});
+      const total = 4096 + lastBlock;
+      expect(
+        await runWithFault(
+          HANDSHAKE_READER,
+          { SPAWN_SNDBUF: String(1 << 20), BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+          ["child.stdout", "exit-bytes", String(handshake), "2", `block=${lastBlock}`],
+        ),
+      ).toEqual({
+        parsed: { all: total, atExit: total },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 });

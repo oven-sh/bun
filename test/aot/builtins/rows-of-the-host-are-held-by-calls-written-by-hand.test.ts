@@ -139,7 +139,9 @@ async function answersOfReportUncaughtException(): Promise<Seen[]> {
     process.stdout.write(JSON.stringify([taken, report(new Error("made for this test"))]));
   `;
   await using child = Bun.spawn([bunExe(), "-e", program], { env: bunEnv, stdout: "pipe", stderr: "ignore" });
-  const answers: unknown[] = JSON.parse(await child.stdout.text());
+  const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+  const answers: unknown[] = JSON.parse(stdout);
+  expect(exitCode).toBe(1);
   return answers.map(value => ({ value }));
 }
 

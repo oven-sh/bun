@@ -8,7 +8,7 @@ use bun_core::ffi::FfiSlice;
 use bun_exe_format::identity::{HostDescription, IdentityError, find_process_identity};
 use bun_options_types::standalone_path::is_bun_standalone_file_path;
 use bun_resolver::StandaloneModuleGraph;
-use bun_resolver::compiled_program::{CompiledEntryPoint, CompiledProgram};
+use bun_resolver::compiled_program::{CompiledEntryPoint, CompiledProgram, LoadedImage};
 
 use crate::virtual_machine::standalone_module_graph;
 use crate::{JSGlobalObject, JSValue};
@@ -36,15 +36,15 @@ struct ImageFileArgument {
 
 unsafe extern "C" {
     fn Bun__AOT__useImage(
-        image: FfiSlice<'static>,
+        image: LoadedImage,
         file_or_null: *const ImageFileArgument,
         identity: *const u8,
     ) -> u32;
-    safe fn Bun__AOT__admittedCode(image: FfiSlice<'_>, admitted: &mut u32) -> bool;
-    safe fn Bun__AOT__admitsUnknownJavaScript(image: FfiSlice<'_>) -> bool;
-    safe fn Bun__AOT__loadsCodeOutsideImage(image: FfiSlice<'_>) -> bool;
+    safe fn Bun__AOT__admittedCode(image: LoadedImage, admitted: &mut u32) -> bool;
+    safe fn Bun__AOT__admitsUnknownJavaScript(image: LoadedImage) -> bool;
+    safe fn Bun__AOT__loadsCodeOutsideImage(image: LoadedImage) -> bool;
     /// Not `safe fn`: past the header check it reads a C++ `bool` from the bytes unvalidated.
-    fn Bun__AOT__omitsFunctionSource(image: FfiSlice<'_>) -> bool;
+    fn Bun__AOT__omitsFunctionSource(image: LoadedImage) -> bool;
     fn Bun__AOT__useNoImageOnThisThread(specifier: FfiSlice<'_>) -> bool;
     safe fn Bun__AOT__imageCode() -> Bytes;
     safe fn Bun__AOT__takePagesForTablesOfFirstThread();
@@ -296,31 +296,27 @@ pub extern "C" fn Bun__AOT__pathInExecutable(path: &bun_core::String) -> bun_cor
     }
 }
 
-fn image_of(program: &CompiledProgram) -> FfiSlice<'_> {
-    FfiSlice::new(program.image)
-}
-
 /// Answers before `use_image` has run. `None`: `use_image` refuses the image.
 pub fn admitted_code_of(program: &CompiledProgram) -> Option<AdmittedCode> {
     let mut admitted = 0u32;
-    let has_header = Bun__AOT__admittedCode(image_of(program), &mut admitted);
+    let has_header = Bun__AOT__admittedCode(program.image, &mut admitted);
     has_header.then(|| AdmittedCode::from_wire(admitted).unwrap_or_default())
 }
 
 /// Whether the compiler allowed for script and machine code that it did not see.
 pub fn admits_unknown_javascript(program: &CompiledProgram) -> bool {
-    Bun__AOT__admitsUnknownJavaScript(image_of(program))
+    Bun__AOT__admitsUnknownJavaScript(program.image)
 }
 
 /// Whether the program itself loads files with code that the build has not seen.
 pub fn loads_code_outside_image(program: &CompiledProgram) -> bool {
-    Bun__AOT__loadsCodeOutsideImage(image_of(program))
+    Bun__AOT__loadsCodeOutsideImage(program.image)
 }
 
 /// Whether the program was built with `--no-compile-function-source`.
 pub fn omits_function_source(program: &CompiledProgram) -> bool {
     // SAFETY: an image whose header passes the check was written by the compiler, with 0 or 1 in that `bool`.
-    unsafe { Bun__AOT__omitsFunctionSource(image_of(program)) }
+    unsafe { Bun__AOT__omitsFunctionSource(program.image) }
 }
 
 /// Whether this executable can run a module of Bun's library that the program does not use.
@@ -974,7 +970,7 @@ fn use_image_on_this_thread(program: &'static CompiledProgram) {
     // `identity` outlive the call.
     let raw_verdict = unsafe {
         Bun__AOT__useImage(
-            image_of(program),
+            program.image,
             file.as_ref().map_or(core::ptr::null(), core::ptr::from_ref),
             identity.as_ptr(),
         )
@@ -1117,7 +1113,7 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         bun_crash_handler::report_aborts();
         #[cfg(not(bun_locked_environment))]
         if is_verbose {
-            settings_for_debugging::print_image_summary(program.image.len());
+            settings_for_debugging::print_image_summary(program.image.as_ptr().len());
         }
         #[cfg(not(bun_locked_environment))]
         settings_for_debugging::record_order();
@@ -1296,7 +1292,7 @@ mod tests {
             module_path: MODULE_PATH,
         };
         graph_of(Some(CompiledProgram::new(
-            b"image",
+            LoadedImage::default(),
             None,
             Box::new([entry_point]),
             Box::new([0]),

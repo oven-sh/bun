@@ -1,13 +1,12 @@
 //! What a compiled program adds to the standalone module graph: its record, the graph handed over by descriptor, and the paths outside the virtual root that the graph answers for.
 
 use core::mem::size_of;
-use core::ptr::read_unaligned;
 #[cfg(not(windows))]
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::borrow::Cow;
 
-use bun_collections::StringArrayHashMap;
 use bun_collections::index_sort;
+use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{StringBuilder, StringPointer, ZStr, bytes_of, slice_as_bytes};
 use bun_paths::{PathBuffer, path_buffer_pool, platform, resolve_path, strings};
 use bun_resolver::compiled_program::{
@@ -27,6 +26,7 @@ use crate::StandaloneModuleGraph::{
     BASE_PUBLIC_PATH, BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, File, StandaloneModuleGraph, dir_stat,
     is_bun_standalone_file_path,
 };
+use crate::payload::{Payload, RawPayload};
 
 const CORRUPTED: Error = Error::CorruptedCompiledProgram;
 /// The `u64` length before the payload, in a section of an executable and in `to_graph_bytes`.
@@ -84,7 +84,7 @@ const _: () = assert!(size_of::<CompiledProgramRecord>() == RECORD_SIZE);
 const _: () = assert!(size_of::<CompiledEntryPointRecord>() == RECORD_SIZE);
 const _: () = assert!(cfg!(target_endian = "little"));
 
-bun_core::impl_no_uninit!(CompiledProgramRecord, CompiledEntryPointRecord);
+bun_core::impl_pod!(CompiledProgramRecord, CompiledEntryPointRecord);
 
 pub struct CompiledEntryPointInput<'a> {
     pub module_id: bun_aot::engine::EngineModuleId,
@@ -601,45 +601,25 @@ fn read_path_aliases(payload: &Payload, at: &mut usize) -> Option<Box<[CompiledP
     Some(aliases.into_boxed_slice())
 }
 
-/// `base[..length]` stays readable as long as the graph read from it is in use (the contract of `from_bytes`).
-#[derive(Copy, Clone)]
-pub(crate) struct Payload {
-    pub(crate) base: *const u8,
-    pub(crate) length: usize,
-    /// The descriptor `base` was mapped from, and the offset of `base` in that file.
-    pub(crate) file: Option<ImageFile>,
-}
-
-impl Payload {
-    fn bytes(&self, offset: usize, length: usize) -> Option<&'static [u8]> {
-        if offset.checked_add(length)? > self.length {
-            return None;
-        }
-        // SAFETY: the range lies in `base[..length]`; see `Payload`.
-        Some(unsafe { core::slice::from_raw_parts(self.base.add(offset), length) })
-    }
-
-    fn pointed_bytes(&self, pointer: StringPointer) -> Option<&'static [u8]> {
-        self.bytes(pointer.offset as usize, pointer.length as usize)
-    }
-}
-
 pub(crate) fn read(
-    payload: &Payload,
+    raw: RawPayload,
     record_at: &mut usize,
     file_count: usize,
-) -> crate::Result<CompiledProgram> {
-    try_read(payload, record_at, file_count).ok_or(CORRUPTED)
+) -> crate::Result<(Payload, CompiledProgram)> {
+    try_read(raw, record_at, file_count).ok_or(CORRUPTED)
 }
 
 fn try_read(
-    payload: &Payload,
+    raw: RawPayload,
     record_at: &mut usize,
     file_count: usize,
-) -> Option<CompiledProgram> {
-    let header = payload.bytes(*record_at, RECORD_SIZE)?.as_ptr();
-    // SAFETY: `RECORD_SIZE` readable bytes, and every bit pattern is a valid record.
-    let header: CompiledProgramRecord = unsafe { read_unaligned(header.cast()) };
+) -> Option<(Payload, CompiledProgram)> {
+    let header: CompiledProgramRecord = raw.read(*record_at)?;
+    if header.image.length == 0 {
+        return None;
+    }
+    let payload_file = raw.file;
+    let (payload, image) = raw.into_payload_and_image(header.image)?;
     let entry_point_count = header.entry_point_count as usize;
     if entry_point_count > file_count {
         return None;
@@ -651,10 +631,6 @@ fn try_read(
     let module_paths_at = order_at.checked_add(order.len())?;
     let module_paths_size = entry_point_count.checked_mul(size_of::<StringPointer>())?;
     let module_paths = payload.bytes(module_paths_at, module_paths_size)?;
-    let image = payload.pointed_bytes(header.image)?;
-    if image.is_empty() {
-        return None;
-    }
 
     let mut entry_points: Vec<CompiledEntryPoint> = Vec::with_capacity(entry_point_count);
     let mut lowest_file_index: usize = 0;
@@ -665,8 +641,7 @@ fn try_read(
         .iter()
         .zip(module_paths)
     {
-        // SAFETY: `RECORD_SIZE` readable bytes, and every bit pattern is a valid record.
-        let record: CompiledEntryPointRecord = unsafe { read_unaligned(bytes.as_ptr().cast()) };
+        let record: CompiledEntryPointRecord = bun_core::read_prefix(bytes)?;
         let module_path = StringPointer {
             offset: u32::from_le_bytes(*offset),
             length: u32::from_le_bytes(*length),
@@ -692,8 +667,8 @@ fn try_read(
     }
 
     let mut end = module_paths_at + module_paths_size;
-    let package_names = skip_names(payload, &mut end)?;
-    let path_aliases = read_path_aliases(payload, &mut end)?;
+    let package_names = skip_names(&payload, &mut end)?;
+    let path_aliases = read_path_aliases(&payload, &mut end)?;
     let mut root_below_working_directory = None;
     if header.flags & HAS_ROOT_BELOW_WORKING_DIRECTORY != 0 {
         let length = payload.bytes(end, size_of::<u32>())?;
@@ -742,7 +717,7 @@ fn try_read(
     }
     let mut further_package_names: &'static [u8] = b"";
     if header.flags & HAS_FURTHER_PACKAGE_NAMES != 0 {
-        further_package_names = skip_names(payload, &mut end)?;
+        further_package_names = skip_names(&payload, &mut end)?;
     }
     let mut refused_data: &'static [u8] = b"";
     if header.flags & HAS_REFUSED_DATA != 0 {
@@ -769,7 +744,7 @@ fn try_read(
         end += length;
     }
     *record_at = end;
-    let backing_file = payload.file.map(|file| ImageFile {
+    let backing_file = payload_file.map(|file| ImageFile {
         descriptor: file.descriptor,
         offset: file.offset + i64::from(header.image.offset),
     });
@@ -807,7 +782,7 @@ fn try_read(
                 .unwrap_or_else(|| StandaloneModuleGraph::exit_without_program())
         },
     ));
-    Some(program.with_path_aliases(path_aliases))
+    Some((payload, program.with_path_aliases(path_aliases)))
 }
 
 fn add_ancestor_directories(dirs: &mut StringArrayHashMap<()>, path: &[u8]) {
@@ -823,7 +798,7 @@ fn add_ancestor_directories(dirs: &mut StringArrayHashMap<()>, path: &[u8]) {
 
 pub(crate) fn add_source_directories(
     dirs: &mut StringArrayHashMap<()>,
-    files: &StringArrayHashMap<File>,
+    files: &ArrayHashMap<&[u8], File>,
     program: &CompiledProgram,
 ) {
     if program.preserves_source_paths {
@@ -1354,15 +1329,24 @@ fn reopen_at(fd: Fd, path: &ZStr, is_meant: impl FnOnce() -> bool) -> Maybe<bool
 
 impl StandaloneModuleGraph {
     /// `descriptor` holds the result of `to_graph_bytes` and stays open: the engine maps the code from it.
-    pub fn from_descriptor(descriptor: Fd) -> crate::Result<Option<*mut StandaloneModuleGraph>> {
-        Self::from_descriptor_at(descriptor, 0)
+    ///
+    /// # Safety
+    /// As [`Self::from_descriptor_at`].
+    pub unsafe fn from_descriptor(
+        descriptor: Fd,
+    ) -> crate::Result<Option<&'static StandaloneModuleGraph>> {
+        // SAFETY: the caller's contract.
+        unsafe { Self::from_descriptor_at(descriptor, 0) }
     }
 
     /// `offset`: a multiple of the size of a page.
-    pub fn from_descriptor_at(
+    ///
+    /// # Safety
+    /// Nothing writes to the file or truncates it during the call or, if there is a graph, for the rest of the process.
+    pub unsafe fn from_descriptor_at(
         descriptor: Fd,
         offset: usize,
-    ) -> crate::Result<Option<*mut StandaloneModuleGraph>> {
+    ) -> crate::Result<Option<&'static StandaloneModuleGraph>> {
         let size = bun_sys::get_file_size(descriptor).map_err(|_| CORRUPTED)?;
         let size = usize::try_from(size).map_err(|_| CORRUPTED)?;
         let size = size.checked_sub(offset).ok_or(CORRUPTED)?;
@@ -1379,9 +1363,12 @@ impl StandaloneModuleGraph {
             descriptor: descriptor.native() as isize,
             offset: (offset + PAYLOAD_HEADER_SIZE) as i64,
         };
-        // SAFETY: `PAYLOAD_HEADER_SIZE <= size`.
-        let payload = unsafe { base.add(PAYLOAD_HEADER_SIZE) };
-        Self::from_payload(payload, length as usize, Some(file))
+        // SAFETY: `PAYLOAD_HEADER_SIZE + length <= size`. The memory is new, is never released, and nothing else
+        // has its address. The caller's contract covers the file behind it.
+        let payload = unsafe {
+            RawPayload::from_raw_parts(base.add(PAYLOAD_HEADER_SIZE), length as usize, Some(file))
+        };
+        Self::from_payload(payload)
     }
 
     /// What the file of `from_descriptor` holds after the graph.
@@ -1552,7 +1539,7 @@ impl StandaloneModuleGraph {
             let path = &spelled[..spelled.len() - 1];
             let folder = strings::last_index_of_char(path, b'/').unwrap_or(0);
             let is_held = self.dirs.contains(&path[..folder])
-                && (self.files.contains(path) || self.dirs.contains(path));
+                && (self.files.contains(&path) || self.dirs.contains(path));
             return is_held
                 || self.key_of_mounted_asset(path).is_some()
                 || self.contains_written_file(path);
@@ -1637,7 +1624,7 @@ impl StandaloneModuleGraph {
                 preserves_source_paths != Some(is_bun_standalone_file_path(key))
                     && is_shared_library_name(key)
             })
-            .map(|(key, file)| (&key[..], file.contents.as_bytes()))
+            .map(|(key, file)| (&key[..], file.contents))
     }
 
     /// A file that `--asset` or an import put into the executable of a compiled program as it is.
@@ -1654,7 +1641,7 @@ impl StandaloneModuleGraph {
         let Some(program) = self.compiled_program.as_ref() else {
             return false;
         };
-        if !file.loader.is_javascript_like() || !file.contents.as_bytes().is_empty() {
+        if !file.loader.is_javascript_like() || !file.contents.is_empty() {
             return false;
         }
         let mut files = self.files.values().iter();
@@ -1677,7 +1664,7 @@ impl StandaloneModuleGraph {
 
     pub(crate) fn has_no_file_contents(&self, file: &File) -> bool {
         // Every read of an embedded file asks, and only an empty file needs its record.
-        let is_empty = file.contents.as_bytes().is_empty();
+        let is_empty = file.contents.is_empty();
         let found = is_empty.then(|| self.find_file_record(file.name)).flatten();
         found.is_some_and(|found| found.size_without_bytes.is_some())
     }
@@ -1925,7 +1912,7 @@ impl StandaloneModuleGraph {
         let mut earlier_folders: Vec<Vec<u8>> = Vec::new();
         Some(keys.filter_map(move |(key, folder_length)| {
             let (folder, below) = key.split_at(folder_length);
-            let is_file = may_be_file && self.files.contains(&key);
+            let is_file = may_be_file && self.files.contains(&key.as_slice());
             let normalized_name = [root, base_name, below].concat();
             let mut earlier = earlier_folders.iter();
             let is_found = (is_file || self.dirs.contains(&key))
@@ -1941,7 +1928,7 @@ impl StandaloneModuleGraph {
         let name_prefix = |end: usize| [earlier_folder, &below[..end]].concat();
         let ends = (1..below.len()).filter(|&at| below[at] == b'/');
         let mut ancestor_names = ends.chain([below.len()]).map(name_prefix);
-        !ancestor_names.any(|name| self.files.contains(&name))
+        !ancestor_names.any(|name| self.files.contains(&name.as_slice()))
             && !(is_file && self.dirs.contains(&name_prefix(below.len())))
     }
 
@@ -1954,7 +1941,7 @@ impl StandaloneModuleGraph {
     ) -> bool {
         let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
         // The graph has no file for a compiled module that is no entry point.
-        let is_own_file = |path: &[u8]| self.files.contains(path) || program.holds_module_at(path);
+        let is_own_file = |path: &[u8]| self.files.contains(&path) || program.holds_module_at(path);
         let is_own_folder =
             || self.dirs.contains(normalized_name) || program.holds_module_below(normalized_name);
         let ends = (root.len()..normalized_name.len()).filter(|&at| normalized_name[at] == b'/');
@@ -2062,7 +2049,7 @@ impl StandaloneModuleGraph {
         }
         let key = Self::key_under_own_root(program, name)?;
         let named_at_root = || self.root_asset_key(&key);
-        let is_file = self.files.contains(&key);
+        let is_file = self.files.contains(&key.as_slice());
         Some((!is_file).then(named_at_root).flatten().unwrap_or(key))
     }
 
@@ -2119,7 +2106,7 @@ impl StandaloneModuleGraph {
             return false;
         };
         let holds = |key: &[u8]| {
-            self.files.contains(key)
+            self.files.contains(&key)
                 || self.dirs.contains(key)
                 || program.holds_module_at(key)
                 || program.holds_module_below(key)
@@ -2285,7 +2272,7 @@ impl StandaloneModuleGraph {
 
     /// `import.meta.dirname` leads to `key`, at or below which the program has removed what `__dirname` leads to. Only a file that nobody asked the build to embed is gone.
     fn forget_implicit_files(&self, key: &[u8]) {
-        if let Some(file) = self.files.get(key) {
+        if let Some(file) = self.files.get(&key) {
             if self.is_file_for_file_system_alone(file) {
                 record_removed_path(file.name);
             }
@@ -2418,9 +2405,9 @@ impl StandaloneModuleGraph {
             return None;
         }
         let key_in_graph = under_own_root.as_deref().unwrap_or(key.as_bytes());
-        let file_index = self.files.get_index(key_in_graph).or_else(|| {
+        let file_index = self.files.get_index(&key_in_graph).or_else(|| {
             self.files
-                .get_index(&self.key_of_mounted_asset(key_in_graph)?)
+                .get_index(&self.key_of_mounted_asset(key_in_graph)?.as_slice())
         })?;
         // The file of an entry point is empty: its text is on the disk or nowhere.
         let is_entry_point = program
@@ -2673,7 +2660,7 @@ impl StandaloneModuleGraph {
         let mut buffer = path_buffer_pool::get();
         #[cfg(windows)]
         let name = normalize_file_key(name, &mut buffer);
-        match self.files.get_index(name) {
+        match self.files.get_index(&name) {
             Some(file_index) => program.entry_point_by_file_index(u32::try_from(file_index).ok()?),
             None => program.entry_point_by_module_path(name),
         }
@@ -2699,8 +2686,8 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::StandaloneModuleGraph::{
-        BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, CompileTarget, Flags, GraphRequest, Offsets,
-        RuntimeOptions, normalize_windows_key, to_bytes, to_graph_bytes, with_graph_slices,
+        BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, CompileTarget, Flags, GraphRequest, RuntimeOptions,
+        normalize_windows_key, to_bytes, to_graph_bytes, with_graph_slices,
     };
     use crate::executable_request::graph_bytes;
 
@@ -2775,14 +2762,19 @@ pub(crate) mod tests {
     }
 
     fn read_back(bytes: Vec<u8>, mut record_at: usize) -> crate::Result<(CompiledProgram, usize)> {
-        let bytes: &'static [u8] = bytes.leak();
-        let payload = Payload {
-            base: bytes.as_ptr(),
-            length: bytes.len(),
-            file: None,
-        };
-        let program = read(&payload, &mut record_at, FILE_COUNT)?;
+        let (_, program) = read(leak_payload(bytes), &mut record_at, FILE_COUNT)?;
         Ok((program, record_at))
+    }
+
+    fn leak_payload(bytes: Vec<u8>) -> RawPayload {
+        let bytes = bytes.leak();
+        // SAFETY: leaked, and `bytes` is not used again.
+        unsafe { RawPayload::from_raw_parts(bytes.as_mut_ptr(), bytes.len(), None) }
+    }
+
+    fn image_bytes(program: &CompiledProgram) -> &[u8] {
+        // SAFETY: no test passes an image to JavaScriptCore, so nothing writes to it.
+        unsafe { &*program.image.as_ptr() }
     }
 
     fn patch(bytes: &mut [u8], at: usize, word: u32) {
@@ -2812,7 +2804,7 @@ pub(crate) mod tests {
         let (mut bytes, record_at, _) = write_three(true);
         let (program, record_end) = read_back(bytes.clone(), record_at).unwrap();
         assert_eq!(record_end, bytes.len());
-        assert_eq!(program.image, IMAGE);
+        assert_eq!(image_bytes(&program), IMAGE);
         assert_eq!(program.backing_file, None);
         assert!(program.preserves_source_paths);
         let fields = program
@@ -3351,15 +3343,20 @@ pub(crate) mod tests {
 
     #[test]
     fn corrupted_records_are_rejected() {
-        let (bytes, record, _) = write_three(false);
+        let (bytes, record, image) = write_three(false);
         let entry = |index: usize| record + RECORD_SIZE * (1 + index);
         let (length, file_count) = (bytes.len() as u32, FILE_COUNT as u32);
+        let image_end = image.offset + image.length;
         for (name, at, word) in [
             ("more entry points than files", record + 8, file_count + 1),
             ("entry point count overflows", record + 8, u32::MAX),
             ("image offset past the end", record, length),
             ("image length past the end", record + 4, length),
             ("empty image", record + 4, 0),
+            ("image overlaps records", record + 4, length - image.offset),
+            ("path ends in the image", entry(0) + 8, image.offset - 1),
+            ("path lies in the image", entry(0) + 8, image.offset),
+            ("path starts in the image", entry(0) + 8, image_end - 1),
             ("file index out of range", entry(2), file_count),
             ("repeated file index", entry(1), 0),
             ("descending file indices", entry(0), 2),
@@ -3497,12 +3494,9 @@ pub(crate) mod tests {
     }
 
     fn read_graph(request: &GraphRequest<'_>) -> StandaloneModuleGraph {
-        let bytes: &'static mut [u8] = graph_bytes(request).unwrap().bytes.leak();
-        let offsets_at = bytes.len() - b"\n---- Bun! ----\n".len() - size_of::<Offsets>();
-        // SAFETY: `to_bytes` ends the graph with its `Offsets` and the trailer.
-        let offsets: Offsets = unsafe { read_unaligned(bytes[offsets_at..].as_ptr().cast()) };
-        let (base, length) = (bytes.as_mut_ptr(), bytes.len());
-        StandaloneModuleGraph::from_bytes(base, length, offsets, None).unwrap()
+        let payload = leak_payload(graph_bytes(request).unwrap().bytes);
+        let offsets = StandaloneModuleGraph::read_offsets(&payload).unwrap();
+        StandaloneModuleGraph::from_bytes(payload, offsets).unwrap()
     }
 
     fn directory_key(graph: &StandaloneModuleGraph, name: &[u8]) -> Option<Vec<u8>> {
@@ -3577,7 +3571,7 @@ pub(crate) mod tests {
     fn in_place_paths() {
         let folder = TemporaryFolder::create("in-place");
         let graph = with_request(&folder, true, read_graph);
-        let find = |name: &[u8]| Some(graph.find_at_source_path(name)?.contents.as_bytes());
+        let find = |name: &[u8]| Some(graph.find_at_source_path(name)?.contents);
         let contents = |relative: &str| find(&folder.join(relative));
         let owns = |relative: &str| graph.owns_directory(&folder.join(relative));
         let key = |relative: &str| directory_key(&graph, &folder.join(relative));
@@ -3949,21 +3943,21 @@ pub(crate) mod tests {
         for malformed in [&b""[..], b"1234567", b"\x09\0\0\0\0\0\0\0payload."] {
             let path = folder.write("malformed", malformed);
             let file = bun_sys::File::open(&path, bun_sys::O::RDONLY, 0).unwrap();
-            let graph = StandaloneModuleGraph::from_descriptor(file.handle());
+            // SAFETY: the file is only rewritten after it was rejected.
+            let graph = unsafe { StandaloneModuleGraph::from_descriptor(file.handle()) };
             assert_eq!(graph.err(), Some(CORRUPTED));
         }
 
         let bytes = with_request(&folder, true, |request| to_graph_bytes(request).unwrap());
         let path = folder.write("graph", &bytes);
         let descriptor = bun_sys::open(&path, bun_sys::O::RDONLY, 0).unwrap();
-        let graph = StandaloneModuleGraph::from_descriptor(descriptor).unwrap();
-        // SAFETY: the process-wide graph, which is never freed. No other test installs one.
-        let graph = unsafe { &*graph.unwrap() };
-        let program = graph.compiled_program.as_ref().unwrap();
+        // SAFETY: the file is deleted at the end, which does not change it.
+        let graph = unsafe { StandaloneModuleGraph::from_descriptor(descriptor) }.unwrap();
+        let program = graph.unwrap().compiled_program.as_ref().unwrap();
         let backing_file = program.backing_file.unwrap();
         assert_eq!(backing_file.descriptor, descriptor.native() as isize);
         assert_eq!(backing_file.offset % ALIGNMENT as i64, 0);
-        assert_eq!(program.image, IMAGE);
+        assert_eq!(image_bytes(program), IMAGE);
         assert_eq!(bytes[backing_file.offset as usize..][..ALIGNMENT], IMAGE);
     }
 }

@@ -132,18 +132,24 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
                     // Create assignment expressions for the inner statements
                     for decl in local.decls.slice() {
-                        if let Some(value) = decl.value {
-                            // Create assignment expression: binding = value
-                            let assign_expr =
-                                self.repl_create_binding_assignment(decl.binding, value, bump);
-                            inner_stmts.push(self.s(
-                                S::SExpr {
-                                    value: assign_expr,
-                                    ..Default::default()
-                                },
-                                stmt.loc,
-                            ));
-                        }
+                        let value = match decl.value {
+                            Some(value) => value,
+                            // `let x;` resets the persistent hoisted var; a bare `var x;` keeps it.
+                            None if local.kind != S::Kind::KVar => {
+                                self.new_expr(E::Undefined, decl.binding.loc)
+                            }
+                            None => continue,
+                        };
+                        // Create assignment expression: binding = value
+                        let assign_expr =
+                            self.repl_create_binding_assignment(decl.binding, value, bump);
+                        inner_stmts.push(self.s(
+                            S::SExpr {
+                                value: assign_expr,
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        ));
                     }
                 }
                 StmtData::SFunction(func) => {

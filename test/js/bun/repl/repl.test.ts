@@ -750,6 +750,35 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("a let without an initializer resets the hoisted binding", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "let x = 1",
+        "let x; x",
+        "var y = 2",
+        // A bare `var` keeps the earlier value, as in a script.
+        "var y; y",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["1", "undefined", "2", "2"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // Top-level `using` is lowered to a try/catch/finally whose error slots are
+    // block-scoped `let`s. The REPL hoists them to persistent `var`s, so each
+    // input must reset them or the next input rethrows an earlier error.
+    test("a top-level using that threw does not poison the next input", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "using a = null; throw new Error('first')",
+        "using b = null; console.log('second ok')",
+        "await using c = null; console.log('third ok')",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["error: first", "second ok\nundefined", "third ok\nundefined"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     test("destructured declarations persist across evaluations", async () => {
       const { outputs, stderr, exitCode } = await runRepl([
         "const [a, b, c] = [10, 20, 30]",

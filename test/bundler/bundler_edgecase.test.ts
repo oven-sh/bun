@@ -2680,6 +2680,46 @@ describe("bundler", () => {
     },
   });
 
+  // The lowered catch stores the thrown error in block-scoped slots. A loop
+  // body that throws in one iteration must not rethrow it in the next one.
+  itBundled("edgecase/UsingInLoopDoesNotRethrowEarlierError", {
+    files: {
+      "/entry.ts": `
+        for (let i = 0; i < 3; i++) {
+          try {
+            using r = { [Symbol.dispose]: () => console.log("dispose", i) };
+            if (i == 0) throw new Error("boom");
+          } catch (e) {
+            console.log("caught", i, e.message);
+          }
+        }
+        console.log("done");
+      `,
+    },
+    run: {
+      stdout: "dispose 0\ncaught 0 boom\ndispose 1\ndispose 2\ndone",
+    },
+  });
+
+  itBundled("edgecase/AwaitUsingInLoopDoesNotRethrowEarlierError", {
+    files: {
+      "/entry.ts": `
+        for (let i = 0; i < 3; i++) {
+          try {
+            await using r = { [Symbol.asyncDispose]: async () => console.log("dispose", i) };
+            if (i == 0) throw new Error("boom");
+          } catch (e) {
+            console.log("caught", i, e.message);
+          }
+        }
+        console.log("done");
+      `,
+    },
+    run: {
+      stdout: "dispose 0\ncaught 0 boom\ndispose 1\ndispose 2\ndone",
+    },
+  });
+
   itBundled("edgecase/UsingExportFails", {
     files: {
       "/entry.ts": `

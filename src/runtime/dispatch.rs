@@ -569,9 +569,8 @@ pub(crate) fn run_task(
                 work: *mut napi_async_work = cast_ptr!(napi_async_work),
                 global: &JSGlobalObject = global,
             ) -> JsResult<()> {
-                // SAFETY: §Dispatch — tag identifies pointee; live for this dispatch.
-                unsafe { &mut *work }.run_from_js(global)?;
-                Ok(())
+                // SAFETY: §Dispatch — tag identifies pointee, which the pool posted back.
+                unsafe { napi_async_work::run_from_js(work, global) }
             }
         )?,
         task_tag::ThreadSafeFunction => {

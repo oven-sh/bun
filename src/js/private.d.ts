@@ -1008,6 +1008,7 @@ declare namespace $Node {
       database: object,
       internalFlags: number,
     ): void;
+    setProgressHandler(handle: SQLDatabase, callback: (() => unknown) | null, n: number): void;
     prepare<Row>(
       handle: SQLDatabase,
       query: string,

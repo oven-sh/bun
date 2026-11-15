@@ -86,6 +86,7 @@ typedef int (*lazy_sqlite3_compileoption_used_type)(const char* zOptName);
 typedef int64_t (*lazy_sqlite3_last_insert_rowid_type)(sqlite3* db);
 typedef int (*lazy_sqlite3_set_authorizer_type)(sqlite3*, int (*xAuth)(void*, int, const char*, const char*, const char*, const char*), void* pUserData);
 typedef void* (*lazy_sqlite3_update_hook_type)(sqlite3*, void (*)(void*, int, const char*, const char*, sqlite3_int64), void*);
+typedef void (*lazy_sqlite3_progress_handler_type)(sqlite3*, int, int (*)(void*), void*);
 typedef int (*lazy_sqlite3_create_function_v2_type)(sqlite3* db, const char* zFunctionName, int nArg, int eTextRep, void* pApp,
     void (*xFunc)(sqlite3_context*, int, sqlite3_value**), void (*xStep)(sqlite3_context*, int, sqlite3_value**),
     void (*xFinal)(sqlite3_context*), void (*xDestroy)(void*));
@@ -191,6 +192,7 @@ inline lazy_sqlite3_sleep_type lazy_sqlite3_sleep;
 inline lazy_sqlite3_stmt_status_type lazy_sqlite3_stmt_status;
 inline lazy_sqlite3_set_authorizer_type lazy_sqlite3_set_authorizer;
 inline lazy_sqlite3_update_hook_type lazy_sqlite3_update_hook;
+inline lazy_sqlite3_progress_handler_type lazy_sqlite3_progress_handler;
 inline lazy_sqlite3_create_function_v2_type lazy_sqlite3_create_function_v2;
 inline lazy_sqlite3_create_window_function_type lazy_sqlite3_create_window_function;
 inline lazy_sqlite3_user_data_type lazy_sqlite3_user_data;
@@ -287,6 +289,7 @@ inline lazy_sqlite3changeset_apply_type lazy_sqlite3changeset_apply;
 #define sqlite3_stmt_status lazy_sqlite3_stmt_status
 #define sqlite3_set_authorizer lazy_sqlite3_set_authorizer
 #define sqlite3_update_hook lazy_sqlite3_update_hook
+#define sqlite3_progress_handler lazy_sqlite3_progress_handler
 #define sqlite3_create_function_v2 lazy_sqlite3_create_function_v2
 #define sqlite3_create_window_function lazy_sqlite3_create_window_function
 #define sqlite3_user_data lazy_sqlite3_user_data
@@ -439,6 +442,7 @@ inline int lazyLoadSQLiteUnlocked(WTF::String* errorMessage = nullptr)
     lazy_sqlite3_stmt_status = (lazy_sqlite3_stmt_status_type)dlsym(sqlite3_handle, "sqlite3_stmt_status");
     lazy_sqlite3_set_authorizer = (lazy_sqlite3_set_authorizer_type)dlsym(sqlite3_handle, "sqlite3_set_authorizer");
     lazy_sqlite3_update_hook = (lazy_sqlite3_update_hook_type)dlsym(sqlite3_handle, "sqlite3_update_hook");
+    lazy_sqlite3_progress_handler = (lazy_sqlite3_progress_handler_type)dlsym(sqlite3_handle, "sqlite3_progress_handler");
     lazy_sqlite3_create_function_v2 = (lazy_sqlite3_create_function_v2_type)dlsym(sqlite3_handle, "sqlite3_create_function_v2");
     lazy_sqlite3_create_window_function = (lazy_sqlite3_create_window_function_type)dlsym(sqlite3_handle, "sqlite3_create_window_function");
     lazy_sqlite3_user_data = (lazy_sqlite3_user_data_type)dlsym(sqlite3_handle, "sqlite3_user_data");

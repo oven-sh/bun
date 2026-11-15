@@ -571,16 +571,22 @@ pub(crate) fn run_task(
                 work: *mut napi_async_work = cast_ptr!(napi_async_work),
                 global: &JSGlobalObject = global,
             ) -> JsResult<()> {
-                // SAFETY: §Dispatch — tag identifies pointee; live for this dispatch.
-                unsafe { &mut *work }.run_from_js(global)?;
-                Ok(())
+                // SAFETY: §Dispatch — tag identifies pointee, which the pool posted back.
+                unsafe { napi_async_work::run_from_js(work, global) }
             }
         )?,
-        task_tag::ThreadSafeFunction => {
-            feature_arm!([NativeAddons], |function: ThreadSafeFunction| {
-                ThreadSafeFunction::on_dispatch(function);
-            })
-        }
+        task_tag::ThreadSafeFunction => in_features!(
+            [NativeAddons],
+            (
+                function: *mut ThreadSafeFunction = cast_ptr!(ThreadSafeFunction),
+                el: &EventLoop = el,
+                vm: &VirtualMachine = vm,
+            ) {
+                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
+                let function = unsafe { std::sync::Arc::from_raw(function) };
+                ThreadSafeFunction::on_dispatch(function, el, vm);
+            }
+        ),
         task_tag::NapiFinalizerTask => boxed_arm!(
             task,
             [NativeAddons],
@@ -588,13 +594,9 @@ pub(crate) fn run_task(
         )?,
         task_tag::UvLoopDispatch => {
             #[cfg(unix)]
-            {
-                use crate::napi::uv_posix::UvLoop;
-                feature_arm!([NativeAddons], |uv_loop: UvLoop| {
-                    // SAFETY: `schedule_dispatch` posted this VM's live loop.
-                    unsafe { UvLoop::dispatch(uv_loop) };
-                })
-            }
+            in_features!([NativeAddons], (vm: &VirtualMachine = vm) {
+                crate::jsc_hooks::runtime_state_of(vm).uv_loop.dispatch(vm);
+            });
             #[cfg(not(unix))]
             unreachable!("posix-only");
         }
@@ -602,10 +604,16 @@ pub(crate) fn run_task(
             #[cfg(unix)]
             {
                 use crate::napi::uv_posix::UvHandle;
-                feature_arm!([NativeAddons], |uv_handle: UvHandle| -> JsResult<()> {
-                    // SAFETY: `uv_close` posted this handle.
-                    unsafe { UvHandle::run_close(uv_handle) }
-                })?;
+                in_features!(
+                    [NativeAddons],
+                    (
+                        uv_handle: *mut UvHandle = cast_ptr!(UvHandle),
+                        global: &JSGlobalObject = global,
+                    ) -> JsResult<()> {
+                        // SAFETY: `uv_close` posted this handle.
+                        unsafe { UvHandle::run_close(uv_handle, global) }
+                    }
+                )?;
             }
             #[cfg(not(unix))]
             unreachable!("posix-only");
@@ -1454,9 +1462,12 @@ pub(crate) unsafe fn fire_timer(
                 use crate::napi::uv_posix::UvTimerNode;
                 in_features!(
                     [NativeAddons],
-                    (c: *mut UvTimerNode = owner!(UvTimerNode, event_loop_timer)) -> JsResult<()> {
+                    (
+                        c: *mut UvTimerNode = owner!(UvTimerNode, event_loop_timer),
+                        vm: &VirtualMachine = vm,
+                    ) -> JsResult<()> {
                         // SAFETY: per fn contract, `c` is a started `uv_timer_t`'s node.
-                        unsafe { UvTimerNode::on_fire(c) }
+                        unsafe { UvTimerNode::on_fire(c, vm) }
                     }
                 )
             }

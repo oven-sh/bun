@@ -522,10 +522,13 @@ impl<const SSL: bool> WebSocket<SSL> {
                 out.did_receive_bytes(data, kind as u8);
             }
             Opcode::Text => {
+                // SAFETY: only `feed` passes an `ArrayBuffer`, and `init_over_stream` asserts `ws_mode`, which
+                // takes the arm above. Other `data` is in a buffer of the socket, the tunnel, `self` or the inflate scratch.
+                let stable = unsafe { strings::StableBytes::new(data) };
                 // this function encodes to UTF-16 if > 127
                 // so we don't need to worry about latin1 non-ascii code points
                 // we avoid trim since we wanna keep the utf8 validation intact
-                let utf16_bytes = match strings::to_utf16_alloc(data, true, false) {
+                let utf16_bytes = match stable.to_utf16_alloc(true) {
                     Ok(v) => v,
                     Err(strings::ToUTF16Error::InvalidByteSequence) => {
                         self.fail(ErrorCode::InvalidUtf8);
@@ -956,7 +959,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             let mut unmask = self.unmask.get();
             let mut receive_buffer = self.receive_buffer.borrow_mut();
             let writable = bun_core::handle_oom(receive_buffer.writable_with_size(chunk.len()));
-            unmask.copy(&mut writable[..chunk.len()], chunk);
+            unmask.copy(writable, chunk);
             receive_buffer.update(chunk.len());
             self.unmask.set(unmask);
         }
@@ -1715,6 +1718,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         options: &ConnectedOptions,
         deflate_params: Option<&websocket_deflate::Params>,
     ) -> *mut Self {
+        assert!(options.ws_mode);
         let ws = Self::new_raw(
             global_this,
             deflate_params,
@@ -2239,7 +2243,7 @@ impl Mask {
             bun_core::hint::cold();
             return;
         }
-        bun_highway::fill_with_skip_mask(*mask_buf, &mut output[..input.len()], input, skip_mask);
+        bun_highway::fill_with_skip_mask(*mask_buf, output, input, skip_mask);
     }
 
     /// In-place variant for when output and input alias the same buffer

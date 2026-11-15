@@ -3741,19 +3741,13 @@ impl<'a> HTTPClient<'a> {
 
         let shared_resp = scratch::response_headers();
         let mut response = loop {
-            let mut amount_read: usize = 0;
-
             // minimal http/1.1 response is 16 bytes ("HTTP/1.1 200\r\n\r\n")
             // if less than 16 it will always be a ShortRead
             if to_read.len() < 16 {
                 short_read!();
             }
 
-            let parsed = match picohttp::Response::parse_parts(
-                to_read,
-                &mut shared_resp[..],
-                Some(&mut amount_read),
-            ) {
+            let parsed = match picohttp::Response::parse(to_read, &mut shared_resp[..]) {
                 Ok(r) => r,
                 Err(picohttp::ParseResponseError::ShortRead) => {
                     // `MAX_HTTP_HEADER_SIZE` (default 16 KB) is the *server*/

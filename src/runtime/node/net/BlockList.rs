@@ -3,8 +3,8 @@ use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 use bun_core::{String as BunString, ZStr};
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{CloneSerializer, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _};
-use bun_threading::{Guarded, Mutex};
+use bun_jsc::{CloneSerializer, JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_threading::Guarded;
 
 /// `(serialize_nonce, address)` of `BlockList` instances currently embedded in
 /// a live `SerializedScriptValue` (one entry per serialize; removed by
@@ -45,12 +45,8 @@ fn sockaddr_from_js(
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct BlockList {
     ref_count: bun_ptr::ThreadSafeRefCount,
-    // R-2: interior mutability so every host_fn takes `&self`. All access is
-    // serialized by `mutex` (held across every read and every `with_mut`), so
-    // the `JsCell` single-thread invariant is upheld even though `BlockList`
-    // can be touched from multiple JS realms via structured clone.
-    da_rules: JsCell<Vec<Rule>>,
-    mutex: Mutex,
+    /// Structured clone shares a `BlockList` between threads.
+    da_rules: Guarded<Vec<Rule>>,
 
     /// We cannot lock/unlock a mutex
     estimated_size: AtomicU32,
@@ -66,8 +62,7 @@ impl BlockList {
     pub(crate) fn constructor() -> *mut Self {
         bun_ptr::RefPtr::new(Self {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            da_rules: JsCell::new(Vec::new()),
-            mutex: Mutex::default(),
+            da_rules: Guarded::new(Vec::new()),
             estimated_size: AtomicU32::new(0),
             serialize_nonce: {
                 let mut n = [0u8; 8];
@@ -172,8 +167,7 @@ impl BlockList {
     }
 
     fn add_rule(&self, rule: Rule) {
-        let _guard = self.mutex.lock_guard();
-        self.da_rules.with_mut(|r| r.insert(0, rule));
+        self.da_rules.lock().insert(0, rule);
         self.estimated_size.fetch_add(
             u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
@@ -213,8 +207,7 @@ impl BlockList {
     }
 
     pub(crate) fn check_sockaddr(&self, address: &sockaddr) -> bool {
-        let _guard = self.mutex.lock_guard();
-        for item in self.da_rules.get().iter() {
+        for item in self.da_rules.lock().iter() {
             match item {
                 Rule::Addr(a) => {
                     let Some(order) = compare(address, a) else {
@@ -297,8 +290,7 @@ impl BlockList {
 
     pub(crate) fn get_rules(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
-        let _guard = self.mutex.lock_guard();
-        let rules = self.da_rules.get();
+        let rules = self.da_rules.lock();
         // GC must be able to visit
         let array = JSValue::create_empty_array(global, rules.len())?;
 
@@ -354,7 +346,6 @@ pub(crate) unsafe extern "C" fn BlockList__onStructuredCloneSerialize(
         bun_ptr::RefPtr::increment_strong_count(this);
         &*this
     };
-    let _guard = this.mutex.lock_guard();
     SERIALIZED_REFS.lock().push((this.serialize_nonce, addr));
     _ = serializer.write_int_le(this.serialize_nonce);
 }

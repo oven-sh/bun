@@ -6,6 +6,7 @@
 //! `extern "Rust"` decls.
 
 use bun_options_types::LoaderExt as _;
+use bun_ptr::CellExt as _;
 
 use crate::virtual_machine::{MAIN_FILE_NAME, MainEntryPoint, VirtualMachine};
 use crate::{self as jsc, ErrorableResolvedSource, JSGlobalObject, JSValue, ResolvedSource};
@@ -19,7 +20,7 @@ bun_core::declare_scope!(ModuleLoader, hidden);
 
 #[derive(Default)]
 pub struct ModuleLoader {
-    pub transpile_source_code_arena: crate::JsCell<Option<Box<bun_ast::AstArena>>>,
+    pub transpile_source_code_arena: core::cell::Cell<Option<Box<bun_ast::AstArena>>>,
     /// Taken while a module is printed, and put back so that the next one reuses its buffer.
     pub source_code_printer: core::cell::Cell<bun_js_printer::BufferPrinter>,
     pub eval_source: core::cell::OnceCell<Box<bun_ast::Source<'static>>>,
@@ -57,7 +58,7 @@ impl ModuleLoader {
         // a perf-sensitive change that
         // needs benchmarking (transpile arena RSS vs cycle cost), so it is
         // tracked as a dedicated work order rather than changed inline.
-        self.transpile_source_code_arena.with_mut(|arena| {
+        self.transpile_source_code_arena.with_taken(|arena| {
             if let Some(arena) = arena {
                 arena.reset_retain_chunks(8 * 1024 * 1024);
             }

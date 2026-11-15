@@ -211,7 +211,7 @@ impl TopExceptionScope {
     fn assertion_failure(&mut self, proof: NonNull<Exception>) -> ! {
         let _ = proof;
         debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
-        TopExceptionScope__assertNoException(&mut self.bytes);
+        TopExceptionScope__assertNoException(self);
         unreachable!("assertionFailure called without a pending exception");
     }
 
@@ -223,7 +223,7 @@ impl TopExceptionScope {
     pub fn exception(&mut self) -> Option<NonNull<Exception>> {
         #[cfg(any(debug_assertions, bun_asan))]
         debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
-        NonNull::new(TopExceptionScope__pureException(&mut self.bytes))
+        NonNull::new(TopExceptionScope__pureException(self))
     }
 
     /// As `clear_exception`, but a TerminationException stays pending (JSC's
@@ -231,14 +231,14 @@ impl TopExceptionScope {
     pub fn clear_exception_except_termination(&mut self) {
         #[cfg(any(debug_assertions, bun_asan))]
         debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
-        TopExceptionScope__clearExceptionExceptTermination(&mut self.bytes)
+        TopExceptionScope__clearExceptionExceptTermination(self)
     }
 
     /// Get the thrown exception if it exists, or if an unhandled trap causes an exception to be thrown
     pub(crate) fn exception_including_traps(&mut self) -> Option<NonNull<Exception>> {
         #[cfg(any(debug_assertions, bun_asan))]
         debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
-        NonNull::new(TopExceptionScope__exceptionIncludingTraps(&mut self.bytes))
+        NonNull::new(TopExceptionScope__exceptionIncludingTraps(self))
     }
 
     /// Intended for use with `?`. Returns if there is already a pending exception or if traps cause
@@ -257,7 +257,7 @@ impl TopExceptionScope {
     pub fn err_for_pending(&mut self) -> JsError {
         #[cfg(any(debug_assertions, bun_asan))]
         debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
-        if TopExceptionScope__takeTerminationOutsideScript(&mut self.bytes) {
+        if TopExceptionScope__takeTerminationOutsideScript(self) {
             JsError::Terminated
         } else {
             JsError::Thrown
@@ -629,10 +629,7 @@ pub fn call_check_slow<R>(global: &JSGlobalObject, f: impl FnOnce() -> R) -> JsR
     call_check_slow_at(global, SourceLocation::from_caller(), f)
 }
 
-// safe fn: `&mut [u8; SIZE]` is ABI-identical to a non-null `*mut [u8; SIZE]`
-// (thin pointer to a fixed-size array). Every `&mut self.bytes` reachable here
-// has been seated by `init_in_place` (the sole constructor path), so the C++
-// `ExceptionScope` invariant is encoded in the `TopExceptionScope` type — no
+// safe fn: a `&mut TopExceptionScope` has been seated by `init_in_place`, so there is no
 // caller-side precondition. `__construct` keeps `unsafe fn` (NUL-terminated
 // `*const c_char` precondition) and `__destruct` keeps `unsafe fn`
 // (consumes; double-destruct is UB, so only `TopExceptionScopeGuard::drop` calls it).
@@ -647,13 +644,15 @@ unsafe extern "C" {
         alignment: usize,
     );
     /// only returns exceptions that have already been thrown. does not check traps
-    safe fn TopExceptionScope__pureException(ptr: &mut [u8; SIZE]) -> *mut Exception;
-    safe fn TopExceptionScope__takeTerminationOutsideScript(ptr: &mut [u8; SIZE]) -> bool;
-    safe fn TopExceptionScope__clearExceptionExceptTermination(ptr: &mut [u8; SIZE]);
+    safe fn TopExceptionScope__pureException(ptr: &mut TopExceptionScope) -> *mut Exception;
+    safe fn TopExceptionScope__takeTerminationOutsideScript(ptr: &mut TopExceptionScope) -> bool;
+    safe fn TopExceptionScope__clearExceptionExceptTermination(ptr: &mut TopExceptionScope);
     /// returns if an exception was already thrown, or if a trap (like another thread requesting
     /// termination) causes an exception to be thrown
-    safe fn TopExceptionScope__exceptionIncludingTraps(ptr: &mut [u8; SIZE]) -> *mut Exception;
+    safe fn TopExceptionScope__exceptionIncludingTraps(
+        ptr: &mut TopExceptionScope,
+    ) -> *mut Exception;
     #[cfg(any(debug_assertions, bun_asan))]
-    safe fn TopExceptionScope__assertNoException(ptr: &mut [u8; SIZE]);
+    safe fn TopExceptionScope__assertNoException(ptr: &mut TopExceptionScope);
     fn TopExceptionScope__destruct(ptr: *mut [u8; SIZE]);
 }

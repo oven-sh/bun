@@ -14,8 +14,6 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use crate::webcore::jsc::{
     self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_core as bun;
 use bun_core::Output;
 use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, WTFStringImplExt as _, strings};
 use bun_http_types::MimeType::MimeType;
@@ -2213,32 +2211,20 @@ impl BlobExt for Blob {
                     // If we can use a copy-on-write clone of the buffer, do so.
                     if let Some(store) = self.store.get() {
                         if let store::Data::Bytes(bytes) = &store.data {
-                            let store_bytes = bytes.slice();
-                            // SAFETY: `Clone` arm reads only; `buf` is store-backed.
-                            if bun::is_slice_in_buffer(unsafe { &*buf }, store_bytes) {
-                                if let Some(memfd) = bytes.memfd() {
-                                    let byte_offset = (buf.cast::<u8>() as usize)
-                                        .saturating_sub(store_bytes.as_ptr() as usize);
-                                    let result =
-                                        jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
-                                            memfd.native() as i64,
-                                            global,
-                                            byte_offset,
-                                            buf_len,
-                                            store_bytes.len(),
-                                            TYPED_ARRAY_VIEW,
-                                        );
-                                    let result = result?;
-                                    debug!(
-                                        "toArrayBuffer COW clone({}, {}) = {}",
-                                        byte_offset,
-                                        buf_len,
-                                        (result != JSValue::ZERO) as u8
-                                    );
-                                    if result != JSValue::ZERO {
-                                        return Ok(result);
-                                    }
-                                }
+                            let result = jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
+                                global,
+                                bytes,
+                                // SAFETY: `Clone` arm reads only.
+                                unsafe { &*buf },
+                                TYPED_ARRAY_VIEW,
+                            )?;
+                            debug!(
+                                "toArrayBuffer COW clone({}) = {}",
+                                buf_len,
+                                (result != JSValue::ZERO) as u8
+                            );
+                            if result != JSValue::ZERO {
+                                return Ok(result);
                             }
                         }
                     }

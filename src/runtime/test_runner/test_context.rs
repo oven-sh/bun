@@ -191,7 +191,7 @@ impl TestContext {
         };
         let thrown = match thrown.to_error() {
             Some(thrown) => thrown,
-            None if thrown.is_exception(global.vm_ptr()) => return Ok(()),
+            None if thrown.is_exception(global.vm()) => return Ok(()),
             None => thrown,
         };
         if thrown.is_object() || thrown.is_symbol() {

@@ -578,7 +578,6 @@ const rustOpaqueHandles = new Set([
   "JSC::Exception",
   "JSC::CallFrame",
   "JSC::CustomGetterSetter",
-  "JSC::SourceProvider",
   "WebCore::DOMURL",
 ]);
 

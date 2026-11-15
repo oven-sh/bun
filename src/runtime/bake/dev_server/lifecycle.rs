@@ -63,8 +63,12 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(emit_incremental_visualizer_events, 0);
         w!(emit_memory_visualizer_events, 0);
         w!(
-            memory_visualizer_timer,
-            OwnedTimer::init_paused(EventLoopTimerTag::DevServerMemoryVisualizerTick)
+            timers,
+            bun_ptr::AliasableBox::new(DevServerTimers {
+                dev: p,
+                memory_visualizer_timer: OwnedTimer::init_paused(),
+                weak_ref_sweep_timer: OwnedTimer::init_paused(),
+            })
         );
         // `dev.frontend_only = dev.framework.file_system_router_types.len == 0`
         w!(
@@ -541,7 +545,7 @@ impl Drop for DevServer {
                 active_websocket_connections: _,
                 emit_incremental_visualizer_events: _,
                 emit_memory_visualizer_events: _,
-                memory_visualizer_timer: _,
+                timers: _,
                 assume_perfect_incremental_bundling: _,
                 broadcast_console_log_from_browser_to_server: _,
             } = &*self;

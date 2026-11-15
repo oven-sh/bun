@@ -4,8 +4,6 @@ use bun_core::{Output, feature_flags};
 use bun_uws::AnyWebSocket;
 use bun_uws_sys::{Opcode, SendStatus};
 
-use crate::timer::EventLoopTimerState;
-
 use super::source_map_store::{self, RemoveOrUpgradeMode};
 use super::{ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId};
 use crate::bake::dev_server::HmrTopicBits;
@@ -106,19 +104,9 @@ impl HmrSocket {
                                     dev.emit_memory_visualizer_message();
                                     if dev.emit_memory_visualizer_events == 1 {
                                         debug_assert!(
-                                            dev.memory_visualizer_timer.state.get()
-                                                != EventLoopTimerState::ACTIVE
+                                            !dev.timers.memory_visualizer_timer.is_active()
                                         );
-                                        let next = bun_core::Timespec::ms_from_now(
-                                            bun_core::TimespecMockMode::ForceRealTime,
-                                            1000,
-                                        );
-                                        crate::jsc_hooks::timer_all().update(
-                                            OwnedTimer::node(
-                                                &raw const dev.memory_visualizer_timer,
-                                            ),
-                                            &next,
-                                        );
+                                        dev.timers.as_pin_ref().arm_memory_visualizer_timer();
                                     }
                                 }
                                 _ => {}
@@ -272,7 +260,7 @@ impl HmrSocket {
             if field.contains(HmrTopic::MemoryVisualizer.as_bit()) {
                 dev.emit_memory_visualizer_events -= 1;
                 if dev.emit_memory_visualizer_events == 0 {
-                    dev.memory_visualizer_timer.disarm();
+                    dev.timers.memory_visualizer_timer.disarm();
                 }
             }
         }

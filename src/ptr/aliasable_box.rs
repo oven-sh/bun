@@ -1,6 +1,16 @@
+use core::pin::Pin;
 use core::ptr::NonNull;
 
 /// A `Box` for a value that raw pointers point into: moving a `Box` would invalidate them.
+/// Pins a `T: !Unpin`, as `Pin<Box<T>>`.
+///
+/// ```compile_fail,E0596
+/// let _ = &mut *bun_ptr::AliasableBox::new(core::marker::PhantomPinned);
+/// ```
+///
+/// ```compile_fail,E0277
+/// let _ = bun_ptr::AliasableBox::new(core::marker::PhantomPinned).into_box();
+/// ```
 #[repr(transparent)]
 pub struct AliasableBox<T>(NonNull<T>);
 
@@ -12,6 +22,7 @@ impl<T> AliasableBox<T> {
     /// # Safety
     /// As for [`Box::from_non_null`]. The value can be outside a `Box` allocation, if it is live and has
     /// no other owner, and the result is neither dropped nor passed to [`Self::into_box`].
+    /// A `T: !Unpin` stays in place until it is dropped.
     pub unsafe fn from_non_null(ptr: NonNull<T>) -> Self {
         Self(ptr)
     }
@@ -27,7 +38,10 @@ impl<T> AliasableBox<T> {
     }
 
     /// Invalidates the pointers into the value.
-    pub fn into_box(self) -> Box<T> {
+    pub fn into_box(self) -> Box<T>
+    where
+        T: Unpin,
+    {
         // SAFETY: it came from a `Box`, and `self` was the only owner.
         unsafe { bun_core::heap::take(self.into_raw()) }
     }
@@ -41,6 +55,11 @@ impl<T> AliasableBox<T> {
     pub fn as_non_null(&self) -> NonNull<T> {
         self.0
     }
+
+    pub fn as_pin_ref(&self) -> Pin<&T> {
+        // SAFETY: only a `T: Unpin` is lent mutably or moved out, and the value is dropped before its memory is freed.
+        unsafe { Pin::new_unchecked(self) }
+    }
 }
 
 impl<T> core::ops::Deref for AliasableBox<T> {
@@ -51,7 +70,7 @@ impl<T> core::ops::Deref for AliasableBox<T> {
     }
 }
 
-impl<T> core::ops::DerefMut for AliasableBox<T> {
+impl<T: Unpin> core::ops::DerefMut for AliasableBox<T> {
     fn deref_mut(&mut self) -> &mut T {
         // SAFETY: as above; code that dereferences `as_ptr()` must not overlap this borrow.
         unsafe { self.0.as_mut() }

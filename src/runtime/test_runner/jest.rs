@@ -175,21 +175,11 @@ impl TestRunner {
                 }
             }
         }
-        if active_file.timer.state.get() != TimerState::ACTIVE
-            || active_file.timer.next.get() == bun_core::Timespec::EPOCH
-        {
-            return bun_core::Timespec::EPOCH;
-        }
-        active_file.timer.next.get()
+        self.bun_test_root.active_timeout()
     }
 
     pub(crate) fn remove_active_timeout(&self) {
-        let Some(active_file) = self.bun_test_root.clone_active_file() else {
-            return;
-        };
-        if active_file.timer.next.get() != bun_core::Timespec::EPOCH {
-            active_file.timer.disarm();
-        }
+        self.bun_test_root.timer.disarm();
     }
 
 
@@ -220,10 +210,6 @@ impl TestRunner {
         })
     }
 }
-
-// Timer state enum referenced via `.ACTIVE` — re-exported from bun_event_loop
-// through `crate::timer` (see src/runtime/timer/mod.rs).
-use crate::timer::EventLoopTimerState as TimerState;
 
 #[derive(Default, Clone, Copy)]
 pub(crate) struct Summary {

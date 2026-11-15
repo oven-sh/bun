@@ -1,12 +1,13 @@
 use core::cell::Cell;
+use core::pin::Pin;
 use std::collections::VecDeque;
 
 use crate::api::cron::CronJob;
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::jsc_hooks::timer_all;
 use crate::timer::{
-    AbortSignalTimeout, Clock, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
-    InHeap, Popped, TimerHeap, TimerObjectInternals,
+    AbortSignalTimeout, Clock, EventLoopTimerTag, ImmediateObject, OwnedTimer,
+    TimeoutObject, TimerHeap, TimerRef,
 };
 use crate::generated_bindgen::fake_timers as generated;
 use bun_core::{Timespec, TimespecMockMode};
@@ -490,11 +491,6 @@ pub(crate) struct FakeTimers {
     /// Bumped by `activate` and `forget_installation`. If it changes mid-run, that run's clock is gone.
     installs: Cell<u32>,
     firing: Cell<u32>,
-    /// The sorted fake timers. TimerHeap is not optimal here because we need these operations:
-    /// - peek/takeFirst (provided by TimerHeap)
-    /// - peekLast (cannot be implemented efficiently with TimerHeap)
-    /// - count (cannot be implemented efficiently with TimerHeap)
-    pub(crate) timers: TimerHeap,
     now: Cell<Timespec>,
     date_now_offset: Cell<f64>,
     loop_limit: Cell<u32>,
@@ -507,8 +503,18 @@ pub(crate) struct FakeTimers {
     last_drive_id: Cell<u32>,
     tick_mode: Cell<TickMode>,
     /// Armed in the real heap while `tick_mode` is `Interval`.
-    tick_timer: EventLoopTimer,
+    tick_timer: OwnedTimer<{ EventLoopTimerTag::FakeTimersTick }>,
     auto_step_posted: Cell<bool>,
+}
+
+bun_event_loop::impl_timer_owner!(FakeTimers; tick_timer: OwnedTimer<FakeTimersTick>);
+
+/// The sorted fake timers. TimerHeap is not optimal here because we need these operations:
+/// - peek/takeFirst (provided by TimerHeap)
+/// - peekLast (cannot be implemented efficiently with TimerHeap)
+/// - count (cannot be implemented efficiently with TimerHeap)
+fn fake_heap() -> &'static TimerHeap {
+    timer_all().heaps.fake()
 }
 
 impl Default for FakeTimers {
@@ -520,7 +526,6 @@ impl Default for FakeTimers {
             from_preload: Cell::new(false),
             installs: Cell::new(0),
             firing: Cell::new(0),
-            timers: TimerHeap::default(),
             now: Cell::new(Timespec::EPOCH),
             date_now_offset: Cell::new(0.0),
             loop_limit: Cell::new(0),
@@ -531,7 +536,7 @@ impl Default for FakeTimers {
             drives: Cell::new(Vec::new()),
             last_drive_id: Cell::new(AUTO_STEP),
             tick_mode: Cell::new(TickMode::Manual),
-            tick_timer: EventLoopTimer::init_paused(EventLoopTimerTag::FakeTimersTick),
+            tick_timer: OwnedTimer::init_paused(),
             auto_step_posted: Cell::new(false),
         }
     }
@@ -731,43 +736,32 @@ impl FakeTimers {
     #[optimize(size)]
     fn clear(&self, vm: &VirtualMachine) {
         self.ticks.with_taken(VecDeque::clear);
-        while let Some(timer) = self.timers.delete_min() {
-            // SAFETY: `delete_min` returned a live node, and `tag` names the owner it is a field
-            // of. The owner may be freed by the call that releases it.
-            unsafe {
-                (*timer).in_heap.set(InHeap::None);
-                (*timer).state.set(EventLoopTimerState::CANCELLED);
-                match (*timer).tag {
-                    EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject => {
-                        Popped::new(timer).cancel(vm);
-                    }
-                    EventLoopTimerTag::AbortSignalTimeout => {
-                        AbortSignalTimeout::discard(AbortSignalTimeout::from_timer_ptr(timer));
-                    }
-                    EventLoopTimerTag::CronJob => {
-                        let job = bun_ptr::ThisPtr::new(CronJob::from_timer_ptr(timer));
-                        CronJob::stop_dropped_from_fake_heap(job);
-                    }
-                    tag => debug_assert!(
-                        false,
-                        "{} timer in the fake heap has no release path",
-                        <&'static str>::from(tag),
-                    ),
-                }
+        while let Some(timer) = fake_heap().delete_min() {
+            match timer.tag() {
+                EventLoopTimerTag::TimeoutObject => timer.into_owner_ref::<_, TimeoutObject>().cancel(vm),
+                EventLoopTimerTag::ImmediateObject => timer.into_owner_ref::<_, ImmediateObject>().cancel(vm),
+                // SAFETY: just popped, so it is live.
+                EventLoopTimerTag::AbortSignalTimeout => unsafe { AbortSignalTimeout::discard(timer.into_owner_ptr()) },
+                EventLoopTimerTag::CronJob => CronJob::stop_dropped_from_fake_heap(&timer.into_owner_ref()),
+                tag => debug_assert!(
+                    false,
+                    "{} timer in the fake heap has no release path",
+                    <&'static str>::from(tag),
+                ),
             }
         }
     }
 
     fn count(&self) -> usize {
-        self.timers.count() + self.ticks.len()
+        fake_heap().count() + self.ticks.len()
     }
 
     fn is_empty(&self) -> bool {
-        self.timers.peek().is_none() && self.ticks.is_empty()
+        fake_heap().is_empty() && self.ticks.is_empty()
     }
 
     fn first_due(&self, until: &Timespec) -> Option<Timespec> {
-        self.timers.first_deadline().filter(|at| !at.greater(until))
+        fake_heap().first_deadline().filter(|at| !at.greater(until))
     }
 
     /// Runs no JS with `Restore::Always`, but settling the returned drives does.
@@ -931,32 +925,29 @@ impl FakeTimers {
     /// `None` if the heap has no such timer.
     fn pop_and_fire(global: &JSGlobalObject, which: WhichTimer) -> JsResult<Option<JSValue>> {
         let this = &timer_all().fake_timers;
-        let Some(timer) = (match which {
-            WhichTimer::FirstIfDue(until) if this.first_due(&until).is_none() => None,
-            WhichTimer::First | WhichTimer::FirstIfDue(_) => this.timers.delete_min(),
-            WhichTimer::FirstImmediate => this.timers.delete_first_immediate(),
-        }) else {
-            return Ok(None);
-        };
-        // SAFETY: `timer` was just popped from our heap; live until its callback completes.
-        let (tag, at) = unsafe { ((*timer).tag, (*timer).next.get()) };
-        this.advance_clock_to(global, at);
-        let _firing = Firing::begin();
         let vm = VirtualMachine::get();
         let mut thrown = JSValue::ZERO;
-        // SAFETY: `timer` was just popped from our heap.
-        unsafe {
-            match tag {
-                EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject => {
-                    TimerObjectInternals::fire_catching(Popped::new(timer), vm, &raw mut thrown)
-                }
-                // An abort listener or cron job that throws is reported as uncaught, same as in the real drain.
-                _ => {
-                    if let Err(err) = crate::dispatch::fire_timer(timer, &at, vm) {
-                        bun_jsc::task::report_error_or_terminate(global, err)
-                            .map_err(|stopped| stopped.throw(global))?;
-                    }
-                }
+        if let WhichTimer::FirstImmediate = which {
+            let Some(timer) = fake_heap().delete_first_immediate() else {
+                return Ok(None);
+            };
+            let immediate = timer.into_owner_ref::<_, ImmediateObject>();
+            this.advance_clock_to(global, immediate.event_loop_timer.next());
+            let _firing = Firing::begin();
+            ImmediateObject::fire_catching(immediate, vm, Some(&mut thrown));
+        } else {
+            let Some(at) = (match which {
+                WhichTimer::FirstIfDue(until) => this.first_due(&until),
+                _ => fake_heap().first_deadline(),
+            }) else {
+                return Ok(None);
+            };
+            this.advance_clock_to(global, at);
+            let _firing = Firing::begin();
+            // An abort listener or cron job that throws is reported as uncaught, same as in the real drain.
+            if let Err(err) = crate::dispatch::fire_first_timer(fake_heap(), &at, vm, Some(&mut thrown)) {
+                bun_jsc::task::report_error_or_terminate(global, err)
+                    .map_err(|stopped| stopped.throw(global))?;
             }
         }
         if global.has_exception() {
@@ -979,7 +970,7 @@ impl FakeTimers {
             ran += 1;
             let (callback, arguments) = (tick.callback.get(), tick.arguments.get());
             drop(tick);
-            let thrown = TimerObjectInternals::call_catching(global, callback, arguments);
+            let thrown = TimeoutObject::call_catching(global, callback, arguments);
             if global.has_exception() {
                 return Err(Stop::Vm(JsError::Thrown));
             }
@@ -1029,7 +1020,7 @@ impl FakeTimers {
 
     /// sinon's `runToLast()`.
     fn run_only_pending(global: &JSGlobalObject) -> Result<JSValue, Stop> {
-        match timer_all().fake_timers.timers.last_deadline() {
+        match fake_heap().last_deadline() {
             Some(last) => Self::run_until(global, last),
             None => Self::run_ticks(global).map(|()| JSValue::ZERO),
         }
@@ -1077,7 +1068,7 @@ impl FakeTimers {
                 return Ok(thrown);
             }
         }
-        if !this.timers.has_immediate() {
+        if !fake_heap().has_immediate() {
             return Ok(JSValue::ZERO);
         }
         loop_limit_error(global, limit)
@@ -1135,7 +1126,7 @@ impl FakeTimers {
     }
 
     fn time_to_last_timer(&self) -> Timespec {
-        self.timers
+        fake_heap()
             .last_deadline()
             .map_or(Timespec::EPOCH, |last| last.duration(&self.now()))
     }
@@ -1283,9 +1274,9 @@ impl FakeTimers {
         let TickMode::Interval(delta) = this.tick_mode.get() else {
             return;
         };
-        if this.tick_timer.state.get() != EventLoopTimerState::ACTIVE {
+        if !this.tick_timer.is_active() {
             all.update(
-                &raw const this.tick_timer,
+                TimerRef::from_pin(Pin::static_ref(this)),
                 &Timespec::now(TimespecMockMode::ForceRealTime).add_ms(i64::from(delta)),
             );
         }
@@ -1293,7 +1284,6 @@ impl FakeTimers {
 
     pub(crate) fn on_tick_timer(global: &JSGlobalObject) -> JsResult<()> {
         let this = &timer_all().fake_timers;
-        this.tick_timer.state.set(EventLoopTimerState::FIRED);
         let TickMode::Interval(delta) = this.tick_mode.get() else {
             return Ok(());
         };

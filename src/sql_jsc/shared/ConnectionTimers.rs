@@ -4,35 +4,36 @@ use core::fmt::Arguments;
 use bun_core::fmt::{ConnTimeoutKind, fmt_conn_timeout};
 use bun_core::{Timespec, TimespecMockMode};
 
-use crate::jsc::{EventLoopTimerState, EventLoopTimerTag, OwnedTimer, VirtualMachine};
+use crate::jsc::{Clock, EventLoopTimerTag, OwnedTimer, TimerRef, VirtualMachine};
 
-pub struct ConnectionTimers {
+pub struct ConnectionTimers<const TIMEOUT: EventLoopTimerTag, const MAX_LIFETIME: EventLoopTimerTag>
+{
     idle_timeout_ms: u32,
     pub(crate) connection_timeout_ms: u32,
     max_lifetime_ms: u32,
     /// The connection timeout until the connection is established, the idle timeout after.
-    pub(crate) timer: OwnedTimer,
-    pub(crate) max_lifetime_timer: OwnedTimer,
+    pub(crate) timer: OwnedTimer<TIMEOUT>,
+    pub(crate) max_lifetime_timer: OwnedTimer<MAX_LIFETIME>,
     /// `maxLifetime` ran out while busy; the connection closes when it stops being busy.
     lifetime_exceeded: Cell<bool>,
     /// The pool handed it to a reservation or a transaction: busy even when nothing is on the wire.
     checked_out: Cell<bool>,
 }
 
-impl ConnectionTimers {
+impl<const TIMEOUT: EventLoopTimerTag, const MAX_LIFETIME: EventLoopTimerTag>
+    ConnectionTimers<TIMEOUT, MAX_LIFETIME>
+{
     pub(crate) fn new(
         idle_timeout_ms: u32,
         connection_timeout_ms: u32,
         max_lifetime_ms: u32,
-        timer_tag: EventLoopTimerTag,
-        max_lifetime_tag: EventLoopTimerTag,
     ) -> Self {
         Self {
             idle_timeout_ms,
             connection_timeout_ms,
             max_lifetime_ms,
-            timer: OwnedTimer::init_paused(timer_tag),
-            max_lifetime_timer: OwnedTimer::init_paused(max_lifetime_tag),
+            timer: OwnedTimer::init_paused(),
+            max_lifetime_timer: OwnedTimer::init_paused(),
             lifetime_exceeded: Cell::new(false),
             checked_out: Cell::new(false),
         }
@@ -48,13 +49,9 @@ impl ConnectionTimers {
     }
 }
 
-fn start(timer: &OwnedTimer, ms: u32) {
-    timer.next.set(Timespec::ms_from_now(
-        TimespecMockMode::ForceRealTime,
-        ms.into(),
-    ));
-    // SAFETY: an unlinked field (both callers see to it) of a boxed connection.
-    unsafe { VirtualMachine::get().timer_insert(OwnedTimer::node(timer)) };
+fn start(timer: TimerRef<'_>, ms: u32) {
+    let next = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, ms.into());
+    VirtualMachine::get().timer_update(timer, &next, Clock::Real);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -65,8 +62,8 @@ pub enum Phase {
     Failed,
 }
 
-pub trait TimedConnection {
-    fn timers(&self) -> &ConnectionTimers;
+pub trait TimedConnection<const TIMEOUT: EventLoopTimerTag, const MAX_LIFETIME: EventLoopTimerTag> {
+    fn timers(&self) -> &ConnectionTimers<TIMEOUT, MAX_LIFETIME>;
     fn phase(&self) -> Phase;
     /// In flight or queued.
     fn has_requests(&self) -> bool;
@@ -104,12 +101,11 @@ pub trait TimedConnection {
         timer.disarm();
         let (_, ms, _) = self.timeout();
         if ms != 0 {
-            start(timer, ms);
+            start(timer.timer_ref(), ms);
         }
     }
 
     fn on_connection_timeout(&self) {
-        self.timers().timer.state.set(EventLoopTimerState::FIRED);
         let (kind, ms, stage) = self.timeout();
         if ms != 0 && !self.is_processing_data() {
             self.fail_timeout(kind, format_args!("{}", fmt_conn_timeout(kind, ms, stage)));
@@ -118,23 +114,19 @@ pub trait TimedConnection {
 
     fn start_max_lifetime_timer(&self) {
         let timers = self.timers();
-        if timers.max_lifetime_ms != 0
-            && timers.max_lifetime_timer.state.get() != EventLoopTimerState::ACTIVE
-        {
-            start(&timers.max_lifetime_timer, timers.max_lifetime_ms);
+        if timers.max_lifetime_ms != 0 && !timers.max_lifetime_timer.is_active() {
+            start(
+                timers.max_lifetime_timer.timer_ref(),
+                timers.max_lifetime_ms,
+            );
         }
     }
 
     fn on_max_lifetime_timeout(&self) {
-        let timers = self.timers();
-        timers
-            .max_lifetime_timer
-            .state
-            .set(EventLoopTimerState::FIRED);
         match self.phase() {
             Phase::Failed => {}
             Phase::Connected if self.is_busy() => {
-                timers.lifetime_exceeded.set(true);
+                self.timers().lifetime_exceeded.set(true);
                 self.notify_retiring();
             }
             _ => self.fail_lifetime_timeout(),

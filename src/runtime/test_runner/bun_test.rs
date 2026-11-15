@@ -1,6 +1,7 @@
 use core::cell::{Cell, OnceCell};
 use core::fmt;
 use core::num::NonZeroU32;
+use core::pin::Pin;
 use std::collections::VecDeque;
 use std::rc::{Rc, Weak};
 
@@ -13,7 +14,7 @@ use bun_ptr::{CellExt as _, OptionCellExt as _, RefPtr, VecCellExt as _, VecDequ
 use bun_sema::util::SmallLocalVec;
 use super::jest::{File, Jest};
 use crate::jsc_hooks::timer_all;
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, OwnedTimer};
+use crate::timer::{EventLoopTimerTag, OwnedTimer, TimerRef};
 use crate::cli::test_command::{CommandLineReporter, TestFailure};
 use crate::generated_bindgen::bun_test::{
     Bun__BunTest__hook, Bun__TestScope__Describe2__bunTestCatch, Bun__TestScope__Describe2__bunTestThen,
@@ -417,7 +418,11 @@ pub(crate) struct BunTestRoot {
     /// state (node:test root) resets on `--rerun-each` where `Bun.main` is
     /// unchanged across iterations.
     pub(crate) file_generation: Cell<u32>,
+    /// The soonest timeout of `active_file`.
+    pub(crate) timer: OwnedTimer<{ EventLoopTimerTag::BunTest }>,
 }
+
+bun_event_loop::impl_timer_owner!(BunTestRoot; timer: OwnedTimer<BunTest>);
 
 impl BunTestRoot {
     pub(crate) fn init() -> BunTestRoot {
@@ -426,6 +431,7 @@ impl BunTestRoot {
             preload: Cell::new(None),
             pending_then_refs: Cell::default(),
             file_generation: Cell::new(0),
+            timer: OwnedTimer::init_paused(),
         }
     }
 
@@ -458,6 +464,7 @@ impl BunTestRoot {
     /// Drops the runner's references before `global_exit()`, which does not unwind to `EnteredFile::drop`.
     pub(crate) fn deinit_for_exit(&self) {
         self.active_file.set(None);
+        self.timer.disarm();
         self.reset_preload_for_test_isolation();
         self.pending_then_refs.take();
     }
@@ -489,6 +496,7 @@ impl BunTestRoot {
 
         debug_assert!(self.has_active_file());
         self.active_file.set(None);
+        self.timer.disarm();
     }
 
     fn clone_active_file_unless_in_preload(&self, vm: &VirtualMachine) -> Option<BunTestPtr> {
@@ -500,6 +508,11 @@ impl BunTestRoot {
 
     pub(crate) fn clone_active_file(&self) -> Option<BunTestPtr> {
         self.active_file.with_taken(|active_file| active_file.clone())
+    }
+
+    /// `EPOCH` if `timer` is not armed.
+    pub(crate) fn active_timeout(&self) -> Timespec {
+        if self.timer.is_active() { self.timer.next() } else { Timespec::EPOCH }
     }
 
     pub(crate) fn has_active_file(&self) -> bool {
@@ -607,7 +620,6 @@ pub(crate) struct BunTest {
     /// `BunTestRoot::file_generation` of this run of the file.
     pub(crate) generation: u32,
     pub(crate) reporter: &'static CommandLineReporter,
-    pub(crate) timer: OwnedTimer,
     result_queue: Cell<VecDeque<RefDataValue>>,
     /// Whether tests in this file should default to concurrent execution
     pub(crate) default_concurrent: bool,
@@ -672,9 +684,6 @@ impl BunTest {
             scopes,
             entries: SmallLocalVec::new(),
             sequence_entries: SmallLocalVec::new(),
-            // `EventLoopTimer` has no `Default`; `init_paused` sets
-            // `next = EPOCH, state = PENDING`.
-            timer: OwnedTimer::init_paused(EventLoopTimerTag::BunTest),
             wants_wakeup: Cell::new(false),
             pending_phase: Cell::new(RefDataValue::Start),
             is_reporting_uncaught: Cell::new(false),
@@ -1015,8 +1024,6 @@ impl BunTest {
     ) {
         let _g = group_begin!();
         let global = vm.global();
-        this.timer.next.set(Timespec::EPOCH);
-        this.timer.state.set(EventLoopTimerState::PENDING);
 
         match this.phase.get() {
             Phase::Collection => {}
@@ -1107,30 +1114,23 @@ impl BunTest {
 
     fn update_min_timeout(this: &BunTestPtr, min_timeout: &Timespec) {
         let _g = group_begin!();
-        let timer: &EventLoopTimer = &this.timer;
+        let root = &this.reporter.jest.bun_test_root;
+        let current = root.active_timeout();
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
         bun_core::scoped_log!(
             bun_test_group,
             "-> timeout: {:?} {}.{}, {:?}",
             min_timeout,
-            timer.next.get().sec,
-            timer.next.get().nsec,
-            Timespec::order_ignore_epoch(*min_timeout, timer.next.get())
+            current.sec,
+            current.nsec,
+            Timespec::order_ignore_epoch(*min_timeout, current)
         );
-        if Timespec::order_ignore_epoch(*min_timeout, timer.next.get()) == core::cmp::Ordering::Less {
+        if Timespec::order_ignore_epoch(*min_timeout, current) == core::cmp::Ordering::Less {
             bun_core::scoped_log!(bun_test_group, "-> setting timer to {:?}", min_timeout);
-            if timer.next.get() != Timespec::EPOCH {
-                bun_core::scoped_log!(bun_test_group, "-> removing existing timer");
-                timer_all().remove(timer);
-            }
-            timer.next.set(*min_timeout);
-            if timer.next.get() != Timespec::EPOCH {
-                bun_core::scoped_log!(bun_test_group, "-> inserting timer");
-                timer_all().insert(timer);
-                if debug::group::get_log_enabled() {
-                    let duration = min_timeout.since_now_force_real_time();
-                    bun_core::scoped_log!(bun_test_group, "-> timer duration: {}", duration);
-                }
+            timer_all().update(TimerRef::from_pin(Pin::static_ref(root)), min_timeout);
+            if debug::group::get_log_enabled() {
+                let duration = min_timeout.since_now_force_real_time();
+                bun_core::scoped_log!(bun_test_group, "-> timer duration: {}", duration);
             }
             bun_core::scoped_log!(bun_test_group, "-> timer set");
         }

@@ -3,6 +3,7 @@
 use core::cell::{Cell, UnsafeCell};
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
+use core::pin::Pin;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -750,6 +751,18 @@ pub unsafe fn class_ref_from_extern<'a, T: crate::JsClass>(
     unsafe { &*wrapped.cast::<T>() }
 }
 
+/// # Safety
+/// `m_wrapped` is that field of the cell of a `refCounted` class, and something holds the cell for the call `heap` belongs to.
+#[doc(hidden)]
+#[inline(always)]
+pub unsafe fn class_ref_ptr_from_extern<'a, T: bun_ptr::RefCounted>(
+    m_wrapped: *mut c_void,
+    _: &JsHeap<'a>,
+) -> &'a bun_ptr::RefPtr<T> {
+    // SAFETY: the field is the pointer of the cell's ref, and only the cell's constructor writes it.
+    unsafe { &*m_wrapped.cast::<bun_ptr::RefPtr<T>>() }
+}
+
 /// `b.bytes` with `held: "handle"`, for a function that can run JavaScript, which can detach, resize or free a buffer.
 #[derive(Clone, Copy)]
 pub struct JsBytes<'a> {
@@ -1191,6 +1204,11 @@ impl<T: JsPayload> StrongWrapper<T> {
 
     pub fn payload(&self) -> &T {
         BorrowedWrapper::<T>(self.to_js(), PhantomData).payload()
+    }
+
+    pub fn as_pin_ref(&self) -> Pin<&T> {
+        // SAFETY: a cell does not move, its payload is only ever shared, and the sweeper drops it in place.
+        unsafe { Pin::new_unchecked(self.payload()) }
     }
 
     /// The global object of the wrapper's class. In a `ShadowRealm` it is not the VM's.

@@ -23,7 +23,7 @@ use crate::api::bun_process::ExtraPipe;
 use crate::api::bun_process::{Process, Rusage, Status};
 use crate::ipc as IPC;
 use crate::node::node_cluster_binding;
-use crate::timer::{EventLoopTimer, EventLoopTimerState};
+use crate::timer::{EventLoopTimerTag, RefCountedTimer};
 use crate::webcore::streams::SourceHandle;
 use crate::webcore::{self, FileSink};
 #[cfg(windows)]
@@ -119,8 +119,7 @@ pub struct Subprocess<'a> {
     pub(crate) context: bun_jsc::ContextId,
 
     pub(crate) event_loop_timer_refd: Cell<bool>,
-    /// Intrusive timer node; `dispatch.rs` recovers the container from it.
-    pub(crate) event_loop_timer: EventLoopTimer,
+    pub(crate) event_loop_timer: RefCountedTimer<{ EventLoopTimerTag::SubprocessTimeout }>,
     pub(crate) kill_signal: SignalCode,
 
     pub(crate) stdout_maxbuf: Cell<Option<MaxBuf::OwnerRef>>,
@@ -128,7 +127,9 @@ pub struct Subprocess<'a> {
     pub(crate) exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
 }
 
-bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
+bun_event_loop::impl_timer_owner!(Subprocess<'static>;
+    event_loop_timer: RefCountedTimer<SubprocessTimeout>,
+);
 
 // Note: no `Default` impl for `Subprocess`. `js_bun_spawn_bindings::
 // spawn_maybe_sync` fills every field explicitly (see note there), and
@@ -176,6 +177,8 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
     pub struct Flags: u8 {
         const IS_SYNC                      = 1 << 0;
+        /// As `ABORT_SIGNAL_KILLED`, for the `timeout` option.
+        const TIMEOUT_KILLED               = 1 << 1;
         const HAS_STDIN_DESTRUCTOR_CALLED  = 1 << 2;
         const FINALIZED                    = 1 << 3;
         const IS_STDIN_A_READABLE_STREAM   = 1 << 5;
@@ -468,16 +471,10 @@ impl Subprocess<'_> {
 
     pub(crate) fn timeout_callback(&self) {
         self.set_event_loop_timer_refd(false);
-        if self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED {
-            return;
-        }
         if self.has_exited() {
-            self.event_loop_timer
-                .state
-                .set(EventLoopTimerState::CANCELLED);
             return;
         }
-        self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
+        self.update_flags(|f| f.insert(Flags::TIMEOUT_KILLED));
         let _ = self.try_kill(self.kill_signal);
     }
 
@@ -696,7 +693,7 @@ impl Subprocess<'_> {
         let is_sync = self.flags.get().contains(Flags::IS_SYNC);
         self.clear_abort_signal();
 
-        self.event_loop_timer.disarm();
+        drop(self.event_loop_timer.disarm());
         self.set_event_loop_timer_refd(false);
 
         jsc_vm.on_subprocess_exit(&self.process);
@@ -765,9 +762,11 @@ impl Subprocess<'_> {
         // When Bun itself killed the child (timeout/maxBuffer/AbortSignal) stop
         // waiting on pipe EOF after the drain above: a grandchild may still
         // hold the write end and the caller already opted into a bounded wait.
-        if self.event_loop_timer.state.get() == EventLoopTimerState::FIRED
-            || self.exited_due_to_maxbuf.get().is_some()
-            || self.flags.get().contains(Flags::ABORT_SIGNAL_KILLED)
+        if self.exited_due_to_maxbuf.get().is_some()
+            || self
+                .flags
+                .get()
+                .intersects(Flags::TIMEOUT_KILLED | Flags::ABORT_SIGNAL_KILLED)
         {
             self.close_readable_pipes();
         }
@@ -970,7 +969,7 @@ impl Subprocess<'_> {
         }
 
         self.process().detach();
-        self.event_loop_timer.disarm();
+        drop(self.event_loop_timer.disarm());
         self.set_event_loop_timer_refd(false);
 
         self.stdout_maxbuf.set(None);

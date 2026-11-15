@@ -481,7 +481,8 @@ impl DevServer {
                 client_bundle
             }
         };
-        self.source_maps.add_weak_ref(source_map_id);
+        self.source_maps
+            .add_weak_ref(source_map_id, self.timers.as_pin_ref());
         StaticRoute::on_with_method(client_bundle, method, resp);
     }
 }

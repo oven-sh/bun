@@ -24,7 +24,7 @@ use bun_ptr::{
 use bun_uws as uws;
 use std::rc::Rc;
 
-use crate::jsc::EventLoopTimerTag;
+use crate::jsc::{EventLoopTimerTag, OwnedTimer};
 use crate::postgres::AuthenticationState;
 use crate::postgres::PostgresSQLQuery;
 use crate::postgres::PostgresSQLStatement;
@@ -154,7 +154,7 @@ pub struct PostgresSQLConnection {
     channel_binding: ChannelBinding,
 
     pub(crate) flags: Cell<ConnectionFlags>,
-    timers: ConnectionTimers,
+    timers: Timers,
     auto_flush_registered: Cell<bool>,
 
     /// Interned notification channel names; see `channel_name_js`.
@@ -176,16 +176,14 @@ impl Drop for Advancing<'_> {
     }
 }
 
-bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
-    from_timer_ptr => timers.timer,
-    from_max_lifetime_timer_ptr => timers.max_lifetime_timer,
-);
+const TIMEOUT: EventLoopTimerTag = EventLoopTimerTag::PostgresSQLConnectionTimeout;
+const MAX_LIFETIME: EventLoopTimerTag = EventLoopTimerTag::PostgresSQLConnectionMaxLifetime;
+type Timers = ConnectionTimers<TIMEOUT, MAX_LIFETIME>;
 
-impl Drop for PostgresSQLConnection {
-    fn drop(&mut self) {
-        self.disconnect();
-    }
-}
+bun_event_loop::impl_timer_owner!(PostgresSQLConnection, drop = Self::disconnect;
+    (timers: Timers).timer: OwnedTimer<PostgresSQLConnectionTimeout>,
+    (timers: Timers).max_lifetime_timer: OwnedTimer<PostgresSQLConnectionMaxLifetime>,
+);
 
 impl PostgresSQLConnection {
     /// Read-modify-write the packed `Cell<ConnectionFlags>` through `&self`.
@@ -220,8 +218,8 @@ impl PostgresSQLConnection {
     }
 }
 
-impl TimedConnection for PostgresSQLConnection {
-    fn timers(&self) -> &ConnectionTimers {
+impl TimedConnection<TIMEOUT, MAX_LIFETIME> for PostgresSQLConnection {
+    fn timers(&self) -> &Timers {
         &self.timers
     }
 
@@ -1058,12 +1056,12 @@ fn open(
             params.idle_timeout_ms,
             params.connection_timeout_ms,
             params.max_lifetime_ms,
-            EventLoopTimerTag::PostgresSQLConnectionTimeout,
-            EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
         ),
         auto_flush_registered: Cell::new(false),
         channel_names: Cell::default(),
     });
+    OwnedTimer::<TIMEOUT>::mark_pinned(this.as_pin_ref());
+    OwnedTimer::<MAX_LIFETIME>::mark_pinned(this.as_pin_ref());
     let ptr = this.as_ptr();
 
     {

@@ -44,7 +44,7 @@ use crate::generated_bindgen::cron::{
     Bun__Cron__cron, Bun__Cron__parse, Bun__Cron__remove, Bun__CronJob__onPromiseReject,
     Bun__CronJob__onPromiseResolve, CronOptions, js_CronJob as js,
 };
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimerTag, RefCountedTimer, TimerRef};
 use bun_core::strings;
 use bun_core::{ZStr, zstr};
 #[cfg(target_os = "macos")]
@@ -1221,8 +1221,7 @@ pub(crate) struct CronJob {
     /// Set from the allocating `RefPtr` so `&self` host fns can reach the
     /// `ThisPtr`-taking paths that may release refs.
     self_ref: Cell<BackRef<CronJob, bun_ptr::Root>>,
-    // pub: `bun_core::from_field_ptr!(CronJob, event_loop_timer)` needs `offset_of!` visibility.
-    pub(crate) event_loop_timer: EventLoopTimer,
+    event_loop_timer: RefCountedTimer<{ EventLoopTimerTag::CronJob }>,
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef. Read-only after construction.
     global: GlobalRef,
     // Read-only after construction.
@@ -1247,7 +1246,7 @@ pub(crate) struct CronJob {
     abort_handle: bun_jsc::AbortHandle,
 }
 
-bun_event_loop::impl_timer_owner!(CronJob; from_timer_ptr => event_loop_timer);
+bun_event_loop::impl_timer_owner!(CronJob; event_loop_timer: RefCountedTimer<CronJob>);
 bun_jsc::impl_abort_handle_owner!(CronJob, abort_handle, |this, cause| {
     // SAFETY: trait contract — `this` is live (armed ⇒ not yet stopped).
     let job = unsafe { &*this };
@@ -1325,7 +1324,7 @@ impl CronJob {
     /// Idempotent — every step checks its own state.
     fn stop_internal(&self, _vm: &VirtualMachine) {
         self.stopped.set(true);
-        self.event_loop_timer.disarm();
+        let _timer_ref = self.event_loop_timer.disarm();
         self.poll_ref.unref(bun_io::js_vm_ctx());
         self.abort_handle.leave();
         self.maybe_downgrade();
@@ -1341,8 +1340,8 @@ impl CronJob {
     /// The fake heap dropped this job's timer (`useRealTimers()` /
     /// `clearAllTimers()`): stop the job as `stop()` would, so it does not
     /// keep the event loop alive for a timer that can no longer fire.
-    pub(crate) fn stop_dropped_from_fake_heap(this: ThisPtr<Self>) {
-        Self::self_stop(this, VirtualMachine::get());
+    pub(crate) fn stop_dropped_from_fake_heap(this: &RefPtr<Self>) {
+        Self::self_stop(this.this_ptr(), VirtualMachine::get());
     }
 
     /// The context of the script that scheduled the job stopped. A tick's promise that is pending
@@ -1436,6 +1435,12 @@ impl CronJob {
         ))
     }
 
+    fn arm(this: RefPtr<Self>, next_time: &bun_core::Timespec) {
+        let timers = timer_all();
+        let clock = timers.fake_timers.set_timeout_clock();
+        timers.update_with_clock(TimerRef::from_ref_ptr(this), next_time, clock);
+    }
+
     /// May free `this` (via `finish_deferred_stop`).
     fn schedule_next(this: ThisPtr<Self>, vm: &VirtualMachine) {
         // Every path into here has just returned from user JS (the callback,
@@ -1450,21 +1455,17 @@ impl CronJob {
         let Some(next_time) = this.compute_next_timespec() else {
             return Self::finish_deferred_stop(this, vm);
         };
-        timer_all().update(&raw const this.event_loop_timer, &next_time);
+        Self::arm(RefPtr::from_this(this), &next_time);
     }
 
     /// The tick's callback runs here as a top-level call (what it throws
     /// synchronously is reported), and the job is rescheduled either way.
-    pub(crate) fn on_timer_fire(this: ThisPtr<Self>, vm: &VirtualMachine) {
-        // scheduleNext → finishDeferredStop downgrades this_value and derefs the
-        // list entry; bracket-ref so that path can't drop the last ref mid-function.
-        // Timer heap holds the entry; `this` is live until the guard drops.
-        let _guard = RefPtr::from_this(this);
+    pub(crate) fn on_timer_fire(job: &RefPtr<Self>, vm: &VirtualMachine) {
         // R-2: shared borrows only — `cb.call()` re-enters JS, which may call
         // `stop()`/`ref()`/`unref()` on this same wrapper; a `noalias`
         // `&mut Self` here would be Stacked-Borrows UB. All mutation is
         // interior (`Cell`).
-        this.event_loop_timer.state.set(EventLoopTimerState::FIRED);
+        let this = job.this_ptr();
 
         if this.stopped.get() {
             return;
@@ -1603,7 +1604,7 @@ impl CronJob {
         let job = RefPtr::new(CronJob {
             ref_count: RefCount::init(),
             self_ref: Cell::new(BackRef::dangling()),
-            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::CronJob),
+            event_loop_timer: RefCountedTimer::init_paused(),
             global: GlobalRef::from(global),
             parsed,
             tz,
@@ -1634,9 +1635,7 @@ impl CronJob {
             }
         }
 
-        // `job`'s ref moves to the JS wrapper (released via `finalize`).
-        let js_value = Self::to_js_nonnull(job.as_non_null(), global);
-        let job = job.into_this_ptr();
+        let js_value = Self::to_js_nonnull(job.clone().into_non_null(), global);
         job.this_value.set_strong(js_value, global);
         js::cron_set_cached(js_value, global, schedule_value.to_js());
         js::callback_set_cached(
@@ -1648,7 +1647,7 @@ impl CronJob {
         job.poll_ref.ref_(bun_io::js_vm_ctx());
         // SAFETY: heap-allocated (`RefPtr`); `stop_internal` leaves the context before the job is released.
         unsafe { bun_jsc::AbortHandle::arm_owner(job.as_ptr(), cx.context()) };
-        timer_all().update(&raw const job.event_loop_timer, &next_time);
+        Self::arm(job, &next_time);
 
         Ok(js_value)
     }

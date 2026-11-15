@@ -26,14 +26,13 @@ use bun_ptr::RefPtr;
 use bun_io::posix_event_loop::Flags as PollFlag;
 use bun_io::{IoEvent, Owner, PollTag};
 
-use bun_event_loop::EventLoopTimer::{
-    EventLoopTimer, Tag as EventLoopTimerTag, Timespec as ElTimespec,
-};
+use bun_core::Timespec;
+use bun_event_loop::EventLoopTimer::{ImmediateTask, Popped, Tag as EventLoopTimerTag, TimerHeap};
 
 use bun_jsc::event_loop::{EventLoop, Stopped};
 use bun_jsc::task::report_error_or_terminate;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 /// X-macro: the `node:fs` ops that are libuv requests on Windows
 /// (`UVFSRequest`); they complete on the JS thread and re-enter through the
@@ -140,9 +139,8 @@ use bun_jsc::cpp_task::CppTask;
 use bun_jsc::hot_reloader;
 use bun_jsc::jsc_scheduler::JSCDeferredWorkTask;
 
-use crate::bake::dev_server::DevServer;
+use crate::bake::dev_server::DevServerTimers;
 use crate::bake::dev_server::PendingReloadEvent as BakePendingReloadEvent;
-use crate::bake::dev_server::source_map_store::SourceMapStore;
 
 #[cfg(windows)]
 use crate::node::fs::async_ as fs_async;
@@ -165,7 +163,6 @@ use crate::api::bun_process::waiter_thread_posix::ResultTask as ProcessWaiterThr
 use bun_bundler::DeferredBatchTask::DeferredBatchTask as BundleV2DeferredBatchTask;
 type BundleV2ParseTaskResult = bun_bundler::parse_task::Result<'static>;
 
-use crate::socket::upgraded_duplex::UpgradedDuplex;
 #[cfg(windows)]
 use crate::socket::windows_named_pipe::WindowsNamedPipe;
 
@@ -174,8 +171,9 @@ use bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection as MySQLConnecti
 use bun_sql_jsc::postgres::PostgresSQLConnection;
 use bun_sql_jsc::shared::connection_timers::TimedConnection as _;
 
-use crate::test_runner::bun_test::{BunTest, clone_active_strong};
-use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
+use crate::jsc_hooks::timer_all;
+use crate::test_runner::bun_test::{BunTest, BunTestRoot, clone_active_strong};
+use crate::timer::{EventLoopDelayMonitor, ImmediateObject, TimeoutObject};
 use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
 use bun_jsc::garbage_collection_controller::GarbageCollectionController;
 use bun_jsc::web_worker::WebWorker;
@@ -1111,35 +1109,16 @@ unsafe fn __bun_io_pollable_on_io_error(
 // `bun_jsc::event_loop` extern impls (link-time)
 // ════════════════════════════════════════════════════════════════════════════
 
-/// `__bun_run_immediate_task` body — cast the low-tier erased `*mut ()` to the
-/// real `crate::timer::ImmediateObject` and run the task (low tier stores
-/// `*mut ()`, high tier owns the cast).
-///
-/// # Safety
-/// `task` was produced by `enqueue_immediate_task` from a live
-/// `timer::ImmediateObject`, and the queue's ref comes with it.
 #[unsafe(no_mangle)]
-unsafe fn __bun_run_immediate_task(task: *mut (), vm: &VirtualMachine) -> bool {
-    // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
-    // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
-    let queued = unsafe { bun_ptr::RefPtr::from_raw(task.cast::<crate::timer::ImmediateObject>()) };
-    crate::timer::TimerObjectInternals::run_immediate_task(queued, vm)
+fn __bun_run_immediate_task(task: ImmediateTask, vm: &VirtualMachine) -> bool {
+    ImmediateObject::run_immediate_task(task.into_owner_ref(), vm)
 }
 
-/// `__bun_cancel_pending_immediate` body — VM-teardown release of the event
-/// loop's `+1` ref on a still-queued `ImmediateObject` (low tier stores
-/// `*mut ()`, high tier owns the cast). Does not run the callback.
-///
-/// # Safety
-/// `task` was produced by `enqueue_immediate_task` from a live
-/// `timer::ImmediateObject` whose event-loop ref has not yet been released;
-/// `RuntimeState` is still installed.
+/// VM-teardown release of the event loop's `+1` ref on a still-queued `ImmediateObject`. Does not run the callback.
 #[unsafe(no_mangle)]
-unsafe fn __bun_cancel_pending_immediate(task: *mut (), vm: &VirtualMachine) {
-    // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
-    // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
-    let queued = unsafe { bun_ptr::RefPtr::from_raw(task.cast::<crate::timer::ImmediateObject>()) };
-    queued.internals.cancel_pending_immediate(vm);
+fn __bun_cancel_pending_immediate(task: ImmediateTask, vm: &VirtualMachine) {
+    task.into_owner_ref::<ImmediateObject>()
+        .cancel_pending_immediate(vm);
 }
 
 /// `__bun_run_wtf_timer` body — cast the low-tier erased `*mut ()` to the real
@@ -1147,153 +1126,138 @@ unsafe fn __bun_cancel_pending_immediate(task: *mut (), vm: &VirtualMachine) {
 ///
 /// # Safety
 /// `timer` was published by `WTFTimer::update` into `imminent_gc_timer` and
-/// remains live until consumed; `vm` owns it.
+/// remains live until consumed.
 #[unsafe(no_mangle)]
-unsafe fn __bun_run_wtf_timer(timer: *mut (), vm: &VirtualMachine) {
+unsafe fn __bun_run_wtf_timer(timer: *mut ()) {
     // SAFETY: per fn contract — the only producer (`WTFTimer::update`) stores a
     // `*mut crate::timer::WTFTimer`, so the cast is the identity.
     let real = timer.cast::<crate::timer::WTFTimer>();
     // SAFETY: per fn contract.
-    unsafe { crate::timer::WTFTimer::run(real, vm) }
+    unsafe { crate::timer::WTFTimer::run(real) }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // EventLoopTimer dispatch
 // ════════════════════════════════════════════════════════════════════════════
 
-/// The tag→`container_of` match that runs the callback of an [`EventLoopTimer`].
-///
-/// Reached from [`crate::timer::All::drain_timers`] (every due heap timer) and
-/// [`crate::timer::All::get_timeout`] (WTFTimer side-effect).
+/// `Popped::$into` for the tag of the arm.
+macro_rules! timer_owner {
+    ($timer:ident.$into:ident::<$tag:ident>()) => {{
+        // Infers the owner from the only `OwnedBy` impl, so a second owner of the tag does not compile.
+        let _ = Popped::$into::<{ EventLoopTimerTag::$tag }, _>;
+        $timer.$into::<{ EventLoopTimerTag::$tag }, _>()
+    }};
+}
+
+/// Pops the first timer of `heap` and runs its callback. `thrown` receives the exception of a JS timer's callback.
 ///
 /// Each arm is the owner's timer entry with its result surfaced: an owner
 /// returns the exception it left pending and never reports it; the drain loop
-/// (`All::drain_timers`) folds every timer's result in one place. Owners whose
-/// entry cannot enter JS return `()` (`timer_arm!` makes that `Ok(())`).
-///
-/// # Safety
-/// `t` points at a live [`EventLoopTimer`] just popped from `All.timers`;
-/// `now` is the snapshot taken by `All::next`. The handler may free the container — do not touch
-/// `t` after the per-arm call returns.
-pub(crate) unsafe fn fire_timer(
-    t: *mut EventLoopTimer,
-    now: &ElTimespec,
+/// (`All::drain_timers`) folds every timer's result in one place.
+pub(crate) fn fire_first_timer(
+    heap: &TimerHeap,
+    now: &Timespec,
     vm: &VirtualMachine,
+    thrown: Option<&mut JSValue>,
 ) -> bun_event_loop::JsResult<()> {
-    use crate::timer::{Popped, TimerObjectInternals, WTFTimer};
+    let Some(timer) = heap.delete_min() else {
+        return Ok(());
+    };
 
-    /// Recover the embedding container from `t` (the popped timer slot).
-    macro_rules! owner {
-        ($ty:ty, $field:ident) => {{
-            // SAFETY: §Dispatch — `t.tag` was set together with the container
-            // at construction; tag uniquely identifies the embedding type and
-            // `$field` is the `EventLoopTimer` slot `t` points into.
-            unsafe { bun_core::from_field_ptr!($ty, $field, t) }
-        }};
-    }
-    // SAFETY: per fn contract — `t` is live for the dispatch read.
-    let tag = unsafe { (*t).tag };
-
-    /// One match-arm body: recover the container as RAW `*mut $Ty` (never
-    /// `&mut` — the handler may free it or re-enter), bind `now`/`vm`, and run
-    /// `$body` under one `unsafe` covering the per-fn-contract dereferences.
-    // An owner that cannot enter JS: its `()` return is `Ok(())` here.
-    macro_rules! timer_arm {
-        ($Ty:ty, $field:ident, |$c:ident, $now:ident, $vm:ident| $body:expr) => {{
-            let $c: *mut $Ty = owner!($Ty, $field);
-            let ($now, $vm) = (now, vm);
-            // SAFETY: per fn contract; container derived from a live `$Ty`.
-            let () = unsafe { $body };
-            Ok(())
-        }};
-    }
-    // The same through `in_features!`.
+    /// `$owner` is the ref that the heap held, or points at the pinned owner, which is live when `$body` starts.
     macro_rules! feature_timer_arm {
-        ($features:tt, $Ty:ty, $field:ident, |$c:ident, $now:ident, $vm:ident| $body:expr) => {
+        ($features:tt, $into:ident::<$tag:ident>, |$owner:ident: $Ptr:ty, $now:ident, $vm:ident| $body:expr) => {
             in_features!(
                 $features,
                 (
-                    $c: *mut $Ty = owner!($Ty, $field),
-                    $now: &ElTimespec = now,
+                    $owner: $Ptr = timer_owner!(timer.$into::<$tag>()),
+                    $now: &Timespec = now,
                     $vm: &VirtualMachine = vm,
-                ) -> JsResult<()> {
-                    // SAFETY: per fn contract; container derived from a live `$Ty`.
-                    let () = unsafe { $body };
-                    Ok(())
-                }
+                ) -> JsResult<()> { $body }
             )
         };
     }
-    let fired: JsResult<()> = match tag {
-        // ── JS-exposed timers (TimerObjectInternals::fire_catching) ──────
+    match timer.tag() {
         // `Bun__JSTimeout__call` reports the callback's exception itself.
-        EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject => {
-            // SAFETY: per fn contract.
-            unsafe {
-                TimerObjectInternals::fire_catching(Popped::new(t), vm, core::ptr::null_mut())
-            };
+        EventLoopTimerTag::TimeoutObject => {
+            let timeout = timer_owner!(timer.into_owner_ref::<TimeoutObject>());
+            TimeoutObject::fire_catching(timeout, vm, thrown);
             Ok(())
         }
-        EventLoopTimerTag::WTFTimer => {
-            timer_arm!(WTFTimer, event_loop_timer, |c, _now, _vm| WTFTimer::fire(c))
-        }
-        EventLoopTimerTag::AbortSignalTimeout => {
-            feature_timer_arm!(
-                [AbortSignal],
-                AbortSignalTimeout,
-                event_loop_timer,
-                |c, _now, vm| AbortSignalTimeout::run(c, vm)
-            )
-        }
-        EventLoopTimerTag::WorkerWaitsForRoom => {
-            feature_timer_arm!([WorkerConstructor], WebWorker, room_timer, |c, _now, vm| {
-                (*c).on_room_timer(vm)
-            })
-        }
+        EventLoopTimerTag::ImmediateObject => in_features!(
+            [Test],
+            (
+                immediate: RefPtr<ImmediateObject> =
+                    timer_owner!(timer.into_owner_ref::<ImmediateObject>()),
+                vm: &VirtualMachine = vm,
+                thrown: Option<&mut JSValue> = thrown,
+            ) -> JsResult<()> {
+                ImmediateObject::fire_catching(immediate, vm, thrown);
+                Ok(())
+            }
+        ),
+        EventLoopTimerTag::AbortSignalTimeout => feature_timer_arm!(
+            [AbortSignal],
+            into_owner_ptr::<AbortSignalTimeout>,
+            |timeout: *mut AbortSignalTimeout, _now, vm| {
+                // SAFETY: live, see `feature_timer_arm!`.
+                unsafe { AbortSignalTimeout::run(timeout, vm) };
+                Ok(())
+            }
+        ),
+        EventLoopTimerTag::WorkerWaitsForRoom => feature_timer_arm!(
+            [WorkerConstructor],
+            into_owner_ref::<WorkerWaitsForRoom>,
+            |worker: RefPtr<WebWorker>, _now, vm| {
+                WebWorker::on_room_timer(worker, vm);
+                Ok(())
+            }
+        ),
         EventLoopTimerTag::GcRepeating => {
-            timer_arm!(
-                GarbageCollectionController,
-                gc_repeating_timer,
-                |c, _now, vm| (*c).on_gc_repeating_timer(vm)
-            )
+            let _ = timer_owner!(timer.into_owner_ptr::<GcRepeating>());
+            GarbageCollectionController::on_gc_repeating_timer();
+            Ok(())
         }
-        EventLoopTimerTag::FakeTimersTick => crate::timer::FakeTimers::on_tick_timer(vm.global()),
+        EventLoopTimerTag::FakeTimersTick => {
+            let _ = timer_owner!(timer.into_owner_ptr::<FakeTimersTick>());
+            crate::timer::FakeTimers::on_tick_timer(vm.global())
+        }
         EventLoopTimerTag::DateHeaderTimer => {
-            timer_arm!(DateHeaderTimer, event_loop_timer, |c, _now, vm| (*c)
-                .run(vm))
+            let _ = timer_owner!(timer.into_owner_ptr::<DateHeaderTimer>());
+            timer_all().date_header_timer.run(vm);
+            Ok(())
         }
-        EventLoopTimerTag::EventLoopDelayMonitor => {
-            feature_timer_arm!(
-                [Histogram],
-                EventLoopDelayMonitor,
-                event_loop_timer,
-                |c, now, vm| (*c).on_fire(now, vm)
-            )
-        }
-        EventLoopTimerTag::StatWatcherScheduler => {
-            feature_timer_arm!(
-                [NodeFs],
-                StatWatcherScheduler,
-                event_loop_timer,
-                |c, _now, _vm| StatWatcherScheduler::timer_callback(bun_ptr::ThisPtr::new(c))
-            )
-        }
-        EventLoopTimerTag::UpgradedDuplex => {
-            feature_timer_arm!(
-                [Sockets],
-                UpgradedDuplex,
-                event_loop_timer,
-                |c, _now, _vm| (*c).on_timeout()
-            )
-        }
+        EventLoopTimerTag::EventLoopDelayMonitor => feature_timer_arm!(
+            [Histogram],
+            into_owner_ptr::<EventLoopDelayMonitor>,
+            |_monitor: *mut EventLoopDelayMonitor, now, vm| {
+                timer_all().event_loop_delay.on_fire(now, vm);
+                Ok(())
+            }
+        ),
+        EventLoopTimerTag::StatWatcherScheduler => feature_timer_arm!(
+            [NodeFs],
+            into_owner_ref::<StatWatcherScheduler>,
+            |scheduler: RefPtr<StatWatcherScheduler>, _now, _vm| {
+                StatWatcherScheduler::timer_callback(scheduler);
+                Ok(())
+            }
+        ),
+        EventLoopTimerTag::UpgradedDuplex => feature_timer_arm!(
+            [Sockets],
+            into_owner_ptr::<UpgradedDuplex>,
+            |context: *mut crate::socket::DuplexUpgradeContext, _now, _vm| {
+                // SAFETY: only a queued task frees it.
+                unsafe { &(*context).upgrade }.on_timeout();
+                Ok(())
+            }
+        ),
         EventLoopTimerTag::DnsSdConnection => {
             #[cfg(target_os = "macos")]
             {
-                timer_arm!(
-                    crate::dns_jsc::dns_sd::SharedConnection,
-                    early_out_timer,
-                    |c, _now, _vm| crate::dns_jsc::dns_sd::SharedConnection::on_early_out(c)
-                )
+                let _ = timer_owner!(timer.into_owner_ptr::<DnsSdConnection>());
+                crate::dns_jsc::dns_sd::SharedConnection::on_early_out();
+                Ok(())
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -1303,18 +1267,21 @@ pub(crate) unsafe fn fire_timer(
                 Ok(())
             }
         }
-        // R-2: shared deref — `check_timeouts` re-enters via `ares_process_fd`.
-        EventLoopTimerTag::DNSResolver => {
-            feature_timer_arm!([Dns], DNSResolver, event_loop_timer, |c, now, vm| {
-                (&*c.cast_const()).check_timeouts(now, vm)
-            })
-        }
+        EventLoopTimerTag::DNSResolver => feature_timer_arm!(
+            [Dns],
+            into_owner_ref::<DNSResolver>,
+            |resolver: RefPtr<DNSResolver>, now, vm| {
+                resolver.check_timeouts(now, vm);
+                Ok(())
+            }
+        ),
         EventLoopTimerTag::WindowsNamedPipe => {
             #[cfg(windows)]
             {
-                let container = owner!(WindowsNamedPipe, event_loop_timer);
-                // SAFETY: per fn contract.
-                unsafe { (*container).on_timeout() };
+                let context: *mut crate::socket::WindowsNamedPipeContext =
+                    timer_owner!(timer.into_owner_ptr::<WindowsNamedPipe>());
+                // SAFETY: only a queued task frees it.
+                unsafe { &(*context).named_pipe }.on_timeout();
                 Ok(())
             }
             #[cfg(not(windows))]
@@ -1325,137 +1292,125 @@ pub(crate) unsafe fn fire_timer(
                 Ok(())
             }
         }
-        EventLoopTimerTag::PostgresSQLConnectionTimeout => {
-            in_features!([Sql], (t: *mut EventLoopTimer = t) -> JsResult<()> {
-                // SAFETY: §Dispatch — tag set together with the container at
-                // construction; `t` is the connection's `timer` field.
-                let container = unsafe { PostgresSQLConnection::from_timer_ptr(t) };
-                // SAFETY: per fn contract.
-                unsafe { (*container).on_connection_timeout() };
+        EventLoopTimerTag::PostgresSQLConnectionTimeout => feature_timer_arm!(
+            [Sql],
+            into_owner_ptr::<PostgresSQLConnectionTimeout>,
+            |connection: *mut PostgresSQLConnection, _now, _vm| {
+                // SAFETY: it roots its wrapper until it fails. What runs script holds a `ref_guard()` or is the last use.
+                unsafe { &*connection }.on_connection_timeout();
                 Ok(())
-            })
-        }
-        EventLoopTimerTag::PostgresSQLConnectionMaxLifetime => {
-            in_features!([Sql], (t: *mut EventLoopTimer = t) -> JsResult<()> {
-                // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
-                let container = unsafe { PostgresSQLConnection::from_max_lifetime_timer_ptr(t) };
-                // SAFETY: per fn contract.
-                unsafe { (*container).on_max_lifetime_timeout() };
+            }
+        ),
+        EventLoopTimerTag::PostgresSQLConnectionMaxLifetime => feature_timer_arm!(
+            [Sql],
+            into_owner_ptr::<PostgresSQLConnectionMaxLifetime>,
+            |connection: *mut PostgresSQLConnection, _now, _vm| {
+                // SAFETY: as above.
+                unsafe { &*connection }.on_max_lifetime_timeout();
                 Ok(())
-            })
-        }
-        EventLoopTimerTag::MySQLConnectionTimeout => {
-            in_features!([Sql], (t: *mut EventLoopTimer = t) -> JsResult<()> {
-                // SAFETY: §Dispatch — `t` is the connection's `timer` field.
-                let container = unsafe { MySQLConnection::from_timer_ptr(t) };
-                // SAFETY: per fn contract.
-                unsafe { (*container).on_connection_timeout() };
+            }
+        ),
+        EventLoopTimerTag::MySQLConnectionTimeout => feature_timer_arm!(
+            [Sql],
+            into_owner_ptr::<MySQLConnectionTimeout>,
+            |connection: *mut MySQLConnection, _now, _vm| {
+                // SAFETY: as above.
+                unsafe { &*connection }.on_connection_timeout();
                 Ok(())
-            })
-        }
-        EventLoopTimerTag::MySQLConnectionMaxLifetime => {
-            in_features!([Sql], (t: *mut EventLoopTimer = t) -> JsResult<()> {
-                // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
-                let container = unsafe { MySQLConnection::from_max_lifetime_timer_ptr(t) };
-                // SAFETY: per fn contract.
-                unsafe { (*container).on_max_lifetime_timeout() };
+            }
+        ),
+        EventLoopTimerTag::MySQLConnectionMaxLifetime => feature_timer_arm!(
+            [Sql],
+            into_owner_ptr::<MySQLConnectionMaxLifetime>,
+            |connection: *mut MySQLConnection, _now, _vm| {
+                // SAFETY: as above.
+                unsafe { &*connection }.on_max_lifetime_timeout();
                 Ok(())
-            })
-        }
-        EventLoopTimerTag::ValkeyConnectionTimeout => in_features!(
+            }
+        ),
+        EventLoopTimerTag::ValkeyConnectionTimeout => feature_timer_arm!(
             [Valkey],
-            (container: *mut Valkey = owner!(Valkey, timer)) -> JsResult<()> {
-                // SAFETY: per fn contract.
-                unsafe { (*container).on_connection_timeout() }
-            }
+            into_owner_ref::<ValkeyConnectionTimeout>,
+            |client: RefPtr<Valkey>, _now, _vm| client.on_connection_timeout()
         ),
-        EventLoopTimerTag::ValkeyConnectionReconnect => in_features!(
+        EventLoopTimerTag::ValkeyConnectionReconnect => feature_timer_arm!(
             [Valkey],
-            (container: *mut Valkey = owner!(Valkey, reconnect_timer)) -> JsResult<()> {
-                // SAFETY: per fn contract.
-                unsafe { (*container).on_reconnect_timer() }
-            }
+            into_owner_ref::<ValkeyConnectionReconnect>,
+            |client: RefPtr<Valkey>, _now, _vm| client.on_reconnect_timer()
         ),
-        EventLoopTimerTag::SubprocessTimeout => {
-            feature_timer_arm!([Spawn], Subprocess<'_>, event_loop_timer, |c, _now, _vm| {
-                (*c).timeout_callback()
-            })
-        }
-        EventLoopTimerTag::DevServerSweepSourceMaps => in_features!(
-            [Bundler],
-            (t: *mut EventLoopTimer = t, now: &ElTimespec = now) -> JsResult<()> {
-                // `sweep_weak_refs` takes the raw `*EventLoopTimer` and recovers
-                // the store inside.
-                SourceMapStore::sweep_weak_refs(t, now);
+        EventLoopTimerTag::SubprocessTimeout => feature_timer_arm!(
+            [Spawn],
+            into_owner_ref::<SubprocessTimeout>,
+            |subprocess: RefPtr<Subprocess<'static>>, _now, _vm| {
+                subprocess.timeout_callback();
                 Ok(())
             }
         ),
-        EventLoopTimerTag::DevServerMemoryVisualizerTick => in_features!(
+        EventLoopTimerTag::DevServerSweepSourceMaps => feature_timer_arm!(
             [Bundler],
-            (t: *mut EventLoopTimer = t) -> JsResult<()> {
-                DevServer::emit_memory_visualizer_message_timer(t);
+            into_owner_ptr::<DevServerSweepSourceMaps>,
+            |timers: *mut DevServerTimers, now, _vm| {
+                // SAFETY: the `DevServer` owns `timers` and stays in its box. No borrow of it lasts across a turn of the event loop, and this runs no script.
+                let dev = unsafe { &mut *(*timers).dev };
+                dev.source_maps
+                    .sweep_weak_refs(now, dev.timers.as_pin_ref());
                 Ok(())
             }
         ),
-        EventLoopTimerTag::BunTest => in_features!(
+        EventLoopTimerTag::DevServerMemoryVisualizerTick => feature_timer_arm!(
+            [Bundler],
+            into_owner_ptr::<DevServerMemoryVisualizerTick>,
+            |timers: *mut DevServerTimers, _now, _vm| {
+                // SAFETY: as above.
+                unsafe { &mut *(*timers).dev }.emit_memory_visualizer_message_timer();
+                Ok(())
+            }
+        ),
+        EventLoopTimerTag::BunTest => feature_timer_arm!(
             [Test],
-            (t: *mut EventLoopTimer = t, now: &ElTimespec = now) -> JsResult<()> {
-                if let Some(file) = clone_active_strong()
-                    && core::ptr::eq(&raw const *file.timer, t)
-                {
-                    BunTest::bun_test_timeout_callback(&file, now, VirtualMachine::get());
-                } else {
-                    // SAFETY: `t` was just popped, and a timer leaves the heap before it is dropped.
-                    let timer = unsafe { &*t };
-                    timer.next.set(ElTimespec::EPOCH);
-                    timer.state.set(crate::timer::EventLoopTimerState::PENDING);
+            into_owner_ptr::<BunTest>,
+            |_root: *mut BunTestRoot, now, vm| {
+                if let Some(file) = clone_active_strong() {
+                    BunTest::bun_test_timeout_callback(&file, now, vm);
                 }
                 Ok(())
             }
         ),
-        EventLoopTimerTag::CronJob => in_features!(
+        EventLoopTimerTag::CronJob => feature_timer_arm!(
             [Cron],
-            (c: *mut CronJob = owner!(CronJob, event_loop_timer)) -> JsResult<()> {
-                // SAFETY: a scheduled job's JS wrapper keeps it alive; `t` was just popped.
-                CronJob::on_timer_fire(unsafe { bun_ptr::ThisPtr::new(c) }, VirtualMachine::get());
+            into_owner_ref::<CronJob>,
+            |job: RefPtr<CronJob>, _now, vm| {
+                CronJob::on_timer_fire(&job, vm);
                 Ok(())
             }
         ),
-        EventLoopTimerTag::QuicEndpoint => in_features!(
+        EventLoopTimerTag::QuicEndpoint => feature_timer_arm!(
             [NodeQuic],
-            (
-                c: *mut crate::node::quic::QuicEndpoint =
-                    owner!(crate::node::quic::QuicEndpoint, event_loop_timer),
-            ) -> JsResult<()> {
-                // SAFETY: an `OwnedTimer` leaves the heap before its owner is freed.
-                unsafe { &*c }.on_timer_fire();
+            into_owner_ptr::<QuicEndpoint>,
+            |endpoint: *mut crate::node::quic::QuicEndpoint, _now, _vm| {
+                // SAFETY: what runs script keeps the JS wrapper, which owns `endpoint`, on the stack, and is the last use.
+                unsafe { &*endpoint }.on_timer_fire();
                 Ok(())
             }
         ),
-        EventLoopTimerTag::ViWait => in_features!(
+        EventLoopTimerTag::ViWait => feature_timer_arm!(
             [Test],
-            (
-                c: *mut crate::test_runner::vi_wait::ViWait =
-                    owner!(crate::test_runner::vi_wait::ViWait, timer),
-                now: &ElTimespec = now,
-                vm: &VirtualMachine = vm,
-            ) -> JsResult<()> {
-                // SAFETY: an armed wait roots its JS wrapper, which owns `c`.
-                unsafe { (*c).on_timer_fire(now, vm) }
+            into_owner_ptr::<ViWait>,
+            |wait: *mut crate::test_runner::vi_wait::ViWait, now, vm| {
+                // SAFETY: it keeps the JS wrapper, which owns `wait`, on the stack.
+                unsafe { &*wait }.on_timer_fire(now, vm)
             }
         ),
         EventLoopTimerTag::UvTimer => {
             #[cfg(unix)]
             {
                 use crate::napi::uv_posix::UvTimerNode;
-                in_features!(
+                feature_timer_arm!(
                     [NativeAddons],
-                    (
-                        c: *mut UvTimerNode = owner!(UvTimerNode, event_loop_timer),
-                        vm: &VirtualMachine = vm,
-                    ) -> JsResult<()> {
-                        // SAFETY: per fn contract, `c` is a started `uv_timer_t`'s node.
-                        unsafe { UvTimerNode::on_fire(c, vm) }
+                    into_owner_ptr::<UvTimer>,
+                    |node: *mut UvTimerNode, _now, vm| {
+                        // SAFETY: live, and only a started `uv_timer_t` is armed.
+                        unsafe { UvTimerNode::on_fire(node, vm) }
                     }
                 )
             }
@@ -1467,8 +1422,47 @@ pub(crate) unsafe fn fire_timer(
                 Ok(())
             }
         }
-    };
-    fired
+    }
+}
+
+/// Releases the ref that the heap held for a timer that will never fire.
+pub(crate) fn release_timer_unfired(timer: Popped) {
+    macro_rules! release_in {
+        ($features:tt, $tag:ident, $Owner:ty) => {
+            in_features!(
+                $features,
+                (owner: RefPtr<$Owner> = timer_owner!(timer.into_owner_ref::<$tag>())) {
+                    drop(owner)
+                }
+            )
+        };
+    }
+    match timer.tag() {
+        EventLoopTimerTag::TimeoutObject => {
+            drop(timer_owner!(timer.into_owner_ref::<TimeoutObject>()))
+        }
+        EventLoopTimerTag::ImmediateObject => {
+            drop(timer_owner!(timer.into_owner_ref::<ImmediateObject>()))
+        }
+        EventLoopTimerTag::StatWatcherScheduler => {
+            release_in!([NodeFs], StatWatcherScheduler, StatWatcherScheduler)
+        }
+        EventLoopTimerTag::DNSResolver => release_in!([Dns], DNSResolver, DNSResolver),
+        EventLoopTimerTag::ValkeyConnectionTimeout => {
+            release_in!([Valkey], ValkeyConnectionTimeout, Valkey)
+        }
+        EventLoopTimerTag::ValkeyConnectionReconnect => {
+            release_in!([Valkey], ValkeyConnectionReconnect, Valkey)
+        }
+        EventLoopTimerTag::SubprocessTimeout => {
+            release_in!([Spawn], SubprocessTimeout, Subprocess<'static>)
+        }
+        EventLoopTimerTag::CronJob => release_in!([Cron], CronJob, CronJob),
+        EventLoopTimerTag::WorkerWaitsForRoom => {
+            release_in!([WorkerConstructor], WorkerWaitsForRoom, WebWorker)
+        }
+        tag => debug_assert!(!tag.is_ref_counted()),
+    }
 }
 
 /// The fold for a foreign dispatcher's landing frame — a uSockets / uWS /
@@ -1487,25 +1481,6 @@ pub(crate) fn fold(result: JsResult<()>) {
     if let Err(err) = result {
         report(err);
     }
-}
-
-/// `__bun_js_timer_epoch` body — the tag→`container_of` read for
-/// [`EventLoopTimer::js_timer_epoch`]. Returns `internals.flags.epoch` for
-/// the three JS-timer container types, else `None`. Sits on the heap-compare
-/// hot path
-/// (`EventLoopTimer::less` → `TimerHeap` meld).
-///
-/// # Safety
-/// `t` points at a live [`EventLoopTimer`] currently linked into a `TimerHeap`.
-#[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_js_timer_epoch(
-    _tag: EventLoopTimerTag,
-    t: *const EventLoopTimer,
-) -> Option<u32> {
-    // SAFETY: per fn contract — `t` is live in a `TimerHeap`. `_tag` kept for
-    // the `extern "Rust"` ABI in `bun_event_loop`; helper re-reads `(*t).tag`
-    // (same address the caller loaded it from — folds under LTO).
-    unsafe { crate::timer::js_timer_flags(t) }.map(|flags| flags.get().epoch())
 }
 
 /// `__bun_tick_queue_with_count` body — declared `extern "Rust"` in

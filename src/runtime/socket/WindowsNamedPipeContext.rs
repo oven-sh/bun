@@ -33,10 +33,7 @@ pub(crate) struct WindowsNamedPipeContext {
     pub(super) self_ref: Cell<Option<RefPtr<Self>>>,
     /// `on_close` and `fail_connect` hand it to the socket's last event. Drops before `named_pipe`.
     socket: Option<OwnedSocket>,
-    /// `pub(super)` so `WindowsNamedPipeListeningContext::on_client_connect`
-    /// (sibling module) can call `get_accepted_by` on the freshly-created
-    /// client.
-    pub(super) named_pipe: WindowsNamedPipe,
+    pub(crate) named_pipe: WindowsNamedPipe,
 
     vm: &'static VirtualMachine,
     global_this: GlobalRef,
@@ -384,6 +381,7 @@ impl WindowsNamedPipeContext {
             bun_jsc::AbortHandle::arm_owner(this, cx.context());
             RefPtr::from_raw(this)
         };
+        crate::timer::OwnedTimer::mark_pinned(self_ref.as_pin_ref());
         let this = self_ref.this_ptr();
         this.self_ref.set(Some(self_ref));
         this
@@ -441,10 +439,15 @@ impl WindowsNamedPipeContext {
     }
 }
 
-impl Drop for WindowsNamedPipeContext {
-    fn drop(&mut self) {
+bun_event_loop::impl_timer_owner!(WindowsNamedPipeContext, drop = Self::deinit;
+    (named_pipe: WindowsNamedPipe).event_loop_timer: OwnedTimer<WindowsNamedPipe>,
+);
+
+impl WindowsNamedPipeContext {
+    fn deinit(&self) {
         bun_output::scoped_log!(WindowsNamedPipeContext, "deinit");
         LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
+        self.named_pipe.release_resources();
     }
 }
 

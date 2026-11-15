@@ -3,6 +3,7 @@
 
 use core::cell::Cell;
 use core::mem::ManuallyDrop;
+use core::pin::Pin;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -471,6 +472,12 @@ impl<T: RefCounted> RefPtr<T> {
     #[inline]
     pub fn as_non_null(&self) -> NonNull<T> {
         self.0
+    }
+
+    #[inline]
+    pub fn as_pin_ref(&self) -> Pin<&T> {
+        // SAFETY: the last ref becomes an `AliasableBox`, which pins the value too.
+        unsafe { Pin::new_unchecked(self) }
     }
 }
 

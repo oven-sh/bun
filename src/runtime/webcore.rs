@@ -261,9 +261,6 @@ pub(crate) mod prompt;
 #[path = "webcore/FormData.rs"]
 pub(crate) mod form_data;
 
-#[path = "webcore/ScriptExecutionContext.rs"]
-pub(crate) mod script_execution_context;
-
 #[doc(hidden)]
 pub(crate) mod multipart_options_impl {
     pub(crate) use bun_s3_signing::MultiPartUploadOptions;

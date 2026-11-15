@@ -1,4 +1,4 @@
-#![feature(core_io_borrowed_buf)]
+#![feature(adt_const_params, core_io_borrowed_buf)]
 #![allow(non_snake_case)]
 #![warn(unused_must_use)]
 pub mod AnyTaskWithExtraContext;

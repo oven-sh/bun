@@ -3,21 +3,19 @@
 //!
 //! this file is loaded as `pub mod timer;` from `mod.rs` (codegen
 //! path `crate::timer::timer::*`). The canonical struct definitions (`All`,
-//! `Kind`, `Maps`, `TimeoutObject`, `ImmediateObject`, `TimerObjectInternals`,
-//! `DateHeaderTimer`, …) live in `mod.rs`; this module only adds the JS-facing
+//! `Kind`, `Maps`, `DateHeaderTimer`, …) live in `mod.rs`; this module only adds the JS-facing
 //! `impl super::All { … }` surface plus the C-ABI export thunks.
 
 use bun_core::String as BunString;
 use bun_core::{EncodedUnits, Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{self, JsHeap};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc as _};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_uws::Loop as UwsLoop;
 
 use super::{
-    All, Clock, CountdownOverflowBehavior, DateHeaderTimer, EventLoopTimer, EventLoopTimerState,
-    EventLoopTimerTag, FakeTimers, ImmediateObject, Kind, TimeoutObject, TimeoutWarning,
-    TimerObjectInternals,
+    All, Clock, CountdownOverflowBehavior, DateHeaderTimer, FakeTimers, ImmediateObject, Kind,
+    TimeoutObject, TimeoutWarning,
 };
 use crate::jsc_hooks::timer_all;
 
@@ -27,15 +25,13 @@ use crate::jsc_hooks::timer_all;
 
 impl All {
     pub(crate) fn update_date_header_timer_if_necessary(
-        &self,
+        &'static self,
         loop_: &UwsLoop,
         vm: &VirtualMachine,
     ) {
         if loop_.should_enable_date_header_timer() {
-            // `is_date_timer_active()` is private to mod.rs; inline.
-            if self.date_header_timer.event_loop_timer.state.get() != EventLoopTimerState::ACTIVE {
+            if !self.date_header_timer.event_loop_timer.is_active() {
                 self.date_header_timer.enable(
-                    self,
                     vm,
                     // Be careful to avoid adding extra calls to bun.timespec.now()
                     // when it's not needed.
@@ -184,14 +180,12 @@ impl All {
             true,
         )?;
         let wrapped_promise = promise.with_async_context_if_needed(cx.global());
-        Ok(TimeoutObject::init(
+        let clock = all.fake_timers.set_timeout_clock();
+        Ok(TimeoutObject::start(
+            TimeoutObject::new(cx, id, Kind::SetTimeout, countdown_int, clock),
             cx,
-            id,
-            Kind::SetTimeout,
-            countdown_int,
             wrapped_promise,
             JSValue::UNDEFINED,
-            all.fake_timers.set_timeout_clock(),
         ))
     }
 
@@ -207,12 +201,12 @@ impl All {
         let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
-        Ok(ImmediateObject::init(
+        let clock = all.fake_timers.clock_while_active(clock);
+        Ok(ImmediateObject::start(
+            ImmediateObject::new(cx, id, Kind::SetImmediate, 0, clock),
             cx,
-            id,
             wrapped_callback,
             arguments,
-            all.fake_timers.clock_while_active(clock),
         ))
     }
 
@@ -241,22 +235,12 @@ impl All {
         let may_be_zero = clock == Clock::Fake || all.zero_delay_is_due_when_idle.get();
         let countdown_int = countdown_int.max(u32::from(!may_be_zero));
         let is_due_when_idle = clock == Clock::Real && countdown_int == 0;
-        let timeout = TimeoutObject::init(
-            cx,
-            id,
-            Kind::SetTimeout,
-            if is_due_when_idle { 1 } else { countdown_int },
-            wrapped_callback,
-            arguments,
-            clock,
-        );
-        if is_due_when_idle {
-            let object =
-                TimeoutObject::from_js(timeout).expect("TimeoutObject::init returns its wrapper");
-            // SAFETY: the wrapper is pinned by the heap that holds the timer.
-            unsafe { &(*object).event_loop_timer }
-                .is_due_when_idle
-                .set(true);
+        let interval = if is_due_when_idle { 1 } else { countdown_int };
+        let timeout = TimeoutObject::new(cx, id, Kind::SetTimeout, interval, clock);
+        let due_when_idle = is_due_when_idle.then(|| timeout.clone());
+        let timeout = TimeoutObject::start(timeout, cx, wrapped_callback, arguments);
+        if let Some(object) = due_when_idle {
+            object.event_loop_timer.is_due_when_idle.set(true);
         }
         Ok(timeout)
     }
@@ -282,14 +266,12 @@ impl All {
             1,
             true,
         )?;
-        Ok(TimeoutObject::init(
+        let clock = all.fake_timers.clock_while_active(clock);
+        Ok(TimeoutObject::start(
+            TimeoutObject::new(cx, id, Kind::SetInterval, countdown_int, clock),
             cx,
-            id,
-            Kind::SetInterval,
-            countdown_int,
             wrapped_callback,
             arguments,
-            all.fake_timers.clock_while_active(clock),
         ))
     }
 
@@ -304,33 +286,29 @@ impl All {
         ((1..=Self::MAX_ID as i64).contains(&id) && id as f64 == number).then_some(id as u64)
     }
 
-    /// The timer `id` names for the running script, removed from the map
+    /// Cancels the timer `id` names for the running script, and removes it from the map
     /// (see `VirtualMachine::context_may_name`).
-    fn remove_timer_by_id(
+    fn cancel_timer_by_id(
         &self,
         vm: &VirtualMachine,
         context: &bun_jsc::ScriptExecutionContext,
         id: u64,
-    ) -> Option<*mut TimeoutObject> {
-        // SAFETY: JS thread; the borrow ends with this function, which runs no JS.
+    ) {
+        // SAFETY: JS thread; the last use comes before `cancel`, and nothing up to there runs JS.
         let maps = unsafe { &mut *self.maps.get() };
         let (map, idx) = if let Some(idx) = maps.set_timeout.get_index(&id) {
             (&mut maps.set_timeout, idx)
-        } else {
-            let idx = maps.set_interval.get_index(&id)?;
+        } else if let Some(idx) = maps.set_interval.get_index(&id) {
             (&mut maps.set_interval, idx)
+        } else {
+            return;
         };
-        let value: *mut EventLoopTimer = map.values()[idx];
-        // SAFETY: entry value points to EventLoopTimer embedded in a TimeoutObject
-        debug_assert!(unsafe { (*value).tag } == EventLoopTimerTag::TimeoutObject);
-        // SAFETY: entry value points to TimeoutObject.event_loop_timer
-        let timeout = unsafe { TimeoutObject::from_timer_ptr(value) };
-        // SAFETY: in the map ⇒ live.
-        if !vm.context_may_name(context, unsafe { (*timeout).internals.context }) {
-            return None;
+        // SAFETY: `drop` removes the entry. The ref that `cancel` releases is not the last: an armed timer roots its wrapper.
+        let timeout = unsafe { &*map.values()[idx] };
+        if vm.context_may_name(context, timeout.context) {
+            map.swap_remove_at(idx);
+            timeout.cancel(vm);
         }
-        map.swap_remove_at(idx);
-        Some(timeout)
     }
 
     pub(crate) fn clear_timer(
@@ -345,99 +323,78 @@ impl All {
         let context = vm.context_of_caller();
         let all = timer_all();
 
-        let timer: &TimerObjectInternals = 'brk: {
-            if timer_id_value.is_number() {
-                // Node.js looks the id up by value (`knownTimersById[id]`): a double holding an
-                // integer names the same timer as the int32. Anything else clears nothing.
-                let Some(id) = Self::timer_id_from_number(timer_id_value) else {
-                    return Ok(());
-                };
-                // Immediates don't have numeric IDs in Node.js so we only have to look up timeouts and intervals
-                let Some(t) = all.remove_timer_by_id(vm, context, id) else {
-                    return Ok(());
-                };
-                // SAFETY: t is a valid TimeoutObject pointer
-                break 'brk unsafe { &(*t).internals };
-            } else if timer_id_value.is_string_literal() {
-                // Primitive string only (JSType::String) — boxed `new String(..)`
-                // must fall through to the downcasts below and be a no-op, matching
-                // Node.js array-index semantics.
-                let string = timer_id_value.to_bun_string(global_this)?;
-                // Custom parseInt logic. I've done this because Node.js is very strict about string
-                // parameters to this function: they can't have leading whitespace, trailing
-                // characters, signs, or even leading zeroes. None of the readily-available string
-                // parsing functions are this strict. The error case is to just do nothing (not
-                // clear any timer).
-                //
-                // The reason is that in Node.js this function's parameter is used for an array
-                // lookup, and array[0] is the same as array['0'] in JS but not the same as array['00'].
-                let parsed: u64 = {
-                    let mut accumulator: u64 = 0;
-                    // We can handle all encodings the same way since the only permitted characters
-                    // are ASCII.
-                    macro_rules! parse_slice {
-                        ($slice:expr) => {{
-                            let slice = $slice;
-                            for (i, &c) in slice.iter().enumerate() {
-                                let c = c as u32;
-                                if c < ('0' as u32) || c > ('9' as u32) {
-                                    // Non-digit characters are not allowed
-                                    return Ok(());
-                                } else if i == 0 && c == ('0' as u32) {
-                                    // Leading zeroes are not allowed
-                                    return Ok(());
-                                }
-                                // Fail on overflow
-                                accumulator = match accumulator.checked_mul(10) {
-                                    Some(v) => v,
-                                    None => return Ok(()),
-                                };
-                                accumulator =
-                                    match accumulator.checked_add(u64::from(c - '0' as u32)) {
-                                        Some(v) => v,
-                                        None => return Ok(()),
-                                    };
+        if timer_id_value.is_number() {
+            // Node.js looks the id up by value (`knownTimersById[id]`): a double holding an
+            // integer names the same timer as the int32. Anything else clears nothing.
+            let Some(id) = Self::timer_id_from_number(timer_id_value) else {
+                return Ok(());
+            };
+            // Immediates don't have numeric IDs in Node.js so we only have to look up timeouts and intervals
+            all.cancel_timer_by_id(vm, context, id);
+        } else if timer_id_value.is_string_literal() {
+            // Primitive string only (JSType::String) — boxed `new String(..)`
+            // must fall through to the downcasts below and be a no-op, matching
+            // Node.js array-index semantics.
+            let string = timer_id_value.to_bun_string(global_this)?;
+            // Custom parseInt logic. I've done this because Node.js is very strict about string
+            // parameters to this function: they can't have leading whitespace, trailing
+            // characters, signs, or even leading zeroes. None of the readily-available string
+            // parsing functions are this strict. The error case is to just do nothing (not
+            // clear any timer).
+            //
+            // The reason is that in Node.js this function's parameter is used for an array
+            // lookup, and array[0] is the same as array['0'] in JS but not the same as array['00'].
+            let parsed: u64 = {
+                let mut accumulator: u64 = 0;
+                // We can handle all encodings the same way since the only permitted characters
+                // are ASCII.
+                macro_rules! parse_slice {
+                    ($slice:expr) => {{
+                        let slice = $slice;
+                        for (i, &c) in slice.iter().enumerate() {
+                            let c = c as u32;
+                            if c < ('0' as u32) || c > ('9' as u32) {
+                                // Non-digit characters are not allowed
+                                return Ok(());
+                            } else if i == 0 && c == ('0' as u32) {
+                                // Leading zeroes are not allowed
+                                return Ok(());
                             }
-                        }};
-                    }
-                    match string.encoded_units() {
-                        EncodedUnits::Utf16(units) => parse_slice!(units),
-                        EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => {
-                            parse_slice!(bytes)
+                            // Fail on overflow
+                            accumulator = match accumulator.checked_mul(10) {
+                                Some(v) => v,
+                                None => return Ok(()),
+                            };
+                            accumulator = match accumulator.checked_add(u64::from(c - '0' as u32)) {
+                                Some(v) => v,
+                                None => return Ok(()),
+                            };
                         }
+                    }};
+                }
+                match string.encoded_units() {
+                    EncodedUnits::Utf16(units) => parse_slice!(units),
+                    EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => {
+                        parse_slice!(bytes)
                     }
-                    accumulator
-                };
-                if parsed > Self::MAX_ID {
-                    return Ok(());
                 }
-                let Some(t) = all.remove_timer_by_id(vm, context, parsed) else {
-                    return Ok(());
-                };
-                // SAFETY: t is a valid TimeoutObject pointer
-                break 'brk unsafe { &(*t).internals };
-            }
-
-            if let Some(timeout) = timer_id_value.as_class_ref::<TimeoutObject>() {
-                // clearImmediate should be a noop if anything other than an Immediate is passed to it.
-                if kind != Kind::SetImmediate {
-                    break 'brk &timeout.internals;
-                } else {
-                    return Ok(());
-                }
-            } else if let Some(immediate) = timer_id_value.as_class_ref::<ImmediateObject>() {
-                // setImmediate can only be cleared by clearImmediate, not by clearTimeout or clearInterval.
-                if kind == Kind::SetImmediate {
-                    break 'brk &immediate.internals;
-                } else {
-                    return Ok(());
-                }
-            } else {
+                accumulator
+            };
+            if parsed > Self::MAX_ID {
                 return Ok(());
             }
-        };
-
-        timer.cancel(vm);
+            all.cancel_timer_by_id(vm, context, parsed);
+        } else if let Some(timeout) = timer_id_value.as_class_ref::<TimeoutObject>() {
+            // clearImmediate should be a noop if anything other than an Immediate is passed to it.
+            if kind != Kind::SetImmediate {
+                timeout.cancel(vm);
+            }
+        } else if let Some(immediate) = timer_id_value.as_class_ref::<ImmediateObject>() {
+            // setImmediate can only be cleared by clearImmediate, not by clearTimeout or clearInterval.
+            if kind == Kind::SetImmediate {
+                immediate.cancel(vm);
+            }
+        }
         Ok(())
     }
 
@@ -471,10 +428,10 @@ impl DateHeaderTimer {
     /// 1. If the timer was recently updated (< 1 second ago), just reschedule it
     /// 2. If the timer is stale (> 1 second since last update), update the date
     ///    immediately and reschedule
-    fn enable(&self, timers: &All, vm: &VirtualMachine, now: &Timespec) {
-        debug_assert!(self.event_loop_timer.state.get() != EventLoopTimerState::ACTIVE);
+    fn enable(&'static self, vm: &VirtualMachine, now: &Timespec) {
+        debug_assert!(!self.event_loop_timer.is_active());
 
-        let last_update = self.event_loop_timer.next.get();
+        let last_update = self.last_update.get();
         let elapsed = now.duration(&last_update).ms();
 
         // If the last update was more than 1 second ago, the date is stale
@@ -483,9 +440,10 @@ impl DateHeaderTimer {
             // updateDate() is an expensive function.
             vm.uws_loop().update_date();
 
-            self.event_loop_timer.next.set(now.add_ms(1000));
+            self.arm(&now.add_ms(1000));
+        } else {
+            self.arm(&last_update);
         }
-        timers.insert(&raw const self.event_loop_timer);
     }
 }
 
@@ -619,18 +577,16 @@ pub(crate) fn fake_request_animation_frame_export(
         Clock::Real => bun_jsc::virtual_machine_exports::read_origin_timer(vm),
     };
     let to_next_frame = FakeTimers::FRAME_MS - (now_ns / NS_PER_MS) % FakeTimers::FRAME_MS;
-    let timeout = TimeoutObject::init(
-        &global.js_thread(vm.context_of_caller()),
-        id,
-        Kind::SetTimeout,
-        to_next_frame as u32,
+    let cx = global.js_thread(vm.context_of_caller());
+    let timeout = TimeoutObject::new(&cx, id, Kind::SetTimeout, to_next_frame as u32, clock);
+    let id = TimeoutObject::to_primitive(&timeout)?;
+    TimeoutObject::start(
+        timeout,
+        &cx,
         callback.with_async_context_if_needed(global),
         JSValue::js_number((now_ns + to_next_frame * NS_PER_MS) as f64 / NS_PER_MS as f64),
-        clock,
     );
-    let timeout = TimeoutObject::from_js(timeout).expect("TimeoutObject::init returns its wrapper");
-    // SAFETY: the wrapper is pinned by the heap that holds the timer.
-    unsafe { (*timeout).internals.to_primitive() }.map(JSValue::js_number_from_uint64)
+    Ok(JSValue::js_number_from_uint64(id))
 }
 
 // HOST_EXPORT(Bun__FakeTimers__queueTick, c)

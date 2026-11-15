@@ -65,7 +65,7 @@ use crate::webcore::blob::BlobExt as _;
 // `repr(C)` keeps `timer` at offset 0, so `timer_all()` is the thread-local load alone.
 #[repr(C)]
 pub(crate) struct RuntimeState {
-    /// setTimeout/setInterval heap + uv timers.
+    /// setTimeout/setInterval heap + uv timers. Drops first, which disarms the timers that the other fields own.
     pub(crate) timer: timer::All,
     /// `RareData.{mysql,postgresql}_context` — concrete SQL state. The
     /// `bun_jsc::rare_data::RareData` slots for these are opaque ZSTs (cycle
@@ -74,10 +74,10 @@ pub(crate) struct RuntimeState {
     /// `RareData.ssl_ctx_cache` — concrete digest-keyed weak `SSL_CTX*` cache.
     /// Same cycle-break story as `sql_rare`.
     pub(crate) ssl_ctx_cache: crate::api::SSLContextCache::SSLContextCache,
-    /// `RareData.global_dns_data` — per-VM resolver + c-ares channel.
-    /// Lazy-init by [`crate::dns_jsc::global_resolver`]; freed when this box
+    /// Per-VM resolver + c-ares channel.
+    /// Lazy-init by [`crate::dns_jsc::global_resolver`]; released when this box
     /// drops in [`deinit_runtime_state`].
-    pub(crate) global_dns_data: core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>>,
+    pub(crate) global_dns_resolver: core::cell::OnceCell<bun_ptr::RefPtr<crate::dns_jsc::Resolver>>,
     /// Backing arena for `vm.transpiler` (spec passes `bun.default_allocator`;
     /// the Rust `Transpiler<'a>` threads `&'a Arena`). Owned here so
     /// `deinit_runtime_state` reclaims it on Worker teardown — previously
@@ -165,7 +165,7 @@ pub(crate) fn timer_all_of(vm: &VirtualMachine) -> &timer::All {
 
 /// [`timer_all`] for hooks that also run without a `RuntimeState`.
 #[inline]
-fn try_timer_all() -> Option<&'static timer::All> {
+pub(crate) fn try_timer_all() -> Option<&'static timer::All> {
     try_runtime_state().map(|state| &state.timer)
 }
 
@@ -173,8 +173,9 @@ fn try_timer_all() -> Option<&'static timer::All> {
 /// re-enter [`crate::dns_jsc::global_resolver`] while a `&Resolver` derived
 /// from this cell is live, so a `&mut` accessor would alias.
 #[inline]
-pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>> {
-    &runtime_state().global_dns_data
+pub(crate) fn global_dns_resolver()
+-> &'static core::cell::OnceCell<bun_ptr::RefPtr<crate::dns_jsc::Resolver>> {
+    &runtime_state().global_dns_resolver
 }
 
 /// [`RuntimeState::stat_watcher_scheduler`] of `vm`.
@@ -218,22 +219,6 @@ pub(crate) fn take_lint_vm() -> Option<Box<crate::cli::lint_js::LintVm>> {
     debug_assert!(!state.is_null(), "take_lint_vm before init_runtime_state");
     // SAFETY: this thread's state, and no `runtime_state()` borrow is live at the top of the thread.
     unsafe { (*state).lint.take() }
-}
-
-/// Recover the [`RuntimeState`] owned by a specific `vm` (not the calling
-/// thread's). `WTFTimer` may be entered off the VM's JS thread (the locked
-/// `All.wtf_timers` heap exists for exactly that), so it goes through `vm.runtime_state`
-/// rather than the thread-local cache.
-///
-/// # Safety
-/// `vm` must point at a live `VirtualMachine` whose `runtime_state` was set by
-/// `init_runtime_state`.
-#[inline]
-pub(crate) unsafe fn runtime_state_ptr_of(vm: *mut VirtualMachine) -> *mut RuntimeState {
-    // One field is read: this may run off the VM's JS thread.
-    // SAFETY: per fn contract — `vm` is live and `runtime_state` was set by
-    // `init_runtime_state` to a `*mut RuntimeState`.
-    unsafe { (*vm).runtime_state.get().cast::<RuntimeState>() }
 }
 
 /// `RareData.defaultClientSslCtx()` — lazy
@@ -328,10 +313,11 @@ unsafe fn init_runtime_state(
     // this hook), so no uws wiring is repeated here.
 
     let owned = bun_ptr::AliasableBox::new(RuntimeState {
-        timer: timer::All::init(),
+        // SAFETY: `RUNTIME_STATE` is set right below, and cleared only to drop the state.
+        timer: unsafe { timer::All::init() },
         sql_rare: Default::default(),
         ssl_ctx_cache: Default::default(),
-        global_dns_data: core::cell::OnceCell::new(),
+        global_dns_resolver: core::cell::OnceCell::new(),
         // `borrowing_default()` wraps `mi_heap_main()` so `Transpiler`-level
         // allocations use the same heap as the global allocator and skip the
         // `mi_heap_new`/`mi_heap_destroy` pair.
@@ -939,7 +925,6 @@ fn auto_tick(vm: &VirtualMachine) {
                 &mut timespec,
                 has_pending_immediate,
                 quic_next_tick_us,
-                vm,
                 &mut now,
             );
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
@@ -1030,7 +1015,6 @@ fn auto_tick_active(vm: &VirtualMachine) {
                 &mut timespec,
                 has_pending_immediate,
                 quic_next_tick_us,
-                vm,
                 &mut now,
             );
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
@@ -1090,22 +1074,21 @@ fn print_exception(
     let _ = writer.flush();
 }
 
-/// `vm.timer.insert(timer)` — the heap lives in
+/// `vm.timer.update_with_clock(timer, time, clock)` — the heap lives in
 /// [`RuntimeState::timer`]; low-tier callers (`AbortSignal::Timeout`) reach it
 /// through this slot.
-///
-/// # Safety
-/// See [`VirtualMachine::timer_insert`].
-unsafe fn timer_insert(
+fn timer_update(
     vm: &VirtualMachine,
-    t: *const bun_event_loop::EventLoopTimer::EventLoopTimer,
+    timer: timer::TimerRef<'_>,
+    time: &bun_core::Timespec,
+    clock: timer::Clock,
 ) {
-    timer_all_of(vm).insert(t);
+    timer_all_of(vm).update_with_clock(timer, time, clock);
 }
 
 #[unsafe(no_mangle)]
-fn __bun_remove_timer(timer: &bun_event_loop::EventLoopTimer::EventLoopTimer) {
-    timer_all().remove(timer);
+fn __bun_timer_heaps() -> &'static timer::TimerHeaps {
+    &timer_all().heaps
 }
 
 /// For `AbortSignal::Timeout`, which turns its delay into a deadline below this tier.
@@ -1114,14 +1097,10 @@ fn timer_min_delay_ms() -> u32 {
 }
 
 /// For `AbortSignal::Timeout`, like `timer_min_delay_ms`.
-fn abort_signal_timeout_clock() -> bun_core::TimespecMockMode {
-    let Some(all) = try_timer_all() else {
-        return bun_core::TimespecMockMode::ForceRealTime;
-    };
-    match all.fake_timers.abort_signal_timeout_clock() {
-        crate::timer::Clock::Fake => bun_core::TimespecMockMode::AllowMockedTime,
-        crate::timer::Clock::Real => bun_core::TimespecMockMode::ForceRealTime,
-    }
+fn abort_signal_timeout_clock() -> timer::Clock {
+    try_timer_all().map_or(timer::Clock::Real, |all| {
+        all.fake_timers.abort_signal_timeout_clock()
+    })
 }
 
 fn timers_left() -> TimersLeft {
@@ -1129,7 +1108,7 @@ fn timers_left() -> TimersLeft {
         return TimersLeft::default();
     };
     TimersLeft {
-        armed: all.timers.has_program_timer(),
+        armed: all.heaps.real().has_program_timer(),
         holds_loop_ref: all.active_timer_count.get() > 0,
     }
 }
@@ -1270,7 +1249,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     auto_tick_active,
     run_pending_test_step,
     print_exception,
-    timer_insert,
+    timer_update,
     timer_min_delay_ms,
     abort_signal_timeout_clock,
     timers_left,
@@ -1410,9 +1389,7 @@ fn cancel_timers(vm: &VirtualMachine, only: Option<bun_jsc::ContextId>) {
         // Drain the `fs.watchFile` scheduler queue while the timer heap and JSC
         // are both still live. Each queued `StatWatcher` holds a `RefPtr` back to
         // the scheduler and the scheduler holds a queue ref on the watcher, so any
-        // watcher still queued at exit forms a cycle and leaks. Runs before
-        // `cancel_all_timeout_objects` so the scheduler's `EventLoopTimer` is still
-        // linked when `set_timer(0)` removes it.
+        // watcher still queued at exit forms a cycle and leaks.
         StatWatcherScheduler::shutdown_for_exit(vm);
         // The realm is going (the VM's end, or the end of a test file under `--isolate`), and its
         // connections are closed.
@@ -1428,8 +1405,11 @@ fn cancel_timers(vm: &VirtualMachine, only: Option<bun_jsc::ContextId>) {
             // cancel may free the one it cancels, never another tracked one.
             unsafe {
                 match kind {
-                    bun_jsc::ContextTimer::Object => {
-                        (*timer.cast::<crate::timer::TimerObjectInternals>()).cancel(vm)
+                    bun_jsc::ContextTimer::TimeoutObject => {
+                        (*timer.cast::<timer::TimeoutObject>()).cancel(vm)
+                    }
+                    bun_jsc::ContextTimer::ImmediateObject => {
+                        (*timer.cast::<timer::ImmediateObject>()).cancel(vm)
                     }
                     bun_jsc::ContextTimer::AbortSignal => {
                         bun_jsc::abort_signal::Timeout::discard(timer.cast())
@@ -1479,10 +1459,9 @@ unsafe fn stop_active_handles_for_vm_teardown_hook(vm: *mut VirtualMachine) -> S
 }
 
 /// `RuntimeHooks::disarm_all_timers_for_vm_teardown`.
-unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
+fn disarm_all_timers_for_vm_teardown() {
     if let Some(all) = try_timer_all() {
-        // SAFETY: JS thread; teardown has forbidden script.
-        unsafe { all.disarm_all_for_vm_teardown() };
+        all.disarm_all_for_vm_teardown();
     }
 }
 
@@ -1495,14 +1474,13 @@ pub(crate) fn stop_dns_for_vm_teardown() -> SweepResult {
         return SweepResult::Idle;
     };
     let mut result = SweepResult::Idle;
-    if let Some(gd) = state.global_dns_data.get() {
-        // SAFETY: the VM-global resolver, pinned by `GlobalData` (its own ref
-        // never drops here).
+    if let Some(resolver) = state.global_dns_resolver.get() {
+        // SAFETY: the pointer of the ref in `state`.
         result = result.and(unsafe {
-            crate::dns_jsc::Resolver::close_channel_for_terminate(gd.resolver.as_ctx_ptr())
+            crate::dns_jsc::Resolver::close_channel_for_terminate(resolver.as_ptr())
         });
         #[cfg(windows)]
-        gd.resolver.cancel_pending_uv_requests_for_teardown();
+        resolver.cancel_pending_uv_requests_for_teardown();
     }
     #[cfg(target_os = "macos")]
     crate::dns_jsc::dns_sd::SharedConnection::close_for_terminate();
@@ -1710,11 +1688,10 @@ fn console_print_runtime_object_inner<const C: bool>(
         // Spec falls through (no `return`) when `toJSON` is absent.
     }
     if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
-        let internals = &timer.internals;
-        let id = internals.id;
+        let id = timer.id;
         formatter.add_for_new_line("Timeout(# ) ".len() + bun_core::fmt::digit_count(id));
         let mut w = AsFmt::new(writer_);
-        if internals.flags.get().kind() == crate::timer::Kind::SetInterval {
+        if timer.flags.get().kind() == crate::timer::Kind::SetInterval {
             formatter.add_for_new_line("repeats ".len() + bun_core::fmt::digit_count(id));
             let _ = write!(
                 w,
@@ -1745,7 +1722,7 @@ fn console_print_runtime_object_inner<const C: bool>(
         return Ok(true);
     }
     if let Some(immediate) = value.as_class_ref::<crate::timer::ImmediateObject>() {
-        let id = immediate.internals.id;
+        let id = immediate.id;
         formatter.add_for_new_line("Immediate(# ) ".len() + bun_core::fmt::digit_count(id));
         let mut w = AsFmt::new(writer_);
         let _ = write!(

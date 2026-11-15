@@ -158,7 +158,8 @@ unsafe extern "C" fn SHA256(data: *const u8, len: usize, out: *mut u8) -> *mut u
     out
 }
 
-static SHA256_MARKER: u8 = 0;
+/// `u16`, because `EVP_MD` has alignment 2.
+static SHA256_MARKER: u16 = 0;
 
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
@@ -180,6 +181,12 @@ unsafe fn sha256_context<'a>(ctx: *mut EVP_MD_CTX) -> &'a mut SHA256_CTX {
     }
 }
 
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+extern "C" fn EVP_MD_size(md: *const EVP_MD) -> usize {
+    assert!(md == EVP_sha256(), "only SHA-256 has a stand-in");
+    32
+}
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
 extern "C" fn EVP_MD_CTX_init(ctx: &mut EVP_MD_CTX) {

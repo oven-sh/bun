@@ -2,7 +2,7 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::PhantomData;
 use core::ptr::{self, NonNull};
 
-use bun_boringssl_sys::OwnedSslCtx;
+use bun_boringssl_sys::{OwnedSslCtx, SSL};
 use bun_core::Fd;
 
 use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, us_bun_verify_error_t};
@@ -234,8 +234,6 @@ impl us_socket_t {
 
     /// `None` falls through to the default context; `error` aborts instead.
     pub(crate) fn sni_resolve(&mut self, ctx: Option<OwnedSslCtx>, error: bool) {
-        // C frees the reference.
-        let ctx = ctx.map_or(ptr::null_mut(), OwnedSslCtx::into_raw);
         c::us_socket_sni_resolve(self, ctx, error as c_int);
     }
 
@@ -246,12 +244,11 @@ impl us_socket_t {
         c::us_socket_on_server_name(self);
     }
 
-    /// Node-compat `_handle` shape: `SSL*` for TLS sockets, fd-as-pointer for
-    /// plain TCP. Consumers that want one or the other should call `ssl()` /
-    /// `get_fd()` directly; this is the round-trip-to-JS form.
-    pub(crate) fn get_native_handle(&mut self) -> Option<*mut c_void> {
-        let p = c::us_socket_get_native_handle(self);
-        if p.is_null() { None } else { Some(p) }
+    /// # Safety
+    /// As for `NewSocketHandler::ssl`.
+    pub(crate) unsafe fn ssl(&self) -> Option<&SSL> {
+        // SAFETY: fn contract.
+        unsafe { c::us_internal_ssl_get_native_handle(self) }
     }
 
     pub fn ext<T>(&mut self) -> &mut T {
@@ -300,7 +297,7 @@ impl us_socket_t {
         &mut self,
         g: &SocketGroup,
         k: SocketKind,
-        ssl_ctx: &mut SslCtx,
+        ssl_ctx: &SslCtx,
         sni: Option<&core::ffi::CStr>,
         is_client: bool,
         request_cert: bool,
@@ -533,7 +530,7 @@ mod c {
     // Shims that take a (ptr,len) pair, nullable raw, or transfer ownership
     // stay unsafe.
     unsafe extern "C" {
-        pub(super) safe fn us_socket_get_native_handle(s: &mut us_socket_t) -> *mut c_void;
+        pub(super) fn us_internal_ssl_get_native_handle(s: &us_socket_t) -> Option<&SSL>;
 
         pub(super) safe fn us_socket_local_port(s: &us_socket_t) -> i32;
         pub(super) safe fn us_socket_remote_port(s: &us_socket_t) -> i32;
@@ -554,7 +551,7 @@ mod c {
         pub(super) safe fn us_socket_get_tos(s: &mut us_socket_t) -> c_int;
         pub(super) safe fn us_socket_sni_resolve(
             s: &mut us_socket_t,
-            ctx: *mut SslCtx,
+            ctx: Option<OwnedSslCtx>,
             error: c_int,
         );
         pub(super) safe fn us_socket_on_server_name(s: &mut us_socket_t);
@@ -633,7 +630,7 @@ mod c {
             s: *mut us_socket_t,
             group: *const SocketGroup,
             kind: u8,
-            ssl_ctx: *mut SslCtx,
+            ssl_ctx: &SslCtx,
             sni: *const c_char,
             is_client: i32,
             request_cert: i32,

@@ -823,7 +823,8 @@ impl RareData {
         // every us_socket_t is libc-allocated and otherwise becomes an LSAN leak
         // (the only pointer into it lives in mimalloc-backed RareData, which LSAN
         // can't trace once we unregister the root region).
-        vm.uws_loop().drain_closed_sockets();
+        // SAFETY: this runs at teardown: no dispatch of the loop resumes, and the close handlers have detached the owners.
+        unsafe { vm.uws_loop().drain_closed_sockets() };
         result
     }
 }

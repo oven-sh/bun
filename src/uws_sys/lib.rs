@@ -222,11 +222,11 @@ unsafe extern "C" {
     safe fn UpgradedDuplex__is_established(this: &UpgradedDuplex) -> bool;
     safe fn UpgradedDuplex__is_closed(this: &UpgradedDuplex) -> bool;
     safe fn UpgradedDuplex__is_shutdown(this: &UpgradedDuplex) -> bool;
-    safe fn UpgradedDuplex__ssl(this: &UpgradedDuplex) -> *mut bun_boringssl_sys::SSL;
+    fn UpgradedDuplex__ssl(this: &UpgradedDuplex) -> Option<&bun_boringssl_sys::SSL>;
     safe fn UpgradedDuplex__set_inline_reject(this: &UpgradedDuplex);
     safe fn UpgradedDuplex__latest_session(
         this: &UpgradedDuplex,
-    ) -> *mut bun_boringssl_sys::SSL_SESSION;
+    ) -> Option<bun_boringssl_sys::OwnedSslSession>;
     safe fn UpgradedDuplex__set_timeout(this: &mut UpgradedDuplex, seconds: core::ffi::c_uint);
     safe fn UpgradedDuplex__flush(this: &mut UpgradedDuplex);
     fn UpgradedDuplex__encode_and_write(
@@ -259,17 +259,19 @@ impl UpgradedDuplex {
     pub(crate) fn is_shutdown(&self) -> bool {
         UpgradedDuplex__is_shutdown(self)
     }
+    /// # Safety
+    /// As for `NewSocketHandler::ssl`.
     #[inline]
-    pub(crate) fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
-        let p = UpgradedDuplex__ssl(self);
-        if p.is_null() { None } else { Some(p) }
+    pub(crate) unsafe fn ssl(&self) -> Option<&bun_boringssl_sys::SSL> {
+        // SAFETY: fn contract.
+        unsafe { UpgradedDuplex__ssl(self) }
     }
     #[inline]
     pub(crate) fn set_inline_reject(&self) {
         UpgradedDuplex__set_inline_reject(self)
     }
     #[inline]
-    pub(crate) fn latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
+    pub(crate) fn latest_session(&self) -> Option<bun_boringssl_sys::OwnedSslSession> {
         UpgradedDuplex__latest_session(self)
     }
     #[inline]
@@ -331,11 +333,11 @@ unsafe extern "C" {
     safe fn WindowsNamedPipe__is_established(this: &WindowsNamedPipe) -> bool;
     safe fn WindowsNamedPipe__is_closed(this: &WindowsNamedPipe) -> bool;
     safe fn WindowsNamedPipe__is_shutdown(this: &WindowsNamedPipe) -> bool;
-    safe fn WindowsNamedPipe__ssl(this: &WindowsNamedPipe) -> *mut bun_boringssl_sys::SSL;
+    fn WindowsNamedPipe__ssl(this: &WindowsNamedPipe) -> Option<&bun_boringssl_sys::SSL>;
     safe fn WindowsNamedPipe__set_inline_reject(this: &WindowsNamedPipe);
     safe fn WindowsNamedPipe__latest_session(
         this: &WindowsNamedPipe,
-    ) -> *mut bun_boringssl_sys::SSL_SESSION;
+    ) -> Option<bun_boringssl_sys::OwnedSslSession>;
     safe fn WindowsNamedPipe__set_timeout(this: &mut WindowsNamedPipe, seconds: core::ffi::c_uint);
     safe fn WindowsNamedPipe__flush(this: &mut WindowsNamedPipe);
     fn WindowsNamedPipe__encode_and_write(
@@ -368,17 +370,19 @@ impl WindowsNamedPipe {
     pub(crate) fn is_shutdown(&self) -> bool {
         WindowsNamedPipe__is_shutdown(self)
     }
+    /// # Safety
+    /// As for `NewSocketHandler::ssl`.
     #[inline]
-    pub(crate) fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
-        let p = WindowsNamedPipe__ssl(self);
-        if p.is_null() { None } else { Some(p) }
+    pub(crate) unsafe fn ssl(&self) -> Option<&bun_boringssl_sys::SSL> {
+        // SAFETY: fn contract.
+        unsafe { WindowsNamedPipe__ssl(self) }
     }
     #[inline]
     pub(crate) fn set_inline_reject(&self) {
         WindowsNamedPipe__set_inline_reject(self)
     }
     #[inline]
-    pub(crate) fn latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
+    pub(crate) fn latest_session(&self) -> Option<bun_boringssl_sys::OwnedSslSession> {
         WindowsNamedPipe__latest_session(self)
     }
     #[inline]

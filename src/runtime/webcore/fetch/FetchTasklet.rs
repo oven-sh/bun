@@ -1030,9 +1030,9 @@ impl FetchTasklet {
         if certificate_info.cert.is_empty() {
             return Err(None);
         }
-        let mut x509 = OwnedX509::from_der(&certificate_info.cert).ok_or(None)?;
+        let x509 = OwnedX509::from_der(&certificate_info.cert).ok_or(None)?;
         let js_cert =
-            X509::to_js(&mut x509, global_this).map_err(|e| Some(global_this.take_exception(e)))?;
+            X509::to_js(&x509, global_this).map_err(|e| Some(global_this.take_exception(e)))?;
         let js_hostname: JSValue =
             bun_string_jsc::create_utf8_for_js(global_this, &certificate_info.hostname)
                 .map_err(|e| Some(global_this.take_exception(e)))?;

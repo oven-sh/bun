@@ -133,8 +133,8 @@ impl ProxyTunnel {
     }
 
     #[inline]
-    fn wrapper_ssl(this: NonNull<Self>) -> Option<NonNull<bun_boringssl_sys::SSL>> {
-        Self::wrapper_ref(this.as_ptr()).and_then(|w| w.ssl.get())
+    fn wrapper_ssl(guard: &RefPtr<Self>) -> Option<&bun_boringssl_sys::SSL> {
+        Self::wrapper_ref(guard.as_ptr())?.ssl()
     }
 
     /// INVARIANT (module): `this` is a live intrusive-refcounted tunnel and
@@ -202,35 +202,10 @@ fn on_open(ctx: *mut HTTPClient) {
     };
     // Live intrusive-refcounted tunnel allocated in `start()`. Do NOT form
     // `&mut ProxyTunnel` — see ALIASING NOTE.
-    let _guard = ProxyTunnel::ref_guard(proxy_nn);
-    if let Some(ssl_ptr) = ProxyTunnel::wrapper_ssl(proxy_nn) {
-        let _hostname = crate::get_tls_hostname(this, false);
-
-        // SAFETY: `ssl_ptr` is the live SSL handle from the tunnel's SSLWrapper.
-        let ssl = unsafe { &mut *ssl_ptr.as_ptr() };
-        if bun_core::ip_address::is_ip_host(_hostname) {
-            // SNI is null (IP literal — no SNI).
-            crate::configure_http_client_with_alpn(ssl, core::ptr::null(), AlpnOffer::H1);
-        } else {
-            // SAFETY: TEMP_HOSTNAME is only accessed from the single HTTP thread.
-            let temp_hostname = crate::temp_hostname();
-            if _hostname.len() < temp_hostname.len() {
-                temp_hostname[.._hostname.len()].copy_from_slice(_hostname);
-                temp_hostname[_hostname.len()] = 0;
-                // `temp_hostname` is NUL-terminated and outlives this call.
-                crate::configure_http_client_with_alpn(
-                    ssl,
-                    temp_hostname.as_ptr().cast(),
-                    AlpnOffer::H1,
-                );
-            } else {
-                let mut owned = _hostname.to_vec();
-                owned.push(0);
-                // `owned` is NUL-terminated and outlives this call.
-                crate::configure_http_client_with_alpn(ssl, owned.as_ptr().cast(), AlpnOffer::H1);
-                // owned drops here (was: defer if hostname_needs_free free(hostname))
-            }
-        }
+    let guard = ProxyTunnel::ref_guard(proxy_nn);
+    if let Some(ssl) = ProxyTunnel::wrapper_ssl(&guard) {
+        let hostname = crate::get_tls_hostname(this, false);
+        crate::configure_http_client_with_alpn(ssl, hostname, AlpnOffer::H1);
     }
 }
 
@@ -342,7 +317,7 @@ fn on_handshake(
     };
     scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake");
     // Do NOT form `&mut ProxyTunnel` (see ALIASING NOTE).
-    let _guard = ProxyTunnel::ref_guard(proxy_nn);
+    let guard = ProxyTunnel::ref_guard(proxy_nn);
     // Not the first report: a renegotiation, with the request already on its way.
     let first_report = this.state.request_stage == HTTPStage::ProxyHandshake;
     if first_report {
@@ -371,13 +346,9 @@ fn on_handshake(
             // Assert the wrapper is Some, then silently return
             // (no debug_assert) on the ssl-None sub-case.
             debug_assert!(ProxyTunnel::wrapper_ref(proxy_nn.as_ptr()).is_some());
-            let Some(ssl_ptr) = ProxyTunnel::wrapper_ssl(proxy_nn) else {
+            let Some(ssl) = ProxyTunnel::wrapper_ssl(&guard) else {
                 return;
             };
-
-            // SAFETY: `ssl_ptr` is the live SSL handle from the tunnel's
-            // SSLWrapper for the open inner TLS connection (NonNull invariant).
-            let ssl = unsafe { &mut *ssl_ptr.as_ptr() };
             match ProxyTunnel::socket_of(proxy_nn) {
                 &Socket::Ssl(socket) => {
                     if !this.check_server_identity::<true>(socket, ssl, false) {
@@ -426,10 +397,8 @@ fn on_handshake(
         // result, which is `UNABLE_TO_GET_ISSUER_CERT` by default when the peer
         // never got as far as sending a certificate. Only a certificate that
         // was received can be what is wrong.
-        let peer_sent_certificate = ProxyTunnel::wrapper_ssl(proxy_nn).is_some_and(|ssl| {
-            // SAFETY: the live SSL handle of the tunnel's wrapper; the chain is borrowed.
-            !unsafe { bun_boringssl_sys::SSL_get_peer_cert_chain(ssl.as_ptr()) }.is_null()
-        });
+        let peer_sent_certificate =
+            ProxyTunnel::wrapper_ssl(&guard).is_some_and(|ssl| ssl.peer_certificate().is_some());
         let err = if handshake_error.error_no <= 0
             || (this.flags.reject_unauthorized && peer_sent_certificate)
         {
@@ -567,7 +536,7 @@ fn progress_update_for_proxy_socket(ctx: *mut HTTPClient, proxy: NonNull<ProxyTu
 /// The inner connection's form of `HTTPClient::server_identity`.
 fn server_identity(
     ctx: *mut HTTPClient,
-    ssl: &mut bun_boringssl::c::SSL,
+    ssl: &bun_boringssl::c::SSL,
 ) -> bun_boringssl::ServerIdentity {
     // SAFETY: `ctx` is the live client that drives this tunnel's handshake.
     let client = unsafe { &*ctx };
@@ -603,7 +572,7 @@ impl ProxyTunnel {
             return;
         };
         let wrapper = match ProxyTunnelWrapper::init_with_ctx(
-            ssl_ctx,
+            &ssl_ctx,
             true,
             SSLWrapperHandlers {
                 on_open,
@@ -616,6 +585,7 @@ impl ProxyTunnel {
                 on_session: None,
                 on_keylog: None,
                 server_identity: Some(server_identity),
+                alpn_select: None,
                 ctx: this.as_erased_ptr().as_ptr(),
             },
         ) {

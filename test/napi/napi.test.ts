@@ -445,7 +445,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
   describe("napi_get_boolean", () => {
     // Node returns no boolean for these.
-    it("takes every byte but zero for true", async () => {
+    it("treats any non-zero byte as true", async () => {
       const output = await runOn(bunExe(), "test_napi_get_boolean_bytes", []);
       expect(output.match(/^\d+: \d/gm)).toEqual(["0: 0", "1: 1", "2: 1", "128: 1", "255: 1"]);
     });
@@ -961,7 +961,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       ]);
     });
 
-    it("survives a ref and an unref from a thread of the addon", async () => {
+    it("survives a ref and an unref from an addon thread", async () => {
       const result = await checkSameOutput("test_threadsafe_function_unref_and_ref_from_addon_thread", []);
       expect(result.split(/\r?\n/)).toEqual(["unref: 0, ref: 0", "finalize: env live"]);
     });
@@ -991,7 +991,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     // An addon's own threads outlive the worker that created the threadsafe
     // function (next-swc's tokio pool does this): the last call and the last
     // release land after the worker's VM, and its event loop, are gone.
-    // MIMALLOC_PURGE_DELAY=0 makes a stale event-loop pointer fault instead of
+    // MIMALLOC_PURGE_DELAY=0 makes a stale pointer into the worker's VM fault instead of
     // reading recycled memory that still happens to look intact.
     it("survives the last call and release after the creating worker is gone", async () => {
       // Both threadsafe functions are finalized at worker teardown; a later call

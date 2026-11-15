@@ -104,6 +104,8 @@ struct us_quic_socket_context_s {
     void (*on_goaway)(us_quic_socket_t *);
     void (*on_close)(us_quic_socket_t *);
     void (*on_stream_open)(us_quic_stream_t *, int);
+    /* Set under us_quic_socket_make_stream, which returns the stream in place of on_stream_open. */
+    us_quic_stream_t **made_stream;
     void (*on_stream_headers)(us_quic_stream_t *);
     void (*on_stream_data)(us_quic_stream_t *, const char *, unsigned int, int);
     void (*on_stream_writable)(us_quic_stream_t *);
@@ -705,7 +707,8 @@ static lsquic_stream_ctx_t *us_quic_on_new_stream(void *if_ctx, lsquic_stream_t 
     if (!s) { lsquic_stream_close(stream); return NULL; }
     s->stream = stream;
     s->ctx = ctx;
-    if (ctx->on_stream_open) ctx->on_stream_open(s, ctx->is_client);
+    if (ctx->made_stream) *ctx->made_stream = s;
+    else if (ctx->on_stream_open) ctx->on_stream_open(s, ctx->is_client);
     lsquic_stream_wantread(stream, 1);
     return (lsquic_stream_ctx_t *) s;
 }
@@ -1601,13 +1604,12 @@ struct us_quic_pending_connect_s {
     int port;
     int reject_unauthorized;
     struct addrinfo_request *ai_req;
-    void *user;
 };
 
 int us_quic_socket_context_connect(
     us_quic_socket_context_t *ctx, const char *host, int port, const char *sni,
     int reject_unauthorized, us_quic_socket_t **out_qs,
-    struct us_quic_pending_connect_s **out_pending, void *user)
+    struct us_quic_pending_connect_s **out_pending)
 {
     *out_qs = NULL;
     *out_pending = NULL;
@@ -1644,13 +1646,8 @@ int us_quic_socket_context_connect(
     pc->port = port;
     pc->reject_unauthorized = reject_unauthorized;
     pc->ai_req = ai_req;
-    pc->user = user;
     *out_pending = pc;
     return 0;
-}
-
-void *us_quic_pending_connect_user(struct us_quic_pending_connect_s *pc) {
-    return pc->user;
 }
 
 struct addrinfo_request *us_quic_pending_connect_addrinfo(
@@ -1677,10 +1674,14 @@ void us_quic_pending_connect_cancel(struct us_quic_pending_connect_s *pc) {
     us_free(pc);
 }
 
-void us_quic_socket_make_stream(us_quic_socket_t *s) {
-    if (!s->conn) return;
+us_quic_stream_t *us_quic_socket_make_stream(us_quic_socket_t *s) {
+    if (!s->conn) return NULL;
+    us_quic_stream_t *made = NULL;
+    s->ctx->made_stream = &made;
     lsquic_conn_make_stream(s->conn);
+    s->ctx->made_stream = NULL;
     s->ctx->pending_write_bytes++;
+    return made;
 }
 
 unsigned us_quic_socket_streams_avail(us_quic_socket_t *s) {

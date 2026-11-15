@@ -83,19 +83,16 @@ struct addrinfo_request;
 int us_quic_socket_context_connect(
     us_quic_socket_context_t *ctx, const char *host, int port, const char *sni,
     int reject_unauthorized, us_quic_socket_t **out_qs,
-    struct us_quic_pending_connect_s **out_pending, void *user);
+    struct us_quic_pending_connect_s **out_pending);
 
-void *us_quic_pending_connect_user(struct us_quic_pending_connect_s *pc);
 struct addrinfo_request *us_quic_pending_connect_addrinfo(
     struct us_quic_pending_connect_s *pc);
 us_quic_socket_t *us_quic_pending_connect_resolved(
     struct us_quic_pending_connect_s *pc);
 void us_quic_pending_connect_cancel(struct us_quic_pending_connect_s *pc);
 
-/* Request a new bidirectional stream; on_stream_open(is_client=1) fires when
- * lsquic has a stream ID to hand out (immediately if under the peer's
- * MAX_STREAMS, otherwise once credit arrives). */
-void us_quic_socket_make_stream(us_quic_socket_t *s);
+/* NULL at the peer's MAX_STREAMS: on_stream_open fires once credit arrives. */
+us_quic_stream_t *us_quic_socket_make_stream(us_quic_socket_t *s);
 unsigned us_quic_socket_streams_avail(us_quic_socket_t *s);
 int us_quic_socket_status(us_quic_socket_t *s, char *buf, unsigned int len);
 

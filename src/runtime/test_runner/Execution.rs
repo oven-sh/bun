@@ -234,7 +234,7 @@ impl ExecutionSequence {
             return context;
         }
         let context = TestContext::create(global, buntest, group_index, sequence_index);
-        self.context.set(Strong::create(context, global));
+        self.context.set(global, context);
         if let Some(fixtures) = self.test(buntest).and_then(|test| test.fixtures.as_ref()) {
             test_context::js::fixtures_set_cached(context, global, fixtures.get());
         }

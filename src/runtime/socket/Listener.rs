@@ -11,9 +11,10 @@ use bun_io::JsKeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, StringJsc as _};
+use bun_jsc::{
+    self as jsc, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, StringJsc as _, StrongCell,
+};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd};
 use bun_uws as uws;
@@ -66,10 +67,10 @@ pub(crate) struct Listener {
     pub(crate) reject_unauthorized: bool,
     /// Accepted sockets carry `Flags::PAUSE_ON_CONNECT` (see `NewSocket::on_open`).
     pub(crate) pause_on_connect: bool,
-    pub(crate) strong_data: JsCell<Strong>,
+    pub(crate) strong_data: StrongCell,
     /// Reference to this listener's JS wrapper. Strong while it is listening or
     /// has connections, downgraded to weak once idle so GC can reclaim it.
-    pub this_value: JsCell<JsRef>,
+    pub this_value: JsRef,
     /// Armed while listening: the listener stops with the context that opened it.
     pub(crate) abort_handle: bun_jsc::AbortHandle,
     /// That context: where an accepted socket that leaves the listener's group (a TLS upgrade) goes.
@@ -93,7 +94,7 @@ pub(crate) enum ListenerType {
 impl Listener {
     pub(crate) fn get_data<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a> {
         log!("getData()");
-        match self.strong_data.get().get() {
+        match self.strong_data.get() {
             Some(data) => JsLocal::new(heap, data),
             None => JsLocal::UNDEFINED,
         }
@@ -101,8 +102,7 @@ impl Listener {
 
     pub(crate) fn set_data(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) {
         log!("setData()");
-        self.strong_data
-            .with_mut(|s| s.set(cx.global(), value.to_js()));
+        self.strong_data.set(cx.global(), value.to_js());
     }
 }
 
@@ -265,8 +265,8 @@ impl Listener {
                     poll_ref: JsKeepAlive::default(),
                     group: uws::SocketGroup::default(),
                     secure_ctx: JsCell::new(None),
-                    strong_data: JsCell::new(Strong::empty()),
-                    this_value: JsCell::new(JsRef::empty()),
+                    strong_data: StrongCell::default(),
+                    this_value: JsRef::empty(),
                     abort_handle: bun_jsc::AbortHandle::for_owner::<Listener>(),
                     context: cx.context().id(),
                 }
@@ -336,9 +336,7 @@ impl Listener {
                 }
 
                 if !default_data.is_empty() {
-                    this_ref
-                        .strong_data
-                        .set(Strong::create(default_data, cx.global()));
+                    this_ref.strong_data.set(cx.global(), default_data);
                 }
                 // The listener holds the handlers cell in a visited slot; every
                 // accepted socket shares the same cell.
@@ -346,9 +344,7 @@ impl Listener {
                 this_ref
                     .handlers
                     .set_listener(Some(this_value.payload_ptr()));
-                this_ref
-                    .this_value
-                    .with_mut(|r| r.set_strong(js_value, cx.global()));
+                this_ref.this_value.set_strong(js_value, cx.global());
                 this_ref.poll_ref.ref_(bun_io::js_vm_ctx());
                 // SAFETY: its address does not change; leaves its context in `Drop`.
                 unsafe { bun_jsc::AbortHandle::arm_owner(this, cx.context()) };
@@ -387,8 +383,8 @@ impl Listener {
             poll_ref: JsKeepAlive::default(),
             group: uws::SocketGroup::default(),
             secure_ctx: JsCell::new(None),
-            strong_data: JsCell::new(Strong::empty()),
-            this_value: JsCell::new(JsRef::empty()),
+            strong_data: StrongCell::default(),
+            this_value: JsRef::empty(),
             abort_handle: bun_jsc::AbortHandle::for_owner::<Listener>(),
             context: cx.context().id(),
         }
@@ -547,9 +543,7 @@ impl Listener {
         this_ref.connection.with_mut(|c| *c = connection);
         this_ref.listener.set(ListenerType::Uws(owned_socket));
         if !default_data.is_empty() {
-            this_ref
-                .strong_data
-                .set(Strong::create(default_data, cx.global()));
+            this_ref.strong_data.set(cx.global(), default_data);
         }
 
         if ssl_enabled {
@@ -573,9 +567,7 @@ impl Listener {
         this_ref
             .handlers
             .set_listener(Some(this_value.payload_ptr()));
-        this_ref
-            .this_value
-            .with_mut(|r| r.set_strong(js_value, cx.global()));
+        this_ref.this_value.set_strong(js_value, cx.global());
         this_ref.poll_ref.ref_(bun_io::js_vm_ctx());
         // SAFETY: its address does not change; leaves its context in `Drop`.
         unsafe { bun_jsc::AbortHandle::arm_owner(this, cx.context()) };
@@ -610,7 +602,7 @@ impl Listener {
             // `protos` is `Option<Box<[u8]>>` so we clone the listener's slice.
             flags: Cell::new(listener.accepted_socket_flags()),
             owned_ssl_ctx: JsCell::new(None),
-            this_value: JsCell::new(jsc::JsRef::empty()),
+            this_value: jsc::JsRef::empty(),
             poll_ref: JsKeepAlive::default(),
             ref_pollref_on_connect: Cell::new(true),
             connection: JsCell::new(None),
@@ -626,7 +618,7 @@ impl Listener {
         // See `on_create`: each accepted named-pipe connection holds the loop
         // on its own so `conn.unref()` is meaningful.
         s.poll_ref.ref_(bun_io::js_vm_ctx());
-        if let Some(default_data) = listener.strong_data.get().get() {
+        if let Some(default_data) = listener.strong_data.get() {
             let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
         }
@@ -656,7 +648,7 @@ impl Listener {
             // the listener's slice; one small allocation per accept.
             flags: Cell::new(listener.accepted_socket_flags()),
             owned_ssl_ctx: JsCell::new(None),
-            this_value: JsCell::new(jsc::JsRef::empty()),
+            this_value: jsc::JsRef::empty(),
             poll_ref: JsKeepAlive::default(),
             ref_pollref_on_connect: Cell::new(true),
             connection: JsCell::new(None),
@@ -675,7 +667,7 @@ impl Listener {
         // `server.unref()`/`server.close()` don't tear out live connections'
         // hold. on_close/mark_inactive already unref this.
         s.poll_ref.ref_(bun_io::js_vm_ctx());
-        let default_data = listener.strong_data.get().get();
+        let default_data = listener.strong_data.get();
         if let Some(default_data) = default_data {
             let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
@@ -795,9 +787,8 @@ impl Listener {
         // exit like Node does.
         self.poll_ref.unref(bun_io::js_vm_ctx());
         if connections == 0 {
-            self.this_value.with_mut(|r| r.downgrade());
-            self.strong_data
-                .with_mut(|s| s.clear_without_deallocation());
+            self.this_value.downgrade();
+            self.strong_data.clear_without_deallocation();
         } else if force_close {
             self.group.close_all();
         }
@@ -863,8 +854,7 @@ impl Listener {
             return;
         }
         self.poll_ref.ref_(bun_io::js_vm_ctx());
-        self.this_value
-            .with_mut(|r| r.set_strong(this_value.to_js(), cx.global()));
+        self.this_value.set_strong(this_value.to_js(), cx.global());
     }
 
     pub(crate) fn unref(&self) {
@@ -1023,7 +1013,7 @@ impl Listener {
                 if ssl_enabled {
                     let tls = if let Some(prev) = prev_maybe_tls {
                         let prev = prev.ref_guard();
-                        debug_assert!(!prev.this_value.get().is_empty());
+                        debug_assert!(!prev.this_value.is_empty());
                         prev.detach_for_reconnect();
                         prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
@@ -1055,7 +1045,7 @@ impl Listener {
                             ),
                             owned_ssl_ctx: JsCell::new(None),
                             flags: Cell::new(SocketFlags::default()),
-                            this_value: JsCell::new(jsc::JsRef::empty()),
+                            this_value: jsc::JsRef::empty(),
                             poll_ref: JsKeepAlive::default(),
                             ref_pollref_on_connect: Cell::new(true),
                             buffered_data_for_node_net: Default::default(),
@@ -1115,7 +1105,7 @@ impl Listener {
                 } else {
                     let tcp = if let Some(prev) = prev_maybe_tcp {
                         let prev = prev.ref_guard();
-                        debug_assert!(!prev.this_value.get().is_empty());
+                        debug_assert!(!prev.this_value.is_empty());
                         prev.detach_for_reconnect();
                         prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
@@ -1142,7 +1132,7 @@ impl Listener {
                             server_name: JsCell::new(None),
                             owned_ssl_ctx: JsCell::new(None),
                             flags: Cell::new(SocketFlags::default()),
-                            this_value: JsCell::new(jsc::JsRef::empty()),
+                            this_value: jsc::JsRef::empty(),
                             poll_ref: JsKeepAlive::default(),
                             ref_pollref_on_connect: Cell::new(true),
                             buffered_data_for_node_net: Default::default(),
@@ -1334,7 +1324,7 @@ impl Drop for Listener {
             this.unlink_unix_socket_path();
         }
         this.listener.set(ListenerType::None);
-        this.this_value.with_mut(|r| r.finalize());
+        this.this_value.finalize();
 
         // Before force-closing: an accepted socket's `on_close` must not release this listener's refs a second time.
         this.handlers.set_listener(None);
@@ -1367,7 +1357,7 @@ fn connect_finish<const IS_SSL: bool>(
     // Either the caller's JS-owned socket (reconnect) or a fresh one.
     let socket_ref = if let Some(prev) = maybe_previous {
         let prev = prev.ref_guard();
-        debug_assert!(prev.this_value.get().is_not_empty());
+        debug_assert!(prev.this_value.is_not_empty());
         // `node:net` allows `socket.connect()` on an already-connected /
         // still-connecting socket. Close the previous native socket before
         // reusing this wrapper so `do_connect` does not alias two native
@@ -1401,7 +1391,7 @@ fn connect_finish<const IS_SSL: bool>(
             server_name: JsCell::new(ssl.as_mut().and_then(|s| s.take_server_name())),
             owned_ssl_ctx: JsCell::new(owned_ssl_ctx),
             flags: Cell::new(SocketFlags::default()),
-            this_value: JsCell::new(jsc::JsRef::empty()),
+            this_value: jsc::JsRef::empty(),
             poll_ref: JsKeepAlive::default(),
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: Default::default(),
@@ -1853,7 +1843,7 @@ fn dispatch_server_name(
     // listener's (the net.Server, kept past `stop()` while connections remain)
     // for an accepted socket, the socket's own (the TLSSocket) for an adopted one.
     let this_value = match handlers.listener() {
-        Some(listener) => listener.strong_data.get().get(),
+        Some(listener) => listener.strong_data.get(),
         None => TLSSocket::data_get_cached(socket_handle),
     }
     .unwrap_or(JSValue::UNDEFINED);

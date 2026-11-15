@@ -550,17 +550,22 @@ impl StreamResult<'_> {
 
 /// The one GC root a native sink keeps while a stream is piped into it: its controller cell, which holds the stream, the done-promise and the failure value.
 #[derive(Default)]
-pub(crate) struct PipeCell(::bun_jsc::strong::Optional);
+pub(crate) struct PipeCell(::bun_jsc::StrongCell);
 
 impl PipeCell {
-    pub(crate) fn create(
+    pub(crate) fn set(
+        &self,
         cell: JSValue,
         stream: JSValue,
         done: JSValue,
         global: &JSGlobalObject,
-    ) -> PipeCell {
+    ) {
         js::set_pipe(cell, stream, done);
-        PipeCell(::bun_jsc::strong::Optional::create(cell, global))
+        self.root(cell, global);
+    }
+
+    pub(crate) fn take(&self) -> PipeCell {
+        PipeCell(self.0.take())
     }
 
     pub(crate) fn cell(&self) -> Option<JSValue> {
@@ -595,8 +600,8 @@ impl PipeCell {
     }
 
     /// Root `cell` with nothing on it yet.
-    pub(crate) fn root(cell: JSValue, global: &JSGlobalObject) -> PipeCell {
-        PipeCell(::bun_jsc::strong::Optional::create(cell, global))
+    pub(crate) fn root(&self, cell: JSValue, global: &JSGlobalObject) {
+        self.0.set(global, cell);
     }
 
     pub(crate) fn has_done(&self) -> bool {
@@ -609,7 +614,7 @@ impl PipeCell {
     }
 
     pub(crate) fn set_done(&self, done: JSValue) {
-        debug_assert!(self.0.has(), "no controller cell to hold the promise");
+        debug_assert!(self.0.is_some(), "no controller cell to hold the promise");
         if let Some(cell) = self.0.get() {
             js::set_pipe_done(cell, done);
         }
@@ -1901,7 +1906,7 @@ impl<const SSL: bool> crate::webcore::sink::ControlledSink for HTTPServerWritabl
         controller: JSValue,
         global: &JSGlobalObject,
     ) {
-        this.pipe = PipeCell::root(controller, global);
+        this.pipe.root(controller, global);
     }
     fn source<'a>(this: &'a mut Self::Entered<'_>) -> &'a Cell<SourceHandle> {
         Cell::from_mut(&mut this.source)

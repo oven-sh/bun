@@ -68,7 +68,7 @@ use crate::jsc_hooks::timer_all;
 trait CronJobBase: Sized + bun_ptr::RefCounted {
     /// The single owning ref; released by `finish`.
     fn owner(&self) -> &Cell<Option<RefPtr<Self>>>;
-    fn promise(&self) -> &JsCell<jsc::JSPromiseStrong>;
+    fn promise(&self) -> &Cell<jsc::JSPromiseStrong>;
     fn global(&self) -> GlobalRef;
     fn remaining_fds(&self) -> &Cell<i8>;
     fn err_msg(&self) -> &JsCell<Option<Vec<u8>>>;
@@ -123,11 +123,10 @@ trait CronJobBase: Sized + bun_ptr::RefCounted {
             let err = EncodedSlice::utf8(&msg).to_error_instance(&global);
             let _ = this
                 .promise()
-                .with_mut(|p| p.reject_with_async_stack(&global, Ok(err)));
+                .take()
+                .reject_with_async_stack(&global, Ok(err));
         } else {
-            let _ = this
-                .promise()
-                .with_mut(|p| p.resolve(&global, JSValue::UNDEFINED));
+            let _ = this.promise().take().resolve(&global, JSValue::UNDEFINED);
         }
     }
 
@@ -194,7 +193,7 @@ struct CronRegisterJob {
     ref_count: RefCount,
     /// The single owning ref; released by `finish`.
     owner: Cell<Option<RefPtr<CronRegisterJob>>>,
-    promise: JsCell<jsc::JSPromiseStrong>,
+    promise: Cell<jsc::JSPromiseStrong>,
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef
     global: GlobalRef,
     _keep_alive: JsKeepAlive,
@@ -247,7 +246,7 @@ impl CronJobBase for CronRegisterJob {
     fn owner(&self) -> &Cell<Option<RefPtr<Self>>> {
         &self.owner
     }
-    fn promise(&self) -> &JsCell<jsc::JSPromiseStrong> {
+    fn promise(&self) -> &Cell<jsc::JSPromiseStrong> {
         &self.promise
     }
     fn global(&self) -> GlobalRef {
@@ -723,10 +722,12 @@ pub(crate) fn register_os_job(
                 bstr::BStr::new(bun_exe.as_bytes())
             )));
     }
+    let promise = jsc::JSPromiseStrong::init(global);
+    let promise_value = promise.value();
     let job = RefPtr::new(CronRegisterJob {
         ref_count: RefCount::init(),
         owner: Cell::new(None),
-        promise: JsCell::new(jsc::JSPromiseStrong::init(global)),
+        promise: Cell::new(promise),
         global: GlobalRef::from(global),
         _keep_alive: JsKeepAlive::active(),
         bun_exe,
@@ -747,7 +748,6 @@ pub(crate) fn register_os_job(
     let owner = Owner::new(PollTag::CronRegister, job.as_ptr().cast());
     // SAFETY: `owner` points to the heap allocation that holds this reader.
     unsafe { job.output_reader.set_owner(owner) };
-    let promise_value = job.promise.get().value();
     let this = job.this_ptr();
     this.owner.set(Some(job));
     let job = this;
@@ -869,7 +869,7 @@ struct CronRemoveJob {
     ref_count: RefCount,
     /// The single owning ref; released by `finish`.
     owner: Cell<Option<RefPtr<CronRemoveJob>>>,
-    promise: JsCell<jsc::JSPromiseStrong>,
+    promise: Cell<jsc::JSPromiseStrong>,
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef
     global: GlobalRef,
     _keep_alive: JsKeepAlive,
@@ -910,7 +910,7 @@ impl CronJobBase for CronRemoveJob {
     fn owner(&self) -> &Cell<Option<RefPtr<Self>>> {
         &self.owner
     }
-    fn promise(&self) -> &JsCell<jsc::JSPromiseStrong> {
+    fn promise(&self) -> &Cell<jsc::JSPromiseStrong> {
         &self.promise
     }
     fn global(&self) -> GlobalRef {
@@ -1131,10 +1131,12 @@ pub(crate) fn remove(cx: &mut JsScope<'_>, title: &[u8]) -> JsResult<JSValue> {
         )));
     }
 
+    let promise = jsc::JSPromiseStrong::init(global);
+    let promise_value = promise.value();
     let job = RefPtr::new(CronRemoveJob {
         ref_count: RefCount::init(),
         owner: Cell::new(None),
-        promise: JsCell::new(jsc::JSPromiseStrong::init(global)),
+        promise: Cell::new(promise),
         global: GlobalRef::from(global),
         _keep_alive: JsKeepAlive::active(),
         title: ZString::from_bytes(title),
@@ -1150,7 +1152,6 @@ pub(crate) fn remove(cx: &mut JsScope<'_>, title: &[u8]) -> JsResult<JSValue> {
     let owner = Owner::new(PollTag::CronRemove, job.as_ptr().cast());
     // SAFETY: `owner` points to the heap allocation that holds this reader.
     unsafe { job.output_reader.set_owner(owner) };
-    let promise_value = job.promise.get().value();
     let this = job.this_ptr();
     this.owner.set(Some(job));
     let job = this;
@@ -1226,7 +1227,7 @@ pub(crate) struct CronJob {
     // Read-only after construction.
     tz: CronTz,
     poll_ref: KeepAlive,
-    this_value: JsCell<JsRef>,
+    this_value: JsRef,
     stopped: Cell<bool>,
     /// Last computed wall-clock fire target (ms epoch); floors the next search
     /// so monotonic-vs-wall skew can't recompute the same minute.
@@ -1269,20 +1270,15 @@ impl CronJob {
     /// has settled, so onPromiseReject can still read pendingPromise from
     /// the wrapper and pass the real Promise to unhandledRejection.
     pub(crate) fn maybe_downgrade(&self) {
-        if self.stopped.get()
-            && self.tick_cell.get().is_empty()
-            && !matches!(self.this_value.get(), JsRef::Finalized)
-        {
-            self.this_value.with_mut(|v| v.downgrade());
+        if self.stopped.get() && self.tick_cell.get().is_empty() {
+            self.this_value.downgrade();
         }
     }
 
     /// The job's script is gone (its context stopped): nothing reads the wrapper again, so the
     /// callback and what it closes over are not kept for a tick whose promise may never settle.
     fn let_go_of_wrapper(&self) {
-        if !matches!(self.this_value.get(), JsRef::Finalized) {
-            self.this_value.with_mut(|v| v.downgrade());
-        }
+        self.this_value.downgrade();
     }
 
     /// Takes one ref as the cell's claim on the job and remembers the cell.
@@ -1413,7 +1409,7 @@ impl CronJob {
     }
 
     pub(crate) fn finalize(&self) {
-        self.this_value.with_mut(|v| v.finalize());
+        self.this_value.finalize();
     }
 
     fn compute_next_timespec(&self) -> Option<bun_core::Timespec> {
@@ -1475,7 +1471,7 @@ impl CronJob {
             return;
         }
 
-        let Some(js_this) = this.this_value.get().try_get() else {
+        let Some(js_this) = this.this_value.try_get() else {
             Self::self_stop(this, vm);
             return;
         };
@@ -1609,7 +1605,7 @@ impl CronJob {
             parsed,
             tz,
             poll_ref: KeepAlive::default(),
-            this_value: JsCell::new(JsRef::empty()),
+            this_value: JsRef::empty(),
             stopped: Cell::new(false),
             last_next_ms: Cell::new(0.0),
             tick_cell: Cell::new(JSValue::ZERO),
@@ -1638,7 +1634,7 @@ impl CronJob {
         // `job`'s ref moves to the JS wrapper (released via `finalize`).
         let js_value = Self::to_js_nonnull(job.as_non_null(), global);
         let job = job.into_this_ptr();
-        job.this_value.with_mut(|v| v.set_strong(js_value, global));
+        job.this_value.set_strong(js_value, global);
         js::cron_set_cached(js_value, global, schedule_value.to_js());
         js::callback_set_cached(
             js_value,
@@ -1666,7 +1662,7 @@ pub(crate) fn on_promise_resolve(
     };
     let this = job.this_ptr();
     let vm = this.global.bun_vm();
-    if let Some(js_this) = this.this_value.get().try_get() {
+    if let Some(js_this) = this.this_value.try_get() {
         js::pending_promise_set_cached(js_this, &this.global, JSValue::UNDEFINED);
     }
     CronJob::schedule_next(this, vm);
@@ -1686,7 +1682,7 @@ pub(crate) fn on_promise_reject(
     let vm = this.global.bun_vm();
     let err = reason.to_js();
     let mut promise_value = JSValue::UNDEFINED;
-    if let Some(js_this) = this.this_value.get().try_get() {
+    if let Some(js_this) = this.this_value.try_get() {
         promise_value = js::pending_promise_get_cached(js_this).unwrap_or(JSValue::UNDEFINED);
         js::pending_promise_set_cached(js_this, &this.global, JSValue::UNDEFINED);
     }

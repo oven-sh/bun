@@ -9,6 +9,7 @@ use bun_core::strings;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{BoxedTask, Task, TaskTag, task_tag};
 use bun_io::KeepAlive;
+use bun_jsc::JsCell;
 #[cfg(not(target_os = "macos"))]
 use bun_jsc::SysErrorJsc as _;
 use bun_jsc::bindgen::JsScope;
@@ -19,7 +20,6 @@ use bun_jsc::{
     CommonAbortReasonExt as _, DOMWrapped, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult,
     VirtualMachineRef as VirtualMachine,
 };
-use bun_jsc::{JsCell, JsCellRefExt as _};
 use bun_paths::resolve_path::{self as Path, platform};
 use bun_ptr::{RefPtr, ThisPtr, ThreadSafeRefCount};
 use bun_sys::{self, SystemErrno};
@@ -65,7 +65,7 @@ pub(crate) struct FSWatcher {
     poll_ref: KeepAlive,
     global_this: GlobalRef,
     /// The JS wrapper, held strong while the watcher is open so that the listener stays callable.
-    js_this: JsCell<JsRef>,
+    js_this: JsRef,
     // pub(super): read directly by `win_watcher::PathWatcher::emit`.
     pub(super) encoding: Encoding,
 
@@ -610,9 +610,7 @@ impl FSWatcher {
         // SAFETY: the GC wrapper takes over the ref `this` was created with.
         let js_this = unsafe { Self::to_js_ptr(this, &this_ref.global_this) };
         js_this.ensure_still_alive();
-        this_ref
-            .js_this
-            .set(JsRef::init_strong(js_this, &this_ref.global_this));
+        this_ref.js_this.set_strong(js_this, &this_ref.global_this);
         js::listener_set_cached(js_this, &this_ref.global_this, listener);
 
         if let Some(s) = this_ref.signal.get() {
@@ -816,7 +814,7 @@ impl FSWatcher {
         if !self.closed.get() {
             self.closed.set(true);
             // Taken before `detach()` clears it: roots the wrapper while 'close' is emitted.
-            let js_this = self.js_this.replace(JsRef::empty());
+            let js_this = self.js_this.take();
             drop(guard);
             self.detach();
 
@@ -870,7 +868,7 @@ impl FSWatcher {
         self.signal.set(None);
 
         // Idempotent: `detach()` can run more than once (close + finalize).
-        self.js_this.set(JsRef::empty());
+        drop(self.js_this.take());
     }
 
     pub(crate) fn do_close(&self, _: &mut JsScope<'_>) {
@@ -914,7 +912,7 @@ impl FSWatcher {
             persistent: Cell::new(args.persistent),
             path_watcher: Cell::new(None),
             global_this: GlobalRef::from(args.global_this),
-            js_this: JsCell::new(JsRef::empty()),
+            js_this: JsRef::empty(),
             encoding: args.encoding,
             closed: Cell::new(false),
             verbose: args.verbose,
@@ -949,6 +947,6 @@ impl FSWatcher {
         );
         // SAFETY: `ctx` is heap-allocated; `detach()` disarms it before it is finalized.
         unsafe { bun_jsc::AbortHandle::arm_owner(ctx, args.context) };
-        Ok(ctx_ref.js_this.get_or_undefined())
+        Ok(ctx_ref.js_this.get())
     }
 }

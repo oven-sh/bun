@@ -90,7 +90,7 @@ pub(crate) struct Terminal {
 
     /// The JS wrapper, which roots the callbacks in its cached slots. Strong
     /// until no callback can fire, then weak (`maybe_downgrade_after_eof`).
-    this_value: JsCell<JsRef>,
+    this_value: JsRef,
 
     /// State flags
     flags: Cell<Flags>,
@@ -340,7 +340,7 @@ impl Terminal {
             #[cfg(windows)]
             inflight_write_ref: Cell::new(None),
             reader_ref: JsCell::new(None),
-            this_value: JsCell::new(JsRef::empty()),
+            this_value: JsRef::empty(),
             flags: Cell::new(Flags::empty()),
             writer_has_buffered: Cell::new(false),
             #[cfg(unix)]
@@ -411,8 +411,7 @@ impl Terminal {
         this_value: JSValue,
     ) {
         // Start with strong ref since we're actively reading.
-        self.this_value
-            .set(JsRef::init_strong(this_value, global_object));
+        self.this_value.set_strong(this_value, global_object);
 
         // Store callbacks via generated gc setters (prevents GC of callbacks while terminal is alive)
         // Note: callbacks were already validated in parseFromJS() and may be wrapped in AsyncContextFrame
@@ -530,7 +529,7 @@ impl Terminal {
 
     /// No callback follows (on Windows the reader drains on after `close_internal`), and the wrapper may be collected.
     fn close_without_callbacks(&self) {
-        self.this_value.with_mut(|v| v.downgrade());
+        self.this_value.downgrade();
         self.update_flags(|f| f.insert(Flags::FINALIZED));
         self.close_internal();
     }
@@ -1230,7 +1229,7 @@ impl Terminal {
         if has_pending {
             // Keep the wrapper rooted for the pending drain dispatch; a write
             // after PTY EOF finds it already downgraded.
-            self.this_value.with_mut(|v| v.upgrade(global_object));
+            self.this_value.upgrade(global_object);
         }
         // A second write() can drain what an earlier one buffered; on_write saw
         // the cleared flag, so fire drain here.
@@ -1471,7 +1470,7 @@ impl Terminal {
     fn on_writer_ready(&self) {
         bun_output::scoped_log!(Terminal, "onWriterReady");
         // Call drain callback
-        if let Some(this_jsvalue) = self.this_value.get().try_get() {
+        if let Some(this_jsvalue) = self.this_value.try_get() {
             if let Some(callback) = js::drain_get_cached(this_jsvalue) {
                 let global_this = self.global();
                 global_this.bun_vm().event_loop().run_callback(
@@ -1551,14 +1550,14 @@ impl Terminal {
         if !self.is_writer_done() && self.writer_has_buffered.get() {
             return;
         }
-        self.this_value.with_mut(|v| v.downgrade());
+        self.this_value.downgrade();
     }
 
     /// Invoke the exit callback with PTY lifecycle status.
     /// Note: exit_code is PTY-level (0=EOF, 1=error), NOT the subprocess exit code.
     /// The signal parameter is only populated if a signal caused the PTY close.
     fn call_exit_callback(&self, exit_code: i32, signal: Option<SignalCode>) {
-        let Some(this_jsvalue) = self.this_value.get().try_get() else {
+        let Some(this_jsvalue) = self.this_value.try_get() else {
             return;
         };
         let Some(callback) = js::exit_get_cached(this_jsvalue) else {
@@ -1595,7 +1594,7 @@ impl Terminal {
             return;
         }
 
-        let Some(this_jsvalue) = self.this_value.get().try_get() else {
+        let Some(this_jsvalue) = self.this_value.try_get() else {
             return;
         };
         let Some(callback) = js::data_get_cached(this_jsvalue) else {
@@ -1643,7 +1642,7 @@ impl Terminal {
     pub(crate) fn finalize(&self) {
         bun_output::scoped_log!(Terminal, "finalize");
         jsc::mark_binding();
-        self.this_value.with_mut(|v| v.finalize());
+        self.this_value.finalize();
         self.update_flags(|f| f.insert(Flags::FINALIZED));
         self.close_internal();
     }

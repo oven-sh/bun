@@ -30,6 +30,9 @@ macro_rules! new_evp {
             ctx: ffi::OwnedEvpMdCtx,
         }
 
+        // SAFETY: the context owns its state, and its `EVP_MD` is a constant.
+        unsafe impl Send for $name {}
+
         impl $name {
             pub const DIGEST: usize = $digest_size;
 

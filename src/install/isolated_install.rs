@@ -41,12 +41,12 @@ use bun_sys::{self as sys, Fd};
 use bun_wyhash::{Wyhash, Wyhash11};
 
 use crate::analytics;
-use crate::bun_progress::Progress;
+use crate::lifecycle_script_runner::ScriptCaller;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{self, Lockfile};
 use crate::network_task::ForTarballError;
 use crate::package_manager::Options::LogLevel;
-use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
+use crate::package_manager::{self, PackageManager, WorkspaceFilter, install_fields, run_tasks};
 use crate::prune::{LinkedNodeModules, OldModules};
 use crate::{
     self as install, DependencyID, PackageID, PackageInstall, PackageNameHash, Resolution,
@@ -141,15 +141,8 @@ struct Wait<'a, 'b> {
 
 impl<'a, 'b> Wait<'a, 'b> {
     fn is_done(&mut self) -> bool {
-        // `Installer.manager` is a BACKREF raw pointer; `manager_mut()`
-        // materializes the unique `&mut PackageManager` for this main-thread
-        // tick without aliasing `&mut Installer`.
-        let pkg_manager = self.installer.manager_mut();
-        let log_level = pkg_manager.options.log_level;
-        // `run_tasks` must not call `installer.manager_mut()` — `pkg_manager`
-        // is the live `&mut PackageManager` for this call.
+        let log_level = self.installer.manager.options.log_level;
         if let Err(err) = run_tasks::run_tasks(
-            pkg_manager,
             run_tasks::Caller::IsolatedLinker(self.installer),
             true,
             log_level,
@@ -159,25 +152,20 @@ impl<'a, 'b> Wait<'a, 'b> {
         }
         self.installer.release_members();
 
-        let pkg_manager = self.installer.manager_mut();
-        if let Some(node) = pkg_manager.scripts_node {
+        let state = &*self.installer.manager.state;
+        if let Some(node) = state.scripts_node {
             // if we're just waiting for scripts, make it known.
-
-            // .monotonic is okay because this is just used for progress; we don't rely on
-            // any side effects from completed tasks.
-            let pending_lifecycle_scripts = pkg_manager
-                .pending_lifecycle_script_tasks
-                .load(Ordering::Relaxed);
+            let pending_lifecycle_scripts = state.active_lifecycle_script_count();
             // `+ 1` because the root task needs to wait for everything
             if pending_lifecycle_scripts > 0
-                && pkg_manager.pending_task_count() <= pending_lifecycle_scripts + 1
+                && state.pending_task_count() as usize <= pending_lifecycle_scripts + 1
             {
-                pkg_manager.progress.activate(node);
-                pkg_manager.progress.refresh();
+                state.progress.activate(node);
+                state.progress.refresh();
             }
         }
 
-        pkg_manager.pending_task_count() == 0
+        state.pending_task_count() == 0
     }
 }
 
@@ -188,7 +176,7 @@ fn claim_hidden_hoist(
     dep_name: &[u8],
 ) -> Result<bool, AllocError> {
     Ok(manager.options.hoist
-        && (manager.options.hoist_pattern.as_ref())
+        && (manager.hoist_pattern.as_ref())
             .is_none_or(|hoist_pattern| hoist_pattern.is_match(dep_name))
         && !hidden_hoisted.get_or_put(dep_name)?.found_existing)
 }
@@ -1376,7 +1364,6 @@ fn build_store(
             peer_hash: new_entry_peer_hash,
             hoisted,
             nested_folder: new_entry_nested_folder,
-            step: core::sync::atomic::AtomicU32::new(0),
             entry_hash: 0,
         })?;
 
@@ -1397,7 +1384,7 @@ fn build_store(
                 // make sure direct dependencies are not replaced
                 public_hoisted.put(dep_name, ())?;
             } else if !new_entry_nested_folder
-                && (manager.options.public_hoist_pattern.as_ref())
+                && (manager.public_hoist_pattern.as_ref())
                     .is_some_and(|pattern| pattern.is_match(dep_name))
                 && !public_hoisted.get_or_put(dep_name)?.found_existing
             {
@@ -1636,7 +1623,8 @@ fn expect_directory(path: &bun_core::ZStr) -> sys::Result<()> {
 
 /// Runs before anything on disk changes, because dependencies loaded from bun.lock skip the
 /// resolver's trust check.
-fn check_link_entries(manager: &mut PackageManager, lockfile: &Lockfile, store: &Store) {
+fn check_link_entries(manager: &PackageManager, store: &Store) {
+    let lockfile = &*manager.lockfile;
     let string_buf = &lockfile.buffers.string_bytes[..];
     let pkgs = &lockfile.packages;
     let pkg_names = pkgs.items_name();
@@ -1651,7 +1639,10 @@ fn check_link_entries(manager: &mut PackageManager, lockfile: &Lockfile, store: 
         let target = pkg_res.symlink().slice(string_buf);
         let name = BStr::new(pkg_names[pkg_id as usize].slice(string_buf));
         let base_len = if !crate::dependency::is_link_path(target) {
-            crate::package_manager_real::directories::global_link_dir_path(manager).len() + 1
+            crate::package_manager_real::directories::global_link_dir(&manager.options)
+                .path
+                .len()
+                + 1
         } else if !lockfile.is_trusted_folder_package(pkg_id) {
             Output::err_generic(
                 "refusing to link dependency <b>{}<r> to \"{}\": {}",
@@ -1690,24 +1681,18 @@ pub(crate) fn install_isolated_packages(
 ) -> Result<crate::package_install::Summary, AllocError> {
     analytics::features::isolated_bun_install.fetch_add(1, Ordering::Relaxed);
 
-    let lockfile: *mut Lockfile = &raw mut *manager.lockfile;
-    // SAFETY: `lockfile` was just derived from `&raw mut *manager.lockfile`;
-    // `manager` outlives this function and no other `&mut Lockfile` is formed
-    // while this reborrow is live (column slices below borrow through it).
-    let lockfile: &mut Lockfile = unsafe { &mut *lockfile };
-
     let mut store: Store = build_store(
-        &*manager,
-        &*lockfile,
+        manager,
+        &manager.lockfile,
         install_root_dependencies,
         workspace_filters,
         packages_to_install,
         manager.options.log_level.is_verbose(),
     )?;
-    check_link_entries(manager, &*lockfile, &store);
+    check_link_entries(manager, &store);
     if warn_incorrect_peers {
-        let linked = linked_nodes(&store, &*lockfile)?;
-        manager.warn_incorrect_peers(&peers_served_in(&store, &*lockfile, Some(&linked)));
+        let linked = linked_nodes(&store, &manager.lockfile)?;
+        manager.warn_incorrect_peers(&peers_served_in(&store, &manager.lockfile, Some(&linked)));
     }
 
     let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {
@@ -1723,6 +1708,11 @@ pub(crate) fn install_isolated_packages(
             let node_pkg_ids = store.nodes.items_pkg_id();
             let node_dep_ids = store.nodes.items_dep_id();
 
+            // Packages newly trusted via `bun add --trust` (not yet written to the
+            // lockfile) will have their lifecycle scripts run this install; treat
+            // them the same as lockfile-trusted packages for eligibility.
+            let trusted_from_update = manager.find_trusted_dependencies_from_update_requests();
+            let lockfile = &*manager.lockfile;
             let pkgs = &lockfile.packages;
             let pkg_names = pkgs.items_name();
             let pkg_resolutions = pkgs.items_resolution();
@@ -1731,12 +1721,7 @@ pub(crate) fn install_isolated_packages(
             let string_buf = &lockfile.buffers.string_bytes[..];
             let dependencies = &lockfile.buffers.dependencies[..];
 
-            // Packages newly trusted via `bun add --trust` (not yet written to the
-            // lockfile) will have their lifecycle scripts run this install; treat
-            // them the same as lockfile-trusted packages for eligibility.
-            let trusted_from_update = manager.find_trusted_dependencies_from_update_requests();
-
-            let no_verify = manager.skips_verify(ResolutionTag::Npm);
+            let no_verify = manager.options.skips_verify(ResolutionTag::Npm);
             // Include the integrity, because the store path `name@version` isn't unique across
             // registries.
             let hash_entry = |seed: u64, id: u32| {
@@ -2057,10 +2042,10 @@ pub(crate) fn install_isolated_packages(
         // The existing contents weren't created by this linker. `--filter` leaves the workspaces
         // that it doesn't link alone.
         if !is_new_node_modules
-            || (!lockfile.workspace_paths.is_empty() && workspace_filters.is_empty())
+            || (!manager.lockfile.workspace_paths.is_empty() && workspace_filters.is_empty())
         {
             old_modules = move_node_modules_aside(
-                lockfile,
+                &manager.lockfile,
                 manager.options.global,
                 manager.options.log_level,
             );
@@ -2101,100 +2086,87 @@ pub(crate) fn install_isolated_packages(
         .ok()
         .map(|st| (st.st_dev, st.st_ino));
 
-    {
-        if manager.options.log_level.show_progress() {
-            manager.start_install_progress_bar(store.entries.len());
-        }
+    if manager.options.log_level.show_progress() {
+        manager
+            .state
+            .start_install_progress_bar(store.entries.len());
+    }
 
+    let trusted_dependencies_from_update_requests =
+        manager.find_trusted_dependencies_from_update_requests();
+    let lockfile = &*manager.lockfile;
+    let shared = installer::SharedInstaller {
+        lockfile,
+        options: &manager.options,
+        postinstall_optimizer: &manager.project.postinstall_optimizer,
+        patched_dependencies_to_remove: &manager.patched_dependencies_to_remove,
+        update_request_package_ids: if manager.options.global {
+            (manager.update_requests.iter())
+                .map(|request| request.package_id)
+                .collect()
+        } else {
+            Vec::new()
+        },
+        store: &store,
+        entry_states: (0..store.entries.len())
+            .map(|_| Default::default())
+            .collect(),
+        trusted_dependencies_from_update_requests,
+        supported_backend: std::sync::atomic::AtomicU8::new(
+            PackageInstall::supported_method() as u8
+        ),
+        is_new_bun_modules,
+        linked,
+        staging_lock: Default::default(),
+        global_store_path: global_store_path
+            .as_deref()
+            .map(bun_core::ZStr::from_slice_with_nul),
+        global_store_tmp_suffix: fast_random(),
+    };
+    let tasks = (0..store.entries.len()).map(|i| installer::Task {
+        entry_id: store::entry::Id::from(u32::try_from(i).expect("int cast")),
+        result: installer::Result::None,
+        relink: installer::Relink::Off,
+        newly_trusted: false,
+        blocked_scripts: 0,
+        scripts: None,
+        left_out_links: Vec::new(),
+        integrity: None,
+    });
+
+    let summary = bun_threading::scoped_tasks::scope(&shared, tasks, |tasks| {
         let node_pkg_ids = store.nodes.items_pkg_id();
 
         let entries = &store.entries;
         let entry_node_ids = entries.items_node_id();
-        let entry_steps = entries.items_step();
         let entry_dependencies = entries.items_dependencies();
         let entry_nested_folder = entries.items_nested_folder();
 
-        // The columns sliced here are never mutated through `installer.lockfile`.
-        let lockfile_ptr: *mut Lockfile = lockfile;
-        let lockfile_ref = bun_ptr::BackRef::<Lockfile>::from(
-            core::ptr::NonNull::new(lockfile_ptr).expect("lockfile BACKREF non-null"),
-        );
-        let lockfile_ro: &Lockfile = lockfile_ref.get();
-        let string_buf = &lockfile_ro.buffers.string_bytes[..];
+        let string_buf = &lockfile.buffers.string_bytes[..];
 
-        let pkgs = &lockfile_ro.packages;
+        let pkgs = &lockfile.packages;
         let pkg_names = pkgs.items_name();
         let pkg_resolutions = pkgs.items_resolution();
 
         // TODO: delete
         let mut seen_workspace_ids: HashMap<PackageID, ()> = HashMap::default();
 
-        let tasks_in_flight = bun_threading::WaitGroup::init();
-
-        let tasks: Box<[installer::Task]> = (0..store.entries.len())
-            .map(|i| installer::Task {
-                entry_id: store::entry::Id::from(u32::try_from(i).expect("int cast")),
-                // Patched below once `installer` has an address. It's never dereferenced before
-                // that.
-                installer: bun_ptr::BackRef::from(core::ptr::NonNull::dangling()),
-                result: installer::Result::None,
-                relink: installer::Relink::Off,
-                newly_trusted: false,
-                blocked_scripts: 0,
-                scripts: None,
-                left_out_links: Vec::new(),
-                task: bun_threading::thread_pool::CountedTask::new(
-                    installer::Task::callback,
-                    &tasks_in_flight,
-                ),
-                next: bun_threading::Link::new(),
-            })
-            .collect();
-
-        let installed = DynamicBitSet::init_empty(lockfile.packages.len())?;
-        let trusted_dependencies_from_update_requests =
-            manager.find_trusted_dependencies_from_update_requests();
-        let log = manager.log();
-        let manager_ptr: *mut PackageManager = manager;
         let mut installer = store::Installer {
-            lockfile: lockfile_ptr,
-            manager: manager_ptr,
-            installed,
-            store: &store,
+            shared: &shared,
+            manager: install_fields!(manager),
+            added_trusted_dependencies: &manager.summary.added_trusted_dependencies,
+            installed: DynamicBitSet::init_empty(lockfile.packages.len())?,
             tasks,
-            tasks_in_flight: &tasks_in_flight,
             waiters_head: vec![store::entry::Id::INVALID; store.entries.len()].into_boxed_slice(),
             next_waiter: vec![store::entry::Id::INVALID; store.entries.len()].into_boxed_slice(),
-            trusted_dependencies_from_update_requests,
-            supported_backend: std::sync::atomic::AtomicU8::new(
-                PackageInstall::supported_method() as u8
-            ),
-            is_new_bun_modules,
-            linked,
-            staging_lock: Default::default(),
-            global_store_path: global_store_path
-                .as_deref()
-                .map(bun_core::ZStr::from_slice_with_nul),
-            global_store_tmp_suffix: fast_random(),
             summary: crate::package_install::Summary {
                 old_modules,
                 ..Default::default()
             },
-            task_queue: Default::default(),
             held_members: Some(Vec::new()),
             left_out_entries: Vec::new(),
             pending_lifecycle_scripts: Default::default(),
         };
-        // From here on, no `&mut PackageManager` is held across a call on `installer`, because it
-        // would alias.
-
-        let installer_ptr: *mut store::Installer<'static> =
-            (&raw mut installer).cast::<()>().cast();
-        let installer_backref =
-            bun_ptr::BackRef::from(core::ptr::NonNull::new(installer_ptr).unwrap());
-        for task in installer.tasks.iter_mut() {
-            task.installer = installer_backref;
-        }
 
         // Check this before any file system work, because an entry is linked under names that later
         // entries declare.
@@ -2213,7 +2185,7 @@ pub(crate) fn install_isolated_packages(
             } else {
                 (deps.slice().iter())
                     .map(|dep| {
-                        lockfile_ro.buffers.dependencies[dep.dep_id as usize]
+                        lockfile.buffers.dependencies[dep.dep_id as usize]
                             .name
                             .slice(string_buf)
                     })
@@ -2231,7 +2203,8 @@ pub(crate) fn install_isolated_packages(
 
         // add the pending task count upfront
         installer
-            .manager()
+            .manager
+            .state
             .increment_pending_tasks(u32::try_from(store.entries.len()).expect("int cast"));
         // `link:` entries go first, because `Installer::start_link_task` must run before the tasks
         // of their dependents start.
@@ -2251,7 +2224,7 @@ pub(crate) fn install_isolated_packages(
             match pkg_res.tag {
                 ResolutionTag::Root => {
                     if dep_id == invalid_dependency_id {
-                        installer.set_step(entry_id, Step::SymlinkDependencies);
+                        shared.set_step(entry_id, Step::SymlinkDependencies);
                         installer.start_task(entry_id);
                         continue;
                     }
@@ -2260,27 +2233,27 @@ pub(crate) fn install_isolated_packages(
                     if !is_new_bun_modules {
                         use bun_sys::FdExt as _;
                         let mut old_copy: AbsPath = AbsPath::init_top_level_dir();
-                        let _ = installer
+                        let _ = shared
                             .append_local_store_entry_path(&mut old_copy, entry_id)
                             .and_then(|()| Fd::cwd().delete_tree(old_copy.slice()));
                     }
-                    installer.set_step(entry_id, Step::Done);
+                    shared.set_step(entry_id, Step::Done);
                     installer.on_task_complete(entry_id, CompleteState::Skipped);
                 }
                 ResolutionTag::Workspace => {
                     // if injected=true this might be false
                     if !seen_workspace_ids.get_or_put(pkg_id)?.found_existing {
-                        installer.set_step(entry_id, Step::SymlinkDependencies);
+                        shared.set_step(entry_id, Step::SymlinkDependencies);
                         installer.start_task(entry_id);
                         continue;
                     }
-                    installer.set_step(entry_id, Step::Done);
+                    shared.set_step(entry_id, Step::Done);
                     installer.on_task_complete(entry_id, CompleteState::Skipped);
                 }
                 ResolutionTag::Symlink => {
                     // Same target check as the hoisted linker's `install_from_link`.
                     let mut link_target = bun_paths::AutoAbsPath::init_top_level_dir();
-                    match installer
+                    match shared
                         .append_store_path(&mut link_target, entry_id)
                         .and_then(|()| expect_directory(link_target.slice_z()))
                     {
@@ -2294,7 +2267,7 @@ pub(crate) fn install_isolated_packages(
                     let folder = pkg_res.folder().slice(string_buf);
                     // The resolver rejects these, so only an edited or old lockfile gets here.
                     let refused = crate::bin::bin_target_escapes_package_dir(folder)
-                        && (nested || !lockfile_ro.is_trusted_folder_package(pkg_id));
+                        && (nested || !lockfile.is_trusted_folder_package(pkg_id));
                     if nested || refused {
                         let state = if refused {
                             Output::err_generic(
@@ -2305,22 +2278,22 @@ pub(crate) fn install_isolated_packages(
                                 ),
                             );
                             Output::flush();
-                            if installer.manager().options.enable.fail_early() {
+                            if manager.options.enable.fail_early() {
                                 Global::exit(1);
                             }
                             CompleteState::Fail
                         } else {
                             CompleteState::Skipped
                         };
-                        installer.set_step(entry_id, Step::Done);
+                        shared.set_step(entry_id, Step::Done);
                         installer.on_task_complete(entry_id, state);
                         continue;
                     }
 
                     // folders are always hardlinked to keep them up-to-date
-                    if !is_new_bun_modules && !installer.manager().options.enable.force_install() {
+                    if !is_new_bun_modules && !manager.options.enable.force_install() {
                         let mut store_path: AbsPath = AbsPath::init_top_level_dir();
-                        if installer
+                        if shared
                             .append_real_store_path(&mut store_path, entry_id, Which::Final)
                             .is_ok()
                             && let (Ok(src), Ok(dest)) =
@@ -2339,7 +2312,7 @@ pub(crate) fn install_isolated_packages(
                 | ResolutionTag::Github
                 | ResolutionTag::LocalTarball
                 | ResolutionTag::RemoteTarball => {
-                    let patch_info = match installer.package_patch_info(pkg_id) {
+                    let patch_info = match shared.package_patch_info(pkg_id) {
                         Ok(patch_info) => patch_info,
                         Err(err) => {
                             installer.on_task_fail(entry_id, &err);
@@ -2347,9 +2320,9 @@ pub(crate) fn install_isolated_packages(
                         }
                     };
 
-                    let uses_global_store = installer.entry_uses_global_store(entry_id);
+                    let uses_global_store = shared.entry_uses_global_store(entry_id);
 
-                    let needs_install = installer.manager().options.enable.force_install()
+                    let needs_install = manager.options.enable.force_install()
                         // A freshly-created `node_modules/.bun` only implies the
                         // *project-local* entries are missing; global virtual-
                         // store entries persist across `rm -rf node_modules` and
@@ -2363,13 +2336,13 @@ pub(crate) fn install_isolated_packages(
                                 // staging path and renamed into place as the
                                 // final step, so the directory existing at its
                                 // final path is the completeness signal.
-                                break 'needs_install !installer
+                                break 'needs_install !shared
                                     .append_global_store_entry_path(&mut store_path, entry_id, Which::Final)
                                     .and_then(|()| sys::directory_exists_at(Fd::cwd(), store_path.slice_z()))
                                     .unwrap_or(false);
                             }
                             // Likewise, the package directory appears here only once fully linked.
-                            if installer.append_local_store_entry_path(&mut store_path, entry_id).is_err() {
+                            if shared.append_local_store_entry_path(&mut store_path, entry_id).is_err() {
                                 break 'needs_install true;
                             }
                             let local_entry_len = store_path.len();
@@ -2393,7 +2366,7 @@ pub(crate) fn install_isolated_packages(
                                         crate::package_install::tarball_tag_matches(
                                             &tag,
                                             &pkgs.items_meta()[pkg_id as usize].integrity,
-                                            installer.manager().skips_verify(pkg_res.tag),
+                                            manager.options.skips_verify(pkg_res.tag),
                                         )
                                     });
                                 if !is_current {
@@ -2419,7 +2392,7 @@ pub(crate) fn install_isolated_packages(
                         };
 
                     if !needs_install {
-                        if installer.manager().options.offline
+                        if manager.options.offline
                             == crate::package_manager_real::options::OfflineMode::Offline
                         {
                             installer.summary.offline_misses.in_place.push(pkg_id);
@@ -2430,12 +2403,12 @@ pub(crate) fn install_isolated_packages(
                             // this entry's files, dep symlinks, and bin links.
                             // The only per-install work is the project-level
                             // `node_modules/.bun/<storepath>` → global symlink.
-                            match installer.link_project_to_global_store(entry_id) {
+                            match shared.link_project_to_global_store(entry_id) {
                                 // The entry is new to this project and none of its tasks run, so
                                 // its blocked scripts are counted here.
                                 Ok(true) => {
                                     let blocked = installer::Task::count_blocked_scripts(
-                                        &installer,
+                                        &shared,
                                         entry_id,
                                         Which::Final,
                                     );
@@ -2453,41 +2426,51 @@ pub(crate) fn install_isolated_packages(
                                 }
                             }
                         }
-                        installer.link_to_hidden_node_modules(entry_id);
+                        shared.link_to_hidden_node_modules(entry_id);
                         if !uses_global_store {
                             installer.start_relink_task(entry_id);
                             continue;
                         }
-                        installer.set_step(entry_id, Step::Done);
+                        shared.set_step(entry_id, Step::Done);
                         installer.on_task_complete(entry_id, state);
                         continue;
                     }
 
                     // Downloads only produce the unpatched folder; `apply_package_patch` derives the rest.
-                    let cache_subpath_z =
-                        installer.cached_folder_name(&mut **folder_name_buf, entry_id, None);
-                    let cache_dir = installer.manager_mut().get_cache_directory().handle.fd();
-
-                    let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
+                    let integrity = &pkgs.items_meta()[pkg_id as usize].integrity;
+                    let cache_subpath_z = if pkg_res.tag.is_tarball()
+                        && installer.manager.waits_for_integrity(integrity)
                     {
-                        // A tarball's cache entry has no name until extraction records its
-                        // integrity.
-                        _ if cache_subpath_z.is_empty() => true,
-                        install::PreinstallState::Done => false,
-                        _ => {
-                            let exists = package_manager::directories::is_package_in_cache_at(
-                                cache_dir,
-                                cache_subpath_z,
-                                pkg_res.tag,
-                            );
-                            if exists {
-                                installer
-                                    .manager_mut()
-                                    .set_preinstall_state(pkg_id, install::PreinstallState::Done);
-                            }
-                            !exists
-                        }
+                        bun_core::ZStr::EMPTY
+                    } else {
+                        shared.cached_folder_name(&mut **folder_name_buf, entry_id, None, None)
                     };
+                    let cache_dir = package_manager::get_cache_directory(&installer.manager)
+                        .handle
+                        .fd();
+
+                    let missing_from_cache =
+                        match installer.manager.state.preinstall_state.get(pkg_id) {
+                            // A tarball's cache entry has no name until extraction records its
+                            // integrity.
+                            _ if cache_subpath_z.is_empty() => true,
+                            install::PreinstallState::Done => false,
+                            _ => {
+                                let exists = package_manager::directories::is_package_in_cache_at(
+                                    cache_dir,
+                                    cache_subpath_z,
+                                    pkg_res.tag,
+                                );
+                                if exists {
+                                    installer.manager.state.preinstall_state.set(
+                                        lockfile,
+                                        pkg_id,
+                                        install::PreinstallState::Done,
+                                    );
+                                }
+                                !exists
+                            }
+                        };
 
                     if !missing_from_cache {
                         match installer.apply_package_patch(entry_id, &patch_info) {
@@ -2500,7 +2483,7 @@ pub(crate) fn install_isolated_packages(
                     let ctx = install::TaskCallbackContext::IsolatedPackageInstallContext(entry_id);
 
                     match package_manager::enqueue_install_task(
-                        installer.manager_mut(),
+                        &mut installer.manager,
                         dep_id,
                         pkg_id,
                         ctx,
@@ -2528,10 +2511,10 @@ pub(crate) fn install_isolated_packages(
                                 ),
                             );
                             Output::flush();
-                            if installer.manager().options.enable.fail_early() {
+                            if manager.options.enable.fail_early() {
                                 Global::exit(1);
                             }
-                            installer.set_step(entry_id, Step::Done);
+                            shared.set_step(entry_id, Step::Done);
                             installer.on_task_complete(entry_id, CompleteState::Fail);
                         }
                     }
@@ -2540,21 +2523,22 @@ pub(crate) fn install_isolated_packages(
                 _ => {
                     // this is `uninitialized` or `single_file_module`.
                     debug_assert!(false);
-                    installer.set_step(entry_id, Step::Done);
+                    shared.set_step(entry_id, Step::Done);
                     installer.on_task_complete(entry_id, CompleteState::Skipped);
                 }
             }
         }
 
-        if installer.manager().pending_task_count() > 0 {
+        if installer.manager.state.pending_task_count() > 0 {
             let mut wait = Wait {
                 installer: &mut installer,
                 err: None,
             };
             Output::flush();
+            let event_loop = wait.installer.manager.state.event_loop;
             while !wait.is_done() {
-                let manager = wait.installer.manager();
-                manager.event_loop.tick(core::ptr::null_mut());
+                event_loop.tick(core::ptr::null_mut());
+                ScriptCaller::IsolatedLinker(wait.installer).finish_exited_subprocesses();
             }
 
             if let Some(err) = wait.err {
@@ -2562,32 +2546,24 @@ pub(crate) fn install_isolated_packages(
                 Global::exit(1);
             }
         }
-        installer.tasks_in_flight.wait();
+        installer.tasks.wait();
 
         debug_assert!(
-            entry_steps
-                .iter()
-                .all(|step| step.load(Ordering::Relaxed) == Step::Done as u32)
+            (shared.entry_states.iter())
+                .all(|state| state.step.load(Ordering::Relaxed) == Step::Done as u32)
         );
 
         installer.relink_bins_of_members_with_scripts();
         installer.unlink_left_out_entries();
-        installer.warn_left_out_links(log);
+        installer.warn_left_out_links();
         installer.record_update_request_trust();
 
-        let manager = installer.manager_mut();
-        if manager.options.log_level.show_progress() {
-            manager.progress.end();
-            manager.progress = Progress::default();
-        }
-        manager.scripts_node = None;
-        manager.downloads_node = None;
+        installer.summary.successfully_installed = Some(installer.installed);
+        Ok(installer.summary)
+    });
 
-        let mut summary = core::mem::take(&mut installer.summary);
-        summary.successfully_installed = Some(core::mem::take(&mut installer.installed));
-
-        return Ok(summary);
-    }
+    manager.finish_linking();
+    summary
 }
 
 // ───────────────────────────────────────────────────────────────────────────

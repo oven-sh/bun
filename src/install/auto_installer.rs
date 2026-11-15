@@ -132,7 +132,7 @@ fn resolution_from_hooks(r: &hooks::Resolution) -> resolution::Resolution {
 
 /// Bumped by every `Inbox::wake` of the auto-install manager.
 static WAKES: AtomicU32 = AtomicU32::new(0);
-/// Threads blocked on `WAKES` (Workers share the manager). At zero a wake skips the syscall.
+/// Threads blocked on `WAKES`. At zero a wake skips the syscall.
 static PARKED: AtomicU32 = AtomicU32::new(0);
 
 /// Blocks the thread, because an event loop would run timers inside `require()`. Uses SeqCst
@@ -235,7 +235,7 @@ impl hooks::AutoInstaller for PackageManager {
     // ── PackageManager ops ────────────────────────────────────────────────
 
     fn project_folder<'b>(
-        &mut self,
+        &self,
         name: &[u8],
         version: &hooks::DependencyVersion,
         version_buf: &[u8],
@@ -278,8 +278,8 @@ impl hooks::AutoInstaller for PackageManager {
                     if dependency::is_link_path(target) {
                         (package_json_dir, target)
                     } else {
-                        directories::try_global_link_dir(self).ok()?;
-                        (directories::global_link_dir_path(self), target)
+                        let dir = directories::try_global_link_dir(&self.options).ok()?;
+                        (dir.path, target)
                     }
                 }
                 _ => return None,
@@ -297,8 +297,8 @@ impl hooks::AutoInstaller for PackageManager {
         log: Option<&bun_ast::Log>,
     ) -> Result<&'b [u8], bun_core::Error> {
         let _drain = self.drain_log_on_drop(log);
-        if let Err(why) = directories::try_get_cache_directory(self) {
-            self.exit_or_log(&why);
+        if let Err(why) = directories::try_get_cache_directory(&self.install_fields()) {
+            self.install_fields().exit_or_log(&why);
             return Err(bun_core::Error::WriteFailed);
         }
         let r = resolution_from_hooks(resolution);
@@ -308,7 +308,7 @@ impl hooks::AutoInstaller for PackageManager {
         // platform, so it is not downloaded here either.
         if len.is_err()
             && r.tag == resolution::Tag::Npm
-            && PackageManager::get_preinstall_state(self, package_id) != PreinstallState::Done
+            && self.state.preinstall_state.get(package_id) != PreinstallState::Done
         {
             enqueue::download_missing_package(self, package_id).map_err(bun_core::Error::from)?;
             len = directories::path_for_resolution(self, package_id, &r, path_buf)
@@ -336,14 +336,14 @@ impl hooks::AutoInstaller for PackageManager {
     }
 
     fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
-        PackageManager::get_preinstall_state(self, package_id)
+        self.state.preinstall_state.get(package_id)
     }
 
     fn enqueue_dependency_to_root(
         &mut self,
         name: &[u8],
         version: &hooks::DependencyVersion,
-        version_buf: &[u8],
+        version_buf: hooks::VersionBuf<'_>,
         package_json_dir: Option<&[u8]>,
         behavior: hooks::Behavior,
         log: Option<&bun_ast::Log>,
@@ -361,7 +361,7 @@ impl hooks::AutoInstaller for PackageManager {
             let Some(joined) = join_abs_string_buf_checked::<platform::Auto>(
                 package_json_dir,
                 &mut buf[..],
-                &[path.slice(version_buf)],
+                &[path.slice(version_buf.slice(&self.lockfile.buffers.string_bytes))],
             ) else {
                 return hooks::EnqueueResult::NotFound;
             };
@@ -377,7 +377,7 @@ impl hooks::AutoInstaller for PackageManager {
             );
         }
         let (version, version_buf) = match &from_package_json_dir {
-            Some(version) => (version, absolute.as_slice()),
+            Some(version) => (version, hooks::VersionBuf::Bytes(&absolute)),
             None => (version, version_buf),
         };
         match enqueue::enqueue_dependency_to_root(self, name, version, version_buf, behavior) {
@@ -403,9 +403,8 @@ impl hooks::AutoInstaller for PackageManager {
         sliced: &SlicedString,
         log: Option<&bun_ast::Log>,
     ) -> Option<hooks::DependencyVersion> {
-        // `pm` is threaded so `parse_with_tag` can record `npm:` aliases into
-        // `pm.known_npm_aliases`.
-        dependency::parse(name, name_hash, version, sliced, log, Some(self))
+        let aliases = &mut self.project.known_npm_aliases;
+        dependency::parse(name, name_hash, version, sliced, log, aliases)
     }
 
     fn parse_dependency_with_tag(
@@ -435,22 +434,13 @@ fn __bun_resolver_parse_dependency(
     sliced: &SlicedString,
     log: Option<&bun_ast::Log>,
 ) -> Option<hooks::DependencyVersion> {
-    dependency::parse(
-        name,
-        name_hash,
-        version,
-        sliced,
-        log,
-        None::<&mut PackageManager>,
-    )
+    dependency::parse(name, name_hash, version, sliced, log, None)
 }
 
 // ─── Lazy factory (resolver → install link-time hook) ─────────────────────
 //
 // `bun_resolver` cannot name `PackageManager` (it would create a dep cycle),
-// so it declares this `extern "Rust"` and we provide the body here. The
-// returned pointer is the process-static `PackageManager` singleton (`get()`),
-// upcast to the `dyn AutoInstaller` trait object the resolver stores.
+// so it declares this `extern "Rust"` and we provide the body here.
 //
 // SAFETY (callee contract):
 //   • `install` is `BundleOptions.install` (`?*Api.BunInstall`). The pointee is
@@ -465,7 +455,7 @@ unsafe fn __bun_resolver_init_package_manager(
     mut env: core::ptr::NonNull<bun_dotenv::Loader>,
     prefer_offline: bool,
     importer_dir: &[u8],
-) -> core::result::Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, bun_resolver::Error> {
+) -> core::result::Result<&'static mut dyn hooks::AutoInstaller, bun_resolver::Error> {
     // ABI: the resolver-side `extern "Rust"` declaration names its own
     // `Error`, whose `Sys` variant carries the real errno name, so that an
     // import fails with `EACCES` and not with `Unexpected`. Keep
@@ -482,7 +472,7 @@ unsafe fn __bun_resolver_init_package_manager(
     // Transpiler-owned storage with no aliasing `&mut` live across this call.
     let env_ref: &mut bun_dotenv::Loader = unsafe { env.as_mut() };
 
-    let pm: *mut PackageManager = crate::package_manager::init_with_runtime(
+    let pm = crate::package_manager::init_with_runtime(
         log,
         bun_install,
         &crate::package_manager::CommandLineArguments {
@@ -497,7 +487,9 @@ unsafe fn __bun_resolver_init_package_manager(
         crate::Error::Resolver(
             err @ (bun_resolver::Error::Sys(_)
             | bun_resolver::Error::SecurityScannerConfigured
-            | bun_resolver::Error::UnreadableConfig),
+            | bun_resolver::Error::UnreadableConfig
+            | bun_resolver::Error::NotMainThread
+            | bun_resolver::Error::PackageManagerTaken),
         ) => err,
         other => {
             log.add_zig_error_with_note(
@@ -507,8 +499,5 @@ unsafe fn __bun_resolver_init_package_manager(
             bun_resolver::Error::Sys(bun_errno::SystemErrno::EIO)
         }
     })?;
-    // On success `init_with_runtime` returns the non-null `holder::RAW_PTR`
-    // singleton; upcast to the trait object the resolver stores.
-    Ok(core::ptr::NonNull::new(pm as *mut dyn hooks::AutoInstaller)
-        .expect("init_with_runtime returns the holder::RAW_PTR singleton"))
+    Ok(pm)
 }

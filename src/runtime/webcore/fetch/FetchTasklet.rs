@@ -1914,6 +1914,8 @@ impl FetchTasklet {
                 compress: fetch_options.compress,
                 pool: fetch_options.pool,
                 bypass_pool: fetch_options.bypass_pool,
+                redirect_credentials: None,
+                yields_to_other_requests: false,
             },
         );
         fetch_tasklet.async_http_id = Some(http.async_http_id);

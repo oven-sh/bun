@@ -1320,6 +1320,27 @@ describe.concurrent("auto-install throws when it can't do something instead of e
     expect(exitCode).toBe(0);
   });
 
+  test("the cache directory is opened again after it and its fallback failed", async () => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-cache-dir-again", {
+      "index.js": `
+        try { require("one-dep"); } catch (e) { console.log(e.code); }
+        require("fs").rmSync(".bun-cache");
+        ${printNoDepsVersion}
+      `,
+      "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "1.0.0" } }),
+      "bunfig.toml": registry.bunfig,
+      ".bun-cache": "",
+      "node_modules": "",
+    });
+
+    expect(await runAutoInstall(String(dir), "index.js")).toEqual({
+      stdout: "MODULE_NOT_FOUND\n1.0.0\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
   describe.serial.skipIf(isWindows)("a cache directory that is read-only", () => {
     async function run(dir: string) {
@@ -1398,6 +1419,80 @@ describe.concurrent("auto-install throws when it can't do something instead of e
     expect(stdout).toMatch(/^note: \w+: failed to open global directory$/m);
     expect(stdout).toEndWith("the program goes on\n");
     expect(exitCode).toBe(0);
+  });
+});
+
+test.concurrent("auto-install goes on after several patches have failed to apply at once", async () => {
+  const names = Array.from({ length: 8 }, (_, i) => `patched-${i}`);
+  const tarball = join(import.meta.dir, "..", "install", "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
+  using registry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { origin, pathname } = new URL(req.url);
+      if (pathname.endsWith(".tgz")) return new Response(Bun.file(tarball));
+      const name = pathname.slice(1);
+      const dependencies = name === "parent" ? Object.fromEntries(names.map(name => [name, "1.0.0"])) : {};
+      return Response.json({
+        name,
+        "dist-tags": { latest: "1.0.0" },
+        versions: { "1.0.0": { name, version: "1.0.0", dependencies, dist: { tarball: `${origin}/${name}.tgz` } } },
+      });
+    },
+  });
+  using dir = tempDir("autoinstall-failing-patches", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "bad.patch":
+      "diff --git a/index.js b/index.js\nindex 0000000..1111111 100644\n--- a/index.js\n+++ b/index.js\n@@ -1 +1 @@\n-a\n+b\n",
+    "fill-cache.js": `require("parent");`,
+    // Each patch that fails makes the import fail that is waiting at that moment.
+    "index.js": `
+      try { require("parent"); } catch {}
+      for (let i = 0; i <= ${names.length}; i++) {
+        try { console.log(require("other").version); break; } catch {}
+      }
+    `,
+    "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+  });
+  // Resolving only patches a package that is in the cache.
+  expect(await runAutoInstall(String(dir), "fill-cache.js")).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  await Bun.write(
+    join(String(dir), "bun.lock"),
+    JSON.stringify({
+      lockfileVersion: 1,
+      configVersion: 1,
+      workspaces: { "": { name: "app" } },
+      patchedDependencies: Object.fromEntries(names.map(name => [`${name}@1.0.0`, "bad.patch"])),
+      packages: {},
+    }),
+  );
+
+  const { stdout, stderr, exitCode } = await runAutoInstall(String(dir), "index.js");
+  expect(stdout).toBe("1.0.0\n");
+  expect(stderr.match(/failed to apply patchfile/g)).toHaveLength(names.length);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("auto-install works after a Worker that asked for the package manager has exited", async () => {
+  using registry = fixtureRegistry();
+  using dir = tempDir("autoinstall-after-worker", {
+    "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "1.0.0" } }),
+    "worker.js": `
+      try { require("bun:internal-for-testing").install_test_helpers.parseLockfile(process.cwd()); }
+      catch (e) { postMessage(e.message); }
+    `,
+    "index.js": `
+      const worker = new Worker("./worker.js");
+      worker.onmessage = ({ data }) => console.log(data);
+      await new Promise(resolve => worker.addEventListener("close", resolve));
+      ${printNoDepsVersion}
+    `,
+    "bunfig.toml": registry.bunfig,
+  });
+
+  expect(await runAutoInstall(String(dir), "index.js")).toEqual({
+    stdout: "failed to initialize the package manager: NotMainThread\n1.0.0\n",
+    stderr: "",
+    exitCode: 0,
   });
 });
 

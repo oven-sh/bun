@@ -1,12 +1,16 @@
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::ptr::NonNull;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::borrow::Cow;
 
 use bun_ast::{Loc, Log};
 use bun_core::FeatureFlags;
 use bun_core::MutableString;
+use bun_ptr::OwnedPtr;
 use bun_url::{PercentEncoding, URL};
 
 use bun_dotenv::Loader as DotEnvLoader;
 
+use crate::headers::api::StringPointer;
 use crate::headers::{self, Headers};
 use crate::{
     FetchRedirect, FinishedRequest, Flags, HTTPClient, HTTPRequestBody, HTTPVerboseLevel,
@@ -20,7 +24,7 @@ bun_core::declare_scope!(AsyncHTTP, visible);
 
 // Lifetime `'a` covers every borrowed input the caller hands in: `url`,
 // `http_proxy`, `request_header_buf`, the borrowed `HTTPRequestBody::Bytes`
-// payload, and `client.{header_buf,unix_socket_path,if_modified_since,progress}`.
+// payload, and `client.{header_buf,unix_socket_path,progress}`.
 pub struct AsyncHTTP<'a> {
     request_headers: headers::EntryList,
     pub request_body: HTTPRequestBody<'a>,
@@ -38,7 +42,11 @@ pub struct AsyncHTTP<'a> {
     pub client: HTTPClient<'a>,
     pub async_http_id: u32,
 
-    pub elapsed: u64,
+    elapsed: u64,
+
+    /// What `url` and `client.header_buf` of an [`OwnedRequest`] point into.
+    owned_href: Cow<'static, [u8]>,
+    owned_headers_buf: Cow<'static, [u8]>,
 }
 
 /// What an attempt changes in `client`, besides what `AsyncHTTP` has a field for.
@@ -161,7 +169,7 @@ fn make_client<'a>(
         state: InternalState::default(),
         tls_props: None,
         custom_ssl_ctx: None,
-        if_modified_since: b"",
+        if_modified_since: Default::default(),
         request_content_len_buf: [0u8; b"18446744073709551615".len()],
         // The client dials and authenticates a proxy from this one parse, whoever made the URL.
         http_proxy: http_proxy.map(|proxy| URL::parse_single_reader(proxy.href)),
@@ -242,6 +250,8 @@ pub struct Options<'a> {
     pub compress: Option<crate::compress_body::CompressOption>,
     pub pool: crate::PoolOptions,
     pub bypass_pool: bool,
+    pub redirect_credentials: Option<crate::RedirectCredentialsPolicy>,
+    pub yields_to_other_requests: bool,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -270,38 +280,21 @@ impl<'a> AsyncHTTP<'a> {
 // Preconnect
 // ──────────────────────────────────────────────────────────────────────────
 
-type Href = std::borrow::Cow<'static, [u8]>;
-
-fn on_preconnect_result(
-    href: *mut Href,
-    finished: Option<FinishedRequest>,
-    _: HTTPClientResult<'_>,
-) {
-    drop(finished);
-    // SAFETY: the box that `preconnect()` leaked; this is its only result.
-    unsafe { bun_core::heap::destroy(href) };
-}
-
-pub fn preconnect(href: Href) {
+pub fn preconnect(href: Cow<'static, [u8]>) {
     if !FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
         return;
     }
 
     crate::http_thread::init(&Default::default());
 
-    let href = bun_core::heap::into_raw(Box::new(href));
-    // SAFETY: freed after the request that borrows it.
-    let url = URL::parse(unsafe { &*href });
-    let mut async_http = AsyncHTTP::init(
-        Method::GET,
-        url,
+    let OwnedRequest(mut async_http) = OwnedRequest::new(
+        href,
         headers::EntryList::default(),
-        b"",
-        b"",
-        HTTPClientResultCallback::new(href, on_preconnect_result),
-        FetchRedirect::Manual,
+        Cow::Borrowed(b""),
+        false,
         Options::default(),
     );
+    async_http.client.redirect_type = FetchRedirect::Manual;
     async_http.client.flags.is_preconnect_only = true;
     crate::HTTPThread::schedule([async_http]);
 }
@@ -359,6 +352,8 @@ impl<'a> AsyncHTTP<'a> {
             client,
             async_http_id,
             elapsed: 0,
+            owned_href: Cow::Borrowed(b""),
+            owned_headers_buf: Cow::Borrowed(b""),
         });
         if let Some(val) = options.unix_socket_path {
             this.client.unix_socket_path = val;
@@ -388,6 +383,10 @@ impl<'a> AsyncHTTP<'a> {
         if let Some(val) = options.tls_props {
             this.client.tls_props = Some(val);
         }
+        if let Some(val) = options.redirect_credentials {
+            this.client.flags.redirect_credentials = val;
+        }
+        this.client.flags.yields_to_other_requests = options.yields_to_other_requests;
         this.client.compress = options.compress;
         this.client.proxy_settings = options.proxy_settings;
         this.client.pool = options.pool;
@@ -428,6 +427,120 @@ impl<'a> AsyncHTTP<'a> {
                 ..Options::default()
             },
         )
+    }
+}
+
+/// A `GET` request that owns its URL and its headers.
+pub struct OwnedRequest(Box<AsyncHTTP<'static>>);
+
+// SAFETY: `schedule` takes the request and the last result gives it back, so a value of this type
+// is not in flight. What belongs to the HTTP thread (sockets, streams, contexts and their reference
+// counts) is not set before `on_start`, and is released before the last result. `signals` points to
+// a static, there is no body, and the handler is `Send`.
+unsafe impl Send for OwnedRequest {}
+
+/// Gets the results of an [`OwnedRequest`] on the HTTP thread.
+pub trait HTTPClientResultHandler<P>: Sized
+where
+    P: OwnedPtr<Target = Self> + Send + 'static,
+{
+    /// A result that is not the last one.
+    fn on_progress(&mut self, result: HTTPClientResult<'_>);
+
+    /// The last result. `request` can be scheduled again.
+    fn on_done(this: P, request: OwnedRequest, result: HTTPClientResult<'_>);
+}
+
+impl OwnedRequest {
+    /// `response_body_streaming` replaces `options.signals`: each chunk of the body is a result of its own.
+    pub fn new(
+        href: Cow<'static, [u8]>,
+        headers: headers::EntryList,
+        headers_buf: Cow<'static, [u8]>,
+        response_body_streaming: bool,
+        mut options: Options<'static>,
+    ) -> Self {
+        static RESPONSE_BODY_STREAMING: AtomicBool = AtomicBool::new(true);
+        options.signals = response_body_streaming.then(|| Signals {
+            response_body_streaming: Some(NonNull::from(&RESPONSE_BODY_STREAMING)),
+            ..Default::default()
+        });
+        // SAFETY: moving a `Cow` does not move its bytes. Both go into private fields
+        // that are not assigned again, and `Self` hands out nothing that borrows them for longer.
+        let (url, borrowed_headers_buf) = unsafe {
+            (
+                URL::parse(bun_ptr::detach_lifetime(&href)),
+                bun_ptr::detach_lifetime(&headers_buf),
+            )
+        };
+        let mut http = AsyncHTTP::init(
+            Method::GET,
+            url,
+            headers,
+            borrowed_headers_buf,
+            b"",
+            noop_callback(),
+            FetchRedirect::Follow,
+            options,
+        );
+        http.owned_href = href;
+        http.owned_headers_buf = headers_buf;
+        http.client.select_proxy();
+        Self(http)
+    }
+
+    /// The URL before any redirect.
+    pub fn href(&self) -> &[u8] {
+        &self.0.owned_href
+    }
+
+    pub fn elapsed(&self) -> u64 {
+        self.0.elapsed
+    }
+
+    /// See [`HTTPClient::if_modified_since`].
+    pub fn set_if_modified_since(&mut self, value: StringPointer) {
+        self.0.client.flags.force_last_modified = true;
+        self.0.client.if_modified_since = value;
+    }
+
+    /// `handler` leaks if the request is dropped without being scheduled.
+    pub fn set_result_handler<T, P>(&mut self, handler: P)
+    where
+        T: HTTPClientResultHandler<P>,
+        P: OwnedPtr<Target = T> + Send + 'static,
+    {
+        fn on_result<T, P>(
+            handler: *mut T,
+            finished: Option<FinishedRequest>,
+            result: HTTPClientResult<'_>,
+        ) where
+            T: HTTPClientResultHandler<P>,
+            P: OwnedPtr<Target = T> + Send + 'static,
+        {
+            match finished {
+                // SAFETY: the `P` that `set_result_handler` leaked, until the arm below takes it back.
+                // Results arrive one at a time, on the HTTP thread.
+                None => unsafe { &mut *handler }.on_progress(result),
+                Some(mut request) => {
+                    request.result_callback = noop_callback();
+                    // SAFETY: as above. The request had the only copy of the pointer.
+                    let handler = unsafe { P::from_raw(NonNull::new_unchecked(handler)) };
+                    T::on_done(handler, OwnedRequest(request), result);
+                }
+            }
+        }
+        unsafe fn release<P: OwnedPtr>(handler: *mut ()) {
+            // SAFETY: called in place of the last result.
+            drop(unsafe { P::from_raw(NonNull::new_unchecked(handler.cast())) });
+        }
+        let handler = P::into_raw(handler).as_ptr();
+        self.0.result_callback =
+            HTTPClientResultCallback::new_with_release(handler, on_result::<T, P>, release::<P>);
+    }
+
+    pub fn schedule(requests: impl Iterator<Item = Self>) {
+        crate::HTTPThread::schedule(requests.map(|request| request.0));
     }
 }
 

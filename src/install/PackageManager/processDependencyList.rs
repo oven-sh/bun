@@ -6,7 +6,7 @@ use bun_semver::{ExternalString, String as SemverString};
 
 use crate::bun_json::{Expr, JsonView};
 use crate::dependency::{TagExt as _, VersionTag};
-use crate::lockfile_real::package::{Diff, Package, PackageColumns, ResolverContext};
+use crate::lockfile_real::package::{Diff, Package, PackageColumns, ParseFields, ResolverContext};
 use crate::lockfile_real::{DependencySlice, Lockfile, PackageIDSlice, QueuedRows, StringBuilder};
 use crate::package_manager_real::options::LogLevel;
 use crate::package_manager_real::{ArrivedPackage, PackageManager, RemoteTurn, enqueue, run_tasks};
@@ -234,7 +234,16 @@ impl PackageManager {
         source: &bun_ast::Source,
         resolver: &mut R,
     ) -> crate::Result<()> {
-        package.parse_from_real_manager(self, source, resolver)
+        let log = self.log();
+        let mut fields = ParseFields::for_package(&self.options, &mut self.project);
+        package.parse(
+            &mut self.lockfile,
+            &mut fields,
+            log,
+            source,
+            resolver,
+            Features::NPM,
+        )
     }
 
     /// Parses the package.json of an extracted package and adds what its `file:` folders depend on.
@@ -502,7 +511,7 @@ impl PackageManager {
                     | ResolutionTag::RemoteTarball
             )
             // `bun pm fetch` downloads what's in bun.lock and doesn't resolve any dependency.
-            && self.task_queue.get(&task_id).is_some_and(|waiting| {
+            && self.state.task_queue.get(&task_id).is_some_and(|waiting| {
                 (waiting.iter()).any(|waiter| matches!(waiter, TaskCallbackContext::Dependency(_)))
             })
     }
@@ -522,7 +531,7 @@ impl PackageManager {
             // Errors in the package.json are reported when the package is added.
             let parsed = listed.package.parse(
                 &mut listed.lockfile,
-                self,
+                &mut ParseFields::for_package(&self.options, &mut self.project),
                 &bun_ast::Log::init(),
                 &source,
                 &mut OnlyDependencies,
@@ -553,12 +562,12 @@ impl PackageManager {
     /// what a deferred peer waits for.
     fn remote_rows_waiting(&self) -> impl core::iter::Iterator<Item = (DependencyID, Task::Id)> {
         self.remote_packages.tasks.iter().filter_map(|&task_id| {
-            if !self.network_dedupe_map.contains_key(&task_id)
-                || self.network_task_has_failed(task_id)
+            if !self.state.network_dedupe_map.contains_key(&task_id)
+                || self.state.network_task_has_failed(task_id)
             {
                 return None;
             }
-            let lowest = (self.task_queue.get(&task_id)?.iter())
+            let lowest = (self.state.task_queue.get(&task_id)?.iter())
                 .filter_map(|waiter| match *waiter {
                     TaskCallbackContext::Dependency(id) => Some(id),
                     _ => None,
@@ -572,7 +581,7 @@ impl PackageManager {
     pub(crate) fn waits_for_remote_package(&self) -> bool {
         !self.remote_packages.tasks.is_empty()
             // With nothing running and nothing downloaded, none of them can be added any more.
-            && (self.pending_task_count() > 0 || !self.remote_packages.arrived.is_empty())
+            && (self.state.pending_task_count() > 0 || !self.remote_packages.arrived.is_empty())
             && self.remote_rows_waiting().next().is_some()
     }
 

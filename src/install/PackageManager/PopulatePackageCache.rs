@@ -44,7 +44,7 @@ pub fn fetch(
     // Resolving downloads whatever the lockfile did not pin yet.
     let root_package_json_path = ZBox::from_bytes(root_package_json_path());
     install_with_manager(manager, ctx, &root_package_json_path, original_cwd)?;
-    if manager.any_failed_to_install {
+    if manager.state.any_failed_to_install {
         return Ok(Summary::default());
     }
     download_pinned_packages(manager, None, count_only)
@@ -136,7 +136,13 @@ pub(crate) fn download_pinned_packages(
         }
 
         let waiter = TaskCallbackContext::Dependency(dep_id);
-        let enqueued = enqueue_install_task(manager, dep_id, pkg_id, waiter, name_and_version_hash);
+        let enqueued = enqueue_install_task(
+            &mut manager.install_fields(),
+            dep_id,
+            pkg_id,
+            waiter,
+            name_and_version_hash,
+        );
         // Any other error is already in `manager.log`.
         if let Err(ForTarballError::OutOfMemory) = enqueued {
             bun_core::out_of_memory();
@@ -145,15 +151,15 @@ pub(crate) fn download_pinned_packages(
 
     // A `Dependency` callback would resolve its dependency again, which would download a `github:`
     // package twice.
-    for waiters in manager.task_queue.values_mut() {
+    for waiters in manager.state.task_queue.values_mut() {
         waiters.retain(|waiter| matches!(waiter, TaskCallbackContext::GitCheckout { .. }));
     }
 
-    let _ = super::run_tasks::schedule_tasks(manager);
+    let _ = super::run_tasks::schedule_tasks(&mut manager.install_fields());
 
-    if manager.pending_task_count() > 0 {
+    if manager.state.pending_task_count() > 0 {
         if log_level.show_progress() {
-            manager.start_progress_bar();
+            manager.state.start_progress_bar();
         } else if log_level != LogLevel::Silent {
             bun_core::pretty_errorln!("Fetching packages");
             Output::flush();
@@ -162,12 +168,12 @@ pub(crate) fn download_pinned_packages(
         let waited = wait_for_everything_except_peers(manager);
 
         if log_level.show_progress() {
-            manager.end_progress_bar();
+            manager.state.end_progress_bar();
         }
 
         waited?;
     }
 
-    summary.fetched += manager.extracted_count;
+    summary.fetched += manager.state.extracted_count;
     Ok(summary)
 }

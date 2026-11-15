@@ -20,7 +20,7 @@ use std::sync::Arc;
 //   • StandaloneModuleGraph                    — trait below; impl in bun_standalone_graph
 //   • perf / crash_handler                     — real bun_perf / bun_crash_handler
 use ::bun_install_types::resolver_hooks as Install;
-use ::bun_install_types::resolver_hooks::{AutoInstaller, Resolution};
+use ::bun_install_types::resolver_hooks::{AutoInstaller, Resolution, VersionBuf};
 use ::bun_semver as Semver;
 
 // LAYERING: `PackageManager.initWithRuntime` lives in
@@ -30,17 +30,17 @@ use ::bun_semver as Semver;
 // `?*Api.BunInstall` (`self.opts.install`); `env` is the `*DotEnv.Loader`.
 unsafe extern "Rust" {
     /// SAFETY (genuine FFI precondition — NOT a `safe fn` candidate): impl
-    /// reborrows `&mut *env` and reads `*install` if non-null. Both must point at process-lifetime Transpiler-owned storage; the
-    /// returned `NonNull` names the `'static` `PackageManager` singleton.
+    /// reborrows `&mut *env` and reads `*install` if non-null. Both must point at process-lifetime Transpiler-owned storage.
     /// Errs when the one-time init fails (e.g. the top-level directory is
     /// unreadable) or auto-install is off; the failure is sticky across calls.
+    /// Only the first call on the main thread can succeed.
     fn __bun_resolver_init_package_manager(
         log: &bun_ast::Log,
         install: Option<NonNull<bun_options_types::schema::api::BunInstall>>,
         env: NonNull<bun_dotenv::Loader>,
         prefer_offline: bool,
         importer_dir: &[u8],
-    ) -> crate::CrateResult<NonNull<dyn AutoInstaller>>;
+    ) -> crate::CrateResult<&'static mut dyn AutoInstaller>;
 
     /// `Dependency.parse` with no `PackageManager`, which it only uses to record `npm:` aliases.
     safe fn __bun_resolver_parse_dependency(
@@ -403,11 +403,11 @@ pub struct Resolver<'a> {
     /// Auto-install backend. `bun_install::PackageManager` implements
     /// [`AutoInstaller`]; the resolver only sees the trait object so it stays
     /// below `bun_install` in the dep graph. `None` until the auto-install
-    /// path is first reached: [`get_package_manager`] then initializes the
+    /// path is first reached: [`ensure_package_manager`] then initializes the
     /// singleton through the link-time `__bun_resolver_init_package_manager`
-    /// factory and caches the pointer here. A failed init (e.g. unreadable
+    /// factory and keeps it here. A failed init (e.g. unreadable
     /// top-level directory) is returned as an error and leaves this `None`.
-    pub package_manager: Option<NonNull<dyn AutoInstaller>>,
+    pub package_manager: SyncView<Option<&'static mut dyn AutoInstaller>>,
     // Stored as `NonNull` (not `&'a Loader`) because the same allocation is
     // mutably reborrowed via `Transpiler.env: *mut Loader` after this field is
     // set (e.g. bake/production/mod.rs assigns this then calls `configure_defines()`
@@ -518,7 +518,7 @@ impl<'a> Resolver<'a> {
             watcher: from.watcher.clone(),
             caches: CacheSet::init(),
             generation: from.generation,
-            package_manager: from.package_manager,
+            package_manager: SyncView::new(None),
             env_loader: from.env_loader,
             store_fd: from.store_fd,
             standalone_module_graph: from.standalone_module_graph,
@@ -618,19 +618,12 @@ impl<'a> Resolver<'a> {
     /// inside the factory) when the one-time init fails, e.g. the top-level
     /// directory was deleted or is unreadable — callers surface that as a
     /// resolve failure rather than panicking.
-    pub fn get_package_manager(&mut self) -> crate::CrateResult<*mut dyn AutoInstaller> {
-        let top_level_dir = self.fs_ref().top_level_dir();
-        self.get_package_manager_for(top_level_dir)
-    }
-
+    ///
     /// The package manager is created once per process, by the first call. It uses the registries,
     /// credentials and lockfile of the project of `importer_dir`, the importing file's directory.
-    fn get_package_manager_for(
-        &mut self,
-        importer_dir: &[u8],
-    ) -> crate::CrateResult<*mut dyn AutoInstaller> {
-        if let Some(pm) = self.package_manager {
-            return Ok(pm.as_ptr());
+    fn ensure_package_manager(&mut self, importer_dir: &[u8]) -> crate::CrateResult<()> {
+        if self.package_manager.as_mut().is_some() {
+            return Ok(());
         }
         let env: NonNull<DotEnv::Loader> = self
             .env_loader
@@ -640,9 +633,8 @@ impl<'a> Resolver<'a> {
         // SAFETY: `__bun_resolver_init_package_manager` is defined
         // `#[no_mangle]` in `bun_install::auto_installer` and linked into the
         // final binary; `self.opts.install` / `env` point at
-        // process-lifetime storage (Transpiler-owned). The returned pointer
-        // names the `PackageManager` singleton (`'static`).
-        let pm: NonNull<dyn AutoInstaller> = unsafe {
+        // process-lifetime storage (Transpiler-owned).
+        let pm = unsafe {
             bun_removable_features::call_removable!(
                 Install,
                 Abort,
@@ -655,25 +647,22 @@ impl<'a> Resolver<'a> {
                 importer_dir,
             )
         }?;
-        self.package_manager = Some(pm);
-        Ok(pm.as_ptr())
+        self.package_manager = SyncView::new(Some(pm));
+        Ok(())
     }
 
-    /// Safe accessor for the optional [`AutoInstaller`] back-reference.
-    ///
-    /// Single `unsafe` deref site for the `package_manager:
-    /// Option<NonNull<dyn AutoInstaller>>` field. The pointee is the
-    /// process-static `PackageManager` singleton (set via
-    /// [`get_package_manager`](Self::get_package_manager) /
-    /// `__bun_resolver_init_package_manager`), so it strictly outlives the
-    /// resolver. `&mut self` ensures the returned `&mut dyn AutoInstaller` is
-    /// the only live reference for its lifetime.
+    /// For `parseLockfile` of `bun:internal-for-testing`.
+    pub fn get_package_manager(
+        &mut self,
+    ) -> crate::CrateResult<&mut (dyn AutoInstaller + 'static)> {
+        let top_level_dir = self.fs_ref().top_level_dir();
+        self.ensure_package_manager(top_level_dir)?;
+        Ok(self.auto_installer().expect("ensured above"))
+    }
+
     #[inline]
-    pub(crate) fn auto_installer(&mut self) -> Option<&mut dyn AutoInstaller> {
-        // SAFETY: BACKREF — `package_manager` names the bun_install-owned
-        // singleton, live for the resolver's lifetime once installed; `&mut
-        // self` ⇒ exclusive access to the only Rust handle.
-        self.package_manager.map(|mut pm| unsafe { pm.as_mut() })
+    pub(crate) fn auto_installer(&mut self) -> Option<&mut (dyn AutoInstaller + 'static)> {
+        self.package_manager.as_mut().as_deref_mut()
     }
 
     /// The project's package.json is parsed before the first bare import creates the manager.
@@ -786,7 +775,7 @@ impl<'a> Resolver<'a> {
             elapsed: 0,
             watcher: None,
             generation: 0,
-            package_manager: None,
+            package_manager: SyncView::new(None),
             env_loader: None,
             store_fd: false,
             standalone_module_graph: None,
@@ -3067,16 +3056,9 @@ impl<'a> Resolver<'a> {
             'load_module_from_cache: {
                 // If the source directory doesn't have a node_modules directory, we can
                 // check the global cache directory for a package.json file.
-                //
-                // NOTE (Stacked Borrows): `get_package_manager` returns the
-                // `*mut dyn AutoInstaller` raw pointer; the body below re-borrows
-                // `self` for `enqueue_dependency_to_resolve` / `debug_logs` /
-                // `log()`. The PackageManager lives in a separate allocation, so
-                // derive a raw pointer once and re-borrow per use — disjoint
-                // from `self`'s storage.
-                let manager = self.get_package_manager_for(source_dir_info.abs_path);
-                let manager_ptr: *mut dyn AutoInstaller = match manager {
-                    Ok(pm) => pm,
+                let log = self.log();
+                match self.ensure_package_manager(source_dir_info.abs_path) {
+                    Ok(()) => {}
                     Err(err) => {
                         // One-time init reads the top-level directory, which
                         // can fail at runtime (cwd deleted, EACCES, a dropped
@@ -3093,7 +3075,6 @@ impl<'a> Resolver<'a> {
                             }
                             _ => None,
                         };
-                        let log = self.log();
                         let add = |text: core::fmt::Arguments<'_>| {
                             if let Some(log) = log {
                                 log.add_resolve_error(
@@ -3124,23 +3105,23 @@ impl<'a> Resolver<'a> {
                         }
                         return MatchStatus::Failure(err);
                     }
-                };
+                }
                 macro_rules! manager {
                     () => {
-                        // SAFETY: re-borrowed narrowly per use; PackageManager outlives resolver.
-                        unsafe { &mut *manager_ptr }
+                        self.auto_installer().expect("ensured above")
                     };
                 }
                 let mut dependency_version = Dependency::Version::default();
                 let mut dependency_behavior = Dependency::Behavior::PROD;
                 let installed_buf: Vec<u8>;
-                let mut string_buf: &[u8] = esm.version;
+                let mut version_buf = VersionBuf::Bytes(esm.version);
                 // The directory of the project's package.json that lists the package. A relative
                 // path in the dependency's version, as in `file:../foo`, is resolved from here.
                 let mut package_json_dir: Option<&[u8]> = None;
 
                 // const initial_pending_tasks = manager.pending_tasks;
                 let mut resolved_package_id: Install::PackageID = 'brk: {
+                    let manager = &*manager!();
                     // A version in the import specifier takes priority over package.json and the
                     // lockfile.
                     let mut listing_dir = esm_ref.version.is_empty().then_some(dir_info);
@@ -3154,19 +3135,22 @@ impl<'a> Resolver<'a> {
                         let resolve_from_lockfile =
                             package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID;
 
-                        let dependencies_list: &[Dependency::Dependency] = if resolve_from_lockfile
-                        {
-                            let dependencies = manager!().lockfile_package_dependencies(
+                        let locked = resolve_from_lockfile.then(|| {
+                            manager.lockfile_package_dependencies(
                                 package_json.package_manager_package_id,
-                            );
-
+                            )
+                        });
+                        let (dependencies_list, string_buf): (_, &[u8]) = match locked {
                             // try to find this package name in the dependencies of the enclosing package
-                            string_buf = manager!().lockfile_string_bytes();
-                            dependencies.get(manager!().lockfile_dependencies_buf())
-                        } else {
+                            Some(dependencies) => (
+                                dependencies.get(manager.lockfile_dependencies_buf()),
+                                manager.lockfile_string_bytes(),
+                            ),
                             // If you don't specify a version, default to the one chosen in your package.json
-                            string_buf = &package_json.dependencies.source_buf;
-                            package_json.dependencies.map.values()
+                            None => (
+                                package_json.dependencies.map.values(),
+                                &package_json.dependencies.source_buf,
+                            ),
                         };
 
                         for (dependency_id, dependency) in dependencies_list.iter().enumerate() {
@@ -3178,15 +3162,17 @@ impl<'a> Resolver<'a> {
                             dependency_behavior = dependency.behavior;
 
                             if resolve_from_lockfile {
-                                let resolutions = manager!().lockfile_package_resolutions(
+                                version_buf = VersionBuf::Lockfile;
+                                let resolutions = manager.lockfile_package_resolutions(
                                     package_json.package_manager_package_id,
                                 );
 
                                 // found it!
-                                break 'brk resolutions.get(manager!().lockfile_resolutions_buf())
+                                break 'brk resolutions.get(manager.lockfile_resolutions_buf())
                                     [dependency_id];
                             }
 
+                            version_buf = VersionBuf::Bytes(&package_json.dependencies.source_buf);
                             if !package_json.source.path.is_node_module() {
                                 package_json_dir =
                                     bun_paths::dirname(package_json.source.path.text);
@@ -3206,13 +3192,13 @@ impl<'a> Resolver<'a> {
                                 Semver::semver_string::Builder::string_hash(name),
                                 range,
                                 &Semver::SlicedString::init(&buf, range),
-                                self.log(),
+                                log,
                             );
                             if let Some(version) = version {
                                 dependency_version = version;
                                 dependency_behavior = behavior;
                                 installed_buf = buf;
-                                string_buf = &installed_buf;
+                                version_buf = VersionBuf::Bytes(&installed_buf);
                                 break 'brk Install::INVALID_PACKAGE_ID;
                             }
                         }
@@ -3248,18 +3234,20 @@ impl<'a> Resolver<'a> {
                     // on disk, so there is nothing to resolve or download.
                     if resolved_package_id == Install::INVALID_PACKAGE_ID
                         && esm_ref.version.is_empty()
-                        && let Some(folder) = manager!().project_folder(
+                        && let manager = &*manager!()
+                        && let Some(folder) = manager.project_folder(
                             esm.name,
                             &dependency_version,
-                            string_buf,
+                            version_buf.slice(manager.lockfile_string_bytes()),
                             package_json_dir,
                             bufs!(path_in_global_disk_cache),
                         )
                     {
                         let found = self.dir_info_cached(folder);
                         if !matches!(found, Ok(Some(_)))
-                            && let Some(log) = self.log()
+                            && let Some(log) = log
                         {
+                            let string_buf = version_buf.slice(manager!().lockfile_string_bytes());
                             log.add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
@@ -3279,23 +3267,24 @@ impl<'a> Resolver<'a> {
                             if dependency_version.tag() == Dependency::version::Tag::Uninitialized {
                                 let sliced_string =
                                     Semver::SlicedString::init(esm.version, esm.version);
-                                string_buf = esm.version;
+                                version_buf = VersionBuf::Bytes(esm.version);
                                 dependency_version = match manager!().parse_dependency(
                                     Semver::String::init(esm.name, esm.name),
                                     None,
                                     esm.version,
                                     &sliced_string,
-                                    self.log(),
+                                    log,
                                 ) {
                                     Some(v) => v,
                                     None => break 'load_module_from_cache,
                                 };
                             }
 
-                            if let Some(id) = manager!().lockfile_resolve(
+                            let manager = &*manager!();
+                            if let Some(id) = manager.lockfile_resolve(
                                 esm.name,
                                 &dependency_version,
-                                string_buf,
+                                version_buf.slice(manager.lockfile_string_bytes()),
                             ) {
                                 resolved_package_id = id;
                             }
@@ -3312,7 +3301,7 @@ impl<'a> Resolver<'a> {
                             dependency_behavior,
                             &mut resolved_package_id,
                             &dependency_version,
-                            string_buf,
+                            version_buf,
                         ) {
                             Some(res) => break 'brk res,
                             // The registry has no such package or version, or the install failed.
@@ -3330,7 +3319,7 @@ impl<'a> Resolver<'a> {
                         resolved_package_id,
                         &resolution,
                         bufs!(path_in_global_disk_cache),
-                        self.log(),
+                        log,
                     ) {
                         Ok(p) => p,
                         Err(err) => {
@@ -3551,7 +3540,7 @@ impl<'a> Resolver<'a> {
         dir_path_maybe_trail_slash: &[u8],
         package_id: Install::PackageID,
     ) -> crate::CrateResult<Option<&'static DirInfo::DirInfo>> {
-        debug_assert!(self.package_manager.is_some());
+        debug_assert!(self.auto_installer().is_some());
 
         let dir_path = strings::without_trailing_slash_windows_path(dir_path_maybe_trail_slash);
 
@@ -3719,7 +3708,7 @@ impl<'a> Resolver<'a> {
         behavior: Dependency::Behavior,
         input_package_id_: &mut Install::PackageID,
         version: &Dependency::Version,
-        version_buf: &[u8],
+        version_buf: VersionBuf<'_>,
     ) -> Option<Resolution> {
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
@@ -3730,35 +3719,28 @@ impl<'a> Resolver<'a> {
         }
 
         let input_package_id = *input_package_id_;
-        // NOTE: see `manager_ptr` note in `load_node_modules` — split the
-        // `&mut self` borrow by holding the PackageManager via raw pointer.
-        // Init failure is unreachable in practice (`load_node_modules`
-        // initialized the manager before calling here), but propagate rather
-        // than unwrap so the invariant isn't load-bearing for safety.
-        let pm_ptr: *mut dyn AutoInstaller = self.get_package_manager().ok()?;
-        macro_rules! pm {
-            () => {
-                // SAFETY: PackageManager lives in a separate allocation; disjoint from `self`.
-                unsafe { &mut *pm_ptr }
-            };
-        }
+        let log = self.log();
+        let pm = self.auto_installer()?;
         // we should never be trying to resolve a dependency that is already resolved
         debug_assert!(
-            pm!()
-                .lockfile_resolve(esm.name, version, version_buf)
-                .is_none()
+            pm.lockfile_resolve(
+                esm.name,
+                version,
+                version_buf.slice(pm.lockfile_string_bytes())
+            )
+            .is_none()
         );
 
         if input_package_id == Install::INVALID_PACKAGE_ID || input_package_id == 0 {
             // All packages are enqueued to the root
             // because we download all the npm package dependencies
-            return match pm!().enqueue_dependency_to_root(
+            return match pm.enqueue_dependency_to_root(
                 esm.name,
                 version,
                 version_buf,
                 package_json_dir,
                 behavior,
-                self.log(),
+                log,
             ) {
                 Install::EnqueueResult::Resolution {
                     package_id,

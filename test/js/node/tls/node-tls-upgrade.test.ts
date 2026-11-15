@@ -470,9 +470,9 @@ async function run(script: string) {
   return { stdout, stderr, exitCode };
 }
 
-describe.concurrent("the write() of the Duplex under a TLS socket", () => {
-  // "x" waits for the handshake in the handle. onWrite() runs while TLS hands it to the Duplex.
-  const withParkedWrite = (script: string) => `
+describe.concurrent("tls.connect({ socket: duplex }): duplex.write()", () => {
+  // The handle buffers "x" until the handshake is done. onWrite() runs in the duplex.write() that sends it.
+  const withBufferedWrite = (script: string) => `
     const server = tls.createServer(JSON.parse(process.env.CERTS), peer => {
       let got = "";
       peer.on("data", data => (got += data)).on("error", () => {});
@@ -495,9 +495,9 @@ describe.concurrent("the write() of the Duplex under a TLS socket", () => {
       ${script}
     });`;
 
-  test("can close the socket while what was parked is written", async () => {
+  test("can terminate the handle while buffered data is written", async () => {
     const result = await run(
-      withParkedWrite(`socket.on("secureConnect", () => {
+      withBufferedWrite(`socket.on("secureConnect", () => {
         onWrite = () => socket._handle.terminate();
         socket._write("y", "utf8", () => {});
         raw.end();
@@ -506,25 +506,32 @@ describe.concurrent("the write() of the Duplex under a TLS socket", () => {
     expect(result).toEqual({ stdout: "server got xy\n", stderr: "", exitCode: 0 });
   });
 
-  test("can emit 'drain' while what was parked is written", async () => {
+  test("can emit 'drain' without sending buffered data twice", async () => {
     const result = await run(
-      withParkedWrite(`socket.on("secureConnect", () => (onWrite = () => duplex.emit("drain")));`),
+      withBufferedWrite(`socket.on("secureConnect", () => (onWrite = () => duplex.emit("drain")));`),
     );
     expect(result).toEqual({ stdout: "server got x\n", stderr: "", exitCode: 0 });
   });
 
-  test("can destroy the socket while what was parked is written, which bytesWritten counts", async () => {
+  test("can call socket._handle.write() while buffered data is written", async () => {
     const result = await run(
-      withParkedWrite(`socket.on("secureConnect", () => (onWrite = () => socket.destroy()));
+      withBufferedWrite(`socket.on("secureConnect", () => (onWrite = () => socket._handle.write("y")));`),
+    );
+    expect(result).toEqual({ stdout: "server got xy\n", stderr: "", exitCode: 0 });
+  });
+
+  test("can destroy the socket, and bytesWritten counts the buffered data", async () => {
+    const result = await run(
+      withBufferedWrite(`socket.on("secureConnect", () => (onWrite = () => socket.destroy()));
         socket.on("close", () => (console.log(socket.bytesWritten), raw.end()));`),
     );
     expect(result).toEqual({ stdout: "1\nserver got x\n", stderr: "", exitCode: 0 });
   });
 
   test.each([
-    ["the first write", "", `socket.write("xy")`],
-    ["a write behind what was parked", `socket.write("x")`, `socket._write("y", "utf8", () => {})`],
-  ])("can complete the handshake under %s", async (_, afterConnect, beforeClientHello) => {
+    ["the first write()", "", `socket.write("xy")`],
+    ["a _write() after buffered data", `socket.write("x")`, `socket._write("y", "utf8", () => {})`],
+  ])("can complete the handshake synchronously during %s", async (_, afterConnect, beforeClientHello) => {
     const result = await run(`
       const near = new Duplex({ read() {}, write: (chunk, encoding, callback) => callback(void far.push(chunk)) });
       const far = new Duplex({ read() {}, write: (chunk, encoding, callback) => callback(void near.push(chunk)) });
@@ -545,7 +552,7 @@ describe.concurrent("the write() of the Duplex under a TLS socket", () => {
     expect(result).toEqual({ stdout: "server got xy\n", stderr: "", exitCode: 0 });
   });
 
-  test("can detach the buffer that is about to be parked", async () => {
+  test("can detach the ArrayBuffer that is being written", async () => {
     const result = await run(`
       const buffer = new Uint8Array(1 << 16);
       const duplex = new Duplex({
@@ -569,11 +576,11 @@ describe.concurrent("the write() of the Duplex under a TLS socket", () => {
   });
 });
 
-describe.concurrent("one half of an upgraded socket connects again", () => {
+describe.concurrent("reconnecting after upgradeTLS()", () => {
   test.each([
     ["raw", "secure"],
     ["secure", "raw"],
-  ])("the handle of the %s half closes the %s half and speaks TLS", async (reused, other) => {
+  ])("connect() with the %s socket as _handle closes the %s socket and uses TLS", async (reused, other) => {
     const result = await run(`
       const server = tls.createServer(JSON.parse(process.env.CERTS), peer => peer.on("error", () => {}).pipe(peer));
       await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -594,7 +601,7 @@ describe.concurrent("one half of an upgraded socket connects again", () => {
     expect(result).toEqual({ stdout: `${other} closed\nhello -1\n`, stderr: "", exitCode: 0 });
   });
 
-  test("a TLS socket that wraps a socket while it dials closes that socket", async () => {
+  test("connect({ socket }) in 'connectionAttempt' closes that socket when the attempt starts", async () => {
     const result = await run(`
       const server = tls.createServer(JSON.parse(process.env.CERTS), peer => peer.on("error", () => {}).resume());
       server.listen(0, "127.0.0.1", () => {

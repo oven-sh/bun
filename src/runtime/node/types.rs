@@ -1,5 +1,6 @@
 use bun_paths::strings;
 use core::ffi::c_int;
+use std::borrow::Cow;
 use std::io::IoSlice;
 
 use crate::jsc::{self, JSGlobalObject, JSValue, JsResult};
@@ -9,6 +10,7 @@ use bun_core::ZStr;
 use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt};
 use bun_jsc::bindgen::{JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::bun_string_jsc;
+use bun_jsc::node_path::JoinedPath;
 use bun_jsc::{StringJsc as _, Utf8WithStringJsc as _};
 pub(crate) use bun_jsc::{ThreadIsolated, ThreadIsolatedArg};
 #[cfg(windows)]
@@ -731,7 +733,7 @@ unsafe extern "C" {
 // ──────────────────────────────────────────────────────────────────────────
 
 // LAYERING: single nominal `PathLike`/`PathOrFileDescriptor` live in
-// `bun_jsc::node_path` so `bun_jsc::webcore_types::store::File::pathlike`
+// `bun_jsc::node_path` so `bun_jsc::webcore_types::store::File::pathlike()`
 // and the `Store`/`Blob` constructors here share one type. This module
 // re-exports them and layers the JS-argument-parsing helpers via the
 // `PathLikeExt` / `PathOrFdExt` extension traits.
@@ -748,7 +750,7 @@ pub(crate) struct NameTooLong;
 
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathLike`.
 ///
-/// `thread_isolated_copy` / `slice` / `estimated_size` are
+/// `slice` / `estimated_size` are
 /// inherent on the lower-tier type (see `bun_jsc::node_path`); this trait
 /// adds only the path-buffer slicers and JS-argument parsing that depend on
 /// `bun_runtime` types (`Valid`, `ArgumentsSlice` cursor flow).
@@ -1173,7 +1175,7 @@ fn find_path_meant(path: &[u8], relative_paths: RelativePaths) -> Option<PathLik
     };
     let on_disk = bun_standalone_graph::find_written_file(joined.as_deref().unwrap_or(path));
     let joined = on_disk.map(<[u8]>::into_vec).or(joined)?;
-    Some(PathLike::Joined(Box::new(bun_jsc::node_path::JoinedPath {
+    Some(PathLike::Joined(Cow::Owned(JoinedPath {
         joined,
         written: path.to_vec(),
     })))
@@ -1513,10 +1515,7 @@ pub(crate) fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Opt
 
 // ──────────────────────────────────────────────────────────────────────────
 
-// LAYERING: `Clone for PathOrFileDescriptor` and the `SerializeTag` enum now
-// live alongside the type in `bun_jsc::node_path` (orphan rules forbid the
-// foreign-type impl here). Re-export the tag so downstream
-// `crate::node::types::PathOrFileDescriptorSerializeTag` paths keep resolving.
+// LAYERING: the tag lives alongside the type in `bun_jsc::node_path`.
 pub(crate) use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
 
 impl PathOrFdExt for PathOrFileDescriptor<'_> {

@@ -16,7 +16,6 @@ use bun_standalone_graph::{File, Graph, is_bun_standalone_file_path};
 
 /// What the `Blob`s of an embedded file share across VMs.
 struct BlobTemplate {
-    /// Never released, so JS is never given these read-only bytes to write to.
     store: RefPtr<Store>,
     name: bstring::String,
 }

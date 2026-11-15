@@ -36,16 +36,6 @@
       "OwnedByThread"
     ]
   },
-  "src/jsc/webcore_types.rs": {
-    "unsafe impl Send": [
-      "Blob",
-      "Store"
-    ],
-    "unsafe impl Sync": [
-      "Blob",
-      "Store"
-    ]
-  },
   "src/runtime/api/JSTranspiler.rs": {
     "unsafe impl Send": [
       "TransformTask"
@@ -204,17 +194,9 @@
   "src/runtime/webcore/Blob.rs": {
     "WorkPool::schedule*": 1
   },
-  "src/runtime/webcore/blob/copy_file.rs": {
-    "unsafe impl Send": [
-      "CopyFile"
-    ]
-  },
   "src/runtime/webcore/blob/read_file.rs": {
     "WorkPool::schedule*": 1,
     "intrusive_work_task!": [
-      "ReadFile"
-    ],
-    "unsafe impl Send": [
       "ReadFile"
     ]
   },

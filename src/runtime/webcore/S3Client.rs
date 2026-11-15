@@ -328,9 +328,7 @@ impl S3Client {
     }
 
     /// Constructs the S3 blob for `path` from this client's credentials and
-    /// per-client defaults merged with the per-call `options` object. The
-    /// returned blob releases its store ref on drop (the Zig `defer
-    /// blob.detach()`).
+    /// per-client defaults merged with the per-call `options` object.
     fn construct_blob(
         &self,
         global: &JSGlobalObject,
@@ -433,14 +431,14 @@ impl S3Client {
         options: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
-        let mut blob = self.blob_for_path(
+        let blob = self.blob_for_path(
             cx.global(),
             path.to_js(),
             opt_js(options.to_js()),
             "check the size of",
             MissingPathError::MissingOrInvalid,
         )?;
-        S3File::S3BlobStatTask::size(&cx, &mut blob)
+        S3File::S3BlobStatTask::size(&cx, &blob)
     }
 
     pub(crate) fn stat(
@@ -527,7 +525,7 @@ impl S3Client {
             self.request_payer,
         )?;
 
-        let store = blob.store.get().as_ref().unwrap().clone();
+        let store = blob.store().unwrap();
         store
             .data
             .as_s3()
@@ -549,7 +547,7 @@ impl S3Client {
             "unlink",
             MissingPathError::AlwaysMissingArgs,
         )?;
-        let store = blob.store.get().as_ref().unwrap().clone();
+        let store = blob.store().unwrap();
         store.data.as_s3().unlink(store.clone(), &cx, options)
     }
 
@@ -622,13 +620,13 @@ impl S3Client {
         let cx = cx.js_thread();
         let global = cx.global();
         let error_message = "Expected a S3 or path to get size";
-        let mut blob = match S3File::parse_s3_path_or_blob(global, path.to_js(), error_message)? {
+        let blob = match S3File::parse_s3_path_or_blob(global, path.to_js(), error_message)? {
             crate::webcore::node_types::PathOrBlob::Blob(blob) => {
                 return Ok(JSValue::js_number(blob.get_size()));
             }
             path => S3File::resolve_s3_blob(global, opt_js(options.to_js()), path, error_message)?,
         };
-        S3File::S3BlobStatTask::size(&cx, &mut blob)
+        S3File::S3BlobStatTask::size(&cx, &blob)
     }
 
     pub(crate) fn static_unlink(
@@ -644,7 +642,7 @@ impl S3Client {
             options,
             "Expected a S3 or path to delete",
         )?;
-        let store = blob.store.get().as_ref().unwrap().clone();
+        let store = blob.store().unwrap();
         store.data.as_s3().unlink(store.clone(), &cx, options)
     }
 
@@ -697,7 +695,7 @@ impl S3Client {
             &existing_credentials,
         )?;
 
-        let store = blob.store.get().as_ref().unwrap().clone();
+        let store = blob.store().unwrap();
         store
             .data
             .as_s3()

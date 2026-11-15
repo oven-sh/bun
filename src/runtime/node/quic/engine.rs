@@ -1,34 +1,33 @@
 //! The lsquic engine and its callbacks (`packages/bun-usockets/src/node_quic_shim.c` lists them).
 
+use core::borrow::Borrow;
 use core::cell::Cell;
 use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
+use core::mem::MaybeUninit;
 use core::ptr::{NonNull, null, null_mut};
 
-use bun_core::ffi::slice;
+use bun_core::ffi::{slice, slice_mut};
 use bun_jsc::bindgen::{JsPayload, StrongWrapper};
 use bun_lsquic_sys::{self as lsquic, Conn, Stream, lsquic_conn, lsquic_stream};
-use bun_ptr::AliasableBox;
-
-use crate::test_runner::cells::CellExt as _;
+use bun_ptr::{AliasableBox, CellExt as _};
 
 use super::endpoint::match_sni;
-use super::roots::Root;
 use super::session::StoredAddr;
 use super::tls::TlsContext;
 use super::{QuicEndpoint, QuicSession, QuicStream};
 
-/// What lsquic keeps pointers to: the context of the engine's callbacks, and the `peer_ctx` of its paths.
-struct Shared {
-    /// Null unless a call that borrows it is on the stack.
+/// The engine's `ea_stream_if_ctx`, `ea_packets_out_ctx`, `ea_cert_lu_ctx` and `peer_ctx`.
+struct EngineCtx {
+    /// Null outside `call_with_endpoint`.
     endpoint: Cell<*const QuicEndpoint>,
     tls: Cell<Option<TlsContext>>,
     origin_blob: Vec<u8>,
 }
 
-/// What can call back takes `&mut self`, so a callback can't run or destroy the engine it came from.
+/// Methods that run callbacks take `&mut self`, so a callback can't re-enter or drop its engine.
 pub(super) struct Engine {
     raw: NonNull<lsquic::lsquic_engine>,
-    shared: AliasableBox<Shared>,
+    ctx: AliasableBox<EngineCtx>,
 }
 
 impl Engine {
@@ -55,32 +54,35 @@ impl Engine {
         });
         lsquic::debug_assert_layout();
 
-        let shared = AliasableBox::new(Shared {
+        let ctx = AliasableBox::new(EngineCtx {
             endpoint: Cell::new(null()),
             tls: Cell::new(Some(tls)),
             origin_blob,
         });
-        // SAFETY: `shared` is dropped after the engine is destroyed. lsquic copies `settings`.
+        // SAFETY: `ctx` is dropped after the engine is destroyed. lsquic copies `settings`.
         let raw = unsafe {
+            if !ctx.origin_blob.is_empty() {
+                settings.origin_blob(&ctx.origin_blob);
+            }
             lsquic::us_nq_engine_new(
                 is_server as c_int,
                 is_http as c_int,
-                shared.as_ptr().cast(),
-                settings.as_mut_ptr(),
-                shared.origin_blob.as_ptr(),
-                shared.origin_blob.len(),
+                ctx.as_ptr().cast(),
+                settings.as_ptr(),
+                // Node accepts a list, so the SSL_CTX owns ALPN.
+                null(),
             )
         };
         Some(Self {
             raw: NonNull::new(raw)?,
-            shared,
+            ctx,
         })
     }
 
-    fn lend_endpoint(&mut self, endpoint: &QuicEndpoint, call: impl FnOnce(&Self)) {
-        self.shared.endpoint.set(endpoint);
-        call(self);
-        self.shared.endpoint.set(null());
+    fn call_with_endpoint(&mut self, endpoint: &QuicEndpoint, f: impl FnOnce(&Self)) {
+        self.ctx.endpoint.set(endpoint);
+        f(self);
+        self.ctx.endpoint.set(null());
     }
 
     pub(super) fn packet_in(
@@ -90,8 +92,8 @@ impl Engine {
         local: &StoredAddr,
         peer: &StoredAddr,
     ) {
-        self.lend_endpoint(endpoint, |this| {
-            // SAFETY: the engine is live and not running. It copies what it keeps, except `shared`.
+        self.call_with_endpoint(endpoint, |this| {
+            // SAFETY: the engine is live and not running. It copies what it keeps, except `ctx`.
             unsafe {
                 lsquic::lsquic_engine_packet_in(
                     this.raw.as_ptr(),
@@ -99,7 +101,7 @@ impl Engine {
                     packet.len(),
                     local.as_ptr(),
                     peer.as_ptr(),
-                    this.shared.as_ptr().cast(),
+                    this.ctx.as_ptr().cast(),
                     0,
                 )
             };
@@ -107,30 +109,29 @@ impl Engine {
     }
 
     pub(super) fn process_conns(&mut self, endpoint: &QuicEndpoint) {
-        self.lend_endpoint(endpoint, |this| {
+        self.call_with_endpoint(endpoint, |this| {
             // SAFETY: the engine is live and not running.
             unsafe { lsquic::lsquic_engine_process_conns(this.raw.as_ptr()) }
         });
     }
 
     pub(super) fn send_unsent_packets(&mut self, endpoint: &QuicEndpoint) {
-        self.lend_endpoint(endpoint, |this| {
+        self.call_with_endpoint(endpoint, |this| {
             // SAFETY: as above.
             unsafe { lsquic::lsquic_engine_send_unsent_packets(this.raw.as_ptr()) }
         });
     }
 
-    /// For the conns to come. An `SSL` holds a reference to its `SSL_CTX`, which is all that a client's needs.
+    /// Existing conns keep their `SSL_CTX` alive, but not the `arg` of its ALPN select callback.
     pub(super) fn set_client_tls(&mut self, tls: TlsContext) {
-        let old = self.shared.tls.take();
-        assert!(!old.as_ref().is_some_and(TlsContext::selects_alpn));
-        self.shared.tls.set(Some(tls));
+        let old = self.ctx.tls.replace(Some(tls));
+        assert!(!old.is_some_and(|old| old.has_alpn_select_cb()));
     }
 
-    /// Binds the new conn to `session`, unless lsquic refused.
+    /// Binds the new conn to `session`, unless `lsquic_engine_connect` fails.
     pub(super) fn connect(
         &mut self,
-        session: &Attached<QuicSession>,
+        session: &StrongCtx<QuicSession>,
         local: &StoredAddr,
         peer: &StoredAddr,
         servername: Option<&CStr>,
@@ -138,12 +139,12 @@ impl Engine {
     ) {
         // SAFETY: as in `packet_in`. The result is null or live, and is only used here.
         let conn = unsafe {
-            Conn::lent(lsquic::lsquic_engine_connect(
+            Conn::from_raw(lsquic::lsquic_engine_connect(
                 self.raw.as_ptr(),
                 lsquic::N_LSQVER,
                 local.as_ptr(),
                 peer.as_ptr(),
-                self.shared.as_ptr().cast(),
+                self.ctx.as_ptr().cast(),
                 null_mut(),
                 servername.map_or(null(), CStr::as_ptr),
                 0,
@@ -165,7 +166,7 @@ impl Engine {
 
     /// Calls `on_new_stream` now, or when the peer allows another stream.
     pub(super) fn make_stream(&mut self, conn: &Conn, unidirectional: bool) {
-        let Some(conn) = conn.as_ptr() else { return };
+        let Some(conn) = conn.raw() else { return };
         // SAFETY: the conn is live, and only its engine can free it.
         unsafe {
             if lsquic::lsquic_conn_get_engine(conn) != self.raw.as_ptr() {
@@ -208,7 +209,7 @@ impl Engine {
         (advised != 0).then_some(diff)
     }
 
-    /// The stateless resets that were sent, and those that the rate limit held back.
+    /// `(sent, rate_limited)`.
     pub(super) fn sreset_stats(&self) -> (u64, u64) {
         let (mut sent, mut limited) = (0u64, 0u64);
         // SAFETY: as above.
@@ -226,17 +227,21 @@ impl Drop for Engine {
     }
 }
 
-/// Empty while its engine is in use.
+/// Empty while `with` runs.
 #[derive(Default)]
-pub(super) struct EngineSlot(Cell<Option<Engine>>);
+pub(super) struct EngineCell(Cell<Option<Engine>>);
 
-impl EngineSlot {
-    pub(super) fn set(&self, engine: Option<Engine>) {
-        self.0.set(engine);
+impl EngineCell {
+    pub(super) fn is_some(&self) -> bool {
+        self.0.with_taken(|engine| engine.is_some())
     }
 
-    pub(super) fn is_some(&self) -> bool {
-        self.with(|_| ()).is_some()
+    pub(super) fn set(&self, engine: Engine) {
+        self.0.set(Some(engine));
+    }
+
+    pub(super) fn clear(&self) {
+        self.0.set(None);
     }
 
     pub(super) fn with<R>(&self, f: impl FnOnce(&mut Engine) -> R) -> Option<R> {
@@ -244,108 +249,114 @@ impl EngineSlot {
     }
 }
 
-pub(super) trait Detach: JsPayload {
-    fn detach(&self);
+pub(super) trait Unbind: JsPayload {
+    fn unbind(&self);
 }
 
-/// The root of what lsquic can have as a context, which it takes back before it lets go.
-pub(super) struct Attached<T: Detach>(StrongWrapper<T>);
+/// Roots the ctx of an lsquic conn or stream, and unbinds it on drop.
+pub(super) struct StrongCtx<T: Unbind>(StrongWrapper<T>);
 
-impl<T: Detach> Attached<T> {
-    pub(super) fn new(root: StrongWrapper<T>) -> Self {
-        Self(root)
+impl<T: Unbind> StrongCtx<T> {
+    pub(super) fn new(wrapper: StrongWrapper<T>) -> Self {
+        Self(wrapper)
     }
 }
 
-impl<T: Detach> Root for Attached<T> {
-    type Payload = T;
-    fn wrapper(&self) -> &StrongWrapper<T> {
+impl<T: Unbind> core::ops::Deref for StrongCtx<T> {
+    type Target = StrongWrapper<T>;
+    fn deref(&self) -> &StrongWrapper<T> {
         &self.0
     }
 }
 
-impl<T: Detach> Drop for Attached<T> {
+impl<T: Unbind> Borrow<StrongWrapper<T>> for StrongCtx<T> {
+    fn borrow(&self) -> &StrongWrapper<T> {
+        &self.0
+    }
+}
+
+impl<T: Unbind> Drop for StrongCtx<T> {
     fn drop(&mut self) {
-        self.0.lend(|attached| attached.detach());
+        self.0.try_with(|ctx| ctx.unbind());
     }
 }
 
-impl Detach for QuicSession {
-    fn detach(&self) {
-        self.conn.detach();
+impl Unbind for QuicSession {
+    fn unbind(&self) {
+        self.conn.unbind();
     }
 }
 
-impl Attached<QuicSession> {
+impl StrongCtx<QuicSession> {
     pub(super) fn bind(&self, conn: &Conn) {
-        self.0.lend(|session| {
+        self.0.try_with(|session| {
             let ctx = core::ptr::from_ref(session.payload()).cast_mut().cast();
-            // SAFETY: `onConnClosed` detaches `session.conn` and lends no `Conn`. `self` roots the
-            // session until it detaches. The teardown of the VM ignores roots, and then the slot
-            // detaches when the session is dropped.
+            // SAFETY: `onConnClosed` unbinds `session.conn` and makes no `Conn`. `self` roots the
+            // session until it unbinds. The teardown of the VM ignores roots, and then
+            // `session.conn` unbinds when the session is dropped.
             unsafe { session.conn.bind(conn, ctx) }
         });
     }
 }
 
-impl Detach for QuicStream {
-    fn detach(&self) {
-        self.raw.detach();
+impl Unbind for QuicStream {
+    fn unbind(&self) {
+        self.raw.unbind();
     }
 }
 
-impl Attached<QuicStream> {
-    pub(super) fn bind(&self, stream: &Stream) {
-        self.0.lend(|attached| {
-            let ctx = core::ptr::from_ref(attached.payload()).cast_mut().cast();
+impl StrongCtx<QuicStream> {
+    pub(super) fn bind(&self, raw: &Stream) {
+        self.0.try_with(|stream| {
+            let ctx = core::ptr::from_ref(stream.payload()).cast_mut().cast();
             // SAFETY: as for a session, with `onStreamClose`.
-            unsafe { attached.raw.bind(stream, ctx) }
+            unsafe { stream.raw.bind(raw, ctx) }
         });
     }
 }
 
 /// # Safety
-/// `ctx` is null or was given to lsquic by `Attached::<T>::bind`, and lsquic still has it.
-unsafe fn with_ctx<T: Detach, R>(ctx: *mut c_void, f: impl FnOnce(&T) -> R) -> Option<R> {
+/// `ctx` is null, or `StrongCtx::<T>::bind` set it and it is still bound.
+unsafe fn with_ctx<T: Unbind, R>(ctx: *mut c_void, f: impl FnOnce(&T) -> R) -> Option<R> {
     // SAFETY: not dropped yet, see `bind`.
     let result = f(unsafe { ctx.cast::<T>().as_ref() }?);
-    // The collector sees the wrapper up to here, even if `f` dropped the root.
+    // Keeps the wrapper visible to the GC's stack scan, as `f` can drop the `StrongCtx`.
     core::hint::black_box(ctx);
     Some(result)
 }
 
 /// # Safety
-/// `ctx` is the context or the `peer_ctx` of an engine that is calling back.
+/// `ctx` is the `EngineCtx` of an engine that is running a callback.
 unsafe fn with_endpoint<R>(ctx: *mut c_void, f: impl FnOnce(&QuicEndpoint) -> R) -> Option<R> {
-    // SAFETY: `Shared` outlives its engine, and `endpoint` is borrowed further up the stack.
-    unsafe { (*ctx.cast::<Shared>()).endpoint.get().as_ref() }.map(f)
+    // SAFETY: an `EngineCtx` outlives its engine, and `call_with_endpoint` borrows `endpoint`.
+    unsafe { (*ctx.cast::<EngineCtx>()).endpoint.get().as_ref() }.map(f)
 }
 
-/// The local address and the peer's.
-pub(super) fn addresses(conn: &Conn) -> Option<(StoredAddr, StoredAddr)> {
+/// `(local, peer)`.
+pub(super) fn conn_sockaddrs(conn: &Conn) -> Option<(StoredAddr, StoredAddr)> {
     let (mut local, mut peer) = (null(), null());
     // SAFETY: the conn is live. On success both point into its `network_path`, where each has the
     // size of a `sockaddr_in6` and is aligned for one.
     unsafe {
-        (lsquic::lsquic_conn_get_sockaddr(conn.as_ptr()?, &raw mut local, &raw mut peer) == 0)
+        (lsquic::lsquic_conn_get_sockaddr(conn.raw()?, &raw mut local, &raw mut peer) == 0)
             .then(|| (*local.cast(), *peer.cast()))
     }
 }
 
-/// `struct lsquic_out_spec`. Only lsquic makes one, and it lends it with what it points to.
+/// Mirrors `struct lsquic_out_spec`. Only lsquic makes one, and `iov` is valid for as long as it is.
 #[repr(C)]
 pub(super) struct OutSpec<'a> {
     iov: *const lsquic::iovec,
     iovlen: usize,
-    pub(super) local: &'a StoredAddr,
-    pub(super) dest: &'a StoredAddr,
+    pub(super) local_sa: &'a StoredAddr,
+    pub(super) dest_sa: &'a StoredAddr,
     _peer_ctx: *mut c_void,
     _conn_ctx: *mut c_void,
     _ecn: c_int,
 }
 
 // node_quic_shim.c asserts the same numbers.
-bun_opaque::assert_ffi_layout!(OutSpec<'static>, 56, 8; iov @ 0, iovlen @ 8, local @ 16, dest @ 24);
+bun_opaque::assert_ffi_layout!(OutSpec<'static>, 56, 8; iov @ 0, iovlen @ 8, local_sa @ 16, dest_sa @ 24);
 
 impl OutSpec<'_> {
     pub(super) fn iov(&self) -> &[lsquic::iovec] {
@@ -360,7 +371,7 @@ unsafe extern "C" fn Bun__nodeQuic__packetsOut(
     specs: *const OutSpec<'_>,
     count: c_uint,
 ) -> c_int {
-    // SAFETY: lsquic lends `count` specs for this call. The addresses are as in `addresses`.
+    // SAFETY: `specs[..count]` is valid for this callback. The addresses are as in `conn_sockaddrs`.
     let sent = unsafe { with_endpoint(ctx, |e| e.packets_out(slice(specs, count as usize))) };
     let sent = sent.unwrap_or(0);
     if sent < count as usize {
@@ -383,25 +394,28 @@ unsafe extern "C" fn Bun__nodeQuic__getSslCtx(
     ctx: *mut c_void,
     _local: *const c_void,
 ) -> *mut bun_boringssl_sys::SSL_CTX {
-    // SAFETY: the context or the `peer_ctx` of the engine. lsquic takes a reference to the result
-    // before it calls back again.
-    let shared = unsafe { &*ctx.cast::<Shared>() };
-    (shared.tls).with_taken(|tls| tls.as_ref().map_or(null_mut(), TlsContext::raw))
+    // SAFETY: the engine's `EngineCtx`. lsquic takes a reference to the result before the next
+    // callback.
+    let ctx = unsafe { &*ctx.cast::<EngineCtx>() };
+    ctx.tls
+        .with_taken(|tls| tls.as_ref().map_or(null_mut(), TlsContext::raw))
 }
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__nodeQuic__lookupCert(
     ctx: *mut c_void,
     local: *const c_void,
-    servername: *const c_char,
+    sni: *const c_char,
 ) -> *mut bun_boringssl_sys::SSL_CTX {
-    // SAFETY: lsquic lends a C string or null. It takes a reference to the result before it calls
-    // back again. BoringSSL selects the ALPN, which reads the `TlsContext`, in the same step.
+    // SAFETY: `sni` is null or a C string that is valid for this callback. lsquic takes a reference
+    // to the result before the next callback. BoringSSL runs the ALPN select callback, which
+    // reads the `TlsContext`, in the same handshake step.
     unsafe {
-        if !servername.is_null() {
-            let host = CStr::from_ptr(servername).to_bytes();
+        if !sni.is_null() {
+            let host = CStr::from_ptr(sni).to_bytes();
             let found = with_endpoint(ctx, |e| {
-                (e.sni_contexts).with_taken(|entries| match_sni(entries, host).map(TlsContext::raw))
+                e.sni_contexts
+                    .with_taken(|entries| match_sni(entries, host).map(TlsContext::raw))
             });
             if let Some(Some(found)) = found {
                 return found;
@@ -414,64 +428,61 @@ unsafe extern "C" fn Bun__nodeQuic__lookupCert(
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__nodeQuic__onMiniConnFailed(
     ctx: *mut c_void,
-    peer: &StoredAddr,
+    peer_sa: &StoredAddr,
     error_code: u64,
 ) {
-    // SAFETY: the context of the engine.
-    unsafe { with_endpoint(ctx, |e| e.on_mini_conn_failed(peer, error_code)) };
+    // SAFETY: the engine's `EngineCtx`.
+    unsafe { with_endpoint(ctx, |e| e.on_mini_conn_failed(peer_sa, error_code)) };
 }
 
-/// The conn of `connect` has no endpoint to go to: `connect` binds it.
+/// Does nothing for a client conn, which `Engine::connect` binds.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__nodeQuic__onNewConn(
     ctx: *mut c_void,
     c: *mut lsquic_conn,
 ) -> *mut c_void {
-    // SAFETY: lsquic lends the conn for this call, in which its engine can't run.
+    // SAFETY: `c` is live for this callback, which can't re-enter its engine.
     unsafe {
-        with_endpoint(ctx, |e| e.on_new_conn(&Conn::lent(c)));
+        with_endpoint(ctx, |e| e.on_new_conn(&Conn::from_raw(c)));
         lsquic::lsquic_conn_get_ctx(c)
     }
 }
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__nodeQuic__onConnClosed(c: *mut lsquic_conn) {
-    // SAFETY: lsquic lends the conn for this call.
+    // SAFETY: `c` is live for this callback.
     unsafe {
         with_ctx(lsquic::lsquic_conn_get_ctx(c), |session: &QuicSession| {
             let status = session.conn.status();
-            session.detach();
+            session.unbind();
             session.on_conn_closed(status);
         })
     };
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__nodeQuic__onDatagramWrite(
+unsafe extern "C" fn Bun__nodeQuic__onDgWrite(
     c: *mut lsquic_conn,
-    buf: *mut u8,
-    room: usize,
+    buf: *mut MaybeUninit<u8>,
+    len: usize,
 ) -> isize {
-    // SAFETY: lsquic lends the conn, and `room` bytes at `buf`, for this call.
-    unsafe {
-        let ctx = lsquic::lsquic_conn_get_ctx(c);
-        match with_ctx(ctx, |session: &QuicSession| session.next_datagram(room)) {
-            Some(Some(payload)) if payload.len() <= room => {
-                buf.copy_from_nonoverlapping(payload.as_ptr(), payload.len());
-                payload.len() as isize
-            }
-            // lsquic frames any value >= 0, so 0 would put an empty DATAGRAM frame on the wire.
-            _ => -1,
-        }
-    }
+    // SAFETY: `c` is live and `buf[..len]` is writable for this callback.
+    let written = unsafe {
+        with_ctx(lsquic::lsquic_conn_get_ctx(c), |session: &QuicSession| {
+            session.on_dg_write(slice_mut(buf, len))
+        })
+    };
+    // -1 means "nothing written"; lsquic treats any value >= 0 as a
+    // datagram it should frame, so 0 emits an empty DATAGRAM frame.
+    written.flatten().map_or(-1, |n| n as isize)
 }
 
 macro_rules! session_callbacks {
     ($($symbol:ident($($arg:ident: $Arg:ty),*) => $method:ident($($value:expr),*);)+) => {$(
         #[unsafe(no_mangle)]
         unsafe extern "C" fn $symbol(c: *mut lsquic_conn, $($arg: $Arg),*) {
-            // SAFETY: lsquic lends the conn, and `len` bytes at `data`, for this call. The
-            // addresses are as in `addresses`.
+            // SAFETY: `c` is live and `data[..len]` is valid for this callback. The addresses are
+            // as in `conn_sockaddrs`.
             unsafe {
                 with_ctx(lsquic::lsquic_conn_get_ctx(c), |session: &QuicSession| {
                     session.$method($($value),*)
@@ -495,12 +506,12 @@ session_callbacks! {
     Bun__nodeQuic__onEarlyDataFailed() => on_early_data_failed();
     Bun__nodeQuic__onPathSwitch(
         validated: c_int,
-        preferred: c_int,
+        is_preferred: c_int,
         new_local: &StoredAddr,
         new_peer: &StoredAddr,
         old_local: &StoredAddr,
         old_peer: &StoredAddr
-    ) => on_path_switch(validated != 0, preferred != 0, [*new_local, *new_peer, *old_local, *old_peer]);
+    ) => on_path_switch(validated != 0, is_preferred != 0, new_local, new_peer, old_local, old_peer);
     Bun__nodeQuic__onOrigin(data: *const u8, len: usize, fin: c_int)
         => on_origin(slice(data, len), fin != 0);
 }
@@ -523,7 +534,7 @@ pub(super) unsafe fn on_keylog(ssl: *const c_void, line: &[u8]) {
         if peer_ctx.is_null() {
             return;
         }
-        if let Some((_, peer)) = addresses(&Conn::lent(c)) {
+        if let Some((_, peer)) = conn_sockaddrs(&Conn::from_raw(c)) {
             with_endpoint(peer_ctx, |e| e.buffer_early_keylog(ssl.addr(), peer, line));
         }
     }
@@ -537,13 +548,13 @@ unsafe extern "C" fn Bun__nodeQuic__onNewStream(
     if s.is_null() {
         return null_mut();
     }
-    // SAFETY: lsquic lends the stream and its conn for this call, in which their engine can't run.
-    // An `Attached` names the session.
+    // SAFETY: `s` and its conn are live for this callback, which can't re-enter their engine. A
+    // `StrongCtx` roots the session.
     unsafe {
         let ctx = lsquic::lsquic_conn_get_ctx(lsquic::lsquic_stream_conn(s));
         if !ctx.is_null() {
-            StrongWrapper::lend_payload(ctx.cast(), |session| {
-                QuicSession::on_new_stream(session, &Stream::lent(s))
+            StrongWrapper::try_with_payload_ptr(ctx.cast(), |session| {
+                QuicSession::on_new_stream(session, &Stream::from_raw(s))
             });
         }
         lsquic::lsquic_stream_get_ctx(s)
@@ -552,14 +563,14 @@ unsafe extern "C" fn Bun__nodeQuic__onNewStream(
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__nodeQuic__onStreamRead(_: *mut lsquic_stream, ctx: *mut c_void) {
-    // SAFETY: the context of the stream.
-    unsafe { with_ctx(ctx, QuicStream::on_read) };
+    // SAFETY: the ctx of the stream.
+    unsafe { with_ctx(ctx, QuicStream::on_stream_read) };
 }
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__nodeQuic__onStreamWrite(_: *mut lsquic_stream, ctx: *mut c_void) {
     // SAFETY: as above.
-    unsafe { with_ctx(ctx, QuicStream::on_write) };
+    unsafe { with_ctx(ctx, QuicStream::on_stream_write) };
 }
 
 #[unsafe(no_mangle)]
@@ -569,7 +580,7 @@ unsafe extern "C" fn Bun__nodeQuic__onStreamReset(
     how: c_int,
 ) {
     // SAFETY: as above.
-    unsafe { with_ctx(ctx, |stream: &QuicStream| stream.on_reset(how)) };
+    unsafe { with_ctx(ctx, |stream: &QuicStream| stream.on_stream_reset(how)) };
 }
 
 #[unsafe(no_mangle)]
@@ -577,8 +588,8 @@ unsafe extern "C" fn Bun__nodeQuic__onStreamClose(_: *mut lsquic_stream, ctx: *m
     // SAFETY: as above.
     unsafe {
         with_ctx(ctx, |stream: &QuicStream| {
-            stream.detach();
-            stream.on_close();
+            stream.unbind();
+            stream.on_stream_close();
         })
     };
 }

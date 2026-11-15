@@ -168,8 +168,8 @@ impl TlsConfig {
     }
 }
 
-/// Live until the engine of `conn` runs again, which nothing in this file makes it do.
-fn ssl_of(conn: &Conn) -> Option<*mut ssl::SSL> {
+/// Valid until the engine of `conn` runs again. Nothing in this file runs it.
+fn conn_ssl(conn: &Conn) -> Option<*mut ssl::SSL> {
     Some(conn.ssl()?.as_ptr().cast())
 }
 
@@ -181,10 +181,10 @@ pub(super) fn early_data_info(conn: &Conn) -> (bool, bool) {
         fn SSL_early_data_accepted(ssl: *const ssl::SSL) -> c_int;
         fn SSL_get_early_data_reason(ssl: *const ssl::SSL) -> c_int;
     }
-    let Some(ssl_ptr) = ssl_of(conn) else {
+    let Some(ssl_ptr) = conn_ssl(conn) else {
         return (false, false);
     };
-    // SAFETY: see `ssl_of`.
+    // SAFETY: see `conn_ssl`.
     let (accepted, reason) = unsafe {
         (
             SSL_early_data_accepted(ssl_ptr) != 0,
@@ -209,7 +209,7 @@ pub(super) struct TlsContext {
 }
 
 unsafe extern "C" fn keylog_cb(ssl: *const ssl::SSL, line: *const core::ffi::c_char) {
-    // SAFETY: BoringSSL lends a C string. Only an `Engine` makes an `SSL` from a `TlsContext`.
+    // SAFETY: `line` is a C string that is valid for this callback. Only an `Engine` makes an `SSL` from a `TlsContext`.
     unsafe { super::engine::on_keylog(ssl.cast(), core::ffi::CStr::from_ptr(line).to_bytes()) }
 }
 
@@ -448,7 +448,7 @@ impl TlsContext {
         self.ctx.as_ptr()
     }
 
-    pub(super) fn selects_alpn(&self) -> bool {
+    pub(super) fn has_alpn_select_cb(&self) -> bool {
         self.alpn.is_some()
     }
 
@@ -464,10 +464,10 @@ impl TlsContext {
 }
 
 pub(super) fn negotiated_alpn(conn: &Conn) -> Option<Vec<u8>> {
-    let ssl = ssl_of(conn)?;
+    let ssl = conn_ssl(conn)?;
     let mut data: *const u8 = core::ptr::null();
     let mut len: u32 = 0;
-    // SAFETY: see `ssl_of`.
+    // SAFETY: see `conn_ssl`.
     unsafe {
         ssl::SSL_get0_alpn_selected(
             ssl,
@@ -521,8 +521,8 @@ pub(super) fn validation_error_strings(code: i32) -> (&'static str, &'static str
 }
 
 pub(super) fn validation_error(conn: &Conn) -> Option<(&'static str, &'static str)> {
-    // SAFETY: see `ssl_of`.
-    let code = unsafe { ssl::SSL_get_verify_result(ssl_of(conn)?) };
+    // SAFETY: see `conn_ssl`.
+    let code = unsafe { ssl::SSL_get_verify_result(conn_ssl(conn)?) };
     if code == 0 {
         return None;
     }
@@ -530,8 +530,8 @@ pub(super) fn validation_error(conn: &Conn) -> Option<(&'static str, &'static st
 }
 
 pub(super) fn ephemeral_key_info(conn: &Conn) -> Option<(&'static str, Option<&'static str>, u32)> {
-    // SAFETY: see `ssl_of`.
-    let group = unsafe { ssl::SSL_get_group_id(ssl_of(conn)?) };
+    // SAFETY: see `conn_ssl`.
+    let group = unsafe { ssl::SSL_get_group_id(conn_ssl(conn)?) };
     if group == 0 {
         return None;
     }
@@ -555,7 +555,7 @@ pub(super) fn ephemeral_key_info(conn: &Conn) -> Option<(&'static str, Option<&'
 }
 
 pub(super) fn local_certificate_der(conn: &Conn) -> Option<Vec<u8>> {
-    let ssl = ssl_of(conn)?;
+    let ssl = conn_ssl(conn)?;
     // `load_cert_chain` only installs certificates on the context. The context parses its
     // leaf once, but `SSL_get_certificate` parses a copy for each SSL.
     // SAFETY: returns a borrowed X509 owned by `ssl`'s context.
@@ -567,6 +567,6 @@ pub(super) fn local_certificate_der(conn: &Conn) -> Option<Vec<u8>> {
 }
 
 pub(super) fn peer_certificate_der(conn: &Conn) -> Option<Vec<u8>> {
-    let cert = ssl::SSL::opaque_ref(ssl_of(conn)?).peer_certificate()?;
+    let cert = ssl::SSL::opaque_ref(conn_ssl(conn)?).peer_certificate()?;
     Some(cert.to_der()?.to_vec())
 }

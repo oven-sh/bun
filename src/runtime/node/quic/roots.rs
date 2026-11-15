@@ -1,28 +1,31 @@
-//! How an endpoint, its sessions and their streams reach each other: what names an object roots it.
+//! The GC roots through which an endpoint, its sessions and their streams reach each other.
 
+use core::borrow::Borrow;
 use core::cell::Cell;
+use core::marker::PhantomData;
 
-use bun_jsc::bindgen::{JsPayload, LentWrapper, StrongWrapper};
+use bun_jsc::bindgen::{BorrowedWrapper, JsPayload, StrongWrapper};
+use bun_ptr::CellExt as _;
 
-use crate::test_runner::cells::CellExt as _;
+/// An optional `StrongWrapper` that is set and taken through `&self`.
+pub(super) struct StrongWrapperCell<T>(Cell<Option<StrongWrapper<T>>>);
 
-pub(super) struct RootSlot<T>(Cell<Option<StrongWrapper<T>>>);
-
-impl<T: JsPayload> RootSlot<T> {
-    pub(super) fn new(root: Option<StrongWrapper<T>>) -> Self {
-        Self(Cell::new(root))
+impl<T: JsPayload> StrongWrapperCell<T> {
+    pub(super) fn new(value: Option<StrongWrapper<T>>) -> Self {
+        Self(Cell::new(value))
     }
 
-    pub(super) fn set(&self, root: StrongWrapper<T>) {
-        self.0.set(Some(root));
+    pub(super) fn set(&self, value: StrongWrapper<T>) {
+        self.0.set(Some(value));
     }
 
     pub(super) fn take(&self) -> Option<StrongWrapper<T>> {
         self.0.take()
     }
 
-    pub(super) fn with<R>(&self, f: impl FnOnce(LentWrapper<'_, T>) -> R) -> Option<R> {
-        StrongWrapper::lend_from(&self.0, Option::as_ref, f)
+    /// `f` can change the cell.
+    pub(super) fn with<R>(&self, f: impl FnOnce(BorrowedWrapper<'_, T>) -> R) -> Option<R> {
+        StrongWrapper::try_with_cell(&self.0, Option::as_ref, f)
     }
 }
 
@@ -30,53 +33,43 @@ impl<T: JsPayload> RootSlot<T> {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct Key(u64);
 
-pub(super) trait Root {
-    type Payload: JsPayload;
-    fn wrapper(&self) -> &StrongWrapper<Self::Payload>;
-}
-
-impl<T: JsPayload> Root for StrongWrapper<T> {
-    type Payload = T;
-    fn wrapper(&self) -> &Self {
-        self
-    }
-}
-
-pub(super) struct Table<E> {
+pub(super) struct StrongWrapperMap<T, V = StrongWrapper<T>> {
     /// Sorted by key.
-    entries: Cell<Vec<(Key, E)>>,
+    entries: Cell<Vec<(Key, V)>>,
     next_key: Cell<u64>,
+    _payload: PhantomData<T>,
 }
 
-fn position<E>(entries: &[(Key, E)], key: Key) -> Result<usize, usize> {
+fn binary_search<V>(entries: &[(Key, V)], key: Key) -> Result<usize, usize> {
     entries.binary_search_by_key(&key, |entry| entry.0)
 }
 
-impl<E: Root> Table<E> {
+impl<T: JsPayload, V: Borrow<StrongWrapper<T>>> StrongWrapperMap<T, V> {
     pub(super) const fn new() -> Self {
         Self {
             entries: Cell::new(Vec::new()),
             next_key: Cell::new(0),
+            _payload: PhantomData,
         }
     }
 
-    pub(super) fn new_key(&self) -> Key {
+    pub(super) fn next_key(&self) -> Key {
         Key(self.next_key.replace(self.next_key.get() + 1))
     }
 
-    pub(super) fn insert(&self, key: Key, entry: E) {
+    pub(super) fn insert(&self, key: Key, value: V) {
         self.entries.with_taken(|entries| {
-            let (Ok(at) | Err(at)) = position(entries, key);
-            entries.insert(at, (key, entry));
+            let (Ok(index) | Err(index)) = binary_search(entries, key);
+            entries.insert(index, (key, value));
         });
     }
 
-    pub(super) fn remove(&self, key: Key) -> Option<E> {
+    pub(super) fn remove(&self, key: Key) -> Option<V> {
         self.entries
-            .with_taken(|entries| Some(entries.remove(position(entries, key).ok()?).1))
+            .with_taken(|entries| Some(entries.remove(binary_search(entries, key).ok()?).1))
     }
 
-    pub(super) fn take_all(&self) -> impl Iterator<Item = E> {
+    pub(super) fn drain(&self) -> impl Iterator<Item = V> {
         self.entries.take().into_iter().map(|entry| entry.1)
     }
 
@@ -88,54 +81,51 @@ impl<E: Root> Table<E> {
         self.len() == 0
     }
 
-    /// The table is empty while `f` runs.
-    pub(super) fn with_entry<R>(&self, key: Key, f: impl FnOnce(&E) -> R) -> Option<R> {
+    /// The map is empty while `f` runs.
+    pub(super) fn with_value<R>(&self, key: Key, f: impl FnOnce(&V) -> R) -> Option<R> {
         self.entries
-            .with_taken(|entries| Some(f(&entries[position(entries, key).ok()?].1)))
+            .with_taken(|entries| Some(f(&entries[binary_search(entries, key).ok()?].1)))
     }
 
-    /// The table is empty while `f` runs.
-    pub(super) fn find_map<R>(
-        &self,
-        mut f: impl FnMut(Key, &E::Payload) -> Option<R>,
-    ) -> Option<R> {
+    /// The map is empty while `f` runs.
+    pub(super) fn find_map<R>(&self, mut f: impl FnMut(Key, &T) -> Option<R>) -> Option<R> {
         self.entries.with_taken(|entries| {
             entries
                 .iter()
-                .find_map(|(key, entry)| entry.wrapper().lend(|lent| f(*key, &lent))?)
+                .find_map(|(key, value)| value.borrow().try_with(|wrapper| f(*key, &wrapper))?)
         })
     }
 
-    /// The table is empty while `f` runs.
-    pub(super) fn any(&self, mut f: impl FnMut(&E::Payload) -> bool) -> bool {
+    /// The map is empty while `f` runs.
+    pub(super) fn any(&self, mut f: impl FnMut(&T) -> bool) -> bool {
         self.find_map(|_, payload| f(payload).then_some(()))
             .is_some()
     }
 
-    /// `f` can change the table.
+    /// `f` can change the map.
     pub(super) fn with<R>(
         &self,
         key: Key,
-        f: impl FnOnce(LentWrapper<'_, E::Payload>) -> R,
+        f: impl FnOnce(BorrowedWrapper<'_, T>) -> R,
     ) -> Option<R> {
-        StrongWrapper::lend_from(
+        StrongWrapper::try_with_cell(
             &self.entries,
-            |entries| Some(entries[position(entries, key).ok()?].1.wrapper()),
+            |entries| Some(entries[binary_search(entries, key).ok()?].1.borrow()),
             f,
         )
     }
 
-    /// Visits what is in the table now and still is when its turn comes. `f` can change the table.
-    pub(super) fn for_each(&self, mut f: impl FnMut(LentWrapper<'_, E::Payload>)) {
+    /// `f` can change the map. Skips what it removes, and keys that `next_key` returns from now on.
+    pub(super) fn for_each(&self, mut f: impl FnMut(BorrowedWrapper<'_, T>)) {
         let end = Key(self.next_key.get());
-        let mut from = Key(0);
-        while StrongWrapper::lend_from(
+        let mut start = Key(0);
+        while StrongWrapper::try_with_cell(
             &self.entries,
             |entries| {
-                let (Ok(at) | Err(at)) = position(entries, from);
-                let (key, entry) = entries.get(at).filter(|entry| entry.0 < end)?;
-                from = Key(key.0 + 1);
-                Some(entry.wrapper())
+                let (Ok(index) | Err(index)) = binary_search(entries, start);
+                let (key, value) = entries.get(index).filter(|entry| entry.0 < end)?;
+                start = Key(key.0 + 1);
+                Some(value.borrow())
             },
             &mut f,
         )

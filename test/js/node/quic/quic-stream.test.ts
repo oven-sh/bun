@@ -764,7 +764,7 @@ async function runWithServerKeys(script: string) {
   return { stdout, stderr, exitCode };
 }
 
-test.concurrent("destroy() doesn't abort a stream that lsquic freed after the abort was deferred", async () => {
+test.concurrent("a deferred abort doesn't use a stream that lsquic has freed", async () => {
   const result = await runWithServerKeys(`
     const remote = Promise.withResolvers(), dropped = Promise.withResolvers();
     const server = await listen(session => {
@@ -772,14 +772,14 @@ test.concurrent("destroy() doesn't abort a stream that lsquic freed after the ab
       session.ondatagram = () => session.sendDatagram("pong");
       session.onstream = stream => (stream.closed.catch(() => {}), remote.resolve(stream));
     }, serverOptions);
-    let gap = false, clientPort, pong;
+    let dropping = false, clientPort, pong;
     const relay = await Bun.udpSocket({
       hostname: "127.0.0.1",
       socket: {
         data(socket, data, port) {
           if (port !== server.address.port) socket.send(data, server.address.port, "127.0.0.1"), (clientPort = port);
-          else if (!gap || data.length < 400) socket.send(data, clientPort, "127.0.0.1");
-          else dropped.resolve(), pong && session.sendDatagram("ping"); // The pong can be in there.
+          else if (!dropping || data.length < 400) socket.send(data, clientPort, "127.0.0.1");
+          else dropped.resolve(), pong && session.sendDatagram("ping"); // The dropped packet may carry the pong.
         },
       },
     });
@@ -803,7 +803,7 @@ test.concurrent("destroy() doesn't abort a stream that lsquic freed after the ab
     await roundTrip();
 
     // The final size is known, and the read side stays open.
-    gap = true;
+    dropping = true;
     writer.writeSync(new Uint8Array(1000));
     await dropped.promise;
     writer.writeSync(new Uint8Array(1));
@@ -819,7 +819,7 @@ test.concurrent("destroy() doesn't abort a stream that lsquic freed after the ab
   expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
 });
 
-test.concurrent("a session that refers to its closed stream is collected", async () => {
+test.concurrent("a session that references its closed stream is garbage collected", async () => {
   const result = await runWithServerKeys(`
     import { heapStats } from "bun:jsc";
     const server = await listen(session => {
@@ -829,7 +829,7 @@ test.concurrent("a session that refers to its closed stream is collected", async
         stream.writer.endSync();
       };
     }, serverOptions);
-    async function once() {
+    async function openAndClose() {
       const session = await connect(server.address, clientOptions);
       await session.opened;
       session.control = await session.createBidirectionalStream({ body: "x" });
@@ -837,7 +837,7 @@ test.concurrent("a session that refers to its closed stream is collected", async
       await session.control.closed;
       await session.close();
     }
-    for (let i = 0; i < 4; i++) await once();
+    for (let i = 0; i < 4; i++) await openAndClose();
     const alive = ({ QuicSession = 0, QuicStream = 0 } = heapStats().objectTypeCounts) => QuicSession + QuicStream;
     let count = Infinity;
     for (let i = 0; i < 5 && count > 2; i++) {

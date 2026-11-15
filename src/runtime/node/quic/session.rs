@@ -2,25 +2,32 @@
 
 use core::cell::{Cell, OnceCell};
 use core::ffi::{c_int, c_uint, c_void};
+use core::mem::MaybeUninit;
 use core::net::{IpAddr, SocketAddr};
+use core::sync::atomic::Ordering::Relaxed;
+use core::sync::atomic::{AtomicU8, AtomicU16, AtomicU32, AtomicU64};
 use std::collections::VecDeque;
 
-use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper, LentWrapper, StrongWrapper};
+use bun_jsc::bindgen::{
+    BorrowedWrapper, JsLocal, JsPayload as _, JsScope, JsWrapper, StrongWrapper,
+};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{ArrayBuffer, JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc, Strong};
+use bun_jsc::{
+    ArrayBuffer, JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc, Strong, StrongCell,
+};
 
 use bun_lsquic_sys as lsquic;
+use bun_ptr::CellExt as _;
 
 use crate::socket::SocketAddress;
 use crate::socket::socket_address::{inet, sockaddr};
-use crate::test_runner::cells::{CellExt as _, StrongCell};
 
+use super::aliased_struct::{AliasedStruct, all_atomic_struct};
 use super::callbacks;
 use super::endpoint::{MS_PER_SEC, QuicEndpoint};
-use super::engine::{self, Attached};
-use super::exposed::{Exposed, U8, U16, U32, U64, state_struct};
+use super::engine::{self, StrongCtx};
 use super::now_ns;
-use super::roots::{Key, Root as _, RootSlot, Table};
+use super::roots::{Key, StrongWrapperCell, StrongWrapperMap};
 use super::stream::QuicStream;
 use super::tls;
 
@@ -149,32 +156,32 @@ impl StoredAddr {
     }
 }
 
-state_struct! {
+all_atomic_struct! {
     /// Mirrors Node's `Session::State` (`SESSION_STATE` in session.cc). The
     /// `IDX_STATE_SESSION_*` constants on the binding are `offset_of!` values
     /// into this struct, so the layout must stay in sync with what the JS layer
     /// reads (`src/js/internal/quic/state.ts`).
     pub(crate) struct SessionState {
-        pub(crate) listener_flags: U32,
-        pub(crate) closing: U8,
-        pub(crate) graceful_close: U8,
-        pub(crate) silent_close: U8,
-        pub(crate) stateless_reset: U8,
-        pub(crate) handshake_completed: U8,
-        pub(crate) handshake_confirmed: U8,
-        pub(crate) stream_open_allowed: U8,
-        pub(crate) priority_supported: U8,
-        pub(crate) headers_supported: U8,
-        pub(crate) wrapped: U8,
-        pub(crate) application_type: U8,
-        _pad0: U8,
-        pub(crate) no_error_code: U64,
-        pub(crate) internal_error_code: U64,
-        pub(crate) max_datagram_size: U16,
-        _pad1: [U8; 6],
-        pub(crate) last_datagram_id: U64,
-        pub(crate) max_pending_datagrams: U16,
-        _pad2: [U8; 6],
+        pub(crate) listener_flags: AtomicU32,
+        pub(crate) closing: AtomicU8,
+        pub(crate) graceful_close: AtomicU8,
+        pub(crate) silent_close: AtomicU8,
+        pub(crate) stateless_reset: AtomicU8,
+        pub(crate) handshake_completed: AtomicU8,
+        pub(crate) handshake_confirmed: AtomicU8,
+        pub(crate) stream_open_allowed: AtomicU8,
+        pub(crate) priority_supported: AtomicU8,
+        pub(crate) headers_supported: AtomicU8,
+        pub(crate) wrapped: AtomicU8,
+        pub(crate) application_type: AtomicU8,
+        _pad0: AtomicU8,
+        pub(crate) no_error_code: AtomicU64,
+        pub(crate) internal_error_code: AtomicU64,
+        pub(crate) max_datagram_size: AtomicU16,
+        _pad1: [AtomicU8; 6],
+        pub(crate) last_datagram_id: AtomicU64,
+        pub(crate) max_pending_datagrams: AtomicU16,
+        _pad2: [AtomicU8; 6],
     }
 }
 
@@ -235,8 +242,8 @@ pub(super) struct HskSnapshot {
 
 struct DeferredAbort {
     stream: Key,
-    /// Its entry of `streams`, once it has left: it stays attached, so it hears of lsquic's close.
-    removed: Option<Attached<QuicStream>>,
+    /// What `remove_stream` removed from `streams`. Still bound, so lsquic's `on_close` clears its `raw`.
+    removed: Option<StrongCtx<QuicStream>>,
     reset: Option<u64>,
     stop: Option<u64>,
     marker: u64,
@@ -357,13 +364,14 @@ impl SessionOptions {
 pub(crate) struct QuicSession {
     pub(super) conn: lsquic::BoundConn,
     /// Empty after `teardown`.
-    endpoint: RootSlot<QuicEndpoint>,
-    /// In the endpoint's `sessions`.
+    endpoint: StrongWrapperCell<QuicEndpoint>,
+    /// Key in the endpoint's `sessions`.
     key: Key,
     is_server: bool,
     local_addr: Cell<StoredAddr>,
     pub(super) remote_addr: Cell<StoredAddr>,
-    state: Exposed<SessionState, { SESSION_STATS_FIELDS.len() }>,
+    state: AliasedStruct<SessionState>,
+    stats: AliasedStruct<[AtomicU64; SESSION_STATS_FIELDS.len()]>,
     events: Cell<Vec<SessionEvent>>,
     origin_buf: Cell<Vec<u8>>,
     deferred_aborts: Cell<Vec<DeferredAbort>>,
@@ -389,7 +397,7 @@ pub(crate) struct QuicSession {
     final_conn_status: Cell<Option<(c_int, Vec<u8>)>>,
     pending_local_bidi: Cell<VecDeque<Key>>,
     pending_local_uni: Cell<VecDeque<Key>>,
-    streams: Table<Attached<QuicStream>>,
+    streams: StrongWrapperMap<QuicStream, StrongCtx<QuicStream>>,
     handshake_reported: Cell<bool>,
     new_token_reported: Cell<bool>,
     close_when_bound: Cell<bool>,
@@ -411,15 +419,16 @@ impl QuicSession {
         is_server: bool,
         application: Application,
         options: &SessionOptions,
-    ) -> JsResult<Attached<QuicSession>> {
+    ) -> JsResult<StrongCtx<QuicSession>> {
         let session = Self {
             conn: lsquic::BoundConn::default(),
-            endpoint: RootSlot::new(Some(endpoint)),
+            endpoint: StrongWrapperCell::new(Some(endpoint)),
             key,
             is_server,
             local_addr: Cell::new(StoredAddr::default()),
             remote_addr: Cell::new(StoredAddr::default()),
-            state: Exposed::new(),
+            state: AliasedStruct::new(SessionState::default()),
+            stats: AliasedStruct::new([const { AtomicU64::new(0) }; _]),
             events: Cell::new(Vec::new()),
             origin_buf: Cell::new(Vec::new()),
             deferred_aborts: Cell::new(Vec::new()),
@@ -440,7 +449,7 @@ impl QuicSession {
             final_conn_status: Cell::new(None),
             pending_local_bidi: Cell::new(VecDeque::new()),
             pending_local_uni: Cell::new(VecDeque::new()),
-            streams: Table::new(),
+            streams: StrongWrapperMap::new(),
             handshake_reported: Cell::new(false),
             new_token_reported: Cell::new(false),
             close_when_bound: Cell::new(false),
@@ -452,32 +461,40 @@ impl QuicSession {
             close_reported: Cell::new(false),
             destroyed: Cell::new(false),
             application_options_js: StrongCell::from(
-                (options.application.as_ref()).map(|app| Strong::create(app.get(), global)),
+                options
+                    .application
+                    .as_ref()
+                    .map(|app| Strong::create(app.get(), global)),
             ),
         };
         // This is the only write to the application fields, like node's `Session::SetApplication`.
         let s = &session.state;
-        s.internal_error_code.set(1);
-        s.stream_open_allowed.set(1);
-        s.application_type.set(application as u8);
+        s.internal_error_code.store(1, Relaxed);
+        s.stream_open_allowed.store(1, Relaxed);
+        s.application_type.store(application as u8, Relaxed);
         match application {
             Application::None => {}
-            Application::Default => s.headers_supported.set(HEADERS_UNSUPPORTED),
+            Application::Default => s.headers_supported.store(HEADERS_UNSUPPORTED, Relaxed),
             Application::Http3 => {
-                s.headers_supported.set(HEADERS_SUPPORTED);
-                s.priority_supported.set(1);
-                s.no_error_code.set(H3_NO_ERROR);
-                s.internal_error_code.set(H3_INTERNAL_ERROR);
+                s.headers_supported.store(HEADERS_SUPPORTED, Relaxed);
+                s.priority_supported.store(1, Relaxed);
+                s.no_error_code.store(H3_NO_ERROR, Relaxed);
+                s.internal_error_code.store(H3_INTERNAL_ERROR, Relaxed);
             }
         }
-        s.write_stat(IDX_STATS_SESSION_CREATED_AT, now_ns());
-        let buffers = session.state.buffers(global)?;
+        session.write_stat(IDX_STATS_SESSION_CREATED_AT, now_ns());
+        let state = session.state.to_array_buffer(global)?;
+        let stats = session.stats.to_array_buffer(global)?;
         let this_value = session.into_js_wrapper(global);
-        buffers.expose(global, this_value.to_js());
-        Ok(Attached::new(StrongWrapper::new(this_value, global)))
+        let handle = this_value.to_js();
+        handle.put(global, b"state", state);
+        handle.put(global, b"stats", stats);
+        handle.put(global, b"stateByteOffset", JSValue::js_number(0.0));
+        handle.put(global, b"statsByteOffset", JSValue::js_number(0.0));
+        Ok(StrongCtx::new(StrongWrapper::new(this_value, global)))
     }
 
-    /// `conn` was just bound to a session that was announced without one.
+    /// Call after `conn` is bound to a provisional session.
     pub(super) fn on_promoted(&self, early_keylog: Vec<Vec<u8>>) {
         for line in early_keylog {
             self.push_event(SessionEvent::Keylog(line));
@@ -491,14 +508,20 @@ impl QuicSession {
     }
 
     pub(super) fn cache_sockaddrs(&self) {
-        if let Some((local, peer)) = engine::addresses(&self.conn) {
+        if let Some((local, peer)) = engine::conn_sockaddrs(&self.conn) {
             self.local_addr.set(local);
             self.remote_addr.set(peer);
         }
     }
 
     fn has_listener(&self, flag: u32) -> bool {
-        self.state.listener_flags.get() & flag != 0
+        self.state.listener_flags.load(Relaxed) & flag != 0
+    }
+    fn add_stat(&self, idx: usize, delta: u64) {
+        self.write_stat(idx, self.stats[idx].load(Relaxed).wrapping_add(delta));
+    }
+    fn write_stat(&self, idx: usize, value: u64) {
+        self.stats[idx].store(value, Relaxed);
     }
     pub(super) fn is_server(&self) -> bool {
         self.is_server
@@ -545,7 +568,7 @@ impl QuicSession {
     pub(super) fn flush_deferred_aborts(&self) {
         let marker = self.write_marker.get();
         for e in self.deferred_aborts.take() {
-            let abort = |stream: LentWrapper<'_, QuicStream>| {
+            let abort = |stream: BorrowedWrapper<'_, QuicStream>| {
                 let s = &stream.raw;
                 if e.marker != marker {
                     // Node parity — the queued frames are dropped.
@@ -562,7 +585,7 @@ impl QuicSession {
                 }
             };
             match &e.removed {
-                Some(removed) => removed.wrapper().lend(abort),
+                Some(removed) => removed.try_with(abort),
                 None => self.streams.with(e.stream, abort),
             };
         }
@@ -591,7 +614,28 @@ impl QuicSession {
             (true, false) => IDX_STATS_SESSION_UNI_IN_STREAM_COUNT,
             (true, true) => IDX_STATS_SESSION_UNI_OUT_STREAM_COUNT,
         };
-        self.state.add_stat(idx, 1);
+        self.add_stat(idx, 1);
+    }
+
+    fn on_remote_stream(this: BorrowedWrapper<'_, Self>, raw: &lsquic::Stream, id: u64) {
+        let key = this.streams.next_key();
+        let stream = match QuicStream::create(this.global(), this.to_strong(), key) {
+            Ok(stream) => stream,
+            Err(e) => return crate::dispatch::fold(Err(e)),
+        };
+        stream.bind(raw);
+        let qs = stream.payload();
+        qs.on_open(this.is_server);
+        qs.mark_wrote_to_lsquic();
+        this.bump_stream_stat(id, false);
+        this.push_event(SessionEvent::StreamReady {
+            stream: key,
+            remote: true,
+        });
+        if let Some(code) = qs.pre_reset_code() {
+            this.push_event(SessionEvent::StreamReset { stream: key, code });
+        }
+        this.streams.insert(key, stream);
     }
 
     fn refresh_conn_stats(&self) {
@@ -601,21 +645,20 @@ impl QuicSession {
         // lsquic reports RTT in microseconds; Node's session.stats are
         // BigInt nanoseconds.
         let us_to_ns = |us: u32| u64::from(us) * 1000;
-        let s = &self.state;
-        s.write_stat(IDX_STATS_SESSION_BYTES_RECEIVED, info.bytes_rcvd);
-        s.write_stat(IDX_STATS_SESSION_BYTES_SENT, info.bytes_sent);
-        s.write_stat(IDX_STATS_SESSION_LOSS_RETRANSMIT_COUNT, info.pkts_retx);
-        s.write_stat(IDX_STATS_SESSION_CWND, u64::from(info.cwnd));
-        s.write_stat(IDX_STATS_SESSION_LATEST_RTT, us_to_ns(info.rtt));
-        s.write_stat(IDX_STATS_SESSION_MIN_RTT, us_to_ns(info.rtt_min));
-        s.write_stat(IDX_STATS_SESSION_RTTVAR, us_to_ns(info.rttvar));
-        s.write_stat(IDX_STATS_SESSION_SMOOTHED_RTT, us_to_ns(info.rtt));
-        s.write_stat(IDX_STATS_SESSION_PKT_SENT, info.pkts_sent);
-        s.write_stat(IDX_STATS_SESSION_PKT_RECV, info.pkts_rcvd);
-        s.write_stat(IDX_STATS_SESSION_PKT_LOST, info.pkts_lost);
-        s.write_stat(IDX_STATS_SESSION_BYTES_RECV, info.bytes_rcvd);
+        self.write_stat(IDX_STATS_SESSION_BYTES_RECEIVED, info.bytes_rcvd);
+        self.write_stat(IDX_STATS_SESSION_BYTES_SENT, info.bytes_sent);
+        self.write_stat(IDX_STATS_SESSION_LOSS_RETRANSMIT_COUNT, info.pkts_retx);
+        self.write_stat(IDX_STATS_SESSION_CWND, u64::from(info.cwnd));
+        self.write_stat(IDX_STATS_SESSION_LATEST_RTT, us_to_ns(info.rtt));
+        self.write_stat(IDX_STATS_SESSION_MIN_RTT, us_to_ns(info.rtt_min));
+        self.write_stat(IDX_STATS_SESSION_RTTVAR, us_to_ns(info.rttvar));
+        self.write_stat(IDX_STATS_SESSION_SMOOTHED_RTT, us_to_ns(info.rtt));
+        self.write_stat(IDX_STATS_SESSION_PKT_SENT, info.pkts_sent);
+        self.write_stat(IDX_STATS_SESSION_PKT_RECV, info.pkts_rcvd);
+        self.write_stat(IDX_STATS_SESSION_PKT_LOST, info.pkts_lost);
+        self.write_stat(IDX_STATS_SESSION_BYTES_RECV, info.bytes_rcvd);
         if let Some(pings) = self.conn.pings_received() {
-            s.write_stat(IDX_STATS_SESSION_PING_RECV, pings);
+            self.write_stat(IDX_STATS_SESSION_PING_RECV, pings);
         }
     }
 
@@ -623,14 +666,18 @@ impl QuicSession {
         let Some(tp) = self.conn.peer_transport_params() else {
             return;
         };
-        self.state.max_datagram_size.set(datagram_budget(&tp));
+        self.state
+            .max_datagram_size
+            .store(datagram_budget(&tp), Relaxed);
     }
 
     fn deliver_pending_tickets(&self, this_value: JSValue, global: &JSGlobalObject) {
         if self.pending_tickets.with_taken(|q| q.is_empty()) {
             return;
         }
-        if self.destroyed.get() || self.close_reported.get() || self.state.graceful_close.get() != 0
+        if self.destroyed.get()
+            || self.close_reported.get()
+            || self.state.graceful_close.load(Relaxed) != 0
         {
             self.pending_tickets.with_taken(VecDeque::clear);
             return;
@@ -738,7 +785,7 @@ impl QuicSession {
                 }
             }
             SessionEvent::HandshakeConfirmed => {
-                self.state.handshake_confirmed.set(1);
+                self.state.handshake_confirmed.store(1, Relaxed);
                 if self.handshake_pending_ok.get() {
                     let close_wins = self.streams.is_empty()
                         && self.events.with_taken(|e| {
@@ -947,14 +994,25 @@ impl QuicSession {
                 }
             }
             SessionEvent::StreamWake { stream } => {
-                self.streams.with(stream, |stream| {
-                    if !stream.is_announce_suppressed() {
-                        stream.wake_reader(global);
+                let wakeup = self.streams.with(stream, |s| {
+                    if s.is_announce_suppressed() {
+                        return None;
                     }
+                    s.take_wakeup()
                 });
+                if let Some(wakeup) = wakeup.flatten() {
+                    let vm = global.bun_vm();
+                    vm.event_loop().run_callback(
+                        bun_event_loop::ContextId::NONE,
+                        wakeup.get(),
+                        global,
+                        JSValue::UNDEFINED,
+                        &[],
+                    );
+                }
             }
             SessionEvent::Datagram { payload, early } => {
-                self.state.add_stat(IDX_STATS_SESSION_DATAGRAMS_RECEIVED, 1);
+                self.add_stat(IDX_STATS_SESSION_DATAGRAMS_RECEIVED, 1);
                 if !self.has_listener(LISTENER_FLAG_DATAGRAM) || self.peer_cert_rejected.get() {
                     return Ok(());
                 }
@@ -972,7 +1030,7 @@ impl QuicSession {
             }
             SessionEvent::DatagramStatus { id, sent } => {
                 if sent {
-                    self.state.add_stat(IDX_STATS_SESSION_DATAGRAMS_SENT, 1);
+                    self.add_stat(IDX_STATS_SESSION_DATAGRAMS_SENT, 1);
                     self.inflight_datagrams.with_taken(|q| q.push_back(id));
                     return Ok(());
                 }
@@ -995,7 +1053,7 @@ impl QuicSession {
             SessionEvent::EarlyDataFailed => {
                 // Node parity: their `closed` promises reject with an
                 // application error.
-                let code = self.state.internal_error_code.get().max(1);
+                let code = self.state.internal_error_code.load(Relaxed).max(1);
                 self.streams
                     .for_each(|stream| stream.cancel_early_rejected(code));
             }
@@ -1013,10 +1071,9 @@ impl QuicSession {
                         break;
                     };
                     if acked {
-                        self.state
-                            .add_stat(IDX_STATS_SESSION_DATAGRAMS_ACKNOWLEDGED, 1);
+                        self.add_stat(IDX_STATS_SESSION_DATAGRAMS_ACKNOWLEDGED, 1);
                     } else {
-                        self.state.add_stat(IDX_STATS_SESSION_DATAGRAMS_LOST, 1);
+                        self.add_stat(IDX_STATS_SESSION_DATAGRAMS_LOST, 1);
                     }
                     if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) || undelivered.is_err() {
                         continue;
@@ -1170,21 +1227,21 @@ impl QuicSession {
         Ok(())
     }
 
-    fn stream_handle(&self, key: Key, wants: impl FnOnce(&QuicStream) -> bool) -> Option<JSValue> {
+    fn stream_handle(&self, key: Key, filter: impl FnOnce(&QuicStream) -> bool) -> Option<JSValue> {
         self.streams
-            .with(key, |stream| wants(&stream).then(|| stream.to_js()))?
+            .with(key, |stream| filter(&stream).then(|| stream.to_js()))?
     }
 
     fn announce_stream(
         &self,
         this_value: JSValue,
         global: &JSGlobalObject,
-        stream: LentWrapper<'_, QuicStream>,
+        stream: BorrowedWrapper<'_, QuicStream>,
     ) {
         // A remote stream that arrives already-reset while this
         // session's close is in the same batch must never be
         // surfaced (Node's onstream count excludes it).
-        if self.conn.is_empty() && stream.pre_reset_code().is_some() {
+        if self.conn.is_null() && stream.pre_reset_code().is_some() {
             stream.suppress_announce();
             return;
         }
@@ -1195,7 +1252,7 @@ impl QuicSession {
         // Already closing: the CONNECTION_CLOSE precedes this
         // stream's packet and a closing endpoint discards new
         // streams (RFC 9000 s10.2.1). Raw QUIC only.
-        if self.state.graceful_close.get() == 1 && !self.is_http() {
+        if self.state.graceful_close.load(Relaxed) == 1 && !self.is_http() {
             stream.suppress_announce();
             stream.raw.close();
             return;
@@ -1227,7 +1284,7 @@ impl QuicSession {
         &self,
         global: &JSGlobalObject,
         key: Key,
-        stream: LentWrapper<'_, QuicStream>,
+        stream: BorrowedWrapper<'_, QuicStream>,
     ) {
         if stream.mark_close_reported() {
             return;
@@ -1274,20 +1331,22 @@ impl QuicSession {
             .filter(|_| ok)
             .and_then(|s| s.peer_transport_params.as_ref())
             .map_or(0, datagram_budget);
-        self.state.handshake_completed.set(ok as u8);
-        self.state.handshake_confirmed.set(ok as u8);
-        self.state.stream_open_allowed.set(open_allowed as u8);
-        self.state.max_datagram_size.set(max_datagram_size);
+        self.state.handshake_completed.store(ok as u8, Relaxed);
+        self.state.handshake_confirmed.store(ok as u8, Relaxed);
+        self.state
+            .stream_open_allowed
+            .store(open_allowed as u8, Relaxed);
+        self.state
+            .max_datagram_size
+            .store(max_datagram_size, Relaxed);
         if !ok {
             return;
         }
         // Below the bail: a failed handshake sets handshake_completed = 0, so
         // stamping these would show `handshakeCompleted === false` next to a
         // non-zero `handshakeCompletedAt`. Node stamps them only on success.
-        self.state
-            .write_stat(IDX_STATS_SESSION_HANDSHAKE_COMPLETED_AT, now_ns());
-        self.state
-            .write_stat(IDX_STATS_SESSION_HANDSHAKE_CONFIRMED_AT, now_ns());
+        self.write_stat(IDX_STATS_SESSION_HANDSHAKE_COMPLETED_AT, now_ns());
+        self.write_stat(IDX_STATS_SESSION_HANDSHAKE_CONFIRMED_AT, now_ns());
         let early_data = snapshot.map_or((false, false), |s| s.early_data);
         let sni = opt_bytes_to_js(global, snapshot.and_then(|s| s.sni.as_deref()));
         let cipher = opt_bytes_to_js(global, snapshot.and_then(|s| s.cipher.as_deref()));
@@ -1361,7 +1420,7 @@ impl QuicSession {
 
         // Matching Node: the server session exists and then closes with a
         // certificate_required transport error.
-        if !cert_ok && !self.destroyed.get() && !self.conn.is_empty() {
+        if !cert_ok && !self.destroyed.get() && !self.conn.is_null() {
             self.self_close.set(Some((
                 false,
                 CRYPTO_ERROR_CERTIFICATE_REQUIRED,
@@ -1432,9 +1491,8 @@ impl QuicSession {
         if self.close_reported.replace(true) {
             return;
         }
-        self.state.closing.set(1);
-        self.state
-            .write_stat(IDX_STATS_SESSION_DESTROYED_AT, now_ns());
+        self.state.closing.store(1, Relaxed);
+        self.write_stat(IDX_STATS_SESSION_DESTROYED_AT, now_ns());
         // Take the close reason before emit_qlog: that runs onSessionQlog,
         // which is user JS and drains microtasks, so a destroy() from inside
         // it would swap the reason this close reports.
@@ -1483,19 +1541,19 @@ impl QuicSession {
         if self.destroyed.replace(true) {
             return;
         }
-        for stream in self.streams.take_all() {
-            stream.wrapper().lend(|stream| {
-                stream.raw.detach();
+        for stream in self.streams.drain() {
+            stream.try_with(|stream| {
+                stream.raw.unbind();
                 stream.teardown(global);
             });
         }
         self.deferred_aborts.take();
         self.pending_local_bidi.with_taken(VecDeque::clear);
         self.pending_local_uni.with_taken(VecDeque::clear);
-        self.conn.detach();
+        self.conn.unbind();
         self.events.with_taken(Vec::clear);
         if let Some(endpoint) = self.endpoint.take() {
-            endpoint.lend(|ep| ep.unregister_session(self.key));
+            endpoint.try_with(|ep| ep.unregister_session(self.key));
         }
         self.application_options_js.clear();
     }
@@ -1556,7 +1614,7 @@ impl QuicSession {
         // A provisional session stashes its close here too, and `apply_close`
         // silently no-ops without a conn — draining it here would consume the
         // close that `on_promoted` is waiting to apply.
-        if self.conn.is_empty() {
+        if self.conn.is_null() {
             return false;
         }
         if let Some((app, code, reason)) = self.pending_graceful.take() {
@@ -1620,8 +1678,8 @@ impl QuicSession {
             // untouched, not marked gracefully-closing with no close sent.
             // All three branches below want the same values.
             let (app, code, reason) = self.parse_close_options(global, options.to_js())?;
-            self.state.graceful_close.set(1);
-            if self.conn.is_empty() {
+            self.state.graceful_close.store(1, Relaxed);
+            if self.conn.is_null() {
                 if self.is_server && !self.close_reported.get() {
                     self.pending_graceful.set(Some((app, code, reason)));
                     self.close_when_bound.set(true);
@@ -1645,7 +1703,7 @@ impl QuicSession {
             return Ok(());
         }
         let mut parse_error = None;
-        if !self.close_reported.get() && !self.conn.is_empty() {
+        if !self.close_reported.get() && !self.conn.is_null() {
             let options = options.to_js();
             if options.is_object() {
                 // Node's Destroy with close options. JS has already latched
@@ -1683,19 +1741,19 @@ impl QuicSession {
         body: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        if self.destroyed.get() || self.conn.is_empty() {
+        if self.destroyed.get() || self.conn.is_null() {
             return Ok(JSValue::UNDEFINED);
         }
         let direction = direction.to_js();
         let body = body.to_js();
         let unidirectional = direction.is_number() && direction.as_number() == 1.0;
-        let key = self.streams.new_key();
+        let key = self.streams.next_key();
         let stream = QuicStream::create(global, StrongWrapper::new(this_value, global), key)?;
         if let Some(buf) = body.as_array_buffer(global) {
             // As in attach_source: a later setOutbound() throws instead of adding a second body.
-            stream.wrapper().payload().set_body(buf.byte_slice());
+            stream.payload().set_body(buf.byte_slice());
         }
-        let handle = stream.wrapper().to_js();
+        let handle = stream.to_js();
         self.streams.insert(key, stream);
         self.pending_local_streams(unidirectional)
             .with_taken(|q| q.push_back(key));
@@ -1712,7 +1770,7 @@ impl QuicSession {
         data: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        if self.destroyed.get() || self.conn.is_empty() {
+        if self.destroyed.get() || self.conn.is_null() {
             return JSValue::from_uint64_no_truncate(global, 0);
         }
         let data = data.to_js();
@@ -1725,7 +1783,7 @@ impl QuicSession {
             return JSValue::from_uint64_no_truncate(global, 0);
         }
         // Oversized for the negotiated budget: not sent (Node returns 0n).
-        let max_size = self.state.max_datagram_size.get();
+        let max_size = self.state.max_datagram_size.load(Relaxed);
         if max_size == 0 || buf.byte_slice().len() > max_size as usize {
             return JSValue::from_uint64_no_truncate(global, 0);
         }
@@ -1736,27 +1794,27 @@ impl QuicSession {
         let id = self
             .next_datagram_id
             .replace(self.next_datagram_id.get() + 1);
-        let max_pending = self.state.max_pending_datagrams.get();
+        let max_pending = self.state.max_pending_datagrams.load(Relaxed);
         if max_pending > 0 && self.datagram_queue.with_taken(|q| q.len()) >= max_pending as usize {
             // Node reports the abandonment synchronously from within
             // sendDatagram.
             if self.datagram_drop_newest {
                 self.report_datagram_abandoned(this_value.to_js(), global, id)?;
-                self.state.last_datagram_id.set(id);
+                self.state.last_datagram_id.store(id, Relaxed);
                 return JSValue::from_uint64_no_truncate(global, id);
             }
             if let Some((dropped_id, _)) = self.datagram_queue.with_taken(VecDeque::pop_front) {
                 // Runs the user's `ondatagramstatus`, which can destroy this
                 // session or close the conn before we get back here.
                 self.report_datagram_abandoned(this_value.to_js(), global, dropped_id)?;
-                if self.destroyed.get() || self.conn.is_empty() {
+                if self.destroyed.get() || self.conn.is_null() {
                     return JSValue::from_uint64_no_truncate(global, 0);
                 }
             }
         }
         self.datagram_queue
             .with_taken(|q| q.push_back((id, payload)));
-        self.state.last_datagram_id.set(id);
+        self.state.last_datagram_id.store(id, Relaxed);
         self.conn.want_datagram_write(true);
         self.schedule_process();
         JSValue::from_uint64_no_truncate(global, id)
@@ -1984,7 +2042,6 @@ fn map_conn_status(
     }
 }
 
-/// lsquic's callbacks.
 impl QuicSession {
     pub(super) fn on_goaway_received(&self) {
         self.push_event(SessionEvent::GoawayReceived);
@@ -2015,31 +2072,14 @@ impl QuicSession {
         }
     }
 
-    pub(super) fn on_new_stream(this: LentWrapper<'_, Self>, raw: &lsquic::Stream) {
+    pub(super) fn on_new_stream(this: BorrowedWrapper<'_, Self>, raw: &lsquic::Stream) {
         let Some(id) = raw.id() else { return };
         let is_local = (id & 1 == 0) != this.is_server;
         if is_local {
             this.on_local_stream(raw, id & STREAM_ID_UNI_BIT != 0);
-            return;
+        } else {
+            Self::on_remote_stream(this, raw, id);
         }
-        let key = this.streams.new_key();
-        let stream = match QuicStream::create(this.global(), this.root(), key) {
-            Ok(stream) => stream,
-            Err(e) => return crate::dispatch::fold(Err(e)),
-        };
-        stream.bind(raw);
-        let qs = stream.wrapper().payload();
-        qs.on_open(this.is_server);
-        qs.mark_wrote_to_lsquic();
-        this.bump_stream_stat(id, false);
-        this.push_event(SessionEvent::StreamReady {
-            stream: key,
-            remote: true,
-        });
-        if let Some(code) = qs.pre_reset_code() {
-            this.push_event(SessionEvent::StreamReset { stream: key, code });
-        }
-        this.streams.insert(key, stream);
     }
 
     fn on_local_stream(&self, raw: &lsquic::Stream, uni: bool) {
@@ -2048,9 +2088,9 @@ impl QuicSession {
         // MAX_STREAMS grant.
         let queue = self.pending_local_streams(uni);
         while let Some(key) = queue.with_taken(VecDeque::pop_front) {
-            let opened = self.streams.with_entry(key, |pending| {
+            let opened = self.streams.with_value(key, |pending| {
                 pending.bind(raw);
-                pending.wrapper().payload().on_open(self.is_server);
+                pending.payload().on_open(self.is_server);
             });
             if opened.is_some() {
                 self.push_event(SessionEvent::StreamReady {
@@ -2093,28 +2133,30 @@ impl QuicSession {
         self.push_event(SessionEvent::Keylog(line.to_vec()));
     }
 
-    /// The payload to send, if it fits in `room`.
-    pub(super) fn next_datagram(&self, room: usize) -> Option<Vec<u8>> {
+    /// Returns how many bytes were written to `buf`.
+    pub(super) fn on_dg_write(&self, buf: &mut [MaybeUninit<u8>]) -> Option<usize> {
         self.datagram_queue.with_taken(|queue| {
             let Some(&(id, ref payload)) = queue.front() else {
                 self.conn.want_datagram_write(false);
                 return None;
             };
-            if payload.len() > room {
-                let max = self.state.max_datagram_size.get() as usize;
-                if max == 0 || payload.len() > max {
+            let len = payload.len();
+            if len > buf.len() {
+                let max = self.state.max_datagram_size.load(Relaxed) as usize;
+                if max == 0 || len > max {
                     queue.pop_front();
                     self.push_event(SessionEvent::DatagramStatus { id, sent: false });
                     self.conn.want_datagram_write(!queue.is_empty());
                 }
                 return None;
             }
-            let (id, payload) = queue.pop_front()?;
+            buf[..len].write_copy_of_slice(payload);
+            queue.pop_front();
             self.push_event(SessionEvent::DatagramStatus { id, sent: true });
             if !queue.is_empty() {
                 self.conn.want_datagram_write(true);
             }
-            Some(payload)
+            Some(len)
         })
     }
 
@@ -2147,15 +2189,18 @@ impl QuicSession {
         &self,
         validated: bool,
         preferred: bool,
-        [new_local, new_remote, old_local, old_remote]: [StoredAddr; 4],
+        new_local: &StoredAddr,
+        new_peer: &StoredAddr,
+        old_local: &StoredAddr,
+        old_peer: &StoredAddr,
     ) {
         self.push_event(SessionEvent::PathValidation {
             validated,
             preferred,
-            new_local,
-            new_remote,
-            old_local,
-            old_remote,
+            new_local: *new_local,
+            new_remote: *new_peer,
+            old_local: *old_local,
+            old_remote: *old_peer,
         });
     }
 

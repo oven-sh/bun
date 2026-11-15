@@ -1,6 +1,3 @@
-#[cfg(windows)]
-use core::ptr;
-
 use bun_alloc::AllocError;
 use bun_paths::path_options::{CheckLength, Kind, PathSeparators};
 use bun_paths::{self, OSPathChar, OSPathSlice};
@@ -111,14 +108,11 @@ impl FileCopier {
                         sys::Result::Err(sys::Error::from_code(E::ENAMETOOLONG, sys::Tag::copyfile))
                     }
                     EntryKind::Directory => {
-                        // SAFETY: FFI — both `slice_z()` are NUL-terminated WStrs.
-                        if unsafe {
-                            bun_sys::windows::CreateDirectoryExW(
-                                self.src_path.slice_z().as_ptr(),
-                                self.dest_subpath.slice_z().as_ptr(),
-                                ptr::null_mut(),
-                            )
-                        } == 0
+                        if bun_sys::windows::CreateDirectoryExW(
+                            self.src_path.slice_z(),
+                            self.dest_subpath.slice_z(),
+                        )
+                        .is_err()
                         {
                             // Also taken when the directory exists, a success for make_path.
                             bun_sys::make_path::make_path::<u16>(&dest_dir, entry.path.as_slice())

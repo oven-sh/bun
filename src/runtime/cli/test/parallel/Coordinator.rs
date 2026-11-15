@@ -4,9 +4,12 @@
 //! the run loop entry live in `runner.rs`; this file is the per-run state
 //! and its methods.
 
+#[cfg(unix)]
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicI32, Ordering};
 use std::io::Write as _;
+#[cfg(windows)]
+use std::os::windows::io::OwnedHandle;
 
 use bun_core::strings;
 use bun_core::{Global, Output};
@@ -76,7 +79,7 @@ pub(crate) struct Coordinator<'a> {
     /// Kill-on-close Job Object so the OS reaps workers if the coordinator dies
     /// without running its signal handler (e.g. SIGKILL / TerminateProcess).
     #[cfg(windows)]
-    pub(crate) windows_job: Option<*mut c_void>,
+    pub(crate) windows_job: Option<&'a OwnedHandle>,
     /// `None` once the run is aborted.
     pub(crate) abort_guard: Option<abort_handler::Guard>,
 }

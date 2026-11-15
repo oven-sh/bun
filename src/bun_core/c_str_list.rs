@@ -13,6 +13,9 @@ pub struct CStrRef<'a>(NonNull<c_char>, PhantomData<&'a CStr>);
 
 const _: () = assert!(size_of::<Option<CStrRef>>() == size_of::<*const c_char>());
 
+// SAFETY: it only reads what a `&CStr` reads, and `&CStr` is `Sync`.
+unsafe impl Sync for CStrRef<'_> {}
+
 impl<'a> CStrRef<'a> {
     /// Panics unless the last byte is a NUL.
     #[inline]
@@ -74,6 +77,13 @@ impl<'a> CStrList<'a> {
     #[inline]
     pub fn first(self) -> Option<CStrRef<'a>> {
         self.0[0]
+    }
+
+    /// Without the `None`.
+    #[cfg(windows)]
+    #[inline]
+    pub(crate) fn unterminated(self) -> &'a [Option<CStrRef<'a>>] {
+        &self.0[..self.0.len() - 1]
     }
 
     #[inline]

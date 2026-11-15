@@ -11,6 +11,13 @@ pub struct File {
     pub handle: Fd,
 }
 
+#[cfg(windows)]
+impl From<std::os::windows::io::OwnedHandle> for File {
+    fn from(handle: std::os::windows::io::OwnedHandle) -> Self {
+        Self::from_fd(Fd::from_system(handle.into_raw_handle()))
+    }
+}
+
 impl Drop for File {
     #[inline]
     fn drop(&mut self) {

@@ -9,25 +9,28 @@ use bun_io::Waker;
 use bun_jsc::Ticket;
 use bun_threading::Guarded;
 
-use super::{JSBundleCompletionTask, JsSide};
+use super::{BundleJs, JSBundleCompletionTask};
 
-type Queued = (Box<JSBundleCompletionTask>, Ticket);
+pub(super) struct QueuedBuild {
+    pub(super) task: Box<JSBundleCompletionTask>,
+    ticket: Ticket,
+}
 
 struct State {
     /// `None` until the thread runs. If it fails to start, the next build tries again.
     waker: Option<&'static Waker>,
-    queue: VecDeque<Queued>,
-    /// The address of the `JsSide` of the build that the thread took last.
-    started: usize,
+    queue: VecDeque<QueuedBuild>,
+    /// The address of the `BundleJs` of the build that the thread took last.
+    last_started_addr: usize,
 }
 
 static STATE: Guarded<State> = Guarded::new(State {
     waker: None,
     queue: VecDeque::new(),
-    started: 0,
+    last_started_addr: 0,
 });
 
-/// Of `State::started`, and written under the same lock.
+/// Of `State::last_started_addr`, and written under the same lock.
 pub(super) static CANCELLED: AtomicBool = AtomicBool::new(false);
 
 /// The thread's uws loop, in which a build waits for its plugins.
@@ -39,7 +42,7 @@ pub(super) fn enqueue(task: Box<JSBundleCompletionTask>, ticket: Ticket) {
     match state.waker.map_or_else(spawn, Ok) {
         Ok(waker) => {
             state.waker = Some(waker);
-            state.queue.push_back((task, ticket));
+            state.queue.push_back(QueuedBuild { task, ticket });
             drop(state);
             waker.wake();
         }
@@ -50,15 +53,15 @@ pub(super) fn enqueue(task: Box<JSBundleCompletionTask>, ticket: Ticket) {
     }
 }
 
-pub(super) fn take_unstarted(js: *mut JsSide) -> Option<Queued> {
+pub(super) fn take_unstarted(js: *mut BundleJs) -> Option<QueuedBuild> {
     let mut state = STATE.lock();
-    let index = (state.queue.iter()).rposition(|(task, _)| task.js.as_ptr() == js)?;
+    let index = (state.queue.iter()).rposition(|queued| queued.task.js.as_ptr() == js)?;
     state.queue.remove(index)
 }
 
-pub(super) fn cancel_if_started(js: &JsSide) {
+pub(super) fn cancel_if_started(js: &BundleJs) {
     let state = STATE.lock();
-    if state.started != core::ptr::from_ref(js).addr() {
+    if state.last_started_addr != core::ptr::from_ref(js).addr() {
         return;
     }
     CANCELLED.store(true, Ordering::SeqCst);
@@ -69,30 +72,30 @@ pub(super) fn cancel_if_started(js: &JsSide) {
     }
 }
 
-fn start_next() -> Option<Queued> {
+fn start_next() -> Option<QueuedBuild> {
     let mut state = STATE.lock();
     let next = state.queue.pop_front()?;
-    state.started = next.0.js.as_ptr().addr();
+    state.last_started_addr = next.task.js.as_ptr().addr();
     CANCELLED.store(false, Ordering::SeqCst);
     Some(next)
 }
 
 fn spawn() -> std::io::Result<&'static Waker> {
-    let started = Arc::new(OnceLock::new());
-    let report = Arc::clone(&started);
+    let waker_result = Arc::new(OnceLock::new());
+    let slot = Arc::clone(&waker_result);
     std::thread::Builder::new()
         .name("Bundler".into())
         .spawn(move || {
             Output::Source::configure_named_thread(zstr!("Bundler"));
             // On Windows the waker is this thread's libuv loop, so create it here.
             let waker = Waker::init().map(|waker| &*Box::leak(Box::new(waker)));
-            let _ = report.set(waker);
-            drop(report);
+            let _ = slot.set(waker);
+            drop(slot);
             if let Ok(waker) = waker {
                 thread_main(waker);
             }
         })?;
-    started.wait().map_err(std::io::Error::other)
+    waker_result.wait().map_err(std::io::Error::other)
 }
 
 /// Used to keep the bundle thread from spinning on Windows
@@ -112,7 +115,7 @@ fn thread_main(waker: &Waker) -> ! {
     let mut generation: bun_core::Generation = 0;
     loop {
         let mut has_bundled = false;
-        while let Some((task, ticket)) = start_next() {
+        while let Some(QueuedBuild { task, ticket }) = start_next() {
             // Newer than the run time's directory listings, which bear 0, and an earlier build's.
             generation = generation.saturating_add(1);
             task.run(ticket, generation);

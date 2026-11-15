@@ -1250,7 +1250,7 @@ mod _async_tasks {
         const _: () = assert!(WriteFile::HAVE_ABORT_SIGNAL);
 
         #[cfg(windows)]
-        pub(crate) trait NeedsMkdirp: bun_event_loop::BoxedTask {
+        pub(crate) trait AsyncMkdirpTarget: bun_event_loop::BoxedTask {
             /// Pool thread.
             fn directory(&self) -> &[u8];
             /// Pool thread.
@@ -1259,21 +1259,21 @@ mod _async_tasks {
 
         #[cfg(windows)]
         /// Used internally. Not from JavaScript.
-        pub(crate) struct AsyncMkdirp<T: NeedsMkdirp> {
+        pub(crate) struct AsyncMkdirp<T: AsyncMkdirpTarget> {
             /// Always posted back to its thread.
-            waiting: Box<T>,
+            target: Box<T>,
             ticket: bun_jsc::Ticket,
             task: WorkPoolTask,
         }
 
         #[cfg(windows)]
-        bun_threading::owned_task!([T: NeedsMkdirp] AsyncMkdirp<T>, task);
+        bun_threading::owned_task!([T: AsyncMkdirpTarget] AsyncMkdirp<T>, task);
 
         #[cfg(windows)]
-        impl<T: NeedsMkdirp> AsyncMkdirp<T> {
-            pub(crate) fn schedule(waiting: Box<T>) {
+        impl<T: AsyncMkdirpTarget> AsyncMkdirp<T> {
+            pub(crate) fn schedule(target: Box<T>) {
                 WorkPool::schedule_new(Self {
-                    waiting,
+                    target,
                     ticket: VirtualMachine::get().ticket(),
                     task: Default::default(),
                 });
@@ -1281,10 +1281,10 @@ mod _async_tasks {
 
             #[allow(clippy::boxed_local)]
             fn run_owned(mut self: Box<Self>) {
-                if let Err(err) = mkdirp(self.waiting.directory()) {
-                    self.waiting.set_error(err);
+                if let Err(err) = mkdirp(self.target.directory()) {
+                    self.target.set_error(err);
                 }
-                let task = bun_jsc::Task::from_boxed(self.waiting);
+                let task = bun_jsc::Task::from_boxed(self.target);
                 self.ticket
                     .post(ConcurrentTask::ConcurrentTask::create(task));
             }

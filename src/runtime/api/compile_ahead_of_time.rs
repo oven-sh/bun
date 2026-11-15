@@ -157,18 +157,20 @@ fn executable_destination(
     })
 }
 
-/// The outcome and the path of the executable.
-type Compiled = Result<(CompileOutcome, Box<[u8]>), CompileError>;
+pub(super) struct CompiledExecutable {
+    outcome: CompileOutcome,
+    full_path: Box<[u8]>,
+}
 
 // Runs on the bundle thread and writes the executable there, not in `on_complete`.
 pub(super) fn compile(
     config: &JSBundlerConfig,
-    compile: &CompileOptions,
+    compile_options: &CompileOptions,
     aot: &AotOptions,
     entry_points: &[&[u8]],
     bundler: BundlerInputs<'_>,
-) -> Compiled {
-    let destination = executable_destination(config, compile)?;
+) -> Result<CompiledExecutable, CompileError> {
+    let destination = executable_destination(config, compile_options)?;
     let (log, env) = (bundler.transpiler.log, bundler.transpiler.env);
 
     // Without an output directory a metafile is handed to the caller and not written.
@@ -190,21 +192,21 @@ pub(super) fn compile(
         entry_points,
         bundler: Some(bundler),
         executable: ExecutableSettings {
-            target: &compile.compile_target,
-            executable_path: if compile.executable_path.list.is_empty() {
+            target: &compile_options.compile_target,
+            executable_path: if compile_options.executable_path.list.is_empty() {
                 None
             } else {
-                Some(compile.executable_path.list.as_slice())
+                Some(compile_options.executable_path.list.as_slice())
             },
             root_dir: destination.root_dir.fd,
             env,
             windows: &destination.windows,
-            exec_argv: &compile.exec_argv.list,
+            exec_argv: &compile_options.exec_argv.list,
             flags: destination.flags,
             runtime_options: RuntimeOptions {
-                jit_policy: compile.jit_policy,
+                jit_policy: compile_options.jit_policy,
             },
-            assets: &compile.assets,
+            assets: &compile_options.assets,
             metafiles: [&metafiles[0], &metafiles[1]],
             embeds_source_maps: config.source_map != options::SourceMapOption::None,
         },
@@ -219,17 +221,20 @@ pub(super) fn compile(
         &mut request
     );
     match compiled {
-        Ok(outcome) => Ok((outcome, destination.full_path)),
+        Ok(outcome) => Ok(CompiledExecutable {
+            outcome,
+            full_path: destination.full_path,
+        }),
         Err(failure) => {
             let mut message = Vec::new();
-            let target = &compile.compile_target;
+            let target = &compile_options.compile_target;
             failure.write_message(RequestOrigin::BuildApi, target, &mut message);
             Err(CompileError::Message(message))
         }
     }
 }
 
-fn fail(log: &mut Log, message: &[u8]) -> bun_bundler::Error {
+fn fail_compilation(log: &mut Log, message: &[u8]) -> bun_bundler::Error {
     if !message.is_empty() {
         log.add_error_fmt(
             None,
@@ -240,12 +245,13 @@ fn fail(log: &mut Log, message: &[u8]) -> bun_bundler::Error {
     bun_bundler::Error::BuildFailed
 }
 
-pub(super) fn finish(
+pub(super) fn finish_compilation(
     config: &JSBundlerConfig,
-    compiled: Compiled,
+    compiled: Result<CompiledExecutable, CompileError>,
     log: &mut Log,
 ) -> bun_bundler::Result<BuildResult> {
-    let (outcome, full_path) = compiled.map_err(|error| fail(log, error.slice()))?;
+    let CompiledExecutable { outcome, full_path } =
+        compiled.map_err(|error| fail_compilation(log, error.slice()))?;
     let CompileOutcome {
         output_files,
         metafile,
@@ -257,7 +263,10 @@ pub(super) fn finish(
     add_compile_logs(log, report_messages, trim_log_lines, &developer_options);
 
     let Some(mut entry) = output_files.into_iter().next() else {
-        return Err(fail(log, CompileErrorReason::NoEntryPoint.message()));
+        return Err(fail_compilation(
+            log,
+            CompileErrorReason::NoEntryPoint.message(),
+        ));
     };
     entry.dest_path = full_path;
     entry.is_executable = true;

@@ -540,7 +540,7 @@ mod windows_impl {
 
     bun_io::intrusive_uv_fs!(WriteFileWindows, io_request);
 
-    impl crate::node::fs::async_::NeedsMkdirp for WriteFileWindows {
+    impl crate::node::fs::async_::AsyncMkdirpTarget for WriteFileWindows {
         fn directory(&self) -> &[u8] {
             let path = self.path();
             bun_core::dirname(path).unwrap_or(path)

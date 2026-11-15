@@ -1660,7 +1660,7 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
 }
 
 #[cfg(windows)]
-impl node_fs::async_::NeedsMkdirp for CopyFileWindows {
+impl node_fs::async_::AsyncMkdirpTarget for CopyFileWindows {
     fn directory(&self) -> &[u8] {
         let destination = self.destination_file_store.data.as_file();
         let path = destination.pathlike.path().slice();

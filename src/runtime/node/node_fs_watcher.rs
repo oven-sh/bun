@@ -94,7 +94,7 @@ impl FSWatcher {
     /// task; the queue takes ownership unless the VM has been torn down, in
     /// which case the caller gets it back.
     #[cfg(not(windows))]
-    pub(crate) fn post(
+    pub(crate) fn post_intrusive(
         &self,
         task: core::ptr::NonNull<ConcurrentTask>,
     ) -> bun_jsc::vm_handle::Posted<()> {
@@ -212,7 +212,7 @@ impl FSWatcher {
         unsafe {
             (*batch).concurrent_task.task = task;
             let node = core::ptr::NonNull::new_unchecked(&raw mut (*batch).concurrent_task);
-            if let bun_jsc::vm_handle::Posted::Refused(()) = this.post(node) {
+            if let bun_jsc::vm_handle::Posted::Refused(()) = this.post_intrusive(node) {
                 // VM torn down: nobody will emit these events.
                 drop(bun_core::heap::take(batch));
             }

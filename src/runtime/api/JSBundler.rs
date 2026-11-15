@@ -23,6 +23,7 @@ use bun_options_types::schema::api; // bun.schema.api
 use bun_options_types::trim::TrimRequest;
 use bun_standalone_graph::StandaloneModuleGraph;
 
+use crate::api::js_bundle_completion_task::{BuildOwner, JSBundleCompletionTask};
 use crate::cli::compile_command::RequestOrigin;
 use crate::cli::compile_options::{self, CompileFlags, OptionError, TrimFlags};
 
@@ -1903,12 +1904,11 @@ pub(crate) mod js_bundler {
 
         let strong = jsc::JSPromiseStrong::init(global_this);
         let promise = strong.value();
-        crate::api::js_bundle_completion_task::JSBundleCompletionTask::schedule(
-            config,
-            global_this,
-            context,
-            crate::api::js_bundle_completion_task::Receiver::Promise(strong, plugins),
-        );
+        let owner = BuildOwner::Promise {
+            promise: strong,
+            plugins,
+        };
+        JSBundleCompletionTask::schedule(config, global_this, context, owner);
         Ok(promise)
     }
 

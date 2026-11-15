@@ -17,7 +17,7 @@ use bun_jsc::JsCell;
 use bun_ptr::{RefCount, RefPtr, ThisPtr};
 use bun_uws::{AnyRequest, AnyResponse};
 
-use crate::api::js_bundle_completion_task::{JSBundleCompletionTask, Receiver};
+use crate::api::js_bundle_completion_task::{BuildOwner, JSBundleCompletionTask};
 use crate::api::js_bundler::js_bundler::{self as JSBundler, Config as JSBundlerConfig};
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::bake::dev_server::route_bundle;
@@ -420,12 +420,12 @@ impl Route {
 
         // The build is the server's: it continues the script that made the server.
         this.state.set(State::Building);
-        let receiver = Receiver::Route {
+        let owner = BuildOwner::Route {
             plugins,
             route: this,
             started_at_ns: bun_core::util::Timespec::now_allow_mocked_time().ns(),
         };
-        JSBundleCompletionTask::schedule(config, &global, server.context_id(), receiver);
+        JSBundleCompletionTask::schedule(config, &global, server.context_id(), owner);
         Ok(())
     }
 

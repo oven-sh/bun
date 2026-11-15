@@ -595,7 +595,7 @@ pub(crate) fn run_task(
         task_tag::NapiFinalizerTask => boxed_arm!(
             task,
             [NativeAddons],
-            |task: NapiFinalizerTask| -> JsResult<()> { task.finalizer.run() }
+            |napi_task: NapiFinalizerTask| -> JsResult<()> { napi_task.finalizer.run() }
         )?,
         task_tag::UvLoopDispatch => {
             #[cfg(unix)]

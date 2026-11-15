@@ -59,13 +59,13 @@ pub(crate) struct JSBundleCompletionTask {
     plugins: Option<JsPtr<Plugin>>,
     declarations: Option<DeclarationOutputs>,
     /// Owned. Not a `Box`: the JS thread uses it while this task is away.
-    js: JsPtr<JsSide>,
+    js: JsPtr<BundleJs>,
 }
 
 /// What stays on the JS thread.
-struct JsSide {
+struct BundleJs {
     global_this: BackRef<JSGlobalObject>,
-    receiver: Receiver,
+    owner: BuildOwner,
     poll_ref: KeepAlive,
     /// The result is not delivered.
     cancelled: Cell<bool>,
@@ -74,8 +74,11 @@ struct JsSide {
     caller: CallerOfTheBuild,
 }
 
-pub(crate) enum Receiver {
-    Promise(jsc::JSPromiseStrong, Option<OwnedPlugin>),
+pub(crate) enum BuildOwner {
+    Promise {
+        promise: jsc::JSPromiseStrong,
+        plugins: Option<OwnedPlugin>,
+    },
     Route {
         route: html_bundle::PendingBuild,
         /// Of the route's server.
@@ -102,7 +105,7 @@ struct CallerOfTheBuild {
 }
 
 impl CallerOfTheBuild {
-    fn cancel_plugin_requests(&self) {
+    fn tombstone_plugins(&self) {
         if let Some(plugins) = self.plugins {
             Plugin::opaque_ref(plugins.as_ptr()).tombstone();
         }
@@ -111,22 +114,22 @@ impl CallerOfTheBuild {
 
 jsc::impl_abort_handle_owner!(CallerOfTheBuild, handle, |this, _cause| {
     // SAFETY: trait contract — `this` is live (armed ⇒ its completion has not run).
-    unsafe { &*this }.cancel_plugin_requests()
+    unsafe { &*this }.tombstone_plugins()
 });
 
-jsc::impl_abort_handle_owner!(JsSide, abort_handle, |this, _cause| {
+jsc::impl_abort_handle_owner!(BundleJs, abort_handle, |this, _cause| {
     // The VM does not wait behind other VMs' builds.
-    if let Some((task, _ticket)) = bundle_thread::take_unstarted(this) {
-        return task.release_unrun();
+    if let Some(queued) = bundle_thread::take_unstarted(this) {
+        return queued.task.release_unrun();
     }
     // SAFETY: trait contract — `this` is live (armed ⇒ its completion has not run).
     unsafe { &*this }.cancel_started()
 });
 
-impl JsSide {
+impl BundleJs {
     /// The bundle thread consumes the plugins' answers, fails the build and posts the completion.
     fn cancel_started(&self) {
-        self.caller.cancel_plugin_requests();
+        self.caller.tombstone_plugins();
         self.cancelled.set(true);
         bundle_thread::cancel_if_started(self);
     }
@@ -138,24 +141,24 @@ impl JSBundleCompletionTask {
         config: JSBundlerConfig,
         global_this: &JSGlobalObject,
         context: jsc::ContextId,
-        receiver: Receiver,
+        owner: BuildOwner,
     ) {
         let vm = global_this.bun_vm();
         let poll_ref = KeepAlive::init();
         poll_ref.ref_(vm.loop_ctx());
-        let plugins = match &receiver {
-            Receiver::Promise(_, plugins) => plugins.as_ref().map(OwnedPlugin::as_non_null),
-            Receiver::Route { plugins, .. } => *plugins,
+        let plugins = match &owner {
+            BuildOwner::Promise { plugins, .. } => plugins.as_ref().map(OwnedPlugin::as_non_null),
+            BuildOwner::Route { plugins, .. } => *plugins,
         };
         if let Some(plugins) = plugins {
             Plugin::opaque_ref(plugins.as_ptr()).freeze_filters();
         }
-        let js = bun_core::heap::into_raw_nn(Box::new(JsSide {
+        let js = bun_core::heap::into_raw_nn(Box::new(BundleJs {
             global_this: BackRef::new(global_this),
-            receiver,
+            owner,
             poll_ref,
             cancelled: Cell::new(false),
-            abort_handle: jsc::AbortHandle::for_owner::<JsSide>(),
+            abort_handle: jsc::AbortHandle::for_owner::<BundleJs>(),
             caller: CallerOfTheBuild {
                 handle: jsc::AbortHandle::for_owner::<CallerOfTheBuild>(),
                 plugins,
@@ -662,8 +665,8 @@ impl JSBundleCompletionTask {
         js.poll_ref.unref(global_this.bun_vm().loop_ctx());
 
         let deliver = deliver && !js.cancelled.get();
-        match &mut js.receiver {
-            Receiver::Route {
+        match &mut js.owner {
+            BuildOwner::Route {
                 route,
                 started_at_ns,
                 ..
@@ -675,8 +678,10 @@ impl JSBundleCompletionTask {
                 }
                 Ok(())
             }
-            Receiver::Promise(promise, _) if deliver => self.settle(promise.swap(), &global_this),
-            Receiver::Promise(..) => Ok(()),
+            BuildOwner::Promise { promise, .. } if deliver => {
+                self.settle(promise.swap(), &global_this)
+            }
+            BuildOwner::Promise { .. } => Ok(()),
         }
     }
 
@@ -1237,7 +1242,7 @@ impl JSBundleCompletionTask {
             };
             let compiled =
                 compile_ahead_of_time::compile(config, compile, aot, &entry_points, bundler);
-            return compile_ahead_of_time::finish(config, compiled, log);
+            return compile_ahead_of_time::finish_compilation(config, compiled, log);
         }
 
         let mut bv2 = BundleV2::init(transpiler, None, heap, event_loop, false, worker_pool, heap);

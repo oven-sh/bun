@@ -7104,6 +7104,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Ok(copy) = shared.deep_clone_no_detach(self.arena, self.stack_check) {
                     return copy;
                 }
+                self.report_stack_overflow(loc);
+                return self.new_expr(E::Missing {}, loc);
             }
             _ => {}
         }

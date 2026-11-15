@@ -216,10 +216,10 @@ impl<'r> Result<'r> {
 }
 
 #[derive(Clone, Copy)]
-pub struct DirEntryResolveQueueItem {
+pub(crate) struct DirEntryResolveQueueItem {
     pub(crate) hash: u64,
-    /// A slice of the threadlocal `dir_info_uncached_path` buffer, so not `'static`.
-    pub(crate) unsafe_path: bun_ptr::RawSlice<u8>,
+    /// The directory is this many bytes of `dir_info_uncached_path`.
+    pub(crate) path_len: usize,
     /// Empty, or a `DirEntry::dir` from the dirname store.
     pub(crate) safe_path: &'static [u8],
     pub(crate) fd: FD,

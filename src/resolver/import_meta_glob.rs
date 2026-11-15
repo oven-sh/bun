@@ -3,7 +3,7 @@ use bun_paths::strings;
 
 use crate::dir_info::DirInfo;
 use crate::package_json::{ESModule, Status};
-use crate::resolver::Resolver;
+use crate::resolver::{Bufs, Resolver};
 use crate::tsconfig_json::TSConfigJSON;
 
 /// (absolute directory, glob relative to it)
@@ -105,12 +105,14 @@ impl Resolver<'_> {
         } else {
             glob.to_vec()
         };
+        let imports = &package_json.imports.as_ref()?.root;
         let resolution = ESModule {
             conditions: &self.opts.conditions.import,
+            bufs: &mut Bufs::take().node_modules.module,
             debug_logs: None,
             stack_check: bun_core::StackCheck::init(),
         }
-        .resolve_imports(&specifier, &package_json.imports.as_ref()?.root);
+        .resolve_imports(&specifier, imports);
         matches!(
             resolution.status,
             Status::Exact | Status::ExactEndsWithStar | Status::Inexact

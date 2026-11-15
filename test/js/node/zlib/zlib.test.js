@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -112,33 +112,22 @@ describe("zlib", () => {
   describe.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 10 * 1024 ** 3)(
     "an input of 2**32 bytes",
     () => {
-      async function run(script) {
-        await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-        return { stdout: stdout.trim(), exitCode };
-      }
-
       it("gunzipSync reads it", async () => {
-        expect(
-          await run(
-            `const input = new Uint8Array(2 ** 32);
-             input.set(Bun.gzipSync("hello"));
-             // What it takes for the size of the output.
-             input[2 ** 32 - 4] = 5;
-             console.log(Buffer.from(Bun.gunzipSync(input)).toString());`,
-          ),
-        ).toEqual({ stdout: "hello", exitCode: 0 });
+        const script = `const input = new Uint8Array(2 ** 32);
+          input.set(Bun.gzipSync("hello"));
+          // ISIZE, from which gunzipSync sizes its output.
+          input[2 ** 32 - 4] = 5;
+          console.log(Buffer.from(Bun.gunzipSync(input)).toString());`;
+        expect(await bunRun(["-e", script])).toSpawn("hello");
       });
 
+      // Too slow for debug and ASAN builds.
       it.skipIf(isDebug || isASAN)(
         "gzipSync compresses all of it",
         async () => {
-          expect(
-            await run(
-              `const crc32AndSize = Bun.gzipSync(new Uint8Array(2 ** 32), { level: 3 }).subarray(-8);
-               console.log(crc32AndSize.toHex());`,
-            ),
-          ).toEqual({ stdout: "8def02d200000000", exitCode: 0 });
+          const script = `const crc32AndSize = Bun.gzipSync(new Uint8Array(2 ** 32), { level: 3 }).subarray(-8);
+            console.log(crc32AndSize.toHex());`;
+          expect(await bunRun(["-e", script])).toSpawn("8def02d200000000");
         },
         90_000,
       );
@@ -162,7 +151,7 @@ describe("zlib", () => {
 
   describe("libdeflate level validation", () => {
     const data = Buffer.alloc(64, "a");
-    // libdeflate_alloc_compressor returns NULL for level outside [0, 12]; that NULL must
+    // libdeflate_alloc_compressor_ex returns NULL for level outside [0, 12]; that NULL must
     // surface as an invalid-argument error, not "Out of memory".
     for (const fn of [gzipSync, deflateSync]) {
       it(`${fn.name}: out-of-range level throws an argument error, not OOM`, () => {
@@ -1053,10 +1042,10 @@ describe("async write buffer lifetime", () => {
 });
 
 it.each([
-  ["createGzip", "gunzipSync"],
-  ["createBrotliCompress", "brotliDecompressSync"],
-  ["createZstdCompress", "zstdDecompressSync"],
-])("%s treats a chunk that was detached while it was queued as empty", async (create, inverse) => {
+  ["createGzip", "Z_FINISH", "gunzipSync"],
+  ["createBrotliCompress", "BROTLI_OPERATION_FINISH", "brotliDecompressSync"],
+  ["createZstdCompress", "ZSTD_e_end", "zstdDecompressSync"],
+])("%s treats a chunk that was detached while it was queued as empty", async (create, finish, inverse) => {
   const chunks = [];
   const compressor = zlib[create]().on("data", chunk => chunks.push(chunk));
   const queued = Buffer.from(new ArrayBuffer(16));
@@ -1065,10 +1054,10 @@ it.each([
   compressor.write("first");
   compressor.write(queued);
   queued.buffer.transfer();
-  compressor.flush(compressor._finishFlushFlag, resolve);
+  compressor.flush(zlib.constants[finish], resolve);
   await promise;
-  expect(zlib[inverse](Buffer.concat(chunks)).toString()).toBe("first");
   compressor.close();
+  expect(zlib[inverse](Buffer.concat(chunks)).toString()).toBe("first");
 });
 
 it("a stream of a ShadowRealm keeps its async context across a write", async () => {

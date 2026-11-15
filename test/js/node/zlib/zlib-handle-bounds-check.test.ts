@@ -451,7 +451,7 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
   });
 
   test.concurrent.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 10 * 1024 ** 3)(
-    "brotli: refuses a dictionary above 2**30 bytes, whose length brotli adds to in an int",
+    "brotli: refuses a dictionary above 2**30 bytes",
     async () => {
       expect(
         await run(

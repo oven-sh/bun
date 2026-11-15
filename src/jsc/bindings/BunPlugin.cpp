@@ -8991,7 +8991,7 @@ __attribute__((minsize)) void appendModuleMocksWhoseFactoryAnImportAwaits(Zig::G
     auto& vm = JSC::getVM(globalObject);
     auto* loader = testFileModuleLoader(globalObject);
     // Each step walks the reactions of one import(). A program with very many of them is not searched to the end.
-    size_t stepsLeft = 4096;
+    size_t stepsLeft = 1024;
     auto* iterator = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), uncheckedDowncast<JSC::JSMap>(dynamicImports), JSC::IterationKind::Entries);
     while (true) {
         auto [import, key] = iterator->nextWithAdvance(vm);

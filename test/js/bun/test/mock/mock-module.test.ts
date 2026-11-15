@@ -3378,6 +3378,16 @@ describe.concurrent("a name that import and require() resolve to two files", () 
       "node_modules/peer-lib/package.json": `{ "name": "peer-lib", "main": "index.js" }`,
       "node_modules/peer-lib/index.js": `exports.read = () => require("with-peer").which;`,
     };
+    // A package whose ES module does not load the CommonJS file, which requires a helper that requires it again.
+    const apart = {
+      "node_modules/apart/package.json": JSON.stringify({
+        name: "apart",
+        exports: { ".": { import: "./esm.mjs", require: "./index.cjs" } },
+      }),
+      "node_modules/apart/esm.mjs": `export const named = () => "real esm";`,
+      "node_modules/apart/index.cjs": `exports.named = () => "real cjs"; exports.viaHelper = require("./helper.cjs");`,
+      "node_modules/apart/helper.cjs": `const index = require("./index.cjs"); module.exports = () => index.named();`,
+    };
     // A library that requires the CommonJS file of wrap-b as it loads.
     const usesWrapB = {
       "node_modules/uses-wrap-b/package.json": `{ "name": "uses-wrap-b", "main": "index.js" }`,
@@ -3577,6 +3587,21 @@ describe.concurrent("a name that import and require() resolve to two files", () 
         `,
         ),
         ...inFolder(
+          "require-actual-apart",
+          `
+          import { expect, jest, mock, test, vi } from "bun:test";
+          // The original of the ES module is loaded and has not loaded the CommonJS file. What jest.requireActual()
+          // loads of that file is no more loaded by that original than it is without it.
+          test("what jest.requireActual() has loaded gets the mock of that same file, also once vi.importActual() has loaded the ES module", async () => {
+            mock.module("apart", () => ({ named: () => "mock" }));
+            expect((await vi.importActual("apart")).named()).toBe("real esm");
+            const actual = jest.requireActual("apart");
+            expect([require("apart").named(), actual.named(), actual.viaHelper()]).toEqual(["mock", "real cjs", "mock"]);
+          });
+        `,
+          apart,
+        ),
+        ...inFolder(
           "loaded-by-originals",
           `
           import { expect, jest, mock, test, vi } from "bun:test";
@@ -3616,6 +3641,23 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             "app.mjs": `import "./routes.mjs"; import peer from "peer-lib"; export const read = () => peer.read();`,
             "routes.mjs": `import "./app.mjs";`,
           },
+        ),
+        ...inFolder(
+          "loaded-by-import",
+          `
+          import { expect, mock, test, vi } from "bun:test";
+          const { default: peer } = await import("peer-lib");
+          // A limit. import() leaves nothing in the loader of the module that called it, so nothing shows that this
+          // file has loaded the library once the original of the ES module has imported it too: from then on the
+          // library counts as loaded by that original, and gets the CommonJS file as it is.
+          test("a library that import() alone has loaded gets the CommonJS file once the original imports it too", async () => {
+            mock.module("with-peer", () => ({ which: "mock" }));
+            expect(peer.read()).toBe("mock");
+            const actual = await vi.importActual("with-peer");
+            expect([actual.which, peer.read(), actual.viaPeer()]).toEqual(["real esm", "real cjs", "real cjs"]);
+          });
+        `,
+          withPeer,
         ),
         ...inFolder(
           "loaded-first",
@@ -3702,7 +3744,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           usesWrapB,
         ),
       },
-      32,
+      34,
       args,
     );
   });

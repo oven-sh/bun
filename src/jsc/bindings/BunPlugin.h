@@ -376,7 +376,8 @@ String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, con
 String packageImportKey(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 // The key of a mock where `key` is the path that require() resolves its name to and an import resolves the name to another file. `key` itself for the mock's two files,
 // for what the original of the mock's own file has loaded, and while require() cannot have the mock. Where `key` is such a mock's own key, what the original of the other file has loaded gets the key of the original.
-// Only a mock that OnLoad::moduleMockKeysByRequirePath names is such a mock. Callers skip the call while that map is empty, which is all that a resolve pays until one is laid.
+// Only a mock that OnLoad::moduleMockKeysByRequirePath names is such a mock. Callers skip the call while that map is empty, which is all that a resolve pays while none
+// stands: a mock that ends takes its entry with it.
 String keyOfModuleMockAtRequirePath(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);

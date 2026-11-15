@@ -207,7 +207,7 @@ fn leave_out_refused_modules(dev: &mut DevServer) -> bool {
     dev.server_graph.current_chunk_len = 0;
     let mut any_refused = false;
     for (code, source_map) in codes.into_iter().zip(source_maps) {
-        let alone = [b"[{".as_slice(), &code, b"}]"].concat();
+        let alone = [b"({".as_slice(), &code, b"})"].concat();
         match server_hmr_ffi::bake_load_server_hmr_patch(global, BunString::clone_utf8(&alone)) {
             Ok(_) => {
                 dev.server_graph.current_chunk_len += code.len();

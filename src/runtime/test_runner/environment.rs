@@ -216,7 +216,7 @@ pub(crate) fn is_in_preload() -> bool {
 
 /// Without `--isolate`, the first call records the names on `globalThis`, which environment.ts reads for a new window.
 pub(crate) fn will_load_test_file(vm: &VirtualMachine, has_names_of_its_own: bool) {
-    if !vm.test_isolation_enabled && Jest::runner().is_some() {
+    if !vm.test_isolation_enabled.get() && Jest::runner().is_some() {
         bun_jsc::cpp::Bun__TestEnvironment__willLoadTestFile(vm.global(), has_names_of_its_own);
     }
 }

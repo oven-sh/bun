@@ -55,7 +55,7 @@ pub(crate) fn scan_imports_and_exports(
     let loaders: &[Loader] = this.parse_graph().input_files.items_loader();
 
     {
-        let css_asts = &this.parse_graph().stylesheets;
+        let css_asts = &this.parse_graph().css_asts;
         let ast = this.graph.ast.split_mut();
         let meta = this.graph.meta.split_mut();
         let dyn_ref_aliases = meta.dynamic_import_referenced_aliases;
@@ -1628,7 +1628,7 @@ impl ExportStarContext {
 // ──────────────────────────────────────────────────────────────────────────
 mod __css_validation {
     use super::*;
-    use crate::Graph::Stylesheets;
+    use crate::Graph::CssAsts;
     use crate::bun_css::css_properties::css_modules::Specifier;
     use crate::bun_css::{BundlerStyleSheet, PropertyIdTag};
     use bun_ast::Log;
@@ -1638,7 +1638,7 @@ mod __css_validation {
         symbols: &symbol::Map,
         log: &mut Log,
         id: usize,
-        css_asts: &Stylesheets<'bump>,
+        css_asts: &CssAsts<'bump>,
         import_records_list: &[ImportRecordList<'bump>],
         input_files: &[Source],
     ) {
@@ -1728,7 +1728,7 @@ mod __css_validation {
         index: IndexInt,
         root_css_ast: &BundlerStyleSheet,
         all_import_records: &[ImportRecordList<'bump>],
-        all_css_asts: &Stylesheets<'bump>,
+        all_css_asts: &CssAsts<'bump>,
         all_sources: &[Source],
     ) {
         #[derive(Default)]
@@ -1749,7 +1749,7 @@ mod __css_validation {
             properties: StringArrayHashMap<PropertyInFile>,
             stack: Vec<Frame>,
             all_import_records: &'a [ImportRecordList<'bump>],
-            all_css_asts: &'a Stylesheets<'bump>,
+            all_css_asts: &'a CssAsts<'bump>,
             all_symbols: &'a symbol::Map,
             all_sources: &'a [Source<'a>],
             log: &'a mut Log,

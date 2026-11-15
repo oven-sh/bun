@@ -61,7 +61,7 @@ fn parse(
     });
     let mut worker = Worker::get(context.bundle());
     with_ast_scope(|arena| {
-        // SAFETY: a bundle keeps every AST until it finishes. This one is dead once the parser returns.
+        // SAFETY: `parsed` holds the AST that borrows `arena` and `file.contents`, and drops inside this closure.
         let (arena, contents) =
             unsafe { (detach_lifetime_ref(arena), detach_lifetime(file.contents)) };
         let mut worker = scopeguard::guard(&mut *worker, |worker| {
@@ -97,7 +97,7 @@ fn set_main_inlining(worker: &mut Worker, inlines_main: bool) {
 }
 
 fn create_task(context: &BuildContext, file: &ComponentFile<'_>) -> ParseTask<'static> {
-    // SAFETY: the task is dropped inside `compile_components`, which borrows both slices.
+    // SAFETY: the task drops inside `parse`, which borrows both slices.
     let (path, namespace) = unsafe {
         (
             detach_lifetime(file.module.path),

@@ -4738,7 +4738,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     pub(crate) fn get_or_create_exported_namespace_members(
-        &mut self,
+        &self,
         name: &[u8],
         is_export: bool,
         is_enum_scope: bool,
@@ -4770,22 +4770,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             None
         };
 
-        if let Some(existing) = map {
-            return js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
-                exported_members: existing,
-                is_enum_scope,
-                arg_ref: Ref::NONE,
-                property_accesses: Default::default(),
-            }));
-        }
-
-        // Otherwise, generate a new namespace object.
-        // Two bump allocs from the same arena; `StoreRef` is non-null so the
-        // map field can't be null-then-patched, and same-arena allocation
-        // keeps the locality while avoiding a self-referential init.
-        let map = js_ast::StoreRef::from_bump(self.arena.alloc(Default::default()));
+        let exported_members = map
+            .unwrap_or_else(|| js_ast::StoreRef::from_bump(self.arena.alloc(Default::default())));
         js_ast::StoreRef::from_bump(self.arena.alloc(js_ast::TSNamespaceScope {
-            exported_members: map,
+            exported_members,
             is_enum_scope,
             arg_ref: Ref::NONE,
             property_accesses: Default::default(),
@@ -9460,7 +9448,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    /// PERF: `P` is ~5 KiB. The literal is the tail expression and there is no `Result`, so it is written once, in the caller's frame.
+    /// PERF: `P` is over 4 KiB. The literal is the tail expression, with no `Result`, so it is written in the caller's frame.
     pub fn init(
         arena: &'a Bump,
         log: core::ptr::NonNull<bun_ast::Log>,

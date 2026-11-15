@@ -36,7 +36,7 @@ use crate::html_scanner::scan_import_records;
 use crate::options::{self, Loader};
 use crate::transpiler::Transpiler;
 use crate::{ContentHasher, UseDirective, perf, target_from_hashbang};
-use bun_resolver::cache::SourceFile;
+use bun_resolver::cache::SourceFd;
 use bun_resolver::fs::{ByteOrderMark, PathResolverExt as _};
 use bun_resolver::{self as _resolver, Resolver};
 
@@ -48,7 +48,7 @@ mod EventLoop {
 }
 
 // the per-file parse arena is held as `bump: &'static Bump` (the
-// worker arena is pinned for the entire bundle pass — see `run_with_source_code`),
+// worker arena is pinned for the entire bundle pass — see `Worker::arena`),
 // so `bump.alloc_*` / `ArenaString::into_bump_str` already yield `&'static`
 // borrows directly. No erasure helper is needed; `StoreStr::new` covers the
 // remaining AST-string sites (`E::String.data`, `FileLoaderHash.key`).
@@ -100,7 +100,7 @@ pub struct ParseTask<'a> {
     pub(crate) experimental_decorators: bool,
     pub(crate) use_define_for_class_fields: bool,
     // BACKREF; `None` only before enqueue (`Default`, runtime source).
-    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'a>, bun_ptr::Mut>>,
+    pub(crate) ctx: Option<bun_ptr::ParentRef<BundleV2<'a>, bun_ptr::Mut>>,
     // Borrows package_json (resolver arena); valid for the bundle pass.
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
@@ -158,7 +158,7 @@ impl ResultValue<'_> {
 }
 
 pub(crate) struct WatcherData {
-    pub(crate) file: Option<SourceFile>,
+    pub(crate) file: Option<SourceFd>,
     pub(crate) dir_fd: Fd,
 }
 
@@ -348,7 +348,7 @@ unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
 }
 
 /// # Safety
-/// `task` is the `task` field of the box that `ThreadPool::schedule` gave to the pool.
+/// `task` is the `task` field of the box that `ThreadPool::schedule_with` gave to the pool.
 unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
     // SAFETY: fn contract. Erasing the bundle's `'a` to `'static` is sound because the bundle
     // waits for every task it scheduled (`pending_items`) before it frees anything
@@ -631,7 +631,9 @@ pub mod parse_worker {
         opts: ParserOptions<'static>,
         bump: &'static Bump,
         source: &'static Source<'static>,
+        stylesheet: &mut Option<Box<bun_css::BundlerStyleSheet<'static>>>,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
+        *stylesheet = Some(Box::new(bun_css::BundlerStyleSheet::empty()));
         let root = Expr::init(E::Object::default(), Loc { start: 0 });
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; `options`
         // is disjoint from any other field the caller may hold a pointer to.
@@ -1393,13 +1395,13 @@ pub mod parse_worker {
     // getCodeForParseTaskWithoutPlugins
     // ───────────────────────────────────────────────────────────────────────────
 
-    fn get_code_for_parse_task_without_plugins<'b>(
+    fn get_code_for_parse_task_without_plugins<'bump>(
         task: &mut ParseTask<'static>,
         log: &mut Log,
-        bump: &'b Bump,
+        bump: &'bump Bump,
         file_path: &mut Fs::Path,
         loader: Loader,
-    ) -> core::result::Result<CacheEntry<'b>, AnyError> {
+    ) -> core::result::Result<CacheEntry<'bump>, AnyError> {
         match &task.contents_or_fd {
             ContentsOrFd::Fd { dir, file } => 'brk: {
                 let contents_dir = *dir;
@@ -1452,25 +1454,22 @@ pub mod parse_worker {
                 // has already deep-copied every additional-file body into its
                 // `OutputFile`). This avoids churning the global allocator with
                 // one `Vec<u8>` per file.
-                let is_carried_unparsed = matches!(
-                    loader,
+                let byte_order_mark = match loader {
                     Loader::File
-                        | Loader::Wasm
-                        | Loader::Napi
-                        | Loader::Base64
-                        | Loader::Dataurl
-                        | Loader::Sqlite
-                        | Loader::SqliteEmbedded
-                );
+                    | Loader::Wasm
+                    | Loader::Napi
+                    | Loader::Base64
+                    | Loader::Dataurl
+                    | Loader::Sqlite
+                    | Loader::SqliteEmbedded => ByteOrderMark::Kept,
+                    _ => ByteOrderMark::Converted,
+                };
                 break 'brk match bun_resolver::cache::Fs::read_file_into_arena(
                     file_path.text,
                     contents_dir,
                     contents_file.unwrap_valid(),
                     bump,
-                    match is_carried_unparsed {
-                        true => ByteOrderMark::Kept,
-                        false => ByteOrderMark::Converted,
-                    },
+                    byte_order_mark,
                 ) {
                     Ok(entry) => Ok(entry),
                     Err(e) => {
@@ -1519,14 +1518,14 @@ pub mod parse_worker {
     // getCodeForParseTask
     // ───────────────────────────────────────────────────────────────────────────
 
-    pub(crate) fn get_code_for_parse_task<'a>(
+    pub(crate) fn get_code_for_parse_task<'bump>(
         task: &mut ParseTask<'static>,
         log: &mut Log,
-        bump: &'a Bump,
+        bump: &'bump Bump,
         file_path: &mut Fs::Path,
         loader: &mut Loader,
         from_plugin: &mut bool,
-    ) -> core::result::Result<CacheEntry<'a>, AnyError> {
+    ) -> core::result::Result<CacheEntry<'bump>, AnyError> {
         let might_have_on_parse_plugins = 'brk: {
             if task.source_index.is_runtime() {
                 break 'brk false;
@@ -1591,7 +1590,7 @@ pub mod parse_worker {
         // the parent via offset_of; a `&mut` here would (a) shrink provenance to
         // the inner field and (b) alias with any `&`/`&mut` to the wrapper.
         result: *mut OnBeforeParseResult,
-        original_file: Option<SourceFile>,
+        original_file: Option<SourceFd>,
     }
 
     #[repr(C)]
@@ -1936,7 +1935,7 @@ pub mod parse_worker {
         0
     }
 
-    impl<'a, 'b: 'a, 'bump> OnBeforeParsePlugin<'a, 'b, 'bump> {
+    impl<'bump> OnBeforeParsePlugin<'_, '_, 'bump> {
         pub(crate) fn run(
             &mut self,
             plugin: &bundler::JSBundlerPlugin,
@@ -2050,6 +2049,7 @@ pub mod parse_worker {
                     self.task.external_free_function = user_context;
                     *from_plugin = true;
                     *self.loader = wrapper.result.loader;
+                    // An unchanged pointer keeps the length that was read, whatever `source_len` says now.
                     let len = if ptr == wrapper.original_source {
                         wrapper.original_source_len
                     } else {
@@ -2080,7 +2080,7 @@ pub mod parse_worker {
 
     fn get_source_code(
         task: &mut ParseTask<'static>,
-        this: &mut crate::Worker,
+        this: &crate::Worker,
         log: &mut Log,
     ) -> core::result::Result<CacheEntry<'static>, AnyError> {
         let bump = this.arena();
@@ -2117,7 +2117,7 @@ pub mod parse_worker {
         step: &mut Step,
         log: &mut Log,
         bump: &'static Bump,
-        entry_contents: &'static [u8],
+        contents: &'static [u8],
     ) -> core::result::Result<Success<'static>, AnyError> {
         // reshaped for borrowck — `transpiler_for_target` borrows `this`
         // mutably; we may need to call it again below (server-components branch),
@@ -2160,7 +2160,7 @@ pub mod parse_worker {
 
         *step = Step::Parse;
 
-        let is_empty = strings::is_all_whitespace(entry_contents);
+        let is_empty = strings::is_all_whitespace(contents);
 
         // SAFETY: `transpiler` derived from a live `&mut` above. Reborrow only the
         // disjoint `options` field — never the whole struct — so the raw `resolver`
@@ -2169,7 +2169,7 @@ pub mod parse_worker {
         // A text, JSON or markdown file can start with the same bytes as a directive.
         let use_directive: UseDirective =
             if !is_empty && topts.server_components && loader.is_javascript_like() {
-                UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
+                UseDirective::parse(contents).unwrap_or(UseDirective::None)
             } else {
                 UseDirective::None
             };
@@ -2209,13 +2209,13 @@ pub mod parse_worker {
         let source: &'static Source<'static> = bump.alloc(Source {
             path: *file_path,
             index: bun_ast::Index(task.source_index.get()),
-            contents: std::borrow::Cow::Borrowed(entry_contents),
+            contents: std::borrow::Cow::Borrowed(contents),
             contents_is_recycled: false,
             ..Default::default()
         });
 
         let target = (if task.source_index.get() == 1 {
-            target_from_hashbang(entry_contents)
+            target_from_hashbang(contents)
         } else {
             None
         })
@@ -2469,7 +2469,7 @@ pub mod parse_worker {
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
         let ast_result: core::result::Result<JSAst, AnyError> =
             if let Some(message) = unsupported_directive {
-                log.add_range_error(Some(source), UseDirective::range(entry_contents), message);
+                log.add_range_error(Some(source), UseDirective::range(contents), message);
                 Err(crate::Error::ParserError)
             } else if !is_empty || loader.handles_empty_file() {
                 get_ast(
@@ -2486,8 +2486,7 @@ pub mod parse_worker {
                     &mut stylesheet,
                 )
             } else if loader.is_css() {
-                stylesheet = Some(Box::new(bun_css::BundlerStyleSheet::empty()));
-                get_empty_css_ast(log, transpiler, opts, bump, source)
+                get_empty_css_ast(log, transpiler, opts, bump, source, &mut stylesheet)
             } else if module_type == options::ModuleType::Esm {
                 get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, source)
             } else {
@@ -2551,7 +2550,7 @@ pub mod parse_worker {
 
         let mut watcher_data = match this.contents_or_fd {
             ContentsOrFd::Fd { file, dir } => WatcherData {
-                file: file.unwrap_valid().map(SourceFile::Lent),
+                file: file.unwrap_valid().map(SourceFd::Borrowed),
                 dir_fd: dir,
             },
             ContentsOrFd::Contents(_) => WatcherData::NONE,
@@ -2562,7 +2561,11 @@ pub mod parse_worker {
             let entry = match stage {
                 ParseTaskStage::NeedsParse(entry) => entry,
                 ParseTaskStage::NeedsSourceCode => {
-                    let entry = match get_source_code(&mut this, &mut worker, &mut log) {
+                    let read = match get_source_code(&mut this, &worker, &mut log) {
+                        Ok(_) if log.has_errors() => Err(crate::Error::SyntaxError),
+                        read => read,
+                    };
+                    let entry = match read {
                         Ok(entry) => entry,
                         Err(e) => {
                             break 'value ResultValue::Err(ResultError {
@@ -2575,16 +2578,6 @@ pub mod parse_worker {
                         }
                     };
 
-                    if log.has_errors() {
-                        break 'value ResultValue::Err(ResultError {
-                            err: crate::Error::SyntaxError,
-                            step,
-                            log,
-                            source_index: this.source_index,
-                            target: this.known_target,
-                        });
-                    }
-
                     if crate::ThreadPool::uses_io_pool() {
                         this.stage = ParseTaskStage::NeedsParse(entry);
                         ctx.graph.pool().schedule_inside_thread_pool(this);
@@ -2595,6 +2588,7 @@ pub mod parse_worker {
             };
 
             watcher_data = WatcherData {
+                // Without a watcher, a file that the task opened closes here.
                 file: entry.file.filter(|_| ctx.bun_watcher.is_some()),
                 dir_fd: Fd::INVALID,
             };
@@ -2645,6 +2639,7 @@ pub mod parse_worker {
             external: core::mem::take(&mut this.external_free_function),
             watcher_data,
         });
+        // Before the post: the bundle can then finish and free what the task borrows.
         drop(this);
         let result = bun_core::heap::into_raw(result);
 
@@ -2683,18 +2678,14 @@ pub mod parse_worker {
     }
 
     fn on_complete_mini(result: *mut Result<'static>, ctx: *mut BundleV2<'static>) {
-        // SAFETY: callback contract — the box queued above, and the bundle that ticks the loop.
+        // SAFETY: callback contract — `result` is the box queued above, `ctx` the bundle that ticks the loop.
         let (result, ctx) = unsafe { (bun_core::heap::take(result), &mut *ctx) };
         BundleV2::on_parse_task_complete(result, ctx);
     }
 
-    /// # Safety
-    /// `result` is a queued box, on the thread of its bundle, which is not otherwise borrowed.
-    pub unsafe fn on_complete(result: *mut Result<'static>) {
-        // SAFETY: fn contract.
-        let result = unsafe { bun_core::heap::take(result) };
+    pub fn on_complete(result: Box<Result<'static>>) {
         let ctx = result.ctx;
-        // SAFETY: fn contract; `ctx` has write provenance (`from_ref_mut` in `ParseTask::init`).
+        // SAFETY: the bundle's loop runs this, with no other borrow of the bundle; `ctx` has write provenance (`ParseTask::init`).
         BundleV2::on_parse_task_complete(result, unsafe { ctx.assume_mut() });
     }
 } // end mod parse_worker

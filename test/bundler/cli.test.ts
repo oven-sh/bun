@@ -549,6 +549,7 @@ describe.concurrent("--no-bundle with --outdir", () => {
         return [];
       }
     });
+    expect(open.length).toBeGreaterThan(0);
     expect(open.filter(target => /src\/(a\.ts|b\.css)$/.test(target))).toEqual([]);
   });
 

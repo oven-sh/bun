@@ -140,7 +140,7 @@ fn on_complete_mini(result: *mut parse_task::Result<'static>, _ctx: *mut BundleV
     // `on_complete` already recovers `ctx` from `result.ctx`.
     // SAFETY: callback contract — `result` is the uniquely-owned Box leaked in
     // `run_from_thread_pool`; ownership transfers to `on_complete`.
-    unsafe { on_complete(result) };
+    on_complete(unsafe { bun_core::heap::take(result) });
 }
 
 fn task_callback(

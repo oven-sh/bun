@@ -13,7 +13,7 @@ use super::options::in_memory_files_by_path;
 use crate::BundleV2;
 use crate::bun_fs as Fs;
 use crate::bundle_v2::api::JSBundler::{
-    Load, LoadOwner, LoadValue, MiniImportRecord, Plugin, RequestOwner, Resolve, ResolveValue,
+    Load, LoadOwner, LoadValue, MiniImportRecord, Plugin, Resolve, ResolveOwner, ResolveValue,
 };
 use crate::options::Target;
 
@@ -222,7 +222,7 @@ impl PluginRequests {
         let waiter = self.waiters.lock().acquire();
         self.with_bundle(|bundle| {
             let mut resolve = Box::new(Resolve::init(bundle, record));
-            resolve.owner = RequestOwner::Waiter(waiter);
+            resolve.owner = ResolveOwner::Waiter(waiter);
             resolve.dispatch(bundle);
         });
         // SAFETY: the pool owns every waiter until `self` drops.

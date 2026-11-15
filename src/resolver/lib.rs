@@ -1822,7 +1822,9 @@ pub mod cache {
     use bun_core::{Output, feature_flags};
     use bun_sys::{self, Fd};
 
-    use crate::fs as fs_mod;
+    use crate::fs::{
+        self as fs_mod, ByteOrderMark, read_file_contents, read_file_contents_in_arena,
+    };
     pub use crate::tsconfig_json::JsonCache as Json;
 
     bun_core::declare_scope!(CacheFs, visible);
@@ -1896,7 +1898,7 @@ pub mod cache {
         /// drops. Stored as `Vec<u8>` (not `Box<[u8]>`) so a sentinel NUL can
         /// sit in spare capacity past `len`.
         Owned(Vec<u8>),
-        /// Borrows the per-thread `shared_buffer` or the caller's arena, which outlive all reads through this.
+        /// Points into `Fs::shared_buffer` or the caller's arena; neither is reset before the last read.
         Borrowed { ptr: *const u8, len: usize },
     }
 
@@ -1951,34 +1953,36 @@ pub mod cache {
     }
 
     /// What the contents of an [`Entry`] were read from.
-    pub enum SourceFile {
-        Lent(Fd),
-        Opened(bun_sys::File),
+    pub enum SourceFd {
+        /// The caller's, such as one from the resolver's entry cache. Never closed here.
+        Borrowed(Fd),
+        Owned(bun_sys::File),
     }
 
-    impl SourceFile {
+    impl SourceFd {
         /// As [`bun_sys::File::into_raw`].
         pub fn into_raw(self) -> Fd {
             match self {
-                SourceFile::Lent(fd) => fd,
-                SourceFile::Opened(file) => file.into_raw(),
+                SourceFd::Borrowed(fd) => fd,
+                SourceFd::Owned(file) => file.into_raw(),
             }
         }
     }
 
-    impl core::ops::Deref for SourceFile {
+    impl core::ops::Deref for SourceFd {
         type Target = bun_sys::File;
         fn deref(&self) -> &bun_sys::File {
             match self {
-                SourceFile::Lent(fd) => bun_sys::File::borrow(fd),
-                SourceFile::Opened(file) => file,
+                SourceFd::Borrowed(fd) => bun_sys::File::borrow(fd),
+                SourceFd::Owned(file) => file,
             }
         }
     }
 
     pub struct Entry<C = Contents> {
         pub contents: C,
-        pub file: Option<SourceFile>,
+        /// `None`: no file was read, or it is already closed.
+        pub file: Option<SourceFd>,
     }
 
     impl Entry {
@@ -2032,7 +2036,6 @@ pub mod cache {
             file_handle: Option<Fd>,
             arena: Option<&bun_alloc::Arena>,
         ) -> crate::CrateResult<Entry> {
-            use fs_mod::{ByteOrderMark, read_file_contents, read_file_contents_in_arena};
             Self::read_file(path, dirname_fd, file_handle, |file| {
                 let contents = match (use_shared_buffer, arena) {
                     (false, Some(arena)) => std::borrow::Cow::Borrowed(
@@ -2065,10 +2068,10 @@ pub mod cache {
             dirname_fd: Fd,
             file_handle: Option<Fd>,
             arena: &'a bun_alloc::Arena,
-            byte_order_mark: fs_mod::ByteOrderMark,
+            byte_order_mark: ByteOrderMark,
         ) -> crate::CrateResult<Entry<&'a [u8]>> {
             Self::read_file(path, dirname_fd, file_handle, |file| {
-                fs_mod::read_file_contents_in_arena(file, arena, byte_order_mark)
+                read_file_contents_in_arena(file, arena, byte_order_mark)
             })
         }
 
@@ -2083,15 +2086,15 @@ pub mod cache {
 
             let file = if let Some(f) = file_handle {
                 bun_sys::lseek(f, 0, libc::SEEK_SET).map_err(crate::Error::from)?;
-                SourceFile::Lent(f)
+                SourceFd::Borrowed(f)
             } else if feature_flags::STORE_FILE_DESCRIPTORS && dirname_fd.is_valid() {
-                match bun_sys::openat_a(
+                match bun_sys::File::openat(
                     dirname_fd,
                     bun_paths::basename(path),
                     bun_sys::O::RDONLY,
                     0,
                 ) {
-                    Ok(fd) => SourceFile::Opened(bun_sys::File::from_fd(fd)),
+                    Ok(file) => SourceFd::Owned(file),
                     Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
                         let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
                             .map_err(crate::Error::from)?;
@@ -2100,14 +2103,14 @@ pub mod cache {
                             bstr::BStr::new(path),
                             dirname_fd,
                         );
-                        SourceFile::Opened(handle)
+                        SourceFd::Owned(handle)
                     }
                     Err(err) => return Err(err.into()),
                 }
             } else {
                 let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
                     .map_err(crate::Error::from)?;
-                SourceFile::Opened(handle)
+                SourceFd::Owned(handle)
             };
 
             #[cfg(not(windows))] // skip on Windows because NTCreateFile will do it.

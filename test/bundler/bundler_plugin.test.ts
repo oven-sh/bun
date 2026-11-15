@@ -2100,8 +2100,8 @@ describe("bundler", () => {
       `import "./fine.tsx"; import "./missing";`,
       `Could not resolve: "./missing"`,
     ],
-  ])("frees the JSX options of a file %s", async (_, entry, message) => {
-    using dir = tempDir("plugin-load-throws-jsx", {
+  ])("plugin/frees the JSX options of a file %s", async (_, entry, message) => {
+    using dir = tempDir("plugin-frees-jsx-options", {
       "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: "Some.factory" } }),
       "entry.tsx": entry,
       "fine.tsx": "",

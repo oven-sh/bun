@@ -181,7 +181,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             }
 
             // An asset, such as "./icon.svg", is not a style sheet.
-            let sheet = self.parse_graph.stylesheets[source_index.get() as usize].as_deref();
+            let sheet = self.parse_graph.css_asts[source_index.get() as usize].as_deref();
             let Some(repr) = sheet.map(CssAstRef::new) else {
                 self.push_layers_of_unloaded_import(wrapping_conditions);
                 return;
@@ -266,7 +266,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         }
     }
 
-    let css_asts = &this.parse_graph().stylesheets;
+    let css_asts = &this.parse_graph().css_asts;
     let all_import_records_slice = this.graph.ast.items_import_records();
     let arena = this.graph.arena();
 

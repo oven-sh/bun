@@ -189,7 +189,7 @@ impl<'a> Options<'a> {
     /// the struct-literal below has no `..Default::default()` tail. Callers
     /// take this snapshot *before* moving `opts` into `parse()`.
     ///
-    /// Intentionally NOT carried over (lazy-export / `to_lazy_export_ast` does
+    /// Intentionally NOT carried over (lazy-export / `into_lazy_export_ast` does
     /// not consult them; carrying them would alias or double-own):
     /// - `macro_context` (`&'a mut`) — macro evaluation runs only on the full
     ///   parse path.
@@ -611,7 +611,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    pub(crate) fn to_lazy_export_ast(
+    pub(crate) fn into_lazy_export_ast(
         self,
         expr: Expr,
         runtime_api_call: &'static [u8],

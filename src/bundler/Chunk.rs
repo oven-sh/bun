@@ -1185,7 +1185,7 @@ pub struct CssChunk<'a> {
     pub(crate) imports_in_chunk_in_order: Vec<CssImportOrder<'a>>,
 }
 
-/// Borrows from `Graph::stylesheets`.
+/// Borrows from `Graph::css_asts`.
 pub(crate) type CssAstRef<'a> = bun_ptr::BackRef<bun_css::BundlerStyleSheet<'a>>;
 
 /// The conditions of an `@import` rule, found through the stylesheet that owns them.

@@ -141,7 +141,7 @@ public:
         void* context { nullptr };
         RequestKind kind { RequestKind::Resolve };
     };
-    // Not the address of the request: an answer frees it, and a later request can get it.
+    // A counter: a later request can get the address of an answered one.
     using RequestID = uint64_t;
     RequestID holdRequest(RequestKind kind, void* context)
     {

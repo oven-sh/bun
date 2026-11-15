@@ -25,6 +25,7 @@ pub(crate) fn generate_compile_result_for_css_chunk(
     let _trace = bun_core::perf::trace("Bundler.generateCodeForFileInChunkCss");
     // `defer trace.end()` — RAII; Drop ends the trace.
 
+    // Frees what JS part ranges retained; CSS does not allocate here.
     worker.temporary_arena.reset();
     let arena = worker.arena();
     let mut allocating_writer: Vec<u8> = Vec::new();
@@ -90,7 +91,7 @@ pub(crate) fn generate_compile_result_for_css_chunk(
             Index::INVALID
         }
         &CssImportOrderKind::SourceIndex(idx) => {
-            let sheet = c.parse_graph().stylesheets[idx.get() as usize]
+            let sheet = c.parse_graph().css_asts[idx.get() as usize]
                 .as_deref()
                 .expect("css ast present");
             let runs = rules_to_bundle(sheet);

@@ -59,12 +59,9 @@ impl BuildContext {
         &self.bundle().transpiler().options
     }
 
-    pub(crate) fn with_worker<R>(
-        &self,
-        work: impl FnOnce(&mut Transpiler<'static>, &Arena) -> R,
-    ) -> R {
+    pub(crate) fn with_worker<R>(&self, work: impl FnOnce(&mut Transpiler<'static>) -> R) -> R {
         let mut worker = Worker::get(self.bundle());
-        with_ast_scope(|arena| work(&mut worker.transpiler, arena))
+        with_ast_scope(|_| work(&mut worker.transpiler))
     }
 }
 

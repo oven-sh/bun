@@ -17,9 +17,9 @@ use bun_css::BundlerStyleSheet;
 pub(crate) use crate::IndexInt;
 
 pub struct Graph<'a> {
-    /// Before `pool`: they have memory in its workers' arenas.
-    pub(crate) stylesheets: Stylesheets<'a>,
-    /// Before what tasks borrow. Boxed: its threads use it while the bundle thread changes the graph.
+    /// Drops before `pool`, whose workers' arenas hold parts of each stylesheet.
+    pub(crate) css_asts: CssAsts<'a>,
+    /// Drops before the fields below, which tasks borrow. Boxed: its threads use it while the bundle thread changes the graph.
     pool: Box<ThreadPool>,
     pub(crate) heap: &'a ThreadLocalArena,
 
@@ -90,12 +90,12 @@ pub struct Graph<'a> {
     pub(crate) has_any_secondary_paths: bool,
 }
 
-/// By source index. Ends at the last CSS file.
+/// By source index. The `Vec` ends at the last CSS file; an index past it reads as `None`.
 #[derive(Default)]
-pub(crate) struct Stylesheets<'a>(Vec<Option<Box<BundlerStyleSheet<'a>>>>);
+pub(crate) struct CssAsts<'a>(Vec<Option<Box<BundlerStyleSheet<'a>>>>);
 
-impl<'a> Stylesheets<'a> {
-    pub(crate) fn insert(&mut self, source_index: usize, sheet: Box<BundlerStyleSheet<'a>>) {
+impl<'a> CssAsts<'a> {
+    pub(crate) fn put(&mut self, source_index: usize, sheet: Box<BundlerStyleSheet<'a>>) {
         if self.0.len() <= source_index {
             self.0.resize_with(source_index + 1, || None);
         }
@@ -107,7 +107,7 @@ impl<'a> Stylesheets<'a> {
     }
 }
 
-impl<'a> core::ops::Index<usize> for Stylesheets<'a> {
+impl<'a> core::ops::Index<usize> for CssAsts<'a> {
     type Output = Option<Box<BundlerStyleSheet<'a>>>;
     fn index(&self, source_index: usize) -> &Self::Output {
         self.0.get(source_index).unwrap_or(&None)
@@ -171,7 +171,7 @@ bitflags::bitflags! {
 impl<'a> Graph<'a> {
     pub(crate) fn new(heap: &'a ThreadLocalArena, pool: ThreadPool) -> Self {
         Self {
-            stylesheets: Stylesheets::default(),
+            css_asts: CssAsts::default(),
             pool: Box::new(pool),
             heap,
             entry_points: Vec::new(),

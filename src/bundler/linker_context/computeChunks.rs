@@ -91,7 +91,7 @@ pub(crate) fn compute_chunks<'a>(
     let parse_graph = this.parse_graph();
 
     let entry_source_indices = this.graph.entry_points.items_source_index();
-    let css_asts = &parse_graph.stylesheets;
+    let css_asts = &parse_graph.css_asts;
     let mut html_chunks: ArrayHashMap<&[u8], Chunk> = ArrayHashMap::new();
     let loaders = parse_graph.input_files.items_loader();
     let sources = parse_graph.input_files.items_source();
@@ -321,9 +321,6 @@ pub(crate) fn compute_chunks<'a>(
             if this.graph.files_live.is_set(source_index.get() as usize) {
                 if css_asts[source_index.get() as usize].is_none() {
                     let entry_bits: &AutoBitSet = &file_entry_bits[source_index.get() as usize];
-                    if css_asts[source_index.get() as usize].is_some() {
-                        continue;
-                    }
 
                     if this.graph.code_splitting {
                         if !contributes_code.is_set(source_index.get() as usize) {

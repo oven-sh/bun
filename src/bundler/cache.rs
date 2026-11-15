@@ -49,7 +49,7 @@ impl RuntimeTranspilerCacheExt for RuntimeTranspilerCache {
 pub use bun_resolver::cache::ExternalFreeFunction;
 
 /// What a parse task parses. A worker's arena, the bundle or a plugin owns the bytes.
-pub type Entry<'a> = bun_resolver::cache::Entry<&'a [u8]>;
+pub(crate) type Entry<'a> = bun_resolver::cache::Entry<&'a [u8]>;
 
 pub struct JavaScript {}
 

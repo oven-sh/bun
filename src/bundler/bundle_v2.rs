@@ -735,13 +735,13 @@ pub mod bv2_impl {
 
             // `Plugin = opaque {}` — backed by C++ `BunPlugin`. The bundler calls
             // `has_any_matches` / `match_on_load` / `match_on_resolve` directly
-            // (no JSC types needed — only `BunString` / raw context ptrs). The
+            // (no JSC types needed — only `BunString` / boxed requests). The
             // JSC-aware methods (`add_plugin`, `global_object`, …) are
             // added by `bun_runtime` via the `PluginJscExt` extension trait so
             // this crate stays free of `JSValue` / `JSGlobalObject`.
             bun_opaque::opaque_ffi! { pub struct Plugin; }
             unsafe extern "C" {
-                // The three `safe fn`s below take only Rust references / by-value
+                // The three `safe fn`s below take only references, boxes and by-value
                 // scalars: every pointer the C++ side reads is guaranteed valid by
                 // the type system, so there is no caller-side precondition left to
                 // discharge.
@@ -861,14 +861,15 @@ pub mod bv2_impl {
 
                 fn match_on_load(&mut self, load: Box<Load<'_>>) {
                     let _tracer = bun_core::perf::trace("JSBundler.matchOnLoad");
-                    let mut namespace_string = match load.owner.namespace() {
+                    let path = load.owner.path();
+                    let mut namespace_string = match path.namespace {
                         b"" => BunString::static_("file"),
                         namespace => BunString::clone_utf8(namespace),
                     };
-                    let mut path_string = BunString::clone_utf8(load.owner.path());
+                    let mut path_string = BunString::clone_utf8(path.text);
                     let default_loader = load.default_loader;
                     let is_server_side = match &load.owner {
-                        LoadOwner::Bundle(task) => task.known_target != Target::Browser,
+                        LoadOwner::Bundle(task) => task.known_target.is_server_side(),
                         LoadOwner::Waiter { .. } => true,
                     };
                     JSBundlerPlugin__matchOnLoad(
@@ -1099,7 +1100,7 @@ pub mod bv2_impl {
             }
 
             #[derive(Copy, Clone)]
-            pub enum RequestOwner {
+            pub(crate) enum ResolveOwner {
                 Bundle,
                 Waiter(core::ptr::NonNull<crate::aot::plugins::PluginWaiter>),
             }
@@ -1111,7 +1112,7 @@ pub mod bv2_impl {
                 pub bv2: *mut BundleV2<'static>,
                 pub import_record: MiniImportRecord<'a>,
                 pub value: ResolveValue,
-                pub owner: RequestOwner,
+                pub(crate) owner: ResolveOwner,
                 /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue.
                 pub(crate) task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
             }
@@ -1142,7 +1143,7 @@ pub mod bv2_impl {
                 /// The VM that runs the bundle is going: the answer goes to nobody.
                 unsafe fn release_unrun(this: *mut Self) {
                     // SAFETY: fn contract — the box that `on_resolve_async` queued.
-                    drop(unsafe { bun_core::heap::take(this) });
+                    unsafe { bun_core::heap::destroy(this) };
                 }
                 /// A step of the bundle.
                 unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
@@ -1162,7 +1163,7 @@ pub mod bv2_impl {
                     bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
                     import_record: record,
                     value: ResolveValue::Pending,
-                    owner: RequestOwner::Bundle,
+                    owner: ResolveOwner::Bundle,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
                 }
@@ -1174,7 +1175,7 @@ pub mod bv2_impl {
                     if bv2.graph.cancelled {
                         return self.answer_cancelled();
                     }
-                    bv2.send_to_plugins(self);
+                    bv2.enqueue_plugin_request(self);
                 }
                 /// The plugins can no longer answer this request (their VM is shutting down, or the pass
                 /// was cancelled before it was handed over): answer it as cancelled, from whichever thread
@@ -1207,6 +1208,7 @@ pub mod bv2_impl {
                 NoMatch,
             }
 
+            /// Who gets the answer, and what names the file.
             pub enum LoadOwner<'a> {
                 Bundle(Box<ParseTask<'a>>),
                 Waiter {
@@ -1216,16 +1218,12 @@ pub mod bv2_impl {
                 },
             }
             impl LoadOwner<'_> {
-                pub fn path(&self) -> &[u8] {
+                pub fn path(&self) -> crate::bun_fs::Path<'_> {
                     match self {
-                        LoadOwner::Bundle(task) => task.path.text,
-                        LoadOwner::Waiter { path, .. } => path,
-                    }
-                }
-                fn namespace(&self) -> &[u8] {
-                    match self {
-                        LoadOwner::Bundle(task) => task.path.namespace,
-                        LoadOwner::Waiter { namespace, .. } => namespace,
+                        LoadOwner::Bundle(task) => task.path,
+                        LoadOwner::Waiter {
+                            path, namespace, ..
+                        } => crate::bun_fs::Path::init_with_namespace(path, namespace),
                     }
                 }
             }
@@ -1251,10 +1249,10 @@ pub mod bv2_impl {
             }
             impl<'a> Load<'a> {
                 pub(crate) fn init(bv2: &mut BundleV2<'_>, owner: LoadOwner<'a>) -> Self {
-                    let default_loader =
-                        crate::bun_fs::Path::init_with_namespace(owner.path(), owner.namespace())
-                            .loader(&bv2.transpiler.options.loaders)
-                            .unwrap_or(Loader::Js);
+                    let default_loader = owner
+                        .path()
+                        .loader(&bv2.transpiler.options.loaders)
+                        .unwrap_or(Loader::Js);
                     Self {
                     bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
                     default_loader,
@@ -1272,11 +1270,11 @@ pub mod bv2_impl {
                     if bv2.graph.cancelled {
                         return self.answer_cancelled();
                     }
-                    bv2.send_to_plugins(self);
+                    bv2.enqueue_plugin_request(self);
                 }
                 /// As `Resolve::answer_cancelled`.
                 pub fn answer_cancelled(mut self: Box<Self>) {
-                    self.value = LoadValue::Err(cancelled_msg(self.owner.path()));
+                    self.value = LoadValue::Err(cancelled_msg(self.owner.path().text));
                     // SAFETY: as `Resolve::answer_cancelled`.
                     unsafe { &*self.bv2 }.on_load_async(self);
                 }
@@ -1308,7 +1306,7 @@ pub mod bv2_impl {
                 /// As `ResolveAnswered::release_unrun`.
                 unsafe fn release_unrun(this: *mut Self) {
                     // SAFETY: fn contract — the box that `on_load_async` queued.
-                    drop(unsafe { bun_core::heap::take(this) });
+                    unsafe { bun_core::heap::destroy(this) };
                 }
                 /// A step of the bundle.
                 unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
@@ -1329,6 +1327,7 @@ pub mod bv2_impl {
             impl bun_event_loop::Taskable for LoadDeferred {
                 const TAG: bun_event_loop::TaskTag =
                     bun_event_loop::task_tag::BundleV2PluginLoadDeferred;
+                /// Nothing is owned.
                 unsafe fn release_unrun(_: *mut Self) {}
                 /// A step of the bundle.
                 unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
@@ -1807,16 +1806,15 @@ pub mod bv2_impl {
         /// Folds the JS-loop lookup + enqueue so the bundler never dereferences
         /// `JSBundleCompletionTask` (its layout lives in `bun_runtime`); the
         /// `completion` handle carries the `&'static` vtable.
-        /// `false`: what `task` points at stays the caller's.
         pub(crate) fn enqueue_on_js_loop_for_plugins(
             &mut self,
             task: NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
-        ) -> bool {
+        ) -> bun_event_loop::Posted {
             debug_assert!(self.plugins.is_some());
             if let Some(completion) = self.completion {
                 // From Bun.build — the completion posts it to its VM (through its ticket, via the vtable).
                 completion.enqueue_task_concurrent(task);
-                return true;
+                return bun_event_loop::Posted::Queued;
             }
             // From bake where the loop running the bundle is also the loop running
             // the plugins.
@@ -1824,22 +1822,19 @@ pub mod bv2_impl {
                 .js_poster
                 .as_ref()
                 .expect("No JavaScript event loop for transpiler plugins to run on");
-            if let bun_event_loop::Posted::Refused(task) = poster.post(task) {
-                // The JS VM running the plugins was torn down mid-bundle; the
-                // plugin hop will never run. Free the task if it is heap-owned.
-                // SAFETY: refused ⇒ still ours.
-                unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(task) };
-                return false;
-            }
-            true
+            poster.post(task)
         }
 
-        fn send_to_plugins<T: bun_event_loop::Taskable>(&mut self, request: Box<T>) {
+        fn enqueue_plugin_request<T: bun_event_loop::Taskable>(&mut self, request: Box<T>) {
             let request = bun_core::heap::into_raw(request);
             let task = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(request);
-            if !self.enqueue_on_js_loop_for_plugins(task) {
-                // SAFETY: the box above, which nothing got.
-                drop(unsafe { bun_core::heap::take(request) });
+            if let bun_event_loop::Posted::Refused(task) = self.enqueue_on_js_loop_for_plugins(task)
+            {
+                // SAFETY: refused ⇒ we own the task and the request.
+                unsafe {
+                    bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(task);
+                    bun_core::heap::destroy(request);
+                }
             }
         }
 
@@ -4442,7 +4437,7 @@ pub mod bv2_impl {
         }
 
         pub fn on_resolve_async(&self, resolve: Box<jsc_api::JSBundler::Resolve>) {
-            if let jsc_api::JSBundler::RequestOwner::Waiter(waiter) = resolve.owner {
+            if let jsc_api::JSBundler::ResolveOwner::Waiter(waiter) = resolve.owner {
                 // SAFETY: as in `on_load_async`.
                 unsafe { waiter.as_ref() }.answer_resolve(resolve.value);
                 return;
@@ -4696,9 +4691,9 @@ pub mod bv2_impl {
             bun_removable_features::removable_definition!(Bundler, Self::on_resolve);
             debug_assert!(matches!(
                 resolve.owner,
-                jsc_api::JSBundler::RequestOwner::Bundle
+                jsc_api::JSBundler::ResolveOwner::Bundle
             ));
-            // Runs last: the decrement can finish a dev server bundle, which frees it.
+            // Runs last: the decrement can finish a dev server bundle, which frees `this`.
             let mut this = scopeguard::guard(this, |this| this.decrement_scan_counter());
             let this: &mut BundleV2 = &mut **this;
             bun_core::scoped_log!(
@@ -5265,7 +5260,7 @@ pub mod bv2_impl {
                     //
                     // Actual empty files will contain a part exporting an empty object.
                     if ast.parts[index].len() != 0 {
-                        if self.graph.stylesheets[index].is_some() {
+                        if self.graph.css_asts[index].is_some() {
                             // CSS has restrictions on what files can be imported.
                             // This means the file can become an error after
                             // resolution, which is not usually the case.
@@ -5275,7 +5270,7 @@ pub mod bv2_impl {
                             if LinkerContext::scan_css_imports(
                                 u32::try_from(index).expect("int cast"),
                                 import_records.as_slice(),
-                                &self.graph.stylesheets,
+                                &self.graph.css_asts,
                                 sources,
                                 loaders,
                                 &mut log,
@@ -5357,7 +5352,7 @@ pub mod bv2_impl {
                 // Find CSS entry points. Originally, this was computed up front, but
                 // failed files do not remember their loader, and plugins can
                 // asynchronously decide a file is CSS.
-                let css = &self.graph.stylesheets;
+                let css = &self.graph.css_asts;
                 for entry_point in &self.graph.entry_points {
                     if css[entry_point.get() as usize].is_some() {
                         start.css_entry_points.put(
@@ -5614,7 +5609,8 @@ pub mod bv2_impl {
             Box::new(jsc_api::JSBundler::Resolve::init(self, record)).dispatch(self);
         }
 
-        /// `None`: a plugin has the task.
+        /// `None`: a `Load` took the task. Otherwise the caller schedules it.
+        #[must_use]
         pub(crate) fn enqueue_on_load_plugin_if_needed(
             &mut self,
             mut parse: Box<ParseTask<'a>>,
@@ -5824,7 +5820,7 @@ pub mod bv2_impl {
                         bun_alloc::ArenaVec::new_in(result_heap),
                     );
 
-                // Drops the stylesheet too: to the dev server, a file that has one parsed.
+                // Drops `result.stylesheet` too: `finish_from_bake_dev_server` treats an entry point that has one as parsed CSS.
                 parse_result.value = parse_task::ResultValue::Err(parse_task::ResultError {
                     err,
                     step: crate::parse_task::Step::Resolve,
@@ -6908,7 +6904,7 @@ pub mod bv2_impl {
                 }
             }
 
-            // By value: it has to drop before the bundle can finish, below.
+            // By value: `value` must drop before `on_after_decrement_scan_counter`, which can free the bundle.
             match parse_result.value {
                 parse_task::ResultValue::Empty {
                     source_index: empty_source_index,
@@ -7017,9 +7013,7 @@ pub mod bv2_impl {
 
                     if let Some(stylesheet) = result.stylesheet {
                         this.graph.css_file_count += 1;
-                        this.graph
-                            .stylesheets
-                            .insert(result_source_index, stylesheet);
+                        this.graph.css_asts.put(result_source_index, stylesheet);
                     }
 
                     diff += this.process_resolve_queue(

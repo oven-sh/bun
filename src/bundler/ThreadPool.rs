@@ -34,7 +34,7 @@ bun_core::declare_scope!(ThreadPool, visible);
 
 /// `std.Thread.Id` — `bun_threading::current_thread_id()` returns `u64` on
 /// every platform (`gettid`/`pthread_threadid_np`/`GetCurrentThreadId`).
-pub(crate) type ThreadId = u64;
+type ThreadId = u64;
 
 pub struct ThreadPool {
     /// macOS holds an IORWLock on every file open.
@@ -148,7 +148,7 @@ impl ThreadPool {
         io_thread_pool::uses_io_pool()
     }
 
-    fn schedule_with_options(
+    fn schedule_with(
         &self,
         mut parse_task: Box<ParseTask<'_>>,
         schedule_fn: fn(&ThreadPoolLib::ThreadPool, ThreadPoolLib::Batch),
@@ -177,11 +177,11 @@ impl ThreadPool {
     }
 
     pub(crate) fn schedule(&self, parse_task: Box<ParseTask<'_>>) {
-        self.schedule_with_options(parse_task, ThreadPoolLib::ThreadPool::schedule);
+        self.schedule_with(parse_task, ThreadPoolLib::ThreadPool::schedule);
     }
 
     pub(crate) fn schedule_inside_thread_pool(&self, parse_task: Box<ParseTask<'_>>) {
-        self.schedule_with_options(
+        self.schedule_with(
             parse_task,
             ThreadPoolLib::ThreadPool::schedule_inside_thread_pool,
         );
@@ -216,8 +216,8 @@ impl ThreadPool {
     #[cold]
     fn get_worker_slow(&self, ctx: &BundleV2<'_>) -> &'static mut Worker {
         let id = bun_threading::current_thread_id();
-        let known = (self.workers_assignments.lock().get(&id)).map(AliasableBox::as_ptr);
-        let worker = known.unwrap_or_else(|| {
+        let assigned = (self.workers_assignments.lock().get(&id)).map(AliasableBox::as_ptr);
+        let worker = assigned.unwrap_or_else(|| {
             let worker = Worker::new(ctx);
             let ptr = worker.as_ptr();
             bun_core::handle_oom(self.workers_assignments.lock().put(id, worker));
@@ -240,7 +240,7 @@ impl Drop for ThreadPool {
             return;
         }
         for worker in workers {
-            // One without a pool thread was made on this thread or on one that has been joined.
+            // One without a pool thread drops here: this thread made it, or one that has been joined.
             if let Some(thread) = worker.thread {
                 let worker = worker.into_raw();
                 // SAFETY: a field of the box above, which the task's callback takes back.
@@ -260,7 +260,7 @@ static TLS_WORKER: core::cell::Cell<(u64, *mut Worker)> =
 
 static POOL_GENERATION: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
 
-/// `Worker`s that their thread has not started to drop, across every pool in the process.
+/// `Worker`s whose `Drop::drop` has not returned, across every pool in the process.
 /// Read by `bun:internal-for-testing`.
 pub static WORKER_LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -329,6 +329,7 @@ impl Drop for WorkerGuard {
 impl Drop for Worker {
     fn drop(&mut self) {
         bun_core::scoped_log!(ThreadPool, "Worker.drop()");
+        // `collect_vm_garbage` needs both `MacroContext`s freed first.
         self.transpiler.macro_context = None;
         self.other_transpiler = None;
         js_ast::Macro::collect_vm_garbage();
@@ -340,7 +341,7 @@ impl Worker {
     /// Runs on the worker's own thread.
     fn drop_callback(task: *mut ThreadPoolLib::Task) {
         // SAFETY: `task` is the `drop_task` field of the box that `ThreadPool::drop` gave up.
-        drop(unsafe { bun_core::heap::take(bun_core::from_field_ptr!(Worker, drop_task, task)) });
+        unsafe { bun_core::heap::destroy(bun_core::from_field_ptr!(Worker, drop_task, task)) };
     }
 
     // holds `&'static mut` (detached) — the `Worker` is
@@ -369,7 +370,7 @@ impl Worker {
             other_transpiler: None,
             temporary_arena: bun_alloc::Arena::new(),
             stmt_list: StmtList::init(),
-            // The parser's heap: mimalloc caches only the last heap a thread touched.
+            // Shares `heap` with the parser: mimalloc caches only the last heap a thread touched.
             ast_memory_store: bun_ast::ASTMemoryAllocator::borrowing(arena),
             thread: NonNull::new(ThreadPoolLib::Thread::current()).map(bun_ptr::ParentRef::from),
             drop_task: ThreadPoolLib::Task {

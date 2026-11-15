@@ -5,7 +5,7 @@ use bun_ast::{Loader, Loc, Log};
 use bun_ptr::{ParentRef, detach_lifetime};
 use std::borrow::Cow;
 
-use super::services::BuildContext;
+use super::services::{BuildContext, with_ast_scope};
 use crate::ParseTask;
 use crate::bun_fs as Fs;
 use crate::options::Target;
@@ -45,7 +45,7 @@ pub(crate) fn run_before_parse(
 
     // `get_code_for_parse_task` blames the plugin for every error that is already in its log.
     let mut plugin_log = Log::init();
-    let changed = context.with_worker(|_, arena| {
+    let changed = with_ast_scope(|arena| {
         let mut task = create_task(context, module, contents, loader);
         run_plugins(&mut task, loader, arena, &mut plugin_log)
     });

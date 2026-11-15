@@ -44,7 +44,6 @@ namespace Bun {
 extern "C" void CrashHandler__setInsideNativePlugin(const char* plugin_name);
 extern "C" int OnBeforeParsePlugin__isDone(void* context);
 extern "C" void OnBeforeParseResult__reset(OnBeforeParseResult* result);
-#define REQUEST_ID(callFrame) static_cast<BundlerPlugin::RequestID>(callFrame->argument(0).asNumber())
 
 /// These are native callbacks to be run after their associated JS version is run
 extern "C" void JSBundlerPlugin__addError(void*, void*, JSC::EncodedJSValue, uint8_t);
@@ -221,6 +220,13 @@ static JSBundlerPlugin* pluginReceiver(JSC::JSGlobalObject* globalObject, JSC::C
     if (!thisObject) [[unlikely]]
         Bun::throwInvalidThisCallError(globalObject, callFrame, "BundlerPlugin"_s);
     return thisObject;
+}
+
+// 0, which no request has, if the first argument isn't an integer.
+static BundlerPlugin::RequestID pluginRequestID(JSC::CallFrame* callFrame)
+{
+    JSC::JSValue id = callFrame->argument(0);
+    return id.isAnyInt() ? id.asAnyInt() : 0;
 }
 
 /// `BundlerPlugin.prototype.addFilter(filter: RegExp, namespace: string, isOnLoad: 0 | 1): void`
@@ -457,7 +463,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addError, (JSC::JSGlobalObject 
     if (!thisObject) [[unlikely]]
         return {};
 
-    if (auto request = thisObject->plugin.takeRequest(REQUEST_ID(callFrame)))
+    if (auto request = thisObject->plugin.takeRequest(pluginRequestID(callFrame)))
         thisObject->plugin.addError(request->context, thisObject, JSValue::encode(callFrame->argument(1)), static_cast<uint8_t>(request->kind));
 
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -468,7 +474,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync, (JSC::JSGlobalObje
     if (!thisObject) [[unlikely]]
         return {};
 
-    if (void* context = thisObject->plugin.takeRequest(BundlerPlugin::RequestKind::Load, REQUEST_ID(callFrame))) {
+    if (void* context = thisObject->plugin.takeRequest(BundlerPlugin::RequestKind::Load, pluginRequestID(callFrame))) {
         thisObject->plugin.onLoadAsync(
             context,
             thisObject->plugin.config,
@@ -484,7 +490,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync, (JSC::JSGlobalO
     if (!thisObject) [[unlikely]]
         return {};
 
-    if (void* context = thisObject->plugin.takeRequest(BundlerPlugin::RequestKind::Resolve, REQUEST_ID(callFrame))) {
+    if (void* context = thisObject->plugin.takeRequest(BundlerPlugin::RequestKind::Resolve, pluginRequestID(callFrame))) {
         thisObject->plugin.onResolveAsync(
             context,
             thisObject->plugin.config,
@@ -513,7 +519,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_generateDeferPromise, (JSC::JSG
     if (!thisObject) [[unlikely]]
         return {};
 
-    void* context = thisObject->plugin.heldRequest(BundlerPlugin::RequestKind::Load, REQUEST_ID(callFrame));
+    void* context = thisObject->plugin.heldRequest(BundlerPlugin::RequestKind::Load, pluginRequestID(callFrame));
     // Only a request the plugins still hold can defer: once answered it is the bundle thread's again.
     if (!context) {
         auto& vm = JSC::getVM(globalObject);

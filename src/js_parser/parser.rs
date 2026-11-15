@@ -1755,7 +1755,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
         log: log_ptr,
         orig_error_count: 0,
     };
-    let result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {
+    let result = match parser.into_lazy_export_ast(expr, runtime_api_call, symbols) {
         Ok(r) => r,
         Err(err) => {
             if temp_log.errors == 0 {
@@ -1772,8 +1772,8 @@ pub fn new_lazy_export_ast_impl<'bump>(
             ast.has_lazy_export = true;
             Ok(Some(*ast))
         }
-        // `to_lazy_export_ast` always returns `Result::Ast` (no parse pass runs).
-        _ => unreachable!("to_lazy_export_ast returns Result::Ast"),
+        // `into_lazy_export_ast` always returns `Result::Ast` (no parse pass runs).
+        _ => unreachable!("into_lazy_export_ast returns Result::Ast"),
     }
 }
 

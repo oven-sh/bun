@@ -2024,7 +2024,7 @@ pub(crate) mod js_bundler {
                 BUNDLER_DEFERRED,
                 "JSBundlerPlugin__onDefer(0x{:x}, {})",
                 std::ptr::from_ref(self) as usize,
-                bstr::BStr::new(self.owner.path())
+                bstr::BStr::new(self.owner.path().text)
             );
 
             if let LoadOwner::Waiter { waiter, .. } = self.owner {
@@ -2113,7 +2113,11 @@ pub(crate) mod js_bundler {
                 // Flattening a `contents` string can still throw.
                 Err(err) => {
                     let exception = plugin.global_object().take_exception(err);
-                    LoadValue::Err(plugin_msg_from_js(plugin, this.owner.path(), exception))
+                    LoadValue::Err(plugin_msg_from_js(
+                        plugin,
+                        this.owner.path().text,
+                        exception,
+                    ))
                 }
             };
         }
@@ -2398,7 +2402,7 @@ pub(crate) mod js_bundler {
             1 => {
                 // SAFETY: per fn contract; the request's one answer.
                 let mut load = unsafe { bun_core::heap::take(ctx.cast::<Load>()) };
-                let msg = plugin_msg_from_js(plugin, load.owner.path(), exception);
+                let msg = plugin_msg_from_js(plugin, load.owner.path().text, exception);
                 load.value = LoadValue::Err(msg);
                 bv2_ref(load.bv2).on_load_async(load);
             }

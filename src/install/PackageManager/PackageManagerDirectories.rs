@@ -11,7 +11,7 @@ use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{Dependency, Integrity, PackageID, Resolution};
-use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
+use bun_paths::{self as path, PathBuffer, SEP};
 use bun_semver as Semver;
 #[cfg(windows)]
 use bun_sys::FdDirExt;
@@ -26,12 +26,8 @@ use super::{Command, PackageManager, ProgressStrings, Subcommand};
 // in the free functions below to keep them callable without an `impl` path.
 
 impl PackageManager {
-    /// Borrowed view of the cached cache-directory fd. Returns `Fd` (not `Dir`)
-    /// because the descriptor is owned by `CACHE_DIRECTORY` — handing out
-    /// an owning `Dir` would close the cached fd when the caller drops it.
-    /// Callers that need `Dir` methods should use `Dir::borrow(&fd)`.
     #[inline]
-    pub(crate) fn get_cache_directory(&mut self) -> Fd {
+    pub(crate) fn get_cache_directory(&mut self) -> &'static CacheDirectory {
         get_cache_directory(self)
     }
 
@@ -49,7 +45,7 @@ impl PackageManager {
         crate::package_manifest_map::DiskCacheCtx {
             enable_manifest_cache,
             enable_manifest_cache_control: self.options.enable.manifest_cache_control(),
-            cache_directory: enable_manifest_cache.then(|| get_cache_directory(self)),
+            cache_directory: enable_manifest_cache.then(|| get_cache_directory(self).handle.fd()),
             timestamp_for_manifest_cache_control: self.timestamp_for_manifest_cache_control,
             accept_expired: self.options.offline != super::options::OfflineMode::Online,
         }
@@ -60,7 +56,7 @@ impl PackageManager {
         get_temporary_directory(self)
     }
 
-    /// If the cache cannot be written, a manifest is still used. It is just not saved.
+    /// `None` means that the manifest is used without being saved.
     pub(crate) fn manifest_cache_temporary_directory(
         &mut self,
     ) -> Option<&'static TemporaryDirectory> {
@@ -127,20 +123,14 @@ pub enum DirectoryError {
 // ───────────────────────────── cache directory ────────────────────────────────
 
 pub struct CacheDirectory {
-    pub(crate) handle: Dir,
-    pub(crate) path: ZBox,
+    pub handle: Dir,
+    pub path: ZBox,
 }
 
 static CACHE_DIRECTORY: std::sync::OnceLock<CacheDirectory> = std::sync::OnceLock::new();
 
-/// Callers must not close the `Fd`. Use `Dir::borrow(&fd)` to call `&self` `Dir` methods on it.
 #[inline]
-pub fn get_cache_directory(this: &mut PackageManager) -> Fd {
-    open_cache_directory(this).handle.fd()
-}
-
-#[inline]
-pub(crate) fn open_cache_directory(this: &mut PackageManager) -> &'static CacheDirectory {
+pub fn get_cache_directory(this: &mut PackageManager) -> &'static CacheDirectory {
     try_get_cache_directory(this).unwrap_or_else(|why| {
         Output::err_generic("{}", (why,));
         Global::crash();
@@ -157,10 +147,6 @@ pub fn try_get_cache_directory(
         return Ok(cache);
     }
     ensure_cache_directory(this).map_err(DirectoryError::OpenCache)
-}
-
-pub fn get_cache_directory_abs_path(this: &mut PackageManager) -> AbsPath {
-    AbsPath::from(open_cache_directory(this).path.as_bytes()).expect("the path is absolute")
 }
 
 /// Any thread.
@@ -195,7 +181,7 @@ pub struct TemporaryDirectory {
     #[cfg(windows)]
     pub(crate) path: ZBox,
     pub(crate) name: &'static [u8],
-    /// On the same filesystem.
+    /// On the same filesystem as `handle`.
     pub(crate) cache: &'static CacheDirectory,
 }
 
@@ -668,7 +654,6 @@ pub fn cached_github_folder_name_print_auto<'a>(
     ZStr::EMPTY
 }
 
-// TODO: normalize to alphanumeric
 pub fn cached_npm_package_folder_name<'a>(
     this: &PackageManager,
     buf: &'a mut [u8],
@@ -686,6 +671,7 @@ pub(crate) fn folder_cache_key(this: &PackageManager, scope: &Scope) -> Option<F
         .then_some(scope.folder_cache_key)
 }
 
+// TODO: normalize to alphanumeric
 pub(crate) fn cached_npm_package_folder_name_print<'a>(
     buf: &'a mut [u8],
     name: &[u8],
@@ -892,7 +878,7 @@ impl PackageManager {
 }
 
 pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
-    sys::directory_exists_at(get_cache_directory(this), folder_path).unwrap_or(false)
+    sys::directory_exists_at(get_cache_directory(this).handle.fd(), folder_path).unwrap_or(false)
 }
 
 /// npm and tarball folders must contain `package.json`, git checkouts the `.bun-tag` written last.
@@ -917,7 +903,7 @@ pub fn is_package_in_cache(
     folder_path: &ZStr,
     tag: ResolutionTag,
 ) -> bool {
-    is_package_in_cache_at(get_cache_directory(this), folder_path, tag)
+    is_package_in_cache_at(get_cache_directory(this).handle.fd(), folder_path, tag)
 }
 
 // ─────────────────────────── global directories ───────────────────────────────
@@ -1018,7 +1004,7 @@ fn path_for_cached_folder<'a>(
         return Err(Error::FileNotFound);
     }
     let len = path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
-        open_cache_directory(this).path.as_bytes(),
+        get_cache_directory(this).path.as_bytes(),
         &mut buf.0[..],
         &[folder_name.as_bytes()],
     )
@@ -1062,7 +1048,7 @@ pub fn path_for_resolution<'a>(
 }
 
 pub struct CacheDirAndSubpath<'a> {
-    /// The `CacheDirectory`'s or `Fd::cwd()`. Callers must not close it.
+    /// The cache directory, the global link directory or `Fd::cwd()`. Callers must not close it.
     pub(crate) cache_dir: Fd,
     pub(crate) cache_dir_subpath: &'a ZStr,
 }
@@ -1086,18 +1072,18 @@ pub fn compute_cache_dir_and_subpath<'a>(
             let version = resolution.npm().version;
             cache_dir_subpath =
                 cached_npm_package_folder_name(manager, folder_path_buf, name, version, patch_hash);
-            cache_dir = get_cache_directory(manager);
+            cache_dir = get_cache_directory(manager).handle.fd();
         }
         ResolutionTag::Git => {
             let git = resolution.git();
             cache_dir_subpath = cached_git_folder_name(manager, folder_path_buf, git, patch_hash);
-            cache_dir = get_cache_directory(manager);
+            cache_dir = get_cache_directory(manager).handle.fd();
         }
         ResolutionTag::Github => {
             let github = resolution.github();
             cache_dir_subpath =
                 cached_github_folder_name(manager, folder_path_buf, github, patch_hash);
-            cache_dir = get_cache_directory(manager);
+            cache_dir = get_cache_directory(manager).handle.fd();
         }
         ResolutionTag::Folder => {
             let buf = manager.lockfile.buffers.string_bytes.as_slice();
@@ -1116,7 +1102,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
         }
         ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
             // Open it first, because with `--no-verify` the name depends on what's in the cache.
-            cache_dir = get_cache_directory(manager);
+            cache_dir = get_cache_directory(manager).handle.fd();
             cache_dir_subpath = cached_tarball_folder_name(
                 manager,
                 folder_path_buf,

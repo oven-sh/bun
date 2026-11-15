@@ -2,7 +2,7 @@ use bstr::BStr;
 use bun_semver::String;
 use bun_semver::string::Builder as StringBuilderNs;
 
-use crate::dependency::{Dependency, Tag as DependencyVersionTag, VersionExt as _};
+use crate::dependency::{self, Dependency, Tag as DependencyVersionTag, VersionExt as _};
 use crate::lockfile::DependencySlice;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile_real::{CatalogMap, Lockfile, bun_lock, join_top_level_dir};
@@ -233,8 +233,7 @@ fn catalog_entry_is_referenced(
         dep.name_hash == name_hash
             && matches!(
                 &dep.version.value,
-                crate::dependency::Value::Catalog(name)
-                    if CatalogMap::same_name(name.slice(buf), group)
+                dependency::Value::Catalog(name) if CatalogMap::same_name(name.slice(buf), group)
             )
     };
 

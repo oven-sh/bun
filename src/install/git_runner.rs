@@ -23,7 +23,7 @@ use bun_threading::thread_pool as ThreadPool;
 
 use crate::cache_publish::UnfinishedEntry;
 use crate::install::{ExtractData, ExtractDataJson};
-use crate::package_manager::directories::{CacheDirectory, open_cache_directory};
+use crate::package_manager::directories::CacheDirectory;
 use crate::package_manager::{INBOX, THREAD_POOL};
 use crate::package_manager_task::{self as Task, Job};
 use crate::repository::{GitEnv, Repository, RepositoryExt as _, is_safe_resolved_tag};
@@ -789,7 +789,7 @@ impl Drop for GitSubprocess {
 
 impl GitSubprocess {
     fn start(manager: &mut PackageManager, task: NonNull<Task::Task>) {
-        let cache_dir = open_cache_directory(manager);
+        let cache_dir = manager.get_cache_directory();
         let event_loop = EventLoopHandle::from_any(&manager.event_loop);
         // SAFETY: a queued git task is live and idle until its runner hands it on.
         let name = match unsafe { &task.as_ref().job } {

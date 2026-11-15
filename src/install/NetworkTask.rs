@@ -48,7 +48,7 @@ pub struct NetworkTask {
     pub(crate) retried: u16,
     pub(crate) response_buffer: MutableString,
     /// Owns this task. Install thread only.
-    pub(crate) package_manager: bun_ptr::ParentRef<PackageManager, bun_ptr::Mut>,
+    pub(crate) package_manager: bun_ptr::ParentRef<PackageManager>,
     pub(crate) callback: Callback,
     pub(crate) next: bun_threading::Link<NetworkTask>,
 
@@ -981,7 +981,7 @@ impl NetworkTask {
     pub(crate) unsafe fn write_init(
         slot: *mut NetworkTask,
         task_id: crate::package_manager_task::Id,
-        package_manager: *mut PackageManager,
+        package_manager: bun_ptr::ParentRef<PackageManager>,
     ) {
         use core::ptr::addr_of_mut;
         // SAFETY: caller contract (see fn `# Safety`) — `slot` is the unique
@@ -989,9 +989,7 @@ impl NetworkTask {
         // contents are garbage; every field is written without dropping.
         unsafe {
             addr_of_mut!((*slot).task_id).write(task_id);
-            // SAFETY: `package_manager` is the live owner of this task.
-            addr_of_mut!((*slot).package_manager)
-                .write(bun_ptr::ParentRef::from_raw_mut(package_manager));
+            addr_of_mut!((*slot).package_manager).write(package_manager);
             // Struct-default fields.
             addr_of_mut!((*slot).http).write(None);
             addr_of_mut!((*slot).response).write(HTTPClientResult::default());

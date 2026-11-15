@@ -23,13 +23,13 @@ use crate::lockfile::reachable;
 use crate::lockfile_real as Lockfile;
 use crate::network_task::{ForTarballError, add_error_or_warning, stored_string};
 use crate::package_manager_real::directories::{
-    open_cache_directory, try_get_cache_directory, try_get_temporary_directory, try_global_link_dir,
+    try_get_cache_directory, try_get_temporary_directory, try_global_link_dir,
 };
 use crate::package_manager_real::options::{Do, OfflineMode};
 use crate::package_manager_real::process_dependency_list::ListedDependencies;
 use crate::package_manager_real::{
     self, HeldAbout, PackageManager, RemoteTurn, SuccessFn, TaskCallbackList, Wanted,
-    get_cache_directory, get_temporary_directory, run_tasks,
+    get_temporary_directory, is_folder_in_cache, run_tasks,
 };
 use crate::package_manager_task as Task;
 use crate::patch_install::{Callback as PatchTaskCallback, EnqueueAfterState};
@@ -294,16 +294,14 @@ fn enqueue_download(
 ) -> Result<(), ForTarballError> {
     let name = this.lockfile.packages.items_name()[package_id as usize];
     let resolution = &this.lockfile.packages.items_resolution()[package_id as usize];
-    let mut github_url = Vec::new();
-    let task_id = match resolution.tag {
-        ResolutionTag::Npm => {
+    let github_url = (resolution.tag == ResolutionTag::Github)
+        .then(|| this.alloc_github_url(resolution.github()));
+    let task_id = match (&github_url, resolution.tag) {
+        (Some(url), _) => Task::Id::for_tarball(url),
+        (None, ResolutionTag::Npm) => {
             Task::Id::for_npm_package(this.lockfile.str(&name), resolution.npm().version)
         }
-        ResolutionTag::Github => {
-            github_url = this.alloc_github_url(resolution.github());
-            Task::Id::for_tarball(&github_url)
-        }
-        _ => Task::Id::for_tarball(this.lockfile.str(resolution.remote_tarball())),
+        (None, _) => Task::Id::for_tarball(this.lockfile.str(resolution.remote_tarball())),
     };
     if has_already_failed(this, task_id, dependency_id, package_id, &task_context) {
         return Err(ForTarballError::AlreadyFailed);
@@ -323,7 +321,7 @@ fn enqueue_download(
     if let Some(task) = run_tasks::generate_network_task_for_tarball(
         this,
         task_id,
-        &github_url,
+        github_url.as_deref(),
         is_required,
         dependency_id,
         &package,
@@ -522,7 +520,7 @@ fn offline_git_miss(
         return false;
     }
     let folder = bun_core::ZBox::from_bytes(crate::git_runner::bare_repo_folder_name(clone_id));
-    if bun_sys::directory_exists_at(get_cache_directory(this), &folder).unwrap_or(false) {
+    if is_folder_in_cache(this, &folder) {
         return false;
     }
     if !is_required {
@@ -852,14 +850,13 @@ fn enqueue_manifest_download(
     // A list for the task, even an empty one, tells `run_tasks` that a dependency wants it.
     task_callback_list(this, task_id);
 
-    let this_ptr: *mut PackageManager = this;
     let network_task = run_tasks::get_network_task(this);
     // SAFETY: `network_task` is the unique handle to a
     // freshly-vended pool slot. `write_init` resets every
     // defaulted field (callback is uninitialized and
     // overwritten by `for_manifest`).
     unsafe {
-        NetworkTask::write_init(network_task, task_id, this_ptr);
+        NetworkTask::write_init(network_task, task_id, bun_ptr::ParentRef::new(this));
     }
 
     let scope = this.scope_for_package_name(name);
@@ -1103,7 +1100,7 @@ fn takes_alias_target(
     };
     match manifest.find_for_range(
         aliased.literal.slice(buf),
-        alias,
+        &alias.version,
         buf,
         this.options.minimum_release_age_ms,
         this.options.minimum_release_age_excludes,
@@ -1817,20 +1814,19 @@ fn asked_version<'a>(
             }
 
             let declared = rule.map_or(&dependency.version, |rule| &rule.version);
-            if let dependency::Value::Catalog(catalog) = &declared.value {
-                if let Some(catalog_dep) =
+            if let dependency::Value::Catalog(catalog) = &declared.value
+                && let Some(catalog_dep) =
                     this.lockfile.catalogs.get(&this.lockfile, *catalog, name)
-                {
-                    let v = catalog_dep.version;
-                    (name, name_hash) = update_name_and_name_hash_from_version_replacement(
-                        &this.lockfile,
-                        name,
-                        name_hash,
-                        &v,
-                    );
-                    *replacement = Some(v);
-                    break 'replaced;
-                }
+            {
+                let v = catalog_dep.version;
+                (name, name_hash) = update_name_and_name_hash_from_version_replacement(
+                    &this.lockfile,
+                    name,
+                    name_hash,
+                    &v,
+                );
+                *replacement = Some(v);
+                break 'replaced;
             }
 
             if let Some(rule) = rule {
@@ -2405,14 +2401,12 @@ fn bind_row_without_manifest(
                 return Ok(());
             }
 
-            let mut github_url = Vec::new();
-            let task_id = Task::Id::for_tarball(match res.tag {
-                ResolutionTag::Github => {
-                    github_url = this.alloc_github_url(res.github());
-                    &github_url
-                }
-                ResolutionTag::LocalTarball => this.lockfile.str(res.local_tarball()),
-                _ => this.lockfile.str(res.remote_tarball()),
+            let github_url =
+                (res.tag == ResolutionTag::Github).then(|| this.alloc_github_url(res.github()));
+            let task_id = Task::Id::for_tarball(match (&github_url, res.tag) {
+                (Some(url), _) => url,
+                (None, ResolutionTag::LocalTarball) => this.lockfile.str(res.local_tarball()),
+                (None, _) => this.lockfile.str(res.remote_tarball()),
             });
 
             if this.lockfile.awaits_resolve(id) {
@@ -2448,7 +2442,7 @@ fn bind_row_without_manifest(
                 match run_tasks::generate_network_task_for_tarball(
                     this,
                     task_id,
-                    &github_url,
+                    github_url.as_deref(),
                     dependency.behavior.is_required(),
                     id,
                     &Package {
@@ -2874,8 +2868,7 @@ fn enqueue_local_tarball(
     // Of the package in the loaded lockfile.
     locked_integrity: Option<&Integrity>,
 ) -> *mut ThreadPool::Task {
-    let cache_dir = open_cache_directory(this);
-    let temp_dir = get_temporary_directory(this).handle.fd();
+    let temp_dir = get_temporary_directory(this);
     let path = this.lockfile.str(resolution.local_tarball());
     // Resolve the on-disk tarball path here on the main thread. The task
     // callback runs on a ThreadPool worker and must not read
@@ -2900,7 +2893,6 @@ fn enqueue_local_tarball(
             registry: None,
             name: stored_string(this.lockfile.str(&name)),
             resolution: *resolution,
-            cache_dir,
             temp_dir,
             dependency_id,
             integrity: locked_integrity.copied().unwrap_or_default(),
@@ -3178,7 +3170,7 @@ fn tarball_task(
     let task = run_tasks::generate_network_task_for_tarball(
         this,
         task_id,
-        b"",
+        None,
         behavior.is_required(),
         dependency_id,
         package,
@@ -3512,7 +3504,7 @@ fn get_or_put_resolved_package(
                 debug_assert!(this.manifests.hash_map.is_empty());
                 this.manifests = manifests;
             });
-            let (ref mut this, ref mut manifests) = *guard;
+            let (this, manifests) = &mut *guard;
 
             let name_str = this.lockfile.str(&name);
             let scope = this.options.scope_for_package_name(name_str);
@@ -3914,9 +3906,7 @@ fn project_path<'a>(path: &[u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
 
 /// Reading a package.json grows the lockfile's string buffer, so a path cannot stay in there.
 fn copy_path<'a>(path: &[u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
-    let copy = buf.get_mut(..path.len())?;
-    copy.copy_from_slice(path);
-    Some(copy)
+    strings::concat_buf_t(buf, &[path]).ok().map(|copy| &*copy)
 }
 
 /// For `bun update <name>`: returns true if the dependency refers to a requested package, either by
@@ -4357,7 +4347,7 @@ fn version_every_peer_accepts<'m>(
     for range in ranges {
         let found = manifest.find_for_range(
             range.literal.slice(buf),
-            &range.npm,
+            &range.npm.version,
             buf,
             this.options.minimum_release_age_ms,
             this.options.minimum_release_age_excludes,

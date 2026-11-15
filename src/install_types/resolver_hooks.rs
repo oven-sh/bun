@@ -380,14 +380,14 @@ impl TarballInfo {
     }
 }
 
-/// The discriminants are those of [`DependencyVersionTag`].
+/// In the order of [`DependencyVersionTag`].
 #[derive(Default, Clone, bun_core::EnumTag)]
 #[enum_tag(existing = DependencyVersionTag)]
 #[repr(u8)]
 #[expect(clippy::large_enum_variant, reason = "`Npm` is the common case")]
 pub enum DependencyVersionValue {
     #[default]
-    Uninitialized = 0,
+    Uninitialized,
     Npm(NpmInfo),
     DistTag(TagInfo),
     Tarball(TarballInfo),

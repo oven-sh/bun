@@ -2006,10 +2006,7 @@ pub(crate) fn install_isolated_packages(
             }
 
             // <cache_dir>/links — created lazily by the first task that misses.
-            let cache_dir_path = &package_manager::directories::open_cache_directory(manager).path;
-            if cache_dir_path.is_empty() {
-                break 'global_store_path None;
-            }
+            let cache_dir_path = &manager.get_cache_directory().path;
             // Own a Vec<u8> with a trailing NUL so it can be re-borrowed as
             // a `&ZStr` for `Installer.global_store_path` below.
             let joined = paths::resolve_path::join_abs_string::<paths::platform::Auto>(
@@ -2468,7 +2465,7 @@ pub(crate) fn install_isolated_packages(
                     // Downloads only produce the unpatched folder; `apply_package_patch` derives the rest.
                     let cache_subpath_z =
                         installer.cached_folder_name(&mut **folder_name_buf, entry_id, None);
-                    let cache_dir = installer.manager_mut().get_cache_directory();
+                    let cache_dir = installer.manager_mut().get_cache_directory().handle.fd();
 
                     let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
                     {

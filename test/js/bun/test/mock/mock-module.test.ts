@@ -7,7 +7,7 @@
 
 import { describe, expect, jest, mock, spyOn, test, vi } from "bun:test";
 import { bunEnv, bunExe, Heap, isASAN, isDebug, isWindows, tempDir } from "harness";
-import { readdirSync } from "node:fs";
+import { readdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
@@ -2293,7 +2293,7 @@ describe.concurrent("a module behind an async onLoad() runs once for a factory a
   const imports = `import { expect, mock, test } from "bun:test";`;
   const expectOne = `expect([a.seen === b.seen, globalThis.calls, globalThis.evaluations]).toEqual([true, 1, 1]);`;
 
-  test.each([
+  const loads = [
     [
       "two import() calls in one tick",
       `const [a, b] = await Promise.all([import("./uses-mid.js"), import("./user.js")]);`,
@@ -2302,22 +2302,94 @@ describe.concurrent("a module behind an async onLoad() runs once for a factory a
       "an import() call that nothing awaits yet",
       `const first = import("./uses-mid.js"), b = await import("./user.js"), a = await first;`,
     ],
-  ])("%s", async (_, load) => {
+  ];
+  const once = (load: string) => `${imports}
+    test("the factory gets the module of the other load", async () => {
+      mock.module("./k.js", async () => ({ x: (await import("./mid.js")).mid }));
+      ${load}
+      ${expectOne}
+    });
+  `;
+
+  test.each(loads)("%s", async (_, load) => {
+    await expectFixturesToPass({ ...files, "once.test.js": once(load) }, 1, [
+      "--preload",
+      "./preload.js",
+      "./once.test.js",
+    ]);
+  });
+
+  // No gate: the callback answers when it has read the file. The factory's import() waits for that.
+  test.each(loads)("%s, by loads that share no module", async (_, load) => {
     await expectFixturesToPass(
       {
         ...files,
-        "once.test.js": `${imports}
-          test("the factory gets the module of the other load", async () => {
-            mock.module("./k.js", async () => ({ x: (await import("./mid.js")).mid }));
-            ${load}
-            ${expectOne}
-          });
-        `,
+        "uses-mid.js": `import { mid } from "./mid.js"; export const seen = mid;`,
+        "user.js": `import { x } from "./k.js"; export const seen = x;`,
+        "once.test.js": once(load),
       },
       1,
       ["--preload", "./preload.js", "./once.test.js"],
     );
   });
+
+  // The compiler of Svelte takes seconds in a debug build, so this one has more time.
+  test("a $state module of bun-plugin-svelte runs once for a factory and a component", async () => {
+    using dir = tempDir("mock-module-svelte", {
+      "session.svelte.ts": `
+        globalThis.sessions = (globalThis.sessions ?? 0) + 1;
+        export const session: { user: string | null } = $state({ user: null });
+      `,
+      "Header.svelte": `
+        <script lang="ts">
+          import { session } from "./session.svelte";
+        </script>
+
+        <header>{session.user ? "hi " + session.user : "signed out"}</header>
+      `,
+      "LoginButton.svelte": `
+        <script module>
+          import { login } from "./api.js";
+          export { login };
+        </script>
+
+        <button onclick={login}>log in</button>
+      `,
+      "api.js": `export const login = () => { throw new Error("network"); };`,
+      "preload.ts": `
+        import { SveltePlugin } from "bun-plugin-svelte";
+        Bun.plugin(SveltePlugin());
+      `,
+      "state.test.js": `
+        import { expect, test, vi } from "bun:test";
+        import { render } from "svelte/server";
+        vi.mock("./api.js", async () => {
+          const { session } = await import("./session.svelte.ts");
+          return { login: () => void (session.user = "ada") };
+        });
+        test("two components are loaded together", async () => {
+          const [header, button] = await Promise.all([import("./Header.svelte"), import("./LoginButton.svelte")]);
+          button.login();
+          expect([globalThis.sessions, render(header.default).body]).toEqual([1, expect.stringContaining("hi ada")]);
+        });
+      `,
+    });
+    symlinkSync(
+      join(import.meta.dir, "..", "..", "..", "..", "node_modules"),
+      join(String(dir), "node_modules"),
+      "junction",
+    );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--preload", "./preload.ts", "./state.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 1 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  }, 60_000);
 
   // The callback answers once the factory has asked for the module. The two loads share no module.
   test.each([
@@ -2398,6 +2470,54 @@ describe.concurrent("a module behind an async onLoad() runs once for a factory a
       },
       1,
     );
+  });
+
+  // The price of the wait. The callback answers only after the test file has the mock, so the file can't load. Before, the factory got a
+  // second instance of the module, and the callback was called twice.
+  test("an import() that waits for a fetch that waits for its mock never settles", async () => {
+    using dir = tempDir("mock-module-waits", {
+      ...files,
+      "other.js": `import { mid } from "./mid.js"; export const seen = mid;`,
+      "user.js": `import { x } from "./k.js"; export const seen = x;`,
+      "preload.js": `
+        import { mock } from "bun:test";
+        Object.assign(globalThis, { calls: 0, asked: Promise.withResolvers(), gate: Promise.withResolvers() });
+        Bun.plugin({
+          name: "its first call answers when the gate is open",
+          setup(build) {
+            build.onLoad({ filter: /data\\.js$/ }, async ({ path }) => {
+              if (++globalThis.calls === 1) {
+                globalThis.asked.resolve();
+                await globalThis.gate.promise;
+              }
+              return { contents: await Bun.file(path).text(), loader: "js" };
+            });
+          },
+        });
+        mock.module("./k.js", async () => ({ x: (await import("./data.js")).id }));
+      `,
+      "a.test.js": `
+        void import("./other.js");
+        await globalThis.asked.promise;
+        await import("./user.js");
+        globalThis.gate.resolve();
+      `,
+      "b.test.js": `
+        import { expect, test } from "bun:test";
+        test("the callback was called once", () => expect(globalThis.calls).toBe(1));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--preload", "./preload.js", "./a.test.js", "./b.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('a.test.js" never finished loading');
+    expect(stderr).toContain(" 1 pass\n 1 fail\n 1 error\n");
+    expect(exitCode).toBe(1);
   });
 
   test("an import() that waits is resolved again for the factory that called it", async () => {
@@ -2694,6 +2814,50 @@ describe.concurrent("a mock doesn't wait for the pending factory of another load
       ["--preload", "./preload.js", "./static.test.js"],
     );
   });
+
+  // The factory of session.js runs for both pages, so the mock that comes after it waits for it in both.
+  test.each([
+    ["the test file", []],
+    ["a preload", ["--preload", "./mocks.js"]],
+  ])(
+    "but it waits for a pending factory that comes before it in each of its loads, with the mocks of %s",
+    async (_, args) => {
+      const mocks = `
+      import { mock } from "bun:test";
+      Object.assign(globalThis, { started: Promise.withResolvers(), gate: Promise.withResolvers() });
+      mock.module("./session.js", async () => {
+        globalThis.started.resolve();
+        await globalThis.gate.promise;
+        globalThis.session = "ready";
+        return { user: "mock user" };
+      });
+      mock.module("./api.js", () => ({ api: "api, session is " + globalThis.session }));
+    `;
+      await expectFixturesToPass(
+        {
+          "session.js": `export const user = "real";`,
+          "api.js": `export const api = "real";`,
+          "settings.js": `import { user } from "./session.js"; import { api } from "./api.js"; export const page = [user, api];`,
+          "profile.js": `import { user } from "./session.js"; import { api } from "./api.js"; export const page = [user, api];`,
+          "mocks.js": mocks,
+          "pages.test.js": `
+          import { expect, test } from "bun:test";
+          ${args.length ? "" : mocks}
+          test("two pages are loaded together", async () => {
+            const pages = Promise.all([import("./settings.js"), import("./profile.js")]);
+            await globalThis.started.promise;
+            await new Promise(resolve => setImmediate(resolve));
+            globalThis.gate.resolve();
+            const page = ["mock user", "api, session is ready"];
+            expect((await pages).map(module => module.page)).toEqual([page, page]);
+          });
+        `,
+        },
+        1,
+        [...args, "./pages.test.js"],
+      );
+    },
+  );
 });
 
 test.concurrent("a factory that another factory's import calls also waits for what that import fetches", async () => {
